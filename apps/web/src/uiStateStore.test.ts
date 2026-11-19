@@ -136,6 +136,12 @@ describe("parsePersistedState", () => {
     });
   });
 
+  it("keeps a persisted fast-forward merge method", () => {
+    expect(
+      parsePersistedState({ pullRequestMergeMethod: "fast-forward" }).pullRequestMergeMethod,
+    ).toBe("fast-forward");
+  });
+
   it.each([undefined, 1])("ignores changed-file expansion version %s", (version) => {
     const parsed = parsePersistedState({
       ...(version === undefined ? {} : { threadChangedFilesExpansionVersion: version }),

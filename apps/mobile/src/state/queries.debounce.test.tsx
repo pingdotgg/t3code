@@ -8,7 +8,8 @@ import { expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
   sessionAtom: {},
-  searchEntries: vi.fn(() => null),
+  searchEntriesAtom: {},
+  searchEntries: vi.fn((): unknown => mocks.searchEntriesAtom),
   listRefs: vi.fn(),
   refresh: vi.fn(),
 }));
@@ -35,7 +36,9 @@ vi.mock("./query", () => ({
     data:
       atom === mocks.sessionAtom
         ? { authenticated: true, scopes: [AuthFilesystemReadScope] }
-        : null,
+        : atom === mocks.searchEntriesAtom
+          ? { entries: [{ path: "src/only-in-original.ts", kind: "file" }] }
+          : null,
     error: null,
     isPending: false,
     refresh: () => {},
@@ -53,12 +56,16 @@ function setup() {
   vi.useFakeTimers();
   mocks.searchEntries.mockClear();
   const root = createRoot(document.createElement("div"));
+  let latest: ReturnType<typeof useComposerPathSearch> | null = null;
   function Probe({ target }: { readonly target: ComposerPathSearchTarget }) {
-    useComposerPathSearch(target);
+    latest = useComposerPathSearch(target);
     return null;
   }
 
   return {
+    get result() {
+      return latest;
+    },
     render(target: ComposerPathSearchTarget) {
       act(() => root.render(<Probe target={{ ...target }} />));
     },
@@ -126,6 +133,21 @@ it.each([
     environmentId: changed.environmentId,
     input: { cwd: changed.cwd, query: changed.query.slice(0, 256), limit: 20 },
   });
+});
+
+it.each([
+  { field: "environment", changed: { ...target, environmentId: EnvironmentId.make("other") } },
+  { field: "project directory", changed: { ...target, cwd: "/other" } },
+])("reports settled results as pending when the $field changes", ({ changed }) => {
+  using harness = setup();
+  harness.render(target);
+  act(() => vi.advanceTimersByTime(200));
+  expect(harness.result?.isPending).toBe(false);
+  expect(harness.result?.entries).toHaveLength(1);
+
+  harness.render(changed);
+  expect(harness.result?.isPending).toBe(true);
+  expect(harness.result?.entries).toEqual([]);
 });
 
 it("keeps compiled branch results stable and resets pagination for a new target or refresh", () => {

@@ -4,6 +4,7 @@ import { SecretProviderId, type SimlockDeviceHostConfig } from "@t3tools/contrac
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Clock from "effect/Clock";
 import * as Fiber from "effect/Fiber";
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
@@ -56,6 +57,8 @@ const fakePool = (
       readonly entered: Deferred.Deferred<void>;
       readonly proceed: Deferred.Deferred<void>;
     };
+    /** The gateway's `lease.maxTtlMs`: leases expire one TTL after their last renewal. */
+    readonly maxTtlMs?: number;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -66,8 +69,10 @@ const fakePool = (
     let leases = 0;
     let renewStatus = 200;
     let catalog: unknown = CATALOG;
+    let leaseDeadline = Infinity;
     const http = HttpClient.make((request) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis;
         const url = new URL(request.url);
         requests.push(`${request.method} ${url.pathname}`);
         const json = (body: unknown, status = 200) =>
@@ -75,6 +80,17 @@ const fakePool = (
         if (request.headers.authorization !== "Bearer agent-token")
           return json({ error: { code: "UNAUTHENTICATED", message: "Unknown bearer token" } }, 401);
         if (url.pathname === "/v1/catalog") return json(catalog);
+        if (url.pathname.endsWith("/renew") && options.maxTtlMs !== undefined) {
+          if (now >= leaseDeadline) return json({}, 404);
+          const body =
+            request.body._tag === "Uint8Array"
+              ? (JSON.parse(new TextDecoder().decode(request.body.body)) as { ttlMs?: number })
+              : {};
+          if ((body.ttlMs ?? 0) > options.maxTtlMs)
+            return json({ error: { code: "BAD_REQUEST", message: "ttlMs exceeds maxTtlMs" } }, 400);
+          leaseDeadline = now + (body.ttlMs ?? options.maxTtlMs);
+          return json({});
+        }
         if (url.pathname.endsWith("/renew")) return json({}, renewStatus);
         if (request.method === "DELETE") return json({}, 202);
         return json({}, 404);
@@ -114,6 +130,8 @@ const fakePool = (
               path.join(dir, `${session}.json`),
               JSON.stringify({ leaseId: `lease-${++leases}` }),
             );
+            if (options.maxTtlMs !== undefined)
+              leaseDeadline = (yield* Clock.currentTimeMillis) + options.maxTtlMs;
           }
           if (command === "screenshot") yield* fs.writeFile(args[1]!, new Uint8Array([1, 2, 3]));
           return {
@@ -472,6 +490,21 @@ describe("Simlock device host", () => {
       );
       yield* Scope.close(scope, Exit.void);
       expect(pool.ran("close")).toHaveLength(0);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("keeps a watched lease renewed when the gateway caps lease TTLs", () =>
+    Effect.gen(function* () {
+      const pool = yield* fakePool({ maxTtlMs: 5 * 60_000 });
+      const host = yield* makeHost(pool, config(), yield* Scope.make());
+      const ready = yield* host.ensureReady(() => Effect.void);
+      const [iphone] = (yield* ready.devices.list).devices;
+      const leaseId = yield* ready.devices.boot(iphone!);
+
+      yield* TestClock.adjust("6 minutes");
+      expect((yield* ready.devices.list).devices.some((device) => device.id === leaseId)).toBe(
+        true,
+      );
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 

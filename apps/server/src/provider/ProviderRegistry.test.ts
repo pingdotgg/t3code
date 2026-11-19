@@ -17,6 +17,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -42,6 +43,7 @@ import {
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { WindowsShellEnvironment } from "@t3tools/shared/shell";
 import { deepMerge } from "@t3tools/shared/Struct";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
@@ -153,6 +155,135 @@ const layerBackgroundPolicyAlwaysRun = Layer.mock(BackgroundPolicy.BackgroundPol
   }),
   shouldRunScopeWork: () => Effect.succeed(true),
   shouldRunOpportunisticWork: Effect.succeed(true),
+});
+
+const makeWorkspaceRescanHarness = Effect.gen(function* () {
+  const instanceId = ProviderInstanceId.make("claude");
+  const driver = ProviderDriverKind.make("claudeCode");
+  const provider = {
+    instanceId,
+    driver,
+    status: "ready",
+    enabled: true,
+    installed: true,
+    auth: { status: "authenticated" },
+    checkedAt: "1970-01-01T00:00:00.000Z",
+    version: "1.0.0",
+    models: [],
+    slashCommands: [],
+    skills: [],
+  } as const satisfies ServerProvider;
+  const scans = yield* Queue.unbounded<{
+    readonly cwd: string;
+    readonly result: Deferred.Deferred<ProviderWorkspaceSnapshot>;
+  }>();
+  const makeInstance = Effect.gen(function* () {
+    const rescans = yield* Queue.unbounded<string>();
+    const reports = yield* Queue.unbounded<string>();
+    const instance: ProviderInstance = {
+      instanceId,
+      driverKind: driver,
+      continuationIdentity: { driverKind: driver, continuationKey: "claude:rescan-test" },
+      displayName: undefined,
+      enabled: true,
+      snapshot: {
+        resolveMaintenance: () =>
+          Effect.succeed(
+            makeManualOnlyProviderMaintenanceCapabilities({
+              provider: driver,
+              packageName: null,
+            }),
+          ),
+        getSnapshot: Effect.succeed(provider),
+        refresh: Effect.succeed(provider),
+        streamChanges: Stream.empty,
+        applyUsageLimits: () => Effect.void,
+      },
+      // A pull-based stream pulls the next report only after the registry queued the last.
+      workspaceRescans: Stream.fromQueue(rescans).pipe(
+        Stream.tap((cwd) => Queue.offer(reports, cwd)),
+      ),
+      snapshotForCwd: (cwd) =>
+        Effect.gen(function* () {
+          const result = yield* Deferred.make<ProviderWorkspaceSnapshot>();
+          yield* Queue.offer(scans, { cwd, result });
+          return yield* Deferred.await(result);
+        }),
+      orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+      textGeneration: {} as ProviderInstance["textGeneration"],
+    };
+    return { instance, rescans, reports };
+  });
+  const first = yield* makeInstance;
+  const instances = yield* Ref.make([first.instance]);
+  const changes = yield* PubSub.unbounded<void>();
+  const scope = yield* Scope.make();
+  yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+  const services = yield* Layer.build(
+    ProviderRegistry.layer.pipe(
+      Layer.provide(layerUnusedMutator),
+      Layer.provideMerge(
+        Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+          getInstance: (id) =>
+            Ref.get(instances).pipe(Effect.map((all) => all.find((i) => i.instanceId === id))),
+          listInstances: Ref.get(instances),
+          listUnavailable: Effect.succeed([]),
+          streamChanges: Stream.fromPubSub(changes),
+          subscribeChanges: PubSub.subscribe(changes),
+        }),
+      ),
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-workspace-rescan-" })),
+      Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
+  ).pipe(Scope.provide(scope));
+  const registry = yield* ProviderRegistry.ProviderRegistry.pipe(Effect.provide(services));
+  const snapshot = (name: string): ProviderWorkspaceSnapshot => ({
+    ...provider,
+    skills: [{ name, path: `/workspace/${name}/SKILL.md`, enabled: true }],
+  });
+  const nextScan = Effect.fnUntraced(function* (cwd: string) {
+    const scan = yield* Queue.take(scans);
+    assert.equal(scan.cwd, cwd);
+    return (name: string) => Deferred.succeed(scan.result, snapshot(name));
+  });
+  const refresh = (cwd: string, fresh = false) =>
+    registry.refreshWorkspaceSnapshot({ instanceId, cwd, fresh });
+  const seed = Effect.fnUntraced(function* (cwd: string) {
+    const pending = yield* refresh(cwd).pipe(Effect.forkChild);
+    const complete = yield* nextScan(cwd);
+    yield* complete("initial");
+    yield* Fiber.join(pending);
+  });
+  // A later requested cwd reaching the serial consumer proves the previous rescan settled,
+  // including when that rescan correctly publishes no change. Seed "/barrier" first; it rescans
+  // to the skills it was seeded with, so it never stamps workspaceRescannedAt.
+  const drainRescans = Effect.gen(function* () {
+    yield* Queue.offer(first.rescans, "/barrier");
+    const complete = yield* nextScan("/barrier");
+    yield* complete("initial");
+  });
+  const skillsOf = (cwd: string) =>
+    Effect.map(registry.getProviders, (providers) =>
+      providers[0]?.workspaceSnapshots?.find((s) => s.cwd === cwd)?.skills?.map((s) => s.name),
+    );
+  const rescannedAtOf = Effect.map(
+    registry.getProviders,
+    (providers) => providers[0]?.workspaceRescannedAt,
+  );
+  return {
+    first,
+    makeInstance,
+    instances,
+    changes,
+    registry,
+    scans,
+    nextScan,
+    refresh,
+    seed,
+    drainRescans,
+    skillsOf,
+    rescannedAtOf,
+  };
 });
 
 function selectDescriptor(
@@ -788,6 +919,86 @@ it.layer(
       }),
     );
 
+    it.effect("shows Codex usage that answers after three seconds inside the probe budget", () =>
+      Effect.gen(function* () {
+        const usageRequested = yield* Deferred.make<void>();
+        const spawner = ChildProcessSpawner.make(() =>
+          Effect.gen(function* () {
+            const scope = yield* Effect.scope;
+            const output = yield* Queue.unbounded<Uint8Array>();
+            const send = (message: unknown) =>
+              Queue.offer(output, encoder.encode(`${JSON.stringify(message)}\n`));
+            const results: Record<string, unknown> = {
+              initialize: {
+                userAgent: "codex_cli_rs/0.167.0",
+                codexHome: "/nonexistent-codex-home",
+                platformFamily: "unix",
+                platformOs: "linux",
+              },
+              "account/read": {
+                account: { type: "chatgpt", email: "test@example.com", planType: "pro" },
+                requiresOpenaiAuth: true,
+              },
+              "config/read": { config: {}, origins: {} },
+              "skills/list": { data: [] },
+              "model/list": { data: [] },
+            };
+            const answer = (line: string) => {
+              const { id, method } = JSON.parse(line) as { id?: number; method?: string };
+              if (id === undefined || method === undefined) return Effect.void;
+              if (method !== "account/rateLimits/read") {
+                return send({ id, result: results[method] ?? {} });
+              }
+              return Deferred.succeed(usageRequested, undefined).pipe(
+                Effect.andThen(Effect.sleep("4 seconds")),
+                Effect.andThen(
+                  send({
+                    id,
+                    result: {
+                      rateLimits: {
+                        limitId: "codex",
+                        planType: "pro",
+                        primary: { usedPercent: 42, windowDurationMins: 300, resetsAt: 2e9 },
+                      },
+                      rateLimitsByLimitId: null,
+                      rateLimitResetCredits: null,
+                      accountId: null,
+                    },
+                  }),
+                ),
+                Effect.forkIn(scope),
+              );
+            };
+            const decoder = new TextDecoder();
+            let buffered = "";
+            return ChildProcessSpawner.makeHandle({
+              ...mockHandle({ stdout: "", stderr: "", code: 0 }),
+              exitCode: Effect.never,
+              isRunning: Effect.succeed(true),
+              stdin: Sink.forEach((chunk: Uint8Array) => {
+                buffered += decoder.decode(chunk, { stream: true });
+                const lines = buffered.split("\n");
+                buffered = lines.pop() ?? "";
+                return Effect.forEach(lines.filter(Boolean), answer, { discard: true });
+              }),
+              stdout: Stream.fromQueue(output),
+            });
+          }),
+        );
+        const fiber = yield* checkCodexProviderStatus(defaultCodexSettings).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.forkChild,
+        );
+        yield* Deferred.await(usageRequested);
+        yield* TestClock.adjust("25 seconds");
+        const status = yield* Fiber.join(fiber);
+
+        assert.strictEqual(status.auth.status, "authenticated");
+        assert.isUndefined(status.usageLimits?.unavailable);
+        assert.strictEqual(status.usageLimits?.windows[0]?.usedPercent, 42);
+      }),
+    );
+
     it.effect("does not run --version when the Codex executable cannot start", () =>
       Effect.gen(function* () {
         if ((yield* HostProcess.Platform) === "win32") return;
@@ -850,6 +1061,20 @@ it.layer(
         unchanged.workspaceSnapshots?.map((snapshot) => snapshot.cwd),
         ["/project", "/plain"],
       );
+      // A machine health refresh must not read as a rescan, nor erase the last one.
+      const rescanned = { ...withCatalog, workspaceRescannedAt: "2026-03-25T00:01:00.000Z" };
+      assert.equal(
+        ProviderRegistry.mergeProviderSnapshot(rescanned, provider).workspaceRescannedAt,
+        "2026-03-25T00:01:00.000Z",
+      );
+      assert.equal(
+        ProviderRegistry.mergeProviderSnapshot(rescanned, {
+          ...provider,
+          workspaceRescannedAt: "2026-03-25T00:02:00.000Z",
+        }).workspaceRescannedAt,
+        "2026-03-25T00:02:00.000Z",
+      );
+      assert.equal(unchanged.workspaceRescannedAt, undefined);
       const changed = ProviderRegistry.mergeProviderSnapshot(withCatalog, {
         ...provider,
         models: [machineModel, addedModel],
@@ -1097,6 +1322,41 @@ it.layer(
       );
     });
 
+    it("does not bring back models on a sub-provider that is now unavailable", () => {
+      const subProviderModel = (slug: string, subProvider: string) => ({
+        slug,
+        name: slug,
+        subProvider,
+        isCustom: false,
+        capabilities: null,
+      });
+      const previousProvider = {
+        instanceId: ProviderInstanceId.make("fx"),
+        driver: ProviderDriverKind.make("fx"),
+        status: "ready",
+        enabled: true,
+        installed: true,
+        auth: { status: "authenticated" },
+        checkedAt: "2026-04-14T00:00:00.000Z",
+        version: "0.0.17",
+        models: [subProviderModel("gateway:a", "Gateway"), subProviderModel("codex:b", "Codex")],
+        subProviders: [{ name: "Gateway" }, { name: "Codex" }],
+        slashCommands: [],
+        skills: [],
+      } as const satisfies ServerProvider;
+      const refreshedProvider = {
+        ...previousProvider,
+        status: "warning",
+        models: [],
+        subProviders: [{ name: "Gateway" }, { name: "Codex", unavailableReason: "Signed out." }],
+      } satisfies ServerProvider;
+
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, refreshedProvider).models,
+        [previousProvider.models[0]],
+      );
+    });
+
     it("retains ACP Registry models while discovery has not completed", () => {
       const previousProvider = {
         instanceId: ProviderInstanceId.make("acpRegistry_codex"),
@@ -1151,48 +1411,15 @@ it.layer(
       );
     });
 
-    it("drops Grok models a completed probe no longer advertises", () => {
+    it.each([
+      ["grok", "warning"],
+      ["cursor", "error"],
+      ["muse", "error"],
+      ["fx", "warning"],
+    ] as const)("drops %s models a completed listing no longer returns", (driver, failedStatus) => {
       const previousProvider = {
-        instanceId: ProviderInstanceId.make("grok"),
-        driver: ProviderDriverKind.make("grok"),
-        status: "ready",
-        enabled: true,
-        installed: true,
-        auth: { status: "authenticated" },
-        checkedAt: "2026-09-30T00:00:00.000Z",
-        version: "1.0.44",
-        models: [
-          { slug: "grok-4.7", name: "Grok 4.7", isCustom: false, capabilities: null },
-          { slug: "codexhub-removed", name: "Removed", isCustom: false, capabilities: null },
-        ],
-        slashCommands: [],
-        skills: [],
-      } as const satisfies ServerProvider;
-      const refreshedProvider = {
-        ...previousProvider,
-        checkedAt: "2026-09-30T00:01:00.000Z",
-        models: [previousProvider.models[0]],
-      } satisfies ServerProvider;
-      const acpFailedProvider = {
-        ...refreshedProvider,
-        status: "warning",
-        message: "Grok CLI is installed but ACP initialize failed.",
-      } satisfies ServerProvider;
-
-      assert.deepStrictEqual(
-        ProviderRegistry.mergeProviderSnapshot(previousProvider, refreshedProvider).models,
-        [previousProvider.models[0]],
-      );
-      assert.deepStrictEqual(
-        ProviderRegistry.mergeProviderSnapshot(previousProvider, acpFailedProvider).models,
-        [...previousProvider.models],
-      );
-    });
-
-    it("drops Cursor models a completed catalog read no longer returns", () => {
-      const previousProvider = {
-        instanceId: ProviderInstanceId.make("cursor"),
-        driver: ProviderDriverKind.make("cursor"),
+        instanceId: ProviderInstanceId.make(driver),
+        driver: ProviderDriverKind.make(driver),
         status: "ready",
         enabled: true,
         installed: true,
@@ -1200,8 +1427,8 @@ it.layer(
         checkedAt: "2026-10-30T00:00:00.000Z",
         version: "1.0.0",
         models: [
-          { slug: "composer-2", name: "Composer 2", isCustom: false, capabilities: null },
-          { slug: "retired-model-x", name: "Retired", isCustom: false, capabilities: null },
+          { slug: "current-model", name: "Current", isCustom: false, capabilities: null },
+          { slug: "retired-model", name: "Retired", isCustom: false, capabilities: null },
         ],
         slashCommands: [],
         skills: [],
@@ -1213,9 +1440,7 @@ it.layer(
       } satisfies ServerProvider;
       const failedProvider = {
         ...refreshedProvider,
-        status: "error",
-        auth: { status: "unknown" },
-        message: "Cursor SDK model discovery timed out.",
+        status: failedStatus,
       } satisfies ServerProvider;
 
       assert.deepStrictEqual(
@@ -1228,7 +1453,39 @@ it.layer(
       );
     });
 
-    it("retains stale OpenCode models when a refresh fails", () => {
+    it.each(["kiro", "claudeAgent"] as const)(
+      "keeps %s models a ready probe can omit",
+      (driver) => {
+        const previousProvider = {
+          instanceId: ProviderInstanceId.make(driver),
+          driver: ProviderDriverKind.make(driver),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-10-30T00:00:00.000Z",
+          version: "1.0.0",
+          models: [
+            { slug: "built-in-model", name: "Built-in", isCustom: false, capabilities: null },
+            { slug: "listed-model", name: "Listed", isCustom: false, capabilities: null },
+          ],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const partialProvider = {
+          ...previousProvider,
+          checkedAt: "2026-10-30T00:01:00.000Z",
+          models: [previousProvider.models[0]],
+        } satisfies ServerProvider;
+
+        assert.deepStrictEqual(
+          ProviderRegistry.mergeProviderSnapshot(previousProvider, partialProvider).models,
+          [...previousProvider.models],
+        );
+      },
+    );
+
+    it("retains stale OpenCode models when a refresh fails or lists none", () => {
       const previousProvider = {
         instanceId: ProviderInstanceId.make("opencode"),
         driver: ProviderDriverKind.make("opencode"),
@@ -1278,6 +1535,21 @@ it.layer(
         ProviderRegistry.mergeProviderSnapshot(previousProvider, refreshedProvider).skills,
         previousProvider.skills,
       );
+
+      const emptyCatalogProvider = {
+        ...refreshedProvider,
+        status: "warning",
+        message: "OpenCode 2 is running, but it did not list any models yet.",
+        slashCommands: [],
+        skills: [],
+      } satisfies ServerProvider;
+      const mergedEmptyCatalog = ProviderRegistry.mergeProviderSnapshot(
+        previousProvider,
+        emptyCatalogProvider,
+      );
+      assert.deepStrictEqual(mergedEmptyCatalog.models, [...previousProvider.models]);
+      assert.deepStrictEqual(mergedEmptyCatalog.slashCommands, previousProvider.slashCommands);
+      assert.deepStrictEqual(mergedEmptyCatalog.skills, previousProvider.skills);
     });
 
     describe("Pi model inventories", () => {
@@ -2187,6 +2459,239 @@ it.layer(
             assert.strictEqual(yield* Ref.get(scans), 1);
           }).pipe(Effect.provide(runtimeServices));
         }),
+    );
+
+    it.effect(
+      "rebuilds only instances missing their CLI when a refresh finds a new Windows PATH",
+      () => {
+        const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows" };
+        return Effect.gen(function* () {
+          const driver = ProviderDriverKind.make("codex");
+          const makeInstance = (id: string, installed: boolean): ProviderInstance => {
+            const instanceId = ProviderInstanceId.make(id);
+            const provider = {
+              instanceId,
+              driver,
+              status: installed ? "ready" : "error",
+              enabled: true,
+              installed,
+              auth: { status: "unknown" },
+              checkedAt: "1970-01-01T00:00:00.000Z",
+              version: null,
+              models: [],
+              slashCommands: [],
+              skills: [],
+            } as const satisfies ServerProvider;
+            return {
+              instanceId,
+              driverKind: driver,
+              continuationIdentity: { driverKind: driver, continuationKey: `codex:${id}` },
+              displayName: undefined,
+              enabled: true,
+              snapshot: {
+                resolveMaintenance: () =>
+                  Effect.succeed(
+                    makeManualOnlyProviderMaintenanceCapabilities({
+                      provider: driver,
+                      packageName: null,
+                    }),
+                  ),
+                getSnapshot: Effect.succeed(provider),
+                refresh: Effect.succeed(provider),
+                streamChanges: Stream.empty,
+                applyUsageLimits: () => Effect.void,
+              },
+              orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+              textGeneration: {} as ProviderInstance["textGeneration"],
+            };
+          };
+          const instances = [makeInstance("present", true), makeInstance("missing", false)];
+          const rebuilt: Array<ReadonlyArray<ProviderInstanceId>> = [];
+          const changes = yield* PubSub.unbounded<void>();
+          const registry = yield* ProviderRegistry.ProviderRegistry.pipe(
+            Effect.provide(
+              ProviderRegistry.layer.pipe(
+                Layer.provide(
+                  Layer.mock(ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator)({
+                    rebuild: (ids) => Effect.sync(() => void rebuilt.push(ids)),
+                  }),
+                ),
+                Layer.provideMerge(
+                  Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+                    getInstance: (id) => Effect.succeed(instances.find((i) => i.instanceId === id)),
+                    listInstances: Effect.succeed(instances),
+                    listUnavailable: Effect.succeed([]),
+                    streamChanges: Stream.fromPubSub(changes),
+                    subscribeChanges: PubSub.subscribe(changes),
+                  }),
+                ),
+                Layer.provideMerge(
+                  ServerConfig.layerTest(process.cwd(), { prefix: "t3-provider-registry-path-" }),
+                ),
+                Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+              ),
+            ),
+          );
+
+          yield* registry.refresh();
+
+          assert.strictEqual(env.PATH, "C:\\Windows;C:\\Tools");
+          assert.deepStrictEqual(rebuilt, [[ProviderInstanceId.make("missing")]]);
+        }).pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.provideService(HostProcess.Environment, env),
+          Effect.provideService(WindowsShellEnvironment, () =>
+            Effect.succeed({ PATH: "C:\\Windows;C:\\Tools" }),
+          ),
+        );
+      },
+    );
+
+    it.effect("rescans a requested cwd whose snapshot is still current", () =>
+      Effect.gen(function* () {
+        const h = yield* makeWorkspaceRescanHarness;
+        yield* h.seed("/barrier");
+        yield* h.seed("/workspace");
+        assert.deepEqual(yield* h.skillsOf("/workspace"), ["initial"]);
+        yield* Queue.offer(h.first.rescans, "/workspace");
+        const complete = yield* h.nextScan("/workspace");
+        yield* complete("hook");
+        yield* h.drainRescans;
+        assert.deepEqual(yield* h.skillsOf("/workspace"), ["hook"]);
+        // Clients that fetched the old skills are told to fetch again.
+        const scannedAt = (yield* h.registry.getProviders)[0]?.workspaceSnapshots?.find(
+          (snapshot) => snapshot.cwd === "/workspace",
+        )?.checkedAt;
+        assert.isString(scannedAt);
+        assert.equal(yield* h.rescannedAtOf, scannedAt);
+      }),
+    );
+
+    it.effect("stamps a rescan whose awaited scan already published the change", () =>
+      Effect.gen(function* () {
+        const h = yield* makeWorkspaceRescanHarness;
+        yield* h.seed("/barrier");
+        yield* h.seed("/workspace");
+        const ordinary = yield* h.refresh("/workspace", true).pipe(Effect.forkChild);
+        const completeOrdinary = yield* h.nextScan("/workspace");
+        yield* Queue.offer(h.first.rescans, "/workspace");
+        yield* Queue.take(h.first.reports);
+        // Let the consumer reach its wait on the running scan.
+        yield* TestClock.adjust(0);
+        yield* completeOrdinary("hook");
+        yield* Fiber.join(ordinary);
+        const completeRescan = yield* h.nextScan("/workspace");
+        yield* completeRescan("hook");
+        yield* h.drainRescans;
+        assert.isString(yield* h.rescannedAtOf);
+      }),
+    );
+
+    it.effect("leaves workspaceRescannedAt unset when a rescan changes nothing", () =>
+      Effect.gen(function* () {
+        const h = yield* makeWorkspaceRescanHarness;
+        yield* h.seed("/barrier");
+        yield* h.seed("/workspace");
+        yield* Queue.offer(h.first.rescans, "/workspace");
+        const complete = yield* h.nextScan("/workspace");
+        yield* complete("initial");
+        yield* h.drainRescans;
+        assert.deepEqual(yield* h.skillsOf("/workspace"), ["initial"]);
+        assert.equal(yield* h.rescannedAtOf, undefined);
+      }),
+    );
+
+    it.effect("starts no scan for a reported cwd nobody requested", () =>
+      Effect.gen(function* () {
+        const h = yield* makeWorkspaceRescanHarness;
+        yield* h.seed("/barrier");
+        yield* Queue.offer(h.first.rescans, "/unrequested");
+        // The next scan being the barrier's shows the report started none.
+        yield* h.drainRescans;
+        assert.deepEqual(yield* h.skillsOf("/unrequested"), undefined);
+      }),
+    );
+
+    it.effect("rescans after an initial scan in flight when the hook report arrives", () =>
+      Effect.gen(function* () {
+        const h = yield* makeWorkspaceRescanHarness;
+        yield* h.seed("/barrier");
+        const initial = yield* h.refresh("/workspace").pipe(Effect.forkChild);
+        const completeInitial = yield* h.nextScan("/workspace");
+        yield* Queue.offer(h.first.rescans, "/workspace");
+        yield* Queue.take(h.first.reports);
+        // Let the consumer reach its wait on the running scan.
+        yield* TestClock.adjust(0);
+        yield* completeInitial("initial");
+        // The requesting client's reply is its only copy of the scan, so the rescan must not
+        // supersede it.
+        const reply = yield* Fiber.join(initial);
+        assert.deepEqual(
+          reply[0]?.workspaceSnapshots
+            ?.find((s) => s.cwd === "/workspace")
+            ?.skills?.map((s) => s.name),
+          ["initial"],
+        );
+        const completeRescan = yield* h.nextScan("/workspace");
+        yield* completeRescan("hook");
+        yield* h.drainRescans;
+        assert.deepEqual(yield* h.skillsOf("/workspace"), ["hook"]);
+      }),
+    );
+
+    it.effect("lets a fresh refresh started while a rescan waits keep its own result", () =>
+      Effect.gen(function* () {
+        const h = yield* makeWorkspaceRescanHarness;
+        yield* h.seed("/barrier");
+        const initial = yield* h.refresh("/workspace").pipe(Effect.forkChild);
+        const completeInitial = yield* h.nextScan("/workspace");
+        yield* Queue.offer(h.first.rescans, "/workspace");
+        yield* Queue.take(h.first.reports);
+        // Let the consumer reach its wait on the running scan.
+        yield* TestClock.adjust(0);
+        const fresh = yield* h.refresh("/workspace", true).pipe(Effect.forkChild);
+        const completeFresh = yield* h.nextScan("/workspace");
+        yield* completeInitial("initial");
+        yield* completeFresh("fresh");
+        yield* Fiber.join(initial);
+        const reply = yield* Fiber.join(fresh);
+        assert.deepEqual(
+          reply[0]?.workspaceSnapshots
+            ?.find((s) => s.cwd === "/workspace")
+            ?.skills?.map((s) => s.name),
+          ["fresh"],
+        );
+        // The rescan joins the fresh scan, so the next scan started is the barrier's.
+        yield* h.drainRescans;
+        assert.deepEqual(yield* h.skillsOf("/workspace"), ["fresh"]);
+      }),
+    );
+
+    it.effect("ignores a queued rescan from a replaced instance", () =>
+      Effect.gen(function* () {
+        const h = yield* makeWorkspaceRescanHarness;
+        yield* h.seed("/workspace");
+        const replacement = yield* h.makeInstance;
+        const rebuilt = yield* h.registry.streamChanges.pipe(
+          Stream.filter((providers) => providers[0]?.workspaceSnapshots === undefined),
+          Stream.runHead,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Ref.set(h.instances, [replacement.instance]);
+        yield* PubSub.publish(h.changes, undefined);
+        yield* Fiber.join(rebuilt);
+        yield* h.seed("/workspace");
+        yield* h.seed("/barrier");
+        // The forwarder pulls the second report only after queueing the first.
+        yield* Queue.offerAll(h.first.rescans, ["/workspace", "/workspace"]);
+        yield* Queue.take(h.first.reports);
+        yield* Queue.take(h.first.reports);
+        yield* Queue.offer(replacement.rescans, "/barrier");
+        // A scan started for the stale report would come before the barrier's.
+        const completeBarrier = yield* h.nextScan("/barrier");
+        yield* completeBarrier("barrier");
+        assert.deepEqual(yield* h.skillsOf("/workspace"), ["initial"]);
+      }),
     );
 
     it.effect("scans scanCwd and keys the workspace snapshot by cwd", () =>
@@ -4180,6 +4685,7 @@ it.layer(
         );
         assert.strictEqual(status.status, "ready");
         assert.strictEqual(status.auth.status, "authenticated");
+        assert.strictEqual(status.auth.label, "Claude API Key");
       }).pipe(
         Effect.provide(
           layerMockSpawner((args) => {
