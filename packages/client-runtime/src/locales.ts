@@ -37,10 +37,20 @@ export function resolveLocale(
   supported: ReadonlyArray<string>,
   fallback: string,
 ): string {
-  if (supported.includes(language)) return language;
+  return resolveLocaleSelection(language, systemLocales, supported, fallback).catalogLocale;
+}
+
+/** Keep the matching system tag for regional formats while loading a supported catalog. */
+export function resolveLocaleSelection(
+  language: string,
+  systemLocales: ReadonlyArray<string>,
+  supported: ReadonlyArray<string>,
+  fallback: string,
+): { readonly catalogLocale: string; readonly formattingLocale: string } {
+  if (supported.includes(language)) return { catalogLocale: language, formattingLocale: language };
   for (const tag of systemLocales) {
     const match = matchSupportedLocale(tag, supported);
-    if (match) return match;
+    if (match) return { catalogLocale: match, formattingLocale: tag.trim().replaceAll("_", "-") };
   }
-  return fallback;
+  return { catalogLocale: fallback, formattingLocale: fallback };
 }

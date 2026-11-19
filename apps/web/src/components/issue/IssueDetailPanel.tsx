@@ -12,7 +12,6 @@ import {
 } from "@t3tools/client-runtime/issue-selection";
 import { isSelected, toggleSelection } from "@t3tools/client-runtime/pull-request-selection";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { AuthOrchestrationOperateScope, threadIssueKeysEqual } from "@t3tools/contracts";
 import type {
   EnvironmentId,
   IssueAssigneeCandidate,
@@ -31,8 +30,6 @@ import {
   CheckIcon,
   ChevronDownIcon,
   ExternalLinkIcon,
-  Link2Icon,
-  Link2OffIcon,
   TagIcon,
   UserPlusIcon,
   UsersIcon,
@@ -43,10 +40,8 @@ import { useContext, useState, type ReactNode } from "react";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { m } from "~/i18n/messages";
 import { issueEnvironment, refreshIssueLists } from "~/state/issues";
-import { useProjects, useThreadShell } from "~/state/entities";
+import { useProjects } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
-import { useEnvironmentScope } from "~/state/session";
-import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
@@ -57,7 +52,6 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { cn } from "~/lib/utils";
 import { PullRequestMetaRow, PullRequestSection } from "../pullRequest/PullRequestSummaryTab";
 import { toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestCandidatePicker } from "../pullRequest/PullRequestCandidatePicker";
 import { PullRequestCommentBody } from "../pullRequest/PullRequestCommentBody";
 import { PullRequestDetailTitleRow } from "../pullRequest/PullRequestDetailLayout";
@@ -74,88 +68,10 @@ import {
 } from "../pullRequest/pullRequestPresentation";
 import { IssueCommentComposer } from "./IssueCommentComposer";
 import { IssueDetailGhost } from "./IssueDetailGhost";
+import { IssueThreadLinks } from "./IssueThreadLinks";
 import { ReactionBar } from "../pullRequest/PullRequestReactions";
 import { PullRequestsUnavailableState } from "../pullRequest/PullRequestsUnavailableState";
 import { issueTrackerPresentation, issueStatePresentation } from "./issuePresentation";
-
-/**
- * Links or unlinks the issue to the thread it is shown beside. Dispatches the orchestration
- * command directly, as pull request linking does.
- */
-function IssueThreadLinkButton({
-  environmentId,
-  reference,
-  issue,
-  threadRef,
-}: {
-  environmentId: EnvironmentId;
-  reference: IssueRef;
-  issue: Pick<IssueDetail, "url" | "displayKey" | "title">;
-  threadRef: ScopedThreadRef;
-}) {
-  const gt = useGT();
-  const thread = useThreadShell(threadRef.environmentId === environmentId ? threadRef : null);
-  const canOperate = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
-  const link = useAtomCommand(threadEnvironment.linkIssue, { reportFailure: false });
-  const unlink = useAtomCommand(threadEnvironment.unlinkIssue, { reportFailure: false });
-  const [pending, setPending] = useState(false);
-  if (thread === null || !canOperate) return null;
-  const key = { ...reference, host: reference.host ?? "" };
-  const linked = (thread.issues ?? []).some((existing) => threadIssueKeysEqual(existing, key));
-  const toggle = async () => {
-    if (pending || reference.host === undefined) return;
-    setPending(true);
-    const result = await (linked
-      ? unlink({ environmentId, input: { threadId: threadRef.threadId, ...key } })
-      : link({
-          environmentId,
-          input: {
-            threadId: threadRef.threadId,
-            ...key,
-            url: issue.url,
-            displayKey: issue.displayKey,
-            title: issue.title,
-            source: "manual",
-          },
-        }));
-    setPending(false);
-    if (result._tag === "Failure") {
-      toastManager.add({
-        type: "error",
-        title: linked ? m(msg("Could not unlink the issue")) : m(msg("Could not link the issue")),
-        description: readableFailure(
-          squashAtomCommandFailure(result),
-          m(msg("The server refused it.")),
-        ),
-      });
-    }
-  };
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            aria-label={linked ? gt("Unlink from thread") : gt("Link to thread")}
-            aria-pressed={linked}
-            disabled={pending || reference.host === undefined}
-            onClick={() => void toggle()}
-          />
-        }
-      >
-        {linked ? (
-          <Link2OffIcon aria-hidden className="size-3.5" />
-        ) : (
-          <Link2Icon aria-hidden className="size-3.5" />
-        )}
-      </TooltipTrigger>
-      <TooltipPopup>
-        {linked ? <T>Unlink from this thread</T> : <T>Link to this thread</T>}
-      </TooltipPopup>
-    </Tooltip>
-  );
-}
 
 function IssueReactionBar({
   reactions,
@@ -649,14 +565,13 @@ export function IssueDetailPanel({
             </InlineButton>
             <span className="flex-1" />
             {stateControl}
-            {threadRef ? (
-              <IssueThreadLinkButton
-                environmentId={environmentId}
-                reference={{ ...reference, host: reference.host ?? detail.host }}
-                issue={detail}
-                threadRef={threadRef}
-              />
-            ) : null}
+            <IssueThreadLinks
+              key={`${environmentId}:${detail.url}`}
+              environmentId={environmentId}
+              reference={{ ...reference, host: reference.host ?? detail.host }}
+              issue={detail}
+              threadRef={threadRef}
+            />
             <Button
               size="icon-xs"
               variant="ghost"
