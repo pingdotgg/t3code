@@ -1645,6 +1645,21 @@ it.effect("a workflow can take an agent's failure as an answer and go on", () =>
         yield* agents.end(stuck.runId, "second/0", { output: { head: "ghi" } });
         const weighed = yield* workflows.waitFor(stuck.runId, status("completed", "paused"));
         assert.include(weighed.result as string, "its turn could not be stopped");
+
+        // A stop turned down once gets through on its retry, and the step says it was stopped.
+        const before = agents.interrupted.length;
+        agents.refuseStops(1);
+        const late = yield* workflows.start(
+          "fallback",
+          { project: "p1", timeout: "1 minute" },
+          { idempotencyKey: "l" },
+        );
+        yield* agents.started(late.runId, "second/0");
+        assert.equal(agents.interrupted.length, before + 1);
+        yield* agents.end(late.runId, "second/0", { output: { head: "mno" } });
+        const retried = yield* workflows.waitFor(late.runId, status("completed", "paused"));
+        assert.equal(retried.status, "completed");
+        assert.notInclude(retried.result as string, "could not be stopped");
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
