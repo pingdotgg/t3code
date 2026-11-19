@@ -141,7 +141,7 @@ function ResolvedFilePreview(
         },
         (error: unknown) => {
           if (controller.signal.aborted) return;
-          if (progressiveGallery && index !== selectedIndex) return settle(index, null);
+          if (index !== selectedIndex) return settle(index, null);
           controller.abort();
           onResolutionError(
             isPreviewResolutionError(error)
@@ -155,23 +155,30 @@ function ResolvedFilePreview(
       controller.abort();
       for (const dispose of leases) dispose();
     };
-  }, [items, selectedIndex, progressiveGallery]);
+  }, [items, selectedIndex]);
   const selected = { ...items[selectedIndex]!, name: filePreviewName(items[selectedIndex]!) };
   if (selected.kind === "image") {
-    // A viewer that resets image gestures when its sources change waits for every image.
+    // A viewer that resets image gestures when its sources change waits for every image, and
+    // opens without the ones that failed since it has no page to show them on.
     if (!progressiveGallery && uris.some((uri) => uri === undefined)) return null;
-    const images = items.map((item, index) => {
+    const pages = items.flatMap((item, index) => {
       const uri = uris[index];
-      return {
+      if (!progressiveGallery && uri === null) return [];
+      const image = {
         ...item,
         name: filePreviewName(item),
         sourceIdentifier: filePreviewSourceIdentifier(item),
         ...(uri ? { uri } : uri === null ? { failed: true } : {}),
       };
+      return [{ image, selected: index === selectedIndex }];
     });
     return (
       <Viewer
-        source={{ kind: "image", images, selectedIndex }}
+        source={{
+          kind: "image",
+          images: pages.map((page) => page.image),
+          selectedIndex: pages.findIndex((page) => page.selected),
+        }}
         onRequestClose={props.onRequestClose}
         onPresent={props.onPresent}
         {...(props.onOpenError ? { onOpenError: props.onOpenError } : {})}
