@@ -58,6 +58,8 @@ export default function OfficeViewer(props: {
   readonly name: string;
   readonly kind: OfficePreviewKind;
   readonly sizeBytes?: number;
+  /** The row the workbook's opening sheet reveals. */
+  readonly revealLine?: number | null;
 }) {
   if (props.kind === "docx" || props.kind === "xlsx" || props.kind === "pptx")
     return (
@@ -73,6 +75,7 @@ function ExtendedOfficeViewer(props: {
   readonly name: string;
   readonly kind: OfficePreviewKind;
   readonly sizeBytes?: number;
+  readonly revealLine?: number | null;
 }) {
   const gt = useGT();
   const messages = useMessages();
@@ -352,6 +355,8 @@ function ExtendedOfficeViewer(props: {
               name={`${props.name}: ${sheetName(page)}`}
               count={sheet.rowCount}
               columns={sheet.columns}
+              sheet={page}
+              revealLine={page === 0 ? (props.revealLine ?? null) : null}
               getRows={(index) => (index === 0 ? sheet.rows : sheetPages.get(`${page}:${index}`))}
               loadPage={(index) => {
                 const key = `${page}:${index}`;

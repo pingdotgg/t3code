@@ -47,6 +47,7 @@ export type PdfViewState = {
   offset: number;
   zoom: number | null;
   left: number;
+  width?: number;
 };
 
 function PdfPage(props: {
@@ -142,7 +143,7 @@ function PdfPage(props: {
 export default function PdfViewer(props: {
   src: string;
   title: string;
-  positionKey?: string;
+  positionKey?: string | undefined;
   initialView?: PdfViewState;
   onViewChange?: (view: PdfViewState) => void;
   actions?: ReactNode;
@@ -170,6 +171,7 @@ export default function PdfViewer(props: {
   const scroll = useRef<HTMLDivElement>(null);
   const find = useRef<HTMLInputElement>(null);
   const zoomAnchor = useRef<{ page: number; offset: number; width: number } | null>(null);
+  const restored = useRef<{ top: number; left: number } | null>(null);
   const initialPage = initialView.page;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the PDF fetch, load timeout, and pdf.js document task across source changes, retries, and unmounts.
   useEffect(() => {
@@ -256,6 +258,7 @@ export default function PdfViewer(props: {
       offset: Math.max(0, node.scrollTop - (offsets[page]! - 16)),
       zoom,
       left: node.scrollLeft,
+      width,
     };
     if (notify) props.onViewChange?.(view);
     if (props.positionKey !== undefined) {
@@ -269,11 +272,12 @@ export default function PdfViewer(props: {
     const node = scroll.current;
     if (!pdf || !node) return;
     node.scrollTo({
-      top: pdfRestoredScrollTop(ratios, width, initialView, savedPosition?.width),
+      top: pdfRestoredScrollTop(ratios, width, initialView, initialView.width),
       left: initialView.left,
     });
+    restored.current = { top: node.scrollTop, left: node.scrollLeft };
     setScrollTop(node.scrollTop);
-    saveView(node);
+    saveView(node, false);
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the saved PDF scroll position after the loaded document's page layout commits.
   useLayoutEffect(() => {
@@ -461,7 +465,13 @@ export default function PdfViewer(props: {
         onScroll={(event) => {
           const top = event.currentTarget.scrollTop;
           setScrollTop(top);
-          saveView(event.currentTarget);
+          // The restore's own scroll event lands where the restore put the view.
+          const echo = restored.current;
+          restored.current = null;
+          saveView(
+            event.currentTarget,
+            echo?.top !== top || echo.left !== event.currentTarget.scrollLeft,
+          );
         }}
         onKeyDown={(event) => {
           if ((event.ctrlKey || event.metaKey) && event.key === "f") {

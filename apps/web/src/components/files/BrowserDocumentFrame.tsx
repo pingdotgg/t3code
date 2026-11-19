@@ -7,7 +7,6 @@ import {
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
 import {
-  type FilePreviewScroll,
   filePreviewRestoreScrollMessage,
   isFilePreviewScrollRestored,
   readFilePreviewScroll,
@@ -38,7 +37,8 @@ import {
   useState,
 } from "react";
 import { isElectron } from "~/env";
-import { type FileReadingKey, usePdfReadingView } from "./fileReadingSave";
+import { FRAME_RETRY_MS, type FrameAction, FrameReading } from "./fileReadingFrame";
+import { type FileReadingKey, useFramePlace, usePdfReadingView } from "./fileReadingSave";
 import { FileSurfaceLoading } from "./fileSurfaceChrome";
 import type { PdfViewState } from "./PdfViewer";
 
@@ -95,7 +95,7 @@ function PdfDocument(props: {
       key={props.documentKey}
       src={props.src}
       title={props.title}
-      positionKey={props.documentKey}
+      positionKey={props.readingKey === undefined ? props.documentKey : undefined}
       initialView={view}
       onViewChange={setView}
       actions={props.actions}
@@ -107,7 +107,8 @@ function PdfDocument(props: {
 function PdfDocumentRevision(props: {
   src: string;
   title: string;
-  positionKey: string;
+  /** Undefined when the reading store keeps the place, which the browser's own viewer hides. */
+  positionKey: string | undefined;
   initialView: PdfViewState;
   onViewChange: (view: PdfViewState) => void;
   actions?: ReactNode;
@@ -116,6 +117,7 @@ function PdfDocumentRevision(props: {
   // The Electron shell does not enable PDF plugins. WebKit embeds on iOS
   // expose only the first page, even when pdfViewerEnabled reports support.
   const native =
+    props.positionKey !== undefined &&
     !isElectron &&
     navigator.pdfViewerEnabled &&
     !/iPad|iPhone|iPod/.test(navigator.userAgent) &&
@@ -157,7 +159,7 @@ export function BrowserDocumentFrame(props: {
   readonly documentId?: string | undefined;
   /** Toolbar actions for the in-app PDF viewer; Chromium's own viewer brings its own. */
   readonly pdfActions?: ReactNode;
-  /** Saves the PDF.js reading position across reloads. */
+  /** Saves the reader's place in a PDF.js view or an HTML page across reloads. */
   readonly readingKey?: FileReadingKey | undefined;
 }) {
   const key = props.documentKey ?? props.src;
@@ -184,6 +186,7 @@ export function BrowserDocumentFrame(props: {
       documentKey={key}
       src={props.src}
       title={props.title}
+      readingKey={props.readingKey}
     />
   );
 }
@@ -214,6 +217,7 @@ function FileDocument(props: {
   readonly documentKey: string;
   readonly src: string;
   readonly title: string;
+  readonly readingKey: FileReadingKey | undefined;
 }) {
   const [frames, setFrames] = useState<FileDocumentFrames>(() => ({
     shown: { key: props.documentKey, src: props.src },
@@ -230,21 +234,37 @@ function FileDocument(props: {
   const shownFrame = useRef<HTMLIFrameElement>(null);
   const nextFrame = useRef<HTMLIFrameElement>(null);
   // The page reports its scroll position (see FILE_PREVIEW_SCROLL_SCRIPT); the next revision
-  // scrolls there before it is uncovered.
-  const scroll = useRef<FilePreviewScroll | null>(null);
+  // scrolls there before it is uncovered, and a reading key keeps it across visits.
+  const place = useFramePlace(props.readingKey);
+  const [reading] = useState(() => new FrameReading<Window>(place.seed));
   // Two frames let the browser paint the incoming page before it is uncovered.
-  const reveal = (revision: FileDocumentRevision) =>
-    requestAnimationFrame(() => requestAnimationFrame(() => setFrames(showRevision(revision))));
+  const reveal = (frame: Window, revision: FileDocumentRevision) =>
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => run(frame, reading.swap(frame), revision)),
+    );
+  const run = (frame: Window, actions: FrameAction[], revision: FileDocumentRevision | null) => {
+    for (const action of actions) {
+      if (action.type === "restore") {
+        frame.postMessage(filePreviewRestoreScrollMessage(action.scroll), "*");
+      } else if (action.type === "save") place.save(action.scroll);
+      else if (action.type === "retry") {
+        setTimeout(() => run(frame, reading.retry(frame), null), FRAME_RETRY_MS);
+      } else if (revision !== null) {
+        if (action.type === "reveal") reveal(frame, revision);
+        else setFrames(showRevision(revision));
+      }
+    }
+  };
   const onFrameMessage = useEffectEvent((event: MessageEvent) => {
+    const shown = shownFrame.current?.contentWindow;
+    const incoming = nextFrame.current?.contentWindow;
+    const frame = event.source === shown ? shown : event.source === incoming ? incoming : null;
+    if (!frame) return;
+    const role = frame === shown ? "shown" : "next";
     const position = readFilePreviewScroll(event.data);
-    if (position !== undefined) {
-      if (event.source === shownFrame.current?.contentWindow) scroll.current = position;
-    } else if (
-      next !== null &&
-      event.source === nextFrame.current?.contentWindow &&
-      isFilePreviewScrollRestored(event.data)
-    ) {
-      reveal(next);
+    if (position !== undefined) run(frame, reading.report(frame, role, position), next);
+    else if (isFilePreviewScrollRestored(event.data)) {
+      run(frame, reading.restored(frame, role), next);
     }
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for the frames' scroll reports
@@ -253,10 +273,14 @@ function FileDocument(props: {
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
   }, []);
+  const onSwapTimeout = useEffectEvent((revision: FileDocumentRevision) => {
+    reading.swapTimedOut(nextFrame.current?.contentWindow ?? null);
+    setFrames(showRevision(revision));
+  });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- swaps in a revision whose load event never arrives
   useEffect(() => {
     if (next === null) return;
-    const timer = setTimeout(() => setFrames(showRevision(next)), FILE_DOCUMENT_SWAP_TIMEOUT_MS);
+    const timer = setTimeout(() => onSwapTimeout(next), FILE_DOCUMENT_SWAP_TIMEOUT_MS);
     return () => clearTimeout(timer);
   }, [next]);
   // The shown frame stays last so it paints on top and is never moved, which would reload it.
@@ -274,20 +298,12 @@ function FileDocument(props: {
             sandbox="allow-scripts allow-forms allow-popups allow-downloads"
             inert={revision === next}
             aria-hidden={revision === next ? true : undefined}
-            onLoad={
-              revision === next
-                ? (event) => {
-                    if (scroll.current === null) {
-                      reveal(revision);
-                      return;
-                    }
-                    event.currentTarget.contentWindow?.postMessage(
-                      filePreviewRestoreScrollMessage(scroll.current),
-                      "*",
-                    );
-                  }
-                : undefined
-            }
+            onLoad={(event) => {
+              const content = event.currentTarget.contentWindow;
+              if (content) {
+                run(content, reading.load(content, revision === next ? "next" : "shown"), revision);
+              }
+            }}
           />
         ),
       )}

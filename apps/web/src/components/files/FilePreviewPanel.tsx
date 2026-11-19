@@ -121,7 +121,7 @@ import {
   FileSurfaceLoading,
 } from "./fileSurfaceChrome";
 import SourceFilePreview from "./ReadOnlySourcePreview";
-import { useFileReadingPosition, useRenderedReadingPosition } from "./fileReadingPosition";
+import { pathReadingKey, useFileReadingPosition } from "./fileReadingPosition";
 import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { projectFileCacheKey } from "./fileContentRevision";
@@ -305,7 +305,7 @@ export function WorkspaceBrowserPreview(props: {
           name={props.title}
         />
       }
-      readingKey={{ environmentId: props.environmentId, absolutePath: props.absolutePath }}
+      readingKey={pathReadingKey(props.environmentId, props.absolutePath)}
     />
   );
 }
@@ -472,6 +472,7 @@ function WorkspaceDocumentPreview(props: {
   readonly name: string;
   readonly workspaceMutationId: string | null;
   readonly refreshRevision: number;
+  readonly rowLine: (table: boolean) => number | null;
 }) {
   const resource =
     props.draft && props.document
@@ -517,6 +518,7 @@ function WorkspaceDocumentPreview(props: {
       sizeBytes={0}
       asset={{ environmentId: props.environmentId, resource }}
       origin={gt("File", { $context: "label for a file opened from the workspace" })}
+      rowLine={props.rowLine}
     />
   );
 }
@@ -1176,14 +1178,9 @@ function RenderedMarkdownSurface({
 }) {
   const saveTarget = { environmentId, cwd, relativePath };
   useFileSaveSession(saveTarget, onPendingChange);
-  const scrollRef = useRenderedReadingPosition(environmentId, cwd, relativePath);
 
   return (
-    <ScrollArea
-      ref={scrollRef}
-      className="min-h-0 flex-1"
-      onKeyDown={selectRenderedContentOnSelectAll}
-    >
+    <ScrollArea className="min-h-0 flex-1" onKeyDown={selectRenderedContentOnSelectAll}>
       <FileMarkdownPreview
         text={contents}
         cwd={cwd}
@@ -1354,12 +1351,13 @@ export default function FilePreviewPanel({
   );
   const tableDelimiter =
     previewPath && attachment === undefined ? filePreviewDelimiter({ name: previewPath }) : null;
-  const reading = useFileReadingPosition({
+  const { placeRef, ...reading } = useFileReadingPosition({
     environmentId,
     threadRef,
     requestedPath: attachment === undefined ? requestedPath : null,
     cwd,
     relativePath: attachment === undefined ? relativePath : null,
+    attachment,
     revealLine,
   });
   const revealHandled =
@@ -1672,6 +1670,7 @@ export default function FilePreviewPanel({
       ) : null}
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div
+          ref={placeRef}
           className={cn("min-w-0 flex-1 flex-col overflow-hidden", previewPath ? "flex" : "hidden")}
         >
           {mayOpenEditor ? (
@@ -1697,6 +1696,8 @@ export default function FilePreviewPanel({
               asset={{ environmentId, attachmentId: attachment.id }}
               htmlRender={attachment.htmlRender === true}
               threadRef={threadRef}
+              readingKey={reading.file}
+              rowLine={reading.rowLine}
             />
           ) : relativePath && isVideo && absolutePath ? (
             <WorkspaceVideoPreview
@@ -1758,7 +1759,7 @@ export default function FilePreviewPanel({
               name={relativePath}
               delimiter={renderTable ? tableDelimiter : null}
               workspaceMutationId={workspaceMutationId}
-              revealLine={revealLine}
+              revealLine={reading.rowLine(renderTable)}
               revealRequestId={revealRequestId}
               wordWrap={wordWrap}
             />
@@ -1776,6 +1777,7 @@ export default function FilePreviewPanel({
               name={relativePath.split(/[\\/]/).at(-1) || relativePath}
               workspaceMutationId={workspaceMutationId}
               refreshRevision={fileRefreshRevision}
+              rowLine={reading.rowLine}
             />
           ) : relativePath && file.error && file.data === null ? (
             <div
@@ -1836,6 +1838,7 @@ export default function FilePreviewPanel({
                 name={relativePath}
                 text={file.data.contents}
                 delimiter={tableDelimiter}
+                revealLine={reading.rowLine(true)}
               />
             ) : file.data.truncated || isHostFile || !canWriteFiles ? (
               <SourceFilePreview

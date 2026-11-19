@@ -3,6 +3,7 @@ import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "re
 import { observeResize } from "~/lib/observeResize";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { PREVIEW_PAGE_ROWS } from "./largeTextProtocol";
+import { announceViewer } from "./fileReadingPlace";
 
 export default function VirtualTablePreview(props: {
   readonly name: string;
@@ -15,6 +16,8 @@ export default function VirtualTablePreview(props: {
   readonly wrap?: boolean;
   readonly revealLine?: number | null;
   readonly revealRequestId?: number;
+  /** The index of the workbook sheet the table shows. */
+  readonly sheet?: number;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [left, setLeft] = useState(0);
@@ -124,9 +127,11 @@ export default function VirtualTablePreview(props: {
       ) : null}
       {width > 0 && (!props.header || props.columns > 30 || measured) ? (
         <div
+          ref={announceViewer}
           role={props.source ? "region" : "table"}
           aria-label={props.name}
           aria-rowcount={props.count}
+          data-sheet={props.sheet}
           aria-colcount={props.source ? undefined : props.columns}
           className="flex h-full min-h-0 flex-col text-xs"
           style={{ width: tableWidth }}

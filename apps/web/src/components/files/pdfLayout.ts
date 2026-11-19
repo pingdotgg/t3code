@@ -59,6 +59,7 @@ export function pdfRestoredScrollTop(
 ) {
   const page = Math.min(view.page, ratios.length - 1);
   const offsets = pdfPageOffsets(ratios, width);
+  if (view.page > page) return offsets[ratios.length]!;
   return (
     offsets[page]! -
     PDF_PAGE_GAP +

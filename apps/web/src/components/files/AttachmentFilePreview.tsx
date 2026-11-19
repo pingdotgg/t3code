@@ -41,6 +41,7 @@ import { PreviewImage } from "./PreviewImage";
 import { AudioPreview } from "./AudioPreview";
 import { BrowserDocumentFrame } from "./BrowserDocumentFrame";
 import { DelimitedTablePreview } from "./DelimitedTablePreview";
+import type { FileReadingKey } from "./fileReadingStore";
 import {
   FILE_SURFACE_SUBHEADER_CLASS,
   FileSurfaceAction,
@@ -113,6 +114,10 @@ export function AttachmentFilePreview(props: {
   origin?: string;
   onRemove?: () => void;
   onClose?: () => void;
+  /** Keeps the PDF reading place across visits. */
+  readingKey?: FileReadingKey | undefined;
+  /** The row a table (true) or raw text (false) reveals, which keeps the reader's place. */
+  rowLine?: ((table: boolean) => number | null) | undefined;
 }) {
   const kind = filePreviewKind(props);
   const officeKind = officePreviewKind(props);
@@ -134,19 +139,19 @@ export function AttachmentFilePreview(props: {
   const { copyToClipboard, isCopied } = useCopyToClipboard({
     target: namedClipboardTarget(props.name),
   });
-  // useAssetUrlRefresh keys its callback on these objects, so they must stay cached.
+  // useAssetUrlRefresh keys its callback on these objects, so they must stay cached. A parent may
+  // rebuild `asset` on any render, so the attachment's own resource depends only on its fields.
+  const attachmentResource = attachmentId
+    ? {
+        _tag: "attachment" as const,
+        attachmentId,
+        fileName: props.name,
+        mimeType: props.mimeType,
+        disposition: "inline" as const,
+      }
+    : null;
   const resource =
-    props.asset && "resource" in props.asset
-      ? props.asset.resource
-      : attachmentId
-        ? {
-            _tag: "attachment" as const,
-            attachmentId,
-            fileName: props.name,
-            mimeType: props.mimeType,
-            disposition: "inline" as const,
-          }
-        : null;
+    props.asset && "resource" in props.asset ? props.asset.resource : attachmentResource;
   const downloadResource = resource
     ? resource._tag === "draft-workspace-file"
       ? resource
@@ -303,13 +308,19 @@ export function AttachmentFilePreview(props: {
         delimiter={rendered ? delimiter : null}
         copyContents={copyContents}
         wordWrap={wordWrap}
+        revealLine={props.rowLine?.(rendered && delimiter !== null) ?? null}
       />
     </Suspense>
   ) : !url || (needsText && !content) ? (
     <FileSurfaceLoading />
   ) : needsText && content ? (
     delimiter && rendered ? (
-      <DelimitedTablePreview name={props.name} text={content.text} delimiter={delimiter} />
+      <DelimitedTablePreview
+        name={props.name}
+        text={content.text}
+        delimiter={delimiter}
+        revealLine={props.rowLine?.(true) ?? null}
+      />
     ) : kind === "mermaid" && rendered ? (
       <Suspense fallback={<FileSurfaceLoading />}>
         <MermaidFilePreview text={content.text} />
@@ -344,6 +355,7 @@ export function AttachmentFilePreview(props: {
         name={props.name}
         kind={officeKind}
         sizeBytes={props.sizeBytes}
+        revealLine={props.rowLine?.(true) ?? null}
       />
     </Suspense>
   ) : kind === "pdf" || kind === "html" ? (
@@ -353,6 +365,7 @@ export function AttachmentFilePreview(props: {
       pdf={kind === "pdf"}
       htmlRender={props.htmlRender === true}
       threadRef={props.threadRef}
+      readingKey={kind === "pdf" ? props.readingKey : undefined}
       // Each mount signs or creates a new URL, so the URL cannot identify the file across visits.
       // A draft keeps its Blob key after upload, so finishing the upload does not reload the PDF.
       documentKey={

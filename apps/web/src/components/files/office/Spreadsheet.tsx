@@ -15,6 +15,7 @@ import {
   type Selection,
   type CellAddr,
 } from "@betteroffice/xlsx/headless";
+import { announceViewer } from "../fileReadingPlace";
 import { FileSurfaceLoading, FileSurfaceNotice } from "../fileSurfaceChrome";
 import type { WorkbookView } from "../officePreviewProtocol";
 import { createWorkerClient, SupersededError } from "./worker-rpc";
@@ -115,6 +116,7 @@ export default function Spreadsheet(props: {
         key={opened.layout.info.activeSheet}
         engine={opened.engine}
         layout={opened.layout}
+        tabPosition={opened.tabs.findIndex((tab) => tab.index === opened.layout.info.activeSheet)}
         initialCell={opened.target}
         onNavigate={(name, cell) => {
           const tab = opened.tabs.find((tab) => tab.name.toLowerCase() === name.toLowerCase());
@@ -167,6 +169,7 @@ export default function Spreadsheet(props: {
 function SpreadsheetGrid(props: {
   engine: Client;
   layout: SheetLayout;
+  tabPosition: number;
   initialCell: CellAddr | undefined;
   onNavigate: (sheet: string, cell: CellAddr) => void;
 }) {
@@ -691,6 +694,7 @@ function SpreadsheetGrid(props: {
     window.addEventListener("resize", schedule);
     resizeArea();
     root.scrollTo({ left, top });
+    announceViewer(root);
     if (initialCell) {
       selection = at(initialCell);
       reveal();
@@ -722,6 +726,8 @@ function SpreadsheetGrid(props: {
         tabIndex={0}
         role="grid"
         aria-label={layout.info.sheetNames[layout.info.activeSheet]}
+        data-sheet={props.tabPosition}
+        data-linked-cell={initialCell && `${columnName(initialCell.col)}${initialCell.row + 1}`}
         aria-readonly="true"
         aria-multiselectable="true"
         aria-rowcount={lastCell.row + 1}

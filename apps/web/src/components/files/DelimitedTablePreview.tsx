@@ -6,6 +6,7 @@ export function DelimitedTablePreview(props: {
   readonly name: string;
   readonly text: string;
   readonly delimiter: "," | "\t";
+  readonly revealLine?: number | null;
 }) {
   return (
     <Suspense fallback={<FileSurfaceLoading />}>
