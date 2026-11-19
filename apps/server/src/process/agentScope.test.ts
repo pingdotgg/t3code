@@ -65,11 +65,13 @@ const withFakeSystemd = <A, E>(
   {
     oomPolicy = true,
     stopFails = false,
+    memoryPolicy,
     leftovers = false,
     liveOwner = false,
   }: {
     readonly oomPolicy?: boolean;
     readonly stopFails?: boolean;
+    readonly memoryPolicy?: string;
     readonly leftovers?: boolean;
     readonly liveOwner?: boolean;
   } = {},
@@ -129,7 +131,11 @@ const withFakeSystemd = <A, E>(
       Effect.provideService(ProviderProcesses.ProviderProcesses, { hasOtherLiveOwner: liveOwner }),
       Effect.provideService(ProcessRunner.ProcessRunner, runner),
       Effect.provideService(HostProcess.Platform, "linux"),
-      Effect.provideService(HostProcess.Environment, { PATH: bin, XDG_RUNTIME_DIR: "/run/user/1" }),
+      Effect.provideService(HostProcess.Environment, {
+        PATH: bin,
+        XDG_RUNTIME_DIR: "/run/user/1",
+        ...(memoryPolicy === undefined ? {} : { T3CODE_AGENT_SLICE_MEMORY_POLICY: memoryPolicy }),
+      }),
       Effect.provideService(FileSystem.FileSystem, {
         ...fileSystem,
         readFileString: (path, encoding) =>
@@ -363,6 +369,54 @@ describe("AgentScope service", () => {
         ]);
       }),
     );
+  });
+
+  it.effect(
+    "leaves agent memory limits to a host-managed policy, even after a memory change",
+    () => {
+      memory.total = 16 * GiB;
+      return withFakeSystemd(
+        ({ scope, calls }) =>
+          Effect.gen(function* () {
+            const launch = scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+            yield* launch;
+            memory.total = 22 * GiB;
+            yield* launch;
+            expect(calls.filter(([, verb]) => verb === "set-property")).toEqual([
+              [
+                "--user",
+                "set-property",
+                "--runtime",
+                "app-t3code.slice",
+                "CPUWeight=10",
+                "IOWeight=10",
+                "TasksMax=25%",
+              ],
+            ]);
+          }),
+        { memoryPolicy: "host-managed" },
+      );
+    },
+  );
+
+  it.effect("warns about an invalid memory policy without logging its value", () => {
+    const memoryPolicy = "invalid-".repeat(256);
+    const logs: Array<unknown> = [];
+    const logger = Logger.make(({ message }) => logs.push(message));
+    memory.total = 16 * GiB;
+    return withFakeSystemd(
+      ({ scope, calls }) =>
+        Effect.gen(function* () {
+          yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+          expect(calls.some((args) => args.includes(`MemoryMax=${12 * GiB}`))).toBe(true);
+          expect(logs).toContainEqual([
+            "Unknown agent slice memory policy; using automatic limits",
+            { memoryPolicy: "unknown", memoryPolicyLength: memoryPolicy.length },
+          ]);
+          expect(JSON.stringify(logs)).not.toContain(memoryPolicy);
+        }),
+      { memoryPolicy },
+    ).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
   });
 
   it.effect("stops agents a killed server left before startup completes", () =>

@@ -202,12 +202,25 @@ export const make = Effect.gen(function* () {
         });
         return false;
       });
+      const memoryPolicy = hostEnvironment.T3CODE_AGENT_SLICE_MEMORY_POLICY;
+      if (
+        memoryPolicy !== undefined &&
+        memoryPolicy !== "automatic" &&
+        memoryPolicy !== "host-managed"
+      ) {
+        yield* Effect.logWarning("Unknown agent slice memory policy; using automatic limits", {
+          memoryPolicy: "unknown",
+          memoryPolicyLength: memoryPolicy.length,
+        });
+      }
+      const hostManagedMemory = memoryPolicy === "host-managed";
       // VMs and containers can resize RAM live, so each launch re-checks the total
       // the limits came from. A failed update is retried by the next launch.
       let appliedTotal: number | undefined;
       const memoryLimitsLock = yield* Semaphore.make(1);
       const applyMemoryLimits = memoryLimitsLock.withPermits(1)(
         Effect.gen(function* () {
+          if (hostManagedMemory) return;
           const total = NodeOS.totalmem();
           if (total === appliedTotal) return;
           const limits = agentSliceMemoryLimits(total);
@@ -231,7 +244,8 @@ export const make = Effect.gen(function* () {
       yield* setProperties(AGENTS_PARENT_SLICE, AGENTS_PARENT_PROPERTIES);
       yield* Effect.logInfo("Agent scopes are on", {
         slice: AGENT_SLICE,
-        ...agentSliceMemoryLimits(NodeOS.totalmem()),
+        memoryPolicy: hostManagedMemory ? "host-managed" : "automatic",
+        ...(hostManagedMemory ? {} : agentSliceMemoryLimits(NodeOS.totalmem())),
         oomPolicy: supportsOomPolicy,
       });
       return {
