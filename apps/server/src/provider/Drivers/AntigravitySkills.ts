@@ -115,16 +115,12 @@ function parseSkillFrontmatter(contents: string, fileName: string) {
   }
 }
 
-/** Enabled user-only skills the text mentions, once each, in mention order. */
-export function antigravityUserOnlySkillMentions(
+/** Enabled skills the text mentions, once each, in mention order. */
+export function antigravityMentionedSkills(
   text: string,
   skills: ReadonlyArray<ServerProviderSkill>,
 ): ReadonlyArray<ServerProviderSkill> {
-  const byName = new Map(
-    skills.flatMap((skill) =>
-      skill.enabled && skill.userInvocationOnly === true ? [[skill.name, skill]] : [],
-    ),
-  );
+  const byName = new Map(skills.flatMap((skill) => (skill.enabled ? [[skill.name, skill]] : [])));
   const mentioned = new Set<ServerProviderSkill>();
   for (const match of text.matchAll(SKILL_MENTION_PATTERN)) {
     const skill = byName.get(match[2] ?? "");

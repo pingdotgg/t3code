@@ -456,8 +456,8 @@ describe("AntigravityAdapterV2 compaction", () => {
   );
 });
 
-describe("AntigravityAdapterV2 user-only skills", () => {
-  it.effect("inlines a user-only skill from outside the workspace that this turn invokes", () =>
+describe("AntigravityAdapterV2 skill mentions", () => {
+  it.effect("inlines a skill from outside the workspace that this turn mentions", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -482,7 +482,6 @@ describe("AntigravityAdapterV2 user-only skills", () => {
               path: skillPath,
               scope: "user",
               enabled: true,
-              userInvocationOnly: true,
             },
           ]),
       });
