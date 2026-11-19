@@ -526,22 +526,36 @@ describe("resolveThreadStatusPill", () => {
   });
 
   it("shows failed, not completed, when the unseen run failed", () => {
-    expect(
-      resolveThreadStatusPill({
-        thread: {
-          ...baseThread,
-          interactionMode: "default",
-          latestRun: { ...makeLatestRun(), status: "failed" },
-          lastVisitedAt: "2026-03-09T10:04:00.000Z",
-          runtime: {
-            ...baseThread.runtime,
-            status: "failed",
-            activeRunId: null,
-            lastError: "Provider turn failed.",
-          },
+    const failed = {
+      ...baseThread,
+      interactionMode: "default" as const,
+      latestRun: { ...makeLatestRun(), status: "failed" as const },
+      lastVisitedAt: "2026-03-09T10:04:00.000Z",
+      runtime: {
+        ...baseThread.runtime,
+        status: "failed" as const,
+        activeRunId: null,
+        lastError: "Provider turn failed.",
+      },
+    };
+    expect(resolveThreadStatusPill({ thread: failed })).toMatchObject({
+      label: "Failed",
+      pulse: false,
+    });
+    // The failure sends the thread to the inbox, so its pill must not say it is still waiting.
+    const watching = {
+      ...failed,
+      pendingBackgroundTasks: [
+        {
+          taskId: "pr-watch",
+          description: "Watching pull request #7",
+          kind: "monitor" as const,
+          awaited: true as const,
         },
-      }),
-    ).toMatchObject({ label: "Failed", pulse: false });
+      ],
+    };
+    expect(isSidebarThreadWorking(watching)).toBe(false);
+    expect(resolveThreadStatusPill({ thread: watching })).toMatchObject({ label: "Failed" });
   });
 
   it("shows failed, not plan ready, when a plan run proposed a plan and then failed", () => {

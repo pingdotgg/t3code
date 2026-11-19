@@ -1244,6 +1244,16 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
+  // A failed run goes to the inbox even while background work holds the thread.
+  if (hasUnseenRunFailure(thread)) {
+    return {
+      label: msg("Failed"),
+      colorClass: "text-red-600 dark:text-red-300/90",
+      dotClass: "bg-red-500 dark:bg-red-300/90",
+      pulse: false,
+    };
+  }
+
   if (
     (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) ||
     backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
@@ -1252,15 +1262,6 @@ export function resolveThreadStatusPill(input: {
       label: msg("Waiting"),
       colorClass: "text-sidebar-muted-foreground",
       dotClass: "bg-sidebar-muted-foreground",
-      pulse: false,
-    };
-  }
-
-  if (hasUnseenRunFailure(thread)) {
-    return {
-      label: msg("Failed"),
-      colorClass: "text-red-600 dark:text-red-300/90",
-      dotClass: "bg-red-500 dark:bg-red-300/90",
       pulse: false,
     };
   }
