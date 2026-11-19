@@ -595,6 +595,18 @@ it.effect("keeps the reader read-only even if a statement turns query_only off",
   ),
 );
 
+it.effect("keeps a reader's sorts and temp tables in memory, not in temp files", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      const rows = yield* sql<{ temp_store: number }>`PRAGMA temp_store`.pipe(
+        sql.withTransaction,
+        SqliteClient.readOnly,
+      );
+      assert.equal(rows[0]?.temp_store, 2);
+    }),
+  ),
+);
+
 it.effect("keeps read-only work inside a write transaction on the writer", () =>
   withReaderClient((sql) =>
     sql.withTransaction(
