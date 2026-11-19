@@ -158,7 +158,13 @@ const pairingRevokeCommand = Command.make("revoke", {
   Command.withHandler((flags) =>
     runWithEnvironmentAuth(flags, (environmentAuth) =>
       Effect.gen(function* () {
-        const revoked = yield* environmentAuth.revokePairingLink(flags.id);
+        const revoked = yield* changeAccess({
+          viaServer: (client) =>
+            client.auth
+              .revokePairingLink({ headers: {}, payload: { id: flags.id } })
+              .pipe(Effect.map((result) => result.revoked)),
+          locally: environmentAuth.revokePairingLink(flags.id),
+        });
         yield* Console.log(
           revoked
             ? `Revoked pairing credential ${flags.id}.\n`
@@ -209,7 +215,20 @@ const connectDeviceApproveCommand = Command.make("approve", {
   Command.withHandler((flags) =>
     runWithEnvironmentAuth(flags, (environmentAuth) =>
       Effect.gen(function* () {
-        const approved = yield* environmentAuth.approveConnectDeviceByCode(flags.code);
+        const [pairingLinkId, ...others] = yield* environmentAuth.connectRequestsShowingCode(
+          flags.code,
+        );
+        // Two waiting devices that share a code are ambiguous; approve neither.
+        const approved =
+          pairingLinkId !== undefined &&
+          others.length === 0 &&
+          (yield* changeAccess({
+            viaServer: (client) =>
+              client.auth
+                .approveConnectDevice({ headers: {}, payload: { pairingLinkId } })
+                .pipe(Effect.map((result) => result.approved)),
+            locally: environmentAuth.approveConnectDevice(pairingLinkId),
+          }));
         yield* Console.log(
           approved
             ? `Approved ${flags.code}. The device connects on its next try.\n`

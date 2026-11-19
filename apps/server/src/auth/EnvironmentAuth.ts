@@ -556,10 +556,10 @@ export class EnvironmentAuth extends Context.Service<
     readonly approveConnectDevice: (
       pairingLinkId: string,
     ) => Effect.Effect<boolean, ServerAuthInternalError>;
-    /** Approves the waiting device that shows this code, for hosts without a client at hand. */
-    readonly approveConnectDeviceByCode: (
+    /** Pairing link ids of waiting devices that show this code; more than one is ambiguous. */
+    readonly connectRequestsShowingCode: (
       verificationCode: string,
-    ) => Effect.Effect<boolean, ServerAuthInternalError>;
+    ) => Effect.Effect<ReadonlyArray<string>, ServerAuthInternalError>;
     /** Trusted devices that show this code; more than one is ambiguous. */
     readonly connectDevicesShowingCode: (
       verificationCode: string,
@@ -1283,20 +1283,18 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("EnvironmentAuth.approveConnectDevice"),
     );
 
-  const approveConnectDeviceByCode: EnvironmentAuth["Service"]["approveConnectDeviceByCode"] =
-    Effect.fn("EnvironmentAuth.approveConnectDeviceByCode")(function* (verificationCode) {
+  const connectRequestsShowingCode: EnvironmentAuth["Service"]["connectRequestsShowingCode"] =
+    Effect.fn("EnvironmentAuth.connectRequestsShowingCode")(function* (verificationCode) {
       const wanted = normalizeVerificationCode(verificationCode);
       const links = yield* bootstrapCredentials
         .listActive()
         .pipe(Effect.mapError((cause) => new ServerAuthPairingLinksListError({ cause })));
-      const matches = links.filter(
-        (link) =>
-          link.connectDeviceRequest !== undefined &&
-          normalizeVerificationCode(link.connectDeviceRequest.verificationCode) === wanted,
+      return links.flatMap((link) =>
+        link.connectDeviceRequest !== undefined &&
+        normalizeVerificationCode(link.connectDeviceRequest.verificationCode) === wanted
+          ? [link.id]
+          : [],
       );
-      // Two waiting devices that share a code are ambiguous; approve neither.
-      if (matches.length !== 1) return false;
-      return yield* approveConnectDevice(matches[0]!.id);
     });
 
   const listConnectDevices: EnvironmentAuth["Service"]["listConnectDevices"] = () =>
@@ -1666,7 +1664,7 @@ export const make = Effect.gen(function* () {
     createPairingLink,
     issueConnectCredential,
     approveConnectDevice,
-    approveConnectDeviceByCode,
+    connectRequestsShowingCode,
     listConnectDevices,
     revokeConnectDevice,
     connectDevicesShowingCode,
