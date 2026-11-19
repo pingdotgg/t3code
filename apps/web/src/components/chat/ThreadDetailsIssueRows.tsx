@@ -23,6 +23,13 @@ import { PullRequestActorLabel } from "../pullRequest/pullRequestPresentation";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
+const LINKED_ISSUE_ROW_CLASS = cn(
+  PULL_REQUEST_ROW_CLASS,
+  PAGE_ROW_HOVER_CLASS,
+  PAGE_ROW_PRESS_CLASS,
+  "px-2",
+);
+
 function LinkedIssueRow({
   link,
   threadRef,
@@ -132,7 +139,7 @@ function LinkedIssueRow({
   ) : (
     <a
       {...anchorProps}
-      className={cn(PULL_REQUEST_ROW_CLASS, PAGE_ROW_HOVER_CLASS, PAGE_ROW_PRESS_CLASS, "px-2")}
+      className={LINKED_ISSUE_ROW_CLASS}
     >
       {lines}
     </a>
