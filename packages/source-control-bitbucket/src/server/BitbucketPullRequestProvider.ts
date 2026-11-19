@@ -125,7 +125,8 @@ function toChangeRequest(pullRequest: BitbucketPullRequest): ProviderChangeReque
   };
 }
 
-// A finished result for a head commit only changes on a re-run, while a pending one is about to.
+// A finished result for a head commit only changes on a re-run. A pending one is about to change,
+// and so is an empty one: CI may simply not have started yet.
 const PENDING_CHECKS_TTL = Duration.minutes(1);
 const FINISHED_CHECKS_TTL = Duration.minutes(30);
 
@@ -201,7 +202,7 @@ export const make = Effect.gen(function* () {
       capacity: 1000,
       timeToLive: (exit) =>
         Exit.isSuccess(exit)
-          ? exit.value === "pending"
+          ? exit.value === "pending" || exit.value === null
             ? PENDING_CHECKS_TTL
             : FINISHED_CHECKS_TTL
           : Duration.zero,
