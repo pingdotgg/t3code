@@ -18,14 +18,17 @@ import { Heading } from "@tiptap/extension-heading";
 import { HorizontalRule } from "@tiptap/extension-horizontal-rule";
 import { Italic, starInputRegex, starPasteRegex } from "@tiptap/extension-italic";
 import {
+  combineTransactionSteps,
+  getChangedRanges,
   type Command,
   type Editor,
-  Extension,
   InputRule,
   markInputRule,
   markPasteRule,
   mergeAttributes,
 } from "@tiptap/core";
+import { isHistoryTransaction } from "@tiptap/pm/history";
+import { canJoin, findWrapping } from "@tiptap/pm/transform";
 import { BulletList, ListItem, OrderedList } from "@tiptap/extension-list";
 import { Strike, inputRegex as strikeInputRegex } from "@tiptap/extension-strike";
 import { TaskItem } from "@tiptap/extension-task-item";
@@ -42,11 +45,25 @@ import { ReplaceStep } from "@tiptap/pm/transform";
 
 import { splitPromptIntoComposerSegments } from "~/composer-editor-mentions";
 import { nextOrderedMarkerText } from "~/composer-list-continuation";
-import { parseInlineMarkdown, RICH_TEXT_DELIMITERS, type RichTextMark } from "~/composer-rich-text";
+import {
+  MARKDOWN_SOURCE_MARK,
+  parseInlineMarkdown,
+  RICH_TEXT_DELIMITERS,
+  type RichTextMark,
+} from "~/composer-rich-text";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
 import { composerMathRanges } from "@t3tools/shared/composerInlineTokens";
 
 export type SkillMeta = { label: string; description: string | null };
+
+export type IsKnownModel = (instanceId: string, model: string) => boolean;
+
+interface ChipResolver {
+  skill: (name: string) => SkillMeta | null;
+  model: IsKnownModel;
+}
+
+const NO_MODELS: IsKnownModel = () => false;
 
 const MARK_NESTING_ORDER: RichTextMark[] = ["strike", "bold", "italic", "code"];
 
@@ -90,6 +107,7 @@ function codePairCaretPlugin(type: MarkType) {
         if (view.composing || from !== to || text !== "`") return false;
         const $from = view.state.doc.resolve(from);
         if (!$from.parent.isTextblock || $from.parent.type.spec.code) return false;
+        if (touchesMarkdownSource(view.state, from, to)) return false;
         const before = $from.nodeBefore?.text ?? "";
         if (closesBacktickPair($from)) {
           view.dispatch(insert().setMeta(codePairKey, { from: from - 1, to: from + 1 }));
@@ -218,7 +236,10 @@ export const ComposerCodeExtension = Code.extend({
           find: rule.find,
           undoable: rule.undoable,
           handler: (props) => {
-            if (literalBackticksBefore(props.state.doc.resolve(props.range.from)) % 2 === 1) {
+            if (
+              literalBackticksBefore(props.state.doc.resolve(props.range.from)) % 2 === 1 ||
+              touchesMarkdownSource(props.state, props.range.from, props.range.to)
+            ) {
               return null;
             }
 
@@ -246,6 +267,18 @@ function literalBackticksBefore($pos: ResolvedPos): number {
   return count;
 }
 
+/**
+ * Whether `from`-`to`, or the caret at `from`, is in shown Markdown source.
+ * Typed delimiters there stay text until the caret leaves and the source is parsed.
+ */
+function touchesMarkdownSource(state: EditorState, from: number, to: number): boolean {
+  const type = state.schema.marks[MARKDOWN_SOURCE_MARK];
+  if (!type) return false;
+  if (from < to) return state.doc.rangeHasMark(from, to, type);
+  const $pos = state.doc.resolve(from);
+  return [$pos.nodeBefore, $pos.nodeAfter].some((node) => node && type.isInSet(node.marks));
+}
+
 // Code permits nested emphasis, so Tiptap's exclusion check cannot protect literal delimiters.
 function markInputRuleOutsideCode(find: RegExp, type: MarkType) {
   const rule = markInputRule({ find, type });
@@ -257,6 +290,7 @@ function markInputRuleOutsideCode(find: RegExp, type: MarkType) {
       const content = match[match.length - 1] ?? "";
       const textStart = range.from + match[0].indexOf(content);
       const textEnd = textStart + content.length;
+      if (touchesMarkdownSource(state, range.from, range.to)) return null;
       if (
         code &&
         (state.doc.rangeHasMark(range.from + match[0].search(/\S/), textStart, code) ||
@@ -267,6 +301,45 @@ function markInputRuleOutsideCode(find: RegExp, type: MarkType) {
       return rule.handler(props);
     },
   });
+}
+
+const SURROUND_MARKS: Record<string, string> = { "`": "code", "*": "italic", _: "italic" };
+
+export function surroundSelectionWithMark(
+  state: EditorState,
+  from: number,
+  to: number,
+  marker: string,
+) {
+  const markType = state.schema.marks[SURROUND_MARKS[marker] ?? ""];
+  if (!markType || touchesMarkdownSource(state, from, to)) return null;
+  const $from = state.doc.resolve(from);
+  if (!$from.sameParent(state.doc.resolve(to)) || !$from.parent.type.allowsMarkType(markType)) {
+    return null;
+  }
+  // Inline markdown cannot span lines, so keep literal wrapping across hard breaks.
+  let crossesLine = false;
+  state.doc.nodesBetween(from, to, (node) => {
+    if (node.type.name === "hardBreak") crossesLine = true;
+    return !crossesLine;
+  });
+  if (crossesLine) return null;
+  const tr = state.tr.addMark(from, to, markType.create());
+  // Nearby delimiters can change how the saved span parses. Atoms are opaque
+  // to inline markdown, so use a placeholder instead of parsing their sources.
+  const children: ProseMirrorNode[] = [];
+  tr.doc.resolve(from).parent.forEach((node) => {
+    children.push(
+      node.isAtom && !node.isText && node.type.name !== "hardBreak"
+        ? state.schema.text("\uFFFC", node.marks)
+        : node,
+    );
+  });
+  const paragraph = state.schema.nodes.paragraph!.create(null, children);
+  const markdown = serializeEditorDoc(state.doc.type.create(null, paragraph)).value;
+  const rebuilt = buildTiptapContent(markdown, () => null, { blocks: false });
+  const restored = state.schema.nodeFromJSON({ type: "doc", content: rebuilt });
+  return paragraph.content.eq(restored.firstChild!.content) ? tr : null;
 }
 
 /**
@@ -295,20 +368,6 @@ export const ComposerBoldExtension = Bold.extend({
 export const ComposerStrikeExtension = Strike.extend({
   addInputRules() {
     return [markInputRuleOutsideCode(strikeInputRegex, this.type)];
-  },
-});
-
-/**
- * Mod+B bolds selected text only. Without a selection Tiptap would toggle bold
- * for the next typed text, which users hit by accident when they mean the
- * sidebar toggle. Runs ahead of the Bold extension and swallows the chord.
- */
-export const ComposerBoldSelectionOnlyExtension = Extension.create({
-  name: "composerBoldSelectionOnly",
-  priority: 1000,
-  addKeyboardShortcuts() {
-    const ignoreWithoutSelection = () => this.editor.state.selection.empty;
-    return { "Mod-b": ignoreWithoutSelection, "Mod-B": ignoreWithoutSelection };
   },
 });
 
@@ -427,7 +486,8 @@ const ComposerListItemExtension = ListItem.extend({
   addKeyboardShortcuts() {
     return {
       ...withoutBlockChords(this.parent?.(), LIST_NESTING_KEYS),
-      Backspace: () => backspaceAcrossList(this.editor),
+      // Replacing Tiptap's Backspace drops its undoInputRule, which keeps a just-typed "+ " literal.
+      Backspace: () => this.editor.commands.undoInputRule() || backspaceAcrossList(this.editor),
       Delete: () => deleteAcrossList(this.editor),
     };
   },
@@ -448,6 +508,12 @@ const ComposerListItemExtension = ListItem.extend({
 
 export const ComposerListExtensions = [
   BulletList.extend({
+    addProseMirrorPlugins() {
+      return [
+        ...(this.parent?.() ?? []),
+        listNormalizationPlugin(() => this.editor.view.composing),
+      ];
+    },
     addKeyboardShortcuts() {
       return withoutBlockChords(this.parent?.(), ["Mod-Shift-8"]);
     },
@@ -582,6 +648,145 @@ function parseListPrefix(line: string): { prefix: ListLinePrefix; markerLength: 
   return null;
 }
 
+/** Only changed top-level paragraphs can acquire a literal list prefix outside an input rule. */
+function listNormalizationPlugin(isComposing: () => boolean) {
+  let pending = new Set<number>();
+  const key = new PluginKey("composerListNormalization");
+  return new Plugin({
+    key,
+    props: {
+      handleDOMEvents: {
+        // ProseMirror tags the DOM flush after compositionend as composition, so nothing else would normalize.
+        compositionend(view) {
+          setTimeout(() => {
+            if (!view.isDestroyed && !view.composing && pending.size > 0) {
+              view.dispatch(view.state.tr);
+            }
+          });
+          return false;
+        },
+      },
+    },
+    appendTransaction(transactions, oldState, state) {
+      // Tiptap's undoInputRule (Backspace right after a rule) restores the typed text on purpose.
+      const undoesInputRule = oldState.plugins.some(
+        (plugin) => plugin.spec.isInputRules && plugin.getState(oldState),
+      );
+      if (undoesInputRule || transactions.some(isHistoryTransaction)) {
+        pending.clear();
+        return null;
+      }
+      if (pending.size === 0 && !transactions.some((tr) => tr.docChanged)) return null;
+      const changes = combineTransactionSteps(oldState.doc, [...transactions]);
+      pending = new Set(
+        [...pending].flatMap((pos) => {
+          const mapped = changes.mapping.mapResult(pos, 1);
+          return mapped.deleted ? [] : [mapped.pos];
+        }),
+      );
+      for (const { newRange } of getChangedRanges(changes)) {
+        state.doc.nodesBetween(newRange.from, newRange.to, (node, pos) => {
+          if (node.type.name !== "paragraph") return false;
+          const parsed = parseListPrefix(paragraphText(node));
+          // Typing after a marker left literal keeps it literal; only an edit reaching the marker converts.
+          if (parsed && newRange.from <= pos + 1 + parsed.markerLength) pending.add(pos);
+          return false;
+        });
+      }
+      // The next non-composition transaction can normalize after the browser finishes its DOM edits.
+      if (isComposing() || transactions.some((tr) => tr.getMeta("composition") != null))
+        return null;
+
+      const tr = state.tr;
+      for (const pos of [...pending].sort((a, b) => b - a)) {
+        pending.delete(pos);
+        if (state.doc.resolve(pos).depth !== 0) continue;
+        const node = state.doc.nodeAt(pos);
+        if (node?.type.name !== "paragraph") continue;
+        const text = paragraphText(node);
+        const parsed = parseListPrefix(text);
+        // Input rules only introduce unindented top-level lists; keep the same boundary here.
+        if (!parsed || parsed.prefix.indent) continue;
+        const { prefix, markerLength } = parsed;
+        if (
+          Object.values(state.schema.marks).some((mark) => node.rangeHasMark(0, markerLength, mark))
+        )
+          continue;
+        const active = state.selection.$from.depth === 1 && state.selection.$from.before(1) === pos;
+        const content = text.slice(markerLength);
+        // Keep `- ` and unfinished task markers literal while the user is entering the gesture.
+        if (
+          active &&
+          (prefix.kind === "task"
+            ? !prefix.contentSpace
+            : prefix.kind === "bullet" &&
+              prefix.marker === "-" &&
+              (!content || /^\[(?:[ xX]\]?)?$/.test(content)))
+        ) {
+          pending.add(pos);
+          continue;
+        }
+        if (prefix.kind !== "task" && !prefix.space) continue;
+        const listType =
+          state.schema.nodes[
+            prefix.kind === "task"
+              ? "taskList"
+              : prefix.kind === "ordered"
+                ? "orderedList"
+                : "bulletList"
+          ];
+        if (!listType) continue;
+        const attrs =
+          prefix.kind === "ordered" ? { start: Number.parseInt(prefix.marker, 10) || 1 } : {};
+        const $from = tr.doc.resolve(pos + 1);
+        const range = $from.blockRange();
+        const wrapping = range && findWrapping(range, listType, attrs);
+        if (!range || !wrapping) continue;
+        tr.wrap(range, wrapping);
+        tr.setNodeMarkup(
+          pos + 1,
+          undefined,
+          prefix.kind === "task"
+            ? {
+                checked: prefix.checked,
+                indent: prefix.indent,
+                markerSpace: prefix.markerSpace,
+                contentSpace: prefix.contentSpace,
+              }
+            : { indent: prefix.indent, marker: prefix.marker, space: prefix.space },
+        );
+        tr.delete(pos + 3, pos + 3 + markerLength);
+        joinCompatibleLists(tr, pos + tr.doc.nodeAt(pos)!.nodeSize);
+        joinCompatibleLists(tr, pos);
+      }
+      pending = new Set([...pending].map((pos) => tr.mapping.map(pos, 1)));
+      return tr.docChanged ? tr : null;
+    },
+  });
+}
+
+function paragraphText(node: ProseMirrorNode): string {
+  return node.textBetween(0, node.content.size, undefined, "\ufffc");
+}
+
+/** Rebuilding from Markdown merges adjacent lists of one type whose markers share a delimiter. */
+function joinCompatibleLists(tr: Transaction, pos: number): void {
+  const $pos = tr.doc.resolve(pos);
+  const before = $pos.nodeBefore;
+  const after = $pos.nodeAfter;
+  const delimiter = (list: ProseMirrorNode) =>
+    String(list.firstChild?.attrs.marker ?? "").slice(-1);
+  if (
+    before &&
+    after &&
+    before.type === after.type &&
+    delimiter(before) === delimiter(after) &&
+    canJoin(tr.doc, pos)
+  ) {
+    tr.join(pos);
+  }
+}
+
 function listKey(prefix: ListLinePrefix): string {
   if (prefix.kind === "task") return "task";
   if (prefix.kind === "ordered") return `ordered:${prefix.marker.slice(-1)}`;
@@ -589,17 +794,18 @@ function listKey(prefix: ListLinePrefix): string {
 }
 
 type InlineJson = Record<string, unknown>;
+type AtomJson = { type: string; attrs: Record<string, unknown> };
 
 interface DocLine {
   list: ListLinePrefix | null;
   inline: InlineJson[];
 }
 
-/** Null for a `$name` that is not one of the provider's skills: it stays editable text. */
+/** Null for a `$name` or `model:` reference the resolver does not know: it stays editable text. */
 function atomJsonForSegment(
   segment: Exclude<ReturnType<typeof splitPromptIntoComposerSegments>[number], { type: "text" }>,
-  skillLabelFor: (name: string) => SkillMeta | null,
-): InlineJson | null {
+  chips: ChipResolver,
+): AtomJson | null {
   if (segment.type === "mention") {
     return {
       type: "composer-mention",
@@ -607,7 +813,7 @@ function atomJsonForSegment(
     };
   }
   if (segment.type === "skill") {
-    const meta = skillLabelFor(segment.name);
+    const meta = chips.skill(segment.name);
     if (!meta) return null;
     return {
       type: "composer-skill",
@@ -616,6 +822,13 @@ function atomJsonForSegment(
         skillLabel: meta.label,
         skillDescription: meta.description,
       },
+    };
+  }
+  if (segment.type === "model") {
+    if (!chips.model(segment.instanceId, segment.model)) return null;
+    return {
+      type: "composer-model",
+      attrs: { instanceId: segment.instanceId, model: segment.model, source: segment.source },
     };
   }
   if (segment.type === "citation") {
@@ -696,8 +909,15 @@ function textJsonForSpan(text: string, marks: RichTextMark[]): Record<string, un
 export function buildTiptapContent(
   value: string,
   skillLabelFor: (name: string) => SkillMeta | null,
-  options?: { styling?: boolean; blocks?: boolean; literalText?: boolean; literalLength?: number },
+  options?: {
+    styling?: boolean;
+    blocks?: boolean;
+    literalText?: boolean;
+    literalLength?: number;
+    isKnownModel?: IsKnownModel;
+  },
 ): Record<string, unknown>[] {
+  const chips = { skill: skillLabelFor, model: options?.isKnownModel ?? NO_MODELS };
   if (options?.literalText) {
     return value.split("\n").map((line) => ({
       type: "paragraph",
@@ -734,7 +954,7 @@ export function buildTiptapContent(
       return splitPromptIntoComposerSegments(chunk.text)
         .map((segment) => {
           if (segment.type === "text") return segment.text;
-          const atom = atomJsonForSegment(segment, skillLabelFor);
+          const atom = atomJsonForSegment(segment, chips);
           if (!atom) return segment.source;
           atoms.push(atom);
           atomSources.push(segment.source);
@@ -857,7 +1077,12 @@ export function buildTiptapContent(
     });
     openQuote = null;
   };
-  for (const entry of entries) {
+  const isProseLine = (entry: (typeof entries)[number] | undefined, empty: boolean) =>
+    entry !== undefined &&
+    "line" in entry &&
+    !entry.line.list &&
+    (entry.line.inline.length === 0) === empty;
+  for (const [entryIndex, entry] of entries.entries()) {
     if ("quote" in entry) {
       flushLists();
       if (openQuote && openQuote.prefix !== entry.quote.prefix) flushQuote();
@@ -865,7 +1090,21 @@ export function buildTiptapContent(
       openQuote.content.push(entry.quote.inline);
       continue;
     }
+    // The serializer separates a quote or list from the prose after it with one blank line; it is not an empty paragraph.
+    // After a list it precedes any empty paragraphs the user left, so those survive.
+    let proseIndex = entryIndex + 1;
+    if (openQuote === null && rootLists.length > 0 && isProseLine(entry, true)) {
+      while (isProseLine(entries[proseIndex], true)) proseIndex += 1;
+    }
+    const blockSeparator =
+      (openQuote !== null || rootLists.length > 0) &&
+      isProseLine(entry, true) &&
+      isProseLine(entries[proseIndex], false);
     flushQuote();
+    if (blockSeparator) {
+      flushLists();
+      continue;
+    }
     if ("code" in entry) {
       flushLists();
       blocks.push(entry.code);
@@ -934,7 +1173,7 @@ export function buildTiptapContent(
 export function buildDocJson(
   value: string,
   skillLabelFor: (name: string) => SkillMeta | null,
-  options?: { styling?: boolean; literalText?: boolean },
+  options?: { styling?: boolean; literalText?: boolean; isKnownModel?: IsKnownModel },
 ) {
   const content = buildTiptapContent(value, skillLabelFor, options);
   if (content.at(-1)?.type === "horizontalRule") content.push({ type: "paragraph" });
@@ -967,6 +1206,7 @@ function readAtomSource(node: ProseMirrorNode): string {
   const attrs = node.attrs as Record<string, unknown>;
   switch (node.type.name) {
     case "composer-mention":
+    case "composer-model":
     case "composer-citation":
     case "composer-context-reference":
       return typeof attrs.source === "string" ? attrs.source : "";
@@ -1004,14 +1244,35 @@ function pushBreakRun(acc: RichAccumulator, position?: number): void {
   acc.md += 1;
 }
 
-// Separate prose from quotes to avoid lazy continuation; an empty paragraph already separates them.
-function needsBlankLineAfterQuote(previous: ProseMirrorNode, block: ProseMirrorNode): boolean {
+function horizontalRuleSource(block: ProseMirrorNode): string {
+  const source = (block.attrs as Record<string, unknown>).source;
+  return typeof source === "string" && source ? source : "---";
+}
+
+// A blank line keeps prose out of a quote or list (lazy continuation) and a dash rule from
+// underlining the line above into a setext heading; an empty paragraph already separates them.
+function needsBlankLineBetween(blocks: readonly ProseMirrorNode[], index: number): boolean {
+  const previous = blocks[index - 1]!;
+  const block = blocks[index]!;
+  const isEmptyParagraph = (node: ProseMirrorNode | undefined) =>
+    node?.type.name === "paragraph" && node.content.size === 0;
+  if (LIST_NODE_NAMES.has(previous.type.name)) {
+    let next = index;
+    while (isEmptyParagraph(blocks[next])) next += 1;
+    return blocks[next]?.type.name === "paragraph";
+  }
+  if (previous.type.name === "blockquote") {
+    return block.type.name === "paragraph" && block.content.size > 0;
+  }
   return (
-    previous.type.name === "blockquote" && block.type.name === "paragraph" && block.content.size > 0
+    block.type.name === "horizontalRule" &&
+    previous.type.name === "paragraph" &&
+    previous.content.size > 0 &&
+    /^-+[ \t]*\r?$/.test(horizontalRuleSource(block))
   );
 }
 
-// Blank-line runs own no document characters; offsets clamp to the paragraph start.
+// Blank-line runs own no document characters; offsets clamp to the start of the next block.
 function pushBlankLineRun(acc: RichAccumulator, pmPos: number): void {
   acc.runs.push({
     kind: "prefix",
@@ -1025,6 +1286,27 @@ function pushBlankLineRun(acc: RichAccumulator, pmPos: number): void {
   });
   acc.value += "\n";
   acc.md += 1;
+}
+
+// Moves an offset into a parsed `value` past the blank lines its serialization inserted,
+// treating other differences (`__` written as `**`) as same-length rewrites. When the two
+// strings do not align that way end to end, the offset is returned unmapped.
+export function serializedMarkdownOffset(
+  value: string,
+  serialized: string,
+  offset: number,
+): number {
+  if (value === serialized) return offset;
+  let index = 0;
+  let mapped = 0;
+  let target = -1;
+  while (index < value.length && mapped < serialized.length) {
+    if (index === offset && target < 0) target = mapped;
+    if (value[index] === serialized[mapped] || serialized[mapped] !== "\n") index += 1;
+    mapped += 1;
+  }
+  if (index !== value.length || mapped !== serialized.length) return offset;
+  return target < 0 ? mapped + (offset - index) : target;
 }
 
 function appendInlineRuns(
@@ -1206,7 +1488,8 @@ function renumberFollowingItems(
   });
 }
 
-export function splitOrLiftListItem(editor: Editor): boolean {
+/** `prepare` runs first in the same transaction, which the split then reads. */
+export function splitOrLiftListItem(editor: Editor, prepare: Command): boolean {
   const $from = editor.state.selection.$from;
   const itemType = listItemTypeAt($from);
   if (!itemType) return false;
@@ -1221,7 +1504,7 @@ export function splitOrLiftListItem(editor: Editor): boolean {
     if (moved) alignListItemWithSiblings(tr, itemType);
     return moved;
   };
-  return editor.can().command(move) && editor.chain().command(move).run();
+  return editor.can().command(move) && editor.chain().command(prepare).command(move).run();
 }
 
 export function convertBulletItemToTask(
@@ -1454,7 +1737,7 @@ function serializeDoc(doc: ProseMirrorNode): RichDocMap {
   let pmBlockStart = 0;
   blocks.forEach((block, blockIndex) => {
     if (blockIndex > 0 && !isTrailingLineAfterRule(doc, blockIndex)) pushBreakRun(acc);
-    if (blockIndex > 0 && needsBlankLineAfterQuote(blocks[blockIndex - 1]!, block)) {
+    if (blockIndex > 0 && needsBlankLineBetween(blocks, blockIndex)) {
       pushBlankLineRun(acc, pmBlockStart + 1);
     }
     if (LIST_NODE_NAMES.has(block.type.name)) {
@@ -1482,8 +1765,7 @@ function serializeDoc(doc: ProseMirrorNode): RichDocMap {
       acc.md += prefix.length;
       appendInlineRuns(block, pmBlockStart + 1, acc);
     } else if (block.type.name === "horizontalRule") {
-      const attrs = block.attrs as Record<string, unknown>;
-      const source = typeof attrs.source === "string" && attrs.source ? attrs.source : "---";
+      const source = horizontalRuleSource(block);
       acc.runs.push({
         kind: "prefix",
         flatStart: acc.flat,
@@ -1516,6 +1798,15 @@ export interface SkillChipReplacement {
   node: ProseMirrorNode;
 }
 
+function isStaleChip(node: ProseMirrorNode, chips: ChipResolver): boolean {
+  const { skillName, instanceId, model } = node.attrs as Record<string, unknown>;
+  if (node.type.name === "composer-skill") {
+    return typeof skillName === "string" && skillName !== "" && !chips.skill(skillName);
+  }
+  if (node.type.name === "composer-model") return !chips.model(String(instanceId), String(model));
+  return false;
+}
+
 /**
  * Use the same Markdown token boundaries as draft restoration. Apply edits
  * last-first so positions stay valid and unrelated citation nodes keep their keys.
@@ -1523,30 +1814,28 @@ export interface SkillChipReplacement {
 export function skillChipReplacements(
   doc: ProseMirrorNode,
   skillLabelFor: (name: string) => SkillMeta | null,
+  isKnownModel: IsKnownModel = NO_MODELS,
 ): SkillChipReplacement[] {
+  const chips = { skill: skillLabelFor, model: isKnownModel };
   const schema = doc.type.schema;
-  const skillType = schema.nodes["composer-skill"];
-  if (!skillType) return [];
   const replacements: SkillChipReplacement[] = [];
   doc.descendants((node, pos) => {
-    if (node.type !== skillType) return;
-    const name = typeof node.attrs.skillName === "string" ? node.attrs.skillName : "";
-    if (name && !skillLabelFor(name)) {
-      replacements.push({
-        from: pos,
-        to: pos + node.nodeSize,
-        node: schema.text(readAtomSource(node), node.marks),
-      });
-    }
+    if (!isStaleChip(node, chips)) return;
+    replacements.push({
+      from: pos,
+      to: pos + node.nodeSize,
+      node: schema.text(readAtomSource(node), node.marks),
+    });
   });
   const map = serializeEditorDoc(doc);
   let end = 0;
   for (const segment of splitPromptIntoComposerSegments(map.value)) {
     const start = end;
     end += segment.type === "text" ? segment.text.length : segment.source.length;
-    if (segment.type !== "skill") continue;
-    const meta = skillLabelFor(segment.name);
-    if (!meta) continue;
+    if (segment.type !== "skill" && segment.type !== "model") continue;
+    const atom = atomJsonForSegment(segment, chips);
+    const type = atom && schema.nodes[atom.type];
+    if (!atom || !type) continue;
     // Only text needs converting; an existing chip is a token run.
     const run = map.runs.find(
       (candidate) =>
@@ -1560,11 +1849,7 @@ export function skillChipReplacements(
     replacements.push({
       from,
       to: from + segment.source.length,
-      node: skillType.create(
-        { skillName: segment.name, skillLabel: meta.label, skillDescription: meta.description },
-        null,
-        doc.nodeAt(from)?.marks,
-      ),
+      node: type.create(atom.attrs, null, doc.nodeAt(from)?.marks),
     });
   }
   return replacements.sort((left, right) => right.from - left.from);
@@ -1639,15 +1924,20 @@ export function pmToFlat(map: RichDocMap, pmPos: number): number {
 
 // Styled boundaries need two caret stops at one position, one for each side's marks.
 
+// Shown Markdown source has real characters at its edges, so it needs no extra stop.
+function styleMarks(marks: readonly Mark[]): readonly Mark[] {
+  return marks.filter((mark) => mark.type.name !== MARKDOWN_SOURCE_MARK);
+}
+
 function styledEdge(state: EditorState) {
   const { selection } = state;
   if (!selection.empty) return null;
   const { $from } = selection;
   if (!$from.parent.inlineContent) return null;
-  const before = $from.nodeBefore?.marks ?? Mark.none;
-  const after = $from.nodeAfter?.marks ?? Mark.none;
+  const before = styleMarks($from.nodeBefore?.marks ?? Mark.none);
+  const after = styleMarks($from.nodeAfter?.marks ?? Mark.none);
   if (Mark.sameSet(before, after)) return null;
-  return { before, after, current: state.storedMarks ?? $from.marks() };
+  return { before, after, current: styleMarks(state.storedMarks ?? $from.marks()) };
 }
 
 export function caretTakesMarksBefore(state: EditorState): boolean {

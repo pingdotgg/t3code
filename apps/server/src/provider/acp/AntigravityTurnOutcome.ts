@@ -8,6 +8,7 @@ import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { antigravityManagedPath, antigravityProfileRoot } from "./AntigravityProfilePaths.ts";
@@ -19,6 +20,10 @@ const MAX_ERROR_PAYLOAD_BYTES = 16_384;
 // The Go harness's rendering of a Google API error, as the agent's api_errors.py reads it.
 const API_ERROR = /Error (\d{3}), Message: (.+?), Status: ([A-Z_]+)/s;
 const QUOTA_EXHAUSTED = /\breason:QUOTA_EXHAUSTED\b/;
+// Claude rejects a saved thinking block without a valid signature. It sits in the native
+// history, so every later prompt to that session fails the same way.
+const INVALID_THINKING_SIGNATURE =
+  /\bmessages\.\d+\.content\.\d+(?:\.thinking\.signature: Field required|: Invalid `signature` in `thinking` block)/;
 const RESET_TIMESTAMP = /\bquotaResetTimeStamp:([^\s\]]+)/;
 const RESET_DELAY = /\bquotaResetDelay:((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]])/;
 // google.rpc.RetryInfo, which plain rate limits carry instead of a quota reset.
@@ -41,19 +46,33 @@ interface LastStep {
   readonly payload: Uint8Array | null;
 }
 
+class AntigravitySessionLogError extends Schema.TaggedError<AntigravitySessionLogError>()(
+  "AntigravitySessionLogError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Could not read the Antigravity session log.";
+  }
+}
+
+const sessionLogError = (cause: unknown) => new AntigravitySessionLogError({ cause });
+
 const readSteps = <A>(file: string, read: (database: NodeSqlite.DatabaseSync) => A) =>
-  Effect.try(() => {
-    const database = new NodeSqlite.DatabaseSync(file, { readOnly: true });
-    try {
-      database.exec("PRAGMA busy_timeout = 100");
-      const hasSteps =
-        database
-          .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'steps'")
-          .get() !== undefined;
-      return hasSteps ? read(database) : undefined;
-    } finally {
-      database.close();
-    }
+  Effect.try({
+    try: () => {
+      const database = new NodeSqlite.DatabaseSync(file, { readOnly: true });
+      try {
+        database.exec("PRAGMA busy_timeout = 100");
+        const hasSteps =
+          database
+            .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'steps'")
+            .get() !== undefined;
+        return hasSteps ? read(database) : undefined;
+      } finally {
+        database.close();
+      }
+    },
+    catch: sessionLogError,
   });
 
 const lastStepIndex = (database: NodeSqlite.DatabaseSync) => {
@@ -91,7 +110,12 @@ function turnFailure(
   stopReason: EffectAcpSchema.StopReason,
   step: LastStep | undefined,
   now: DateTime.Utc,
-): OrchestrationV2ProviderFailure | undefined {
+):
+  | {
+      readonly failure: OrchestrationV2ProviderFailure;
+      readonly threadDisposition: "reusable" | "broken";
+    }
+  | undefined {
   const errorText =
     step?.type === ERROR_STEP_TYPE
       ? new TextDecoder().decode(step.payload ?? new Uint8Array())
@@ -100,30 +124,50 @@ function turnFailure(
   if (errorText === undefined && stopReason !== "refusal") return undefined;
   const text = errorText ?? "";
   const apiError = API_ERROR.exec(text);
+  const reusable = (failure: OrchestrationV2ProviderFailure) =>
+    ({ failure, threadDisposition: "reusable" }) as const;
   if (stopReason === "refusal" || QUOTA_EXHAUSTED.test(text)) {
-    return makeProviderFailure({
-      class: "usage_limit",
-      message: "You have reached your Antigravity quota for this period.",
-      code: apiError?.[3] ?? "QUOTA_EXHAUSTED",
-      retryable: true,
-      resetAt: resetAtFrom(text, now) ?? null,
-    });
+    return reusable(
+      makeProviderFailure({
+        class: "usage_limit",
+        message: "You have reached your Antigravity quota for this period.",
+        code: apiError?.[3] ?? "QUOTA_EXHAUSTED",
+        retryable: true,
+        resetAt: resetAtFrom(text, now) ?? null,
+      }),
+    );
+  }
+  if (INVALID_THINKING_SIGNATURE.test(text)) {
+    return {
+      failure: makeProviderFailure({
+        class: "provider_error",
+        message:
+          "Antigravity's saved conversation can no longer be sent to the model. The next message starts a fresh Antigravity session with this thread's context.",
+        code: "INVALID_THINKING_SIGNATURE",
+        retryable: true,
+      }),
+      threadDisposition: "broken",
+    };
   }
   if (apiError === null) {
-    return makeProviderFailure({
-      class: "provider_error",
-      message: "Antigravity stopped this turn because of an error.",
-    });
+    return reusable(
+      makeProviderFailure({
+        class: "provider_error",
+        message: "Antigravity stopped this turn because of an error.",
+      }),
+    );
   }
   const [, httpStatus, message, status] = apiError;
   const rateLimited = httpStatus === "429" || status === "RESOURCE_EXHAUSTED";
-  return makeProviderFailure({
-    class: rateLimited ? "usage_limit" : "provider_error",
-    message: message!.trim(),
-    code: status ?? null,
-    retryable: rateLimited || Number(httpStatus) >= 500,
-    resetAt: resetAtFrom(text, now) ?? null,
-  });
+  return reusable(
+    makeProviderFailure({
+      class: rateLimited ? "usage_limit" : "provider_error",
+      message: message!.trim(),
+      code: status ?? null,
+      retryable: rateLimited || Number(httpStatus) >= 500,
+      resetAt: resetAtFrom(text, now) ?? null,
+    }),
+  );
 }
 
 const conversationSegments = ["antigravity-acp", "conversations"];
@@ -142,22 +186,25 @@ export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.w
     DateTime.now.pipe(Effect.map((now) => turnFailure(result.stopReason, undefined, now)));
   if (!NATIVE_SESSION_ID.test(sessionId)) return typedOnly;
   const segments = [...conversationSegments, `${sessionId}.db`];
-  const before = yield* Effect.tryPromise(async () => {
-    const root = await antigravityProfileRoot(profileDirectory);
-    if (root === undefined) return undefined;
-    if ((await antigravityManagedPath(root, conversationSegments, "directory")) === undefined) {
-      return undefined;
-    }
-    const database = await antigravityManagedPath(root, segments, "file");
-    // A path that exists but fails the proof is a link or other foreign entry.
-    if (database === undefined) {
-      const present = await NodeFSP.lstat(NodePath.join(root, ...segments)).then(
-        () => true,
-        () => false,
-      );
-      return present ? undefined : { root, identity: undefined, startIndex: -1 };
-    }
-    return { root, identity: database.info, startIndex: undefined };
+  const before = yield* Effect.tryPromise({
+    try: async () => {
+      const root = await antigravityProfileRoot(profileDirectory);
+      if (root === undefined) return undefined;
+      if ((await antigravityManagedPath(root, conversationSegments, "directory")) === undefined) {
+        return undefined;
+      }
+      const database = await antigravityManagedPath(root, segments, "file");
+      // A path that exists but fails the proof is a link or other foreign entry.
+      if (database === undefined) {
+        const present = await NodeFSP.lstat(NodePath.join(root, ...segments)).then(
+          () => true,
+          () => false,
+        );
+        return present ? undefined : { root, identity: undefined, startIndex: -1 };
+      }
+      return { root, identity: database.info, startIndex: undefined };
+    },
+    catch: sessionLogError,
   }).pipe(Effect.orElseSucceed(() => undefined));
   if (before === undefined) {
     yield* Effect.logWarning("The Antigravity session log is not this session's own file.");
@@ -177,9 +224,10 @@ export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.w
     result: EffectAcpSchema.PromptResponse,
   ) {
     // The same file as before the prompt, or one this prompt created, still unlinked.
-    const after = yield* Effect.tryPromise(() =>
-      antigravityManagedPath(before.root, segments, "file"),
-    ).pipe(Effect.orElseSucceed(() => undefined));
+    const after = yield* Effect.tryPromise({
+      try: () => antigravityManagedPath(before.root, segments, "file"),
+      catch: sessionLogError,
+    }).pipe(Effect.orElseSucceed(() => undefined));
     const sameFile =
       after !== undefined &&
       (before.identity === undefined ||

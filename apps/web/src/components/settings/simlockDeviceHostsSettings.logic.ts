@@ -1,10 +1,14 @@
 import {
   SimlockDeviceHostConfig,
   type EnvironmentId,
+  type SettingsSecretValue,
   type SimlockDeviceHostConfig as SimlockDeviceHostConfigType,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 const parseSimlockDeviceHostDraft = Schema.decodeUnknownOption(SimlockDeviceHostConfig);
 
@@ -31,21 +35,31 @@ export function updateSimlockDeviceHosts(
 }
 
 /** Why the shared fields keep a draft from saving, or null; tokens are checked per environment. */
-export function simlockDeviceHostProblem(host: SimlockDeviceHostConfigType): string | null {
+export function simlockDeviceHostProblem(
+  host: SimlockDeviceHostConfigType,
+  resolve: MessageResolver = m,
+): string | null {
   const withToken = { ...host, agentToken: "token" };
   if (Option.isSome(parseSimlockDeviceHostDraft(withToken))) return null;
-  if (!host.label.trim()) return "Give the host a label.";
+  if (!host.label.trim()) return resolve(msg("Give the host a label."));
   // With in-range limits, a draft that still fails has a bad gateway URL.
   return Option.isNone(
     parseSimlockDeviceHostDraft({ ...withToken, maxLeases: 1, maxLeaseMinutes: 60 }),
   )
-    ? "Enter the gateway's origin, such as https://gateway.example.ts.net:4700."
-    : "Keep the limits within the ranges shown.";
+    ? resolve(msg("Enter the gateway's origin, such as https://gateway.example.ts.net:4700."))
+    : resolve(msg("Keep the limits within the ranges shown."));
 }
 
-export function simlockLeaseLimits(host: SimlockDeviceHostConfigType) {
-  const devices = host.maxLeases === 1 ? "1 device" : `${host.maxLeases} devices`;
-  return `Up to ${devices} at once, each released after ${host.maxLeaseMinutes} min`;
+export function simlockLeaseLimits(
+  host: SimlockDeviceHostConfigType,
+  resolve: MessageResolver = m,
+) {
+  return resolve(
+    msg(
+      "{count, plural, one {Up to {count} device at once, each released after {minutes} min} other {Up to {count} devices at once, each released after {minutes} min}}",
+      { count: host.maxLeases, minutes: host.maxLeaseMinutes },
+    ),
+  );
 }
 
 export interface SimlockHostEnvironment {
@@ -54,10 +68,10 @@ export interface SimlockHostEnvironment {
   readonly hosts: ReadonlyArray<SimlockDeviceHostConfigType>;
 }
 
-/** A token field: the environment's saved token, a replacement, or none. */
+/** A token field: the environment's saved token, a replacement or secret reference, or none. */
 export type SimlockTokenEntry =
   | { kind: "saved" }
-  | { kind: "new"; value: string }
+  | { kind: "new"; value: SettingsSecretValue }
   | { kind: "cleared" };
 
 /**
@@ -68,6 +82,7 @@ export function planSimlockDeviceHostSave(
   environments: ReadonlyArray<SimlockHostEnvironment>,
   draft: SimlockDeviceHostConfigType,
   tokens: ReadonlyMap<EnvironmentId, SimlockTokenEntry>,
+  resolve: MessageResolver = m,
 ):
   | { readonly problem: string }
   | {
@@ -76,14 +91,20 @@ export function planSimlockDeviceHostSave(
         hosts: ReadonlyArray<SimlockDeviceHostConfigType>;
       }>;
     } {
-  const shared = simlockDeviceHostProblem(draft);
+  const shared = simlockDeviceHostProblem(draft, resolve);
   if (shared) return { problem: shared };
   const patches = [];
   for (const environment of environments) {
     const saved = environment.hosts.find((host) => host.id === draft.id)?.agentToken ?? "";
     const entry = tokens.get(environment.environmentId) ?? { kind: "cleared" };
     const agentToken =
-      entry.kind === "saved" ? saved : entry.kind === "new" ? entry.value.trim() : "";
+      entry.kind === "saved"
+        ? saved
+        : entry.kind !== "new"
+          ? ""
+          : typeof entry.value === "string"
+            ? entry.value.trim()
+            : entry.value;
     patches.push({
       environmentId: environment.environmentId,
       hosts: updateSimlockDeviceHosts(environment.hosts, { ...draft, agentToken }, false),

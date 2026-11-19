@@ -1,9 +1,10 @@
+import { msg } from "gt-react";
+import { m } from "../i18n/messages";
 import { DpopProof } from "@t3tools/client-runtime/relay";
 import { computeDpopJwkThumbprint, DpopPublicJwk } from "@t3tools/shared/dpop";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Signature from "effect/crypto/Signature";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -14,10 +15,12 @@ export interface BrowserDpopKey {
   readonly thumbprint: string;
 }
 
-export class BrowserDpopError extends Data.TaggedError("BrowserDpopError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+export class BrowserDpopError extends Schema.TaggedError<BrowserDpopError>()("BrowserDpopError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
+
+const isBrowserDpopError = Schema.is(BrowserDpopError);
 
 const DPOP_DATABASE_NAME = "t3code:cloud-auth";
 const DPOP_DATABASE_VERSION = 1;
@@ -38,7 +41,9 @@ function openDpopDatabase(): Effect.Effect<IDBDatabase, BrowserDpopError> {
     const request = indexedDB.open(DPOP_DATABASE_NAME, DPOP_DATABASE_VERSION);
     request.addEventListener("error", () =>
       resume(
-        Effect.fail(dpopError("Could not open DPoP key storage.", request.error ?? undefined)),
+        Effect.fail(
+          dpopError(m(msg("Could not open DPoP key storage.")), request.error ?? undefined),
+        ),
       ),
     );
     request.addEventListener("upgradeneeded", () => {
@@ -63,7 +68,9 @@ function readStoredBrowserDpopKey(): Effect.Effect<BrowserDpopKey | null, Browse
           .objectStore(DPOP_KEY_STORE_NAME)
           .get(DPOP_KEY_ID);
         request.addEventListener("error", () =>
-          resume(Effect.fail(dpopError("Could not read DPoP key.", request.error ?? undefined))),
+          resume(
+            Effect.fail(dpopError(m(msg("Could not read DPoP key.")), request.error ?? undefined)),
+          ),
         );
         request.addEventListener("success", () =>
           resume(Effect.succeed((request.result as BrowserDpopKey | undefined) ?? null)),
@@ -84,7 +91,9 @@ function writeStoredBrowserDpopKey(key: BrowserDpopKey): Effect.Effect<void, Bro
         const transaction = database.transaction(DPOP_KEY_STORE_NAME, "readwrite");
         transaction.addEventListener("error", () =>
           resume(
-            Effect.fail(dpopError("Could not write DPoP key.", transaction.error ?? undefined)),
+            Effect.fail(
+              dpopError(m(msg("Could not write DPoP key.")), transaction.error ?? undefined),
+            ),
           ),
         );
         transaction.addEventListener("complete", () => resume(Effect.void));
@@ -101,21 +110,21 @@ const generateBrowserDpopKey = Effect.gen(function* () {
         "sign",
         "verify",
       ]) as Promise<CryptoKeyPair>,
-    catch: (cause) => dpopError("Could not generate DPoP proof key.", cause),
+    catch: (cause) => dpopError(m(msg("Could not generate DPoP proof key.")), cause),
   });
   const privateJwk = yield* Effect.tryPromise({
     try: () => crypto.subtle.exportKey("jwk", generated.privateKey),
-    catch: (cause) => dpopError("Could not export DPoP private key.", cause),
+    catch: (cause) => dpopError(m(msg("Could not export DPoP private key.")), cause),
   });
   const publicJwk = yield* Effect.tryPromise({
     try: () => crypto.subtle.exportKey("jwk", generated.publicKey),
-    catch: (cause) => dpopError("Could not export DPoP public key.", cause),
+    catch: (cause) => dpopError(m(msg("Could not export DPoP public key.")), cause),
   }).pipe(
     Effect.flatMap((jwk) => decodeDpopPublicJwk(jwk)),
     Effect.mapError((cause) =>
-      cause instanceof BrowserDpopError
+      isBrowserDpopError(cause)
         ? cause
-        : dpopError("Generated DPoP public key is invalid.", cause),
+        : dpopError(m(msg("Generated DPoP public key is invalid.")), cause),
     ),
   );
   const privateKey = yield* Effect.tryPromise({
@@ -123,7 +132,7 @@ const generateBrowserDpopKey = Effect.gen(function* () {
       crypto.subtle.importKey("jwk", privateJwk, { name: "ECDSA", namedCurve: "P-256" }, false, [
         "sign",
       ]),
-    catch: (cause) => dpopError("Could not import DPoP private key.", cause),
+    catch: (cause) => dpopError(m(msg("Could not import DPoP private key.")), cause),
   });
   return {
     privateKey,
@@ -141,17 +150,18 @@ export const loadOrCreateProofKey = Effect.fn("dpop.loadOrCreateProofKey")(funct
   const privateKey = yield* Signature.privateKeyFromCryptoKey(
     Signature.ecdsaP256,
     browserKey.privateKey,
-  ).pipe(Effect.mapError((cause) => dpopError("Could not load DPoP proof key.", cause)));
+  ).pipe(Effect.mapError((cause) => dpopError(m(msg("Could not load DPoP proof key.")), cause)));
   return {
     publicJwk: browserKey.publicJwk,
     sign: (signingInput) =>
-      signature
-        .sign(privateKey, signingInput)
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new DpopProof.DpopProofError({ message: "Could not sign DPoP proof.", cause }),
-          ),
+      signature.sign(privateKey, signingInput).pipe(
+        Effect.mapError(
+          (cause) =>
+            new DpopProof.DpopProofError({
+              message: m(msg("Could not sign DPoP proof.")),
+              cause,
+            }),
         ),
+      ),
   } satisfies DpopProof.DpopProofKey;
 });
