@@ -6,12 +6,13 @@ import type {
 } from "@t3tools/contracts";
 import {
   collectProviderUsageLimits,
-  elapsedShare,
   type LimitPace,
   paceOf,
+  paceRemainingPercent,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { formatDuration, limitsNotice } from "@t3tools/shared/usageLimitsCopy";
+import { Link } from "@tanstack/react-router";
 import { msg, useGT, useLocale, useMessages } from "gt-react";
 import { CalendarRangeIcon, GaugeIcon, Minimize2Icon, TimerIcon } from "lucide-react";
 import type { ReactNode } from "react";
@@ -39,7 +40,7 @@ export interface ThreadDetailsUsageInput {
 }
 type UsageTone = "error" | "warning" | null;
 
-/** Provider limits share the canvas's icon, label, meter, percentage and reset columns. */
+/** Provider limits share the canvas's icon, label, meter, percentage and reset columns; each row opens the usage page. */
 export function ThreadDetailsUsage({
   providerInstanceId,
   providers,
@@ -69,6 +70,7 @@ export function ThreadDetailsUsage({
           tone={null}
           value={gt("Unavailable")}
           tooltip={notice ?? gt("No usage windows reported.")}
+          opensUsage
         />
       ) : (
         limits.windows.map((window) => <LimitRow key={window.id} window={window} now={now} />)
@@ -175,7 +177,7 @@ function LimitRow({
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const left = remainingPercent(window);
   const pace = paceOf(window, now);
-  const elapsed = elapsedShare(window, now);
+  const timeLeft = paceRemainingPercent(window, now);
   const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
   const remainingMs = resetsAt - now;
   const weekly = (window.windowDurationMins ?? 0) >= 24 * 60 || /week/i.test(window.label);
@@ -190,10 +192,11 @@ function LimitRow({
       label={window.label}
       icon={weekly ? <CalendarRangeIcon /> : <TimerIcon />}
       fill={left}
-      tick={elapsed === null ? null : (1 - elapsed) * 100}
+      tick={timeLeft}
       tone={left <= 10 ? "error" : left <= 20 ? "warning" : null}
       value={`${left}%`}
       ariaValue={gt("{left}% left", { left })}
+      opensUsage
       trailing={
         reset ? (
           <span className="truncate text-caption text-dim-foreground">{reset}</span>
@@ -204,6 +207,12 @@ function LimitRow({
           <span className="text-foreground">
             {gt("{label}: {left}% left", { label: window.label, left })}
           </span>
+          {pace && timeLeft !== null ? (
+            <span>
+              <span className="block">{m(PACE_LABEL[pace])}</span>
+              <span className="block">{gt("{timeLeft}% of the window left", { timeLeft })}</span>
+            </span>
+          ) : null}
           {window.resetsAt && remainingMs > 0 ? (
             <span>
               <span className="block">
@@ -214,13 +223,13 @@ function LimitRow({
               </span>
             </span>
           ) : null}
-          {pace ? <span>{m(PACE_LABEL[pace])}</span> : null}
         </>
       }
     />
   );
 }
 
+/** With `opensUsage` the row links to the usage page. */
 function UsageRow({
   label,
   icon,
@@ -231,6 +240,7 @@ function UsageRow({
   ariaValue = value,
   tooltip,
   trailing,
+  opensUsage = false,
 }: {
   readonly label: string;
   readonly icon: ReactNode;
@@ -241,18 +251,22 @@ function UsageRow({
   readonly ariaValue?: string;
   readonly tooltip: ReactNode;
   readonly trailing?: ReactNode;
+  readonly opensUsage?: boolean;
 }) {
   const gt = useGT();
+  const rowProps = {
+    "aria-label": gt("{label}: {value}", { label, value: ariaValue }),
+    className: cn(
+      "flex min-w-0 flex-1 items-center gap-2 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+      opensUsage ? "cursor-pointer" : "cursor-default",
+    ),
+  };
   return (
     <Tooltip>
       <div className="flex h-8 items-center gap-2 ps-3 pe-2 text-meta">
         <TooltipTrigger
           render={
-            <div
-              tabIndex={0}
-              aria-label={gt("{label}: {value}", { label, value: ariaValue })}
-              className="flex min-w-0 flex-1 cursor-default items-center gap-2 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-            />
+            opensUsage ? <Link to="/usage" {...rowProps} /> : <div tabIndex={0} {...rowProps} />
           }
         >
           <span className="shrink-0 text-muted-foreground [&>svg]:size-4">{icon}</span>
@@ -297,7 +311,10 @@ function UsageRow({
         <span className="flex w-11 shrink-0 justify-end">{trailing}</span>
       </div>
       <TooltipPopup side="left" sideOffset={16}>
-        <div className="flex flex-col gap-0.5 text-muted-foreground">{tooltip}</div>
+        <div className="flex flex-col gap-0.5 text-muted-foreground">
+          {tooltip}
+          {opensUsage ? <span>{gt("Open usage")}</span> : null}
+        </div>
       </TooltipPopup>
     </Tooltip>
   );

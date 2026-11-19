@@ -563,7 +563,9 @@ function startAnnotation(
   const host = document.createElement("div");
   host.setAttribute(OVERLAY_ATTRIBUTE, "");
   host.setAttribute("dir", "ltr");
-  host.style.cssText = `position:fixed;inset:0;z-index:${Z_INDEX_OVERLAY};pointer-events:none`;
+  host.popover = "manual";
+  // Resets the UA popover box (fit-content size, auto margin, border, padding, Canvas background).
+  host.style.cssText = `position:fixed;inset:0;width:auto;height:auto;margin:0;border:0;padding:0;overflow:visible;background:transparent;color:inherit;z-index:${Z_INDEX_OVERLAY};pointer-events:none`;
   applyAnnotationTheme(host, annotationTheme);
   const shadowRoot = host.attachShadow({ mode: "closed" });
   const themeStyle = document.createElement("style");
@@ -577,7 +579,7 @@ function startAnnotation(
   root.style.cssText = "pointer-events:none";
   const cursorStyle = document.createElement("style");
   cursorStyle.setAttribute(OVERLAY_ATTRIBUTE, "");
-  cursorStyle.textContent = `html[data-t3code-annotation-tool] body, html[data-t3code-annotation-tool] body * { cursor: crosshair !important; } [${OVERLAY_ATTRIBUTE}], [${OVERLAY_ATTRIBUTE}] * { cursor: default !important; } [${OVERLAY_ATTRIBUTE}] input[type=number]::-webkit-inner-spin-button, [${OVERLAY_ATTRIBUTE}] input[type=number]::-webkit-outer-spin-button { appearance:none; margin:0; }`;
+  cursorStyle.textContent = `[${OVERLAY_ATTRIBUTE}]::backdrop { display:none !important; } html[data-t3code-annotation-tool] body, html[data-t3code-annotation-tool] body * { cursor: crosshair !important; } [${OVERLAY_ATTRIBUTE}], [${OVERLAY_ATTRIBUTE}] * { cursor: default !important; } [${OVERLAY_ATTRIBUTE}] input[type=number]::-webkit-inner-spin-button, [${OVERLAY_ATTRIBUTE}] input[type=number]::-webkit-outer-spin-button { appearance:none; margin:0; }`;
   document.documentElement.appendChild(cursorStyle);
   shadowRoot.appendChild(root);
 
@@ -1600,6 +1602,38 @@ function startAnnotation(
       event.stopPropagation();
   };
 
+  // Page popovers and modal dialogs sit in the top layer above any z-index, and a modal makes
+  // everything outside it inert, so the overlay is shown last and lives inside the topmost modal.
+  // Modals in the order they opened, since DOM order does not say which one blocks the rest.
+  const openedModals: Element[] = [];
+  const raiseOverlay = (): void => {
+    const focused = shadowRoot.activeElement;
+    const parent =
+      document.activeElement?.closest("dialog:modal") ??
+      openedModals.findLast((dialog) => dialog.matches(":modal")) ??
+      Array.from(document.querySelectorAll("dialog:modal")).at(-1) ??
+      document.documentElement;
+    if (host.parentElement !== parent) parent.appendChild(host);
+    if (host.matches(":popover-open")) host.hidePopover();
+    host.showPopover();
+    if (focused instanceof HTMLElement && !focused.matches(":focus"))
+      focused.focus({ preventScroll: true });
+  };
+  const onPageToggle = (event: Event): void => {
+    const target = event.target;
+    if (target === host) return;
+    if (target instanceof HTMLDialogElement) {
+      const index = openedModals.indexOf(target);
+      if (index !== -1) openedModals.splice(index, 1);
+      if (target.matches(":modal")) openedModals.push(target);
+    }
+    raiseOverlay();
+  };
+  // Removing an open dialog hides the overlay inside it without a toggle event.
+  const detachObserver = new MutationObserver(() => {
+    if (!host.isConnected || !host.matches(":popover-open")) raiseOverlay();
+  });
+
   const onPointerOut = (event: PointerEvent): void => {
     if (event.relatedTarget === null) clearHoverOutline();
   };
@@ -1644,6 +1678,8 @@ function startAnnotation(
     dragHandle.removeEventListener("pointerup", onEditorPointerUp);
     dragHandle.removeEventListener("pointercancel", onEditorPointerUp);
     for (const type of PAGE_ISOLATED_EVENTS) host.removeEventListener(type, stopAtOverlay);
+    window.removeEventListener("toggle", onPageToggle, true);
+    detachObserver.disconnect();
     document.documentElement.removeEventListener("focusout", onFocusOutToOverlay);
     if (editorLayoutFrame !== null) window.cancelAnimationFrame(editorLayoutFrame);
     ipcRenderer.off(CANCEL_PICK_CHANNEL, onCancel);
@@ -1813,7 +1849,9 @@ function startAnnotation(
     document.documentElement.appendChild(inputLayer);
     inputLayer.focus({ preventScroll: true });
   }
-  document.documentElement.appendChild(host);
+  raiseOverlay();
+  window.addEventListener("toggle", onPageToggle, true);
+  detachObserver.observe(document.documentElement, { childList: true, subtree: true });
   rootResizeObserver.observe(document.documentElement);
   refreshToolButtons();
   updateStatus();
