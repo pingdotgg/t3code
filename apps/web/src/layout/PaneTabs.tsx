@@ -1233,7 +1233,7 @@ export function useLayoutTabLabel(tab: LayoutTab): {
         : tab.content.kind === "usage"
           ? gt("Usage")
           : tab.content.kind === "issues"
-            ? gt("Issues", { $context: "page title, list of issues" })
+            ? gt("Issues", { $context: "sidebar link to the list of issues" })
             : gt("Pull requests");
     const Icon =
       tab.content.kind === "settings"

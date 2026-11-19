@@ -20,12 +20,10 @@ import {
 export function IssueCommentComposer({
   environmentId,
   reference,
-  displayKey,
   blocked,
 }: {
   environmentId: EnvironmentId;
   reference: IssueRef;
-  displayKey: string;
   /** Why the viewer cannot comment here; null when they can. */
   blocked: string | null;
 }) {
@@ -33,7 +31,7 @@ export function IssueCommentComposer({
   const [open, setOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const comment = useAtomCommand(issueEnvironment.comment, { reportFailure: false });
-  const title = gt("Comment on {issue}", { issue: displayKey });
+  const title = gt("Add a comment");
 
   const submit = async (_action: "comment", text: string) => {
     const result = await comment({ environmentId, input: { ...reference, body: text } });

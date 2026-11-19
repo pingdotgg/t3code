@@ -699,7 +699,7 @@ export function IssuesPage() {
         {presence.present ? openPanelControls : null}
         <WorkItemListColumn
           area="issues"
-          title={gt("Issues", { $context: "page title, list of issues" })}
+          title={gt("Issues", { $context: "sidebar link to the list of issues" })}
           icon={<IssueGlyph.issue aria-hidden className="size-3.5 shrink-0 text-foreground" />}
           refreshLabel={gt("Refresh issues")}
           refreshing={list.isPending}

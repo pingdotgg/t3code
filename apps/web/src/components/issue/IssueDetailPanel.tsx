@@ -546,7 +546,7 @@ export function IssueDetailPanel({
         <span className="@max-sm/pr-header:sr-only">{currentState.label}</span>
       </Badge>
     );
-  const actionsLabel = gt("More issue actions");
+  const actionsLabel = gt("More actions");
   // Moving the issue lives in the actions menu, where a pull request's close and reopen do.
   const actionsMenu = (
     <Menu>
@@ -915,7 +915,6 @@ export function IssueDetailPanel({
           <IssueCommentComposer
             environmentId={environmentId}
             reference={reference}
-            displayKey={detail.displayKey}
             blocked={canComment ? null : (blocked ?? gt("You cannot comment here."))}
           />
         </div>
