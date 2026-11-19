@@ -14,6 +14,7 @@ import {
   ProviderTurnId,
   RunAttemptId,
   RunId,
+  ScheduledTaskId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -958,6 +959,22 @@ it.effect("a fresh send in a fork that has not run yet starts without the fork's
       createdBy: "user",
       creationSource: "web",
     });
+    const scheduled = yield* orchestrator
+      .dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("fresh-fork-scheduled"),
+        threadId: forkId,
+        messageId: MessageId.make("fresh-fork-scheduled"),
+        scheduledTaskId: ScheduledTaskId.make("fresh-fork-task"),
+        text: "Scheduled",
+        attachments: [],
+        freshContext: true,
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      })
+      .pipe(Effect.flip);
+    assert.include(String(scheduled.cause), "still being applied");
     yield* orchestrator.dispatch({
       type: "message.dispatch",
       commandId: CommandId.make("fresh-fork-send"),

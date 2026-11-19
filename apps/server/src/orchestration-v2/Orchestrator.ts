@@ -7959,20 +7959,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       return;
     }
-    const pendingForkTransfer = freshContext ? undefined : pendingForkTransferForThread(projection);
+    // A scheduled fresh run is a side conversation, so it must not drop the fork's context.
+    const supersedesForkTransfer = freshContext && command.scheduledTaskId === undefined;
+    const pendingForkTransfer = supersedesForkTransfer
+      ? undefined
+      : pendingForkTransferForThread(projection);
     const pendingMergeBackSourceThreadIds = new Set(
       pendingMergeBackTransfers.map((transfer) => transfer.sourceThreadId),
     );
-    if (!freshContext && pendingMergeBackSourceThreadIds.size > 1) {
+    if (pendingMergeBackSourceThreadIds.size > 1) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
         cause: `Thread ${command.threadId} has pending merge-back transfers from multiple forks.`,
       });
     }
-    const pendingMergeBackTransfer = freshContext
-      ? undefined
-      : latestContextTransfer(pendingMergeBackTransfers);
+    const pendingMergeBackTransfer = latestContextTransfer(pendingMergeBackTransfers);
     const supersededMergeBackTransfers = pendingMergeBackTransfers.filter(
       (transfer) => transfer.id !== pendingMergeBackTransfer?.id,
     );
@@ -7998,6 +8000,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           modelSelection,
           updatedAt: now,
         },
+      });
+    }
+    if (
+      freshContext &&
+      (pendingForkTransfer !== undefined || pendingMergeBackTransfer !== undefined)
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "A fresh session can't start while a fork or merge is still being applied.",
       });
     }
     const ordinal = nextRunOrdinal(projection);
@@ -8339,28 +8351,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: run,
       });
       yield* completeSourcePlan(now);
-      if (freshContext) {
-        // A fresh session drops inherited context, so pending transfers are superseded, not applied.
-        const forkTransfer = pendingForkTransferForThread(projection);
-        const supersededTransfers =
-          forkTransfer === undefined
-            ? pendingMergeBackTransfers
-            : [forkTransfer, ...pendingMergeBackTransfers];
-        for (const supersededTransfer of supersededTransfers) {
-          yield* emitEvent({
-            type: "context-transfer.updated",
-            threadId: command.threadId,
-            runId,
-            providerInstanceId: modelSelection.instanceId,
-            occurredAt: now,
-            payload: {
-              ...supersededTransfer,
-              status: "superseded",
-              error: "Superseded by a fresh session.",
-              updatedAt: now,
-            },
-          });
-        }
+      const supersededForkTransfer = supersedesForkTransfer
+        ? pendingForkTransferForThread(projection)
+        : undefined;
+      if (supersededForkTransfer !== undefined) {
+        // Superseded, or the next ordinary send would bring the parent's context back.
+        yield* emitEvent({
+          type: "context-transfer.updated",
+          threadId: command.threadId,
+          runId,
+          providerInstanceId: modelSelection.instanceId,
+          occurredAt: now,
+          payload: {
+            ...supersededForkTransfer,
+            status: "superseded",
+            error: "Superseded by a fresh session.",
+            updatedAt: now,
+          },
+        });
       }
       yield* emitEvent({
         type: "run-attempt.created",
