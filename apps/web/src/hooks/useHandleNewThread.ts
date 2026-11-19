@@ -43,7 +43,13 @@ import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentSummaries } from "../state/presentation";
 import { environmentServerConfigsAtom } from "../state/server";
-import { layoutDraftIds, selectLayoutOpenAnchor } from "../layout/layoutModel";
+import {
+  findLayoutTab,
+  layoutDraftIds,
+  selectFocusedTab,
+  selectLayoutOpenAnchor,
+  type LayoutTab,
+} from "../layout/layoutModel";
 import { runInNewLayoutTab, useLayoutStore } from "../layout/layoutStore";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
@@ -467,9 +473,14 @@ export function createNewThreadHandler(router: AnyRouter) {
     })();
   };
   return async (...args: Parameters<typeof openNewThread>) => {
+    const store = useLayoutStore.getState();
+    // A split or a launcher's pick asked for this spot, so only a plain open may land elsewhere.
+    const placedByCaller =
+      store.newTabRequest !== null && store.newTabRequest.request !== "active-pane";
+    const reused = args[1] === undefined && !placedByCaller ? focusEmptyDraftTab(args[0]) : null;
+    if (reused) return reused;
     const open = () => openNewThread(...args);
     // A new thread replaces the focused tab (cmd+N), kept or not; callers may place it elsewhere.
-    const store = useLayoutStore.getState();
     const anchor = store.newTabRequest === null ? selectLayoutOpenAnchor(store.layout) : null;
     const opened = await (anchor
       ? runInNewLayoutTab(open, { replaceTabId: anchor.tab.id })
@@ -477,6 +488,38 @@ export function createNewThreadHandler(router: AnyRouter) {
     if (opened) takeNoProjectsDraft(opened.draftId);
     return opened;
   };
+}
+
+/** A plain new thread in a project that already has an untouched draft tab goes to that tab. */
+function focusEmptyDraftTab(
+  projectRef: ScopedProjectRef,
+): { draftId: DraftId; threadId: ThreadId } | null {
+  const { getComposerDraft, getDraftSession } = useComposerDraftStore.getState();
+  const emptyDraftOf = (tab: LayoutTab) => {
+    if (tab.content.kind !== "chat" || tab.content.target.kind !== "draft") return null;
+    const { draftId } = tab.content.target;
+    const draft = getDraftSession(draftId);
+    if (
+      draft === null ||
+      draft.environmentId !== projectRef.environmentId ||
+      draft.projectId !== projectRef.projectId ||
+      draft.promotedTo != null ||
+      readThreadShell(scopeThreadRef(draft.environmentId, draft.threadId)) !== null ||
+      composerDraftHasUserContent(getComposerDraft(draftId))
+    ) {
+      return null;
+    }
+    return { draftId, threadId: draft.threadId };
+  };
+  const { layout, focusTab } = useLayoutStore.getState();
+  const focused = selectFocusedTab(layout);
+  const tab =
+    focused && emptyDraftOf(focused)
+      ? focused
+      : findLayoutTab(layout, (candidate) => emptyDraftOf(candidate) !== null)?.tab;
+  if (!tab) return null;
+  focusTab(tab.id);
+  return emptyDraftOf(tab);
 }
 
 /**

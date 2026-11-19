@@ -264,6 +264,8 @@ describe("chat route commands", () => {
     useComposerDraftStore
       .getState()
       .setProjectDraftThreadId(focusedProject, focusedDraft, { threadId: threadRef.threadId });
+    // An untouched draft tab would take the new thread itself.
+    useComposerDraftStore.getState().setPrompt(focusedDraft, "kept");
     const navigate = vi.fn<(request: { params: { draftId: DraftId } }) => Promise<void>>(
       async () => {},
     );

@@ -35,17 +35,25 @@ const testState = vi.hoisted(() => {
   const draftStore = {
     getComposerDraft: vi.fn((draftId: string) => ({ draftId })),
     getDraftSessionByLogicalProjectKey: vi.fn(() => storedDraft),
-    getDraftSession: vi.fn(() =>
-      openDraftRoute === null
-        ? null
-        : {
-            logicalProjectKey: "remote-project",
+    getDraftSession: vi.fn((draftId: string) =>
+      draftId === "draft-in-tab"
+        ? {
+            draftId,
+            environmentId: "environment-ssh",
+            projectId: "project-remote",
             promotedTo: null,
-            threadId: "thread-open",
-            createdAt: "2026-01-01T00:00:00.000Z",
-            runtimeMode: "full-access",
-            interactionMode: "default",
-          },
+            threadId: "thread-in-tab",
+          }
+        : openDraftRoute === null
+          ? null
+          : {
+              logicalProjectKey: "remote-project",
+              promotedTo: null,
+              threadId: "thread-open",
+              createdAt: "2026-01-01T00:00:00.000Z",
+              runtimeMode: "full-access",
+              interactionMode: "default",
+            },
     ),
     getDraftThread: vi.fn(() => null),
     applyStickyState: vi.fn(),
@@ -258,7 +266,19 @@ vi.mock("../uiStateStore", () => ({
 }));
 vi.mock("./useSettings", () => ({ getClientSettings: () => ({}) }));
 
+import { createLayoutState, selectFocusedTab, type LayoutTabContent } from "../layout/layoutModel";
+import { useLayoutStore } from "../layout/layoutStore";
 import { resolveDefaultProjectRef, useNewThreadHandler } from "./useHandleNewThread";
+
+function openLayoutTabs(contents: ReadonlyArray<LayoutTabContent>) {
+  const original = useLayoutStore.getState().layout;
+  // Earlier opens clear their placement request on a timer this test does not wait for.
+  useLayoutStore.setState({ layout: createLayoutState(), newTabRequest: null });
+  for (const content of contents) {
+    useLayoutStore.getState().openTab(content, { placement: "active-pane", position: "end" });
+  }
+  return { [Symbol.dispose]: () => useLayoutStore.setState({ layout: original }) };
+}
 
 describe.each([
   ["new", null],
@@ -386,6 +406,35 @@ describe("useNewThreadHandler", () => {
       "draft-open",
       "Read the playbook. ",
     );
+  });
+
+  it("focuses the project's empty draft tab instead of opening another", async () => {
+    testState.reset(null);
+    const draftTab: LayoutTabContent = {
+      kind: "chat",
+      target: { kind: "draft", draftId: "draft-in-tab" as never },
+    };
+    const otherTab: LayoutTabContent = {
+      kind: "chat",
+      target: { kind: "draft", draftId: "draft-unknown" as never },
+    };
+    using _layout = openLayoutTabs([draftTab, otherTab]);
+
+    const project = { environmentId: "environment-ssh", projectId: "project-remote" } as never;
+    expect(await useNewThreadHandler()(project)).toEqual({
+      draftId: "draft-in-tab",
+      threadId: "thread-in-tab",
+    });
+    expect(selectFocusedTab(useLayoutStore.getState().layout)?.content).toBe(draftTab);
+    expect(testState.router.navigate).not.toHaveBeenCalled();
+
+    const launcherPick = useLayoutStore.getState().requestNewTab({ replaceTabId: "launcher" });
+    expect((await useNewThreadHandler()(project))?.draftId).toBe("draft-delayed");
+    useLayoutStore.getState().clearNewTabRequest(launcherPick);
+
+    testState.giveUserText("draft-in-tab");
+    useLayoutStore.getState().openTab(otherTab);
+    expect((await useNewThreadHandler()(project))?.draftId).toBe("draft-delayed");
   });
 
   it("opens the draft without waiting on a project file from an offline machine", async () => {
