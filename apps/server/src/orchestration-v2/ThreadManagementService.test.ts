@@ -699,6 +699,7 @@ it.effect.each([
   { status: "completed" as const, followUp: "promoted-to-steer", settles: true },
   // A delegated-completion wake cancelled unstarted because the turn already took the result.
   { status: "completed" as const, followUp: "cancelled-delegated", settles: true },
+  { status: "completed" as const, followUp: "stopped-delegated", settles: false },
 ])("settleAfterRun handles $status with $followUp follow-up", ({ status, followUp, settles }) =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:thread-management:settle-after-run");
@@ -717,6 +718,7 @@ it.effect.each([
       ordinal: 2,
       status: "running" as OrchestrationV2Run["status"],
       userMessageId: MessageId.make("follow-up"),
+      startedAt: followUp === "stopped-delegated" ? "2026-01-01T00:00:00.000Z" : null,
     };
     const dispatched: Array<string> = [];
     // The notification starts after the completed run was observed, before settlement commits.
@@ -813,7 +815,7 @@ it.effect.each([
           ? "failed"
           : followUp === "held-notification"
             ? "queued"
-            : followUp === "promoted-to-steer" || followUp === "cancelled-delegated"
+            : followUp === "promoted-to-steer" || followUp.endsWith("ed-delegated")
               ? "cancelled"
               : "completed";
       yield* Queue.offer(events, {
