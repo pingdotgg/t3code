@@ -470,8 +470,6 @@ export function buildAntigravityAcpSpawnInput(input: {
   return {
     command: input.installation.executablePath,
     // The agy CLI has no harness sibling and serves ACP through its `acp` subcommand.
-    // OS Login users have no /etc/passwd entry, and the bundled runtime cannot load
-    // libnss_oslogin, so without the fallback flag getpwuid fails and it exits 255.
     args:
       input.installation.harnessPath === null
         ? [
@@ -483,7 +481,8 @@ export function buildAntigravityAcpSpawnInput(input: {
             "antigravity-acp",
           ]
         : input.profile.platform === "linux"
-          ? ["--uid=", "--loas_pwd_fallback_in_corp"]
+          ? // Without the fallback, the bundled runtime exits 255 for users with no passwd entry (OS Login).
+            ["--uid=", "--loas_pwd_fallback_in_corp"]
           : [],
     cwd: input.cwd,
     env: {
