@@ -131,6 +131,18 @@ function parseField(
   }
 }
 
+// The card has no other place for a multi-select's count limits.
+function selectionHint(field: Field | undefined): string {
+  if (field?.kind !== "multiChoice") return "";
+  const min = field.minItems > 1 ? field.minItems : undefined;
+  const max = field.maxItems < field.values.size ? field.maxItems : undefined;
+  if (min !== undefined && max !== undefined) {
+    return min === max ? ` (choose ${min})` : ` (choose ${min} to ${max})`;
+  }
+  if (max !== undefined) return ` (choose up to ${max})`;
+  return min === undefined ? "" : ` (choose at least ${min})`;
+}
+
 function optionValue(option: Option): string {
   return option.value ?? option.label;
 }
@@ -221,15 +233,24 @@ export function parseElicitationForm(
     }
   }
   const folded = new Set(companions.values());
+  const lone = parsedFields.length - folded.size === 1;
+  const intro = text(message);
   const questions: OrchestrationV2UserInputQuestion[] = [];
   for (const { id, property, options } of parsedFields) {
     if (folded.has(id)) continue;
-    const kind = fields.get(id)?.kind;
+    const field = fields.get(id);
+    const kind = field?.kind;
     const header = text(property.title) ?? `Question ${questions.length + 1}`;
+    const description = text(property.description);
+    // A lone field's description often only says how to answer; keep the form's message too.
+    const prompt =
+      lone && description !== undefined && intro !== undefined && intro !== description
+        ? `${intro} ${description}`
+        : (description ?? intro ?? header);
     questions.push({
       id,
       header,
-      question: text(property.description) ?? text(message) ?? header,
+      question: prompt + selectionHint(field),
       options,
       ...(kind === "text" ||
       kind === "number" ||
