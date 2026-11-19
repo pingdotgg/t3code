@@ -16,17 +16,21 @@ import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import { RELAY_HEALTH_RESPONSE_TYP, RELAY_MINT_RESPONSE_TYP } from "@t3tools/shared/relayJwt";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import * as CloudMintSigner from "../auth/CloudMintSigner.ts";
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as EnvironmentConnector from "./EnvironmentConnector.ts";
+import { RELAY_REQUEST_DEADLINE_MS } from "../http/Api.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
 
 const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
@@ -499,6 +503,43 @@ describe("EnvironmentConnector", () => {
       expect(result).toMatchObject({ status: "offline", offlineReason: "tunnel_released" });
     }).pipe(Effect.provide(layerConnectorTest(execute, { allocations })));
   });
+
+  it.effect("answers a hung host with a typed timeout inside the relay request deadline", () =>
+    Effect.gen(function* () {
+      const hostRequests = yield* Queue.unbounded<string>();
+      const execute = (request: HttpClientRequest.HttpClientRequest) =>
+        Queue.offer(hostRequests, request.url).pipe(Effect.andThen(Effect.never));
+
+      return yield* Effect.gen(function* () {
+        const connector = yield* EnvironmentConnector.EnvironmentConnector;
+        const status = yield* connector
+          .status({ userId: "user_123", environmentId: "env-connector-test" })
+          .pipe(Effect.forkChild);
+        const connect = yield* connector
+          .connect({
+            userId: "user_123",
+            environmentId: "env-connector-test",
+            clientProofKeyThumbprint: "client-proof-key-thumbprint",
+          })
+          .pipe(Effect.flip, Effect.forkChild);
+        yield* Queue.take(hostRequests);
+        yield* Queue.take(hostRequests);
+
+        // Leave the relay room for auth and lookups before its host call starts.
+        yield* TestClock.adjust(RELAY_REQUEST_DEADLINE_MS - 2_000);
+
+        const statusExit = status.pollUnsafe();
+        const connectExit = connect.pollUnsafe();
+        expect(statusExit && Exit.isSuccess(statusExit) && statusExit.value).toMatchObject({
+          status: "offline",
+          endpointFailure: "timeout",
+        });
+        expect(connectExit && Exit.isSuccess(connectExit) && connectExit.value._tag).toBe(
+          "EnvironmentMintRequestTimedOut",
+        );
+      }).pipe(Effect.provide(layerConnectorTest(execute)));
+    }),
+  );
 
   it.effect("rejects health responses with a mismatched top-level environment id", () => {
     const execute = (request: HttpClientRequest.HttpClientRequest) =>

@@ -132,7 +132,8 @@ export type EnvironmentConnectorError =
   | EnvironmentLinks.EnvironmentLinkLookupPersistenceError
   | ManagedEndpointAllocations.ManagedEndpointAllocationPersistenceError;
 
-const ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS = 10_000;
+// Leaves relay work room inside RELAY_REQUEST_DEADLINE_MS, so a hung host gets a typed timeout, not a 504.
+const ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS = 6_000;
 const ENVIRONMENT_HEALTH_CLOCK_SKEW_MILLIS = 60 * 1_000;
 
 export class EnvironmentConnector extends Context.Service<
