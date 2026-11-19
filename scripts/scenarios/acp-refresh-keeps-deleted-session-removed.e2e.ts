@@ -119,6 +119,7 @@ test(
       const confirm = screen.getByRole("alertdialog");
       await confirm.getByRole("button", "Confirm", { exact: true }).tap();
       await entry.waitFor({ state: "hidden" });
+      expect(await loading.isVisible(), "The refresh is still pending after deletion").toBe(true);
 
       releaseSnapshot.resolve();
       await loading.waitFor({ state: "hidden" });
