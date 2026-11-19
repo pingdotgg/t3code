@@ -20,7 +20,8 @@ function stripDeclarations(rule: CSSRule): boolean {
   for (let item = rule.style.length - 1; item >= 0; item--) {
     const property = rule.style.item(item);
     const value = rule.style.getPropertyValue(property);
-    if (value === "") pending.push(property);
+    // An empty custom property (`--on: ;`) is a real value, not a pending shorthand.
+    if (value === "" && !property.startsWith("--")) pending.push(property);
     else if (themeCssValueFetches(value)) rule.style.removeProperty(property);
   }
   // A shorthand with var() leaves each longhand reading "". cssText shows the shorthand whole,
