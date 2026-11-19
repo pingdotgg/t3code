@@ -32,6 +32,7 @@ import {
   makeAntigravityStdoutTransform,
   parseAntigravityAuthorizationUrl,
   prepareAntigravityProfile,
+  isNoExecMount,
   resolveAntigravityInstanceDirectories,
 } from "./antigravityAuthSupport.ts";
 
@@ -254,6 +255,31 @@ describe("Antigravity process environment", () => {
       expect(socket.length).toBeLessThan(104);
     }).pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodePath.layerPosix))),
   );
+
+  it.effect("keeps the runtime beside the state directory when /tmp is noexec", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("antigravity");
+      const shared = yield* resolveAntigravityInstanceDirectories("/userdata", instanceId);
+      const noExec = yield* resolveAntigravityInstanceDirectories("/userdata", instanceId, {
+        tmpIsNoExec: true,
+      });
+      expect(noExec.runtimeTemp).toBe("/userdata/antigravity-tmp/ac0a3dfd6ddd");
+      expect(noExec.legacyRuntimeTemps).toContain(shared.runtimeTemp);
+      expect(shared.legacyRuntimeTemps).toContain(noExec.runtimeTemp);
+    }).pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodePath.layerPosix))),
+  );
+
+  it("reads whether /tmp is noexec from the mount table", () => {
+    const root = "/dev/sda1 / ext4 rw,relatime 0 0";
+    const tmp = (options: string) => `tmpfs /tmp tmpfs ${options} 0 0`;
+    expect(isNoExecMount([root, tmp("rw,nosuid,nodev")].join("\n"), "/tmp")).toBe(false);
+    expect(isNoExecMount([root, tmp("rw,nosuid,nodev,noexec")].join("\n"), "/tmp")).toBe(true);
+    expect(isNoExecMount("/dev/sda1 / ext4 rw,noexec 0 0", "/tmp")).toBe(true);
+    expect(isNoExecMount([tmp("rw,noexec"), root].join("\n"), "/tmp")).toBe(true);
+    expect(isNoExecMount([tmp("rw,noexec"), tmp("rw")].join("\n"), "/tmp")).toBe(false);
+    expect(isNoExecMount("tmpfs /tmpfoo tmpfs rw,noexec 0 0", "/tmp")).toBe(false);
+    expect(isNoExecMount("", "/tmp")).toBe(false);
+  });
 });
 
 describe("Antigravity authorization URL", () => {

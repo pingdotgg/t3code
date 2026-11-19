@@ -179,18 +179,39 @@ export interface AntigravityInstanceDirectories {
   readonly profile: string;
   /**
    * Becomes the agent's TMPDIR, so off Windows it sits in /tmp: tools that put a Unix socket under
-   * it need room in the 104-byte sun_path. On Windows it stays beside the profile, because
-   * 120-character archive members under the profile's longer name would exceed MAX_PATH.
+   * it need room in the 104-byte sun_path. It stays beside the state directory on Windows, where
+   * the profile's longer name would push archive members past MAX_PATH, and when /tmp is noexec,
+   * where the PyInstaller bundle could not load the libraries it unpacks.
    */
   readonly runtimeTemp: string;
-  /** Earlier runtime temp roots, swept on start to reclaim what a force-killed run left there. */
+  /** Other runtime temp roots, swept on start to reclaim what a force-killed run left there. */
   readonly legacyRuntimeTemps: ReadonlyArray<string>;
+}
+
+/** Whether `target` (/tmp or a directory directly under /) is on a noexec mount, per /proc/self/mounts. */
+export function isNoExecMount(mounts: string, target: string): boolean {
+  let mountPoint = "";
+  let noExec = false;
+  for (const line of mounts.split("\n")) {
+    const [, point, , options] = line.split(" ");
+    if (point === undefined || options === undefined) continue;
+    // Later lines are mounted over earlier ones at the same point.
+    if ((point === target || point === "/") && point.length >= mountPoint.length) {
+      mountPoint = point;
+      noExec = options.split(",").includes("noexec");
+    }
+  }
+  return noExec;
 }
 
 /** Hashes the instance ID so case-only differences stay separate on case-insensitive filesystems. */
 export const resolveAntigravityInstanceDirectories = Effect.fn(
   "resolveAntigravityInstanceDirectories",
-)(function* (stateDir: string, instanceId: ProviderInstanceId) {
+)(function* (
+  stateDir: string,
+  instanceId: ProviderInstanceId,
+  options?: { readonly tmpIsNoExec?: boolean },
+) {
   const digest = yield* Digest.Digest;
   const path = yield* Path.Path;
   const hash = (value: string) =>
@@ -208,10 +229,14 @@ export const resolveAntigravityInstanceDirectories = Effect.fn(
   }
   // /tmp is shared by every T3 home, so the name also covers the state directory.
   const sharedKey = yield* hash(`${stateDir}\0${instanceId}`);
+  const tmpRuntimeTemp = path.join("/tmp", `t3-agy-${sharedKey.slice(0, 12)}`);
+  const [runtimeTemp, otherRoot] = options?.tmpIsNoExec
+    ? [stateRuntimeTemp, tmpRuntimeTemp]
+    : [tmpRuntimeTemp, stateRuntimeTemp];
   return {
     profile,
-    runtimeTemp: path.join("/tmp", `t3-agy-${sharedKey.slice(0, 12)}`),
-    legacyRuntimeTemps: [stateRuntimeTemp, legacyProfileTemp],
+    runtimeTemp,
+    legacyRuntimeTemps: [otherRoot, legacyProfileTemp],
   } satisfies AntigravityInstanceDirectories;
 });
 

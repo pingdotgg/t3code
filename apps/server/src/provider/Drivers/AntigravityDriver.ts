@@ -40,6 +40,7 @@ import {
   buildAntigravityAcpSpawnInput,
   isAntigravitySignInRequiredError,
   prepareAntigravityProfile,
+  isNoExecMount,
   resolveAntigravityInstanceDirectories,
   type AntigravityAuthConfig,
 } from "../antigravityAuthSupport.ts";
@@ -152,14 +153,22 @@ export const AntigravityDriver: ProviderDriver<
     };
     const authConfigIssue = antigravityAuthConfigIssue(auth);
     const processEnvironment = yield* mergeProviderInstanceEnvironment(environment);
+    const platform = yield* HostProcess.Platform;
     const userHome = resolveAntigravityUserHome(
-      yield* HostProcess.Platform,
+      platform,
       processEnvironment,
       yield* HostProcess.HomeDirectory,
     );
+    const tmpIsNoExec =
+      platform === "linux" &&
+      isNoExecMount(
+        yield* fileSystem.readFileString("/proc/self/mounts").pipe(Effect.orElseSucceed(() => "")),
+        "/tmp",
+      );
     const directories = yield* resolveAntigravityInstanceDirectories(
       host.paths.stateDir,
       instanceId,
+      { tmpIsNoExec },
     ).pipe(
       Effect.provideService(Digest.Digest, digest),
       Effect.provideService(Path.Path, path),
