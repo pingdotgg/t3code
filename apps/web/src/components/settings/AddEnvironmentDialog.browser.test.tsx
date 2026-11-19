@@ -9,6 +9,9 @@ import { render, stubGlobal } from "../../../test/render";
 import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
 
 const mocks = vi.hoisted(() => ({
+  connectPairing: vi.fn<() => Promise<AtomCommandResult<void, Error>>>(async () =>
+    AsyncResult.success(undefined),
+  ),
   connectSshEnvironment: vi.fn<() => Promise<AtomCommandResult<void, Error>>>(async () =>
     AsyncResult.success(undefined),
   ),
@@ -21,6 +24,7 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
 }));
 vi.mock(import("~/connection/onboarding"), async (original) => ({
   ...(await original()),
+  connectPairing: mocks.connectPairing as never,
   connectSshEnvironment: mocks.connectSshEnvironment as never,
 }));
 vi.mock(import("~/state/query"), async (original) => ({
@@ -61,6 +65,7 @@ function Owner() {
 }
 
 function setup() {
+  mocks.connectPairing.mockClear();
   mocks.connectSshEnvironment.mockClear();
   return stubGlobal("desktopBridge", {});
 }
@@ -153,5 +158,33 @@ describe("AddEnvironmentDialog", () => {
       .element(page.getByRole("dialog").getByRole("button", { name: "Add environment" }))
       .toBeEnabled();
     await expect.element(page.getByText(/dismissed SSH attempt/)).not.toBeInTheDocument();
+  });
+
+  it("keeps a reopened dialog open when an earlier pairing finishes", async () => {
+    using _bridge = setup();
+    await using _screen = await render(<Owner />);
+
+    let finishPairing!: (result: AtomCommandResult<void, Error>) => void;
+    mocks.connectPairing.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishPairing = resolve;
+        }),
+    );
+    await userEvent.click(page.getByRole("button", { name: "Add environment" }));
+    await userEvent.fill(page.getByPlaceholder("backend.example.com"), "devbox.example.com");
+    await userEvent.fill(page.getByPlaceholder("PAIRCODE"), "PAIRCODE");
+    await userEvent.click(
+      page.getByRole("dialog").getByRole("button", { name: "Add environment" }),
+    );
+    expect(mocks.connectPairing).toHaveBeenCalledOnce();
+    await userEvent.keyboard("{Escape}");
+    await expectDefaultModeAfterReopen();
+
+    finishPairing(AsyncResult.success(undefined));
+    await expect
+      .element(page.getByRole("dialog").getByRole("button", { name: "Add environment" }))
+      .toBeEnabled();
+    await expect.element(page.getByRole("dialog")).toBeInTheDocument();
   });
 });
