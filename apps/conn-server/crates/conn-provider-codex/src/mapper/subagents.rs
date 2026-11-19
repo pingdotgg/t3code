@@ -169,6 +169,7 @@ fn child_app_thread(
             ("id", json!(child_thread_id)),
             ("title", json!(title)),
             ("titleRegeneration", Value::Null),
+            ("titleRenamed", json!(false)),
             ("linkedPullRequest", Value::Null),
             ("pullRequests", json!([])),
             ("providerInstanceId", instance_id.clone()),

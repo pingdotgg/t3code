@@ -1106,6 +1106,7 @@ fn child_app_thread(sub: &Sub, task: &Value, ordinal: u32, now: &str) -> Option<
         ("id", json!(sub.child_thread_id)),
         ("title", json!(title)),
         ("titleRegeneration", Value::Null),
+        ("titleRenamed", json!(false)),
         ("linkedPullRequest", Value::Null),
         ("pullRequests", json!([])),
         ("providerInstanceId", json!(sub.parent.instance_id)),

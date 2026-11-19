@@ -623,7 +623,14 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
         ))?;
     }
     let seed = match c.title_seed.as_deref().map(str::trim) {
-        Some(seed) if !seed.is_empty() && tx.count(&c.thread_id, "messages")? == 1 => Some(seed),
+        // A rename before the first message keeps that name (#38683).
+        Some(seed)
+            if !seed.is_empty()
+                && thread["titleRenamed"] != json!(true)
+                && tx.count(&c.thread_id, "messages")? == 1 =>
+        {
+            Some(seed)
+        }
         _ => None,
     };
     let mut effects = vec![];
@@ -1820,6 +1827,7 @@ fn thread_metadata_update(tx: &mut Tx<'_>, command: Value) -> Outcome {
             }
             if let Some(title) = c.title.filter(|title| !title.trim().is_empty()) {
                 t["title"] = json!(title.trim());
+                t["titleRenamed"] = json!(true);
             }
             if regenerate {
                 t["titleRegeneration"] = json!({"requestId": command_id, "startedAt": now});
@@ -2753,6 +2761,7 @@ fn thread_title_regeneration_complete(tx: &mut Tx<'_>, command: Value) -> Outcom
         }
         if let Some(title) = title.as_str().map(str::trim).filter(|s| !s.is_empty()) {
             t["title"] = json!(title);
+            t["titleRenamed"] = json!(false);
         }
         if outcome.is_object() {
             let mut last = outcome;

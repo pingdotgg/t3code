@@ -193,6 +193,8 @@ pub(crate) fn thread_fork(tx: &mut Tx<'_>, command: Value) -> Outcome {
         ("id", json!(target_id)),
         ("title", json!(title)),
         ("titleRegeneration", Value::Null),
+        // The source's title job and rename stay with the source thread (#38683).
+        ("titleRenamed", json!(false)),
         ("activeProviderThreadId", Value::Null),
         ("lineage", new_lineage),
         (
