@@ -10278,9 +10278,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const launch =
             toolUseId === undefined
               ? undefined
-              : activeContext === null
-                ? subagentToolCalls.get(toolUseId)
-                : findToolCall(activeContext, toolUseId);
+              : (activeContext?.toolCalls.get(toolUseId) ?? subagentToolCalls.get(toolUseId));
           const command =
             launch?.classification.itemType === "command_execution" ||
             launch?.toolName === "Monitor"
