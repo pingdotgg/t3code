@@ -4022,16 +4022,6 @@
     }
   ],
   "e58a1d884fa1d8f2": "Thread details",
-  "43c5fbd02c6f330a": "Show less",
-  "de45b075b016cb14": [
-    "Show ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " more"
-  ],
   "02d9667ff2c8e0b8": "Issue {key}: {title}",
   "4276743ee60a3c62": "{count, plural, one {{count} comment} other {{count} comments}}",
   "42f634397f3960aa": "Show in thread details",
@@ -4071,6 +4061,16 @@
   ],
   "159ddd0d146a0f22": "Watching: the agent wakes when checks finish, someone comments, or the branch conflicts. Click to stop.",
   "1cbc8b5db51b4c77": "Merge",
+  "43c5fbd02c6f330a": "Show less",
+  "de45b075b016cb14": [
+    "Show ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " more"
+  ],
   "a3d040c4ef4fc6e9": "Ahead of pace",
   "b16fdf56b16d99c9": "On pace",
   "90f977e97ae8b6c6": "Under pace",
@@ -4085,7 +4085,6 @@
   "66be4fb43249bbd2": "{used} of {max} tokens",
   "ee3ae58c8b38a425": "{left}% left",
   "ebb26f93fb83a71b": "{label}: {left}% left",
-  "1b16346722b65812": "{timeLeft}% of the window left",
   "728c6cc1431e76c8": "Resets in {duration} · {time}",
   "e16b0b9b490c8bc7": "{label}: {value}",
   "ba67d0a9ff5dabf0": "Clipboard API is unavailable while copying admin request.",
@@ -8647,7 +8646,7 @@
   "81c9796bf61b306a": "Could not forget the link",
   "33386c89f3b07fea": "Expired. Link it again with a new pairing code.",
   "13d91e967cd9065c": "Not answering right now.",
-  "922c1c3393a00ced": "{days, plural, one {Expires in {days} day if it stays unused.} other {Expires in {days} days if it stays unused.}}",
+  "42e613ac8acac777": "{days, plural, one {Expires in {days} day. Link it again to renew.} other {Expires in {days} days. Link it again to renew.}}",
   "8971602c42718d72": "Reachable",
   "57f38a04b1e5c033": "Forgetting…",
   "20ffe8337f8f30ba": "Forget",
@@ -11869,6 +11868,7 @@
   "0bd938825ffcf992": "+{percent}% of pool",
   "09c0e00d7fb55402": "Using reset credit…",
   "4df3ff1be768a7ab": "{name}: {remaining}% left",
+  "1b16346722b65812": "{timeLeft}% of the window left",
   "7aaaff1c6484f25c": "Segment",
   "8bcab2ef61de6518": "$0 cap",
   "a16b48709357a5a7": "Manage usage",

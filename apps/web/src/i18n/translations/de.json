@@ -4024,15 +4024,6 @@
     }
   ],
   "e58a1d884fa1d8f2": "Thread-Details",
-  "43c5fbd02c6f330a": "Weniger anzeigen",
-  "de45b075b016cb14": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " weitere anzeigen"
-  ],
   "02d9667ff2c8e0b8": "Issue {key}: {title}",
   "4276743ee60a3c62": "{count, plural, one {{count} Kommentar} other {{count} Kommentare}}",
   "42f634397f3960aa": "In Thread-Details anzeigen",
@@ -4072,6 +4063,15 @@
   ],
   "159ddd0d146a0f22": "Beobachtet: Der Agent wird geweckt, wenn Checks fertig sind, jemand kommentiert oder der Branch Konflikte hat. Klicke zum Beenden.",
   "1cbc8b5db51b4c77": "Mergen",
+  "43c5fbd02c6f330a": "Weniger anzeigen",
+  "de45b075b016cb14": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " weitere anzeigen"
+  ],
   "a3d040c4ef4fc6e9": "Über dem Tempo",
   "b16fdf56b16d99c9": "Im Tempo",
   "90f977e97ae8b6c6": "Unter dem Tempo",
@@ -4086,7 +4086,6 @@
   "66be4fb43249bbd2": "{used} von {max} Tokens",
   "ee3ae58c8b38a425": "{left} % übrig",
   "ebb26f93fb83a71b": "{label}: {left} % übrig",
-  "1b16346722b65812": "{timeLeft} % des Zeitfensters übrig",
   "728c6cc1431e76c8": "Wird in {duration} zurückgesetzt · {time}",
   "e16b0b9b490c8bc7": "{label}: {value}",
   "ba67d0a9ff5dabf0": "Die Zwischenablage-API ist beim Kopieren der Admin-Anfrage nicht verfügbar.",
@@ -8639,7 +8638,7 @@
   "81c9796bf61b306a": "Verknüpfung konnte nicht vergessen werden",
   "33386c89f3b07fea": "Abgelaufen. Verknüpfe es erneut mit einem neuen Kopplungscode.",
   "13d91e967cd9065c": "Antwortet gerade nicht.",
-  "922c1c3393a00ced": "{days, plural, one {Läuft in {days} Tag ab, wenn es ungenutzt bleibt.} other {Läuft in {days} Tagen ab, wenn es ungenutzt bleibt.}}",
+  "42e613ac8acac777": "{days, plural, one {Läuft in {days} Tag ab. Verknüpfe es erneut, um es zu verlängern.} other {Läuft in {days} Tagen ab. Verknüpfe es erneut, um es zu verlängern.}}",
   "8971602c42718d72": "Erreichbar",
   "57f38a04b1e5c033": "Wird vergessen…",
   "20ffe8337f8f30ba": "Vergessen",
@@ -11861,6 +11860,7 @@
   "0bd938825ffcf992": "+{percent} % des Kontingents",
   "09c0e00d7fb55402": "Reset-Guthaben wird verwendet…",
   "4df3ff1be768a7ab": "{name}: {remaining} % übrig",
+  "1b16346722b65812": "{timeLeft} % des Zeitfensters übrig",
   "7aaaff1c6484f25c": "Segment",
   "8bcab2ef61de6518": "0-$-Limit",
   "a16b48709357a5a7": "Nutzung verwalten",

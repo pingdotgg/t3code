@@ -4021,15 +4021,6 @@
     }
   ],
   "e58a1d884fa1d8f2": "Detalhes da thread",
-  "43c5fbd02c6f330a": "Mostrar menos",
-  "de45b075b016cb14": [
-    "Mostrar mais ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
   "02d9667ff2c8e0b8": "Issue {key}: {title}",
   "4276743ee60a3c62": "{count, plural, one {{count} comentário} other {{count} comentários}}",
   "42f634397f3960aa": "Mostrar nos detalhes da thread",
@@ -4069,6 +4060,15 @@
   ],
   "159ddd0d146a0f22": "Acompanhando: o agente é ativado quando as verificações terminam, alguém comenta ou o branch entra em conflito. Clique para parar.",
   "1cbc8b5db51b4c77": "Mesclar",
+  "43c5fbd02c6f330a": "Mostrar menos",
+  "de45b075b016cb14": [
+    "Mostrar mais ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "a3d040c4ef4fc6e9": "Acima do ritmo",
   "b16fdf56b16d99c9": "No ritmo",
   "90f977e97ae8b6c6": "Abaixo do ritmo",
@@ -4083,7 +4083,6 @@
   "66be4fb43249bbd2": "{used} de {max} tokens",
   "ee3ae58c8b38a425": "{left}% restante",
   "ebb26f93fb83a71b": "{label}: {left}% restante",
-  "1b16346722b65812": "{timeLeft}% da janela restante",
   "728c6cc1431e76c8": "Renova em {duration} · {time}",
   "e16b0b9b490c8bc7": "{label}: {value}",
   "ba67d0a9ff5dabf0": "A API da área de transferência não está disponível ao copiar o pedido para o administrador.",
@@ -8638,7 +8637,7 @@
   "81c9796bf61b306a": "Não foi possível esquecer o vínculo",
   "33386c89f3b07fea": "Expirado. Vincule novamente com um novo código de pareamento.",
   "13d91e967cd9065c": "Sem resposta no momento.",
-  "922c1c3393a00ced": "{days, plural, one {Expira em {days} dia se não for usado.} other {Expira em {days} dias se não for usado.}}",
+  "42e613ac8acac777": "{days, plural, one {Expira em {days} dia. Vincule novamente para renovar.} other {Expira em {days} dias. Vincule novamente para renovar.}}",
   "8971602c42718d72": "Acessível",
   "57f38a04b1e5c033": "Esquecendo…",
   "20ffe8337f8f30ba": "Esquecer",
@@ -11858,6 +11857,7 @@
   "0bd938825ffcf992": "+{percent}% do total",
   "09c0e00d7fb55402": "Usando crédito de redefinição…",
   "4df3ff1be768a7ab": "{name}: {remaining}% restante",
+  "1b16346722b65812": "{timeLeft}% da janela restante",
   "7aaaff1c6484f25c": "Segmento",
   "8bcab2ef61de6518": "Limite de $0",
   "a16b48709357a5a7": "Gerenciar uso",

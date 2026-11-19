@@ -4020,16 +4020,6 @@
     }
   ],
   "e58a1d884fa1d8f2": "Detalles del hilo",
-  "43c5fbd02c6f330a": "Mostrar menos",
-  "de45b075b016cb14": [
-    "Mostrar ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " más"
-  ],
   "02d9667ff2c8e0b8": "Issue {key}: {title}",
   "4276743ee60a3c62": "{count, plural, one {{count} comentario} other {{count} comentarios}}",
   "42f634397f3960aa": "Mostrar en los detalles del hilo",
@@ -4069,6 +4059,16 @@
   ],
   "159ddd0d146a0f22": "Siguiendo: el agente se activa cuando terminan las comprobaciones, alguien comenta o la rama tiene conflictos. Haz clic para dejar de seguir.",
   "1cbc8b5db51b4c77": "Fusionar",
+  "43c5fbd02c6f330a": "Mostrar menos",
+  "de45b075b016cb14": [
+    "Mostrar ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " más"
+  ],
   "a3d040c4ef4fc6e9": "Por encima del ritmo",
   "b16fdf56b16d99c9": "Al ritmo",
   "90f977e97ae8b6c6": "Por debajo del ritmo",
@@ -4083,7 +4083,6 @@
   "66be4fb43249bbd2": "{used} de {max} tokens",
   "ee3ae58c8b38a425": "{left} % restante",
   "ebb26f93fb83a71b": "{label}: {left} % restante",
-  "1b16346722b65812": "Queda un {timeLeft}% de la ventana",
   "728c6cc1431e76c8": "Se restablece en {duration} · {time}",
   "e16b0b9b490c8bc7": "{label}: {value}",
   "ba67d0a9ff5dabf0": "La API del portapapeles no está disponible al copiar la solicitud de administrador.",
@@ -8637,7 +8636,7 @@
   "81c9796bf61b306a": "No se pudo olvidar el vínculo",
   "33386c89f3b07fea": "Caducado. Vuelve a vincularlo con un código de emparejamiento nuevo.",
   "13d91e967cd9065c": "No responde en este momento.",
-  "922c1c3393a00ced": "{days, plural, one {Caduca en {days} día si no se usa.} other {Caduca en {days} días si no se usa.}}",
+  "42e613ac8acac777": "{days, plural, one {Caduca en {days} día. Vuelve a vincularlo para renovarlo.} other {Caduca en {days} días. Vuelve a vincularlo para renovarlo.}}",
   "8971602c42718d72": "Accesible",
   "57f38a04b1e5c033": "Olvidando…",
   "20ffe8337f8f30ba": "Olvidar",
@@ -11854,6 +11853,7 @@
   "0bd938825ffcf992": "+{percent}% del total",
   "09c0e00d7fb55402": "Usando el crédito de restablecimiento…",
   "4df3ff1be768a7ab": "{name}: queda un {remaining}%",
+  "1b16346722b65812": "Queda un {timeLeft}% de la ventana",
   "7aaaff1c6484f25c": "Segmento",
   "8bcab2ef61de6518": "Límite de 0 $",
   "a16b48709357a5a7": "Gestionar uso",
