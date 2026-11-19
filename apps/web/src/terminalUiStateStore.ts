@@ -658,8 +658,8 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
                 suppression.suppressed,
               )
             : state.suppressedTerminalIdsByThreadKey;
-          // An observed id that is not local was closed here or saved by an older build, so it
-          // must not make reconcile close the fresh terminal that reuses it.
+          // A listing from before this client placed the id is about an earlier terminal, so it
+          // must not make reconcile close the new one.
           const nextServerObservationsByThreadKey =
             suppression &&
             !suppression.suppressed &&
