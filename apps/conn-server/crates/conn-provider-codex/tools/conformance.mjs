@@ -46,6 +46,7 @@ const SCENARIOS = {
   simple: { fixture: "simple", covers: "initialize, fresh thread and turn" },
   resume: { fixture: "provider_thread_resume", covers: "a resumed thread on a new process" },
   mcp: { fixture: "simple", mcp: true, covers: "a turn with the t3-code MCP server" },
+  device: { fixture: "simple", mcp: true, device: true, covers: "a turn whose MCP session has the device tools" },
   approval: { fixture: "tool_call_read_only_on_request", covers: "an approval and its answer" },
   login: {
     fixture: "simple",
@@ -650,6 +651,7 @@ const mcpLayer = (scenario: any) =>
         endpoint: "http://127.0.0.1:3773/mcp",
         authorizationHeader: "Bearer conformance-token",
         browserToolsAvailable: true,
+        ...(scenario.device ? { capabilities: new Set(["device"]) } : {}),
       } as any),
     clear: () => Effect.void,
     recordHtmlRender: () => Effect.void,

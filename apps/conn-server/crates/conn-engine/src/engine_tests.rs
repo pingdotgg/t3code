@@ -2942,6 +2942,7 @@ impl crate::EngineHost for RecordingHost {
         self.sessions.lock().unwrap().push(session.clone());
         Some(crate::AgentTools {
             servers: vec![conn_provider::McpServer {
+                device_tools: false,
                 name: "t3-code".into(),
                 url: "http://127.0.0.1:1/mcp".into(),
                 headers: vec![(

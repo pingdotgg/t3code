@@ -158,10 +158,12 @@ async fn open(
     provider: &ClaudeProvider,
     run: &Run,
     mcp: bool,
+    device: bool,
 ) -> (Box<dyn Session>, mpsc::Receiver<ProviderEvent>) {
     // The MCP servers go in at open, as the engine passes them.
     let mcp_servers = if mcp {
         vec![McpServer {
+            device_tools: device,
             name: "t3-code".into(),
             url: MCP_URL.into(),
             headers: vec![("Authorization".into(), MCP_AUTHORIZATION.into())],
@@ -226,6 +228,7 @@ async fn scenario(root: &std::path::Path, run: &Run, model: &str, spec: &Value) 
             conn_mcp::AGENT_INSTRUCTIONS,
             conn_mcp::CLAUDE_INSTRUCTIONS
         )),
+        device_instructions: Some(conn_mcp::DEVICE_INSTRUCTIONS.to_owned()),
         ..ClaudeConfig::default()
     };
     let config = base.with_instance(Some(&entry));
@@ -245,7 +248,8 @@ async fn scenario(root: &std::path::Path, run: &Run, model: &str, spec: &Value) 
         instance,
     };
     let mcp = spec["mcp"] == json!(true);
-    let (mut session, mut events) = open(&provider, &run, mcp).await;
+    let device = spec["device"] == json!(true);
+    let (mut session, mut events) = open(&provider, &run, mcp, device).await;
     let mut thread = session
         .ensure_thread(EnsureThreadInput {
             thread_id: THREAD.into(),
@@ -262,7 +266,7 @@ async fn scenario(root: &std::path::Path, run: &Run, model: &str, spec: &Value) 
     'steps: for step in spec["steps"].as_array().into_iter().flatten() {
         if step["reopen"] == json!(true) {
             session.close().await;
-            let (s, e) = open(&provider, &run, mcp).await;
+            let (s, e) = open(&provider, &run, mcp, device).await;
             session = s;
             events = e;
             thread = session

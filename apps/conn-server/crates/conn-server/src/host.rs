@@ -96,12 +96,12 @@ impl EngineHost for Host {
     }
 
     fn agent_tools(&self, session: AgentSession) -> Option<AgentTools> {
-        let entry = self
-            .mcp
-            .get()?
-            .issue_thread_credential(self.credential_request(session));
+        let request = self.credential_request(session);
+        let device_tools = request.device;
+        let entry = self.mcp.get()?.issue_thread_credential(request);
         Some(AgentTools {
             servers: vec![McpServer {
+                device_tools,
                 name: conn_mcp::SERVER_NAME.to_owned(),
                 url: entry.url,
                 headers: vec![("Authorization".to_owned(), entry.authorization)],

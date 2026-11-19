@@ -739,6 +739,7 @@ async fn live_mcp_server_tool_call() {
     let (session, _helper, mut events) = concrete(provider().config().clone());
     session
         .set_mcp_servers(vec![McpServer {
+            device_tools: false,
             name: "probe".into(),
             url: server.url.clone(),
             headers: vec![("Authorization".into(), "Bearer live-test".into())],

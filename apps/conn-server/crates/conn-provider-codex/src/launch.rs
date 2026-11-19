@@ -723,6 +723,7 @@ mod tests {
     #[test]
     fn t3_code_splits_its_wait_tool_onto_a_direct_server() {
         let server = McpServer {
+            device_tools: false,
             name: "t3-code".into(),
             url: "http://127.0.0.1:3773/mcp".into(),
             headers: vec![("Authorization".into(), "Bearer abc".into())],

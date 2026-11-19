@@ -76,6 +76,7 @@ async fn main() {
         let mcp: Vec<conn_provider::McpServer> = scenario["mcp"]["endpoint"]
             .as_str()
             .map(|endpoint| conn_provider::McpServer {
+                device_tools: false,
                 name: "t3-code".into(),
                 url: endpoint.to_owned(),
                 headers: vec![(

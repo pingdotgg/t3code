@@ -140,6 +140,22 @@ const scopeFor = (caller) => ({
   linkedEnvironments: caller !== "links-off",
 });
 
+/** `$ref: "#/$defs/…"` replaced by its definition; an unknown or too deep reference fails. */
+function inlineRefs(schema) {
+  const defs = schema.$defs ?? {};
+  const walk = (node, depth) => {
+    if (Array.isArray(node)) return node.map((n) => walk(n, depth));
+    if (!isObject(node)) return node;
+    if (typeof node.$ref === "string") {
+      const name = node.$ref.replace(/^#\/\$defs\//, "");
+      if (depth > 32 || defs[name] === undefined) throw new Error(`result schema: cannot inline ${node.$ref}`);
+      return walk(defs[name], depth + 1);
+    }
+    return Object.fromEntries(Object.entries(node).filter(([k]) => k !== "$defs").map(([k, v]) => [k, walk(v, depth)]));
+  };
+  return walk(schema, 0);
+}
+const resultSchemas = [];
 const tools = await Effect.runPromise(
   Effect.gen(function* () {
     const mcp = yield* McpServer.McpServer;
@@ -155,8 +171,14 @@ const tools = await Effect.runPromise(
           if (shown === false) hiddenFor.push(caller);
         }
       }
+      const plain = JSON.parse(JSON.stringify(tool));
+      // A union output schema is left out of `tools/list`; a linked environment's answer is
+      // still decoded with it (`result-schemas.jsonl`).
+      if (plain.outputSchema !== undefined && listed(plain).outputSchema === undefined) {
+        resultSchemas.push({ name: plain.name, schema: inlineRefs(plain.outputSchema) });
+      }
       result.push({
-        ...listed(JSON.parse(JSON.stringify(tool))),
+        ...listed(plain),
         ...(hiddenFor.length === 0 ? {} : { "x-conn-hiddenFor": hiddenFor }),
       });
     }
@@ -208,8 +230,8 @@ const instructionsOut = NodePath.join(here, "..", "src", "instructions.txt");
 // Claude also gets the adapter's own texts after T3_CODE_ORCHESTRATION_INSTRUCTIONS, which it
 // does not export: `T3_CODE_ORCHESTRATION_INSTRUCTIONS + CLAUDE_A + CLAUDE_B + (deviceInstructions
 // ? … : "")` in makeClaudeQueryOptions. Read the constant names from that expression, in order,
-// so a new or moved text fails `--check` instead of drifting. The device text is left out: this
-// server has no device tools, and T3 adds it only with them.
+// so a new or moved text fails `--check` instead of drifting. The device text follows only when
+// the session has the device tools (`src/device-instructions.txt`, also the SubagentStart text).
 const adapter = NodeFS.readFileSync(
   NodePath.join(server, "src/orchestration-v2/Adapters/ClaudeAdapterV2.ts"),
   "utf8",
@@ -234,6 +256,17 @@ const claudeTexts = claudeTextNames.map((name) => {
   return found[1].replace(/\\(.)/g, "$1");
 });
 const claudeOut = NodePath.join(here, "..", "src", "claude-instructions.txt");
+// `(deviceInstructions ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n` : "")`, and the
+// SubagentStart hook's `additionalContext`: the same text.
+if (!adapter.includes("(deviceInstructions\n                ? `\\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\\n`") ||
+    !adapter.includes("additionalContext: T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,")) {
+  console.error("ClaudeAdapterV2.ts adds the device text in a new shape: teach gen-tools.mjs and launch.rs.");
+  process.exit(1);
+}
+const { T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH } = await import(
+  NodeURL.pathToFileURL(NodePath.join(repo, "packages/provider-core/src/server/orchestrationInstructions.ts")).href
+);
+const deviceOut = NodePath.join(here, "..", "src", "device-instructions.txt");
 // The `next` text of a running task: the schema takes any string, so the catalog no longer holds it.
 const { ORCHESTRATOR_MCP_RUNNING_TASK_NEXT } = await import(
   NodeURL.pathToFileURL(NodePath.join(repo, "packages/contracts/src/orchestratorMcp.ts")).href
@@ -395,6 +428,7 @@ const outputs = [
   [threadInputsOut,`${JSON.stringify(threadInputs)}\n`,"thread tool input checks"],
   [NodePath.join(here, "..", "..", "conn-features", "src", "secret-texts.json"), secretTexts, "secret request texts"],
   [out, text, `${catalog.length} tools`],
+  [NodePath.join(here, "..", "src", "result-schemas.jsonl"), resultSchemas.filter(({ name }) => implemented.includes(name)).map((entry) => `${JSON.stringify(entry)}\n`).join(""), "union result schemas"],
   [outsideHiddenOut, outsideHidden.join(""), `${outsideHidden.length} tools hidden from outside clients`],
   [linksHiddenOut, linksHidden.join(""), `${linksHidden.length} tools hidden while links are off`],
   [linkedTargetsOut, linkedTargets.join(""), `${linkedTargets.length} tools that run in a linked environment`],
@@ -405,6 +439,7 @@ const outputs = [
   [nullArgumentsOut, nullArguments.join(""), `${nullArguments.length} arguments that keep null`],
   [instructionsOut, T3_CODE_ORCHESTRATION_INSTRUCTIONS, "agent instructions"],
   [claudeOut, claudeTexts.join(""), `Claude texts (${claudeTextNames.join(" + ")})`],
+  [deviceOut, T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH, "Claude device text"],
 ];
 if (process.argv.includes("--check")) {
   for (const [file, content, what] of outputs) {

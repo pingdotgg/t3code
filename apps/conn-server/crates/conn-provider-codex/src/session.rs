@@ -166,14 +166,17 @@ impl CodexSession {
             .map_err(|detail| ProviderError::Protocol { detail })?
         };
         // TS: `hasT3Mcp` when the thread has an MCP session; the engine passes it as the
-        // `t3-code` server. Browser tools on, device tools off: the session carries no
-        // finer answer (TS reads `browserToolsAvailable` and the `device` capability).
+        // `t3-code` server, with the session's `device` capability. Browser tools on: the
+        // session carries no finer answer (TS reads `browserToolsAvailable`).
         let t3_tools = inner
             .lock()
             .mcp_servers
             .iter()
-            .any(|s| s.name == "t3-code")
-            .then(ToolAvailability::default);
+            .find(|s| s.name == "t3-code")
+            .map(|s| ToolAvailability {
+                device: s.device_tools,
+                ..ToolAvailability::default()
+            });
         let params = launch::turn_start_params(
             &native,
             codex_input,

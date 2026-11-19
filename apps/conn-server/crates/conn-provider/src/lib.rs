@@ -353,6 +353,10 @@ pub struct McpServer {
     pub url: String,
     #[serde(default)]
     pub headers: Vec<(String, String)>,
+    /// The session may use the device tools (T3's `device` MCP capability): the agent then
+    /// gets T3's device text.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub device_tools: bool,
 }
 
 impl std::fmt::Debug for McpServer {

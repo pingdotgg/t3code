@@ -72,6 +72,9 @@ pub struct ClaudeConfig {
     /// (`T3_CODE_ORCHESTRATION_INSTRUCTIONS` and the adapter's own texts in TS;
     /// `conn_mcp::CLAUDE_INSTRUCTIONS`).
     pub mcp_instructions: Option<String>,
+    /// `T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH` (`conn_mcp::DEVICE_INSTRUCTIONS`), for
+    /// a session with the device tools.
+    pub device_instructions: Option<String>,
     /// The SDK helper. Default: [`HelperCommand::discover`].
     pub helper: HelperCommand,
     /// Where the status probe runs the CLI (T3: its state folder). `None`: the server's cwd.
@@ -172,6 +175,7 @@ impl Default for ClaudeConfig {
             idle_timeout: Some(DEFAULT_IDLE_TIMEOUT),
             idle_max_hold: DEFAULT_IDLE_MAX_HOLD,
             mcp_instructions: None,
+            device_instructions: None,
             helper: HelperCommand::discover(),
             status_cwd: None,
             status_probe: true,
@@ -371,10 +375,20 @@ pub struct QueryInput {
     pub title: Option<String>,
     /// The session has the `t3-code` MCP server (its servers go in by `setMcpServers`).
     pub t3_mcp: bool,
+    /// That server offers the device tools: T3's device text follows the MCP text, and
+    /// subagents get it at their start.
+    pub device_tools: bool,
     /// `allowedTools` after the MCP pre-approvals.
     pub allowed_tools: Option<Vec<String>>,
     /// `promptSuggestions`. T3: off for delegated threads, else the user's setting.
     pub prompt_suggestions: bool,
+}
+
+/// The device text when the session has the device tools (`deviceInstructions`).
+pub fn device_text<'a>(config: &'a ClaudeConfig, input: &QueryInput) -> Option<&'a str> {
+    (input.t3_mcp && input.device_tools)
+        .then_some(config.device_instructions.as_deref())
+        .flatten()
 }
 
 /// The option object for `query()`, as `makeClaudeQueryOptions` builds it, without the
@@ -487,6 +501,11 @@ pub fn query_options(
     let mut append = config.append_system_prompt.clone().unwrap_or_default();
     if input.t3_mcp {
         append.push_str(config.mcp_instructions.as_deref().unwrap_or_default());
+        if let Some(device) = device_text(config, input) {
+            append.push('\n');
+            append.push_str(device);
+            append.push('\n');
+        }
     }
     for text in &launch.append {
         append.push_str("\n\n");
@@ -720,6 +739,7 @@ mod tests {
             resume_at: None,
             title: Some("A thread".into()),
             t3_mcp: false,
+            device_tools: false,
             allowed_tools: None,
             prompt_suggestions: false,
         }

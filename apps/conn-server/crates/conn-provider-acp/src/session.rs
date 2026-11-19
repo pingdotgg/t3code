@@ -1367,6 +1367,7 @@ mod mcp_tests {
     #[test]
     fn grok_gets_t3s_stdio_bridge() {
         let server = conn_provider::McpServer {
+            device_tools: false,
             name: "t3-code".into(),
             url: "http://127.0.0.1:1/mcp".into(),
             headers: vec![("Authorization".into(), "Bearer t".into())],

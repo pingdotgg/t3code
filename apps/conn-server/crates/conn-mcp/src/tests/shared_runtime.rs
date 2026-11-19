@@ -29,6 +29,7 @@ impl conn_engine::EngineHost for CredentialHost {
         let entry = self.0.get()?.issue_thread_credential(request(&session));
         Some(AgentTools {
             servers: vec![conn_provider::McpServer {
+                device_tools: false,
                 name: crate::SERVER_NAME.to_owned(),
                 url: entry.url,
                 headers: vec![("Authorization".to_owned(), entry.authorization)],

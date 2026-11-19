@@ -288,6 +288,7 @@ async fn run_scenario(
                         // TS side gets the same endpoint and token from its McpProviderSessions.
                         mcp_servers: if scenario["mcp"] == true {
                             vec![McpServer {
+                                device_tools: scenario["device"] == true,
                                 name: "t3-code".into(),
                                 url: "http://127.0.0.1:3773/mcp".into(),
                                 headers: vec![(

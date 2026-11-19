@@ -402,6 +402,7 @@ async fn an_abandoned_start_aborts_the_booting_query() {
         helper.clone(),
         tx,
         vec![conn_provider::McpServer {
+            device_tools: false,
             name: "t3".into(),
             url: "http://127.0.0.1:9/mcp".into(),
             headers: vec![],

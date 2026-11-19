@@ -84,6 +84,8 @@ interface Scenario {
   readonly name: string;
   readonly runtimeMode: "full-access" | "approval-required";
   readonly mcp?: boolean;
+  /** The session has the device tools (`capabilities: device`). */
+  readonly device?: boolean;
   /** Spread over the runtime policy, as T3's RuntimePolicy.layerWithOverride does. */
   readonly policyOverride?: { readonly approvalPolicy?: unknown; readonly sandboxPolicy?: unknown };
   readonly claudeSettings?: unknown;
@@ -251,6 +253,7 @@ const runScenario = (scenario: Scenario) =>
         endpoint: MCP_URL,
         authorizationHeader: MCP_AUTHORIZATION,
         browserToolsAvailable: false,
+        ...(scenario.device === true ? { capabilities: new Set(["device"]) } : {}),
       });
     }
     const open = Effect.gen(function* () {

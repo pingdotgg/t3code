@@ -164,6 +164,17 @@ pub struct McpOAuth {
     secrets_dir: PathBuf,
     key: Mutex<Option<[u8; 32]>>,
     codes: Mutex<HashMap<String, PendingCode>>,
+    /// Slots taken by sign-ins whose pairing code is being spent; counted with `codes`.
+    reserved: std::sync::atomic::AtomicUsize,
+}
+
+/// A pending-code slot held while a pairing code is spent; given back on drop.
+struct Slot<'a>(&'a std::sync::atomic::AtomicUsize);
+
+impl Drop for Slot<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 impl std::fmt::Debug for McpOAuth {
@@ -179,6 +190,7 @@ impl McpOAuth {
             secrets_dir: secrets_dir.to_owned(),
             key: Mutex::new(None),
             codes: Mutex::new(HashMap::new()),
+            reserved: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -373,12 +385,19 @@ impl McpOAuth {
         })
     }
 
-    /// Whether [`MAX_PENDING_CODES`] unexpired codes already wait for their exchange.
-    fn codes_full(&self) -> bool {
+    /// A slot for one more pending code, or `None` when [`MAX_PENDING_CODES`] unexpired codes
+    /// and reserved slots already wait. Taken under the codes lock, so two sign-ins can never
+    /// both take the last one.
+    fn reserve_code(&self) -> Option<Slot<'_>> {
+        use std::sync::atomic::Ordering;
         let now = conn_support::time::now_ms();
         let mut codes = crate::lock(&self.codes);
         codes.retain(|_, pending| pending.expires_at_ms > now);
-        codes.len() >= MAX_PENDING_CODES
+        if codes.len() + self.reserved.load(Ordering::SeqCst) >= MAX_PENDING_CODES {
+            return None;
+        }
+        self.reserved.fetch_add(1, Ordering::SeqCst);
+        Some(Slot(&self.reserved))
     }
 
     /// `decision`: `deny`, or a `pairing-code` that this environment issued. Browser-session
@@ -420,11 +439,11 @@ impl McpOAuth {
                     );
                 }
                 // Capacity first: a sign-in refused for it must not spend the user's code.
-                if self.codes_full() {
+                let Some(slot) = self.reserve_code() else {
                     return Decision::PageError(TOO_MANY_SIGN_INS.to_owned());
-                }
+                };
                 match auth.consume_mcp_code(code, access, authorization.client.peer_link) {
-                    Ok(level) => level,
+                    Ok(level) => (level, slot),
                     Err(McpCodeError::Storage) => {
                         return Decision::PageError(McpCodeError::Storage.message().to_owned());
                     }
@@ -438,11 +457,11 @@ impl McpOAuth {
                 );
             }
         };
+        let (access, slot) = access;
         let code = mint_code();
         let now = conn_support::time::now_ms();
         {
-            // Checked before the pairing code was spent; a sign-in that raced in since may
-            // pass the limit briefly rather than lose its spent code.
+            // The slot reserved before the pairing code was spent becomes this code.
             let mut codes = crate::lock(&self.codes);
             codes.retain(|_, pending| pending.expires_at_ms > now);
             codes.insert(
@@ -458,6 +477,7 @@ impl McpOAuth {
                     expires_at_ms: now.saturating_add(AUTHORIZATION_CODE_TTL_MS),
                 },
             );
+            drop(slot);
         }
         redirect(&[
             ("code", Some(&code)),
@@ -664,6 +684,27 @@ mod tests {
             state: Some("s".into()),
             resource: Some("http://127.0.0.1:3773/mcp".into()),
         }
+    }
+
+    /// Two sign-ins at the last free slot: only one may spend its code (Codex finding 3 of
+    /// #151); the slot comes back when the sign-in ends without a code.
+    #[test]
+    fn the_last_code_slot_is_taken_once() {
+        let oauth = oauth();
+        oauth
+            .reserved
+            .store(MAX_PENDING_CODES - 1, std::sync::atomic::Ordering::SeqCst);
+        let first = oauth.reserve_code();
+        assert!(first.is_some());
+        assert!(
+            oauth.reserve_code().is_none(),
+            "the table is full with the slot taken"
+        );
+        drop(first);
+        assert!(
+            oauth.reserve_code().is_some(),
+            "a given-back slot is free again"
+        );
     }
 
     /// A sign-in refused because too many codes wait must leave the user's pairing code

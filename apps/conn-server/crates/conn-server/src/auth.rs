@@ -581,7 +581,8 @@ impl State {
         let mut changes = Vec::new();
         self.pairing.retain(|_, grant| {
             let keep = grant.expires_at_ms > now;
-            if !keep {
+            // Approval and peer-link codes are never listed, so their end is not announced.
+            if !keep && !grant.purpose_bound() {
                 changes.push(AccessChange::PairingLinkRemoved(grant.id.clone()));
             }
             keep
@@ -913,7 +914,12 @@ impl AuthStore {
                 .filter(|level| is_mcp_access(level))
                 .unwrap_or(access);
             outcome = Ok(level.to_owned());
-            vec![AccessChange::PairingLinkRemoved(grant.id)]
+            // `consumeAvailable`: a spent approval or peer-link code is not announced.
+            if grant.purpose_bound() {
+                Vec::new()
+            } else {
+                vec![AccessChange::PairingLinkRemoved(grant.id)]
+            }
         });
         if let Err(error) = written {
             eprintln!("conn-server: could not save auth state: {error}");
@@ -1192,22 +1198,30 @@ impl AuthStore {
     }
 
     /// Reloads the file when another process changed it, and announces what moved.
-    fn refresh(&self, state: &mut State) {
+    /// Reads the file again when another process changed it. `false` when it could not: the
+    /// state in memory may then be stale.
+    fn refresh(&self, state: &mut State) -> bool {
         let Some(path) = &self.file else {
             let changes = state.purge(now_ms());
             self.announce(changes);
-            return;
+            return true;
         };
         if stamp(path) == state.stamp {
             let changes = state.purge(now_ms());
             self.announce(changes);
-            return;
+            return true;
         }
         let before_links: Vec<String> = state.pairing.values().map(|l| l.id.clone()).collect();
+        let hidden_before: Vec<String> = state
+            .pairing
+            .values()
+            .filter(|l| l.purpose_bound())
+            .map(|l| l.id.clone())
+            .collect();
         let before_sessions: Vec<StoredSession> = state.sessions.values().cloned().collect();
         if let Err(error) = self.reload(state) {
             eprintln!("conn-server: could not read {}: {error}", path.display());
-            return;
+            return false;
         }
         let mut changes = Vec::new();
         for id in &before_links {
@@ -1215,6 +1229,11 @@ impl AuthStore {
                 changes.push(AccessChange::PairingLinkRemoved(id.clone()));
             }
         }
+        // Approval and peer-link codes were never announced, so their end is not either.
+        changes.retain(|change| match change {
+            AccessChange::PairingLinkRemoved(id) => !hidden_before.contains(id),
+            _ => true,
+        });
         for link in state.pairing.values() {
             if !before_links.contains(&link.id) && !link.purpose_bound() {
                 changes.push(AccessChange::PairingLinkUpserted(link.id.clone()));
@@ -1231,6 +1250,7 @@ impl AuthStore {
             }
         }
         self.announce(changes);
+        true
     }
 
     /// Replaces the persistent part of `state` with the file's content.
@@ -1270,12 +1290,25 @@ impl AuthStore {
             None => None,
         };
         let mut state = self.lock();
-        self.refresh(&mut state);
+        // A write from a stale snapshot could bring back what another process removed.
+        if !self.refresh(&mut state) {
+            return Err(io::Error::other(
+                "could not read the auth file before writing it",
+            ));
+        }
         let mut next = state.clone();
         let changes = change(&mut next);
-        if !changes.is_empty()
-            && let Some(path) = &self.file
-        {
+        // Saved whenever the stored records changed, announced or not: a spent approval or
+        // peer-link code announces nothing but must not come back in another process.
+        let changed = !changes.is_empty()
+            || next.pairing.len() != state.pairing.len()
+            || next.pairing.keys().any(|k| !state.pairing.contains_key(k))
+            || next.sessions.len() != state.sessions.len()
+            || next
+                .sessions
+                .keys()
+                .any(|k| !state.sessions.contains_key(k));
+        if changed && let Some(path) = &self.file {
             let file = AuthFile {
                 version: 1,
                 sessions: next.sessions.values().cloned().collect(),
@@ -1702,6 +1735,32 @@ mod tests {
             Ok(AccessChange::PairingLinkUpserted(id)) if id == plain.id
         ));
         assert_eq!(store.pairing_links().len(), 1);
+        // Spending the peer-link code announces nothing either, here or on a reload
+        // (`consumeAvailable` skips approval subjects; Codex finding 4 of #151).
+        let _ = other_events.try_recv();
+        assert_eq!(
+            store
+                .consume_mcp_code(&issued.code, "auto", true)
+                .ok()
+                .as_deref(),
+            Some("auto")
+        );
+        assert!(events.try_recv().is_err(), "the spent code was announced");
+        // Spent means spent in a process that opens the file afresh too.
+        let reopened = AuthStore::open(dir.join("auth.json")).unwrap();
+        assert!(
+            reopened
+                .consume_mcp_code(&issued.code, "auto", true)
+                .is_err(),
+            "a spent peer-link code came back from the file"
+        );
+        assert_eq!(other.pairing_links().len(), 1);
+        while let Ok(change) = other_events.try_recv() {
+            assert!(
+                !matches!(&change, AccessChange::PairingLinkRemoved(id) if *id == issued.id),
+                "a reload announced the spent code"
+            );
+        }
         fs::remove_dir_all(dir).unwrap();
     }
 

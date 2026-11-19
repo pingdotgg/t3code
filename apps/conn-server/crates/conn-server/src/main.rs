@@ -34,6 +34,7 @@ fn run_server() {
             conn_mcp::AGENT_INSTRUCTIONS,
             conn_mcp::CLAUDE_INSTRUCTIONS
         )),
+        device_instructions: Some(conn_mcp::DEVICE_INSTRUCTIONS.to_owned()),
         ..ClaudeConfig::default()
     };
     if let Some(helper) = &options.sdk_host {

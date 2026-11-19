@@ -216,9 +216,8 @@ impl<'a> Client<'a> {
             serde_json::from_str::<Value>(result["content"][0]["text"].as_str().unwrap()).unwrap(),
             value
         );
-        let (definition, _) = catalog::tool(tool).unwrap();
-        if let Some(schema) = definition.get("outputSchema") {
-            catalog::conforms(schema, &value, tool).unwrap();
+        if let Some(schema) = catalog::result_schema(tool) {
+            catalog::conforms(&schema, &value, tool).unwrap();
         }
         value
     }
@@ -255,6 +254,39 @@ fn forwarded_results_must_match_their_tool() {
         &json!({"matches": [], "extra": true})
     ));
     assert!(!crate::tool_result_matches("no_such_tool", &json!({})));
+    // Union results (left out of `tools/list`) are checked too: an empty answer is refused.
+    for tool in [
+        "t3_thread_organize",
+        "t3_pending_request",
+        "t3_queue",
+        "t3_thread_configure",
+        "t3_workflow_stop",
+    ] {
+        assert!(catalog::result_schema(tool).is_some(), "{tool}");
+    }
+    assert!(!crate::tool_result_matches("t3_queue", &json!({})));
+    assert!(!crate::tool_result_matches(
+        "t3_workflow_stop",
+        &Value::Null
+    ));
+    assert!(crate::tool_result_matches(
+        "t3_thread_organize",
+        &json!({"sequence": 3})
+    ));
+    // T3 decodes `1.0` as the integer 1; a string past `maxLength` is refused.
+    assert!(crate::tool_result_matches(
+        "t3_thread_organize",
+        &json!({"sequence": 3.0})
+    ));
+    assert!(!crate::tool_result_matches(
+        "t3_thread_organize",
+        &json!({"sequence": 3.5})
+    ));
+    let long = "x".repeat(241);
+    let schema = json!({"type": "string", "maxLength": 240});
+    assert!(catalog::conforms(&schema, &json!(long), "s").is_err());
+    assert!(catalog::conforms(&schema, &json!("😀".repeat(120)), "s").is_ok());
+    assert!(catalog::conforms(&schema, &json!("😀".repeat(121)), "s").is_err());
 }
 
 #[test]

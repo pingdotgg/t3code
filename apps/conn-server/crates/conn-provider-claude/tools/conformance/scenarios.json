@@ -47,6 +47,20 @@
       ]
     },
     {
+      "name": "device_turn",
+      "runtimeMode": "full-access",
+      "mcp": true,
+      "scripts": [
+        "e01_turn"
+      ],
+      "steps": [
+        {
+          "turn": "Reply with exactly: pong"
+        }
+      ],
+      "device": true
+    },
+    {
       "name": "permission",
       "runtimeMode": "approval-required",
       "scripts": [
