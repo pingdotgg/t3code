@@ -77,7 +77,7 @@ import {
   SORT_OPTIONS,
   STATE_TABS,
 } from "./pullRequestListOptions";
-import { PullRequestsColumn } from "./PullRequestsColumn";
+import { WorkItemListColumn } from "../workItem/WorkItemListColumn";
 import { PullRequestListGroups } from "./PullRequestListGroups";
 import { pullRequestPanelReference } from "./usePullRequestDetail";
 import { usePullRequestIntentPrefetch } from "./usePullRequestIntentPrefetch";
@@ -1574,11 +1574,23 @@ export function PullRequestsPage() {
     />
   );
   const columnProps = {
+    area: "pull-requests",
+    title: gt("Pull requests"),
+    icon: <PullRequestGlyph.pullRequest aria-hidden className="size-3.5 shrink-0 text-foreground" />,
+    refreshLabel: gt("Refresh pull requests"),
     refreshing,
     onRefresh: () => void refreshFromHost(),
-    host: search.host,
-    hostMenuOptions,
-    onHost: (host: string | undefined) => updateListScope({ host }),
+    providerMenu: (
+      <PullRequestCompactFilterMenu
+        label={gt("Filter by provider")}
+        iconOnly={search.host !== undefined}
+        triggerIcon={<Plug2Icon aria-hidden className="size-4" />}
+        triggerLabel={gt("All", { $context: "all providers" })}
+        value={search.host ?? ""}
+        options={hostMenuOptions}
+        onChange={(next) => updateListScope({ host: next === "" ? undefined : next })}
+      />
+    ),
     searchInput,
     sortMenu,
     filtersMenu,
@@ -1692,7 +1704,7 @@ export function PullRequestsPage() {
     >
       <div ref={observeSplitRow} className="relative flex min-h-0 flex-1">
         {pullRequestsSupported && rightPanelPresent ? openPanelControls : null}
-        <PullRequestsColumn {...columnProps} split={splitPanes} />
+        <WorkItemListColumn {...columnProps} split={splitPanes} />
 
         {splitPanes ? (
           <RightPanelTabs

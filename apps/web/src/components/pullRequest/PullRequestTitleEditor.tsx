@@ -63,24 +63,64 @@ export function PullRequestTitleEditor({
     }
   };
 
-  if (titleDraft === null) {
+  return (
+    <WorkItemTitleEditor
+      title={detail.title}
+      canEdit={canEditPullRequestChangeRequest(detail)}
+      draft={titleDraft}
+      onDraftChange={onValueChange}
+      saving={titleSaving}
+      canSave={canWriteSourceControl}
+      label={gt(
+        "{term, select, mr {Merge request} cr {Change request} other {Pull request}} title",
+        {
+          term: changeRequestTermKind(sourceControlClients.get(detail.provider).changeRequest),
+        },
+      )}
+      onSave={(next) => void saveTitle(next)}
+    />
+  );
+}
+
+/**
+ * A detail's title, shared by pull requests and issues: the heading with its edit button, or
+ * the field that renames it in place while `draft` holds text.
+ */
+export function WorkItemTitleEditor({
+  title,
+  canEdit,
+  draft,
+  onDraftChange,
+  saving,
+  canSave = true,
+  label,
+  onSave,
+}: {
+  title: string;
+  canEdit: boolean;
+  draft: string | null;
+  onDraftChange: (draft: string | null) => void;
+  saving: boolean;
+  canSave?: boolean;
+  label: string;
+  onSave: (draft: string) => void;
+}) {
+  const gt = useGT();
+  if (draft === null) {
     return (
       <PullRequestDetailTitleRow className="group gap-1">
         <Tooltip>
           <TooltipTrigger
             render={
               <h1 className="min-w-0 flex-1 text-title leading-(--pr-title-leading) [--pr-title-leading:1.3] wrap-anywhere text-foreground [--type-title:0.9375rem]">
-                {detail.title}
+                {title}
               </h1>
             }
           />
-          <TooltipPopup side="top">{detail.title}</TooltipPopup>
+          <TooltipPopup side="top">{title}</TooltipPopup>
         </Tooltip>
-        {canEditPullRequestChangeRequest(detail) ? (
-          <PullRequestEditButton
-            aria-label={gt("Edit title")}
-            onClick={() => onValueChange(detail.title)}
-          />
+        {canEdit ? (
+          <PullRequestEditButton aria-label={gt("Edit title")} onClick={() => onDraftChange(title)} />
         ) : null}
       </PullRequestDetailTitleRow>
     );
@@ -90,42 +130,32 @@ export function PullRequestTitleEditor({
       <Input
         autoFocus
         size="sm"
-        disabled={titleSaving}
-        value={titleDraft}
-        aria-label={gt(
-          "{term, select, mr {Merge request} cr {Change request} other {Pull request}} title",
-          {
-            term: changeRequestTermKind(sourceControlClients.get(detail.provider).changeRequest),
-          },
-        )}
-        onChange={(event) => onValueChange(event.target.value)}
+        disabled={saving}
+        value={draft}
+        aria-label={label}
+        onChange={(event) => onDraftChange(event.target.value)}
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing || event.keyCode === 229) return;
           if (event.key === "Enter") {
             event.preventDefault();
-            void saveTitle(titleDraft);
+            onSave(draft);
           } else if (event.key === "Escape") {
             event.preventDefault();
-            onValueChange(null);
+            onDraftChange(null);
           }
         }}
       />
       <div className="flex justify-end gap-2">
-        <Button
-          size="xs"
-          variant="ghost"
-          disabled={titleSaving}
-          onClick={() => onValueChange(null)}
-        >
+        <Button size="xs" variant="ghost" disabled={saving} onClick={() => onDraftChange(null)}>
           <T>Cancel</T>
         </Button>
         <Button
           size="xs"
           variant="secondary"
-          disabled={!canWriteSourceControl || titleSaving || titleDraft.trim().length === 0}
-          onClick={() => void saveTitle(titleDraft)}
+          disabled={!canSave || saving || draft.trim().length === 0}
+          onClick={() => onSave(draft)}
         >
-          {titleSaving ? gt("Saving...") : gt("Save")}
+          {saving ? gt("Saving...") : gt("Save")}
         </Button>
       </div>
     </div>
