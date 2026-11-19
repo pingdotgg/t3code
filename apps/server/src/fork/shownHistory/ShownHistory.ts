@@ -17,6 +17,7 @@ import {
   SEND_TO_USER_TOOL_NAME,
   SUB_THREAD_WINDOW_CORES,
 } from "@t3tools/shared/displayModes";
+import { htmlRenderFromToolItem, mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -40,11 +41,11 @@ export interface ShownKey {
   readonly itemId: TurnItemId;
 }
 
-/** A row that a display mode shows, and what it shows. */
+/** A row that a display mode shows, and what it shows: a message, or a card (`other`). */
 interface ShownRow extends ShownKey {
   readonly rowid: number;
   readonly item: OrchestrationV2TurnItem;
-  readonly event: Exclude<DisplayEvent, { readonly type: "other" }>;
+  readonly event: DisplayEvent;
 }
 
 /** The rows of a window or page, newest first, and the newest shown row older than them. */
@@ -75,12 +76,13 @@ interface ShownTarget {
   readonly itemId: string;
 }
 
-/** A walk stops once it holds `minCores` messages, or at a cap. */
+/** A walk stops once it holds `minCores` messages, or at a cap. The screen also reads `cards`. */
 interface ShownLimits {
   readonly minCores: number;
   readonly maxRows: number;
   readonly maxBytes: number;
   readonly maxRuns: number;
+  readonly cards: boolean;
 }
 
 const WINDOW_LIMITS: ShownLimits = {
@@ -90,12 +92,14 @@ const WINDOW_LIMITS: ShownLimits = {
   maxBytes: 512 * 1024,
   // A run's records come along outside the byte cap; Normal stops at as many turns.
   maxRuns: THREAD_HISTORY_MAX_RAW_TURNS,
+  cards: true,
 };
 const PAGE_LIMITS: ShownLimits = {
   minCores: 100,
   maxRows: 1_000,
   maxBytes: 1_048_576,
   maxRuns: Number.POSITIVE_INFINITY,
+  cards: true,
 };
 const TARGETED_PAGE_LIMITS: ShownLimits = { ...PAGE_LIMITS, maxRows: 2_000, maxBytes: 2_097_152 };
 /** A tail read's caps; it asks for its own `minCores`. */
@@ -165,15 +169,26 @@ export const sendCallSql = (sql: SqlClient.SqlClient) =>
   sql`(item.type = 'dynamic_tool'
     AND json_extract(item.payload_json, '$.toolName') LIKE ${`%${SEND_TO_USER_TOOL_NAME}%`})`;
 
-/** The rows a display mode can show: messages the user typed (isUserTypedMessage) and send calls. */
-const shownCandidateSql = (sql: SqlClient.SqlClient) => sql`(
+/**
+ * The rows a display mode can show: messages the user typed (isUserTypedMessage) and send calls.
+ * With `cards`, also waiting secret and link cards, and tool calls with inline output, a superset
+ * of the agent's renders and apps.
+ */
+const shownCandidateSql = (sql: SqlClient.SqlClient, cards: boolean) => sql`(
   (item.type = 'user_message'
     AND json_extract(item.payload_json, '$.createdBy') = 'user'
     AND json_extract(item.payload_json, '$.creationSource') IN ('web', 'mobile')
     AND json_extract(item.payload_json, '$.scheduledTaskId') IS NULL
     AND json_extract(item.payload_json, '$.senderThreadId') IS NULL
     AND json_extract(item.payload_json, '$.idleCompaction') IS NULL)
-  OR ${sendCallSql(sql)})`;
+  OR ${sendCallSql(sql)}
+  ${
+    cards
+      ? sql`OR (item.type IN ('secret_request', 'link_request') AND item.status = 'waiting')
+          OR (item.type = 'dynamic_tool' AND item.inline_work_output = 1
+            AND (item.payload_json LIKE '%htmlRender%' OR item.payload_json LIKE '%t3McpApp%'))`
+      : sql.literal("")
+  })`;
 
 // A thread's own rows follow the eligible rule of ProjectionStore.retainedWindowRows; an inherited
 // stretch only the fork cutoff.
@@ -193,7 +208,12 @@ interface CandidateRow {
   readonly payload_json: string;
 }
 
-const readCandidates = (sql: SqlClient.SqlClient, segment: ShownSegment, from: ShownBound) =>
+const readCandidates = (
+  sql: SqlClient.SqlClient,
+  segment: ShownSegment,
+  from: ShownBound,
+  cards: boolean,
+) =>
   sql<CandidateRow>`
     SELECT item.rowid AS item_rowid, item.turn_item_id, item.ordinal, item.payload_json
     FROM orchestration_v2_projection_turn_items AS item
@@ -202,7 +222,7 @@ const readCandidates = (sql: SqlClient.SqlClient, segment: ShownSegment, from: S
       AND item.ordinal <= ${from.ordinal}
       AND (item.ordinal < ${from.ordinal}
         OR item.turn_item_id ${sql.literal(from.inclusive ? "<=" : "<")} ${from.itemId})
-      AND ${shownCandidateSql(sql)}
+      AND ${shownCandidateSql(sql, cards)}
       AND ${segmentVisible(sql, segment)}
     ORDER BY item.ordinal DESC, item.turn_item_id DESC
     LIMIT ${BATCH_ROWS}
@@ -340,21 +360,34 @@ const rewriteTarget = (event: Extract<DisplayEvent, { readonly type: "rewrite" }
       ? `first:${event.subThread}`
       : undefined;
 
-/** A candidate whose display event shows nothing, such as a refused send, is null. */
-const decodeShownRow = (segment: ShownSegment, row: CandidateRow) =>
+/** A card the web timeline draws beside the messages: a waiting request, a render or an app. */
+const isShownCard = (item: OrchestrationV2TurnItem) =>
+  item.type === "secret_request" || item.type === "link_request"
+    ? item.status === "waiting"
+    : item.type === "dynamic_tool" &&
+      ((item.status === "completed" && htmlRenderFromToolItem(item) !== undefined) ||
+        mcpAppFromToolItem(item) !== undefined);
+
+/** A candidate that shows nothing, such as a refused send or a subagent's result, is null. */
+const decodeShownRow = (segment: ShownSegment, row: CandidateRow, cards: boolean) =>
   decodeTurnItem(row.payload_json).pipe(
     Effect.map((item): ShownRow | null => {
-      const event = displayEventFromTurnItem(item);
-      return event === null || event.type === "other"
-        ? null
-        : { ...keyOf(segment, row), rowid: row.item_rowid, item, event };
+      const message = displayEventFromTurnItem(item);
+      const event: DisplayEvent | null =
+        message !== null && message.type !== "other"
+          ? message
+          : cards && isShownCard(item)
+            ? { type: "other" }
+            : null;
+      return event === null ? null : { ...keyOf(segment, row), rowid: row.item_rowid, item, event };
     }),
   );
 
 /**
  * Walks `segments` newest first over the shown rows only, in batches, until it has passed `target`
- * and holds the messages `limits` asks for, checked after each batch. A cap ends it at any row.
- * `next` is the newest shown row the walk left out, which the next page starts at.
+ * and holds the messages `limits` asks for, checked after each batch, and the screen's cards hold
+ * their run's typed message. A cap ends it at any row, or before a card's run it would cut, unless
+ * that run is all the walk holds. `next` is the newest shown row the walk left out.
  */
 const walkShownRows = Effect.fn("ShownHistory.walk")(function* (
   sql: SqlClient.SqlClient,
@@ -368,12 +401,23 @@ const walkShownRows = Effect.fn("ShownHistory.walk")(function* (
   const rewritten = new Set<string>();
   let bytes = 0;
   let met = false;
+  let runOfLast: string | null = null;
+  let runStart = 0;
+  let grewAfterMet = false;
+  // Runs whose card is loaded but not the message the user typed in the run, which places it.
+  const unplaced = new Set<string>();
+  const typed = new Set<string>();
   for (const [index, segment] of segments.entries()) {
     let from: ShownBound | null = segment.from;
     while (from !== null) {
-      const batch: ReadonlyArray<CandidateRow> = yield* readCandidates(sql, segment, from);
+      const batch: ReadonlyArray<CandidateRow> = yield* readCandidates(
+        sql,
+        segment,
+        from,
+        limits.cards,
+      );
       for (const candidate of batch) {
-        const row = yield* decodeShownRow(segment, candidate);
+        const row = yield* decodeShownRow(segment, candidate, limits.cards);
         if (row === null) continue;
         // A newer rewrite of the same message already sets its text.
         const rewrite = row.event.type === "rewrite" ? rewriteTarget(row.event) : undefined;
@@ -381,17 +425,36 @@ const walkShownRows = Effect.fn("ShownHistory.walk")(function* (
         if (rewrite !== undefined) rewritten.add(rewrite);
         const cost = rowBytes(row);
         const newRun = row.item.runId !== null && !runs.has(row.item.runId);
-        if (
-          met ||
-          (rows.length > 0 &&
-            (rows.length >= limits.maxRows ||
-              bytes + cost > limits.maxBytes ||
-              (newRun && runs.size >= limits.maxRuns)))
-        )
+        // The screen places a run's cards by the run's typed message, so a page reads on to it.
+        const sameRun =
+          runOfLast !== null && row.item.runId === runOfLast && unplaced.has(runOfLast);
+        // Finishing a run can add a reply whose first message is older.
+        if (met && !sameRun && grewAfterMet) met = shownNeedsMet(rows, limits.minCores);
+        grewAfterMet &&= sameRun;
+        const capped =
+          rows.length > 0 &&
+          (rows.length >= limits.maxRows ||
+            bytes + cost > limits.maxBytes ||
+            (newRun && runs.size >= limits.maxRuns));
+        if (capped && sameRun && runStart > 0) {
+          const { threadId, ordinal, itemId } = rows[runStart]!;
+          return { rows: rows.slice(0, runStart), next: { threadId, ordinal, itemId } };
+        }
+        if ((met && !sameRun) || capped)
           return { rows, next: keyOf(segment, candidate) } satisfies ShownWalk;
+        if (!sameRun) runStart = rows.length;
         rows.push(row);
+        grewAfterMet ||= met;
         bytes += cost;
-        if (row.item.runId !== null) runs.add(row.item.runId);
+        runOfLast = row.item.runId;
+        if (row.item.runId !== null) {
+          runs.add(row.item.runId);
+          if (row.event.type === "user") {
+            typed.add(row.item.runId);
+            unplaced.delete(row.item.runId);
+          } else if (row.event.type === "other" && !typed.has(row.item.runId))
+            unplaced.add(row.item.runId);
+        }
       }
       const last = batch.at(-1);
       from =
@@ -455,7 +518,7 @@ export const selectShownTail = Effect.fn("ShownHistory.selectTail")(function* (
       const walk = yield* walkShownRows(
         sql,
         segments,
-        { ...SHOWN_TAIL_LIMITS, minCores },
+        { ...SHOWN_TAIL_LIMITS, minCores, cards: false },
         // The rows stay in memory whole; a wire row would summarize a send's input.
         (row) => Buffer.byteLength(JSON.stringify(row.item), "utf8"),
         null,

@@ -1,4 +1,4 @@
-import { MessageId } from "@t3tools/contracts";
+import { MessageId, type RunId } from "@t3tools/contracts";
 import {
   type DisplayEvent,
   type DisplayMode,
@@ -235,10 +235,47 @@ export function rowShownIn(
 }
 
 /**
+ * The run of a row a mode with sub-threads draws beside the messages: the agent's render or app, or
+ * a secret or link card that waits for this thread's user. Undefined for any other row.
+ */
+function cardRun(entry: TimelineEntry): RunId | null | undefined {
+  if (entry.kind === "html-render" || entry.kind === "mcp-app") return entry.runId;
+  if (entry.kind !== "event") return undefined;
+  const { item, visibility } = entry.projectedItem;
+  return (item.type === "secret_request" || item.type === "link_request") &&
+    item.status === "waiting" &&
+    visibility === "local"
+    ? item.runId
+    : undefined;
+}
+
+/**
+ * Where each run's cards show, as its answer does: the first message of the sub-thread of the
+ * latest message the user typed in the run. A run with none, such as one a task or another agent
+ * started, shows its cards in the main list, as does a sub-thread whose first message is not loaded.
+ */
+function cardPlaces(
+  entries: ReadonlyArray<TimelineEntry>,
+  cores: ReadonlyArray<VisibleCore>,
+): ReadonlyMap<RunId, string> {
+  const coreById = new Map(cores.map((core) => [core.id, core]));
+  const places = new Map<RunId, string>();
+  for (const entry of entries) {
+    const core = coreById.get(entry.id);
+    const runId = entry.kind === "message" ? entry.message.runId : null;
+    if (core?.from !== "user" || runId == null) continue;
+    if (core.reply && core.first !== null && coreById.has(core.first))
+      places.set(runId, core.first);
+    else places.delete(runId);
+  }
+  return places;
+}
+
+/**
  * Returns the rows that a display mode draws, or `entries` itself when no row changes. A completed
  * send is a reply with its latest text, but in Normal a Normal-mode send keeps upstream's row. A
- * replace call has no row. A mode without sub-threads keeps all other rows. A mode with
- * sub-threads draws the first messages, or with `subThread`, that first message and its replies.
+ * replace call has no row. Other rows stay, except in a mode with sub-threads: it draws the first
+ * messages, or with `subThread`, that first message and its replies, with their runs' cards.
  */
 export function applyDisplayMode(
   mode: DisplayMode,
@@ -254,8 +291,15 @@ export function applyDisplayMode(
           .map((core) => core.id),
       )
     : null;
+  let places: ReadonlyMap<RunId, string> | undefined;
+  const cardHere = (entry: TimelineEntry) => {
+    const runId = cardRun(entry);
+    if (runId === undefined) return false;
+    places ??= cardPlaces(entries, cores);
+    return (runId === null ? null : (places.get(runId) ?? null)) === subThread;
+  };
   const rows = entries.flatMap((entry, index): TimelineEntry[] => {
-    if (shownIds !== null && !shownIds.has(entry.id)) return [];
+    if (shownIds !== null && !shownIds.has(entry.id)) return cardHere(entry) ? [entry] : [];
     const item = entry.kind === "work" ? entry.entry.structuredPayload : undefined;
     if (item !== undefined && isReplaceSendCall(item)) return [];
     const event = events[index];
@@ -271,7 +315,7 @@ export function applyDisplayMode(
 
 /**
  * A mode that chooses its replies draws no Working or Thinking row, and marks an agent message
- * drawn right after another one, with no user message between, so a rule can part the two.
+ * drawn right after another one, with no user message or card between, so a rule can part the two.
  */
 export function displayModeRows(
   rows: MessagesTimelineRow[],
@@ -281,6 +325,8 @@ export function displayModeRows(
   let afterAgent = false;
   return rows.flatMap((row): MessagesTimelineRow[] => {
     if (row.kind === "working" || row.kind === "thinking") return [];
+    if (row.kind === "event" || row.kind === "html-render" || row.kind === "mcp-app")
+      afterAgent = false;
     if (row.kind !== "message") return [row];
     const fromAgent = row.message.role === "assistant";
     const follows = fromAgent && afterAgent;
