@@ -141,6 +141,12 @@ describe("antigravityEditPatch", () => {
     expect(preview("header\nadded\nold\nfooter\n")).toBe(
       `${header}@@ -1,1 +1,2 @@ snippet, line unknown\n+added\n old\n`,
     );
+    // A written replacement that ends inside the target's match is as ambiguous.
+    const swapped = { Target: "a\nb\n", Replacement: "b\na\n" };
+    const swap = (written: string) =>
+      antigravityEditPatch({ path, rawInput: swapped, readPreEditFile: () => written });
+    expect(swap("h\na\nb\nb\nf\n")).toMatch(/^@@ -2,2 \+2,2 @@$/m);
+    expect(swap("h\nb\na\nb\nf\n")).toMatch(/ snippet, line unknown$/m);
     // A replacement inside the target, as in a delete, is not a written edit.
     expect(
       antigravityEditPatch({

@@ -37,15 +37,14 @@ describe("toolActivity", () => {
   it("keeps a located diff patch when a later update resends that diff without one", () => {
     const resent = { type: "diff", path: "src/a.ts", oldText: "a\n", newText: "b\n" };
     const merge = (patch: unknown, content: unknown = [resent, { ...resent, path: "src/b.ts" }]) =>
-      mergeToolActivityData({ content: [{ type: "diff", path: "src/a.ts", patch }] }, { content })
-        ?.content;
+      mergeToolActivityData({ content: [{ ...resent, patch }] }, { content })?.content;
     const located = { text: "@@ -9,1 +9,1 @@\n-a\n+b\n" };
     expect(merge(located)).toEqual([
       { ...resent, patch: located },
       { ...resent, path: "src/b.ts" },
     ]);
     // An update that empties content keeps the located diff, and null still clears it.
-    expect(merge(located, [])).toEqual([{ type: "diff", path: "src/a.ts", patch: located }]);
+    expect(merge(located, [])).toEqual([{ ...resent, patch: located }]);
     expect(merge(located, null)).toBeUndefined();
     for (const patch of [{ format: "snippet", text: located.text }, { format: "omitted" }]) {
       expect(merge(patch)).toEqual([resent, { ...resent, path: "src/b.ts" }]);

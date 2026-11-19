@@ -108,10 +108,16 @@ function uniqueWholeLineMatch(
   return found?.whole === true ? { line: found.line, index: found.index } : undefined;
 }
 
-/** True when an occurrence of `other` in `text` covers the `length` characters at `start`. */
-function insideSnippet(text: string, start: number, length: number, other: string): boolean {
-  const index = text.indexOf(other, Math.max(0, start + length - other.length));
-  return index !== -1 && index <= start;
+/** True when an occurrence of `other` overlaps `text[start, start + length)` and reaches outside it. */
+function straddlesSnippet(text: string, start: number, length: number, other: string): boolean {
+  const end = start + length;
+  for (
+    let index = text.indexOf(other, Math.max(0, start - other.length + 1));
+    index !== -1 && index < end;
+    index = text.indexOf(other, index + 1)
+  )
+    if (index < start || index + other.length > end) return true;
+  return false;
 }
 
 function snippetHunks(
@@ -193,12 +199,12 @@ export function antigravityEditPatch(input: {
       const target = chunk.TargetContent.replaceAll("\r\n", "\n");
       const replacement = chunk.ReplacementContent.replaceAll("\r\n", "\n");
       const match = uniqueWholeLineMatch(file, target, chunk.StartLine, chunk.EndLine);
-      // The runtime may write before T3 reads the file. A target found inside a written
-      // replacement could be either state, so it stays unplaced.
+      // The runtime may write before T3 reads the file. A target overlapped by a written
+      // replacement that reaches past it could be either state, so it stays unplaced.
       if (
         match !== undefined &&
         file !== undefined &&
-        (replacement === target || !insideSnippet(file, match.index, target.length, replacement))
+        !straddlesSnippet(file, match.index, target.length, replacement)
       )
         start = match.line;
       // A lone replacement starts on the same line before and after it, so an already-applied
