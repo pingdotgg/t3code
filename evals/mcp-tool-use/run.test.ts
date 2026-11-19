@@ -1089,6 +1089,23 @@ it.effect("saves a new secret file for each request and tells the shell simulato
       machine?.text,
       `request_secret saved these files in this sample: ${first.file}, ${second.file}.`,
     );
+    // A plain `fields` request saves one file per field; only secret fields count as secrets.
+    const login = yield* answerToolCall(sample, config, {
+      type: "tool_use",
+      id: "g",
+      name: "mcp__t3-code__request_secret",
+      input: {
+        label: "Login",
+        fields: [
+          { name: "email", label: "Email", secret: false },
+          { name: "password", label: "Password" },
+        ],
+      },
+    }).pipe(Effect.map((result) => JSON.parse(String(result.content))));
+    assert.equal(login.status, "saved");
+    assert.deepEqual(Object.keys(login.files), ["email", "password"]);
+    assert.deepEqual(sample.secretFiles, [first.file, second.file, login.files.password]);
+    assert.deepEqual(sample.plainFiles, [{ file: login.files.email, label: "Email" }]);
     // A declined request saves nothing.
     const declined = makeSample(
       {
