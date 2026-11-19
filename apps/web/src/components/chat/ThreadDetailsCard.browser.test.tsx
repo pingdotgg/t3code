@@ -9,6 +9,7 @@ import { ChatCanvasContext } from "./ChatCanvasContext";
 import { resolveChatCanvasLayout } from "./chatCanvasLayout";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
+import { THREAD_DETAILS_CARD_GAP } from "./threadDetailsCardLayout";
 import "../../index.css";
 
 const threadA: ScopedThreadRef = {
@@ -20,7 +21,13 @@ const threadB: ScopedThreadRef = {
   threadId: ThreadId.make("thread-b"),
 };
 const container = { width: 1200, height: 800 };
-const placement = { x: 916, y: 0, right: 12, width: 272, height: 400 } as const;
+const placement = {
+  x: 928 - THREAD_DETAILS_CARD_GAP,
+  y: 0,
+  right: THREAD_DETAILS_CARD_GAP,
+  width: 272,
+  height: 400,
+} as const;
 
 function setup() {
   useRightPanelStore.setState({ threadPanelVisibilityByThreadKey: {} });
