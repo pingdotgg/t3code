@@ -2,7 +2,7 @@ import { useGT } from "gt-react-native";
 import { useEffectEvent, useState } from "react";
 import { Platform, Pressable, StyleSheet, View, type AccessibilityActionEvent } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
-import { runOnJS } from "react-native-reanimated";
+import { runOnJS, useSharedValue, type SharedValue } from "react-native-reanimated";
 import { cn } from "../../lib/cn";
 
 const ACCESSIBILITY_RESIZE_STEP = 24;
@@ -10,10 +10,12 @@ const ACCESSIBILITY_RESIZE_STEP = 24;
 interface WorkspacePaneDividerProps {
   readonly accessibilityLabel: string;
   readonly currentWidth: number;
+  readonly liveWidth?: SharedValue<number>;
+  readonly liveWidthBounds?: { readonly min: number; readonly max: number };
   readonly resizeDirection: 1 | -1;
   readonly onResizeStart?: () => void;
   readonly onResizeBy: (delta: number) => void;
-  readonly onResizeEnd?: () => void;
+  readonly onResizeEnd?: (finalWidth?: number) => void;
   /** A compact touch grip for primary panes; inspector dividers remain visually quiet. */
   readonly showHandle?: boolean;
 }
@@ -21,6 +23,10 @@ interface WorkspacePaneDividerProps {
 export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
   const gt = useGT();
   const [dragging, setDragging] = useState(false);
+  const liveWidthStart = useSharedValue(0);
+  const liveWidth = props.liveWidth;
+  const liveWidthBounds = props.liveWidthBounds;
+  const resizeDirection = props.resizeDirection;
   const handleResizeStart = useEffectEvent(() => {
     setDragging(true);
     props.onResizeStart?.();
@@ -28,22 +34,31 @@ export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
   const handleResize = useEffectEvent((translationX: number) => {
     props.onResizeBy(translationX * props.resizeDirection);
   });
-  const handleResizeEnd = useEffectEvent(() => {
+  const handleResizeEnd = useEffectEvent((finalWidth?: number) => {
     setDragging(false);
-    props.onResizeEnd?.();
+    props.onResizeEnd?.(finalWidth);
   });
   const [resizeGesture] = useState(() =>
     Gesture.Pan()
       .activeOffsetX([-4, 4])
       .failOffsetY([-24, 24])
       .onStart(() => {
+        if (liveWidth) liveWidthStart.value = liveWidth.value;
         runOnJS(handleResizeStart)();
       })
       .onUpdate((event) => {
-        runOnJS(handleResize)(event.translationX);
+        const delta = event.translationX * resizeDirection;
+        if (liveWidth && liveWidthBounds) {
+          liveWidth.value = Math.max(
+            liveWidthBounds.min,
+            Math.min(liveWidthBounds.max, liveWidthStart.value + delta),
+          );
+        } else {
+          runOnJS(handleResize)(event.translationX);
+        }
       })
       .onFinalize(() => {
-        runOnJS(handleResizeEnd)();
+        runOnJS(handleResizeEnd)(liveWidth?.value);
       }),
   );
 

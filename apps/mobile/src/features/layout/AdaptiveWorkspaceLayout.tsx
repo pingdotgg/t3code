@@ -36,6 +36,7 @@ import {
   View,
 } from "react-native";
 import Animated, {
+  cancelAnimation,
   runOnJS,
   useAnimatedStyle,
   useDerivedValue,
@@ -282,9 +283,7 @@ function AdaptiveWorkspaceLayoutContent(
   const navigation = useNavigation();
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
   const [androidSessionPaneWidth, setAndroidSessionPaneWidth] = useState<number | null>(null);
-  const [androidSessionPaneDragWidth, setAndroidSessionPaneDragWidth] = useState<number | null>(
-    null,
-  );
+  const [androidSessionPaneResizing, setAndroidSessionPaneResizing] = useState(false);
   const androidSessionPaneResizeStart = useRef(0);
   const androidSessionPaneDragWidthRef = useRef<number | null>(null);
   const [fileInspectorPreferredVisible, setFileInspectorPreferredVisible] = useState(true);
@@ -361,7 +360,7 @@ function AdaptiveWorkspaceLayoutContent(
       viewportWidth,
       leadingWidth: navigationRailWidth,
     });
-    const requestedAndroidWidth = androidSessionPaneDragWidth ?? androidSessionPaneWidth;
+    const requestedAndroidWidth = androidSessionPaneWidth;
     if (
       Platform.OS === "android" &&
       hinge === null &&
@@ -398,7 +397,6 @@ function AdaptiveWorkspaceLayoutContent(
     viewportWidth,
     floatingTabs.row,
     floatingTabsEnabled,
-    androidSessionPaneDragWidth,
     androidSessionPaneWidth,
   ]);
   // The rail keeps its room even while the sidebar floats; only the list pane overlays the page.
@@ -531,30 +529,32 @@ function AdaptiveWorkspaceLayoutContent(
     setPrimarySidebarVisible(true);
   };
   const beginAndroidSessionPaneResize = () => {
+    cancelAnimation(renderedSidebarWidth);
     androidSessionPaneResizeStart.current = panes.primarySidebarVisible
       ? (layout.listPaneWidth ?? 0)
       : 0;
     androidSessionPaneDragWidthRef.current = androidSessionPaneResizeStart.current;
-    setAndroidSessionPaneDragWidth(androidSessionPaneResizeStart.current);
+    setAndroidSessionPaneResizing(true);
     if (!panes.primarySidebarVisible) setPrimarySidebarVisible(true);
   };
   const resizeAndroidSessionPaneBy = (delta: number) => {
     const width = androidSessionPaneResizeStart.current + delta;
     androidSessionPaneDragWidthRef.current = width;
-    setAndroidSessionPaneDragWidth(width);
   };
-  const endAndroidSessionPaneResize = () => {
-    const width = androidSessionPaneDragWidthRef.current ?? androidSessionPaneResizeStart.current;
+  const endAndroidSessionPaneResize = (renderedWidth?: number) => {
+    const width =
+      renderedWidth === undefined
+        ? (androidSessionPaneDragWidthRef.current ?? androidSessionPaneResizeStart.current)
+        : Math.max(0, renderedWidth - (layout.listPaneGap ?? 0));
     androidSessionPaneDragWidthRef.current = null;
+    setAndroidSessionPaneResizing(false);
     if (width < ANDROID_SESSION_PANE_COLLAPSE_THRESHOLD) {
       setPrimarySidebarVisible(false);
-      setAndroidSessionPaneDragWidth(null);
       return;
     }
     setAndroidSessionPaneWidth(
       Math.max(ANDROID_SESSION_PANE_MIN_WIDTH, Math.min(width, ANDROID_SESSION_PANE_MAX_WIDTH)),
     );
-    setAndroidSessionPaneDragWidth(null);
     setPrimarySidebarVisible(true);
   };
   const handleToggleSidebarCommand = () => {
@@ -719,8 +719,8 @@ function AdaptiveWorkspaceLayoutContent(
     : 0;
   // Android's split content is a rounded card: keep it off the screen edge like the list card.
   const contentEndGap = Platform.OS === "android" && layout.usesSplitView ? 4 : 0;
-  // Android's split is one strip: a sidebar slot of fixed width, then the detail pane. The
-  // sidebar never resizes; both slide by one offset, so together they always fill the width.
+  // Android's split is one strip: a sidebar slot, then the detail pane. Both slide by one offset,
+  // so together they always fill the width.
   const stripSidebar =
     Platform.OS === "android" &&
     layout.usesSplitView &&
@@ -1088,7 +1088,11 @@ function AdaptiveWorkspaceLayoutContent(
             sidebarAnimatedStyle,
           ]}
         >
-          <Animated.View className="flex-1" style={listPaneAnimatedStyle}>
+          <Animated.View
+            className="flex-1"
+            pointerEvents={androidSessionPaneResizing ? "none" : "auto"}
+            style={[listPaneAnimatedStyle, androidSessionPaneResizing ? { opacity: 0 } : undefined]}
+          >
             <PaneContext value="sidebar">
               <RenderErrorBoundary
                 renderFallback={(fallback) => (
@@ -1118,6 +1122,11 @@ function AdaptiveWorkspaceLayoutContent(
         <WorkspacePaneDivider
           accessibilityLabel={gt("Resize session list")}
           currentWidth={panes.primarySidebarVisible ? (layout.listPaneWidth ?? 0) : 0}
+          liveWidth={renderedSidebarWidth}
+          liveWidthBounds={{
+            min: 0,
+            max: ANDROID_SESSION_PANE_MAX_WIDTH + (layout.listPaneGap ?? 0),
+          }}
           resizeDirection={1}
           onResizeStart={beginAndroidSessionPaneResize}
           onResizeBy={resizeAndroidSessionPaneBy}
@@ -1138,6 +1147,7 @@ function AdaptiveWorkspaceLayoutContent(
       >
         <Animated.View
           collapsable={false}
+          pointerEvents={androidSessionPaneResizing ? "none" : "auto"}
           style={[
             contentTargetWidth !== null
               ? {
@@ -1149,6 +1159,7 @@ function AdaptiveWorkspaceLayoutContent(
                 }
               : { flex: 1 },
             Platform.OS === "android" ? androidNavigatorLimit : undefined,
+            androidSessionPaneResizing ? { opacity: 0 } : undefined,
           ]}
         >
           {/* Android holds the content still, so its floating controls keep its width. */}
