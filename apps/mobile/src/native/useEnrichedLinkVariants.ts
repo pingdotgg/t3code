@@ -157,13 +157,7 @@ export function useEnrichedLinkVariants(
           return [
             enrichedLinkVariantPattern(url),
             {
-              pill: {
-                borderColor: "transparent",
-                borderWidth: 0,
-                borderRadius: 6,
-                paddingHorizontal: 5,
-                paddingVertical: 2,
-              },
+              pill: { wrap: true, paddingHorizontal: 0, paddingVertical: 0 },
               fontFamily: chipForeground ? FONT_FAMILIES.medium : textStyle.fontFamily,
               color: chipForeground ?? link.color ?? textStyle.fileTextColor,
               underline: false,
