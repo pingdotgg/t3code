@@ -80,7 +80,7 @@ export function describeAntigravitySubagentLaunches(
 }
 
 /** Length-delimited fields only; varints and fixed values are skipped. */
-function protoFields(bytes: Uint8Array): ReadonlyArray<readonly [number, Uint8Array]> {
+export function protoFields(bytes: Uint8Array): ReadonlyArray<readonly [number, Uint8Array]> {
   const fields: Array<readonly [number, Uint8Array]> = [];
   let offset = 0;
   const varint = () => {
