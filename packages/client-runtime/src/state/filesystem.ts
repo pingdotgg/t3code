@@ -1,9 +1,6 @@
 import {
   AuthFilesystemReadScope,
-  type EnvironmentId,
   type FilesystemBrowseEntry,
-  type FilesystemGetMetadataInput,
-  type FilesystemGetMetadataResult,
   WS_METHODS,
   sessionGrantsScope,
   type SessionGrantInput,
@@ -28,7 +25,7 @@ import {
   hasTrailingPathSeparator,
   isFilesystemBrowseQuery,
 } from "./projects.ts";
-import { type AtomCommandResult, createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
+import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
 
 const BROWSE_IDLE_TTL_MS = 5_000;
 
@@ -203,23 +200,6 @@ export function canPreloadBrowsePath(
   connectionPhase: EnvironmentConnectionPhase | null | undefined,
 ): boolean {
   return connectionPhase === "connected";
-}
-
-export async function getFilesystemCanonicalPaths(
-  getMetadata: (request: {
-    readonly environmentId: EnvironmentId;
-    readonly input: FilesystemGetMetadataInput;
-  }) => Promise<AtomCommandResult<FilesystemGetMetadataResult, unknown>>,
-  environmentId: EnvironmentId,
-  paths: ReadonlyArray<string>,
-) {
-  const metadata = await getMetadata({
-    environmentId,
-    input: { paths, includeCanonicalPath: true },
-  });
-  return metadata._tag === "Success"
-    ? metadata.value.entries.map((entry) => entry?.canonicalPath)
-    : [];
 }
 
 export function createFilesystemEnvironmentAtoms<R, E>(

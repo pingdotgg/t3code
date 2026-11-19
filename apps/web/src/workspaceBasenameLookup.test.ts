@@ -4,7 +4,7 @@ import {
   agentWorkingDirectories,
   claimWorkspaceBasenameLookup,
   findAgentDirectoryMatch,
-  pickProjectLinkMatch as pickProjectLinkMatchWithCanonicalPaths,
+  pickProjectLinkMatch,
   pickWorkspaceBasenameMatch,
   pickWorkspaceLinkMatch,
   workspaceLinkLookupQuery,
@@ -93,18 +93,6 @@ describe("chat file links an agent shortened", () => {
 });
 
 describe("chat file links into another project", () => {
-  const pickProjectLinkMatch = (
-    relativePath: string,
-    searches: Parameters<typeof pickProjectLinkMatchWithCanonicalPaths>[1],
-  ) =>
-    pickProjectLinkMatchWithCanonicalPaths(relativePath, searches, (paths) =>
-      paths.map((path) =>
-        path === "C:\\Reports\\docs\\handoff.txt" || path === "c:/reports/docs\\handoff.txt"
-          ? "C:\\Reports\\docs\\handoff.txt"
-          : undefined,
-      ),
-    );
-
   const appB = {
     root: "/home/user/app-b",
     entries: [{ path: "src/api/rules/categories.ts", kind: "file" as const }],
@@ -126,7 +114,7 @@ describe("chat file links into another project", () => {
       inner: "/home/user/reports/docs",
       found: "/home/user/reports/docs/handoff.txt",
     },
-    { outer: "C:\\Reports", inner: "c:/reports/docs/", found: "C:\\Reports\\docs\\handoff.txt" },
+    { outer: "C:\\Reports", inner: "C:/Reports/docs/", found: "C:\\Reports\\docs\\handoff.txt" },
   ])("resolves one file that a project nested in $outer also lists", ({ outer, inner, found }) => {
     expect(
       pickProjectLinkMatch("handoff.txt", [
@@ -180,37 +168,6 @@ describe("chat file links into another project", () => {
         },
       ]),
     ).toBeNull();
-  });
-
-  it("keeps Windows case twins ambiguous unless the server confirms the same target", async () => {
-    const searches = [
-      { root: "C:\\Reports", entries: [{ path: "Docs/handoff.txt", kind: "file" as const }] },
-      { root: "C:\\Reports\\docs", entries: [{ path: "handoff.txt", kind: "file" as const }] },
-    ];
-    expect(pickProjectLinkMatchWithCanonicalPaths("handoff.txt", searches)).toBeNull();
-    const upper = "C:\\Reports\\Docs\\handoff.txt";
-    const lower = "C:\\Reports\\docs\\handoff.txt";
-    const resolveUsing = (canonicalPaths: ReadonlyMap<string, string>) =>
-      pickProjectLinkMatchWithCanonicalPaths("handoff.txt", searches, async (paths) =>
-        paths.map((path) => canonicalPaths.get(path)),
-      );
-    expect(
-      await resolveUsing(
-        new Map([
-          [upper, upper],
-          [lower, lower],
-        ]),
-      ),
-    ).toBeNull();
-    expect(await resolveUsing(new Map([[upper, upper]]))).toBeNull();
-    expect(
-      await resolveUsing(
-        new Map([
-          [upper, upper],
-          [lower, upper],
-        ]),
-      ),
-    ).toBe(upper);
   });
 });
 

@@ -2,7 +2,6 @@ import { FILESYSTEM_METADATA_BATCH_LIMIT } from "@t3tools/contracts";
 import {
   isAbsolutePath,
   isWindowsAbsolutePath,
-  normalizeProjectPathForComparison,
   resolveWorkspaceFilePath,
 } from "@t3tools/shared/path";
 
@@ -127,8 +126,6 @@ function pickStrippedWorkspaceMatch(
   return files.find((entry) => key(entry.path) === key(strippedPath))?.path ?? null;
 }
 
-type CanonicalPaths = ReadonlyArray<string | undefined>;
-
 /**
  * The absolute path of the one file a chat link names across other project roots, or null when
  * no root has it or roots name different files. Agents cite paths relative to their repo.
@@ -140,29 +137,30 @@ export function pickProjectLinkMatch(
     readonly root: string;
     readonly entries: ReadonlyArray<WorkspaceEntryCandidate>;
   }>,
-  canonicalPathsFor?: (paths: ReadonlyArray<string>) => CanonicalPaths | Promise<CanonicalPaths>,
-): string | null | Promise<string | null> {
+): string | null {
   const target = relativePath.trim();
   const isBasename = needsWorkspaceBasenameLookup(target);
-  const rankedPaths = searches.flatMap(({ root, entries }) => {
-    if (!isBasename) {
-      return workspaceQualifiedPathMatches(target, root, entries).map((match) =>
-        resolveWorkspaceFilePath(match, root),
-      );
-    }
-    const match = pickWorkspaceBasenameMatch(target, entries);
-    return match === null ? [] : [resolveWorkspaceFilePath(match, root)];
-  });
-  if (rankedPaths.length <= 1) return rankedPaths[0] ?? null;
-
   const matches = new Map<string, string>();
+  let rootHits = 0;
   const addMatch = (path: string) => {
+    // Windows paths that differ only by case stay distinct: a directory can be case-sensitive.
     const key = isWindowsAbsolutePath(path) ? path.replaceAll("/", "\\") : path;
     if (!matches.has(key)) matches.set(key, path);
   };
-  rankedPaths.forEach(addMatch);
-  // A root's highest-ranked basename can hide another file before overlapping hits are merged.
-  if (isBasename) {
+  for (const { root, entries } of searches) {
+    if (isBasename) {
+      const match = pickWorkspaceBasenameMatch(target, entries);
+      if (match === null) continue;
+      rootHits += 1;
+      addMatch(resolveWorkspaceFilePath(match, root));
+    } else {
+      for (const match of workspaceQualifiedPathMatches(target, root, entries)) {
+        addMatch(resolveWorkspaceFilePath(match, root));
+      }
+    }
+  }
+  if (isBasename && rootHits > 1) {
+    // A root's highest-ranked basename can hide another file that an overlapping root also lists.
     for (const { root, entries } of searches) {
       for (const entry of entries) {
         if (entry.kind === "file" && basenameOfPath(entry.path) === target) {
@@ -171,34 +169,7 @@ export function pickProjectLinkMatch(
       }
     }
   }
-  const paths = [...matches.values()];
-  const [first] = paths;
-  if (first === undefined) return null;
-  if (paths.length === 1) return first;
-
-  // Windows directories can be case-sensitive. Folding only identifies possible aliases.
-  if (
-    !canonicalPathsFor ||
-    !isWindowsAbsolutePath(first) ||
-    paths.length > FILESYSTEM_METADATA_BATCH_LIMIT ||
-    paths.some((path) => path.trim() !== path)
-  ) {
-    return null;
-  }
-  const folded = normalizeProjectPathForComparison(first);
-  if (paths.some((path) => normalizeProjectPathForComparison(path) !== folded)) return null;
-  const pickConfirmedMatch = (canonicalPaths: CanonicalPaths) => {
-    const [target] = canonicalPaths;
-    return target !== undefined &&
-      canonicalPaths.length === paths.length &&
-      canonicalPaths.every((path) => path === target)
-      ? first
-      : null;
-  };
-  const canonicalPaths = canonicalPathsFor(paths);
-  return canonicalPaths instanceof Promise
-    ? canonicalPaths.then(pickConfirmedMatch)
-    : pickConfirmedMatch(canonicalPaths);
+  return matches.size === 1 ? ([...matches.values()][0] ?? null) : null;
 }
 
 const AGENT_DIRECTORY_SEARCH_LIMIT = 4;

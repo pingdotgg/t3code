@@ -19,7 +19,6 @@ import {
   AuthOrchestrationOperateScope,
   SOURCE_CONTROL_MEDIA_ASSET,
 } from "@t3tools/contracts";
-import { getFilesystemCanonicalPaths } from "@t3tools/client-runtime/state/filesystem";
 import {
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
@@ -875,10 +874,9 @@ function useChatMarkdownState({
       });
       if (metadata._tag !== "Success" || metadata.value.entries[0] !== null) return null;
     }
-    const projectMatch = await pickProjectLinkMatch(
+    const projectMatch = pickProjectLinkMatch(
       workspaceRelativePath,
       await Promise.all(otherRoots.map(searchRoot)),
-      (paths) => getFilesystemCanonicalPaths(getFilesystemMetadata, environmentId, paths),
     );
     if (projectMatch !== null || agentRoots.length === 0) return projectMatch;
     // No project has the file, so it opens where the agent last worked, as written.

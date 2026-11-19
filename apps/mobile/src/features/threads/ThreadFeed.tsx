@@ -98,7 +98,6 @@ import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplat
 import { codexArtifactTemplatePresentationLabel } from "@t3tools/shared/codexArtifactTemplatesCopy";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
-import { getFilesystemCanonicalPaths } from "@t3tools/client-runtime/state/filesystem";
 import {
   executeAtomQuery,
   isAtomCommandInterrupted,
@@ -278,7 +277,6 @@ import { assetEnvironment, useAssetUrl, useRefreshAssetUrl } from "../../state/a
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { readEnvironmentScope, usePreparedConnection } from "../../state/session";
 import { environmentProjects, projectEnvironment } from "../../state/projects";
-import { filesystemEnvironment } from "../../state/filesystem";
 import {
   agentWorkingDirectories,
   findAgentDirectoryMatch,
@@ -3355,21 +3353,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         match =
           otherRoots.length === 0
             ? null
-            : await pickProjectLinkMatch(
-                relativePath,
-                await Promise.all(otherRoots.map(searchRoot)),
-                (paths) =>
-                  getFilesystemCanonicalPaths(
-                    (request) =>
-                      executeAtomQuery(
-                        appAtomRegistry,
-                        filesystemEnvironment.getMetadata(request),
-                        { ...queryOptions, refresh: true },
-                      ),
-                    props.environmentId,
-                    paths,
-                  ),
-              );
+            : pickProjectLinkMatch(relativePath, await Promise.all(otherRoots.map(searchRoot)));
       }
       if (match === null && reply !== undefined && !signal.aborted) {
         // No project has the file, so it opens where the agent last worked, as written.
