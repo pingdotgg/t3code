@@ -1,4 +1,4 @@
-import { AuthSessionId, AuthStandardClientScopes } from "@t3tools/contracts";
+import { AuthAccessWriteScope, AuthSessionId, AuthStandardClientScopes } from "@t3tools/contracts";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -24,10 +24,11 @@ import {
   DurationFromString,
   resolveCliAuthConfig,
 } from "./config.ts";
+import * as RunningServer from "./runningServer.ts";
 
-const runWithEnvironmentAuth = Effect.fn("auth.runWithEnvironmentAuth")(function* <A, E>(
+const runWithEnvironmentAuth = Effect.fn("auth.runWithEnvironmentAuth")(function* <A, E, R>(
   flags: CliAuthLocationFlags,
-  run: (environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E>,
+  run: (environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E, R>,
   options?: {
     readonly quietLogs?: boolean;
   },
@@ -40,13 +41,19 @@ const runWithEnvironmentAuth = Effect.fn("auth.runWithEnvironmentAuth")(function
     return yield* run(environmentAuth);
   }).pipe(
     Effect.provide(
-      Layer.mergeAll(EnvironmentAuth.layerRuntime).pipe(
-        Layer.provide(ServerConfig.layer(config)),
+      EnvironmentAuth.layerRuntime.pipe(
+        Layer.provideMerge(ServerConfig.layer(config)),
         Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
       ),
     ),
   );
 });
+
+/** Access changes go through a running server, which applies them to its open connections. */
+const changeAccess = <A, E, R, E2, R2>(change: {
+  readonly viaServer: (client: RunningServer.ServerClient) => Effect.Effect<A, E, R>;
+  readonly locally: Effect.Effect<A, E2, R2>;
+}) => RunningServer.changeState({ scopes: [AuthAccessWriteScope], ...change });
 
 const ttlFlag = Flag.String("ttl").pipe(
   Flag.withSchema(DurationFromString),
@@ -221,13 +228,25 @@ const connectDeviceRevokeCommand = Command.make("revoke", {
   Command.withHandler((flags) =>
     runWithEnvironmentAuth(flags, (environmentAuth) =>
       Effect.gen(function* () {
-        const outcome = yield* environmentAuth.revokeConnectDeviceByCode(flags.code);
+        const [device, ...others] = yield* environmentAuth.connectDevicesShowingCode(flags.code);
+        if (device === undefined) {
+          return yield* Console.log(`No trusted device shows ${flags.code}.\n`);
+        }
+        if (others.length > 0) {
+          return yield* Console.log(
+            `More than one trusted device shows ${flags.code}; revoke it from a client.\n`,
+          );
+        }
+        const { proofKeyThumbprint } = device;
+        yield* changeAccess({
+          viaServer: (client) =>
+            client.auth
+              .revokeConnectDevice({ headers: {}, payload: { proofKeyThumbprint } })
+              .pipe(Effect.map((result) => result.revoked)),
+          locally: environmentAuth.revokeConnectDevice(proofKeyThumbprint),
+        });
         yield* Console.log(
-          outcome === "revoked"
-            ? `Revoked ${flags.code}. If approval for new devices is off, it can connect again on its own.\n`
-            : outcome === "ambiguous"
-              ? `More than one trusted device shows ${flags.code}; revoke it from a client.\n`
-              : `No trusted device shows ${flags.code}.\n`,
+          `Revoked ${flags.code}. If approval for new devices is off, it can connect again on its own.\n`,
         );
       }),
     ),
@@ -305,11 +324,19 @@ const sessionRevokeCommand = Command.make("revoke", {
     Argument.withSchema(AuthSessionId),
   ),
 }).pipe(
-  Command.withDescription("Revoke an active session."),
+  Command.withDescription(
+    "Revoke an active session. A T3 Connect device's session takes the device's trust and other sessions with it; if approval for new devices is off, the device can connect again on its own.",
+  ),
   Command.withHandler((flags) =>
     runWithEnvironmentAuth(flags, (environmentAuth) =>
       Effect.gen(function* () {
-        const revoked = yield* environmentAuth.revokeSession(flags.sessionId);
+        const revoked = yield* changeAccess({
+          viaServer: (client) =>
+            client.auth
+              .revokeClient({ headers: {}, payload: { sessionId: flags.sessionId } })
+              .pipe(Effect.map((result) => result.revoked)),
+          locally: environmentAuth.revokeClient(flags.sessionId),
+        });
         yield* Console.log(
           revoked
             ? `Revoked session ${flags.sessionId}.\n`
