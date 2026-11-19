@@ -79,6 +79,7 @@ const withService = <A, E>(
                 link.environmentPublicKey === input.environmentPublicKey),
           ),
         ),
+      updateLiveActivityPreference: () => Effect.die("unexpected Live Activity preference update"),
       setHoldWebhooksWhileOffline: () => Effect.void,
     }),
     Layer.mock(ManagedEndpointAllocations.ManagedEndpointAllocations, {
