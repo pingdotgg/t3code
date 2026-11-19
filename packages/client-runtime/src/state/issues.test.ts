@@ -162,6 +162,7 @@ describe("createIssueCommentPager", () => {
       registry.dispose();
     }
   });
+
   it("discards loaded and late older pages after refreshing unchanged detail", async () => {
     const value = { comments: [comment("newest")], commentsCursor: "first" };
     const detail = Atom.make(AsyncResult.success(value));
