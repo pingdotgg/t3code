@@ -7,15 +7,36 @@ import {
   type MergedIssueList,
 } from "@t3tools/client-runtime/state/issues";
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadIssueLink } from "@t3tools/contracts";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { formatEnvironmentQueryError } from "./query";
+import { useServerConfigs } from "./entities";
+import { formatEnvironmentQueryError, useEnvironmentQuery } from "./query";
 
 export type { IssueListTarget };
 
 export const issueEnvironment = createIssueEnvironmentAtoms(connectionAtomRuntime);
+
+export function useLinkedIssueDetail(
+  environmentId: EnvironmentId,
+  link: ThreadIssueLink | undefined,
+  mountScope?: "sidebar" | "thread-details" | "linked-items" | "sidebar-tooltip",
+) {
+  const configs = useServerConfigs();
+  const input = link && {
+    projectId: link.projectId,
+    tracker: link.tracker,
+    host: link.host,
+    scope: link.scope,
+    key: link.key,
+  };
+  return useEnvironmentQuery(
+    input && configs.get(environmentId)?.environment.capabilities.issues === true
+      ? issueEnvironment.detail({ environmentId, input }, mountScope)
+      : null,
+  ).data;
+}
 
 const mergedIssueLists = createMergedIssueListAtoms(
   issueEnvironment.list,

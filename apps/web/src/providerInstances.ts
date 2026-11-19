@@ -48,9 +48,22 @@ export function hasInstanceBadge(entries: ReadonlyArray<ProviderInstanceEntry>):
   return entries.some((entry) => shouldShowInstanceBadge(entry, entries));
 }
 
-/** Disabled instances may retain ready status until reconciliation. */
+/**
+ * Disabled instances may retain ready status until reconciliation. A warning still offers
+ * the models of sub-providers that report no problem of their own.
+ */
 export function isProviderInstancePickerReady(entry: ProviderInstanceEntry): boolean {
-  return entry.enabled && entry.isAvailable && entry.status === "ready";
+  if (!entry.enabled || !entry.isAvailable) return false;
+  if (entry.status === "ready") return true;
+  if (entry.status !== "warning") return false;
+  const usable = new Set(
+    entry.snapshot.subProviders?.flatMap((subProvider) =>
+      subProvider.unavailableReason === undefined ? [subProvider.name] : [],
+    ),
+  );
+  return entry.models.some(
+    (model) => model.subProvider !== undefined && usable.has(model.subProvider),
+  );
 }
 
 export function isProviderInstancePickerVisible(entry: ProviderInstanceEntry): boolean {
