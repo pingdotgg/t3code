@@ -178,7 +178,9 @@ undo by accident:
   connection, which also makes the tunnel follow a route switch.
 - **Owner check, not auth.** Chromium can't authenticate to a SOCKS proxy, so any local process
   can connect to the listener and ride this user's tunnel. On Linux the listener looks the client
-  up in `/proc/net/tcp` and refuses other users. macOS and Windows have no such check yet.
+  up in `/proc/net/tcp` and refuses other users. macOS and Windows have no such check yet. The
+  mobile app's device preview has the same listener while it is open: iOS suspends other apps, but
+  Android lets any app reach it, and apps cannot see another app's socket owner there.
 - **System browser links** have no tunnel. They keep the private-network rewrite in
   [`browserTargetResolver.ts`](../../apps/web/src/browser/browserTargetResolver.ts).
 
