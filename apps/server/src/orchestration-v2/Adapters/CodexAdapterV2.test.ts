@@ -4925,6 +4925,84 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("reads the Codex turn suffix across pages in conversation order", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "external-history";
+      const nativeTurnId = "anchor";
+      const turn = (id: string) => ({
+        id,
+        status: "completed",
+        items: [
+          { type: "userMessage", id: `${id}:user`, content: [{ type: "text", text: id }] },
+          { type: "agentMessage", id: `${id}:assistant`, text: `Reply to ${id}` },
+        ],
+      });
+      const listPage = (
+        id: number,
+        cursor: string | null,
+        data: Array<ReturnType<typeof turn>>,
+        nextCursor: string | null,
+      ): Array<CodexReplay.CodexAppServerReplayEntry> => [
+        {
+          type: "expect_outbound",
+          label: "thread/turns/list",
+          frame: {
+            id,
+            method: "thread/turns/list",
+            params: {
+              threadId: nativeThreadId,
+              cursor,
+              limit: 32,
+              itemsView: "summary",
+              sortDirection: "desc",
+            },
+          },
+        },
+        {
+          type: "emit_inbound",
+          label: "thread/turns/list",
+          frame: { id, result: { data, nextCursor } },
+        },
+      ];
+      const { runtime, providerThread } = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "codex-external-history",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Start" }).slice(0, 5),
+            ...listPage(3, null, [turn("newest")], "before-newest"),
+            ...listPage(
+              4,
+              "before-newest",
+              [turn("older"), turn(nativeTurnId), turn("past")],
+              null,
+            ),
+            ...listPage(5, null, [turn("newest"), turn("older")], null),
+          ],
+        }),
+      );
+      const readHistory = runtime.readHistoryAfter!;
+      const appended = yield* readHistory({ providerThread, nativeTurnId });
+      assert.deepEqual(
+        appended.map((turn) => turn.id),
+        ["older", "newest"],
+      );
+      assert.deepEqual(appended[0]?.messages, [
+        { role: "user", text: "older" },
+        { role: "assistant", text: "Reply to older" },
+      ]);
+      assert.deepEqual(yield* readHistory({ providerThread, nativeTurnId }), []);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("reports a thread another Codex client is writing to as in use", () =>
     Effect.gen(function* () {
       const nativeThreadId = "thread-open-elsewhere";

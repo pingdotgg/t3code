@@ -35,6 +35,7 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import type * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import type * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
@@ -697,6 +698,17 @@ export type ProviderAdapterV2SubagentOutcome = {
   readonly result: OrchestrationV2Subagent["result"];
 };
 
+export interface ProviderAdapterV2HistoryTurn {
+  readonly id: string;
+  readonly status: "completed" | "interrupted" | "failed" | "inProgress";
+  readonly startedAt: DateTime.Utc;
+  readonly completedAt: DateTime.Utc;
+  readonly messages: ReadonlyArray<{
+    readonly role: "user" | "assistant";
+    readonly text: string;
+  }>;
+}
+
 export interface ProviderAdapterV2SessionRuntime {
   readonly instanceId: ProviderInstanceId;
   readonly driver: ProviderDriverKind;
@@ -798,6 +810,10 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly readThreadSnapshot: (
     input: ProviderAdapterV2ReadThreadSnapshotInput,
   ) => Effect.Effect<ProviderAdapterV2ThreadSnapshot, ProviderAdapterV2Error>;
+  /** Native turns after a known turn, oldest first. If the anchor is missing, returns no turns. */
+  readonly readHistoryAfter?: (
+    input: ProviderAdapterV2ReadThreadSnapshotInput & { readonly nativeTurnId: string },
+  ) => Effect.Effect<ReadonlyArray<ProviderAdapterV2HistoryTurn>, ProviderAdapterV2Error>;
   readonly uploadFeedback?: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly reason?: string;

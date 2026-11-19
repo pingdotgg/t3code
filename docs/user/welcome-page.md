@@ -114,6 +114,10 @@ conversation adds new messages to the existing thread when the original history
 is intact and the thread has no turns run in T3 Code. You can continue without
 the remaining history.
 
+After you run a turn in T3 Code, you can continue that same conversation in
+Codex. Open the conversation in T3 Code or return to its window to pick up
+recent completed text turns from the original Codex session.
+
 You can start without importing. While an import runs, T3 Code stays on the
 Welcome page. If you quit, open the Welcome page again from **Settings → About**; the
 projects you started stay checked.

@@ -8788,6 +8788,64 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             ),
           ),
           mcpApps,
+          readHistoryAfter: Effect.fn("CodexAdapterV2.readHistoryAfter")(
+            function* ({ providerThread, nativeTurnId }) {
+              const threadId = yield* getNativeThreadId(providerThread);
+              yield* ensureInitialized;
+              const turns: Array<CodexSchema.V2ThreadTurnsListResponse__Turn> = [];
+              const visited = new Set<string | null>();
+              let cursor: string | null = null;
+              do {
+                visited.add(cursor);
+                const page: CodexSchema.V2ThreadTurnsListResponse = yield* client.request(
+                  "thread/turns/list",
+                  { threadId, cursor, limit: 32, itemsView: "summary", sortDirection: "desc" },
+                );
+                const anchor = page.data.findIndex((turn) => turn.id === nativeTurnId);
+                if (anchor >= 0) {
+                  const observedAt = yield* DateTime.now;
+                  turns.push(...page.data.slice(0, anchor));
+                  return turns
+                    .reverse()
+                    .map((turn): ProviderAdapter.ProviderAdapterV2HistoryTurn => {
+                      const startedAt =
+                        turn.startedAt == null ? observedAt : codexTimestamp(turn.startedAt);
+                      return {
+                        id: turn.id,
+                        status: turn.status,
+                        startedAt,
+                        completedAt:
+                          turn.completedAt == null ? startedAt : codexTimestamp(turn.completedAt),
+                        messages: turn.items.flatMap(
+                          (item): ProviderAdapter.ProviderAdapterV2HistoryTurn["messages"] => {
+                            if (item.type === "userMessage") {
+                              return [{ role: "user", text: codexUserMessageText(item.content) }];
+                            }
+                            return item.type === "agentMessage" && item.text.trim() !== ""
+                              ? [{ role: "assistant", text: item.text }]
+                              : [];
+                          },
+                        ),
+                      };
+                    });
+                }
+                turns.push(...page.data);
+                cursor = page.nextCursor ?? null;
+              } while (cursor !== null && !visited.has(cursor));
+              return [];
+            },
+            (effect, { providerThread }) =>
+              effect.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterReadThreadSnapshotError({
+                      driver: CODEX_PROVIDER,
+                      providerThreadId: providerThread.id,
+                      cause,
+                    }),
+                ),
+              ),
+          ),
           readThreadSnapshot: Effect.fn("CodexAdapterV2.readThreadSnapshot")(
             function* (threadInput) {
               const threadId = yield* getNativeThreadId(threadInput.providerThread);

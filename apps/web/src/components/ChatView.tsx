@@ -4102,7 +4102,14 @@ export default function ChatView(props: ChatViewProps) {
         onConfirm={onConfirmRevertStable}
       />
       {embedded ? null : <LinkPullRequestDialogHost />}
-      <ThreadVisitWatermark threadRef={routeThreadRef} />
+      <ThreadVisitWatermark
+        threadRef={routeThreadRef}
+        canRefreshCodexHistory={
+          activeProviderThread?.driver === "codex" &&
+          activeProviderThread.nativeThreadRef?.strength === "strong" &&
+          activeThread?.archivedAt == null
+        }
+      />
       <ExpandedImageDialogHost threadKey={routeThreadKey} />
     </div>
   );

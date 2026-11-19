@@ -2,12 +2,16 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   type AgentSessionSource,
+  type OrchestrationV2Run,
   type ServerSettingsError,
   EventId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   MessageId,
+  NodeId,
+  ProviderTurnId,
+  RunAttemptId,
   RunId,
   ThreadId,
   type ApplicationStoredEvent,
@@ -280,6 +284,7 @@ const makeImporter = Effect.fn(function* (
   return {
     run: importer.importRecentAgentThreads({ projectId }),
     importNativeHistory: importer.importNativeHistory,
+    refreshCodexHistory: importer.refreshCodexHistory,
     published,
   };
 });
@@ -633,6 +638,164 @@ it.effect("appends new Codex messages to the existing import exactly once", () =
       "Continued",
     ]);
     expect(after.turnItems.map((item) => item.ordinal)).toEqual([1, 2, 3, 4]);
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect("refreshes completed Codex turns after a turn run in T3", () =>
+  Effect.gen(function* () {
+    const sink = yield* EventSink.EventSinkV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* seedOwner(candidate(CODEX_MODEL_SELECTION, "alternating-clients"));
+    const {
+      thread,
+      providerThreads: [providerThread],
+    } = yield* projections.getThreadRecords(threadId, ["providerThreads"]);
+    expect(providerThread).toBeDefined();
+    const nativeThread = providerThread!;
+    const runId = RunId.make(`${threadId}:first`);
+    const attemptId = RunAttemptId.make(`${runId}:1`);
+    const nodeId = NodeId.make(`${runId}:root`);
+    const localRun: OrchestrationV2Run = {
+      id: runId,
+      threadId,
+      ordinal: 1,
+      providerInstanceId: nativeThread.providerInstanceId,
+      modelSelection: thread.modelSelection,
+      providerThreadId: nativeThread.id,
+      userMessageId: MessageId.make(`${runId}:user`),
+      rootNodeId: nodeId,
+      activeAttemptId: attemptId,
+      status: "completed",
+      requestedAt: now,
+      startedAt: now,
+      completedAt: now,
+      checkpointId: null,
+      contextHandoffId: null,
+    };
+    const laterRun: OrchestrationV2Run = {
+      ...localRun,
+      id: RunId.make(`${threadId}:second`),
+      ordinal: 2,
+      userMessageId: MessageId.make(`${threadId}:second:user`),
+      rootNodeId: null,
+      activeAttemptId: null,
+      status: "queued",
+      startedAt: null,
+      completedAt: null,
+    };
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make(`${runId}:created`),
+          type: "run.created",
+          threadId,
+          occurredAt: now,
+          payload: localRun,
+        },
+        {
+          id: EventId.make(`${runId}:native`),
+          type: "provider-turn.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: ProviderTurnId.make(`${runId}:native`),
+            providerThreadId: nativeThread.id,
+            nodeId,
+            runAttemptId: attemptId,
+            nativeTurnRef: {
+              driver: nativeThread.driver,
+              nativeId: "local-turn",
+              strength: "strong",
+            },
+            ordinal: 1,
+            status: "completed",
+            startedAt: now,
+            completedAt: now,
+          },
+        },
+        {
+          id: EventId.make(`${laterRun.id}:created`),
+          type: "run.created",
+          threadId,
+          occurredAt: now,
+          payload: laterRun,
+        },
+      ],
+    });
+
+    const nativeTurn = (
+      id: string,
+      text: string,
+      status: ProviderAdapter.ProviderAdapterV2HistoryTurn["status"] = "completed",
+    ) => ({
+      id,
+      status,
+      startedAt: now,
+      completedAt: now,
+      messages: [
+        { role: "user" as const, text },
+        { role: "assistant" as const, text: `Reply to ${text}` },
+      ],
+    });
+    const nativeHistory = [
+      nativeTurn("local-turn", "From T3"),
+      nativeTurn("outside-1", "From Codex"),
+      nativeTurn("outside-stopped", "Interrupted in Codex", "interrupted"),
+      nativeTurn("outside-2", "Next Codex message", "inProgress"),
+    ];
+    const readAnchors: Array<string> = [];
+    const session = {
+      readHistoryAfter: ({ nativeTurnId }) =>
+        Effect.sync(() => {
+          readAnchors.push(nativeTurnId);
+          const anchor = nativeHistory.findIndex((turn) => turn.id === nativeTurnId);
+          return anchor < 0 ? [] : nativeHistory.slice(anchor + 1);
+        }),
+    } satisfies Pick<ProviderAdapter.ProviderAdapterV2SessionRuntime, "readHistoryAfter">;
+    const adapter = {
+      openSession: () => Effect.succeed(session),
+    } as unknown as ProviderAdapter.ProviderAdapterV2["Service"];
+    const importer = yield* makeImporter([], Effect.void, () => Effect.succeed(adapter));
+    const refresh = importer.refreshCodexHistory({ threadId });
+
+    expect(yield* refresh).toBe(0);
+    expect(readAnchors).toEqual([]);
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make(`${laterRun.id}:cancelled`),
+          type: "run.updated",
+          threadId,
+          occurredAt: now,
+          payload: { ...laterRun, status: "cancelled", completedAt: now },
+        },
+      ],
+    });
+    const copies = yield* Effect.all([refresh, refresh], { concurrency: 2 });
+    expect(copies.toSorted()).toEqual([0, 1]);
+    expect(readAnchors).toEqual(["local-turn", "outside-1"]);
+    nativeHistory[3] = nativeTurn("outside-2", "Next Codex message");
+    expect(yield* refresh).toBe(1);
+
+    const after = yield* projections.getThreadRecords(threadId, [
+      "runs",
+      "turnItems",
+      "providerTurns",
+    ]);
+    expect(after.runs.map((run) => run.ordinal)).toEqual([1, 2, 3, 4]);
+    expect(after.providerTurns.map((turn) => turn.nativeTurnRef?.nativeId)).toEqual([
+      "local-turn",
+      "outside-1",
+      "outside-2",
+    ]);
+    expect(after.turnItems.map((item) => ("text" in item ? item.text : null))).toEqual([
+      "From Codex",
+      "Reply to From Codex",
+      "Next Codex message",
+      "Reply to Next Codex message",
+    ]);
+    expect(after.turnItems[0]?.ordinal).toBeGreaterThan(2_000_000);
+    expect(after.thread.id).toBe(threadId);
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 

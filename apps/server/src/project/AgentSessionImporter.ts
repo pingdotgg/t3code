@@ -12,6 +12,7 @@ import {
   MessageId,
   ProjectId,
   ProviderDriverKind,
+  RunId,
   ThreadId,
   TurnItemId,
   type AgentSessionImportInput,
@@ -20,6 +21,8 @@ import {
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2ProviderTurn,
+  type OrchestrationV2Run,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
@@ -30,10 +33,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import type { ProviderAdapterV2HistoryTurn } from "@t3tools/provider-core/server/ProviderAdapter";
+import { isActiveRun } from "../orchestration-v2/CommandPolicy.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
@@ -88,6 +94,7 @@ class AgentSessionThreadModifiedError extends Schema.TaggedError<AgentSessionThr
 // ACP imports read the history while holding the session-mutation lock, and an agent can
 // leave session/resume or initialize unanswered. Longer than session/load's own deadline.
 const NATIVE_HISTORY_READ_TIMEOUT = "2 minutes";
+const CODEX_HISTORY_READ_TIMEOUT = "10 seconds";
 
 /**
  * Whether a thread bound to a native session still lacks its native history.
@@ -113,21 +120,22 @@ function messageEvents(input: {
   readonly threadId: ThreadId;
   readonly index: number;
   readonly message: HistoryMessage;
+  readonly turn?: OrchestrationV2ProviderTurn;
+  readonly run?: OrchestrationV2Run;
 }): ReadonlyArray<OrchestrationV2DomainEvent> {
   const ordinal = input.index + 1;
   const suffix = String(input.index).padStart(6, "0");
-  const messageId = MessageId.make(`${input.threadId}:${suffix}`);
-  const turnItemId = TurnItemId.make(
-    `${IMPORT_EVENT_PREFIX}:turn-item:${input.threadId}:${suffix}`,
-  );
+  const messageKey = `${input.run?.id ?? input.threadId}:${suffix}`;
+  const messageId = MessageId.make(messageKey);
+  const turnItemId = TurnItemId.make(`${IMPORT_EVENT_PREFIX}:turn-item:${messageKey}`);
   const at = dateTime(input.message.createdAt);
   const common = {
     id: turnItemId,
     threadId: input.threadId,
-    runId: null,
-    nodeId: null,
-    providerThreadId: null,
-    providerTurnId: null,
+    runId: input.run?.id ?? null,
+    nodeId: input.turn?.nodeId ?? null,
+    providerThreadId: input.turn?.providerThreadId ?? null,
+    providerTurnId: input.turn?.id ?? null,
     nativeItemRef: null,
     parentItemId: null,
     ordinal,
@@ -151,11 +159,11 @@ function messageEvents(input: {
   }
   const message: OrchestrationV2ConversationMessage = {
     createdBy: input.message.role === "user" ? "user" : "agent",
-    creationSource: "server",
+    creationSource: input.run === undefined ? "server" : "provider",
     id: messageId,
     threadId: input.threadId,
-    runId: null,
-    nodeId: null,
+    runId: common.runId,
+    nodeId: common.nodeId,
     role: input.message.role,
     text: input.message.text,
     attachments: [],
@@ -168,7 +176,7 @@ function messageEvents(input: {
       ? {
           ...common,
           createdBy: "user",
-          creationSource: "server",
+          creationSource: message.creationSource,
           type: "user_message",
           messageId,
           inputIntent: "turn_start",
@@ -184,13 +192,132 @@ function messageEvents(input: {
         };
   return [
     {
-      id: EventId.make(`${IMPORT_EVENT_PREFIX}:message:${input.threadId}:${suffix}`),
+      id: EventId.make(`${IMPORT_EVENT_PREFIX}:message:${messageKey}`),
       type: "message.updated",
       threadId: input.threadId,
       occurredAt: at,
       payload: message,
     },
     turnItemEvent(turnItem),
+  ];
+}
+
+function externalTurnEvents(input: {
+  readonly thread: OrchestrationV2AppThread;
+  readonly owner: OrchestrationV2ProviderThread;
+  readonly nativeThreadId: string;
+  readonly nativeTurn: ProviderAdapterV2HistoryTurn;
+  readonly indexOfUserMessage: number;
+  readonly runOrdinal: number;
+  readonly turnOrdinal: number;
+  readonly ids: IdAllocator.IdAllocatorV2["Service"]["derive"];
+}): ReadonlyArray<OrchestrationV2DomainEvent> {
+  const { thread, owner, nativeTurn, ids } = input;
+  const { id: threadId } = thread;
+  const { id: providerThreadId, providerInstanceId, driver } = owner;
+  const runId = RunId.make(`codex-history:${threadId}:${nativeTurn.id}`);
+  const attemptId = ids.runAttempt({ runId, attemptOrdinal: 1 });
+  const nodeId = ids.rootNode({ runId });
+  const providerTurnId = ids.providerTurn({ driver, nativeTurnId: nativeTurn.id });
+  const { startedAt, completedAt } = nativeTurn;
+  const occurredAt = completedAt;
+  const nodeEvent = { threadId, nodeId, runId, providerInstanceId, occurredAt };
+  const turn: OrchestrationV2ProviderTurn = {
+    id: providerTurnId,
+    providerThreadId,
+    nodeId,
+    runAttemptId: attemptId,
+    nativeTurnRef: { driver, nativeId: nativeTurn.id, strength: "strong" },
+    nativeThreadRef: { driver, nativeId: input.nativeThreadId, strength: "strong" },
+    ordinal: input.turnOrdinal,
+    status: "completed",
+    startedAt,
+    completedAt,
+  };
+  const run: OrchestrationV2Run = {
+    id: runId,
+    threadId,
+    ordinal: input.runOrdinal,
+    providerInstanceId,
+    modelSelection: { ...thread.modelSelection, instanceId: providerInstanceId },
+    providerThreadId,
+    userMessageId: MessageId.make(`${runId}:${String(input.indexOfUserMessage).padStart(6, "0")}`),
+    rootNodeId: nodeId,
+    activeAttemptId: attemptId,
+    status: "completed",
+    requestedAt: startedAt,
+    startedAt,
+    completedAt,
+    checkpointId: null,
+    contextHandoffId: null,
+  };
+  return [
+    {
+      ...nodeEvent,
+      id: EventId.make(`${runId}:created`),
+      type: "run.created",
+      payload: run,
+    },
+    {
+      ...nodeEvent,
+      id: EventId.make(`${runId}:root`),
+      type: "node.updated",
+      payload: {
+        id: nodeId,
+        threadId,
+        runId,
+        parentNodeId: null,
+        rootNodeId: nodeId,
+        kind: "root_turn",
+        status: "completed",
+        countsForRun: true,
+        providerThreadId,
+        providerTurnId,
+        nativeItemRef: null,
+        runtimeRequestId: null,
+        checkpointScopeId: null,
+        startedAt,
+        completedAt,
+      },
+    },
+    {
+      ...nodeEvent,
+      id: EventId.make(`${runId}:attempt`),
+      type: "run-attempt.created",
+      payload: {
+        id: attemptId,
+        runId,
+        attemptOrdinal: 1,
+        rootNodeId: nodeId,
+        providerInstanceId,
+        providerThreadId,
+        providerTurnId,
+        nativeThreadId: input.nativeThreadId,
+        reason: "initial",
+        status: "completed",
+        startedAt,
+        completedAt,
+      },
+    },
+    {
+      ...nodeEvent,
+      driver,
+      id: EventId.make(`${runId}:provider-turn`),
+      type: "provider-turn.updated",
+      payload: turn,
+    },
+    ...nativeTurn.messages.flatMap((message, index) =>
+      messageEvents({
+        threadId,
+        index,
+        message: {
+          ...message,
+          createdAt: DateTime.formatIso(message.role === "user" ? startedAt : completedAt),
+        },
+        run,
+        turn,
+      }),
+    ),
   ];
 }
 
@@ -204,6 +331,7 @@ const make = Effect.gen(function* () {
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
   const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const settingsService = yield* ServerSettings.ServerSettingsService;
+  const codexReaders = yield* Semaphore.make(2);
   const ceiling = settingsService.managedPolicy?.limits?.maxRuntimeMode;
   const importRecentAgentThreads = Effect.fn("importRecentAgentThreadsV2")(function* (
     input: AgentSessionImportInput,
@@ -641,7 +769,139 @@ const make = Effect.gen(function* () {
     return yield* commit(messages);
   });
 
-  return { importRecentAgentThreads, importNativeHistory };
+  const readCodexRefreshTarget = Effect.fn("AgentSessionImporter.readCodexRefreshTarget")(
+    function* (threadId: ThreadId) {
+      const { thread, providerThreads, runs, providerTurns } = yield* orchestrator.getThreadRecords(
+        threadId,
+        ["providerThreads", "runs", "providerTurns"],
+      );
+      const owner = providerThreads.find(
+        (providerThread) =>
+          providerThread.id === thread.activeProviderThreadId &&
+          providerThread.appThreadId === threadId &&
+          providerThread.ownerNodeId === null &&
+          providerThread.driver === "codex" &&
+          providerThread.nativeThreadRef?.strength === "strong",
+      );
+      if (
+        owner === undefined ||
+        owner.nativeThreadRef?.nativeId == null ||
+        thread.deletedAt !== null ||
+        thread.archivedAt !== null ||
+        runs.some((run) => run.status === "queued" || isActiveRun(run))
+      ) {
+        return null;
+      }
+      const nativeId = owner.nativeThreadRef.nativeId;
+      const runByAttempt = new Map(
+        runs.flatMap((run) =>
+          run.activeAttemptId === null || run.status === "rolled_back"
+            ? []
+            : [[run.activeAttemptId, run] as const],
+        ),
+      );
+      const ownedTurns = providerTurns.filter((turn) => turn.providerThreadId === owner.id);
+      const anchor = ownedTurns.findLast(
+        (turn) =>
+          turn.runAttemptId !== null &&
+          runByAttempt.has(turn.runAttemptId) &&
+          turn.nativeTurnRef?.strength === "strong" &&
+          turn.nativeTurnRef.nativeId !== null &&
+          (turn.nativeThreadRef === undefined || turn.nativeThreadRef.nativeId === nativeId),
+      );
+      const run = anchor?.runAttemptId == null ? undefined : runByAttempt.get(anchor.runAttemptId);
+      if (anchor?.nativeTurnRef?.nativeId == null || run === undefined) return null;
+      return {
+        thread,
+        owner,
+        nativeId,
+        anchor: anchor.nativeTurnRef.nativeId,
+        modelSelection: run.modelSelection,
+        runOrdinal: runs.at(-1)?.ordinal ?? 0,
+        turnOrdinal: ownedTurns.at(-1)?.ordinal ?? 0,
+        knownIds: new Set(ownedTurns.map((turn) => turn.nativeTurnRef?.nativeId)),
+      };
+    },
+  );
+
+  const refreshCodexHistory = Effect.fn("AgentSessionImporter.refreshCodexHistory")(
+    function* ({ threadId }: { readonly threadId: ThreadId }) {
+      const target = yield* readCodexRefreshTarget(threadId);
+      if (target === null) return 0;
+      const project = yield* projects.getById(target.thread.projectId);
+      if (Option.isNone(project)) return 0;
+      const cwd = target.thread.worktreePath ?? project.value.workspaceRoot;
+      const adapter = yield* registry.get(target.owner.providerInstanceId);
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: target.owner.providerInstanceId,
+        threadId,
+      });
+      const history = yield* adapter
+        .openSession({
+          threadId,
+          providerSessionId,
+          modelSelection: target.modelSelection,
+          runtimePolicy: {
+            runtimeMode: target.thread.runtimeMode,
+            interactionMode: target.thread.interactionMode,
+            cwd,
+          },
+          initialNativeThreadId: target.nativeId,
+        })
+        .pipe(
+          Effect.flatMap(
+            (session) =>
+              session.readHistoryAfter?.({
+                providerThread: target.owner,
+                nativeTurnId: target.anchor,
+              }) ?? Effect.succeed([]),
+          ),
+          Effect.scoped,
+          codexReaders.withPermit,
+          Effect.timeout(CODEX_HISTORY_READ_TIMEOUT),
+        );
+      const events: Array<OrchestrationV2DomainEvent> = [];
+      let runOrdinal = target.runOrdinal;
+      let turnOrdinal = target.turnOrdinal;
+      for (const nativeTurn of history) {
+        if (nativeTurn.status === "inProgress" || target.knownIds.has(nativeTurn.id)) break;
+        if (nativeTurn.status !== "completed" || nativeTurn.id === "") continue;
+        const indexOfUserMessage = nativeTurn.messages.findIndex(
+          (message) => message.role === "user",
+        );
+        if (indexOfUserMessage < 0) continue;
+        target.knownIds.add(nativeTurn.id);
+        events.push(
+          ...externalTurnEvents({
+            thread: target.thread,
+            owner: target.owner,
+            nativeThreadId: target.nativeId,
+            nativeTurn,
+            indexOfUserMessage,
+            runOrdinal: ++runOrdinal,
+            turnOrdinal: ++turnOrdinal,
+            ids: idAllocator.derive,
+          }),
+        );
+      }
+      if (events.length === 0) return 0;
+      const stored = yield* eventSink.write({ unlessNativeThreadOwned: target.owner, events });
+      return stored.length === 0 ? 0 : runOrdinal - target.runOrdinal;
+    },
+    (effect, { threadId }) =>
+      // A send after returning to the thread must take its ordinal after the sync.
+      threadCommands
+        .withLock(threadId, effect)
+        .pipe(
+          Effect.catch((cause) =>
+            Effect.logDebug("Could not refresh Codex history", { threadId, cause }).pipe(
+              Effect.as(0),
+            ),
+          ),
+        ),
+  );
+
+  return { importRecentAgentThreads, importNativeHistory, refreshCodexHistory };
 });
 
 type AgentSessionImporterShape = Effect.Success<typeof make>;
