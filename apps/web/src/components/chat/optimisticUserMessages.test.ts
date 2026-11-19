@@ -61,13 +61,13 @@ describe("optimistic user messages", () => {
     expect(state.handoff).toEqual({});
   });
 
-  it("releases the previous thread's messages when the thread changes", () => {
+  it("a send the server has not acknowledged is still shown after leaving and returning to its thread", () => {
     let state = applyOptimisticUserMessagesAction(emptyOptimisticUserMessages(threadA), threadA, [
       message("a1"),
     ]);
     state = reconcileOptimisticUserMessages(state, threadB, ids());
     state = reconcileOptimisticUserMessages(state, threadA, ids());
-    expect(state).toEqual(emptyOptimisticUserMessages(threadA));
+    expect(state.messages.map((m) => m.id)).toEqual([MessageId.make("a1")]);
   });
 
   it("drops a late update for a thread the view has left", () => {
