@@ -1745,6 +1745,121 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
+  it.effect.each([
+    { policy: "default", approvalPolicy: undefined },
+    { policy: "on-request", approvalPolicy: "on-request" },
+  ] as const)(
+    "answers dangerous command prompts in full access with the $policy approval policy",
+    ({ policy, approvalPolicy }) =>
+      Effect.gen(function* () {
+        const nativeThreadId = `dangerous-command-${policy}-thread`;
+        const nativeTurnId = `dangerous-command-${policy}-turn`;
+        const prompt = "Clean up the scratch directory.";
+        const pending = yield* Queue.unbounded<OrchestrationV2RuntimeRequest>();
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: `dangerous-command-${policy}`,
+            entries: [
+              ...codexReplayPreamble({
+                nativeThreadId,
+                nativeTurnId,
+                prompt,
+                ...(approvalPolicy === undefined
+                  ? {}
+                  : {
+                      turnPolicy: { approvalPolicy, sandboxPolicy: { type: "dangerFullAccess" } },
+                    }),
+              }),
+              {
+                type: "emit_inbound",
+                frame: {
+                  id: 0,
+                  method: "item/commandExecution/requestApproval",
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    itemId: "remove-scratch",
+                    startedAtMs: 1782622441000,
+                    command: "/bin/bash -lc 'rm -rf /tmp/scratch'",
+                  },
+                },
+              },
+              {
+                type: "expect_outbound",
+                frame: {
+                  id: 0,
+                  result: { decision: approvalPolicy === undefined ? "accept" : "decline" },
+                },
+              },
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                  },
+                },
+              },
+            ],
+          }),
+          (event) =>
+            event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending"
+              ? Queue.offer(pending, event.runtimeRequest)
+              : Effect.void,
+        );
+        const turnInput = makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(`dangerous-command-${policy}-attempt`),
+          text: prompt,
+        });
+        yield* harness.runtime.startTurn({
+          ...turnInput,
+          runtimePolicy: {
+            ...turnInput.runtimePolicy,
+            runtimeMode: "full-access",
+            ...(approvalPolicy === undefined ? {} : { approvalPolicy }),
+          },
+        });
+        if (approvalPolicy === undefined) {
+          const request = yield* Effect.raceFirst(
+            harness.firstTerminal.pipe(Effect.as(undefined)),
+            Queue.take(pending),
+          );
+          assert.isUndefined(request, "Full access must not wait for a command approval");
+        } else {
+          const request = yield* Effect.raceFirst(
+            Queue.take(pending),
+            harness.firstTerminal.pipe(
+              Effect.andThen(Effect.die("Command approval was not presented")),
+            ),
+          );
+          assert.equal(request.kind, "command");
+          yield* harness.runtime.respondToRuntimeRequest({
+            requestId: request.id,
+            decision: "decline",
+          });
+          yield* harness.firstTerminal;
+        }
+        assert.deepEqual(
+          harness.terminalEvents().map((event) => event.status),
+          ["completed"],
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   it.effect.each(["native", "ordinary"] as const)(
     "resumes Codex without a prompt only for an existing conversation (%s)",
     (mode) =>
