@@ -180,7 +180,7 @@ describe("thread execution presentation", () => {
       lastError: "Plan limit reached",
       lastErrorClass: "usage_limit",
     });
-    expect(deriveResumableRunId(projection, deriveThreadRuntime(projection))).toBe(failed.id);
+    expect(deriveResumableRunId(projection)).toBe(failed.id);
     expect(
       deriveThreadRuntime({
         ...projection,
@@ -251,7 +251,7 @@ describe("thread execution presentation", () => {
       lastError: "Plan limit reached",
       lastErrorClass: "usage_limit",
     });
-    expect(deriveResumableRunId(projection, deriveThreadRuntime(projection))).toBe(failed.id);
+    expect(deriveResumableRunId(projection)).toBe(failed.id);
     const cancelledQueued = {
       ...run("cancelled-queued", 3, "cancelled"),
       startedAt: null,
@@ -271,7 +271,24 @@ describe("thread execution presentation", () => {
       status: "queued",
       lastErrorClass: null,
     });
-    expect(deriveResumableRunId(providerError, deriveThreadRuntime(providerError))).toBeNull();
+    expect(deriveResumableRunId(providerError)).toBe(failed.id);
+  });
+
+  it("offers no continuation for a failed worktree setup until the worktree exists", () => {
+    const failed = {
+      ...run("setup-failed", 1, "failed"),
+      completedAt: now,
+      workspacePreparation: { type: "worktree" as const, baseRef: "main" },
+    };
+    const projection = { ...v2Projection, runs: [failed] };
+
+    expect(deriveResumableRunId(projection)).toBeNull();
+    expect(
+      deriveResumableRunId({
+        ...projection,
+        thread: { ...projection.thread, worktreePath: "/tmp/worktree" },
+      }),
+    ).toBe(failed.id);
   });
 
   it("keeps live activity attached to an executing run when a newer run is queued", () => {
@@ -375,7 +392,7 @@ describe("thread execution presentation", () => {
       status: "interrupted",
       activeRunId: null,
     });
-    expect(deriveResumableRunId(projection, deriveThreadRuntime(projection))).toBe(interrupted.id);
+    expect(deriveResumableRunId(projection)).toBe(interrupted.id);
 
     const resumed = { ...projection, runs: [interrupted, { ...held, queueHeld: false }] };
     expect(deriveThreadRuntime(resumed)).toMatchObject({ status: "queued" });
