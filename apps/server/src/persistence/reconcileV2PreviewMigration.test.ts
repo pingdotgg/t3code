@@ -81,6 +81,7 @@ describe("V2 preview upgrade", () => {
         [101, "FleetPeerEnvironments"],
         [102, "OpenShellFleetState"],
         [103, "FleetDrainImports"],
+        [99, "BackgroundRecoveryIndexes"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -205,6 +206,7 @@ describe("V2 preview upgrade", () => {
         [101, "FleetPeerEnvironments"],
         [102, "OpenShellFleetState"],
         [103, "FleetDrainImports"],
+        [99, "BackgroundRecoveryIndexes"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

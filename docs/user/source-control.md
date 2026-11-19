@@ -312,20 +312,24 @@ and their marks follow the same rules as on web and desktop.
 ## Linked pull requests
 
 A thread can hold several pull requests, including reviews from another repository on the same host.
-Use **Link pull request** in the command palette or **Linked pull requests** panel, or right-click a
+Use **Link pull request** in the command palette or **Linked items** panel, or right-click a
 pull request link in the conversation. Creating a pull request from Git actions links it automatically,
 and so does an agent creating one with `gh pr create` or `glab mr create`. Agents can link other
 pull requests with the `link_pull_request` tool.
+
+Agents can also read, open, update, reply on, and merge pull requests in the thread's repository
+through T3 Code's own tools, which use the same sign-in as the Pull requests page. An agent merges
+only the commit it last read: if someone pushed since, the merge is refused.
 
 Use **Link pull request to thread** in the command palette to keep a pull request with the thread. From a review
 on the Pull requests page, **Link to thread** lets you search for an active thread. The review header
 also lists the threads that link to it, including archived threads, so you can return to their context.
 
 Thread badges show a stack's layer count or the current review number with a count of additional
-links. Clicking a badge with more than one review opens the **Linked pull requests** panel. On mobile, the Git overview lists linked reviews and their stacks; tap a review to open it.
+links. Clicking a badge with more than one review opens the **Linked items** panel. On mobile, the Git overview lists linked reviews and their stacks; tap a review to open it.
 Linking and unlinking are available in the web and desktop clients.
 
-The **Linked pull requests** panel lists every review and groups stacks. Unlink a review from its
+The **Linked items** panel lists every review and groups stacks. Unlink a review from its
 row menu. An unlinked stack layer stays out of later syncs. Open linked reviews refresh on the server;
 closed reviews refresh periodically so reopening one on the host is detected. Merged reviews refresh
 when requested. Settling a thread refreshes its open and closed reviews once; after that they stop refreshing until you unsettle it. With **Auto-settle merged threads** enabled, a thread can settle after every linked
@@ -337,21 +341,24 @@ check fails or waits for a maintainer's approval, the required checks pass, some
 conflict. On github.com it also wakes the agent, with GitHub's reason, when the merge queue drops
 the pull request without merging it. Threads in a project that watch the same pull request share one check. On GitHub, a check
 first asks whether anything changed and reads the pull request only when it did, which keeps
-watching inside GitHub's rate limit. Comments from your own account do not wake it. Watching ends
-when the pull request merges or closes, after 10 wakes in a row that bring only comments, after 8
+watching inside GitHub's rate limit. Comments from your own account do not wake it. When the pull
+request merges or closes, watching ends, and the agent is woken once unless it merged or closed the
+pull request itself with the host's CLI. A reopened pull request needs a new watch. Watching also ends after 10 wakes in a row that bring only comments, after 8
 failed reads in a row, or when you press Stop on the thread. A rate limit only pauses watching.
 Settling or archiving a thread also ends all its watches. Unsettle the thread before starting a new
 watch. Watching a pull request again does not repeat check or conflict news its last
 watch already reported; unlinking the pull request clears that. Subagents cannot watch pull requests; the thread that delegated to them does. To start or stop
-it yourself, use the row menu in the **Linked pull requests** panel. In the thread details card, a
+it yourself, use the row menu in the **Linked items** panel. In the thread details card, a
 watched pull request shows an eye; click it to stop watching.
 
 A watched thread counts as working while the pull request still has checks running, so it stays in
 the **Working** section, including after the agent pushes a fix. Once every check has finished,
 including review bots that report as checks, the thread returns to your inbox: what happens next is
 up to a person. That includes a workflow waiting for a maintainer to approve it, which runs only
-once someone does. The watch stays on and still wakes the agent on new comments, failed checks or
-conflicts, and a watched thread never auto-settles.
+once someone does. If you ask the agent to act on the pull request itself, such as merging it once
+a teammate approves, the thread stays in **Working** until the pull request merges or closes. The
+watch stays on and still wakes the agent on new comments, failed checks or conflicts, and a watched
+thread never auto-settles.
 
 Cross-repository links use a project on the same host. Azure DevOps reviews require a project checked
 out from the matching organization and repository.
@@ -361,7 +368,7 @@ out from the matching organization and repository.
 The Issues page lists the issues of every project whose remote is on GitHub, GitLab, Azure
 DevOps or Forgejo, grouped per tracker account. Open it from the sidebar's utility row or with
 **Open issues** in the command palette. Filter by open or closed, by your involvement
-(assigned, opened by you, mentioning you), and by tracker; the search box asks the tracker
+(assigned, opened by you, mentioning you), by project, and by tracker; the search box asks the tracker
 itself where it can search. Press **Load more** at the end of a group to read further back.
 The **Views** menu saves and restores a search, filter, and sort setup, as it does for pull
 requests.
@@ -377,8 +384,9 @@ allow it. An issue read through a project that does not own its repository is sh
 
 An issue can be kept with a thread the way a pull request can: open it beside the thread (issue
 links in the conversation open there) and use **Link to this thread** in its header; **Unlink**
-undoes it. Linked issues are listed in the thread's details beside its pull requests. Agents link the
-issues they work on with the `link_issue` tool.
+undoes it. Click the issue badge in the thread sidebar to see its issues and pull requests in
+**Linked items**. Select an issue there to open it beside the thread. Agents link the issues they
+work on with the `link_issue` tool.
 
 Writing to a tracker over a remote connection requires the `source-control:write` scope.
 
