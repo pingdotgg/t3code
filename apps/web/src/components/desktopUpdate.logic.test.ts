@@ -2,7 +2,6 @@ import { describe, expect, it } from "vite-plus/test";
 import type { DesktopUpdateState } from "@t3tools/contracts";
 
 import {
-  canCheckForUpdate,
   getArm64IntelBuildWarningDescription,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateInstallConfirmationMessage,
@@ -196,17 +195,4 @@ describe("desktop update UI helpers", () => {
       );
     },
   );
-});
-
-describe("canCheckForUpdate", () => {
-  it("returns true once an update has been downloaded so newer releases can be found", () => {
-    expect(
-      canCheckForUpdate({
-        ...baseState,
-        status: "downloaded",
-        availableVersion: "1.1.0",
-        downloadedVersion: "1.1.0",
-      }),
-    ).toBe(true);
-  });
 });

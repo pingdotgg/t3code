@@ -15,7 +15,6 @@ import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import { usePrimaryManagedPolicy } from "../../state/managedPolicy";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
-  canCheckForUpdate,
   getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
@@ -28,7 +27,7 @@ import {
   shouldToastDesktopUpdateActionResult,
 } from "../desktopUpdate.logic";
 import { showDesktopUpdateDownloadedToast } from "../desktopUpdate.toast";
-import { useCheckProviderUpdates } from "../ProviderUpdatesAction";
+import { useCheckForUpdates } from "../useCheckForUpdates";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { SidebarMenuItem } from "../ui/sidebar";
@@ -202,18 +201,18 @@ export function SidebarUpdatePill() {
 }
 
 function SidebarUpdateControl() {
-  return <DesktopUpdateControl inSidebar />;
+  return <UpdateControl inSidebar />;
 }
 
 /**
- * Desktop-only update check/install button. Callers own the visuals through
+ * Update check/install button. Callers own the visuals through
  * `className`; update availability is exposed as `data-update-state`.
  */
-export function DesktopUpdateButton({ className }: { className?: string | undefined } = {}) {
-  return isElectron ? <DesktopUpdateControl className={className} /> : null;
+export function UpdateButton({ className }: { className?: string | undefined } = {}) {
+  return <UpdateControl className={className} />;
 }
 
-function DesktopUpdateControl({
+function UpdateControl({
   className,
   inSidebar = false,
 }: { className?: string | undefined; inSidebar?: boolean } = {}) {
@@ -221,8 +220,8 @@ function DesktopUpdateControl({
   // The desktop updates this machine, whose policy the primary environment reports.
   const updatesDenial = managedUpdatesDenial(usePrimaryManagedPolicy());
   const [isActionPending, setIsActionPending] = useState(false);
-  const [providerCheck, setProviderCheck] = useState<"button" | "dialog" | null>(null);
-  const isCheckingProviders = providerCheck === "button";
+  const [check, setCheck] = useState<"button" | "dialog" | null>(null);
+  const isCheckingEverything = check === "button";
   const [isConfirmingEverything, setIsConfirmingEverything] = useState(false);
   const [checkAnimationKey, setCheckAnimationKey] = useState(0);
   const [releaseNotesPopoverHandle] = useState(() => PopoverCreateHandle());
@@ -253,11 +252,11 @@ function DesktopUpdateControl({
   const localUpdateVersion =
     state && action !== "none" ? getDesktopUpdateDownloadedVersion(state) : null;
   const everything = useUpdateEverything(localUpdateVersion);
-  const checkProviderUpdates = useCheckProviderUpdates();
+  const checkForUpdates = useCheckForUpdates();
   const runsEverything = everything.hasUpdates && !isDownloading;
   const run = useUpdateEverythingRun();
   const isRunningEverything = run !== null;
-  const isChecking = state?.status === "checking" || isCheckingProviders;
+  const isChecking = state?.status === "checking" || isCheckingEverything;
   const { iconStatus, showCheckIcon, showUpdateDetails, showUpdateIconState } =
     resolveSidebarUpdatePresentation({
       action,
@@ -282,13 +281,13 @@ function DesktopUpdateControl({
       : isChecking
         ? "Checking for updates…"
         : (idleTooltip?.title ?? "Check for updates");
-  // Only the app's own status disables. A provider check can hang, so clicking again retries it,
-  // and the spin latch releases on an animation event a paused animation never fires.
+  // Only the app's own busy status disables; with its updater off, a check still covers servers and
+  // providers. The spin latch releases on an animation event a paused animation never fires.
   const disabled = runsEverything
     ? false
     : showUpdateDetails
       ? isDesktopUpdateButtonDisabled(state)
-      : !canCheckForUpdate(state);
+      : state?.status === "checking" || state?.status === "downloading";
   // A run's button only opens its details, so a run never disables it.
   const isInteractionDisabled = !isRunningEverything && (disabled || isActionPending);
   const showReleaseNotesPopover = shouldUseSidebarUpdateReleaseNotesPopover(
@@ -312,23 +311,23 @@ function DesktopUpdateControl({
 
     if (runsEverything) {
       setIsConfirmingEverything(true);
-      // Machines that still cache an older latest version add their rows while the dialog is open.
-      setProviderCheck("dialog");
-      void checkProviderUpdates({ quiet: true }).finally(() => setProviderCheck(null));
+      // A newer build of this app, and machines that cached an older latest version, add their rows
+      // while the dialog is open.
+      setCheck("dialog");
+      void checkForUpdates({ errorsOnly: true }).finally(() => setCheck(null));
       return;
     }
 
-    if (!bridge || !state) return;
-    setIsActionPending(true);
-
-    if (action === "download") {
+    if (bridge && state && action === "download") {
+      setIsActionPending(true);
       void downloadLocalUpdate(bridge, { notifyDownloaded: true }).finally(() =>
         setIsActionPending(false),
       );
       return;
     }
 
-    if (action === "install") {
+    if (bridge && state && action === "install") {
+      setIsActionPending(true);
       let confirmed = false;
       try {
         confirmed = await ensureLocalApi().dialogs.confirm(
@@ -358,33 +357,8 @@ function DesktopUpdateControl({
       setIsCheckAnimationLatched(true);
       setCheckAnimationKey((key) => key + 1);
     }
-    void bridge
-      .checkForUpdate()
-      .then((result) => {
-        if (result.checked) return;
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not check for updates",
-            description:
-              updatesDenial ??
-              result.state.message ??
-              "Automatic updates are not available in this build.",
-          }),
-        );
-      })
-      .catch((error) => {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not check for updates",
-            description: error instanceof Error ? error.message : "Update check failed.",
-          }),
-        );
-      })
-      .finally(() => setIsActionPending(false));
-    setProviderCheck("button");
-    void checkProviderUpdates().finally(() => setProviderCheck(null));
+    setCheck("button");
+    void checkForUpdates().finally(() => setCheck(null));
   };
 
   const runEverything = async () => {
@@ -420,13 +394,11 @@ function DesktopUpdateControl({
   const handleCheckAnimationIteration = () => {
     setIsCheckAnimationLatched(
       shouldContinueDesktopUpdateCheckAnimation({
-        isChecking: state?.status === "checking" || isCheckingProviders,
+        isChecking: state?.status === "checking" || isCheckingEverything,
         prefersReducedMotion,
       }),
     );
   };
-
-  if (!isElectron && !runsEverything && !isRunningEverything) return null;
 
   const statusIcon = (
     <DesktopUpdateStatusIcon
@@ -445,7 +417,7 @@ function DesktopUpdateControl({
       providerCount={everything.providerCount}
       rows={everything.rows}
       restarts={everything.restarts}
-      checking={providerCheck === "dialog"}
+      checking={check === "dialog"}
       onConfirm={() => void runEverything()}
     />
   );

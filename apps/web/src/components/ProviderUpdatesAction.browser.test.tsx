@@ -7,12 +7,11 @@ import {
   ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect } from "react";
 import { expect, it, vi } from "vite-plus/test";
 
-import { act, fakeTimers, render } from "../../test/render";
+import { act, render } from "../../test/render";
 
 const state = vi.hoisted(() => ({
   environments: [] as {
@@ -23,7 +22,6 @@ const state = vi.hoisted(() => ({
   providers: new Map<EnvironmentId, ReadonlyArray<ServerProvider>>(),
   requests: [] as EnvironmentId[],
   checks: [] as { environmentId: EnvironmentId; input: unknown }[],
-  checkResult: null as AsyncResult.AsyncResult<unknown, unknown> | null,
   stallChecks: false,
   sessions: new Map<EnvironmentId, Atom.Writable<AsyncResult.AsyncResult<AuthSessionState>>>(),
 }));
@@ -45,7 +43,11 @@ vi.mock(import("@t3tools/client-runtime/state/session"), async (original) => {
   };
 });
 vi.mock(import("~/state/server"), () => ({
-  serverEnvironment: { updateProvider: "update", refreshProviders: "refresh" } as never,
+  serverEnvironment: {
+    updateProvider: "update",
+    refreshProviders: "refresh",
+    lookupNpmRelease: "lookup",
+  } as never,
 }));
 vi.mock(import("~/state/use-atom-command"), () => ({
   useAtomCommand: ((command: string) =>
@@ -56,13 +58,12 @@ vi.mock(import("~/state/use-atom-command"), () => ({
       }
       state.checks.push({ environmentId, input });
       if (state.stallChecks) return new Promise(() => {});
-      return state.checkResult ?? AsyncResult.success(undefined);
+      return AsyncResult.success({ providers: [provider] });
     }) as never,
 }));
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
-import { toastManager } from "./ui/toast";
-import { useCheckProviderUpdates, useProviderUpdates } from "./ProviderUpdatesAction";
+import { useCheckEnvironmentUpdates, useProviderUpdates } from "./ProviderUpdatesAction";
 
 const provider: ServerProvider = {
   instanceId: ProviderInstanceId.make("codex"),
@@ -113,7 +114,6 @@ function setup() {
   );
   state.requests = [];
   state.checks = [];
-  state.checkResult = null;
   state.stallChecks = false;
   const sessions = new Map<EnvironmentId, Atom.Writable<AsyncResult.AsyncResult<AuthSessionState>>>(
     [
@@ -134,10 +134,10 @@ function setup() {
 it("provider updates and checks exclude connections without a confirmed management grant", async () => {
   const fixture = setup();
   let updates!: ReturnType<typeof useProviderUpdates>;
-  let check!: ReturnType<typeof useCheckProviderUpdates>;
+  let check!: ReturnType<typeof useCheckEnvironmentUpdates>;
   function Probe() {
     const nextUpdates = useProviderUpdates();
-    const nextCheck = useCheckProviderUpdates();
+    const nextCheck = useCheckEnvironmentUpdates();
     useEffect(() => {
       updates = nextUpdates;
       check = nextCheck;
@@ -156,29 +156,20 @@ it("provider updates and checks exclude connections without a confirmed manageme
     await updates.updateAll({ quiet: true });
   });
   expect(state.requests).toEqual([writableId]);
+  let items: Awaited<ReturnType<typeof check>> = [];
   await act(async () => {
-    await check();
+    items = await check();
   });
   // A model refresh always drops the server's cached latest provider versions.
   expect(state.checks).toEqual([{ environmentId: writableId, input: { refreshModels: true } }]);
-
-  using toast = vi.spyOn(toastManager, "add");
-  state.checkResult = AsyncResult.failure(Cause.interrupt());
-  await act(async () => {
-    await check();
+  expect(items).toContainEqual({
+    subject: "Codex on Writable",
+    result: { status: "available", version: "1.1.0" },
   });
-  expect(toast).not.toHaveBeenCalled();
-  state.checkResult = AsyncResult.failure(Cause.fail(new Error("offline")));
-  await act(async () => {
-    await check({ quiet: true });
+  expect(items).toContainEqual({
+    subject: "Providers on Read only",
+    result: { status: "error", reason: "You do not have permission to manage them." },
   });
-  expect(toast).not.toHaveBeenCalled();
-  await act(async () => {
-    await check();
-  });
-  expect(toast).toHaveBeenCalledWith(
-    expect.objectContaining({ title: "Could not check provider updates" }),
-  );
 
   await act(() => {
     appAtomRegistry.set(fixture.sessions.get(writableId)!, session(["orchestration:read"]));
@@ -191,11 +182,11 @@ it("provider updates and checks exclude connections without a confirmed manageme
   expect(state.requests).toEqual([]);
 });
 
-it("a stalled provider refresh times out so the next check runs", async () => {
+it("a repeat check joins the running one instead of rediscovering models again", async () => {
   setup();
-  let check!: ReturnType<typeof useCheckProviderUpdates>;
+  let check!: ReturnType<typeof useCheckEnvironmentUpdates>;
   function Probe() {
-    const nextCheck = useCheckProviderUpdates();
+    const nextCheck = useCheckEnvironmentUpdates();
     useEffect(() => {
       check = nextCheck;
     }, [nextCheck]);
@@ -206,23 +197,9 @@ it("a stalled provider refresh times out so the next check runs", async () => {
       <Probe />
     </RegistryContext.Provider>,
   );
-  using toast = vi.spyOn(toastManager, "add");
-  using _timers = fakeTimers();
   state.stallChecks = true;
 
   const stalled = check();
   expect(check()).toBe(stalled);
-  await act(async () => {
-    vi.advanceTimersByTime(60_000);
-    await stalled;
-  });
-  expect(toast).toHaveBeenCalledWith(
-    expect.objectContaining({ title: "Could not check provider updates" }),
-  );
-
-  state.stallChecks = false;
-  await act(async () => {
-    await check();
-  });
-  expect(state.checks).toHaveLength(2);
+  expect(state.checks).toHaveLength(1);
 });
