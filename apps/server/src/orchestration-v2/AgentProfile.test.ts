@@ -13,6 +13,11 @@ import {
   agentProfileReminder,
   resolveThreadCreateProfile,
 } from "./AgentProfile.ts";
+import { compileClaudeModelSelection } from "../claudeModelOptions.ts";
+import {
+  BUNDLED_CLAUDE_MODEL_CATALOG,
+  getClaudeCatalogModelCapabilities,
+} from "../provider/ClaudeModelCatalog.ts";
 
 const profile: McpGatewayProfile = {
   profileId: "review",
@@ -151,16 +156,39 @@ describe("V2 profile association", () => {
     const providers = [
       provider("antigravity", "Antigravity", { id: "thought_level", role: "reasoning" }),
       provider("codex", "Codex", { id: "reasoningEffort" }),
-      provider("claudeAgent", "Claude", { id: "effort" }),
+      {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        driver: "claudeAgent",
+        displayName: "Claude",
+        enabled: true,
+        models: [
+          {
+            slug: "claude-opus-5-5",
+            name: "Opus 5.5",
+            isCustom: false,
+            capabilities: getClaudeCatalogModelCapabilities(
+              BUNDLED_CLAUDE_MODEL_CATALOG,
+              "claude-opus-5-5",
+            ),
+          },
+        ],
+      } as unknown as ServerProvider,
     ];
     const launch: { modelSelection?: McpGatewayProfile["modelSelection"] } & typeof command =
       command;
     const resolve = (agent: Partial<McpGatewayProfile>) =>
       resolveThreadCreateProfile(launch, [{ ...profile, ...agent }], providers).modelSelection;
+    const claude = resolve({
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-opus-5-5",
+      },
+    });
+    expect(claude?.options).toEqual([{ id: "effort", value: "high" }]);
+    expect(compileClaudeModelSelection(claude!).effort).toBe("high");
     for (const [instanceId, id] of [
       ["antigravity", "thought_level"],
       ["codex", "reasoningEffort"],
-      ["claudeAgent", "effort"],
     ]) {
       expect(
         resolve({
