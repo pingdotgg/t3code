@@ -28,6 +28,7 @@ import {
   reidentifyComposerContext,
   uploadedComposerContext,
   serializeComposerMessageForServer,
+  issueComposerContext,
   pullRequestComposerContext,
 } from "./composerContext";
 
@@ -396,6 +397,25 @@ describe("host context compatibility", () => {
       `src/${"[long file]".repeat(500)}.ts`,
     );
     expect(composerContextSendBlockReason({ version: 1, records: [large] })).toBeNull();
+  });
+
+  it("sends a picked issue's title and page to the agent", () => {
+    const record = issueComposerContext(
+      {
+        reference: "#640",
+        number: 640,
+        title: "Login page crashes",
+        url: "https://gitlab.com/group/project/-/issues/640",
+      },
+      "issue-640",
+    );
+    const prompt = projectComposerContextForProvider({
+      text: formatComposerContextReference(record),
+      records: [record],
+    });
+    expect(prompt).toContain("Login page crashes");
+    expect(prompt).toContain("https://gitlab.com/group/project/-/issues/640");
+    expect(composerContextSendBlockReason({ version: 1, records: [record] })).toBeNull();
   });
 
   it("describes the change request with its host's term", () => {

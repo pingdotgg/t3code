@@ -23,7 +23,11 @@ import {
   formatComposerContextReference,
   threadContextRecord,
 } from "@t3tools/shared/composerContextReferences";
-import { environmentComposerContext, pullRequestComposerContext } from "../../lib/composerContext";
+import {
+  environmentComposerContext,
+  issueComposerContext,
+  pullRequestComposerContext,
+} from "../../lib/composerContext";
 import { uuidv4 } from "../../lib/uuid";
 import {
   getComposerDraftSnapshot,
@@ -244,8 +248,6 @@ export function resolveComposerCommandSelection(input: {
     replacement = `/${item.command} `;
   } else if (item.type === "provider-slash-command") {
     replacement = `/${item.command.name} `;
-  } else if (item.type === "issue-reference") {
-    replacement = `${item.reference} `;
   } else if (item.type === "model") {
     replacement = `${formatComposerModelMention(item.option.selection.instanceId, item.option.selection.model)} `;
   }
@@ -391,7 +393,7 @@ export function useComposerCommandMenu({
       return issueSearch.candidates.map((candidate) => ({
         id: `issue-reference:${candidate.reference}`,
         type: "issue-reference",
-        reference: candidate.reference,
+        candidate,
         label: candidate.reference,
         description: candidate.title,
       }));
@@ -651,14 +653,17 @@ export function useComposerCommandMenu({
       setSelection({ start: result.cursor, end: result.cursor });
       return;
     }
-    if (item.type === "pull-request") {
+    if (item.type === "pull-request" || item.type === "issue-reference") {
       if (
         !ownerKey ||
-        trigger.kind !== "pull-request" ||
+        trigger.kind !== (item.type === "pull-request" ? "pull-request" : "issue") ||
         !items.some((candidate) => candidate.id === item.id)
       )
         return;
-      const record = pullRequestComposerContext(item.pullRequest, uuidv4());
+      const record =
+        item.type === "pull-request"
+          ? pullRequestComposerContext(item.pullRequest, uuidv4())
+          : issueComposerContext(item.candidate, uuidv4());
       if (
         (getComposerDraftSnapshot(ownerKey).context?.records.length ?? 0) >=
         COMPOSER_CONTEXT_MAX_RECORDS

@@ -716,6 +716,7 @@ const RawReferenceSchema = Schema.Struct({
   iid: Schema.Number,
   title: Schema.String,
   state: Schema.String,
+  web_url: Schema.optional(Schema.NullOr(Schema.String)),
 });
 const decodeReferenceEntry = Schema.decodeUnknownExit(RawReferenceSchema);
 
@@ -735,12 +736,14 @@ export function decodeReferenceCandidatesJson(
     if (Exit.isFailure(reference) || !Number.isInteger(reference.value.iid)) continue;
     if (reference.value.iid < 1) continue;
     const { iid, title, state } = reference.value;
+    const url = trimmed(reference.value.web_url);
     items.push({
       reference: `${kind === "issue" ? "#" : "!"}${iid}`,
       kind,
       number: iid,
       title,
       state: state === "merged" ? "merged" : state === "opened" ? "open" : "closed",
+      ...(url ? { url } : {}),
     });
   }
   return Result.succeed({ items, rawCount: decoded.success.length });

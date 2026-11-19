@@ -223,7 +223,10 @@ import { CollapsedComposerStopAction, ComposerPrimaryActions } from "./ComposerP
 import { ComposerFooterPrimaryActions } from "./ComposerFooterControls";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
-import { buildPullRequestReferenceContext } from "../pullRequest/pullRequestDetail.logic";
+import {
+  buildIssueReferenceContext,
+  buildPullRequestReferenceContext,
+} from "../pullRequest/pullRequestDetail.logic";
 import { getComposerPromptInjectionState, getComposerReasoningStep } from "./composerProviderState";
 import { readPromptUltrathink } from "./TraitsPicker";
 import { useApplyThreadModelPick } from "./useApplyThreadModelPick";
@@ -2064,14 +2067,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       return;
     }
-    if (item.type === "pull-request") {
+    if (item.type === "pull-request" || item.type === "issue-reference") {
       if (
-        trigger.kind !== "pull-request" ||
+        trigger.kind !== (item.type === "pull-request" ? "pull-request" : "issue") ||
         !composerMenuItemsRef.current.some((candidate) => candidate.id === item.id)
       ) {
         return;
       }
-      const comment = buildPullRequestReferenceContext(item.pullRequest);
+      const comment =
+        item.type === "pull-request"
+          ? buildPullRequestReferenceContext(item.pullRequest)
+          : buildIssueReferenceContext(item.candidate);
       const replacement = `${formatInlineContextReference(
         reviewCommentContextReference(comment),
       )} `;
@@ -2087,22 +2093,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         addComposerDraftReviewComment(composerDraftTarget, comment, {
           appendReference: false,
         });
-        setComposerHighlightedItemId(null);
-      }
-      return;
-    }
-    if (item.type === "issue-reference") {
-      if (trigger.kind !== "issue") return;
-      const replacement = `${item.candidate.reference} `;
-      const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
-        snapshot.value,
-        trigger.rangeEnd,
-        replacement,
-      );
-      const applied = applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
-        expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
-      });
-      if (applied) {
         setComposerHighlightedItemId(null);
       }
       return;

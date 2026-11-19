@@ -6,6 +6,7 @@ import type {
   EnvironmentId,
   EnvironmentMachineKind,
   PullRequestContextMetadata,
+  PullRequestReferenceCandidate,
   ScopedThreadRef,
   ServerProviderSkill,
   ServerProviderSlashCommand,
@@ -36,7 +37,7 @@ export type ComposerCommandItem =
   | {
       readonly id: string;
       readonly type: "issue-reference";
-      readonly reference: string;
+      readonly candidate: PullRequestReferenceCandidate;
       readonly label: string;
       readonly description: string;
     }
