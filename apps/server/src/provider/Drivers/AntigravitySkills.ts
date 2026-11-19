@@ -260,12 +260,13 @@ const PluginPreferences = Schema.fromJsonString(
 const decodePluginManifest = Schema.decodeEffect(PluginManifest);
 const decodePluginPreferences = Schema.decodeEffect(PluginPreferences);
 
+/** agy runs with GEMINI_HOME set to the instance profile, so it loads plugins from there only. */
 const discoverAntigravityPlugins = Effect.fn("discoverAntigravityPlugins")(function* (
-  userHome: string,
+  profileDirectory: string,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const config = path.join(userHome, ".gemini", "config");
+  const config = path.join(profileDirectory, "config");
   const directory = path.join(config, "plugins");
   const entries = yield* readIfPresent(fileSystem.readDirectory(directory), directory);
   if (entries === undefined) return [];
@@ -326,6 +327,7 @@ const discoverAntigravityPlugins = Effect.fn("discoverAntigravityPlugins")(funct
 export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(function* (input: {
   readonly cwd: string;
   readonly userHome: string;
+  readonly profileDirectory: string;
 }): Effect.fn.Return<
   ReadonlyArray<ServerProviderSkill>,
   AntigravitySkillsProbeError,
@@ -346,7 +348,7 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     ],
     { remainingBytes: MAX_SCAN_BYTES, remainingEntries: MAX_SCAN_ENTRIES },
   );
-  const pluginSkills = yield* discoverAntigravityPlugins(input.userHome).pipe(
+  const pluginSkills = yield* discoverAntigravityPlugins(input.profileDirectory).pipe(
     Effect.catchTags({
       AntigravitySkillsProbeError: (cause) =>
         Effect.logWarning("Antigravity plugin skills are unavailable.", {

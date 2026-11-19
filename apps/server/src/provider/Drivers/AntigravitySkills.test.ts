@@ -25,6 +25,7 @@ const makeWorkspace = Effect.fn("makeWorkspace")(function* () {
   return {
     cwd: path.join(temporaryDirectory, "workspace"),
     userHome: path.join(temporaryDirectory, "home"),
+    profileDirectory: path.join(temporaryDirectory, "profile"),
   };
 });
 
@@ -98,7 +99,7 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const input = yield* makeWorkspace();
-      const config = path.join(input.userHome, ".gemini", "config");
+      const config = path.join(input.profileDirectory, "config");
       const expected = [];
       for (const name of ["alpha", "beta", "broken", "off", "disabled", "unregistered"]) {
         const plugin = path.join(config, "plugins", name);
@@ -131,6 +132,10 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
         path.join(config, "config.json"),
         JSON.stringify({ plugins: { beta: { enabled: true }, off: { enabled: false } } }),
       );
+      // agy in a T3 thread cannot load plugins outside its profile, so the picker must not offer them.
+      const homePlugin = path.join(input.userHome, ".gemini", "config", "plugins", "home");
+      yield* writeSkill(path.join(homePlugin, "skills", "review"), "---\nname: home-review\n---\n");
+      yield* fileSystem.writeFileString(path.join(homePlugin, "plugin.json"), "{}");
       for (const [directory, scope] of [
         [path.join(input.cwd, ".agents", "skills"), "project"],
         [path.join(input.userHome, ".gemini", "config", "skills"), "user"],
@@ -159,7 +164,7 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
         path.join(input.userHome, ".gemini", "config", "skills", "standalone"),
         "---\nname: standalone\n---\n",
       );
-      const plugin = path.join(input.userHome, ".gemini", "config", "plugins", "broken");
+      const plugin = path.join(input.profileDirectory, "config", "plugins", "broken");
       yield* writeSkill(path.join(plugin, "skills", "review"), "---\nname: review\n---\n");
       yield* fileSystem.writeFileString(path.join(plugin, "plugin.json"), "x".repeat(1_000_001));
       assert.deepEqual(yield* discoverAntigravitySkills(input), [
