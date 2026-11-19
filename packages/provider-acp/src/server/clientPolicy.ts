@@ -202,9 +202,9 @@ export function acpPermissionDisposition(
   return acpOperationDisposition(runtimePolicy, {
     kind: request.toolCall.kind,
     locations: request.toolCall.locations,
-    // Only a title naming T3's server counts; a bare tool name could come from any server.
+    // Only a title naming T3's server before any ":" arguments counts; a bare tool name could come from any server.
     isT3McpCall:
-      /t3[-_ ]?code/i.test(request.toolCall.title ?? "") &&
+      /t3[-_ ]?code/i.test((request.toolCall.title ?? "").split(":", 1)[0] ?? "") &&
       toolCall !== undefined &&
       extractMcpToolCallIdentity(toolCall)?.server === "t3-code",
   });

@@ -132,9 +132,10 @@ describe("acpPermissionDisposition", () => {
       ),
       "deny",
     );
-    // A bare tool name or another server's metadata does not establish T3 origin.
+    // A bare tool name, "t3-code" only in arguments, or another server's metadata does not establish T3 origin.
     for (const toolCall of [
       { ...t3McpRequest.toolCall, title: "preview_status" },
+      { ...t3McpRequest.toolCall, title: 'html_render: {"text":"t3-code"}' },
       {
         ...t3McpRequest.toolCall,
         _meta: { serverId: "other-server", toolName: "preview_status" },
