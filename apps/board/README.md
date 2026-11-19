@@ -14,9 +14,24 @@ node apps/board/scripts/check-engine-untouched.mjs
 
 It exits 0 when nothing outside those paths changed since the merge base with `upstream/main`, 1 with the offending paths otherwise, and 2 when the `upstream` remote is missing.
 
+## Run
+
+```sh
+vp run --filter @agent-board/app dev      # Electron window on the Vite dev server
+vp run --filter @agent-board/app dev:web  # the renderer alone, in a browser, at http://127.0.0.1:5190
+vp run --filter @agent-board/app build    # renderer to dist/, Electron main to dist-electron/
+vp run --filter @agent-board/app start    # production build, loaded from agentboard://app
+```
+
+On a Windows machine, run the same commands from WSL with `dev:windows` and `start:windows` (after `build`) to get Windows' own window frame. They download Electron for `win32-x64` once into `%LOCALAPPDATA%\agent-board\` and copy the bundle there, so Electron never runs from a `\\wsl.localhost` path. This needs WSL mirrored networking, so the Windows app can reach the dev server on `127.0.0.1`.
+
+`PORT` moves the dev server. `AGENT_BOARD_CDP_PORT` turns on Electron's remote debugging port. Electron prints `board:first-paint <ms>` once the renderer has painted, measured from the main process start.
+
 ## Tests
 
 ```sh
+vp run --filter @agent-board/app typecheck
+cd apps/board && vp test run
 node --test apps/board/scripts/*.test.mjs
 ```
 

@@ -18,10 +18,14 @@ jobs:
           fetch-depth: 0
           filter: blob:none
 
-      - name: Setup Node
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         with:
           node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@agent-board/app...
 
       - name: Fetch upstream T3 Code
         run: |
@@ -33,3 +37,10 @@ jobs:
 
       - name: Board script tests
         run: node --test apps/board/scripts/*.test.mjs
+
+      - name: Typecheck
+        run: vp run --filter @agent-board/app typecheck
+
+      - name: Unit tests
+        working-directory: apps/board
+        run: vp test run

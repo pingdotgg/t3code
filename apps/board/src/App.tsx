@@ -1,0 +1,23 @@
+import { Viewport } from "./board/Viewport";
+import { Sidebar } from "./sidebar/Sidebar";
+
+export function App() {
+  return (
+    <div className="grid h-full grid-rows-[var(--topbar-height)_minmax(0,1fr)]">
+      <header className="drag-region border-b border-line bg-bg" />
+      <div className="grid min-h-0 grid-cols-[240px_minmax(0,1fr)]">
+        <Sidebar
+          footer={
+            <>
+              <span className="size-[7px] rounded-full bg-offline" />
+              Engine not connected
+            </>
+          }
+        />
+        <main className="min-w-0">
+          <Viewport />
+        </main>
+      </div>
+    </div>
+  );
+}
