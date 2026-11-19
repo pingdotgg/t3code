@@ -46,7 +46,10 @@ import {
   updatePreviewServerSnapshot,
   useThreadPreviewState,
 } from "~/previewStateStore";
-import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
+import {
+  resolveDiscoveredServerUrl,
+  resolveExternalServerUrl,
+} from "~/browser/browserTargetResolver";
 import { useEnvironmentSupportsServerBrowser } from "~/state/entities";
 import {
   useEnvironment,
@@ -451,7 +454,9 @@ export function PreviewView({
 
   const handleOpenInBrowser = () => {
     if (!localApi || !url) return;
-    void localApi.shell.openExternal(url).catch(() => undefined);
+    // A desktop tab's localhost is the environment's; the system browser needs its own route there.
+    const externalUrl = isServerTab ? url : resolveExternalServerUrl(threadRef.environmentId, url);
+    void localApi.shell.openExternal(externalUrl).catch(() => undefined);
   };
 
   const moveTarget = alternatePreviewRuntime(
