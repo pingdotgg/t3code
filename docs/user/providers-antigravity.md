@@ -61,6 +61,9 @@ Install [Antigravity CLI](https://antigravity.google/docs/getting-started) on th
 Set **Binary path** to its `agy` executable and update it yourself.
 Leave the field blank to use the managed runtime, or a compatible executable on
 `PATH` if no managed runtime is installed.
+On Windows, **Binary path** can also be a `.cmd` or `.bat` script that only sets
+variables and then runs `agy_acp_server.exe` by its full path or a `%~dp0`-relative
+path; keep `localharness_external.exe` beside that executable.
 
 ## Update the managed runtime
 
@@ -95,8 +98,9 @@ Antigravity. Antigravity cannot rewind its own conversation, so the next turn
 starts a fresh Antigravity session and T3 Code sends it the kept conversation,
 without the turns you removed.
 
-Manual context compaction is unavailable through Antigravity's ACP runtime, even
-though its CLI has `/compact`. Send `/clear` when you need a fresh context.
+Use `/compact` to summarize a long conversation when your Antigravity runtime
+offers that command. If it is unavailable, update Antigravity in provider settings
+or send `/clear` when you need a fresh context.
 
 ### Skills and attachments
 
@@ -138,6 +142,8 @@ runtimes are shared on the environment.
 
 All three keep thread history and workspace files. Sending `/logout` by itself in
 a thread signs out its instance, including stopping that instance's other sessions.
+That needs a client allowed to manage providers, and it has to be your own message:
+`/logout` from an agent or a scheduled task is refused.
 Sign out, then sign in again to replace an account.
 
 Before removing a managed runtime, disable its instances and cancel any active

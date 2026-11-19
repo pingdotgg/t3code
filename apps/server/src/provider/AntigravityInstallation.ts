@@ -20,6 +20,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import type { PlatformError } from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
@@ -58,8 +59,21 @@ const UPDATE_CHECK_INTERVAL = 60 * 60 * 1000;
 const FREE_SPACE_MARGIN = 256 * 1024 * 1024;
 const RECORD_MAX_BYTES = 8 * 1024;
 const RELEASE_RECORD = ".install-complete.json";
+const LAUNCHER_SETUP =
+  /^[\s@]*(?:|::[^&|<>]*|rem(?:\s[^&|<>]*|$)|set\s+"[^"=&|<>]+=[^"&|<>]*"\s*|(?:echo|set|setlocal|endlocal)(?:\s[^&|<>()]*)?)$/iu;
+const LAUNCHER_COMMAND =
+  /^[\s@]*(?:"([^"]*agy_acp_server\.exe)"|([^\s"&|<>()@]*agy_acp_server\.exe))(?:\s[^&|<>()]*)?$/iu;
 const LARGE_PAGE_KERNEL_MESSAGE =
   "Google's linux-arm64 Antigravity runtime needs a kernel with 4 KiB memory pages, and this kernel uses larger pages (as on Asahi Linux or Raspberry Pi 5). Use a remote environment or a custom Antigravity executable.";
+
+// The launcher runs in the project directory, so a target like `\x\agy_acp_server.exe`
+// whose drive comes from the working directory may not be the file resolved here.
+export const launcherTargetPath = (path: Path.Path, launcher: string, written: string) => {
+  const target = written.replace(/%~dp0/giu, () => `${path.dirname(launcher)}${path.sep}`);
+  if (/[%!]/u.test(target)) return null;
+  const resolved = path.resolve(target);
+  return path.parse(path.normalize(target)).root === path.parse(resolved).root ? resolved : null;
+};
 
 const ReleaseId = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u));
 const ActiveRelease = Schema.Struct({ releaseId: ReleaseId });
@@ -206,6 +220,18 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
   );
   const versionsDirectory = path.join(managedDirectory, "versions");
   const activePath = path.join(managedDirectory, "active.json");
+  // Windows briefly keeps handles on fresh runtime files after taskkill or an antivirus scan; retry for up to 10 seconds.
+  const retryWhileWindowsHoldsHandles = <A, R>(effect: Effect.Effect<A, PlatformError, R>) =>
+    effect.pipe(
+      Effect.retry({
+        times: platform === "win32" ? 40 : 0,
+        schedule: Schedule.spaced("250 millis"),
+        while: (error) =>
+          error.reason._tag === "PermissionDenied" ||
+          error.reason._tag === "Busy" ||
+          error.reason._tag === "Unknown",
+      }),
+    );
   const gate = yield* Semaphore.make(1);
   const leases = new Map<string, number>();
   let running: { readonly operationId: string; readonly fiber: Fiber.Fiber<void> } | undefined;
@@ -308,24 +334,49 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     } satisfies AntigravityExecutable;
   });
 
+  // Infer helper pairing only from a plain launcher with one literal executable path.
+  const launcherTarget = Effect.fn("AntigravityInstallation.launcherTarget")(function* (
+    launcher: string,
+  ) {
+    if (platform !== "win32" || !/\.(?:bat|cmd)$/iu.test(launcher)) return null;
+    const contents = yield* fs.readFileString(launcher);
+    const targets = new Set<string>();
+    for (const line of contents.split(/\r?\n/u)) {
+      if (line.includes("^")) return null;
+      if (/^[\s@]*exit(?:\s+\/b)?(?:\s+-?\d+)?\s*$/iu.test(line)) break;
+      if (LAUNCHER_SETUP.test(line)) continue;
+      const match = LAUNCHER_COMMAND.exec(line);
+      if (!match) return null;
+      const target = launcherTargetPath(path, launcher, match[1] ?? match[2] ?? "");
+      if (target === null) return null;
+      targets.add(target);
+    }
+    const [target] = targets;
+    if (targets.size !== 1 || !target || !(yield* executableFile(target))) return null;
+    return yield* fs.realPath(target);
+  });
+
   const fromExternal = Effect.fn("AntigravityInstallation.fromExternal")(function* (
     candidate: string,
     source: "override" | "path",
   ) {
     if (!(yield* executableFile(candidate))) return null;
     const executablePath = yield* fs.realPath(candidate);
+    const launched = yield* launcherTarget(executablePath);
     const realVersions = yield* fs.realPath(versionsDirectory).pipe(Effect.option);
-    const directory = path.dirname(executablePath);
+    const directory = path.dirname(launched ?? executablePath);
     if (
       Option.isSome(realVersions) &&
       path.dirname(directory) === realVersions.value &&
       /^[a-f0-9]{64}$/u.test(path.basename(directory))
     ) {
       const installed = yield* completedRelease(path.basename(directory));
-      return { ...installed, source };
+      return launched === null
+        ? { ...installed, source }
+        : { ...installed, executablePath, source };
     }
     // Keep launcher symlinks intact: version-manager shims dispatch by their invoked name.
-    if (isAntigravityCli(candidate, executablePath)) {
+    if (launched === null && isAntigravityCli(candidate, executablePath)) {
       return {
         executablePath: candidate,
         harnessPath: null,
@@ -461,18 +512,9 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
         const profileDirectory = yield* Effect.acquireRelease(
           fs.makeTempDirectory({ prefix: "t3-antigravity-validate-" }),
           (directory) =>
-            fs.remove(directory, { recursive: true, force: true }).pipe(
-              // Windows may retain DLL handles briefly after taskkill returns.
-              Effect.retry({
-                times: platform === "win32" ? 10 : 0,
-                schedule: Schedule.spaced("100 millis"),
-                while: (error) =>
-                  error.reason._tag === "PermissionDenied" ||
-                  error.reason._tag === "Busy" ||
-                  error.reason._tag === "Unknown",
-              }),
-              Effect.orDie,
-            ),
+            fs
+              .remove(directory, { recursive: true, force: true })
+              .pipe(retryWhileWindowsHoldsHandles, Effect.orDie),
         );
         const profile = yield* prepareAntigravityProfile({
           profileDirectory,
@@ -540,6 +582,22 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       }),
     );
 
+  // Each update lands in its own directory. Best effort: a busy gate means a session is
+  // resolving, so the next start or update finishes the cleanup.
+  const pruneInactiveReleases = Effect.gen(function* () {
+    const active = yield* readRecord(activePath, ActiveRelease);
+    for (const entry of yield* fs.readDirectory(versionsDirectory)) {
+      if (entry === active.releaseId || !/^[a-f0-9]{64}$/u.test(entry)) continue;
+      const directory = path.join(versionsDirectory, entry);
+      if (leases.has(directory)) continue;
+      yield* fs.remove(directory, { recursive: true, force: true }).pipe(Effect.ignore);
+    }
+  }).pipe(
+    gate.withPermitsIfAvailable(1),
+    Effect.ignore,
+    Effect.withSpan("AntigravityInstallation.pruneInactiveReleases"),
+  );
+
   const install = Effect.fn("AntigravityInstallation.install")(
     function* (asset: AntigravityReleaseAsset | AntigravityCliReleaseAsset) {
       yield* ensureEligible(asset.version);
@@ -585,6 +643,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
             mode: 0o600,
           });
           yield* fs.rename(pointerPath, activePath);
+          yield* pruneInactiveReleases;
           yield* SubscriptionRef.update(
             state,
             (current) =>
@@ -891,6 +950,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
         { flag: "wx", mode: 0o600 },
       );
       yield* fs.rename(pairDirectory, destination).pipe(
+        retryWhileWindowsHoldsHandles,
         Effect.catch((cause) =>
           completedRelease(releaseId).pipe(
             Effect.flatMap((existing) =>
@@ -1169,6 +1229,9 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       ),
     ),
   );
+
+  // A startup install prunes when it activates; pruning now could delete the release it is verifying.
+  if (!isRunning(yield* SubscriptionRef.get(state))) yield* pruneInactiveReleases;
 
   return AntigravityInstallation.of({
     managedDirectory,

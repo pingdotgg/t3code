@@ -1,4 +1,5 @@
 import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
+import { T } from "gt-react";
 import { useState } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -54,7 +55,9 @@ export function PullRequestChangeBreakdownStat({
           <ChangeBreakdownGrid breakdown={breakdown} total={{ additions, deletions }} />
         </TooltipPopup>
       ) : query.isPending ? (
-        <TooltipPopup side="bottom">Loading breakdown</TooltipPopup>
+        <TooltipPopup side="bottom">
+          <T>Loading breakdown</T>
+        </TooltipPopup>
       ) : null}
     </Tooltip>
   );
