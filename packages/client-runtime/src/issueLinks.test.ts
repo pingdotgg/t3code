@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  IssueTrackerAccountId,
   IssueTrackerKind,
   ProjectId,
   SourceControlProviderKind,
@@ -127,6 +128,31 @@ describe("resolveIssueLinkTarget", () => {
     expect(
       resolveIssueLinkTarget({ url: "https://linear.app/acme/issue/WEB-17", projects }),
     ).toBeNull();
+
+    // A second account reaches its own workspace, through only the projects bound with it.
+    const second = IssueTrackerAccountId.make("second");
+    const withSecond = {
+      ...trackers,
+      accounts: [{ ...trackers.trackers[0]!, accountId: second, workspace: "othercorp" }],
+      bindings: { [ProjectId.make("p1")]: trackers.bindings[ProjectId.make("p1")]! },
+      accountBindings: {
+        [ProjectId.make("p2")]: {
+          tracker: IssueTrackerKind.make("linear"),
+          accountId: second,
+          scope: "WEB",
+        },
+      },
+    };
+    const both = (url: string) =>
+      resolveIssueLinkTarget({ url, projects, trackers: withSecond })?.ref;
+    expect(both("https://linear.app/othercorp/issue/WEB-17")).toMatchObject({
+      projectId: "p2",
+      scope: "WEB",
+    });
+    expect(both("https://linear.app/acme/issue/WEB-17")).toMatchObject({
+      projectId: "p1",
+      scope: "WEB",
+    });
   });
 
   it.each([

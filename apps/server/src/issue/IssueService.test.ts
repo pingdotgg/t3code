@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import {
+  IssueTrackerAccountId,
   IssueTrackerKind,
   type IssueTrackerProjectBinding,
   SourceControlProviderKind,
@@ -16,6 +17,7 @@ import {
   type StandaloneIssueTrackerApi,
   type TrackerIssueDetail,
 } from "@t3tools/source-control-core/server/IssueTracker";
+import { IssueTrackerAccount } from "@t3tools/source-control-core/server/IssueTrackerHost";
 
 import { PersistenceSqlError } from "../persistence/Errors.ts";
 import * as IssueTrackerBindings from "../persistence/IssueTrackerBindings.ts";
@@ -59,6 +61,7 @@ function fakeStandaloneTracker(
         ["https://linear.app/acme/issue/ENG-1/issue-title", "acme"],
         ["https://linear.app/acme/issue/ENG-1/canonical-title", "acme"],
         ["https://linear.app/other-workspace/issue/ENG-1/old-title", "other-workspace"],
+        ["https://linear.app/other-workspace/issue/ENG-1/canonical-title", "other-workspace"],
       ]);
       const workspace = links.get(url.href);
       return workspace === undefined
@@ -570,6 +573,145 @@ describe("IssueService with a standalone tracker", () => {
       const missing = yield* service.list({ state: "open", projectId: "missing" as ProjectId });
       expect(missing.scopes).toEqual([]);
       expect(reads).toBe(2);
+    }),
+  );
+
+  it.effect("reads each project's team as the account it is bound with", () =>
+    Effect.gen(function* () {
+      const second = IssueTrackerAccountId.make("second");
+      const asWhom = Effect.map(IssueTrackerAccount, (account) => account ?? "first");
+      const calls: string[] = [];
+      const service = yield* makeService({
+        projects: [project({ id: "work" }), project({ id: "home" })],
+        trackers: [
+          fakeStandaloneTracker({
+            getViewer: () => Effect.map(asWhom, (account) => `viewer-${account}`),
+            listIssues: (input) =>
+              Effect.map(asWhom, (account) => {
+                calls.push(`list ${account} ${input.scope} ${input.cursor ?? ""}`);
+                return {
+                  items: [{ ...issue("ENG-1"), title: `Issue of ${account}` }],
+                  nextCursor: `${account}-next`,
+                };
+              }),
+            getIssue: (input) =>
+              Effect.map(asWhom, (account) => ({
+                ...issue(input.key),
+                title: `Issue of ${account}`,
+                url: `https://linear.app/${account === "first" ? "acme" : "other-workspace"}/issue/${input.key}/canonical-title`,
+              })),
+          }),
+        ],
+        bindings: {
+          work: { tracker: LINEAR, scope: "ENG" },
+          home: { tracker: LINEAR, accountId: second, scope: "ENG" },
+        },
+      });
+
+      // The same team key on two accounts is two scopes, each with its own cursor and viewer.
+      const listed = yield* service.list({ state: "open", involvement: "assigned" });
+      expect(calls.sort()).toEqual(["list first ENG ", "list second ENG "]);
+      expect(listed.viewers).toEqual({
+        "linear.app": "viewer-first",
+        "linear.app second": "viewer-second",
+      });
+      expect(listed.nextCursors).toEqual({
+        "linear.app eng": "first-next",
+        "linear.app second/eng": "second-next",
+      });
+      expect(listed.entries.map((entry) => [entry.projectId, entry.title]).sort()).toEqual([
+        ["home", "Issue of second"],
+        ["work", "Issue of first"],
+      ]);
+
+      // A continuation carries each account on from its own cursor.
+      calls.length = 0;
+      yield* service.list({
+        state: "open",
+        cursors: { "linear.app second/eng": "second-next" },
+      });
+      expect(calls).toEqual(["list second ENG second-next"]);
+
+      const ref = { tracker: LINEAR, scope: "ENG", key: "ENG-1" };
+      expect(yield* service.detail({ ...ref, projectId: "home" as ProjectId })).toMatchObject({
+        title: "Issue of second",
+      });
+      expect(yield* service.detail({ ...ref, projectId: "work" as ProjectId })).toMatchObject({
+        title: "Issue of first",
+      });
+
+      // One refused key, either one, leaves the group usable; only its project errs. Both
+      // refused, the group is.
+      const refusing = (refused: ReadonlyArray<string>) =>
+        makeService({
+          projects: [project({ id: "work" }), project({ id: "home" })],
+          trackers: [
+            fakeStandaloneTracker({
+              listIssues: () =>
+                Effect.flatMap(asWhom, (account) =>
+                  refused.includes(account)
+                    ? Effect.fail(
+                        new IssueTrackerError({
+                          tracker: LINEAR,
+                          operation: "listIssues",
+                          reason: "unauthenticated",
+                          detail: "Linear refused the key.",
+                        }),
+                      )
+                    : Effect.succeed({ items: [issue("ENG-1")], nextCursor: null }),
+                ),
+            }),
+          ],
+          bindings: {
+            work: { tracker: LINEAR, scope: "ENG" },
+            home: { tracker: LINEAR, accountId: second, scope: "ENG" },
+          },
+        });
+      for (const [refused, failed] of [
+        ["second", "home"],
+        ["first", "work"],
+      ] as const) {
+        const partly = yield* (yield* refusing([refused])).list({ state: "open" });
+        expect(partly.trackers).toMatchObject([{ tracker: "linear", configured: true }]);
+        expect(partly.errors).toMatchObject([
+          { projectId: failed, message: "Linear refused the key." },
+        ]);
+      }
+      const none = yield* (yield* refusing(["first", "second"])).list({ state: "open" });
+      expect(none.trackers).toMatchObject([
+        { tracker: "linear", configured: false, detail: "Linear refused the key." },
+      ]);
+
+      // Two users of one workspace: the account bound to the link's exact team serves it, even
+      // when the preferred project reads another team through the other account.
+      const sameWorkspace = yield* makeService({
+        projects: [project({ id: "ops" }), project({ id: "eng" })],
+        trackers: [fakeStandaloneTracker()],
+        bindings: {
+          ops: { tracker: LINEAR, scope: "OPS" },
+          eng: { tracker: LINEAR, accountId: second, scope: "ENG" },
+        },
+      });
+      expect(
+        yield* sameWorkspace.resolveUrl(
+          "https://linear.app/acme/issue/ENG-1/old-title",
+          "ops" as ProjectId,
+        ),
+      ).toMatchObject({ projectId: "eng", scope: "ENG", writable: true });
+
+      // A link resolves through the account whose workspace it names, whichever is preferred.
+      expect(
+        yield* service.resolveUrl(
+          "https://linear.app/other-workspace/issue/ENG-1/old-title",
+          "work" as ProjectId,
+        ),
+      ).toMatchObject({ projectId: "home", issue: { title: "Issue of second" } });
+      expect(
+        yield* service.resolveUrl(
+          "https://linear.app/acme/issue/ENG-1/old-title",
+          "home" as ProjectId,
+        ),
+      ).toMatchObject({ projectId: "work", issue: { title: "Issue of first" } });
     }),
   );
 
