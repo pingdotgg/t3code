@@ -32,6 +32,7 @@ import { PREVIEW_TUNNEL_ACCESS_REQUEST_CHANNEL } from "../ipc/channels.ts";
 
 const ACCESS_TIMEOUT = "15 seconds";
 const PROBE_TIMEOUT = "3 seconds";
+const MAX_FORWARD_CONNECTIONS = 64;
 const CONNECT_TIMEOUT = "10 seconds";
 
 const REPLY_SUCCEEDED = 0;
@@ -135,9 +136,13 @@ const isTunnelEndpoint = (tunnelUrl: string, port: number) => {
 };
 
 /** Opens a connection to the destination; `ws` pauses its socket, so a slow page slows the tunnel. */
+/** Set by the environment's /api/preview/tunnel when it reached the port and nothing listens. */
+const PORT_REFUSED_HEADER = "x-t3-tunnel-port-refused";
+
 const dialDestination = Effect.fn("LoopbackTunnel.dialDestination")(function* (
   tunnelUrl: string,
   port: number,
+  onPortRefused?: () => void,
 ) {
   if (isTunnelEndpoint(tunnelUrl, port)) {
     const endpoint = yield* NodeSocket.makeNet({
@@ -149,10 +154,18 @@ const dialDestination = Effect.fn("LoopbackTunnel.dialDestination")(function* (
   const url = new URL(tunnelUrl);
   url.searchParams.set("port", String(port));
   const tunnel = yield* Effect.acquireRelease(
-    Effect.sync(() =>
+    Effect.sync(() => {
       // Closing before the handshake finishes emits an error after Socket's listeners are gone.
-      new NodeWS.WebSocket(url).on("error", () => undefined),
-    ),
+      const tunnel = new NodeWS.WebSocket(url).on("error", () => undefined);
+      if (onPortRefused) {
+        tunnel.on("unexpected-response", (_request, response) => {
+          if (response.headers[PORT_REFUSED_HEADER] !== undefined) onPortRefused();
+          // Handled here, so `ws` leaves aborting the handshake to us.
+          tunnel.terminate();
+        });
+      }
+      return tunnel;
+    }),
     (tunnel) => Effect.sync(() => tunnel.close()),
   );
   const socket = yield* Socket.fromWebSocket(Effect.succeed(tunnel), {
@@ -383,11 +396,17 @@ const make = Effect.gen(function* () {
     );
 
   /** Serves one connection to a forwarded port; closes it when the environment is out of reach. */
-  const serveForward = (environmentId: string, port: number) =>
-    Effect.fn("LoopbackTunnel.serveForward")(
+  const serveForward = (environmentId: string, port: number) => {
+    let active = 0;
+    return Effect.fn("LoopbackTunnel.serveForward")(
       function* (socket: Socket.Socket) {
+        // Acquiring the socket ties it to this scope, so returning early closes it.
         const pull = yield* Socket.readerBytes(socket);
         const writer = yield* socket.writer;
+        // Closed at once, so a page hammering the port can't queue tunnels and access requests.
+        if (active >= MAX_FORWARD_CONNECTIONS) return;
+        active++;
+        yield* Effect.addFinalizer(() => Effect.sync(() => active--));
         if (!(yield* isOwnConnection())) return;
         const tunnelUrl = yield* requestAccess(environmentId);
         if (tunnelUrl === null) return;
@@ -400,6 +419,7 @@ const make = Effect.gen(function* () {
       Effect.scoped,
       (effect) => Effect.ignoreCause(effect),
     );
+  };
 
   /**
    * Whether the environment's loopback is this machine's, by tunnelling a nonce to a local probe.
@@ -411,11 +431,16 @@ const make = Effect.gen(function* () {
     const tunnelUrl = yield* requestAccess(environmentId);
     // Without access the answer is unknown, not "another machine": a forward could loop later.
     if (tunnelUrl === null) return yield* new LoopbackTunnelUnavailableError({ environmentId });
-    return yield* probeLoopback(tunnelUrl);
+    return yield* probeLoopback(environmentId, tunnelUrl);
   });
 
+  /**
+   * True only when the nonce reaches this machine's probe; false only on proof the environment
+   * was reached and nothing listens on the probe port there. Anything else is unknown.
+   */
   const probeLoopback = Effect.fn("LoopbackTunnel.probeLoopback")(
-    function* (tunnelUrl: string) {
+    function* (environmentId: string, tunnelUrl: string) {
+      const unavailable = new LoopbackTunnelUnavailableError({ environmentId });
       const nonce = new TextEncoder().encode(yield* random.uuidV4());
       const arrived = yield* Deferred.make<void>();
       const probe = yield* NodeSocketServer.make({ port: 0, host: "127.0.0.1" });
@@ -437,20 +462,36 @@ const make = Effect.gen(function* () {
           ),
         )
         .pipe(Effect.forkScoped);
+      let portRefused = false;
       const destination = yield* dialDestination(
         tunnelUrl,
         (probe.address as NetAddress.InetAddress).port,
-      );
-      yield* destination.writer.write(nonce);
-      // Any answer or a close means another machine's service took the connection.
-      return yield* Effect.raceFirst(
+        () => {
+          portRefused = true;
+        },
+      ).pipe(Effect.option);
+      if (Option.isNone(destination)) {
+        if (portRefused) return false;
+        return yield* unavailable;
+      }
+      yield* destination.value.writer.write(nonce);
+      // An answer or a close means a service on another machine took the connection.
+      const answer = yield* Effect.raceFirst(
         Deferred.await(arrived).pipe(Effect.as(true)),
-        destination.pull.pipe(Effect.as(false)),
-      ).pipe(Effect.timeoutOption(PROBE_TIMEOUT), Effect.map(Option.getOrElse(() => false)));
+        destination.value.pull.pipe(Effect.as(false)),
+      ).pipe(Effect.timeoutOption(PROBE_TIMEOUT));
+      if (Option.isNone(answer)) return yield* unavailable;
+      return answer.value;
     },
     Effect.scoped,
-    // An unreachable probe port is another machine, or one the forward can't loop through.
-    Effect.orElseSucceed(() => false),
+    (effect, environmentId) =>
+      effect.pipe(
+        Effect.mapError((error) =>
+          error._tag === "LoopbackTunnelUnavailableError"
+            ? error
+            : new LoopbackTunnelUnavailableError({ environmentId }),
+        ),
+      ),
   );
 
   const forwardKey = (environmentId: string, port: number) => `${environmentId}:${port}`;

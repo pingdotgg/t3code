@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Result from "effect/Result";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
@@ -431,4 +432,86 @@ it.effect(
       const forward = yield* tunnel.forward({ environmentId, remotePort });
       expect(yield* exchange(forward.localPort, Uint8Array.of(9))).toEqual([0xee, 9]);
     }),
+);
+
+/** The environment's tunnel route refusing every port with a 502, as for a port nothing listens on. */
+const listenRefusingEndpoint = (headers: Record<string, string>) =>
+  Effect.acquireRelease(
+    Effect.promise(
+      () =>
+        new Promise<NodeWS.WebSocketServer>((resolve) => {
+          const server: NodeWS.WebSocketServer = new NodeWS.WebSocketServer(
+            {
+              port: 0,
+              host: "127.0.0.1",
+              verifyClient: (_info, done) => done(false, 502, "Bad Gateway", headers),
+            },
+            () => resolve(server),
+          );
+        }),
+    ),
+    closeServer,
+  );
+
+it.effect.each([
+  { case: "the environment reports nothing on the probe port", refused: true },
+  { case: "the tunnel fails for another reason", refused: false },
+])("decides a forward's machine only on proof: $case", ({ refused }) =>
+  Effect.gen(function* () {
+    const endpoint = yield* listenRefusingEndpoint(
+      refused ? { "x-t3-tunnel-port-refused": "1" } : {},
+    );
+    const remotePort = yield* unusedPort;
+    const tunnel = yield* makeTunnel(`ws://127.0.0.1:${addressPort(endpoint)}/api/preview/tunnel`);
+    const result = yield* tunnel
+      .forward({ environmentId: EnvironmentId.make("remote"), remotePort })
+      .pipe(Effect.result);
+    if (refused) {
+      expect(Result.isSuccess(result)).toBe(true);
+    } else {
+      expect(Result.isFailure(result) && result.failure._tag).toBe(
+        "LoopbackTunnelUnavailableError",
+      );
+      expect(yield* refusesConnections(remotePort)).toBe(true);
+    }
+  }),
+);
+
+it.effect("closes connections beyond a forward's limit without tunnelling them", () =>
+  Effect.gen(function* () {
+    const endpoint = yield* listenEndpoint;
+    const tunnel = yield* makeTunnel(
+      `ws://127.0.0.1:${addressPort(endpoint.server)}/api/preview/tunnel`,
+    );
+    const forward = yield* tunnel.forward({
+      environmentId: EnvironmentId.make("remote"),
+      remotePort: yield* unusedPort,
+    });
+    const open = () =>
+      Effect.acquireRelease(
+        Effect.promise(
+          () =>
+            new Promise<NodeNet.Socket>((resolve) => {
+              const socket = NodeNet.connect(forward.localPort, "127.0.0.1", () => {
+                socket.once("data", () => resolve(socket));
+                socket.write(Uint8Array.of(1));
+              });
+            }),
+        ),
+        (socket) => Effect.sync(() => socket.destroy()),
+      );
+    yield* Effect.forEach(Array.from({ length: 64 }), open, { concurrency: "unbounded" });
+    const tunnelled = endpoint.requests.length;
+    const closed = yield* Effect.promise(
+      () =>
+        new Promise<boolean>((resolve) => {
+          const socket = NodeNet.connect(forward.localPort, "127.0.0.1");
+          socket.on("close", () => resolve(true));
+          socket.on("data", () => resolve(false));
+          socket.write(Uint8Array.of(2));
+        }),
+    );
+    expect(closed).toBe(true);
+    expect(endpoint.requests.length).toBe(tunnelled);
+  }),
 );
