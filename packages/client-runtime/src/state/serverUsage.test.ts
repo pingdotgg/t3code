@@ -13,6 +13,7 @@ import {
   type UsageSummaryInput,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -331,5 +332,33 @@ it.effect("reads usage in full when the saved answer cannot be read", () =>
     yield* settledSummary(harness.registry, summary);
     expect(harness.inputs().map(({ provisional }) => provisional)).toEqual([true, undefined]);
     unmount();
+  }),
+);
+
+it.effect("rereads usage while mounted and stops after unmount", () =>
+  Effect.gen(function* () {
+    // Effect schedules fibers with setImmediate, so only the refresh timer is faked.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeHarness();
+          const summary = harness.summary();
+          const unmount = harness.registry.mount(summary);
+          yield* settledSummary(harness.registry, summary);
+          expect(harness.requests()).toBe(1);
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(5 * 60_000));
+          expect(harness.requests()).toBe(2);
+          unmount();
+          // The idle TTL keeps the query alive for one more interval.
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(10 * 60_000));
+          const settled = harness.requests();
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(30 * 60_000));
+          expect(harness.requests()).toBe(settled);
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   }),
 );
