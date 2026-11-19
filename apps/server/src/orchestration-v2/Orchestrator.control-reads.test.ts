@@ -3186,6 +3186,7 @@ it.effect.each([
   "watch",
   "background",
   "unread-steer",
+  "provider-disabled",
   "permission",
   "client",
 ] as const)("continuation durably commits its handoff and source settlement: %s", (scenario) =>
@@ -3320,6 +3321,13 @@ it.effect.each([
       assert.isTrue(Result.isFailure(result));
       assert.notEqual(finalSource.thread.settledOverride, "settled");
       assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
+      if (scenario === "provider-disabled") {
+        assert.isTrue(
+          Result.isFailure(
+            yield* orchestrator.getThreadRecords(targetThreadId, []).pipe(Effect.result),
+          ),
+        );
+      }
       return;
     }
     assert.isTrue(Result.isSuccess(result), JSON.stringify(result));
@@ -3342,5 +3350,28 @@ it.effect.each([
       creationSource: "server",
     });
     assert.lengthOf((yield* projections.getThreadProjection(targetThreadId)).runs, 1);
-  }).pipe(Effect.provide(layerTest)),
+  }).pipe(
+    Effect.provide(
+      scenario === "provider-disabled"
+        ? Layer.provideMerge(
+            ProviderReplayHarness.layerWithRegistry(
+              { name: "control-reads" },
+              ProviderAdapterRegistry.layerFromAdapters([adapter]),
+              {
+                databaseLayer: layerDatabase,
+                runEffectWorker: false,
+                serverSettingsOverrides: {
+                  projectSettingsOverrides: {
+                    [ProjectId.make("project:continuation")]: {
+                      providerInstances: { [instanceId]: { enabled: false } },
+                    },
+                  },
+                },
+              },
+            ),
+            ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+          )
+        : layerTest,
+    ),
+  ),
 );
