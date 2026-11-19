@@ -36,6 +36,7 @@ import {
   resolveAssistantMessageCopyState,
   type MessagesTimelineRow,
   workEntryDisplayLabel,
+  workEntryReadOutput,
 } from "./MessagesTimeline.logic";
 import { workEntryIconName } from "./TimelineWorkEntryRow.logic";
 
@@ -5156,5 +5157,16 @@ describe("isTimelineMinimapTurnVisible", () => {
     expect(isTimelineMinimapTurnVisible(500, undefined, 200, 210)).toBe(false);
     expect(isTimelineMinimapTurnVisible(10, 500, 500, 510)).toBe(false);
     expect(isTimelineMinimapTurnVisible(10, 500, null, null)).toBe(false);
+  });
+});
+
+describe("workEntryReadOutput", () => {
+  it("joins relative paths to the workspace root but keeps home paths as written", () => {
+    expect(
+      workEntryReadOutput(
+        { changedFiles: ["src/app.ts", "~/.claude/CLAUDE.md", "~\\.gitconfig"] },
+        "/workspace/t3code",
+      ),
+    ).toBe("/workspace/t3code/src/app.ts\n~/.claude/CLAUDE.md\n~/.gitconfig");
   });
 });
