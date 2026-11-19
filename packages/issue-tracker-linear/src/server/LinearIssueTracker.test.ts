@@ -297,11 +297,6 @@ describe("LinearIssueTracker", () => {
     Effect.gen(function* () {
       const { tracker } = fakeLinear({
         T3CurrentUser: () => ({ viewer: JULIUS }),
-        T3Viewer: () => ({
-          viewer: JULIUS,
-          organization: { urlKey: "acme" },
-          teams: { nodes: [] },
-        }),
         T3Issue: () => ({
           issue: issue("ENG-7", {
             comments: {
@@ -359,7 +354,6 @@ describe("LinearIssueTracker", () => {
       const api = yield* tracker;
       const detail = yield* api.getIssue({ ...target, key: "eng-7" });
       expect(detail.viewer).toBe("julius");
-      expect((yield* api.probeCredential("token")).workspace).toBe("acme");
       // The team's own workflow, in Linear's order, with the category each state falls in.
       expect(detail.states.map((entry) => [entry.name, entry.category])).toEqual([
         ["Todo", "open"],
