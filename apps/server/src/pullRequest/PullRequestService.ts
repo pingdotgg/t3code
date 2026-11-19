@@ -361,8 +361,6 @@ const LABEL_CHANGE_REFUSAL = "You need triage access on this repository to chang
 export interface SupportedProject {
   readonly cursorKey: string;
   readonly project: OrchestrationProjectShell;
-  /** Every workspace project of this repository, `project` included; the list keeps one. */
-  readonly projectIds: ReadonlyArray<ProjectId>;
   readonly api: PullRequestProviderApi;
   readonly repository: string;
   readonly host: string;
@@ -982,10 +980,9 @@ export const make = Effect.gen(function* () {
         const viewerRoots = new Map<string, string[]>();
         const refinedProjectIdsByHost = new Map<string, ProjectId[]>();
         const seen = new Set<string>();
-        // Every project of a repository, whatever this listing selects: a turn in any of them can
-        // change what the repository holds.
-        const projectIdsByKey = new Map<string, ProjectId[]>();
         for (const project of projects) {
+          if (filter.projectId !== undefined && project.id !== filter.projectId) continue;
+          if (filter.projectIds !== undefined && !filter.projectIds.includes(project.id)) continue;
           const identity = project.repositoryIdentity;
           let kind = identity?.provider;
           const repository = sourceControlDefinitions.repositorySelector(
@@ -999,16 +996,6 @@ export const make = Effect.gen(function* () {
               : remoteHosts.get(remoteHostKey(recognized, identity.locator.remoteUrl));
           kind = remote?.kind ?? kind;
           const host = remote?.host ?? sourceControlDefinitions.changeRequestHost(identity, kind);
-          const registered = registry.get(kind);
-          const api = registered?.servesHost?.(host) === false ? null : registered;
-          const repositoryKey =
-            api?.repositoryKey?.({ canonicalKey: identity.canonicalKey }) ?? null;
-          const key = listCursorKey(host, repositoryKey ?? repository);
-          const sharing = projectIdsByKey.get(key);
-          if (sharing === undefined) projectIdsByKey.set(key, [project.id]);
-          else sharing.push(project.id);
-          if (filter.projectId !== undefined && project.id !== filter.projectId) continue;
-          if (filter.projectIds !== undefined && !filter.projectIds.includes(project.id)) continue;
           if (filter.host !== undefined && host !== filter.host.toLowerCase()) {
             continue;
           }
@@ -1017,11 +1004,16 @@ export const make = Effect.gen(function* () {
             if (projectIds === undefined) refinedProjectIdsByHost.set(host, [project.id]);
             else projectIds.push(project.id);
           }
+          const registered = registry.get(kind);
+          const api = registered?.servesHost?.(host) === false ? null : registered;
           if (api !== null) {
             const roots = viewerRoots.get(host);
             if (roots === undefined) viewerRoots.set(host, [project.workspaceRoot]);
             else if (!roots.includes(project.workspaceRoot)) roots.push(project.workspaceRoot);
           }
+          const repositoryKey =
+            api?.repositoryKey?.({ canonicalKey: identity.canonicalKey }) ?? null;
+          const key = listCursorKey(host, repositoryKey ?? repository);
           if (seen.has(key)) continue;
           seen.add(key);
           if (api === null) {
@@ -1033,7 +1025,6 @@ export const make = Effect.gen(function* () {
           supported.push({
             cursorKey: key,
             project,
-            projectIds: projectIdsByKey.get(key)!,
             api: withRateLimitBackoff(api, host, rateLimits),
             repository,
             host,
@@ -1111,7 +1102,6 @@ export const make = Effect.gen(function* () {
                     return {
                       cursorKey: listCursorKey(host, repository),
                       project: selected.value,
-                      projectIds: [selected.value.id],
                       api: withRateLimitBackoff(api, host, rateLimits),
                       repository,
                       host,
@@ -1402,6 +1392,9 @@ export const make = Effect.gen(function* () {
     }
   >();
   const quietSearchedRows = new Map<string, number>();
+  // Turns by repository, whichever of its projects ran them: the list keeps one project of a
+  // repository, and a listing loads only the projects it selects.
+  const quietTurnsByRepository = new Map<string, number>();
 
   const listUncached: PullRequestService["Service"]["list"] = Effect.fn(
     "PullRequestService.listUncached",
@@ -1620,11 +1613,10 @@ export const make = Effect.gen(function* () {
         input.query ?? null,
         input.filters ?? null,
       ]);
+      const repositoryKey = project.project.repositoryIdentity?.canonicalKey.toLowerCase();
       const epochOf = () =>
-        Math.max(
-          listingsEpoch,
-          ...project.projectIds.map((id) => projectEpochs.get(id) ?? projectEpochFloor),
-        );
+        Math.max(listingsEpoch, projectEpochs.get(project.project.id) ?? projectEpochFloor) +
+        (repositoryKey === undefined ? 0 : (quietTurnsByRepository.get(repositoryKey) ?? 0));
       const epoch = epochOf();
       const searched = quietSearchedRows.get(project.cursorKey) ?? 0;
       const now = yield* Clock.currentTimeMillis;
@@ -3898,6 +3890,15 @@ export const make = Effect.gen(function* () {
     // change request reached through another repository, and no epoch may move until those
     // reads are gone, or a reader in between keeps the old one under the new epoch.
     yield* forgetProviderReads();
+    const shell = yield* projects
+      .getShell(projectId)
+      .pipe(Effect.orElseSucceed(() => Option.none<OrchestrationProjectShell>()));
+    // A project with no repository has no listing to refresh.
+    const turnRepository = Option.getOrUndefined(shell)?.repositoryIdentity?.canonicalKey;
+    if (turnRepository !== undefined) {
+      const key = turnRepository.toLowerCase();
+      quietTurnsByRepository.set(key, (quietTurnsByRepository.get(key) ?? 0) + 1);
+    }
     const epoch = ++epochCounter;
     // A push can open or move a PR; a plain turn waits for the listing TTL to spare the API quota.
     if (options?.pushed === true) listingsEpoch = epoch;
