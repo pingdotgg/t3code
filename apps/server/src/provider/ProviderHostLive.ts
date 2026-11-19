@@ -29,6 +29,7 @@ export const layer = Layer.effect(
       ServerLifecycleEvents.ServerLifecycleEvents,
     );
     return ProviderHost.ProviderHost.of({
+      managedPolicy: serverSettings.managedPolicy,
       paths: {
         cwd: config.cwd,
         baseDir: config.baseDir,

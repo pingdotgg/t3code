@@ -76,6 +76,12 @@ export function getProviderSummary(
         resolve(msg("This provider is installed but disabled for new sessions in T3 Code.")),
     };
   }
+  if (provider.availability === "unavailable") {
+    return {
+      headline: resolve(msg("Unavailable", { $context: "provider status" })),
+      detail: provider.unavailableReason ?? provider.message ?? null,
+    };
+  }
   if (!provider.installed) {
     return {
       headline: resolve(msg("Not found", { $context: "provider status, CLI is missing" })),

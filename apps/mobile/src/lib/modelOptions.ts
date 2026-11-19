@@ -204,6 +204,7 @@ export function isModelSelectionUnavailable(
   if (isDriverDisallowed(config, driver)) {
     return true;
   }
+  if (driver === "acpRegistry" && provider?.availability === "unavailable") return true;
   return (
     driver === "antigravity" &&
     (!provider ||
@@ -238,6 +239,12 @@ export function describeUnavailableModelSelection(
           message: disallowedProviderText(config?.managedPolicy?.organization, label),
         }),
       ),
+    };
+  }
+  if (driver === "acpRegistry" && provider?.availability === "unavailable") {
+    return {
+      title: m(msg("Provider unavailable")),
+      detail: provider.unavailableReason ?? m(msg("Choose another model.")),
     };
   }
   return isDisabledForProject(config, provider, selection.instanceId, projectId)
@@ -392,7 +399,8 @@ export function buildModelOptions(
       !isProviderEnabledForProject(config, provider, projectId) ||
       !provider.installed ||
       provider.auth.status === "unauthenticated" ||
-      (provider.driver === "antigravity" && provider.availability === "unavailable")
+      ((provider.driver === "antigravity" || provider.driver === "acpRegistry") &&
+        provider.availability === "unavailable")
     ) {
       continue;
     }

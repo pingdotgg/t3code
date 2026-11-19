@@ -129,6 +129,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
             failure("methods", "Could not inspect the selected ACP agent.", cause),
           ),
         );
+      if (inspected.status === "denied") return yield* failure("methods", inspected.message);
       if (inspected.status !== "ready")
         return yield* failure("methods", "Prepare this ACP agent before signing in.");
       // Path overrides can change in place; cache discovery only for registry versions.

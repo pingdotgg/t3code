@@ -919,6 +919,29 @@ describe("synchronized mobile model visibility", () => {
         title: "Provider not allowed",
         detail: "Example Corp's policy does not allow the Claude provider. Choose another model.",
       });
+      const deniedAcp = {
+        instanceId: ProviderInstanceId.make("acpRegistry_work"),
+        model: "default",
+      };
+      const reason = "Example Corp's policy does not allow the ACP agent cline.";
+      const acpConfig = {
+        providers: [
+          {
+            ...config.providers[0],
+            instanceId: deniedAcp.instanceId,
+            driver: "acpRegistry",
+            availability: "unavailable",
+            unavailableReason: reason,
+          },
+        ],
+      } as unknown as ServerConfig;
+      expect(isModelSelectionUnavailable(acpConfig, deniedAcp, null)).toBe(true);
+      expect(buildModelOptions(acpConfig, null, undefined, null)).toEqual([]);
+      expect(buildModelOptions(acpConfig, deniedAcp, undefined, null)[0]?.isUnavailable).toBe(true);
+      expect(describeUnavailableModelSelection(acpConfig, deniedAcp, null)).toEqual({
+        title: "Provider unavailable",
+        detail: reason,
+      });
     });
   });
 });

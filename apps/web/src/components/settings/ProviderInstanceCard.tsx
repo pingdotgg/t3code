@@ -1,3 +1,4 @@
+import { managedAcpAgentsNotice } from "@t3tools/client-runtime/contract-labels";
 import { Spinner } from "~/components/ui/spinner";
 
 import {
@@ -860,6 +861,8 @@ export function ProviderInstanceCard({
   const accentColor = normalizeProviderAccentColor(instance.accentColor);
   const managedPolicy = useManagedPolicy(environmentId);
   const instanceLocks = managedInstanceLocks(managedPolicy, instance.driver, m);
+  const acpAgentsNotice =
+    instance.driver === "acpRegistry" ? managedAcpAgentsNotice(managedPolicy, m) : undefined;
   const managedDriverReason = isManagedDriverAllowed(managedPolicy, instance.driver)
     ? undefined
     : disallowedProviderMessage(
@@ -1446,6 +1449,11 @@ export function ProviderInstanceCard({
           aria-disabled={readOnly || undefined}
           className={readOnly ? "opacity-50 select-none" : undefined}
         >
+          {acpAgentsNotice ? (
+            <div className="px-3 pt-2 sm:px-4">
+              <ManagedNotice>{acpAgentsNotice}</ManagedNotice>
+            </div>
+          ) : null}
           {runtimeFields}
         </SettingsSection>
       ) : null}

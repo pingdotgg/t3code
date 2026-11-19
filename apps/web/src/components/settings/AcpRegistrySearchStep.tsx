@@ -3,6 +3,7 @@ import {
   ACP_REGISTRY_MAX_AGENTS,
   ACP_REGISTRY_SEARCH_QUERY_MAX_LENGTH,
   AuthProvidersManageScope,
+  managedAcpAgentsNotice,
 } from "@t3tools/contracts";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import {
@@ -23,6 +24,7 @@ import { useDeadlinePassed } from "../../hooks/useDeadline";
 import { m } from "../../i18n/messages";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentQuery } from "../../state/query";
+import { useManagedPolicy } from "../../state/managedPolicy";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
@@ -137,7 +139,7 @@ interface AcpRegistrySearchStepProps {
   readonly providerInstances: Readonly<Record<string, ProviderInstanceConfig>>;
   readonly onPrepared: (agent: AcpRegistrySearchAgent) => void;
   readonly onManualConfiguration: () => void;
-  readonly onLocalConfiguration?: () => void;
+  readonly onLocalConfiguration?: (() => void) | undefined;
 }
 
 export function AcpRegistrySearchStep({
@@ -150,6 +152,7 @@ export function AcpRegistrySearchStep({
 }: AcpRegistrySearchStepProps) {
   const gt = useGT();
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
+  const agentsLimited = managedAcpAgentsNotice(useManagedPolicy(environmentId)) !== undefined;
   const { query, search, preparingId, prepareError } = registry;
 
   const handleSearch = (event: FormEvent<HTMLFormElement>) => {
@@ -243,7 +246,11 @@ export function AcpRegistrySearchStep({
               <T>No compatible agents found</T>
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              <T>Try a broader search.</T>
+              {agentsLimited ? (
+                <T>Only agents your organization allows appear here.</T>
+              ) : (
+                <T>Try a broader search.</T>
+              )}
             </p>
           </div>
         ) : (

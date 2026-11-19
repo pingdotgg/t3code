@@ -99,6 +99,12 @@ describe("Antigravity with unchecked sign-in", () => {
         status: "warning",
       },
       {
+        name: "refused by policy",
+        change: { installed: false, status: "error", availability: "unavailable" },
+        headline: "Unavailable",
+        status: "error",
+      },
+      {
         name: "API key authentication",
         change: { auth: { status: "unknown", type: "gemini-api-key" } },
         headline: "Needs attention",
