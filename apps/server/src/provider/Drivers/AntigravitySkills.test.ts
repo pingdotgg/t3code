@@ -121,6 +121,63 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
     }),
   );
 
+  it.effect.skipIf(!symlinksSupported)(
+    "reads skills from enabled user plugins before the profile links them",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const input = yield* makeWorkspace();
+        const config = path.join(input.userHome, ".gemini", "config");
+        const profileConfig = path.join(input.profileDirectory, "config");
+        for (const [plugin, manifest] of [
+          ["on", "plugin.json"],
+          ["ag", ".antigravity-plugin/plugin.json"],
+          ["gem", ".gemini-plugin/plugin.json"],
+          ["off", "plugin.json"],
+          ["bare", undefined],
+          ["profile-off", "plugin.json"],
+          ["shadowed", "plugin.json"],
+        ] as const) {
+          const directory = path.join(config, "plugins", plugin);
+          yield* writeSkill(path.join(directory, "skills", plugin), `---\nname: ${plugin}\n---\n`);
+          if (manifest !== undefined) {
+            yield* fileSystem.makeDirectory(path.dirname(path.join(directory, manifest)), {
+              recursive: true,
+            });
+            yield* fileSystem.writeFileString(path.join(directory, manifest), "{}");
+          }
+        }
+        yield* fileSystem.writeFileString(
+          path.join(config, "config.json"),
+          JSON.stringify({ plugins: { off: { enabled: false } } }),
+        );
+        yield* writeSkill(
+          path.join(profileConfig, "plugins", "shadowed", "skills", "own"),
+          "---\nname: profile-shadowed\n---\n",
+        );
+        yield* fileSystem.writeFileString(
+          path.join(profileConfig, "config.json"),
+          JSON.stringify({ plugins: { "profile-off": { enabled: false } } }),
+        );
+        // A link from before "off" was disabled goes on the next launch.
+        yield* fileSystem.symlink(
+          path.join(config, "plugins", "off"),
+          path.join(profileConfig, "plugins", "off"),
+        );
+
+        assert.deepEqual(
+          (yield* discoverAntigravitySkills(input)).map((skill) => [skill.name, skill.scope]),
+          [
+            ["ag", "user"],
+            ["gem", "user"],
+            ["on", "user"],
+            ["profile-shadowed", "user"],
+          ],
+        );
+      }),
+  );
+
   it.effect("uses native root order for duplicate names", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

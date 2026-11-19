@@ -20,6 +20,7 @@ import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStr
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   antigravityUserSkillDirectories,
+  readAntigravityUserPlugins,
   resolveAntigravityUserHome,
 } from "./Drivers/AntigravitySkills.ts";
 
@@ -306,6 +307,55 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
   }
 });
 
+/** Link each enabled plugin instead of the folder, so plugins installed into the profile keep working. */
+const linkAntigravityUserPlugins = Effect.fn("linkAntigravityUserPlugins")(function* (input: {
+  readonly profileDirectory: string;
+  readonly userHome: string;
+  readonly platform: NodeJS.Platform;
+}): Effect.fn.Return<void, never, FileSystem.FileSystem | Path.Path> {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const userPlugins = path.join(input.userHome, ".gemini", "config", "plugins");
+  const profilePlugins = path.join(input.profileDirectory, "config", "plugins");
+  yield* Effect.gen(function* () {
+    const enabled = yield* readAntigravityUserPlugins(input.userHome);
+    const existing = new Set(
+      yield* fs
+        .readDirectory(profilePlugins)
+        .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed([]))),
+    );
+    for (const name of existing) {
+      const link = path.join(profilePlugins, name);
+      const target = yield* fs.readLink(link).pipe(
+        Effect.map((value): string | undefined => path.resolve(profilePlugins, value)),
+        Effect.orElseSucceed(() => undefined),
+      );
+      // Only links into the user's plugins are ours. Real folders and other links stay.
+      if (target === undefined || path.dirname(target) !== userPlugins) continue;
+      if (enabled.get(name) === target) continue;
+      yield* fs.remove(link);
+      existing.delete(name);
+    }
+    for (const [name, target] of enabled) {
+      if (existing.has(name)) continue;
+      const link = path.join(profilePlugins, name);
+      yield* fs.makeDirectory(profilePlugins, { recursive: true });
+      yield* Effect.tryPromise({
+        try: () => NodeFSP.symlink(target, link, input.platform === "win32" ? "junction" : "dir"),
+        catch: (cause) => new AntigravitySkillLinkError({ link, cause }),
+      });
+    }
+  }).pipe(
+    Effect.catch((error) =>
+      Effect.logWarning("Antigravity user plugins are not linked into the profile.", {
+        profilePlugins,
+        userPlugins,
+        error,
+      }),
+    ),
+  );
+});
+
 export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(function* (input: {
   readonly profileDirectory: string;
   readonly baseEnv?: NodeJS.ProcessEnv;
@@ -453,6 +503,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
       ),
     );
   yield* linkAntigravityUserSkills({ profileDirectory: geminiHome, userHome, platform });
+  yield* linkAntigravityUserPlugins({ profileDirectory: geminiHome, userHome, platform });
   return profile;
 });
 

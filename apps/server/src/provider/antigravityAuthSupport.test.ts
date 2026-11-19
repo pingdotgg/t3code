@@ -669,6 +669,7 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         expect(yield* fs.exists(path.join(profileDirectory, "config", "mcp_config.json"))).toBe(
           false,
         );
+        expect(yield* fs.exists(path.join(profileDirectory, "config", "plugins"))).toBe(false);
 
         // The harness leaves an empty folder where the link was skipped.
         yield* fs.makeDirectory(cliLink, { recursive: true });
@@ -691,6 +692,75 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         yield* fs.remove(cliSkills, { recursive: true });
         yield* prepareAntigravityProfile({ profileDirectory, userHome });
         expect(yield* isLink(cliLink)).toBe(false);
+      }),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "links each enabled user plugin and removes only its own stale links",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const temporaryDirectory = yield* fs.makeTempDirectoryScoped();
+        const userHome = path.join(temporaryDirectory, "home");
+        const profileDirectory = path.join(temporaryDirectory, "profile");
+        const config = path.join(userHome, ".gemini", "config");
+        const userPlugins = path.join(config, "plugins");
+        const profilePlugins = path.join(profileDirectory, "config", "plugins");
+        const write = Effect.fn("writeFile")(function* (file: string, text: string) {
+          yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+          yield* fs.writeFileString(file, text);
+        });
+        const linkTarget = (name: string) =>
+          fs.readLink(path.join(profilePlugins, name)).pipe(Effect.orElseSucceed(() => undefined));
+        for (const [plugin, manifest] of [
+          ["on", "plugin.json"],
+          ["ag", ".antigravity-plugin/plugin.json"],
+          ["gem", ".gemini-plugin/plugin.json"],
+          ["off", "plugin.json"],
+          ["bare", "skills/bare/SKILL.md"],
+          ["local", "plugin.json"],
+        ] as const) {
+          yield* write(path.join(userPlugins, plugin, manifest), "{}");
+        }
+        const disable = (plugins: ReadonlyArray<string>) =>
+          write(
+            path.join(config, "config.json"),
+            encodeUnknownJson({
+              plugins: Object.fromEntries(plugins.map((name) => [name, { enabled: false }])),
+            }),
+          );
+        yield* disable(["off"]);
+        yield* write(path.join(config, "mcp_config.json"), '{"mcpServers":{"s":{}}}');
+        yield* write(path.join(config, "hooks.json"), '{"hooks":{"Stop":[]}}');
+        yield* write(path.join(profilePlugins, "local", "plugin.json"), "{}");
+        const foreign = path.join(temporaryDirectory, "foreign");
+        yield* fs.makeDirectory(foreign);
+        yield* fs.symlink(foreign, path.join(profilePlugins, "foreign"));
+
+        yield* prepareAntigravityProfile({ profileDirectory, userHome });
+        for (const plugin of ["on", "ag", "gem"]) {
+          expect(yield* linkTarget(plugin)).toBe(path.join(userPlugins, plugin));
+        }
+        expect(yield* fs.exists(path.join(profilePlugins, "off"))).toBe(false);
+        expect(yield* fs.exists(path.join(profilePlugins, "bare"))).toBe(false);
+        expect(yield* linkTarget("local")).toBeUndefined();
+        expect(yield* linkTarget("foreign")).toBe(foreign);
+        for (const name of ["mcp_config.json", "hooks.json"]) {
+          expect(yield* fs.exists(path.join(profileDirectory, "config", name))).toBe(false);
+        }
+
+        yield* disable(["on"]);
+        yield* fs.remove(path.join(userPlugins, "ag"), { recursive: true });
+        yield* fs.remove(path.join(profilePlugins, "gem"));
+        yield* fs.symlink(path.join(userPlugins, "off"), path.join(profilePlugins, "gem"));
+        yield* prepareAntigravityProfile({ profileDirectory, userHome });
+        expect(yield* linkTarget("on")).toBeUndefined();
+        expect(yield* linkTarget("ag")).toBeUndefined();
+        expect(yield* linkTarget("gem")).toBe(path.join(userPlugins, "gem"));
+        expect(yield* linkTarget("off")).toBe(path.join(userPlugins, "off"));
+        expect(yield* fs.exists(path.join(profilePlugins, "local", "plugin.json"))).toBe(true);
+        expect(yield* linkTarget("foreign")).toBe(foreign);
       }),
   );
 

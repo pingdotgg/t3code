@@ -40,8 +40,10 @@ Antigravity separates account profiles per instance while sharing installed exec
 environment. It forces file-based credential storage because the native macOS keychain entry would
 otherwise be shared across instances. The launch environment removes ambient Google credentials,
 so an instance cannot silently use another account or billing project. The agent also resolves
-its user-global skill directories under that profile, so the profile links those two directories
-back to the user's real `~/.gemini`; MCP servers, hooks, and rules there stay out of the profile.
+its user-global skill directories and plugins under that profile, so the profile links those two
+skill directories and each enabled plugin back to the user's real `~/.gemini`. Plugins are linked
+one by one, never as a folder, so plugins installed into the profile itself keep working. A plugin's
+own hooks and MCP servers come with it, while top-level MCP servers, hooks, and rules stay out.
 See [profile isolation](../../apps/server/src/provider/antigravityAuthSupport.ts).
 
 The [Antigravity installer](../../apps/server/src/provider/AntigravityInstallation.ts) outlives
@@ -74,7 +76,8 @@ metadata. Otherwise a helper or resumed session could retain the old account. Ca
 do not establish current access, and an authoritative empty catalog must clear the old list.
 
 Antigravity text-generation helpers deny tool requests, but native hooks and MCP configuration can
-run before the prompt. They reject profiles with such configuration before launch. Prompt
+run before the prompt. They reject profiles with such configuration, including in enabled plugins,
+before launch. The check also covers user plugins that profile preparation links later. Prompt
 instructions and tool denial do not create a native sandbox.
 See [helper constraints](../../apps/server/src/textGeneration/AntigravityTextGeneration.ts).
 

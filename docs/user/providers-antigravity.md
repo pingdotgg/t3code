@@ -112,6 +112,13 @@ Skills for every project go in `~/.gemini/config/skills` or
 `~/.gemini/antigravity-cli/skills`. Antigravity does not read `~/.agents/skills`,
 so a skill there only appears when the project itself is your home directory.
 
+Plugins installed in `~/.gemini/config/plugins` work too, unless
+`~/.gemini/config/config.json` turns them off. T3 Code sessions load their
+skills, hooks, and MCP servers as `agy` does. MCP servers and hooks configured directly in
+`~/.gemini/config` do not. If an enabled plugin has hooks or MCP servers,
+Antigravity cannot serve as a
+[text generation model](./text-generation.md), so pick another one.
+
 Antigravity receives images and audio directly, and reads PDFs and text files as
 documents. With the managed runtime on macOS and Linux, an MP4 video up to 20 MiB
 is sent as video to Gemini models. Other attachments, and videos for other models, are passed as a
