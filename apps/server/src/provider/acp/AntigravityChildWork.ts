@@ -26,7 +26,6 @@ const STEP_INVOKE_SUBAGENT = 143;
 const INVOKE_SPECS = 9;
 const INVOKE_RESULTS = 10;
 const INVOKE_SUBAGENT_STEP_TYPE = 127;
-// Cortex step types for shell commands (exa.cortex_pb): RUN_COMMAND=21, GENERIC=132.
 const MAX_COMMAND_SCAN_ROWS = 256;
 
 export type AntigravityCommandNativeState = "running" | "completed" | "failed" | "cancelled";
@@ -618,6 +617,7 @@ export function makeAntigravityCommandStatusReader(
             let scannedMaxIdx = lastScannedMaxIdx;
             let hitScanCap = false;
             let sawUnmappedRow = false;
+            // Shell command step types (exa.cortex_pb): RUN_COMMAND=21, GENERIC=132.
             const query = hasMetadata
               ? database.prepare(
                   "SELECT idx, status, CASE WHEN length(metadata) <= ? THEN metadata END AS metadata FROM steps WHERE step_type IN (21, 132) AND step_format = 0 AND idx > ? ORDER BY idx DESC LIMIT ?",

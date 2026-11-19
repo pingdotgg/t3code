@@ -26,6 +26,20 @@ import {
   transcriptLines,
 } from "./AntigravityChildWork.testkit.ts";
 
+const varint = (value: number): number[] => {
+  const bytes: number[] = [];
+  let current = value;
+  while (current >= 0x80) {
+    bytes.push((current & 0x7f) | 0x80);
+    current = Math.floor(current / 0x80);
+  }
+  return [...bytes, current];
+};
+const field = (num: number, value: string | Uint8Array) => {
+  const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
+  return [...varint(num * 8 + 2), ...varint(bytes.length), ...bytes];
+};
+
 const read = (
   profileDirectory: string,
   nativeTaskId: string,
@@ -351,19 +365,6 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
       const conversations = path.join(profile, "antigravity-acp", "conversations");
       yield* fs.makeDirectory(conversations, { recursive: true });
       const dbPath = path.join(conversations, `${ROOT}.db`);
-      const varint = (value: number): number[] => {
-        const bytes: number[] = [];
-        let current = value;
-        while (current >= 0x80) {
-          bytes.push((current & 0x7f) | 0x80);
-          current = Math.floor(current / 0x80);
-        }
-        return [...bytes, current];
-      };
-      const field = (num: number, value: string | Uint8Array) => {
-        const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
-        return [...varint(num * 8 + 2), ...varint(bytes.length), ...bytes];
-      };
       const metadataFor = (callId: string) =>
         Uint8Array.from(
           field(4, Uint8Array.from([...field(1, callId), ...field(2, "run_command")])),
@@ -444,19 +445,6 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
       const conversations = path.join(profile, "antigravity-acp", "conversations");
       yield* fs.makeDirectory(conversations, { recursive: true });
       const dbPath = path.join(conversations, `${ROOT}.db`);
-      const varint = (value: number): number[] => {
-        const bytes: number[] = [];
-        let current = value;
-        while (current >= 0x80) {
-          bytes.push((current & 0x7f) | 0x80);
-          current = Math.floor(current / 0x80);
-        }
-        return [...bytes, current];
-      };
-      const field = (num: number, value: string | Uint8Array) => {
-        const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
-        return [...varint(num * 8 + 2), ...varint(bytes.length), ...bytes];
-      };
       const stepPayloadFor = (callId: string) =>
         Uint8Array.from(
           field(

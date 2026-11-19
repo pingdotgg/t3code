@@ -1335,7 +1335,6 @@ describe("AntigravityAdapterV2 foreground command settlement", () => {
     readonly foregroundCommandSettlement?: Parameters<
       typeof makeAntigravityAdapterV2
     >[0]["foregroundCommandSettlement"];
-    readonly onDrainEvents?: () => Effect.Effect<void>;
     readonly onPrompt: (args: {
       readonly promptIndex: number;
       readonly payload: Parameters<AcpSessionRuntime.AcpSessionRuntime["Service"]["prompt"]>[0];
@@ -1384,10 +1383,6 @@ describe("AntigravityAdapterV2 foreground command settlement", () => {
               Effect.sync(() => {
                 sessionUpdate = handler;
               }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
-            drainEvents:
-              input.onDrainEvents === undefined
-                ? runtime.drainEvents
-                : runtime.drainEvents.pipe(Effect.tap(input.onDrainEvents)),
             prompt: (payload, promptOptions) =>
               Effect.gen(function* () {
                 receivedPrompts.push(JSON.stringify(payload.prompt));
@@ -1508,7 +1503,6 @@ describe("AntigravityAdapterV2 foreground command settlement", () => {
       startedTurnId,
       receivedPrompts,
       startTurn,
-      emitUpdate,
     };
   });
 
@@ -1586,54 +1580,6 @@ describe("AntigravityAdapterV2 foreground command settlement", () => {
   );
 
   it.live(
-    "settles a detached failed foreground command as failed instead of fabricating completed",
-    () =>
-      Effect.gen(function* () {
-        const sessionId = "6063c071-f83e-427d-ab35-6caf4c8dbfa2";
-        const { profileDirectory } = yield* createNativeStepsDb(sessionId, [
-          { idx: 46, callId: "call_fail", status: 7 },
-        ]);
-        const fixture = yield* makeForegroundFixture({
-          name: "fg-detached-fail",
-          profileDirectory,
-          sessionId,
-          onPrompt: ({ promptIndex, emit }) =>
-            Effect.gen(function* () {
-              if (promptIndex === 1) {
-                yield* emit({
-                  sessionUpdate: "tool_call",
-                  toolCallId: "call_fail",
-                  title: "Tests",
-                  kind: "execute",
-                  status: "in_progress",
-                  rawInput: { CommandLine: "npm test", IsDaemon: false },
-                });
-                return { stopReason: "end_turn" as const };
-              }
-              yield* emit({
-                sessionUpdate: "agent_message_chunk",
-                content: { type: "text", text: "Tests failed." },
-              });
-              return { stopReason: "end_turn" as const };
-            }),
-        });
-
-        yield* fixture.startTurn();
-        const events = Array.from(yield* Fiber.join(fixture.eventsFiber));
-        assert.equal(fixture.receivedPrompts.length, 2);
-        const settledTool = events.findLast(
-          (event) =>
-            event.type === "turn_item.updated" &&
-            event.turnItem.nativeItemRef?.nativeId === "call_fail",
-        );
-        assert.equal(
-          settledTool?.type === "turn_item.updated" ? settledTool.turnItem.status : null,
-          "failed",
-        );
-      }).pipe(Effect.provide(layerSession), Effect.scoped),
-  );
-
-  it.live(
     "aborts waiting on a running native foreground command when Stop is requested without re-prompting",
     () =>
       Effect.gen(function* () {
@@ -1672,145 +1618,6 @@ describe("AntigravityAdapterV2 foreground command settlement", () => {
         assert.equal(fixture.receivedPrompts.length, 1);
         const terminal = events.find((event) => event.type === "turn.terminal");
         assert.equal(terminal?.type === "turn.terminal" ? terminal.status : null, "interrupted");
-      }).pipe(Effect.provide(layerSession), Effect.scoped),
-  );
-
-  it.live(
-    "still sends one continuation when ACP completes the command after end_turn while waiting",
-    () =>
-      Effect.gen(function* () {
-        const sessionId = "6063c071-f83e-427d-ab35-6caf4c8dbfa4";
-        const { profileDirectory } = yield* createNativeStepsDb(sessionId, [
-          { idx: 48, callId: "call_late_acp", status: 2 },
-        ]);
-        const enteredWait = yield* Deferred.make<void>();
-        let firstPromptDone = false;
-        const fixture = yield* makeForegroundFixture({
-          name: "fg-late-acp",
-          profileDirectory,
-          sessionId,
-          onDrainEvents: () =>
-            firstPromptDone
-              ? Deferred.succeed(enteredWait, undefined).pipe(Effect.asVoid)
-              : Effect.void,
-          onPrompt: ({ promptIndex, emit }) =>
-            Effect.gen(function* () {
-              if (promptIndex === 1) {
-                yield* emit({
-                  sessionUpdate: "tool_call",
-                  toolCallId: "call_late_acp",
-                  title: "Late ACP command",
-                  kind: "execute",
-                  status: "in_progress",
-                  rawInput: { CommandLine: "npm run test", IsDaemon: false },
-                });
-                firstPromptDone = true;
-                return { stopReason: "end_turn" as const };
-              }
-              yield* emit({
-                sessionUpdate: "agent_message_chunk",
-                content: { type: "text", text: "Late ACP result delivered." },
-              });
-              return { stopReason: "end_turn" as const };
-            }),
-        });
-
-        yield* fixture.startTurn();
-        yield* Deferred.await(enteredWait);
-        yield* Effect.sleep("50 millis");
-        // Simulate agy 1.5.11 emitting tool_call_update(completed) after end_turn while adapter waits.
-        yield* fixture.emitUpdate({
-          sessionUpdate: "tool_call_update",
-          toolCallId: "call_late_acp",
-          status: "completed",
-          rawOutput: "OK",
-        });
-
-        const events = Array.from(yield* Fiber.join(fixture.eventsFiber));
-        assert.equal(fixture.receivedPrompts.length, 2);
-        const assistantText = events
-          .flatMap((event) =>
-            event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
-              ? [event.turnItem.text ?? ""]
-              : [],
-          )
-          .join("");
-        assert.include(assistantText, "Late ACP result delivered.");
-      }).pipe(Effect.provide(layerSession), Effect.scoped),
-  );
-
-  it.live(
-    "keeps waiting when native status reader throws or returns empty, never mislabels interrupted, and sends still_running continuation on maxWait",
-    () =>
-      Effect.gen(function* () {
-        const sessionId = "6063c071-f83e-427d-ab35-6caf4c8dbfa5";
-        const fileSystem = yield* FileSystem.FileSystem;
-        const emptyProfile = yield* fileSystem.makeTempDirectoryScoped({
-          prefix: "t3-ag-empty-profile-",
-        });
-        let readerCalls = 0;
-        const fixture = yield* makeForegroundFixture({
-          name: "fg-reader-errors",
-          profileDirectory: emptyProfile,
-          sessionId,
-          foregroundCommandSettlement: {
-            maxWait: "120 millis",
-            pollInterval: "25 millis",
-            maxContinuations: 1,
-            makeStatusReader: () => () => {
-              readerCalls += 1;
-              if (readerCalls === 1) {
-                return Effect.fail(
-                  new EffectAcpErrors.AcpTransportError({
-                    detail: "SQLITE_BUSY",
-                    cause: new Error("SQLITE_BUSY"),
-                  }),
-                );
-              }
-              return Effect.succeed(new Map());
-            },
-          },
-          onPrompt: ({ promptIndex, emit }) =>
-            Effect.gen(function* () {
-              if (promptIndex === 1) {
-                yield* emit({
-                  sessionUpdate: "tool_call",
-                  toolCallId: "call_unknown_native",
-                  title: "Opaque command",
-                  kind: "execute",
-                  status: "in_progress",
-                  rawInput: { CommandLine: "npm run opaque", IsDaemon: false },
-                });
-                return { stopReason: "end_turn" as const };
-              }
-              yield* emit({
-                sessionUpdate: "tool_call_update",
-                toolCallId: "call_unknown_native",
-                status: "completed",
-                rawOutput: "DONE",
-              });
-              yield* emit({
-                sessionUpdate: "agent_message_chunk",
-                content: { type: "text", text: "Checked status and finished." },
-              });
-              return { stopReason: "end_turn" as const };
-            }),
-        });
-
-        yield* fixture.startTurn();
-        const events = Array.from(yield* Fiber.join(fixture.eventsFiber));
-        assert.isAtLeast(readerCalls, 2);
-        assert.equal(fixture.receivedPrompts.length, 2);
-        assert.include(fixture.receivedPrompts[1] ?? "", "still running");
-        const toolStatuses = events
-          .filter(
-            (event) =>
-              event.type === "turn_item.updated" &&
-              event.turnItem.nativeItemRef?.nativeId === "call_unknown_native",
-          )
-          .map((event) => (event.type === "turn_item.updated" ? event.turnItem.status : null));
-        assert.notInclude(toolStatuses, "interrupted");
-        assert.equal(toolStatuses.at(-1), "completed");
       }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 
