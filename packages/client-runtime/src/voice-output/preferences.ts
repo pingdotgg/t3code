@@ -1,8 +1,11 @@
 import type {
   ProjectSettingsOverrides,
+  ScopedProjectRef,
+  ServerSettings,
   SpeechOutputDestination,
   SpeechPlaybackRate,
 } from "@t3tools/contracts";
+import { scopedProjectKey } from "../environment/scoped.ts";
 
 export function speechPlaybackSelection(
   preferences: readonly {
@@ -36,15 +39,16 @@ export function createSpeechProjectSettingsWriter() {
     string,
     {
       tail: Promise<void>;
-      confirmed?: { source: ProjectSettingsOverrides | undefined; value: ProjectSettingsOverrides };
+      confirmed?: { source: ServerSettings; value: ProjectSettingsOverrides };
     }
   >();
   return (
-    key: string,
+    target: ScopedProjectRef,
     patch: SpeechProjectPatch,
-    read: () => ProjectSettingsOverrides | undefined,
+    read: () => ServerSettings,
     write: (value: ProjectSettingsOverrides) => Promise<ProjectSettingsOverrides | false>,
   ) => {
+    const key = scopedProjectKey(target);
     let project = projects.get(key);
     if (!project) {
       project = { tail: Promise.resolve() };
@@ -54,7 +58,9 @@ export function createSpeechProjectSettingsWriter() {
     const operation = current.tail.then(async () => {
       const source = read();
       const base =
-        current.confirmed && current.confirmed.source === source ? current.confirmed.value : source;
+        current.confirmed && current.confirmed.source === source
+          ? current.confirmed.value
+          : source.projectSettingsOverrides[target.projectId];
       const saved = await write({ ...base, ...patch });
       if (saved !== false) current.confirmed = { source, value: saved };
     });

@@ -65,13 +65,13 @@ export function useSpeechOutputDestination(
     if (!threadRef || !projectId || !settings) return false;
     if (!writer.current) writer.current = createSpeechProjectSettingsWriter();
     void writer.current(
-      `${threadRef.environmentId}:${projectId}`,
+      { environmentId: threadRef.environmentId, projectId },
       patch,
       () => {
         const latest = appAtomRegistry.get(
           serverEnvironment.configValueAtom(threadRef.environmentId),
         );
-        return (latest?.settings ?? settings).projectSettingsOverrides[projectId];
+        return latest?.settings ?? settings;
       },
       async (value) => {
         const result = await update({
