@@ -360,6 +360,7 @@ const fakeAgents = () => {
   }> = [];
   let threads = 0;
   let refusals = 0;
+  const unreadable = new Set<string>();
   const turn = (key: string) => {
     const known = turns.get(key);
     if (known !== undefined) return known;
@@ -388,13 +389,20 @@ const fakeAgents = () => {
             ...(input.environment === undefined ? {} : { environment: input.environment }),
           };
         }),
-      result: (started) => Deferred.await(turn(started.turnId).ended),
+      result: (started) =>
+        [...unreadable].some((key) => started.turnId.endsWith(`/${key}`) && unreadable.delete(key))
+          ? Effect.fail(new WorkflowAgentError({ reason: "the result could not be read" }))
+          : Deferred.await(turn(started.turnId).ended),
       interrupt: (thread) =>
         refusals-- > 0
           ? Effect.fail(new WorkflowAgentError({ reason: "the link is down" }))
           : Effect.sync(() => void interrupted.push(thread)),
     }),
     interrupted,
+    /** The next read of a turn with this key fails. */
+    unreadableResult: (key: string) => {
+      unreadable.add(key);
+    },
     /** Turns down the next `count` stops. */
     refuseStops: (count: number) => {
       refusals = count;
@@ -1595,6 +1603,22 @@ it.effect("a workflow can take an agent's failure as an answer and go on", () =>
           found.result,
           "def after: the agent could not be started: No project is registered there.",
         );
+
+        // A result that cannot be read leaves the turn maybe running: a stop that fails gives up
+        // the step, and no second turn starts beside it.
+        const stopsBefore = agents.interrupted.length;
+        agents.refuseStops(3);
+        agents.unreadableResult("first/0");
+        const unread = yield* workflows.start(
+          "fallback",
+          { project: "p1" },
+          { idempotencyKey: "u" },
+        );
+        yield* agents.started(unread.runId, "second/0");
+        assert.equal(agents.interrupted.length, stopsBefore);
+        yield* agents.end(unread.runId, "second/0", { output: { head: "jkl" } });
+        const gaveUp = yield* workflows.waitFor(unread.runId, status("completed", "paused"));
+        assert.include(gaveUp.result as string, "its turn could not be stopped");
 
         // One past its time whose turn cannot be stopped says so, for the workflow to weigh.
         agents.refuseStops(3);
