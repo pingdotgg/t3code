@@ -124,13 +124,15 @@ function revealThreadFindMatch(
     return;
   }
 
-  const codeScroller = range.startContainer.parentElement?.closest("pre");
-  if (codeScroller) {
+  const horizontalViewport = range.startContainer.parentElement?.closest(
+    'pre, .chat-markdown-table-container [data-slot="scroll-area-viewport"]',
+  );
+  if (horizontalViewport) {
     const rect = range.getBoundingClientRect();
-    const viewport = codeScroller.getBoundingClientRect();
-    if (rect.left < viewport.left) codeScroller.scrollLeft += rect.left - viewport.left - 16;
+    const viewport = horizontalViewport.getBoundingClientRect();
+    if (rect.left < viewport.left) horizontalViewport.scrollLeft += rect.left - viewport.left - 16;
     else if (rect.right > viewport.right)
-      codeScroller.scrollLeft += rect.right - viewport.right + 16;
+      horizontalViewport.scrollLeft += rect.right - viewport.right + 16;
   }
   const rect = range.getBoundingClientRect();
   const viewport = container?.getBoundingClientRect();
