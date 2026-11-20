@@ -1,6 +1,10 @@
 import { RunId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { deriveMessagesTimelineRows, liveWorkEntryLabel } from "./MessagesTimeline.logic";
+import {
+  deriveMessagesTimelineRows,
+  liveWorkEntryLabel,
+  workEntryDisplayLabel,
+} from "./MessagesTimeline.logic";
 
 describe("long active tool groups", () => {
   it.each([false, true])(
@@ -90,6 +94,7 @@ describe("liveWorkEntryLabel for a command execution without a command", () => {
         toolLifecycleStatus: status,
       };
       expect(liveWorkEntryLabel(entry, undefined, active)).toBe(expected);
+      expect(workEntryDisplayLabel(entry, undefined)).toBe(expected);
     },
   );
 });

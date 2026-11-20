@@ -157,6 +157,12 @@ export function workEntryDisplayLabel(
   const toolPresentation = resolveWorkEntryToolPresentation(entry, undefined, resolve);
   if (toolPresentation) return toolPresentation.displayName;
   if (entry.command?.trim()) return commandDisplayText(entry.command);
+  const commandless = commandlessCommandLabel(
+    entry,
+    liveActivityToolStatus(entry.toolLifecycleStatus, false),
+    resolve,
+  );
+  if (commandless) return commandless;
   const action = toolGroupAction(entry);
   if (action === "code-search" || action === "search") {
     const searchLabel =
@@ -264,14 +270,20 @@ function genericCommandStatusLabel(
   );
 }
 
-function isGenericCommandHeading(heading: string, resolve: MessageResolver): boolean {
-  return (
+function commandlessCommandLabel(
+  entry: WorkLogEntry,
+  status: ReturnType<typeof liveActivityToolStatus>,
+  resolve: MessageResolver,
+): string | null {
+  if (entry.itemType !== "command_execution" || entry.command?.trim()) return null;
+  const heading = normalizeCompactToolLabel(entry.toolTitle || entry.label);
+  const generic =
     heading === "Ran command" ||
     heading === "Run command" ||
     heading === "Command" ||
     heading === resolve(msg("Ran command")) ||
-    heading === resolve(msg("Command", { $context: "noun, a shell command tool" }))
-  );
+    heading === resolve(msg("Command", { $context: "noun, a shell command tool" }));
+  return generic ? genericCommandStatusLabel(status, resolve) : null;
 }
 
 /** Components pass `useMessages()` so the label follows a language switch. */
@@ -312,13 +324,10 @@ export function liveWorkEntryLabel(
               : msg("Ran {program}", { program }),
     );
   }
-  if (
-    entry.itemType === "command_execution" &&
-    isGenericCommandHeading(normalizeCompactToolLabel(entry.toolTitle || entry.label), resolve)
-  ) {
-    return genericCommandStatusLabel(status, resolve);
-  }
-  return workEntryDisplayLabel(entry, workspaceRoot, resolve);
+  return (
+    commandlessCommandLabel(entry, status, resolve) ??
+    workEntryDisplayLabel(entry, workspaceRoot, resolve)
+  );
 }
 
 export function workEntryIsVisibleInGroup(
