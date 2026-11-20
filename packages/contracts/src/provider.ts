@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { ProviderThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { IsoDateTime, ProviderThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ThreadId } from "./baseSchemas.ts";
 import {
   getProviderAttachmentLimitError,
@@ -51,6 +51,8 @@ export type ProviderMcpSignInStartInput = typeof ProviderMcpSignInStartInput.Typ
 export const ProviderMcpSignInStartResult = Schema.Struct({
   /** The page to approve the sign-in on; null when the server needs none any more. */
   authorizationUrl: Schema.NullOr(SignInUrl),
+  /** The environment's time when it found the server already signed in. */
+  signedInAt: Schema.NullOr(IsoDateTime),
 });
 export type ProviderMcpSignInStartResult = typeof ProviderMcpSignInStartResult.Type;
 
@@ -60,6 +62,12 @@ export const ProviderMcpSignInCompleteInput = Schema.Struct({
   callbackUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(16_384)),
 });
 export type ProviderMcpSignInCompleteInput = typeof ProviderMcpSignInCompleteInput.Type;
+
+export const ProviderMcpSignInCompleteResult = Schema.Struct({
+  /** The environment's time, so a later notice that needs a sign-in again offers one. */
+  signedInAt: IsoDateTime,
+});
+export type ProviderMcpSignInCompleteResult = typeof ProviderMcpSignInCompleteResult.Type;
 
 /** Safe to show: never carries the callback URL, codes or tokens. */
 export class ProviderMcpSignInError extends Schema.TaggedError<ProviderMcpSignInError>()(

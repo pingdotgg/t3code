@@ -8791,10 +8791,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           providerThread: OrchestrationV2ProviderThread,
         ) {
           const liveQuery = yield* Ref.get(queryContext);
+          const nativeId = providerThread.nativeThreadRef?.nativeId;
+          // After /clear the thread carries the new session id; the live query keeps the old one.
           if (
             liveQuery === null ||
             liveQuery.stopping ||
-            liveQuery.nativeThreadId !== providerThread.nativeThreadRef?.nativeId
+            (liveQuery.nativeThreadId !== nativeId &&
+              clearedNativeSessions.get(liveQuery.nativeThreadId) !== nativeId)
           ) {
             return yield* new ProviderAdapter.ProviderAdapterSessionStoppedError({
               driver: CLAUDE_PROVIDER,
@@ -14692,7 +14695,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 .reconnectMcpServer(server)
                 .pipe(
                   Effect.mapError(() =>
-                    fail(`Signed in, but ${server} didn't reconnect. Send a message to try again.`),
+                    fail(
+                      `Signed in, but ${server} didn't reconnect. Restart the agent session to use it.`,
+                    ),
                   ),
                 );
             }),

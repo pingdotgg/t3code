@@ -7,7 +7,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import * as Haptics from "expo-haptics";
 import { msg, T, useGT, useMessages } from "gt-react-native";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ScrollView } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -52,6 +52,12 @@ export function McpSignInSheet(props: {
   const [callbackUrl, setCallbackUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A result that lands after the sheet closed must not open a browser or report anything.
+  const closed = useRef(false);
+  const close = () => {
+    closed.current = true;
+    props.onClose();
+  };
 
   const failed = (result: AtomCommandResult<unknown, unknown> & { readonly _tag: "Failure" }) => {
     if (isAtomCommandInterrupted(result)) return;
@@ -63,7 +69,7 @@ export function McpSignInSheet(props: {
   // The command marks the server signed in for the thread, which every notice about it shows.
   const signedIn = () => {
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    props.onClose();
+    close();
   };
   const openSignInPage = async () => {
     setBusy(true);
@@ -71,6 +77,7 @@ export function McpSignInSheet(props: {
     let page = url;
     if (page === null) {
       const result = await start({ environmentId: props.environmentId, input: props.target });
+      if (closed.current) return;
       if (result._tag === "Failure") {
         setBusy(false);
         failed(result);
@@ -98,13 +105,14 @@ export function McpSignInSheet(props: {
       environmentId: props.environmentId,
       input: { ...props.target, callbackUrl: pasted },
     });
+    if (closed.current) return;
     setBusy(false);
     if (result._tag === "Success") signedIn();
     else failed(result);
   };
 
   return (
-    <Sheet title={gt("Sign in to {server}", { server })} onClose={props.onClose}>
+    <Sheet title={gt("Sign in to {server}", { server })} onClose={close}>
       <ScrollView
         className="flex-1 bg-sheet-solid"
         contentInsetAdjustmentBehavior="automatic"
@@ -160,7 +168,7 @@ export function McpSignInSheet(props: {
             fullWidth
           />
         ) : null}
-        <Button label={gt("Cancel")} tone="secondary" onPress={props.onClose} fullWidth />
+        <Button label={gt("Cancel")} tone="secondary" onPress={close} fullWidth />
       </ScrollView>
     </Sheet>
   );

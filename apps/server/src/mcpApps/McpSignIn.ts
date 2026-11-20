@@ -1,10 +1,12 @@
 import {
   ProviderMcpSignInError,
   type ProviderMcpSignInCompleteInput,
+  type ProviderMcpSignInCompleteResult,
   type ProviderMcpSignInStartInput,
   type ProviderMcpSignInStartResult,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -26,7 +28,7 @@ export class McpSignIn extends Context.Service<
     ) => Effect.Effect<ProviderMcpSignInStartResult, ProviderMcpSignInError>;
     readonly complete: (
       input: ProviderMcpSignInCompleteInput,
-    ) => Effect.Effect<void, ProviderMcpSignInError>;
+    ) => Effect.Effect<ProviderMcpSignInCompleteResult, ProviderMcpSignInError>;
   }
 >()("t3/mcpApps/McpSignIn") {}
 
@@ -73,7 +75,14 @@ const make = Effect.gen(function* () {
   const start = Effect.fn("McpSignIn.start")(
     function* (input: ProviderMcpSignInStartInput) {
       const { providerThread, mcpSignIn } = yield* resolve(input);
-      return yield* mcpSignIn.start({ providerThread, server: input.server });
+      const { authorizationUrl } = yield* mcpSignIn.start({
+        providerThread,
+        server: input.server,
+      });
+      return {
+        authorizationUrl,
+        signedInAt: authorizationUrl === null ? DateTime.formatIso(yield* DateTime.now) : null,
+      };
     },
     (effect, input) =>
       effect.pipe(
@@ -89,6 +98,7 @@ const make = Effect.gen(function* () {
         server: input.server,
         callbackUrl: input.callbackUrl,
       });
+      return { signedInAt: DateTime.formatIso(yield* DateTime.now) };
     },
     (effect, input) =>
       effect.pipe(

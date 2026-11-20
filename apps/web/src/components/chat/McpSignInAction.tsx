@@ -2,7 +2,7 @@ import type { EnvironmentId, ProviderThreadId, ThreadId } from "@t3tools/contrac
 import { useAtomValue } from "@effect/atom-react";
 import { T, useGT } from "gt-react";
 import { CheckIcon, CopyIcon, ExternalLinkIcon } from "lucide-react";
-import { useId, useState, type KeyboardEvent } from "react";
+import { useId, useRef, useState, type KeyboardEvent } from "react";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { ensureLocalApi } from "../../localApi";
@@ -39,34 +39,45 @@ export function McpSignInAction({
   threadId,
   providerThreadId,
   server,
+  noticeAt,
 }: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly providerThreadId: ProviderThreadId;
   readonly server: string;
+  /** When the environment raised the notice, in epoch milliseconds. */
+  readonly noticeAt: number;
 }) {
   const gt = useGT();
   const formId = useId();
   const allowed = useAtomValue(threadEnvironment.mcpSignInStart.permissionAtom(environmentId));
   const signedIn = useAtomValue(
-    threadEnvironment.mcpSignedInAtom(environmentId, { threadId, server }),
+    threadEnvironment.mcpSignedInAtom(environmentId, { threadId, server, noticeAt }),
   );
   const start = useAtomCommand(threadEnvironment.mcpSignInStart, { reportFailure: false });
   const complete = useAtomCommand(threadEnvironment.mcpSignInComplete, { reportFailure: false });
   const { copyToClipboard, isCopied } = useCopyToClipboard();
   const [signIn, setSignIn] = useState<SignIn | null>(null);
   const [callbackUrl, setCallbackUrl] = useState("");
+  // Counts attempts, so a result that lands after a close or a restart changes nothing.
+  const attempt = useRef(0);
   if (!allowed) return null;
 
   const input = { threadId, providerThreadId, server };
-  const done = () => {
+  const close = () => {
+    attempt.current += 1;
     setSignIn(null);
+  };
+  const done = () => {
+    close();
     toastManager.add({ type: "success", title: gt("Signed in to {server}", { server }) });
   };
   const begin = async () => {
+    const current = ++attempt.current;
     setSignIn({ phase: "starting" });
     setCallbackUrl("");
     const result = await start({ environmentId, input });
+    if (current !== attempt.current) return;
     if (result._tag === "Failure") {
       setSignIn({ phase: "failed", url: null, message: formatEnvironmentQueryError(result.cause) });
     } else if (result.value.authorizationUrl === null) {
@@ -77,11 +88,13 @@ export function McpSignInAction({
   };
   const finish = async (url: string) => {
     if (callbackUrl.trim().length === 0) return;
+    const current = attempt.current;
     setSignIn({ phase: "finishing", url });
     const result = await complete({
       environmentId,
       input: { ...input, callbackUrl: callbackUrl.trim() },
     });
+    if (current !== attempt.current) return;
     if (result._tag === "Failure") {
       setSignIn({ phase: "failed", url, message: formatEnvironmentQueryError(result.cause) });
     } else {
@@ -111,7 +124,7 @@ export function McpSignInAction({
       <Dialog
         open={signIn !== null}
         onOpenChange={(open) => {
-          if (!open) setSignIn(null);
+          if (!open) close();
         }}
       >
         <DialogPopup className="max-w-lg">
@@ -175,7 +188,7 @@ export function McpSignInAction({
             ) : null}
           </DialogPanel>
           <DialogFooter variant="bare">
-            <Button variant="outline" onClick={() => setSignIn(null)}>
+            <Button variant="outline" onClick={close}>
               <T>Cancel</T>
             </Button>
             {url === null && signIn?.phase === "failed" ? (

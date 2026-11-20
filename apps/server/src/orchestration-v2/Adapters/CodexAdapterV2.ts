@@ -8937,11 +8937,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 // A notice can outlive its problem, as when another client signed the server in.
                 const status = yield* ensureInitialized.pipe(
                   Effect.andThen(
-                    client.request("mcpServerStatus/list", {
-                      serverName: server,
+                    withLoadedThread(
+                      providerThread,
                       threadId,
-                      detail: "toolsAndAuthOnly",
-                    }),
+                      client.request("mcpServerStatus/list", {
+                        serverName: server,
+                        threadId,
+                        detail: "toolsAndAuthOnly",
+                      }),
+                    ),
                   ),
                   Effect.orElseSucceed(() => ({ data: [] })),
                 );
@@ -8951,7 +8955,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 // With the thread, Codex reconnects the server there once the sign-in succeeds.
                 const { authorizationUrl } = yield* ensureInitialized.pipe(
                   Effect.andThen(
-                    client.request("mcpServer/oauth/login", { name: server, threadId }),
+                    withLoadedThread(
+                      providerThread,
+                      threadId,
+                      client.request("mcpServer/oauth/login", { name: server, threadId }),
+                    ),
                   ),
                 );
                 const params = yield* Effect.try({
@@ -9011,6 +9019,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   Effect.provide(FetchHttpClient.layer),
                   Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
                   Effect.provideService(HttpClient.TracerPropagationEnabled, false),
+                  Effect.timeout("10 seconds"),
                   Effect.as(true),
                   Effect.orElseSucceed(() => false),
                 );
@@ -9028,7 +9037,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     ),
                 }),
               );
-              mcpSignIns.delete(server);
+              // A newer start may have replaced this sign-in while it finished.
+              if (mcpSignIns.get(server) === signIn) mcpSignIns.delete(server);
               if (!succeeded) {
                 return yield* fail(`${server} didn't accept the sign-in. Start again.`);
               }

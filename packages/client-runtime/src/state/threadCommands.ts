@@ -154,12 +154,37 @@ export function createThreadEnvironmentAtoms<R, E>(
       }),
   });
 
-  // A sign-in counts for every notice about that server in the thread, until the app reloads.
-  const mcpSignedInFamily = Atom.family((_key: string) => Atom.make(false).pipe(Atom.keepAlive));
-  const mcpSignedInAtom = (
+  // The environment's time of the last sign-in to a server in a thread, until the app reloads.
+  const mcpSignedInAtFamily = Atom.family((_key: string) =>
+    Atom.make<number | null>(null).pipe(Atom.keepAlive),
+  );
+  const mcpSignInKey = (
     environmentId: EnvironmentId,
     input: { readonly threadId: ThreadId; readonly server: string },
-  ) => mcpSignedInFamily(JSON.stringify([environmentId, input.threadId, input.server]));
+  ) => JSON.stringify([environmentId, input.threadId, input.server]);
+  const markMcpSignedIn = (
+    registry: AtomRegistry.AtomRegistry,
+    environmentId: EnvironmentId,
+    input: { readonly threadId: ThreadId; readonly server: string },
+    signedInAt: string,
+  ) =>
+    registry.update(mcpSignedInAtFamily(mcpSignInKey(environmentId, input)), (current) =>
+      Math.max(current ?? 0, Date.parse(signedInAt)),
+    );
+  const mcpNoticeSignedInFamily = Atom.family((key: string) => {
+    const [signInKey, noticeAt] = JSON.parse(key) as [string, number];
+    // A notice newer than the sign-in means the server needs one again.
+    return Atom.make((get) => {
+      const signedInAt = get(mcpSignedInAtFamily(signInKey));
+      return signedInAt !== null && noticeAt <= signedInAt;
+    });
+  });
+  /** Whether a sign-in notice, by its environment time, came before the server was signed in. */
+  const mcpSignedInAtom = (
+    environmentId: EnvironmentId,
+    input: { readonly threadId: ThreadId; readonly server: string; readonly noticeAt: number },
+  ) =>
+    mcpNoticeSignedInFamily(JSON.stringify([mcpSignInKey(environmentId, input), input.noticeAt]));
   const sent = {
     armTitleRegeneration: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:regenerate-title",
@@ -445,19 +470,18 @@ export function createThreadEnvironmentAtoms<R, E>(
     mcpSignInStart: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:commands:thread:mcp-sign-in-start",
       tag: WS_METHODS.providerMcpSignInStart,
-      // No page to open means the server already works.
       onSuccess: ({ environmentId, input }, registry, result) =>
         Effect.sync(() => {
-          if (result.authorizationUrl === null) {
-            registry.set(mcpSignedInAtom(environmentId, input), true);
+          if (result.signedInAt !== null) {
+            markMcpSignedIn(registry, environmentId, input, result.signedInAt);
           }
         }),
     }),
     mcpSignInComplete: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:commands:thread:mcp-sign-in-complete",
       tag: WS_METHODS.providerMcpSignInComplete,
-      onSuccess: ({ environmentId, input }, registry) =>
-        Effect.sync(() => registry.set(mcpSignedInAtom(environmentId, input), true)),
+      onSuccess: ({ environmentId, input }, registry, result) =>
+        Effect.sync(() => markMcpSignedIn(registry, environmentId, input, result.signedInAt)),
     }),
   };
   const commands = {

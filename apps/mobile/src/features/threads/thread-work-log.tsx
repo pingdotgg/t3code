@@ -53,6 +53,7 @@ import {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
+import * as DateTime from "effect/DateTime";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -901,6 +902,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
       ? threadEnvironment.mcpSignedInAtom(props.environmentId, {
           threadId: signInNotice.threadId,
           server: signInNotice.mcpSignIn.server,
+          noticeAt: DateTime.toEpochMillis(signInNotice.updatedAt),
         })
       : NOT_SIGNED_IN,
   );

@@ -172,6 +172,7 @@ import { KeybindingsConfigError } from "./keybindings.ts";
 import { OrchestrationSearchThreadsError } from "./threadSearch.ts";
 import {
   ProviderMcpSignInCompleteInput,
+  ProviderMcpSignInCompleteResult,
   ProviderMcpSignInError,
   ProviderMcpSignInStartInput,
   ProviderMcpSignInStartResult,
@@ -1722,6 +1723,7 @@ const WsProviderMcpSignInStartRpc = Rpc.make(WS_METHODS.providerMcpSignInStart, 
 
 const WsProviderMcpSignInCompleteRpc = Rpc.make(WS_METHODS.providerMcpSignInComplete, {
   payload: ProviderMcpSignInCompleteInput,
+  success: ProviderMcpSignInCompleteResult,
   error: Schema.Union([ProviderMcpSignInError, EnvironmentAuthorizationError]),
 });
 
