@@ -289,10 +289,14 @@ function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "
       events.emit("dialog", dialog);
     }),
   };
+  const browserSession = { send: vi.fn(async (_method: string, _input?: unknown) => ({})) };
+  const browser = { newBrowserCDPSession: vi.fn(async () => browserSession) };
   const context = {
     page,
     sessions,
     cssViewport,
+    browserSession,
+    browser: () => browser,
     newPage: async () => page as unknown as Page,
     grantPermissions: vi.fn(async () => {}),
     newCDPSession: async (target: unknown) => {
@@ -990,25 +994,25 @@ it.effect("headless tabs let public pages reach loopback, but not the LAN", () =
         operation: "open",
         input: { reuseExistingTab: false, show: false },
       });
-      const grantsLoopback = (context: (typeof contexts)[number]) =>
-        context.sessions.some((session) =>
-          session.send.mock.calls.some(
-            ([method, input]) =>
-              method === "Browser.setPermission" &&
-              JSON.stringify(input) ===
-                JSON.stringify({
-                  permission: { name: "loopback-network" },
-                  setting: "granted",
-                  browserContextId: "ctx",
-                }),
-          ),
-        );
+      const setsPermission = (session: { send: { mock: { calls: Array<Array<unknown>> } } }) =>
+        session.send.mock.calls.filter(([method]) => method === "Browser.setPermission");
 
-      // The ready tab and the one opened here each get the grant.
+      // Each context is granted once, through the browser: a tab's session would take the
+      // context's permissions with it when the tab closes.
       expect(opened).toBeGreaterThan(0);
       expect(contexts.length).toBeGreaterThan(opened);
       for (const context of contexts) {
-        expect(grantsLoopback(context)).toBe(true);
+        expect(setsPermission(context.browserSession)).toEqual([
+          [
+            "Browser.setPermission",
+            {
+              permission: { name: "loopback-network" },
+              setting: "granted",
+              browserContextId: "ctx",
+            },
+          ],
+        ]);
+        for (const session of context.sessions) expect(setsPermission(session)).toEqual([]);
         expect(context.grantPermissions).toHaveBeenCalledWith(["clipboard-write"]);
       }
     }),

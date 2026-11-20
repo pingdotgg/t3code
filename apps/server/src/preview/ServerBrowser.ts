@@ -73,6 +73,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type {
+  Browser,
   BrowserContext,
   CDPSession,
   Dialog,
@@ -1144,7 +1145,7 @@ const make = Effect.gen(function* () {
     // precedes this override, so its Sec-CH-UA brands still name HeadlessChrome.
     if (!desktop) await presentAsChrome(cdp, host);
     if (!desktop) await recordCopies(cdp);
-    if (!desktop) await allowLoopback(cdp).catch(constVoid);
+    if (!desktop) await allowLoopback(context, cdp).catch(constVoid);
     page.setDefaultTimeout(NAVIGATION_TIMEOUT_MS);
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
     const control = new SessionControl(snapshot.automationOwner ?? null, () =>
@@ -1636,13 +1637,25 @@ const make = Effect.gen(function* () {
     await context.grantPermissions(["clipboard-write"]);
   };
 
-  // Like the desktop's loopback-network allowlist: without it Chromium refuses a public page's
-  // request to localhost before sending it, and reports a CORS failure. Playwright's
-  // local-network-access would also open the host's LAN, so only loopback is granted here.
-  // This runs after prepareContext, whose grantPermissions would reset it.
-  const allowLoopback = async (cdp: CDPSession) => {
+  // Like the desktop's loopback-network allowlist; without it Chromium blocks a public page's
+  // localhost requests as CORS failures. Playwright's local-network-access would open the LAN too.
+  // Chromium drops a context's permission overrides when the session that set them detaches, so
+  // this uses a browser-lifetime session, never a tab's, and runs after prepareContext's grant.
+  const browserSessions = new WeakMap<Browser, Promise<CDPSession>>();
+  const loopbackContexts = new WeakSet<BrowserContext>();
+  const allowLoopback = async (context: BrowserContext, cdp: CDPSession) => {
+    const browser = context.browser();
+    if (browser === null || loopbackContexts.has(context)) return;
+    loopbackContexts.add(context);
     const { browserContextId } = (await cdp.send("Target.getTargetInfo")).targetInfo;
-    await cdp.send("Browser.setPermission", {
+    let session = browserSessions.get(browser);
+    if (session === undefined) {
+      session = browser.newBrowserCDPSession();
+      browserSessions.set(browser, session);
+    }
+    await (
+      await session
+    ).send("Browser.setPermission", {
       permission: { name: "loopback-network" },
       setting: "granted",
       ...(browserContextId === undefined ? {} : { browserContextId }),
