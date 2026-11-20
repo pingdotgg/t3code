@@ -7,6 +7,7 @@ import * as Path from "effect/Path";
 
 const SHIM_DIR = "device/bin";
 const TARGETS_DIR = "device/targets";
+const CLAIM_DIRECTORY_FILE = "claim-directory";
 const STALE_RUNTIME =
   "This agent-device command is out of date because T3 Code moved or updated its runtime. Call device_open again for a fresh one.";
 
@@ -253,7 +254,8 @@ if (local) {
 // The shared launcher uses the directory of the session's bound launcher, so both hold one claim.
 const targets = ${JSON.stringify("targetsDir" in claim ? claim.targetsDir : null)};
 const session = targets ? valueOf("--session") ?? "" : "";
-const claimDirectory = targets ? (/^[\\w-][\\w.-]*$/.test(session) ? join(targets, session) : null) : ${JSON.stringify("directory" in claim ? claim.directory : null)};
+const recorded = () => { try { return readFileSync(join(targets, session, ${JSON.stringify(CLAIM_DIRECTORY_FILE)}), "utf8"); } catch { return null; } };
+const claimDirectory = targets ? (/^[\\w-][\\w.-]*$/.test(session) ? recorded() : null) : ${JSON.stringify("directory" in claim ? claim.directory : null)};
 const cwd = !informational && claimDirectory && ${JSON.stringify(CLAIM_COMMANDS)}.includes(name) && existsSync(claimDirectory) ? claimDirectory : undefined;
 if (cwd) {
   const pathFlags = new Set(${JSON.stringify(CLAIM_PATH_FLAGS)});
@@ -301,6 +303,8 @@ const writeLauncher = Effect.fn("AgentDeviceShim.writeLauncher")(function* (inpu
     launcherPath,
     launcherSource(node, input.entryPath, input.boundArgs, input.claim),
   );
+  if ("directory" in input.claim)
+    yield* fs.writeFileString(path.join(input.dir, CLAIM_DIRECTORY_FILE), input.claim.directory);
   if (platform === "win32") {
     const script = `@echo off\r\nsetlocal EnableExtensions DisableDelayedExpansion\r\nif not exist "${node}" (echo ${STALE_RUNTIME} 1>&2 & exit /b 1)\r\nset "ELECTRON_RUN_AS_NODE=1"\r\n"${node}" "${launcherPath}" %*\r\n`;
     const scriptPath = path.join(input.dir, "agent-device.cmd");

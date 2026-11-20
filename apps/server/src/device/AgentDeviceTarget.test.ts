@@ -259,6 +259,7 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
       // The shared launcher claims in the session's bound launcher directory, or the caller's without one.
       for (const [session, cwd] of [
         ["t3-a", own],
+        ["t3-b", openedIn],
         ["t3-none", caller],
         ["../t3-a", caller],
       ] as const) {
