@@ -119,6 +119,7 @@ type FakeProviderCall =
       readonly baseRefName: string;
       readonly headSelector: string;
       readonly title: string;
+      readonly draft: unknown;
     }
   | { readonly operation: "getChangeRequest"; readonly reference: string }
   | {
@@ -509,6 +510,7 @@ function createFakeSourceControlProvider(scenario: FakeProviderScenario = {}): {
           baseRefName: input.baseRefName,
           headSelector: input.headSelector,
           title: input.title,
+          draft: "draft" in input ? input.draft : undefined,
         }),
       getDefaultBranch: (input) =>
         record(input.cwd, { operation: "getDefaultBranch" }).pipe(
@@ -4500,6 +4502,29 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       );
       expect(notListed.message).toContain("does not list it yet");
       expect(created(unlisted.providerCalls)).toHaveLength(1);
+
+      // A new PR asked for as a draft is opened as one, never ready first.
+      const newActions: Array<PullRequestActionInput> = [];
+      const fresh = yield* makeManager({
+        providerScenario: { prListSequence: [[], [open]] },
+        pullRequests: {
+          summary: () => Effect.succeed({ isDraft: false } as never),
+          runAction: (action) => Effect.sync(() => void newActions.push(action)),
+        },
+      });
+      yield* fresh.manager.createPullRequest({
+        cwd: repoDir,
+        projectId: ProjectId.make("project-1"),
+        title: "Feature",
+        body: "Body",
+        draft: true,
+      });
+      expect(
+        fresh.providerCalls.flatMap((call) =>
+          call.operation === "createChangeRequest" ? [call.draft] : [],
+        ),
+      ).toEqual([true]);
+      expect(newActions).toEqual([]);
     }),
   );
 
