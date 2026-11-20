@@ -23,6 +23,11 @@ const copilotModesProfile = process.env.T3_ACP_COPILOT_MODES === "1";
 const copilotModeId = (name: string) =>
   `https://agentclientprotocol.com/protocol/session-modes#${name}`;
 const modeOptionCategory = process.env.T3_ACP_MODE_OPTION_CATEGORY ?? "mode";
+// Factory Droid's modes are autonomy levels behind an `autonomy_level` option. An organization can
+// cap them: Droid then starts no higher than the cap and advertises no level above it.
+const droidModesProfile = process.env.T3_ACP_DROID_MODES === "1";
+const droidMaxAutonomy = process.env.T3_ACP_DROID_MAX_AUTONOMY ?? "auto-high";
+const modeConfigId = droidModesProfile ? "autonomy_level" : "mode";
 // Comma-separated command names the mock advertises, so `/compact` support is testable.
 const advertisedCommandNames = (process.env.T3_ACP_AVAILABLE_COMMANDS ?? "")
   .split(",")
@@ -120,7 +125,9 @@ let currentModeId = antigravityProfile
   ? (process.env.T3_ACP_INITIAL_MODE ?? "default")
   : copilotModesProfile
     ? copilotModeId("agent")
-    : "ask";
+    : droidModesProfile
+      ? droidMaxAutonomy
+      : "ask";
 let currentModelId = antigravityProfile ? "gemini-test-low" : "default";
 let parameterizedModelPicker = false;
 let currentReasoning = "medium";
@@ -308,7 +315,7 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
         ]
       : []),
     {
-      configId: "mode",
+      configId: modeConfigId,
       name: "Mode",
       category: modeOptionCategory,
       type: "select" as const,
@@ -369,6 +376,14 @@ const antigravityModels = [
   { modelId: "gemini-test-high", name: "Gemini Test High" },
 ] satisfies ReadonlyArray<AcpCompat.ModelInfo>;
 
+const droidModes: ReadonlyArray<AcpCompat.SessionMode> = [
+  { id: "normal", name: "Auto (Off)" },
+  { id: "spec", name: "Spec" },
+  { id: "auto-low", name: "Auto (Low)" },
+  { id: "auto-medium", name: "Auto (Medium)" },
+  { id: "auto-high", name: "Auto (High)" },
+];
+
 const availableModes: ReadonlyArray<AcpCompat.SessionMode> = antigravityProfile
   ? [
       { id: "default", name: "Default" },
@@ -381,23 +396,25 @@ const availableModes: ReadonlyArray<AcpCompat.SessionMode> = antigravityProfile
         { id: copilotModeId("plan"), name: "Plan" },
         { id: copilotModeId("autopilot"), name: "Autopilot" },
       ]
-    : [
-        {
-          id: "ask",
-          name: "Ask",
-          description: "Request permission before making any changes",
-        },
-        {
-          id: "architect",
-          name: "Architect",
-          description: "Design and plan software systems without implementation",
-        },
-        {
-          id: "code",
-          name: "Code",
-          description: "Write and modify code with full tool access",
-        },
-      ];
+    : droidModesProfile
+      ? droidModes.slice(0, droidModes.findIndex((mode) => mode.id === droidMaxAutonomy) + 1)
+      : [
+          {
+            id: "ask",
+            name: "Ask",
+            description: "Request permission before making any changes",
+          },
+          {
+            id: "architect",
+            name: "Architect",
+            description: "Design and plan software systems without implementation",
+          },
+          {
+            id: "code",
+            name: "Code",
+            description: "Write and modify code with full tool access",
+          },
+        ];
 
 function modeState(): AcpCompat.SessionModeState {
   return {
@@ -866,7 +883,7 @@ const program = Effect.gen(function* () {
         yield* Deferred.await(delayedLoadReplied);
         yield* Effect.sleep(100);
       }
-      if (failSetModeConfigOption && request.configId === "mode") {
+      if (failSetModeConfigOption && request.configId === modeConfigId) {
         return yield* AcpError.AcpRequestError.invalidParams(
           "Mock invalid params for session/set_config_option",
           {
@@ -875,7 +892,7 @@ const program = Effect.gen(function* () {
           },
         );
       }
-      if (request.configId === "mode" && typeof request.value === "string") {
+      if (request.configId === modeConfigId && typeof request.value === "string") {
         currentModeId = request.value;
       }
       if (request.configId === "model" && typeof request.value === "string") {
