@@ -306,6 +306,13 @@ function UsageChartPlot({
   const plotRef = useRef<HTMLDivElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const hoverPositionRef = useRef<{ x: number; y: number } | null>(null);
+  const tooltipSizeRef = useRef<{ width: number; height: number } | null>(null);
+
+  const measureTooltip = () => {
+    const tooltip = tooltipRef.current;
+    tooltipSizeRef.current =
+      tooltip === null ? null : { width: tooltip.offsetWidth, height: tooltip.offsetHeight };
+  };
 
   const positionTooltip = () => {
     const plot = plotRef.current;
@@ -314,8 +321,11 @@ function UsageChartPlot({
     if (plot === null || tooltip === null || hoverPosition === null) return;
 
     const gap = 12;
-    const tooltipWidth = tooltip.offsetWidth;
-    const tooltipHeight = tooltip.offsetHeight;
+    // Cached in measureTooltip so each mousemove does not force layout; the
+    // useLayoutEffect and ResizeObserver refresh the cache when content changes.
+    if (tooltipSizeRef.current === null) measureTooltip();
+    const tooltipWidth = tooltipSizeRef.current?.width ?? 0;
+    const tooltipHeight = tooltipSizeRef.current?.height ?? 0;
     const plotWidth = plot.clientWidth;
     const plotHeight = plot.clientHeight;
     const preferredLeft =
@@ -335,14 +345,18 @@ function UsageChartPlot({
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- positions the hover tooltip through plot CSS variables before paint and on ResizeObserver
   useLayoutEffect(() => {
     if (hoverIndex === null) return;
+    measureTooltip();
     positionTooltip();
 
     const plot = plotRef.current;
     const tooltip = tooltipRef.current;
     if (plot === null || tooltip === null) return;
 
-    return observeResize([plot, tooltip], positionTooltip);
-  }, [hoverIndex, positionTooltip]);
+    return observeResize([plot, tooltip], () => {
+      measureTooltip();
+      positionTooltip();
+    });
+  }, [hoverIndex, measureTooltip, positionTooltip]);
 
   const handleMove = (event: React.MouseEvent<HTMLDivElement>) => {
     const plot = plotRef.current;
