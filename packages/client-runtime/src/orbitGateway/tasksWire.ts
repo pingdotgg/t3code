@@ -249,6 +249,16 @@ export function decodeOrbitTasksPage(json: unknown): OrbitTasksPage | null {
   });
 }
 
+const decodeCreated = Schema.decodeUnknownOption(Schema.Struct({ data: ListRow }));
+
+/** A task-create result, `{ data: <task> }`: its list-row fields, whatever else it carries. */
+export function decodeOrbitTaskCreated(json: unknown): OrbitTaskSummary | null {
+  return Option.match(decodeCreated(json), {
+    onNone: () => null,
+    onSome: ({ data }) => summary(data),
+  });
+}
+
 export function decodeOrbitTaskDetail(json: unknown): OrbitTaskDetail | null {
   return Option.match(decodeDetail(json), {
     onNone: () => null,

@@ -30,7 +30,8 @@ export function ThreadListFilters(props: {
       horizontal
       showsHorizontalScrollIndicator={false}
       style={{ marginHorizontal: -props.gutter, overflow: "visible" }}
-      contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 2, paddingBottom: 10, gap: 8 }}
+      // Same 12pt edge as the row favicons below (8pt inset + 4pt row padding).
+      contentContainerStyle={{ paddingHorizontal: 12, paddingTop: 2, paddingBottom: 10, gap: 8 }}
     >
       <ListFilterMenu
         label={selectedEnvironment?.label ?? gt("All environments")}

@@ -317,6 +317,8 @@ export function threadListV2RowAccessibilityLabel(
     readonly woke: boolean;
     readonly statusLabel: string | undefined;
     readonly timeLabel: string;
+    /** The status dot's meaning; the dot itself is hidden from speech. */
+    readonly dotLabel?: string;
     readonly snoozeWakeLabel: string | undefined;
     readonly providerNameLabel: string | null;
     readonly hasQueuedMessages: boolean;
@@ -334,11 +336,12 @@ export function threadListV2RowAccessibilityLabel(
   return [
     input.title,
     meta,
+    input.variant === "card" && input.dotLabel !== meta ? input.dotLabel : null,
     input.providerNameLabel,
     input.hasQueuedMessages ? resolve(msg("messages queued to send")) : null,
     input.regeneratingTitle ? resolve(msg("regenerating title")) : null,
   ]
-    .filter((part) => part !== null)
+    .filter((part) => part !== null && part !== undefined)
     .join(", ");
 }
 

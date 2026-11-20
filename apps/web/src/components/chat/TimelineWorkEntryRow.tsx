@@ -52,6 +52,8 @@ import type { MessageResolver } from "~/i18n/messages";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { FetchedToolOutput, V2ItemInspector } from "./V2ItemInspector";
 import { SubagentNotificationLink } from "./V2LifecycleRow";
+import { TaskReceiptRow } from "./TimelineTaskReceipt";
+import { orbitTaskCreateReceipt } from "./TimelineTaskReceipt.logic";
 import {
   TimelineRowCtx,
   TimelineRowActivityCtx,
@@ -230,6 +232,8 @@ type WorkEntryRowProps = {
 export const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEntryRowProps) {
   const ctx = use(TimelineRowCtx);
   const item = props.workEntry.projectedItem?.item;
+  const createdTask = orbitTaskCreateReceipt(props.workEntry);
+  if (createdTask) return <TaskReceiptRow task={createdTask} />;
   const childThreadId =
     item?.type === "notification" ? notificationChildThreadId(item.source) : undefined;
   if (item?.type !== "notification" || childThreadId === undefined) {

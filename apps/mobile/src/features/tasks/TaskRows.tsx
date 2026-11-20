@@ -145,10 +145,15 @@ export function ProjectTile(props: { readonly name: string }) {
     <View
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
-      className="h-5 w-5 items-center justify-center rounded-md"
-      style={{ backgroundColor: PROJECT_COLORS[hash % PROJECT_COLORS.length] }}
+      className="items-center justify-center"
+      style={{
+        width: 18,
+        height: 18,
+        borderRadius: 5,
+        backgroundColor: PROJECT_COLORS[hash % PROJECT_COLORS.length],
+      }}
     >
-      <Text className="text-3xs font-t3-bold text-white">
+      <Text className="font-t3-bold text-white" style={{ fontSize: 10, lineHeight: 13 }}>
         {(props.name[0] ?? "?").toUpperCase()}
       </Text>
     </View>

@@ -74,6 +74,7 @@ function convertMenu(menu: MenuInput, id: string): StackHeaderMenuIOS {
         {
           ...convertMenu({ items: item.items }, childId),
           title: "label" in item ? item.label : item.title,
+          icon: convertIcon(item.icon),
           displayInline:
             "inline" in item
               ? item.inline

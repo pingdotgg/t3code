@@ -246,9 +246,9 @@ export function showContextMenuFallback<T extends string>(
       for (const item of entries) {
         if (item.separatorBefore === true && inner.children.length > 0) {
           const separator = document.createElement("div");
-          separator.className = "mx-2 my-1 h-px bg-border";
+          separator.className = "mx-2 my-1 h-px bg-(--glass-divider)";
           separator.style.cssText =
-            "height:1px;margin:0.25rem 0.5rem;background:var(--contrast-border);";
+            "height:1px;margin:0.25rem 0.5rem;background:var(--glass-divider);";
           separator.dataset.contextMenuSeparator = "true";
           separator.setAttribute("role", "separator");
           inner.appendChild(separator);

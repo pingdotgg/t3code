@@ -1,0 +1,36 @@
+.m-thread {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-screen);
+}
+.m-feed {
+  flex: 1;
+  min-height: 0;
+  padding-top: 116px;
+}
+.m-feed-inner {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 14px;
+  padding: 0 16px 14px;
+}
+.m-feed-text {
+  padding: 0 4px;
+}
+.m-feed-item {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.m-thread-bottom {
+  flex: none;
+  position: relative;
+  z-index: 10;
+}
+.m-thread-panel {
+  padding: 0 16px 8px;
+}

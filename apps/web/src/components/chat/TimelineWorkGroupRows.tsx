@@ -16,6 +16,7 @@ import { T, useGT, useMessages } from "gt-react";
 import { memo, use, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { workEntryDisplayIndicatesToolFailure } from "../../session-logic";
+import { orbitTaskCreateReceipt } from "./TimelineTaskReceipt.logic";
 import ChatMarkdown from "../ChatMarkdown";
 import { assetMediaActionsSource } from "./ChatMarkdownMedia";
 import { Minimize2Icon, XIcon } from "lucide-react";
@@ -110,7 +111,16 @@ export const WorkGroupSection = memo(function WorkGroupSection({
   }
 
   return (
-    <section aria-label={gt("Activity")}>
+    <section
+      aria-label={gt("Activity")}
+      // Task cards sit 8px apart, and 8px from the fold's separator (it leaves 6px) and from the
+      // next row (the block around this row leaves 8px).
+      className={
+        nonEmptyEntries.every((entry) => orbitTaskCreateReceipt(entry) !== null)
+          ? "flex flex-col gap-2 pt-0.5"
+          : undefined
+      }
+    >
       {nonEmptyEntries.map((workEntry) => (
         <SimpleWorkEntryRow
           key={workEntry.id}

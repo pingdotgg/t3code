@@ -2,6 +2,7 @@ import { msg, useGT, useMessages } from "gt-react-native";
 
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
+import type { AppSymbolName } from "../../components/ui/AppSymbol";
 import type { AppBarMenu } from "../../components/ui/AppBar.types";
 import {
   AuthSourceControlWriteScope,
@@ -289,6 +290,79 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   };
 }
 
+export type ThreadTerminalRowsProps = Pick<
+  ThreadGitControlsProps,
+  | "canOperateTerminal"
+  | "projectScripts"
+  | "terminalSessions"
+  | "onOpenTerminal"
+  | "onOpenNewTerminal"
+  | "onRunProjectScript"
+>;
+
+export interface ThreadTerminalRow {
+  readonly id: string;
+  readonly title: string;
+  readonly icon: Extract<AppSymbolName, string>;
+  readonly subtitle: string;
+  readonly disabled?: boolean;
+  readonly onPress: () => void;
+}
+
+/** The terminal options: project scripts, live sessions, a new shell. Shared by the menu and the Terminal sheet. */
+export function threadTerminalRows(
+  props: ThreadTerminalRowsProps,
+  resolve: MessageResolver = m,
+): ReadonlyArray<ThreadTerminalRow> {
+  return [
+    ...(props.projectScripts.length > 0
+      ? props.projectScripts.map((script) => ({
+          id: `script-${script.id}`,
+          title: projectScriptMenuLabel(script, resolve),
+          icon: projectScriptMenuIcon(script.icon),
+          subtitle: script.command,
+          disabled: !props.canOperateTerminal,
+          onPress: () => void props.onRunProjectScript(script),
+        }))
+      : [
+          {
+            id: "script-none",
+            title: resolve(msg("No project scripts")),
+            icon: "play" as const,
+            subtitle: resolve(msg("This project has no saved scripts yet")),
+            disabled: true,
+            onPress: () => {},
+          },
+        ]),
+    ...props.terminalSessions.map((session) => ({
+      id: `terminal-${session.terminalId}`,
+      title: session.displayLabel,
+      icon: "terminal" as const,
+      subtitle: [
+        getTerminalStatusLabel(
+          {
+            status: session.status,
+            hasRunningSubprocess: session.hasRunningSubprocess,
+          },
+          resolve,
+        ),
+        basename(session.cwd),
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      onPress: () => props.onOpenTerminal(session.terminalId),
+    })),
+    {
+      id: "terminal-new",
+      title: resolve(msg("Open new terminal")),
+      icon: "plus" as const,
+      subtitle: resolve(msg("Start another shell for this thread")),
+      disabled: !props.canOperateTerminal,
+      onPress: props.onOpenNewTerminal,
+    },
+  ];
+}
+
 export function threadTerminalMenu(
   props: ThreadGitControlsProps,
   resolve: MessageResolver = m,
@@ -298,53 +372,7 @@ export function threadTerminalMenu(
     title: resolve(msg("Terminal")),
     icon: "terminal",
     separateBackground: false,
-    items: [
-      ...(props.projectScripts.length > 0
-        ? props.projectScripts.map((script) => ({
-            id: `script-${script.id}`,
-            title: projectScriptMenuLabel(script, resolve),
-            icon: projectScriptMenuIcon(script.icon),
-            subtitle: script.command,
-            disabled: !props.canOperateTerminal,
-            onPress: () => void props.onRunProjectScript(script),
-          }))
-        : [
-            {
-              id: "script-none",
-              title: resolve(msg("No project scripts")),
-              icon: "play",
-              subtitle: resolve(msg("This project has no saved scripts yet")),
-              disabled: true,
-              onPress: () => {},
-            },
-          ]),
-      ...props.terminalSessions.map((session) => ({
-        id: `terminal-${session.terminalId}`,
-        title: session.displayLabel,
-        icon: "terminal",
-        subtitle: [
-          getTerminalStatusLabel(
-            {
-              status: session.status,
-              hasRunningSubprocess: session.hasRunningSubprocess,
-            },
-            resolve,
-          ),
-          basename(session.cwd),
-        ]
-          .filter(Boolean)
-          .join(" · "),
-        onPress: () => props.onOpenTerminal(session.terminalId),
-      })),
-      {
-        id: "terminal-new",
-        title: resolve(msg("Open new terminal")),
-        icon: "plus",
-        subtitle: resolve(msg("Start another shell for this thread")),
-        disabled: !props.canOperateTerminal,
-        onPress: props.onOpenNewTerminal,
-      },
-    ],
+    items: threadTerminalRows(props, resolve),
   };
 }
 

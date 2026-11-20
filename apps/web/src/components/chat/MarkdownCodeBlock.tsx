@@ -1,7 +1,7 @@
 import { T, useGT } from "gt-react";
 import { PlayIcon, WrapTextIcon, CheckIcon, CopyIcon } from "lucide-react";
 import { toHtml } from "hast-util-to-html";
-import React, { use, useEffect, useState, type ReactNode } from "react";
+import React, { use, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useClientSettings } from "../../hooks/useSettings";
@@ -11,6 +11,7 @@ import {
   highlightCodeToHast,
 } from "../../lib/incrementalHighlighting";
 import { LRUCache } from "../../lib/lruCache";
+import { observeResize } from "../../lib/observeResize";
 import { getSyntaxHighlighterPromise } from "../../lib/syntaxHighlighting";
 import { cn } from "../../lib/utils";
 import {
@@ -112,7 +113,7 @@ function MarkdownCodeBlockTitleContent({
 
   const fileName = syntheticFileNameForLanguageId(language);
   if (!hasSpecificPierreIconForFileName(fileName)) {
-    return <span className="truncate">{language}</span>;
+    return <span className="truncate">{language === "text" ? gt("Text") : language}</span>;
   }
   return (
     <Tooltip>
@@ -173,6 +174,20 @@ export function MarkdownCodeBlock({
   const defaultWrapped = useClientSettings((settings) => settings.wordWrap);
   const [wrapOverride, setWrapOverride] = useState<boolean | null>(null);
   const wrapped = wrapOverride ?? defaultWrapped;
+  // Wrap is offered only when a line runs past the block, or while wrapping is on (to turn it off).
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [overflowing, setOverflowing] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures whether the code scrolls sideways
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!body) return;
+    const measure = () => {
+      const lines = body.querySelector("pre");
+      if (lines) setOverflowing(lines.scrollWidth > lines.clientWidth + 1);
+    };
+    measure();
+    return observeResize(body, measure);
+  }, []);
   const wrapLabel = wrapped ? gt("Disable line wrap") : gt("Wrap lines");
   const copyLabel = copied ? gt("Copied") : gt("Copy code");
   const command = code.trim();
@@ -233,7 +248,7 @@ export function MarkdownCodeBlock({
           role="toolbar"
           aria-label={gt("Code block actions")}
         >
-          {canWrap ? (
+          {canWrap && (overflowing || wrapped) ? (
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -277,7 +292,7 @@ export function MarkdownCodeBlock({
         </span>
       }
     >
-      {children}
+      <div ref={bodyRef}>{children}</div>
     </MarkdownCodeBlockFrame>
   );
 }

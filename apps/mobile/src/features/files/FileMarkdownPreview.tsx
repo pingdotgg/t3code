@@ -38,6 +38,8 @@ import { fileRoutePathSegments, resolveWorkspaceFilePath } from "./filePath";
 
 interface MarkdownPreviewStyles {
   readonly nativeTextStyle: NativeMarkdownTextStyle;
+  /** The same text a size smaller, in the muted colors: an agent's earlier text beside a question. */
+  readonly mutedNativeTextStyle: NativeMarkdownTextStyle;
 }
 
 export function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
@@ -52,23 +54,36 @@ export function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
   const codeText = theme["--color-md-code-text"];
   const horizontalRule = theme["--color-md-hr"];
 
+  const nativeTextStyle: NativeMarkdownTextStyle = {
+    color: body,
+    strongColor: strong,
+    mutedColor: body,
+    linkColor: link,
+    inlineCodeColor: codeText,
+    codeColor: codeText,
+    codeBackgroundColor: codeBackground,
+    codeBlockBackgroundColor: codeBackground,
+    fileTextColor: codeText,
+    quoteMarkerColor: blockquoteBorder,
+    dividerColor: horizontalRule,
+    fontSize: nativeMarkdownTypography.fontSize,
+    lineHeight: nativeMarkdownTypography.lineHeight,
+    headingFontSizes: nativeMarkdownTypography.headingFontSizes,
+    fontFamily: SANS_FONT_FAMILY,
+  };
   return {
-    nativeTextStyle: {
-      color: body,
-      strongColor: strong,
-      mutedColor: body,
-      linkColor: link,
-      inlineCodeColor: codeText,
-      codeColor: codeText,
-      codeBackgroundColor: codeBackground,
-      codeBlockBackgroundColor: codeBackground,
-      fileTextColor: codeText,
-      quoteMarkerColor: blockquoteBorder,
-      dividerColor: horizontalRule,
-      fontSize: nativeMarkdownTypography.fontSize,
-      lineHeight: nativeMarkdownTypography.lineHeight,
-      headingFontSizes: nativeMarkdownTypography.headingFontSizes,
-      fontFamily: SANS_FONT_FAMILY,
+    nativeTextStyle,
+    mutedNativeTextStyle: {
+      ...nativeTextStyle,
+      // Every text and marker colour is muted, so bold, code and bullets stay quiet; links keep theirs.
+      color: theme["--color-foreground-muted"],
+      strongColor: theme["--color-foreground-muted"],
+      mutedColor: theme["--color-foreground-muted"],
+      inlineCodeColor: theme["--color-foreground-muted"],
+      codeColor: theme["--color-foreground-muted"],
+      fileTextColor: theme["--color-foreground-muted"],
+      fontSize: nativeTextStyle.fontSize - 1,
+      lineHeight: nativeTextStyle.lineHeight - 2,
     },
   };
 }

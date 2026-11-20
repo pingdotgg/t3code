@@ -1,6 +1,10 @@
 import { Platform } from "react-native";
 
-import { GLASS_HEADER_OPTIONS, type AppScreenOptions } from "../../native/glass-header-options";
+import {
+  GLASS_HEADER_OPTIONS,
+  HEADER_TITLE_STYLE,
+  type AppScreenOptions,
+} from "../../native/glass-header-options";
 import { formSheetDetents } from "../../native/sheet-surface";
 
 /**
@@ -19,31 +23,19 @@ const SOLID_HEADER_OPTIONS: AppScreenOptions = {
   headerLargeTitle: false,
   headerShadowVisible: false,
   headerShown: true,
-  headerTitleStyle: { fontSize: 18, fontWeight: "800" },
+  headerTitleStyle: HEADER_TITLE_STYLE,
   headerTransparent: false,
 };
 
-function headerOptions(header: HeaderStyle, itemStyle: "editor" | "standard"): AppScreenOptions {
+function headerOptions(header: HeaderStyle): AppScreenOptions {
   if (header === "none") return { headerShown: false };
-  if (header === "glass") {
-    // The editor style needs liquid glass, which GLASS_HEADER_OPTIONS already gates it on.
-    return itemStyle === "editor"
-      ? GLASS_HEADER_OPTIONS
-      : { ...GLASS_HEADER_OPTIONS, unstable_navigationItemStyle: undefined };
-  }
-  return {
-    ...SOLID_HEADER_OPTIONS,
-    unstable_navigationItemStyle:
-      itemStyle === "editor" && Platform.OS === "ios" ? "editor" : undefined,
-  };
+  return header === "glass" ? GLASS_HEADER_OPTIONS : SOLID_HEADER_OPTIONS;
 }
 
 export interface PageRouteOptions {
   readonly title?: string;
   /** Glass bars let content scroll under them. Defaults to glass. */
   readonly header?: HeaderStyle;
-  /** iOS 26 groups a page's bar items like an editor; settings pages use the standard look. */
-  readonly itemStyle?: "editor" | "standard";
   /**
    * How the Duo minimizes the bar while scrolling. "never" for lists that stutter against the
    * default on hardware; "onScrollUp" for conversations read backwards, like Messages.
@@ -56,7 +48,7 @@ export interface PageRouteOptions {
 /** A page in the workspace: pushed on compact windows, a column page on wide ones. */
 export function pageRoute(options: PageRouteOptions = {}): AppScreenOptions {
   return {
-    ...headerOptions(options.header ?? "glass", options.itemStyle ?? "editor"),
+    ...headerOptions(options.header ?? "glass"),
     ...(options.title === undefined ? undefined : { title: options.title }),
     ...(options.duoMinimize
       ? { unstable_headerMinimizationBehavior: options.duoMinimize }
@@ -84,7 +76,6 @@ export interface SheetRouteOptions {
   readonly android?: "sheet" | "card" | "fullScreen";
   /** The sheet spans the Duo's rail, and its content insets itself. */
   readonly spansRail?: boolean;
-  readonly itemStyle?: "editor" | "standard";
   readonly duoMinimize?: "never" | "onScrollUp";
 }
 
@@ -96,7 +87,7 @@ function sheetDetents(options: SheetRouteOptions): number[] {
 
 /** A sheet over the workspace: a formSheet with a grabber that closes, never goes back. */
 export function sheetRoute(options: SheetRouteOptions): AppScreenOptions {
-  const header = headerOptions(options.header ?? "glass", options.itemStyle ?? "standard");
+  const header = headerOptions(options.header ?? "glass");
   const shared = {
     ...header,
     ...(options.title === undefined ? undefined : { title: options.title }),
@@ -128,14 +119,13 @@ export interface ModalRouteOptions {
   readonly title?: string;
   /** Defaults to "none": the screen draws its own SheetHeader or has no bar. */
   readonly header?: HeaderStyle;
-  readonly itemStyle?: "editor" | "standard";
   readonly duoMinimize?: "never" | "onScrollUp";
 }
 
 /** A full-screen modal over the workspace with a close button, not a back button. */
 export function modalRoute(options: ModalRouteOptions = {}): AppScreenOptions {
   return {
-    ...headerOptions(options.header ?? "none", options.itemStyle ?? "standard"),
+    ...headerOptions(options.header ?? "none"),
     ...(options.title === undefined ? undefined : { title: options.title }),
     ...(options.duoMinimize
       ? { unstable_headerMinimizationBehavior: options.duoMinimize }

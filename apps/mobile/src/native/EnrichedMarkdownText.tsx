@@ -212,7 +212,7 @@ function codeBlockElement(
       />
     ) : undefined;
   }
-  if (renderer.kind === "highlight" && markdownStyle.codeBlock) {
+  if (markdownStyle.codeBlock) {
     return (
       <HighlightedCodeBlock
         code={block.code}

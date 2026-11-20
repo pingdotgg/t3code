@@ -4,6 +4,7 @@ import {
   type LucideProps as OriginalLucideProps,
 } from "lucide-react-original";
 import { forwardRef, type ForwardRefExoticComponent, type RefAttributes } from "react";
+import { useIconOverride } from "./iconOverride";
 
 // Hand-drawn stroke icons (createLucideIcon) still render through Lucide.
 export { createLucideIcon };
@@ -31,6 +32,8 @@ function hasA11yProp(props: Record<string, unknown>): boolean {
 export function connIcon(name: string, node: IconNode, viewBox = "0 0 16 16"): LucideIcon {
   const ConnIcon = forwardRef<SVGSVGElement, Omit<LucideProps, "ref">>(
     function ConnIcon(props, ref) {
+      const override = useIconOverride(name, props, ref, false);
+      if (override) return override;
       const {
         size = 24,
         color = "currentColor",

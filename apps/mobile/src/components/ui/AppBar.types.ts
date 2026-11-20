@@ -41,7 +41,10 @@ export type AppBarMenuItem =
     };
 
 export interface AppBarMenu {
+  /** The menu's name; with `untitled` it is only the button's accessibility label. */
   readonly title: string;
+  /** iOS: the open menu shows no title line. */
+  readonly untitled?: boolean;
   readonly icon: AppSymbolName;
   readonly status?: string;
   readonly separateBackground?: boolean;
@@ -103,6 +106,8 @@ export interface AppBarProps {
    * button, on both platforms.
    */
   readonly onClose?: () => void;
+  /** iOS: where the close button sits. Defaults to the bar's start; system sheets end the bar. */
+  readonly closePlacement?: "leading" | "trailing";
   /** Defaults to "Close". */
   readonly closeAccessibilityLabel?: string;
   /** A sheet's confirm button, last in the bar. */

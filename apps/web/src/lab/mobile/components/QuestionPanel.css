@@ -1,0 +1,249 @@
+/* The question panel. Text (title, context, code, "1 of 3") sits --q-text in from both sides. Option
+   highlights reach 8px past it on both sides, to --q-edge; the last action and the bottom padding use
+   --q-edge too, so the Send pill sits evenly in the corner and lines up with the highlights. */
+.m-q {
+  --q-edge: 8px;
+  --q-text: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  padding: 16px var(--q-edge) var(--q-edge) var(--q-text);
+  border-radius: 28px;
+  border: 1px solid var(--color-card-face-border);
+  border-top-color: var(--color-card-face-edge);
+  background: var(--color-card-face);
+  overflow: hidden;
+}
+
+.m-q-column {
+  position: relative;
+  margin-left: -12px;
+  min-height: 0;
+  flex: 0 1 auto;
+  display: flex;
+  flex-direction: column;
+}
+.m-q-scroll {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+}
+/* Title → context is 8px of box gap (about 15px between the glyphs). The options get 4px more, since
+   their highlight has no text leading, so context → options also reads as about 15px. */
+.m-q-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 12px 4px 12px;
+}
+
+.m-q-fade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 24px;
+  pointer-events: none;
+}
+.m-q-fade-top {
+  top: 0;
+  background: linear-gradient(to bottom, var(--color-card-face), transparent);
+}
+.m-q-fade-bottom {
+  bottom: 0;
+  background: linear-gradient(to top, var(--color-card-face), transparent);
+}
+
+/* ---- the agent's last message ---- */
+.m-q-context {
+  position: relative;
+  font-size: 15px;
+  line-height: 21px;
+  color: var(--color-foreground-muted);
+}
+.m-q-context-text {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.m-q-context-meter {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  height: auto;
+  max-height: none;
+}
+.m-q-more {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: 500 15px/21px var(--m-font);
+  color: var(--color-foreground);
+  cursor: pointer;
+}
+.m-q-more-inline {
+  display: inline;
+}
+.m-q > .m-q-column .m-q-context > .m-q-more {
+  margin-top: 4px;
+}
+
+/* ---- options ---- */
+.m-q-options {
+  margin: 4px -12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.m-q-option {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  width: 100%;
+  padding: 14px 12px;
+  border: 0;
+  border-radius: 16px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+.m-q-option[data-selected="true"] {
+  background: var(--m-hl6);
+}
+.m-q-option:active {
+  background: var(--m-hl5);
+}
+/* The mark sits 12px from the highlight's edge and 12px from the text, so both gaps match. */
+.m-q-option-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  text-align: left;
+}
+/* Indented to the title column: mark width (20) + gap (12). */
+.m-q-option-badge {
+  display: flex;
+  padding-left: 32px;
+}
+.m-q-option-mark {
+  display: flex;
+  align-items: center;
+  height: 20px;
+  flex: none;
+}
+.m-q-option-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+/* The Recommended pill sits on its own first line; the title follows below it. */
+.m-q-option-title {
+  font-size: 14px;
+  line-height: 19px;
+  font-weight: 500;
+  color: var(--color-foreground);
+}
+.m-q-pill {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-primary) 15%, transparent);
+  font-size: 13px;
+  line-height: 17px;
+  font-weight: 500;
+  color: var(--color-primary-text);
+}
+.m-q-option-description {
+  font-size: 13px;
+  line-height: 16px;
+  color: var(--color-foreground-muted);
+}
+.m-q-option-your {
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--color-foreground-muted);
+}
+.m-q-option-text {
+  font-size: 14px;
+  line-height: 19px;
+  color: var(--color-foreground);
+}
+
+/* radio / checkbox: explicit radii, so a continuous corner never squircles the circle */
+.m-q-mark {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  border: 1.5px solid var(--color-foreground-tertiary);
+  color: var(--color-primary-foreground);
+}
+.m-q-mark[data-multiple="true"] {
+  border-radius: 6px;
+}
+.m-q-mark[data-selected="true"] {
+  border: 0;
+  background: var(--color-primary);
+}
+.m-q-mark-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--color-primary-foreground);
+}
+
+/* ---- action row ---- */
+.m-q-actions {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  min-height: 40px;
+}
+.m-q-spacer {
+  flex: 1;
+}
+.m-q-progress {
+  font-size: 13px;
+  line-height: 17px;
+  color: var(--color-foreground-muted);
+}
+.m-q-text-action {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: 500 14px/19px var(--m-font);
+  color: var(--color-foreground-secondary);
+  cursor: pointer;
+}
+/* A pill ends at the panel's 8pt edge, but a bare text button there hugs the border. When a text
+   button is last, it ends at the text edge (--q-text) instead, in line with the question text. */
+.m-q-text-action[data-last="true"] {
+  margin-right: calc(var(--q-text) - var(--q-edge));
+}
+.m-q-button {
+  min-height: 40px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  font: 500 16px/23px var(--m-font);
+  cursor: pointer;
+}
+.m-q-button:disabled {
+  background: var(--color-subtle-strong);
+  color: var(--color-foreground-muted);
+  cursor: default;
+}
+.m-q-button:active:not(:disabled) {
+  opacity: 0.7;
+}

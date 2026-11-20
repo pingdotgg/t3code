@@ -1948,6 +1948,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const primaryActionEnvironmentUnavailable =
     environmentUnavailable !== null ||
     (!activePendingProgress && (noProviderAvailable || projectSelectionRequired));
+  // Desktop: the question panel holds Previous and Next/Send; mobile keeps them by the prompt.
+  const pendingActionsInPanel = !isMobileViewport && pendingPrimaryAction !== null;
+  const pendingPanelActions =
+    pendingActionsInPanel && pendingPrimaryAction
+      ? {
+          isLastQuestion: pendingPrimaryAction.isLastQuestion,
+          ready: pendingPrimaryAction.isLastQuestion
+            ? pendingPrimaryAction.isComplete
+            : pendingPrimaryAction.canAdvance,
+          disabled:
+            !canOperateThread ||
+            primaryActionEnvironmentUnavailable ||
+            primaryActionSendDisabledReason !== null ||
+            pendingPrimaryAction.isResponding,
+          voiceInputActive,
+          onPrevious: onPreviousActivePendingUserInputQuestion,
+        }
+      : undefined;
   const dictationShortcutLabel = useDictationShortcut({
     keybindings,
     speech: speechInput,
@@ -3533,6 +3551,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onToggleOption={onSelectActivePendingUserInputOption}
                     onAdvance={onAdvanceActivePendingUserInput}
                     onDismiss={onDismissActivePendingUserInput}
+                    actions={pendingPanelActions}
                   />
                 ) : null}
               </ComposerBanner.Root>
@@ -3897,6 +3916,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onSubmitMessage={handleSubmitMessageStable}
                     onResume={onResume}
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
+                    pendingActionsInPanel={pendingActionsInPanel}
                     onInterrupt={handleInterruptPrimaryActionStable}
                     compactBeforeSendTokens={props.resumeCompactionTokens}
                     hideCompactToggle={dictationTakesFooter}

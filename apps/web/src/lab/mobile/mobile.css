@@ -1,0 +1,139 @@
+/* Lab chrome (toolbar, backdrop) and the shared primitives every mobile component uses.
+   Colour tokens are theme.generated.css (the app's own variables). Sizes follow apps/mobile/global.css. */
+:root {
+  --m-font: -apple-system, "SF Pro Text", "SF Pro", system-ui, sans-serif;
+  --m-mono: "SF Mono", ui-monospace, Menlo, monospace;
+  /* apps/mobile/global.css text roles: size / line height */
+  --m-text-3xs: 11px;
+  --m-text-2xs: 12px;
+  --m-text-xs: 13px;
+  --m-text-sm: 14px;
+  --m-text-base: 16px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--m-font);
+}
+
+.mlab {
+  min-height: 100vh;
+  padding: 0 0 48px;
+  background: #0c0c0d;
+  color: #e8e8ea;
+}
+.mlab[data-backdrop="light"] {
+  background: #d9d9dd;
+  color: #222;
+}
+
+.mlab-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 20px;
+  padding: 10px 20px;
+  font: 500 12px/1 var(--m-font);
+  background: color-mix(in srgb, #1a1a1c 92%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgb(255 255 255 / 0.08);
+  color: #e8e8ea;
+}
+.mlab-toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mlab-toolbar select {
+  font: inherit;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid rgb(255 255 255 / 0.15);
+  background: #2a2a2d;
+  color: inherit;
+}
+.mlab-segment {
+  display: flex;
+  border-radius: 8px;
+  background: #2a2a2d;
+  padding: 2px;
+  gap: 2px;
+}
+.mlab-segment button {
+  font: inherit;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #a8a8ae;
+  cursor: pointer;
+}
+.mlab-segment button[data-active="true"] {
+  background: #55555b;
+  color: #fff;
+}
+
+.mlab-stage {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 48px;
+  padding: 28px 24px 0;
+}
+
+/* ---- primitives shared by the components ---- */
+:where(.m-phone) button {
+  font-family: inherit;
+  color: inherit;
+}
+.m-phone {
+  --m-hl6: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+  --m-hl5: color-mix(in srgb, var(--color-foreground) 5%, transparent);
+  --m-hl10: color-mix(in srgb, var(--color-foreground) 10%, transparent);
+  --m-syn-keyword: #f472b6;
+  --m-syn-string: #fb923c;
+  --m-syn-builtin: #c084fc;
+  --m-syn-operator: #22d3ee;
+  --m-syn-punct: color-mix(in srgb, var(--color-md-code-text) 45%, transparent);
+  --m-syn-fn: #a78bfa;
+}
+.m-phone[data-mobile-theme="light"] {
+  --m-syn-keyword: #d6336c;
+  --m-syn-string: #c2410c;
+  --m-syn-builtin: #7e22ce;
+  --m-syn-operator: #0e7490;
+  --m-syn-fn: #6d28d9;
+}
+
+/* iOS "continuous" corners are a gently smoothed circle, close to a plain radius. CSS's
+   corner-shape: squircle is a much squarer superellipse, so it is not used here. */
+.m-continuous {
+}
+
+.m-tnum {
+  font-variant-numeric: tabular-nums;
+}
+.m-scroll {
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.m-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* The card face every inline card shares: apps/mobile ThreadCardFace (card-face tokens). */
+.m-card-face {
+  overflow: hidden;
+  border-radius: 10px;
+  border: 1px solid var(--color-card-face-border);
+  border-top-color: var(--color-card-face-edge);
+  background: var(--color-card-face);
+}

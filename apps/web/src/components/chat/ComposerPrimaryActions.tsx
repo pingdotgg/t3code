@@ -64,6 +64,8 @@ interface ComposerPrimaryActionsProps {
   onSubmitMessage?: MouseEventHandler<HTMLButtonElement>;
   onResume?: () => void;
   onPreviousPendingQuestion: () => void;
+  /** The question panel holds Previous and Next/Submit; the footer keeps only its controls and Stop. */
+  pendingActionsInPanel?: boolean;
   onInterrupt: () => void;
   compactBeforeSendTokens?: number | null;
   hideCompactToggle?: boolean;
@@ -98,7 +100,7 @@ const STOP_PENDING_MAX_MS = 10_000;
 // The action that takes Stop's place ignores clicks this long, so repeat Stop clicks can't resume.
 const STOP_LANDED_CLICK_GUARD_MS = 500;
 
-const messageActionPillClassName =
+export const messageActionPillClassName =
   "inline-flex shrink-0 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-full bg-message-action font-medium text-base text-message-action-foreground shadow-xs shadow-message-action/24 outline-none hover:bg-message-action-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-64 disabled:shadow-none sm:text-sm";
 
 const preventPointerFocus: PointerEventHandler<HTMLElement> = (event) => {
@@ -254,6 +256,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   onSubmitMessage,
   onResume,
   onPreviousPendingQuestion,
+  pendingActionsInPanel = false,
   onInterrupt,
   compactBeforeSendTokens = null,
   hideCompactToggle = false,
@@ -301,6 +304,17 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         : null}
     </>
   );
+
+  if (pendingAction && pendingActionsInPanel) {
+    return (
+      <div className={cn("flex items-center justify-end", compact ? "gap-1.5" : "gap-2")}>
+        {children}
+        {canInterrupt || stopPhase === "pending" || stopPhase === "timedOut"
+          ? renderStopGenerationButton(true)
+          : null}
+      </div>
+    );
+  }
 
   if (pendingAction) {
     return (

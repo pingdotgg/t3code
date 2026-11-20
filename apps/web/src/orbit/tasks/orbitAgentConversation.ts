@@ -23,6 +23,31 @@ import {
   prepareOrbitConversationEnvironment,
 } from "./taskNavigation.logic";
 
+/**
+ * Opens a task's PR one level below the task, in the thread's Tasks tab. False when no connected
+ * project can open it; nothing changes then.
+ */
+export function openTaskPullRequest(threadKey: string, taskId: number, url: string): boolean {
+  const source = parseScopedThreadKey(threadKey);
+  if (!source) return false;
+  const target = pullRequestLinkPanelTarget({
+    url,
+    environmentId: undefined,
+    primaryEnvironmentId: source.environmentId,
+    lendHostProject: true,
+  });
+  if (!target) return false;
+  tasksPanelActions().openPullRequest(threadKey, taskId, {
+    environmentId: target.project.environmentId,
+    projectId: target.project.id,
+    repository: target.repository,
+    number: target.number,
+    ...(target.host === undefined ? {} : { host: target.host }),
+    url,
+  });
+  return true;
+}
+
 /** Conn: a Tasks agent click peeks; marks go down before the environment connects. */
 async function prepareEnvironment(target: OrbitConversationRef, peek: boolean) {
   const transport = desktopOrbitGatewayTransport();
@@ -133,13 +158,7 @@ export function useOrbitTaskNavigation(
   const openPullRequest = (taskId: number, url: string): boolean => {
     if (!source) return false;
     guard.begin();
-    const target = pullRequestLinkPanelTarget({
-      url,
-      environmentId: undefined,
-      primaryEnvironmentId: source.environmentId,
-      lendHostProject: true,
-    });
-    if (!target) {
+    if (!openTaskPullRequest(threadKey, taskId, url)) {
       // The error belongs to the task, which a board badge opens next.
       setError({
         place: placeOf(taskId),
@@ -149,14 +168,6 @@ export function useOrbitTaskNavigation(
       return false;
     }
     setError(null);
-    tasksPanelActions().openPullRequest(threadKey, taskId, {
-      environmentId: target.project.environmentId,
-      projectId: target.project.id,
-      repository: target.repository,
-      number: target.number,
-      ...(target.host === undefined ? {} : { host: target.host }),
-      url,
-    });
     return true;
   };
   const returnToOrigin = () => {

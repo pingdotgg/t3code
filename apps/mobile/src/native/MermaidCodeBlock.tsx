@@ -299,7 +299,7 @@ function MermaidBlock(props: MermaidCodeBlockProps & { readonly diagram: Diagram
 }
 
 const styles = StyleSheet.create({
-  content: { padding: 12 },
+  content: { paddingHorizontal: 14, paddingTop: 2, paddingBottom: 14 },
   diagramRow: { flexDirection: "row", justifyContent: "center" },
   error: { marginBottom: 8 },
   exportCopy: { position: "absolute", opacity: 0 },

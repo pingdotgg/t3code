@@ -769,7 +769,7 @@ const sidebarMenuButtonVariants = cva(
         outline: "bg-sidebar-control-surface ring-1 ring-sidebar-border",
         // Matches a thread row: thread-row corners, the 13px UI text, the row-active fill for the current item,
         // and its top-edge highlight. Every row keeps a transparent 1px top border so becoming active never shifts the layout.
-        row: "rounded-md border-t border-t-transparent! font-medium text-sidebar-muted-foreground/80 text-ui data-[active=true]:border-t-(--shell-divider-raised)! data-[active=true]:bg-sidebar-row-active",
+        row: "rounded-lg border-t border-t-transparent! font-medium text-sidebar-muted-foreground/80 text-ui data-[active=true]:border-t-(--shell-divider-raised)! data-[active=true]:bg-sidebar-row-active",
       },
     },
   },

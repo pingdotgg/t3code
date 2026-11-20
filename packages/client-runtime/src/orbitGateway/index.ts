@@ -24,6 +24,7 @@ export * from "./attachedThreads.ts";
 export * from "./threadIndex.ts";
 export * from "./tasks.ts";
 export * from "./tasksClient.ts";
+export { decodeOrbitTaskCreated } from "./tasksWire.ts";
 export * from "./taskInsights.ts";
 export * from "./tasksRealtime.ts";
 export * from "./sidebarHiddenThreads.ts";

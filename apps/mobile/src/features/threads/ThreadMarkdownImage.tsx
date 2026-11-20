@@ -30,6 +30,13 @@ import {
   resolveSvgImageSize,
 } from "./markdownImageSize";
 
+// Card-face frame: a hairline border plus padding keep the picture's own edge off the feed.
+const FRAME_CLASS_NAME =
+  "overflow-hidden rounded-[10px] border border-card-face-border border-t-card-face-edge bg-card-face";
+const FRAME_PADDING = 3;
+const FRAME_INSET = FRAME_PADDING + 1;
+const FRAME_IMAGE_RADIUS = 6;
+
 /** Use known feed width immediately; later image measurement would move already-positioned rows. */
 export const MarkdownImageAvailableWidthContext = createContext(0);
 
@@ -132,7 +139,7 @@ export function ThreadMarkdownImageView(props: {
       : resolveMarkdownImageDisplaySize({
           sourceWidth: sourceSize.width,
           sourceHeight: sourceSize.height,
-          availableWidth,
+          availableWidth: availableWidth - FRAME_INSET * 2,
         });
   const failed =
     props.unavailable ||
@@ -140,7 +147,9 @@ export function ThreadMarkdownImageView(props: {
     AsyncResult.isFailure(svg);
   const placeholderWidth: ViewStyle["width"] =
     availableWidth > 0 ? Math.min(availableWidth, MARKDOWN_IMAGE_MAX_WIDTH) : "100%";
-  const frameStyle: ViewStyle = displaySize ?? { width: placeholderWidth, aspectRatio: 16 / 9 };
+  const frameStyle: ViewStyle = displaySize
+    ? { width: displaySize.width + FRAME_INSET * 2, height: displaySize.height + FRAME_INSET * 2 }
+    : { width: placeholderWidth, aspectRatio: 16 / 9 };
 
   return (
     <View
@@ -155,7 +164,7 @@ export function ThreadMarkdownImageView(props: {
             accessibilityHint={
               mediaActions.actions.length > 0 ? gt("Touch and hold for media actions") : undefined
             }
-            className="items-center justify-center rounded-[10px] bg-md-code-bg"
+            className={`items-center justify-center ${FRAME_CLASS_NAME}`}
             style={frameStyle}
           >
             {failed ? (
@@ -190,8 +199,8 @@ export function ThreadMarkdownImageView(props: {
                   }),
                 )
               }
-              className="overflow-hidden rounded-[10px] bg-md-code-bg"
-              style={{ alignSelf: "flex-start", ...frameStyle }}
+              className={FRAME_CLASS_NAME}
+              style={{ alignSelf: "flex-start", padding: FRAME_PADDING, ...frameStyle }}
             >
               {props.format === "svg" ? (
                 <ThreadMarkdownSvg ast={svgDocument?.ast ?? null} />
@@ -245,7 +254,12 @@ function ThreadMarkdownImageRequest(props: {
           props.onLoad(event.source);
         }}
         onError={props.onError}
-        style={{ width: "100%", height: "100%", opacity: loaded ? 1 : 0 }}
+        style={{
+          width: "100%",
+          height: "100%",
+          borderRadius: FRAME_IMAGE_RADIUS,
+          opacity: loaded ? 1 : 0,
+        }}
       />
       {loaded ? null : <ThreadMarkdownImageLoading />}
     </>

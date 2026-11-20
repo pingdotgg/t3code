@@ -249,6 +249,7 @@ import {
   type ThreadFeedLatestRun,
   messageFoldRunId,
 } from "../../lib/threadActivity";
+import { ThreadCardButton, ThreadCardFace } from "./ThreadCardFace";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { type ThreadWorkGroupScrollPosition } from "./thread-feed-scroll-position";
 import {
@@ -1609,7 +1610,7 @@ function useMarkdownStyles(): MarkdownStyleSets {
   };
 }
 
-/** Messages from other agents fold to one line so the user's own messages stay easy to find. */
+/** Messages from other agents fold to a card header so the user's own messages stay easy to find. */
 function AgentMessageFoldHeader(props: {
   readonly environmentId: EnvironmentId;
   readonly senderThreadId?: ThreadId;
@@ -1626,7 +1627,7 @@ function AgentMessageFoldHeader(props: {
   const gt = useGT();
   const label = senderShell?.title.trim() || props.senderTitle?.trim() || gt("Agent");
   return (
-    <Pressable
+    <ThreadCardButton
       accessibilityRole="button"
       accessibilityLabel={gt("{label}: {summary}", { label, summary: props.summary })}
       accessibilityHint={
@@ -1635,36 +1636,36 @@ function AgentMessageFoldHeader(props: {
           : gt("Double tap to show the message.")
       }
       accessibilityState={{ expanded: props.expanded }}
-      hitSlop={4}
-      className="min-h-10 flex-row items-center gap-1.5 px-3.5 py-2"
       onPress={() => {
         void Haptics.selectionAsync();
         props.onToggle();
       }}
-    >
-      <SymbolView
-        name="bubble.left.and.bubble.right"
-        size={14}
-        weight="medium"
-        tintColorClassName="accent-user-bubble-foreground-muted"
-        type="monochrome"
-      />
-      <Text
-        numberOfLines={1}
-        className="max-w-[50%] shrink-0 font-t3-medium text-sm text-user-bubble-foreground-muted"
-      >
-        {label}
-      </Text>
-      <Text numberOfLines={1} className="min-w-0 shrink text-sm text-user-bubble-foreground">
-        {props.summary}
-      </Text>
-      <ThreadDisclosureChevron
-        expanded={props.expanded}
-        collapsedDirection="down"
-        size={11}
-        tintColor={props.iconSubtleColor}
-      />
-    </Pressable>
+      header={
+        <>
+          <Text numberOfLines={1} className="min-w-0 shrink font-t3-medium text-xs text-foreground">
+            {label}
+          </Text>
+          <Text numberOfLines={1} className="shrink-0 text-xs text-foreground-muted">
+            <T>Agent message</T>
+          </Text>
+        </>
+      }
+      status={
+        <ThreadDisclosureChevron
+          expanded={props.expanded}
+          collapsedDirection="down"
+          size={11}
+          tintColor={props.iconSubtleColor}
+        />
+      }
+      title={
+        props.expanded ? null : (
+          <Text numberOfLines={2} className="text-sm text-foreground-secondary">
+            {props.summary}
+          </Text>
+        )
+      }
+    />
   );
 }
 
@@ -2334,6 +2335,7 @@ function renderFeedEntry(
           : null);
       const foldExpanded = foldRowId !== null && (props.expandedWorkRows[foldRowId] ?? false);
       const bubbleBodyVisible = foldRowId === null || foldExpanded;
+      const BubbleContainer = foldRowId !== null ? ThreadCardFace : View;
       const intentBadge = props.userMessageGrouping.continuesSteer
         ? null
         : resolveUserMessageIntentBadge(
@@ -2438,19 +2440,23 @@ function renderFeedEntry(
             </View>
           ) : null}
           {hasBubble ? (
-            <View
-              className="min-w-0 rounded-[20px]"
-              style={{
-                backgroundColor: userBubbleColor,
-                maxWidth: props.duoColumns ? "85%" : props.userBubbleMaxWidth,
-                ...(!bubbleBodyVisible
-                  ? null
-                  : hasReviewCommentContext
-                    ? { width: props.reviewCommentBubbleWidth }
-                    : hasWideBlock || foldExpanded
-                      ? { width: props.duoColumns ? "85%" : props.userBubbleMaxWidth }
-                      : null),
-              }}
+            <BubbleContainer
+              className={foldRowId !== null ? "w-full min-w-0" : "min-w-0 rounded-[20px]"}
+              style={
+                foldRowId !== null
+                  ? undefined
+                  : {
+                      backgroundColor: userBubbleColor,
+                      maxWidth: props.duoColumns ? "85%" : props.userBubbleMaxWidth,
+                      ...(!bubbleBodyVisible
+                        ? null
+                        : hasReviewCommentContext
+                          ? { width: props.reviewCommentBubbleWidth }
+                          : hasWideBlock
+                            ? { width: props.duoColumns ? "85%" : props.userBubbleMaxWidth }
+                            : null),
+                    }
+              }
             >
               {presentation.attribution === "guest" ? <GuestBubbleTint /> : null}
               {foldRowId !== null ? (
@@ -2470,7 +2476,9 @@ function renderFeedEntry(
                 />
               ) : null}
               {bubbleBodyVisible ? (
-                <View className={cn("gap-2 px-3.5 pb-2.5", foldRowId === null && "pt-2.5")}>
+                <View
+                  className={cn("gap-2", foldRowId === null ? "px-3.5 pb-2.5 pt-2.5" : "px-3 pb-3")}
+                >
                   {pendingBubbleAttachments.map((attachment) =>
                     attachment.type === "image" && attachment.uploadedAttachmentId ? (
                       <MessageAttachmentImage
@@ -2550,7 +2558,7 @@ function renderFeedEntry(
                         text={renderedText}
                         environmentId={props.environmentId}
                         context={message.context}
-                        markdownStyles={styles}
+                        markdownStyles={foldRowId !== null ? markdownStyles.assistant : styles}
                         reviewCommentColors={props.reviewCommentColors}
                         skills={props.skills}
                         linkHandlers={props.markdownLinkHandlers}
@@ -2560,7 +2568,7 @@ function renderFeedEntry(
                   ) : null}
                 </View>
               ) : null}
-            </View>
+            </BubbleContainer>
           ) : null}
           {bubbleBodyVisible ? (
             <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">

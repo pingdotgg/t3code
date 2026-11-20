@@ -1,0 +1,567 @@
+diff --git a/apps/server/src/auth/EnvironmentAuth.ts b/apps/server/src/auth/EnvironmentAuth.ts
+index 741403983ec2..71276d1f1dfe 100644
+--- a/apps/server/src/auth/EnvironmentAuth.ts
++++ b/apps/server/src/auth/EnvironmentAuth.ts
+@@ -556,10 +556,10 @@ export class EnvironmentAuth extends Context.Service<
+     readonly approveConnectDevice: (
+       pairingLinkId: string,
+     ) => Effect.Effect<boolean, ServerAuthInternalError>;
+-    /** Approves the waiting device that shows this code, for hosts without a client at hand. */
+-    readonly approveConnectDeviceByCode: (
++    /** Pairing link ids of waiting devices that show this code; more than one is ambiguous. */
++    readonly connectRequestsShowingCode: (
+       verificationCode: string,
+-    ) => Effect.Effect<boolean, ServerAuthInternalError>;
++    ) => Effect.Effect<ReadonlyArray<string>, ServerAuthInternalError>;
+     /** Trusted devices that show this code; more than one is ambiguous. */
+     readonly connectDevicesShowingCode: (
+       verificationCode: string,
+@@ -1279,20 +1279,18 @@ export const make = Effect.gen(function* () {
+       Effect.withSpan("EnvironmentAuth.approveConnectDevice"),
+     );
+ 
+-  const approveConnectDeviceByCode: EnvironmentAuth["Service"]["approveConnectDeviceByCode"] =
+-    Effect.fn("EnvironmentAuth.approveConnectDeviceByCode")(function* (verificationCode) {
++  const connectRequestsShowingCode: EnvironmentAuth["Service"]["connectRequestsShowingCode"] =
++    Effect.fn("EnvironmentAuth.connectRequestsShowingCode")(function* (verificationCode) {
+       const wanted = normalizeVerificationCode(verificationCode);
+       const links = yield* bootstrapCredentials
+         .listActive()
+         .pipe(Effect.mapError((cause) => new ServerAuthPairingLinksListError({ cause })));
+-      const matches = links.filter(
+-        (link) =>
+-          link.connectDeviceRequest !== undefined &&
+-          normalizeVerificationCode(link.connectDeviceRequest.verificationCode) === wanted,
++      return links.flatMap((link) =>
++        link.connectDeviceRequest !== undefined &&
++        normalizeVerificationCode(link.connectDeviceRequest.verificationCode) === wanted
++          ? [link.id]
++          : [],
+       );
+-      // Two waiting devices that share a code are ambiguous; approve neither.
+-      if (matches.length !== 1) return false;
+-      return yield* approveConnectDevice(matches[0]!.id);
+     });
+ 
+   const listConnectDevices: EnvironmentAuth["Service"]["listConnectDevices"] = () =>
+@@ -1651,7 +1649,7 @@ export const make = Effect.gen(function* () {
+     createPairingLink,
+     issueConnectCredential,
+     approveConnectDevice,
+-    approveConnectDeviceByCode,
++    connectRequestsShowingCode,
+     listConnectDevices,
+     revokeConnectDevice,
+     connectDevicesShowingCode,
+diff --git a/apps/server/src/cli/auth.ts b/apps/server/src/cli/auth.ts
+index 127db369c386..a99d67413119 100644
+--- a/apps/server/src/cli/auth.ts
++++ b/apps/server/src/cli/auth.ts
+@@ -1,4 +1,9 @@
+-import { AuthAccessWriteScope, AuthSessionId, AuthStandardClientScopes } from "@t3tools/contracts";
++import {
++  AuthAccessWriteScope,
++  AuthRevokePairingLinkInput,
++  AuthSessionId,
++  AuthStandardClientScopes,
++} from "@t3tools/contracts";
+ import * as Console from "effect/Console";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+@@ -152,13 +157,23 @@ const pairingListCommand = Command.make("list", {
+ 
+ const pairingRevokeCommand = Command.make("revoke", {
+   ...authLocationFlags,
+-  id: Argument.String("id").pipe(Argument.withDescription("Pairing credential id to revoke.")),
++  id: Argument.String("id").pipe(
++    Argument.withDescription("Pairing credential id to revoke."),
++    // Same schema the server applies, so both paths revoke the same id.
++    Argument.withSchema(AuthRevokePairingLinkInput.fields.id),
++  ),
+ }).pipe(
+   Command.withDescription("Revoke an active client pairing token."),
+   Command.withHandler((flags) =>
+     runWithEnvironmentAuth(flags, (environmentAuth) =>
+       Effect.gen(function* () {
+-        const revoked = yield* environmentAuth.revokePairingLink(flags.id);
++        const revoked = yield* changeAccess({
++          viaServer: (client) =>
++            client.auth
++              .revokePairingLink({ headers: {}, payload: { id: flags.id } })
++              .pipe(Effect.map((result) => result.revoked)),
++          locally: environmentAuth.revokePairingLink(flags.id),
++        });
+         yield* Console.log(
+           revoked
+             ? `Revoked pairing credential ${flags.id}.\n`
+@@ -209,7 +224,20 @@ const connectDeviceApproveCommand = Command.make("approve", {
+   Command.withHandler((flags) =>
+     runWithEnvironmentAuth(flags, (environmentAuth) =>
+       Effect.gen(function* () {
+-        const approved = yield* environmentAuth.approveConnectDeviceByCode(flags.code);
++        const [pairingLinkId, ...others] = yield* environmentAuth.connectRequestsShowingCode(
++          flags.code,
++        );
++        // Two waiting devices that share a code are ambiguous; approve neither.
++        const approved =
++          pairingLinkId !== undefined &&
++          others.length === 0 &&
++          (yield* changeAccess({
++            viaServer: (client) =>
++              client.auth
++                .approveConnectDevice({ headers: {}, payload: { pairingLinkId } })
++                .pipe(Effect.map((result) => result.approved)),
++            locally: environmentAuth.approveConnectDevice(pairingLinkId),
++          }));
+         yield* Console.log(
+           approved
+             ? `Approved ${flags.code}. The device connects on its next try.\n`
+diff --git a/apps/server/src/cli/connect.ts b/apps/server/src/cli/connect.ts
+index 322b17242d9a..787e1c31c741 100644
+--- a/apps/server/src/cli/connect.ts
++++ b/apps/server/src/cli/connect.ts
+@@ -1,9 +1,7 @@
+ import {
+   AuthRelayReadScope,
+   AuthRelayWriteScope,
+-  type AuthEnvironmentScope,
+   type EnvironmentConnectReachability,
+-  EnvironmentHttpApi,
+   formatConnectReachable,
+   type RelayClientInstallProgressEvent,
+   type RelayClientInstallProgressStage,
+@@ -27,7 +25,6 @@ import * as References from "effect/References";
+ import * as Schema from "effect/Schema";
+ import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
+ import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+-import * as HttpApiClient from "effect/http-api/HttpApiClient";
+ 
+ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+ import * as ManagedLimits from "../policy/managedLimits.ts";
+@@ -56,6 +53,7 @@ import {
+   readPersistedServerRuntimeState,
+ } from "../serverRuntimeState.ts";
+ import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
++import * as RunningServer from "./runningServer.ts";
+ import { resolveHostCliHint } from "./invocation.ts";
+ import * as CliService from "./service.ts";
+ 
+@@ -297,21 +295,6 @@ export const acquireRelayClientForLink = Effect.fn("cloud.cli.acquire_relay_clie
+   },
+ );
+ 
+-const withCloudCliSessionToken = <A, E, R>(
+-  environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
+-  scope: AuthEnvironmentScope,
+-  run: (token: string) => Effect.Effect<A, E, R>,
+-) =>
+-  Effect.acquireUseRelease(
+-    environmentAuth.issueSession({
+-      scopes: [scope],
+-      subject: "cloud-cli",
+-      label: "t3 connect cli",
+-    }),
+-    (issued) => run(issued.token),
+-    (issued) => environmentAuth.revokeSession(issued.sessionId).pipe(Effect.ignore({ log: true })),
+-  );
+-
+ type LiveCloudActionResult =
+   | { readonly status: "not-running" }
+   | { readonly status: "server-gone" }
+@@ -329,17 +312,11 @@ const runLiveCloudUnlink = Effect.fn("cloud.cli.run_live_unlink")(function* () {
+     return { status: "server-gone" } satisfies LiveCloudActionResult;
+   }
+ 
+-  const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+   const result = yield* Effect.exit(
+-    withCloudCliSessionToken(environmentAuth, AuthRelayWriteScope, (token) =>
+-      HttpApiClient.make(EnvironmentHttpApi, {
+-        baseUrl: runtimeState.value.origin,
+-      }).pipe(
+-        Effect.flatMap((client) =>
+-          client.connect.unlink({ headers: { authorization: `Bearer ${token}` } }),
+-        ),
+-        Effect.timeout(CLOUD_CLI_LIVE_SERVER_TIMEOUT),
+-      ),
++    RunningServer.serverClient(runtimeState.value.origin, [AuthRelayWriteScope]).pipe(
++      Effect.flatMap((client) => client.connect.unlink({ headers: {} })),
++      Effect.timeout(CLOUD_CLI_LIVE_SERVER_TIMEOUT),
++      Effect.scoped,
+     ),
+   );
+   return Exit.isSuccess(result)
+@@ -357,15 +334,12 @@ const checkLiveReachability = Effect.fn("cloud.cli.check_live_reachability")(fun
+   const config = yield* ServerConfig.ServerConfig;
+   const runtimeState = yield* readLiveServerRuntimeState(config.serverRuntimeStatePath);
+   if (Option.isNone(runtimeState)) return null;
+-  const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+-  return yield* withCloudCliSessionToken(environmentAuth, AuthRelayReadScope, (token) =>
+-    HttpApiClient.make(EnvironmentHttpApi, { baseUrl: runtimeState.value.origin }).pipe(
+-      Effect.flatMap((client) =>
+-        client.connect.checkReachability({ headers: { authorization: `Bearer ${token}` } }),
+-      ),
+-      Effect.timeout(CLOUD_CLI_REACHABILITY_TIMEOUT),
+-    ),
+-  ).pipe(Effect.orElseSucceed(() => null));
++  return yield* RunningServer.serverClient(runtimeState.value.origin, [AuthRelayReadScope]).pipe(
++    Effect.flatMap((client) => client.connect.checkReachability({ headers: {} })),
++    Effect.timeout(CLOUD_CLI_REACHABILITY_TIMEOUT),
++    Effect.scoped,
++    Effect.orElseSucceed(() => null),
++  );
+ });
+ 
+ function formatAlertBox(text: string): string {
+diff --git a/apps/server/src/cli/deferredImports.test.ts b/apps/server/src/cli/deferredImports.test.ts
+index c5d55afe7f94..38cc0586f794 100644
+--- a/apps/server/src/cli/deferredImports.test.ts
++++ b/apps/server/src/cli/deferredImports.test.ts
+@@ -86,7 +86,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CLI deferred imp
+         }),
+       });
+       const unreachable: typeof globalThis.fetch = () =>
+-        Promise.reject(new Error("connection refused"));
++        Promise.reject(
++          new TypeError("fetch failed", {
++            cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),
++          }),
++        );
+ 
+       const exit = yield* runCli(["project", "add", root, "--base-dir", baseDir]).pipe(
+         Effect.provideService(FetchHttpClient.Fetch, unreachable),
+diff --git a/apps/server/src/cli/project.test.ts b/apps/server/src/cli/project.test.ts
+index 5e33ad84bc12..9c117b76e7d3 100644
+--- a/apps/server/src/cli/project.test.ts
++++ b/apps/server/src/cli/project.test.ts
+@@ -162,7 +162,7 @@ it.effect.each(["snapshot", "mutation"] as const)(
+         const isMutation = init?.method === "POST";
+         if (isMutation) mutations++;
+         else snapshotRequests++;
+-        if (slowRequest === "mutation" ? isMutation : !isMutation && snapshotRequests === 2) {
++        if (slowRequest === "mutation" ? isMutation : !isMutation) {
+           requestReceived.resolve();
+           await releaseResponse.promise;
+         }
+@@ -191,7 +191,7 @@ it.effect.each(["snapshot", "mutation"] as const)(
+       releaseResponse.resolve();
+       yield* Fiber.join(add);
+ 
+-      assert.equal(snapshotRequests, 2);
++      assert.equal(snapshotRequests, 1);
+       assert.equal(mutations, 1);
+       assert.deepEqual((yield* readProjects(baseDir)).projects, []);
+     }).pipe(Effect.provide(NodeServices.layer)),
+diff --git a/apps/server/src/cli/project.ts b/apps/server/src/cli/project.ts
+index 3e59c5bd4735..ee45ff0cefc6 100644
+--- a/apps/server/src/cli/project.ts
++++ b/apps/server/src/cli/project.ts
+@@ -1,7 +1,6 @@
+ import {
+   AuthStandardClientScopes,
+   CommandId,
+-  EnvironmentHttpApi,
+   EnvironmentHttpCommonError,
+   type ProjectMutation,
+   type ProjectSnapshot,
+@@ -9,7 +8,6 @@ import {
+ } from "@t3tools/contracts";
+ import * as Console from "effect/Console";
+ import * as SecureRandom from "effect/crypto/SecureRandom";
+-import * as Duration from "effect/Duration";
+ import * as Effect from "effect/Effect";
+ import * as FileSystem from "effect/FileSystem";
+ import * as Layer from "effect/Layer";
+@@ -19,15 +17,12 @@ import * as References from "effect/References";
+ import * as Schema from "effect/Schema";
+ import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
+ import { FetchHttpClient, HttpClient, HttpClientError } from "effect/http";
+-import * as HttpApiClient from "effect/http-api/HttpApiClient";
+ 
+ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+ 
+ import * as ServerConfig from "../config.ts";
+ import * as SqlitePersistence from "../persistence/Sqlite.ts";
+-import * as ProcessRunner from "../processRunner.ts";
+-import * as ServerOwnership from "../serverOwnership.ts";
+ import type * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
+ import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
+ import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
+@@ -37,12 +32,9 @@ import { projectMutationOperation } from "../project/ProjectMutation.ts";
+ import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
+ import * as ServerSettings from "../serverSettings.ts";
+ import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+-import {
+-  clearPersistedServerRuntimeState,
+-  readLiveServerRuntimeState,
+-} from "../serverRuntimeState.ts";
+ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+ import { type CliAuthLocationFlags, projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
++import * as RunningServer from "./runningServer.ts";
+ 
+ type ProjectMutationTarget = {
+   readonly id: ProjectId;
+@@ -50,7 +42,6 @@ type ProjectMutationTarget = {
+   readonly workspaceRoot: string;
+ };
+ 
+-type ProjectCommandExecutionMode = "live" | "offline";
+ type ProjectCliDispatchCommand = ProjectMutation;
+ 
+ const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
+@@ -94,18 +85,6 @@ export class ProjectLiveServerUndeclaredStatusError extends Schema.TaggedError<P
+   }
+ }
+ 
+-export class ProjectLiveServerRequestError extends Schema.TaggedError<ProjectLiveServerRequestError>()(
+-  "ProjectLiveServerRequestError",
+-  {
+-    operation: Schema.Literal("callLiveServer"),
+-    cause: Schema.Defect(),
+-  },
+-) {
+-  override get message(): string {
+-    return "Failed to call the running server.";
+-  }
+-}
+-
+ export class ProjectTitleEmptyError extends Schema.TaggedError<ProjectTitleEmptyError>()(
+   "ProjectTitleEmptyError",
+   {
+@@ -162,7 +141,6 @@ export const ProjectCommandError = Schema.Union([
+   ProjectCommandIdGenerationError,
+   ProjectLiveServerDeclaredResponseError,
+   ProjectLiveServerUndeclaredStatusError,
+-  ProjectLiveServerRequestError,
+   ProjectTitleEmptyError,
+   ProjectIdentifierEmptyError,
+   ProjectNotFoundError,
+@@ -170,7 +148,8 @@ export const ProjectCommandError = Schema.Union([
+ ]);
+ export type ProjectCommandError = typeof ProjectCommandError.Type;
+ 
+-function projectCommandErrorFromLiveServerRequest(cause: unknown): ProjectCommandError {
++/** Names a server's error answer; unanswered requests pass through for `changeState`. */
++function projectCommandErrorFromServerAnswer<E>(cause: E) {
+   if (isEnvironmentHttpCommonError(cause)) {
+     return new ProjectLiveServerDeclaredResponseError({
+       operation: "callLiveServer",
+@@ -186,8 +165,7 @@ function projectCommandErrorFromLiveServerRequest(cause: unknown): ProjectComman
+       cause,
+     });
+   }
+-
+-  return new ProjectLiveServerRequestError({ operation: "callLiveServer", cause });
++  return cause;
+ }
+ 
+ const projectCommandUuid = SecureRandom.SecureRandom.pipe(
+@@ -221,26 +199,6 @@ const makeProjectCliRuntimeLayer = (layerProjectService: typeof RuntimeLayer.lay
+     Layer.provideMerge(SqlitePersistence.layerConfig),
+   );
+ 
+-const PROJECT_CLI_LIVE_SERVER_PROBE_TIMEOUT = Duration.seconds(1);
+-const PROJECT_CLI_LIVE_SERVER_REQUEST_TIMEOUT = Duration.seconds(10);
+-const withProjectCliSessionToken = <A, E, R>(
+-  environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
+-  run: (token: string) => Effect.Effect<A, E, R>,
+-) =>
+-  Effect.acquireUseRelease(
+-    environmentAuth.issueSession({
+-      scopes: AuthStandardClientScopes,
+-      label: "t3 project cli",
+-    }),
+-    (issued) => run(issued.token),
+-    (issued) => environmentAuth.revokeSession(issued.sessionId).pipe(Effect.ignore({ log: true })),
+-  );
+-
+-const makeLiveServerClient = (origin: string) =>
+-  HttpApiClient.make(EnvironmentHttpApi, {
+-    baseUrl: origin,
+-  });
+-
+ const normalizeWorkspaceRootForProjectCommand = Effect.fn(
+   "normalizeWorkspaceRootForProjectCommand",
+ )(function* (workspaceRoot: string) {
+@@ -324,72 +282,6 @@ const findActiveProjectTarget = Effect.fn("findActiveProjectTarget")(function* (
+   } satisfies ProjectMutationTarget;
+ });
+ 
+-const fetchLiveOrchestrationSnapshot = Effect.fn("project.fetchLiveOrchestrationSnapshot")(
+-  function* (origin: string, bearerToken: string, _timeout?: Duration.Duration) {
+-    const client = yield* makeLiveServerClient(origin);
+-    return yield* client.projects.snapshot({
+-      headers: { authorization: `Bearer ${bearerToken}` },
+-    });
+-  },
+-  (effect, _origin, _bearerToken, timeout = PROJECT_CLI_LIVE_SERVER_REQUEST_TIMEOUT) =>
+-    effect.pipe(Effect.timeout(timeout), Effect.mapError(projectCommandErrorFromLiveServerRequest)),
+-);
+-
+-const dispatchLiveOrchestrationCommand = Effect.fn("project.dispatchLiveOrchestrationCommand")(
+-  function* (origin: string, bearerToken: string, command: ProjectCliDispatchCommand) {
+-    const client = yield* makeLiveServerClient(origin);
+-    yield* client.projects.mutate({
+-      headers: { authorization: `Bearer ${bearerToken}` },
+-      payload: command,
+-    } as Parameters<typeof client.projects.mutate>[0]);
+-  },
+-  (effect, _origin, _bearerToken, _command) =>
+-    effect.pipe(
+-      Effect.timeout(PROJECT_CLI_LIVE_SERVER_REQUEST_TIMEOUT),
+-      Effect.mapError(projectCommandErrorFromLiveServerRequest),
+-    ),
+-);
+-
+-const getOfflineSnapshot = Effect.fn("getOfflineSnapshot")(function* () {
+-  const projects = yield* ProjectService.ProjectService;
+-  return yield* projects.snapshot;
+-});
+-
+-const tryResolveLiveProjectExecutionMode = Effect.fn("tryResolveLiveProjectExecutionMode")(
+-  function* (
+-    environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
+-    config: ServerConfig.ServerConfig["Service"],
+-  ) {
+-    const runtimeState = yield* readLiveServerRuntimeState(config.serverRuntimeStatePath);
+-    if (Option.isNone(runtimeState)) {
+-      return Option.none<{ readonly origin: string }>();
+-    }
+-
+-    const attempt = withProjectCliSessionToken(environmentAuth, (token) =>
+-      fetchLiveOrchestrationSnapshot(
+-        runtimeState.value.origin,
+-        token,
+-        PROJECT_CLI_LIVE_SERVER_PROBE_TIMEOUT,
+-      ).pipe(
+-        Effect.as({
+-          origin: runtimeState.value.origin,
+-        }),
+-      ),
+-    );
+-
+-    const attempted = yield* Effect.result(attempt);
+-    if (attempted._tag === "Success") {
+-      return Option.some(attempted.success);
+-    }
+-
+-    yield* Effect.logDebug("Failed to connect to the persisted project CLI server.", {
+-      origin: runtimeState.value.origin,
+-      cause: attempted.failure,
+-    });
+-    return Option.none<{ readonly origin: string }>();
+-  },
+-);
+-
+ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
+   flags: CliAuthLocationFlags,
+   run: (input: {
+@@ -397,7 +289,6 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
+     readonly dispatch: (
+       command: ProjectCliDispatchCommand,
+     ) => Effect.Effect<void, Error, FileSystem.FileSystem | HttpClient.HttpClient | Path.Path>;
+-    readonly mode: ProjectCommandExecutionMode;
+   }) => Effect.Effect<
+     string,
+     Error,
+@@ -413,54 +304,44 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
+   const minimumLogLevel = config.logLevel;
+ 
+   return yield* Effect.gen(function* () {
+-    const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+-    const liveMode = yield* tryResolveLiveProjectExecutionMode(environmentAuth, config);
+-
+-    if (Option.isSome(liveMode)) {
+-      return yield* withProjectCliSessionToken(environmentAuth, (token) =>
+-        Effect.gen(function* () {
+-          const snapshot = yield* fetchLiveOrchestrationSnapshot(liveMode.value.origin, token);
+-          const output = yield* run({
+-            snapshot,
+-            dispatch: (command) =>
+-              dispatchLiveOrchestrationCommand(liveMode.value.origin, token, command),
+-            mode: "live",
+-          });
+-          yield* Console.log(output);
+-        }),
+-      );
+-    }
+-
+-    // Before ownership and clearing, so a failed import leaves server state alone.
+-    const { layerProjectService } = yield* Effect.promise(
+-      () => import("../orchestration-v2/runtimeLayer.ts"),
+-    );
+-    const layerOfflineRuntime = makeProjectCliRuntimeLayer(layerProjectService).pipe(
+-      Layer.provide(ServerConfig.layer(config)),
+-      Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
+-    );
+-
+-    // An unreachable server may still be running; never write behind it.
+-    yield* ServerOwnership.acquireServerOwnership(config.serverRuntimeStatePath).pipe(
+-      Effect.provide(ProcessRunner.layer),
+-    );
+-    yield* clearPersistedServerRuntimeState(config.serverRuntimeStatePath);
+-    return yield* Effect.gen(function* () {
+-      const snapshot = yield* getOfflineSnapshot();
+-      const projects = yield* ProjectService.ProjectService;
+-      const output = yield* run({
+-        snapshot,
+-        dispatch: (command) => projectMutationOperation(projects, command).pipe(Effect.asVoid),
+-        mode: "offline",
+-      });
+-      yield* Console.log(output);
+-    }).pipe(Effect.provide(layerOfflineRuntime));
++    const output = yield* RunningServer.changeState({
++      scopes: AuthStandardClientScopes,
++      viaServer: Effect.fn("project.viaServer")(function* (client) {
++        return yield* run({
++          snapshot: yield* client.projects.snapshot({ headers: {} }),
++          dispatch: (command) =>
++            client.projects.mutate({ headers: {}, payload: command } as Parameters<
++              typeof client.projects.mutate
++            >[0]),
++        });
++      }, Effect.mapError(projectCommandErrorFromServerAnswer)),
++      locally: Effect.promise(() => import("../orchestration-v2/runtimeLayer.ts")).pipe(
++        Effect.flatMap(({ layerProjectService }) =>
++          Effect.gen(function* () {
++            const projects = yield* ProjectService.ProjectService;
++            return yield* run({
++              snapshot: yield* projects.snapshot,
++              dispatch: (command) =>
++                projectMutationOperation(projects, command).pipe(Effect.asVoid),
++            });
++          }).pipe(
++            Effect.provide(
++              makeProjectCliRuntimeLayer(layerProjectService).pipe(
++                Layer.provide(ServerConfig.layer(config)),
++                Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
++              ),
++            ),
++          ),
++        ),
++      ),
++    });
++    yield* Console.log(output);
+   }).pipe(
+     Effect.scoped,
+     Effect.provide(
+       Layer.mergeAll(EnvironmentAuth.layerRuntime, WorkspacePaths.layer).pipe(
+         Layer.provideMerge(FetchHttpClient.layer),
+-        Layer.provide(ServerConfig.layer(config)),
++        Layer.provideMerge(ServerConfig.layer(config)),
+         Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
+       ),
+     ),
+diff --git a/apps/server/src/cli/runningServer.ts b/apps/server/src/cli/runningServer.ts
+index d34139cf7453..cf315ff223ae 100644
+--- a/apps/server/src/cli/runningServer.ts
++++ b/apps/server/src/cli/runningServer.ts
+@@ -45,7 +45,7 @@ const SESSION_TTL = Duration.minutes(2);
+ const REQUEST_TIMEOUT = Duration.seconds(30);
+ 
+ /** A client of the server at `origin`, signed in as a short-lived session for the scope. */
+-const serverClient = Effect.fn("RunningServer.serverClient")(function* (
++export const serverClient = Effect.fn("RunningServer.serverClient")(function* (
+   origin: string,
+   scopes: ReadonlyArray<AuthEnvironmentScope>,
+ ) {

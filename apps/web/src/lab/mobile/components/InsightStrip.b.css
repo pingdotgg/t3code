@@ -1,0 +1,75 @@
+/* Variant B, "Panel": production's cards in a track (4px round, 4px gap), as one rounded
+   panel that scrolls sideways inside itself. The clipped edge fades while there is more to come,
+   and a small thumb underneath shows where you are. */
+.m-ins-root[data-variant="b"] {
+  --progress: 0;
+}
+/* No container: the cards sit on the page and run off the right edge as you scroll. */
+[data-variant="b"] .m-ins-scroll {
+  scroll-padding-left: 12px;
+}
+[data-variant="b"] .m-ins-grid {
+  grid-template-columns: repeat(3, 160px);
+  gap: 2px;
+  padding: 0 12px;
+}
+/* The fade over the clipped edge is gone once the scroll reaches the end. */
+[data-variant="b"] .m-ins-fade {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 40px;
+  background: linear-gradient(to right, transparent, var(--color-screen) 85%);
+  opacity: calc(1 - var(--progress) * 1.6);
+  pointer-events: none;
+}
+[data-variant="b"] .m-ins-fade-start {
+  right: auto;
+  left: 0;
+  background: linear-gradient(to left, transparent, var(--color-screen) 85%);
+  opacity: calc(var(--progress) * 1.6);
+}
+[data-variant="b"] .m-ins-progress {
+  display: flex;
+  justify-content: center;
+  height: 14px;
+  padding-top: 9px;
+}
+[data-variant="b"] .m-ins-progress span {
+  position: relative;
+  width: 28px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--ins-line);
+}
+[data-variant="b"] .m-ins-progress span::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 14px;
+  border-radius: 2px;
+  background: var(--color-foreground-muted);
+  transform: translateX(calc(var(--progress) * 14px));
+}
+
+/* The chart card takes the cards' place, as a production card face. */
+[data-variant="b"] .m-ins-detail {
+  margin-inline: 12px;
+  border-radius: 12px;
+}
+
+/* Only the top row has a border: its highlighted top edge. Everything else is borderless
+   (transparent, so card sizes don't change). */
+[data-variant="b"] .m-ins {
+  border-color: transparent;
+}
+[data-variant="b"] .m-ins[data-row="0"] {
+  border-top-color: var(--ins-edge);
+}
+
+/* A little more air above the grid (below the page subtitle) and below it (above the first task). */
+.m-ins-root[data-variant="b"] {
+  margin-top: 8px;
+  margin-bottom: 20px;
+}

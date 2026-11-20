@@ -46,6 +46,7 @@ import {
   type TimelineEntry,
   type WorkLogEntry,
 } from "../../session-logic";
+import { orbitTaskCreateReceipt } from "./TimelineTaskReceipt.logic";
 import {
   type ChatMessage,
   type ProposedPlan,
@@ -1246,6 +1247,7 @@ function deriveTurnFolds(input: {
       }
       if (entry.kind === "work" && entry.entry.itemType === "notification") continue;
       if (entry.kind === "work" && entry.entry.questionAnswer !== undefined) continue;
+      if (entry.kind === "work" && orbitTaskCreateReceipt(entry.entry)) continue;
       hiddenEntryIds.add(entry.id);
     }
     if (hiddenEntryIds.size === 0) {
@@ -2068,6 +2070,39 @@ export function deriveMessagesTimelineRows(
     }
 
     if (timelineEntry.kind === "work") {
+      if (orbitTaskCreateReceipt(timelineEntry.entry) !== null) {
+        // A run of task cards is one row, so the row spaces the cards among themselves.
+        const receipts = [timelineEntry.entry];
+        let next = index + 1;
+        while (next < timelineEntries.length) {
+          const candidate = timelineEntries[next];
+          if (
+            !candidate ||
+            candidate.kind !== "work" ||
+            orbitTaskCreateReceipt(candidate.entry) === null ||
+            activeWorkEntryIds.has(candidate.id) ||
+            collapsedEntryIds.has(candidate.id) ||
+            collapsedSupersededEntryIds.has(candidate.id) ||
+            foldsByAnchorEntryId.has(candidate.id) ||
+            supersededFoldsByAnchorEntryId.has(candidate.id) ||
+            (candidate.entry.runId ?? null) !== (timelineEntry.entry.runId ?? null) ||
+            candidate.attempt?.id !== timelineEntry.attempt?.id
+          ) {
+            break;
+          }
+          receipts.push(candidate.entry);
+          next += 1;
+        }
+        nextRows.push({
+          kind: "work",
+          id: timelineEntry.id,
+          createdAt: timelineEntry.createdAt,
+          groupedEntries: receipts,
+          isExpandedToolGroup: false,
+        });
+        index = next - 1;
+        continue;
+      }
       if (
         isPendingApproval(timelineEntry.entry) ||
         (timelineEntry.entry.runId != null && itemizedRunIds.has(timelineEntry.entry.runId)) ||
@@ -2105,6 +2140,7 @@ export function deriveMessagesTimelineRows(
           nextEntry.entry.itemType === "notification" ||
           nextEntry.entry.itemType === "todo_list" ||
           nextEntry.entry.questionAnswer !== undefined ||
+          orbitTaskCreateReceipt(nextEntry.entry) !== null ||
           isPendingApproval(nextEntry.entry) ||
           activeWorkEntryIds.has(nextEntry.id) ||
           collapsedEntryIds.has(nextEntry.id) ||
@@ -2453,7 +2489,11 @@ export function deriveMessagesTimelineRows(
     attachCreatedThreadSummaries(nextRows, timelineEntries, collapsedFoldMemberIds),
   );
   return result.map((row, index) => {
-    if (timelineRowIsWorkLog(row) && timelineRowIsWorkLog(result[index + 1])) {
+    // A task card is a card, not a log line: it keeps its own trailing space before the next row.
+    const isTaskReceipt =
+      row.kind === "work" &&
+      row.groupedEntries.every((entry) => orbitTaskCreateReceipt(entry) !== null);
+    if (!isTaskReceipt && timelineRowIsWorkLog(row) && timelineRowIsWorkLog(result[index + 1])) {
       return { ...row, continuesWorkLog: true };
     }
     if (!timelineRowIsOwnUserMessage(row)) return row;

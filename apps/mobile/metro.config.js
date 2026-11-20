@@ -38,6 +38,29 @@ config.resolver = {
   },
 };
 
+// Mobile UI lab only (scripts/lab/lab.mts sets CONN_ICON_LAB=1): draw the superheroicons 16px solid
+// set in place of SF Symbols (expo-symbols) and Tabler. Production builds leave this off.
+if (process.env.CONN_ICON_LAB === "1") {
+  const labIcons = path.join(__dirname, "src", "lab", "icons");
+  const labTabler = path.join(labIcons, "tabler");
+  config.resolver.resolveRequest = (context, moduleName, platform) => {
+    if (!context.originModulePath.startsWith(labIcons)) {
+      if (/(^|\/)swapHeaderIcon$/.test(moduleName)) {
+        return { type: "sourceFile", filePath: path.join(labIcons, "headerIcon.ts") };
+      }
+      if (moduleName === "expo-symbols") {
+        return { type: "sourceFile", filePath: path.join(labIcons, "expoSymbols.tsx") };
+      }
+      const tabler = /^@tabler\/icons-react-native\/(Icon\w+)$/.exec(moduleName);
+      if (tabler) {
+        const filePath = path.join(labTabler, `${tabler[1]}.tsx`);
+        if (fs.existsSync(filePath)) return { type: "sourceFile", filePath };
+      }
+    }
+    return context.resolveRequest(context, moduleName, platform);
+  };
+}
+
 async function writeFileIfChanged(filePath, contents) {
   try {
     if ((await fs.promises.readFile(filePath, "utf8")) === contents) return;

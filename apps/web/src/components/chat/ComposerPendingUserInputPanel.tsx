@@ -1,19 +1,33 @@
 import { type RuntimeRequestId, type ScopedThreadRef } from "@t3tools/contracts";
 import { markdownProseDirection, textDirection } from "~/textDirection";
 import { useGT } from "gt-react";
-import { memo, use, useEffect, useEffectEvent, useRef, useState } from "react";
+import { memo, use, useEffect, useEffectEvent, useRef, useState, type ComponentProps } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { type PendingUserInput } from "../../session-logic";
 import type { PendingUserInputDraftAnswer } from "@t3tools/client-runtime/state/pending-user-input";
 import { derivePendingUserInputProgress } from "../../pendingUserInput";
 import { CheckboxMark } from "../ui/checkbox";
-import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Kbd } from "../ui/kbd";
 import { cn } from "~/lib/utils";
 import { isInSideChatPane } from "~/lib/sideChatPane";
 import { ComposerBanner } from "./ComposerBanner";
 import ChatMarkdown from "../ChatMarkdown";
+import { ComposerPendingUserInputContext } from "./ComposerPendingUserInputContext";
+import { messageActionPillClassName } from "./ComposerPrimaryActions";
+import { splitRecommendedLabel } from "./pendingUserInputContext.logic";
+
+/** What the panel's bottom row needs from the composer: the footer no longer holds these buttons. */
+export interface PendingUserInputActions {
+  isLastQuestion: boolean;
+  /** The answer is enough to go on (or, on the last question, to send). */
+  ready: boolean;
+  /** Blocked for a reason outside the answer: offline, preparing a file, already sending. */
+  disabled: boolean;
+  /** Dictation is running; Send finishes it and submits. */
+  voiceInputActive: boolean;
+  onPrevious: () => void;
+}
 
 interface PendingUserInputPanelProps {
   pendingUserInputs: PendingUserInput[];
@@ -26,6 +40,7 @@ interface PendingUserInputPanelProps {
   onToggleOption: (questionId: string, optionValue: string) => void;
   onAdvance: () => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
+  actions?: PendingUserInputActions | undefined;
 }
 
 export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserInputPanel({
@@ -39,6 +54,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
   onToggleOption,
   onAdvance,
   onDismiss,
+  actions,
 }: PendingUserInputPanelProps) {
   if (pendingUserInputs.length === 0) return null;
   const activePrompt = pendingUserInputs[0];
@@ -57,6 +73,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
       onToggleOption={onToggleOption}
       onAdvance={onAdvance}
       onDismiss={onDismiss}
+      actions={actions}
     />
   );
 });
@@ -72,6 +89,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onToggleOption,
   onAdvance,
   onDismiss,
+  actions,
 }: {
   prompt: PendingUserInput;
   cwd: string | undefined;
@@ -83,6 +101,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onToggleOption: (questionId: string, optionValue: string) => void;
   onAdvance: () => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
+  actions: PendingUserInputActions | undefined;
 }) {
   const gt = useGT();
   // Message-mode requests remain answerable after their provider turn ends.
@@ -94,7 +113,6 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     questionId: string;
     optionValue: string;
   } | null>(null);
-  const [collapsedQuestionId, setCollapsedQuestionId] = useState<string | null>(null);
   // Keep question identity stable for its shortcut listener.
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
   const activeQuestion = progress.activeQuestion;
@@ -104,7 +122,6 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     (option) =>
       !customAnswerActive && progress.selectedOptionValues.includes(option.value ?? option.label),
   );
-  const isCollapsed = collapsedQuestionId !== null && collapsedQuestionId === activeQuestion?.id;
 
   if (
     optimisticSingleSelect &&
@@ -151,7 +168,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a document keydown listener for digit shortcuts while a question is answerable
   useEffect(() => {
-    if (!activeQuestion || responseDisabled || isCollapsed || backgroundThread) return;
+    if (!activeQuestion || responseDisabled || backgroundThread) return;
     const handler = (event: globalThis.KeyboardEvent) => {
       if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target;
@@ -178,7 +195,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [activeQuestion, backgroundThread, isCollapsed, responseDisabled]);
+  }, [activeQuestion, backgroundThread, responseDisabled]);
 
   if (!activeQuestion) {
     return null;
@@ -195,161 +212,178 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   );
   const questionTextAlign = promptDirection === "rtl" ? "text-right" : "text-left";
 
+  const multiSelect = activeQuestion.multiSelect === true;
+  const autoAdvancing = !multiSelect && optimisticSingleSelect !== null;
+  const showPrimary =
+    actions !== undefined &&
+    !autoAdvancing &&
+    (actions.voiceInputActive || actions.ready || (!actions.isLastQuestion && multiSelect));
+  const primaryDisabled =
+    actions !== undefined && (actions.disabled || (!actions.voiceInputActive && !actions.ready));
+  const total = prompt.questions.length;
+  const lastContextMessageId = prompt.contextMessageIds?.at(-1);
+
   return (
-    <Collapsible
-      dir={promptDirection}
-      open={!isCollapsed}
-      onOpenChange={(open) => {
-        setCollapsedQuestionId(open ? null : activeQuestion.id);
-      }}
-    >
-      <CollapsibleTrigger
-        render={<ComposerBanner.Row render={<button type="button" />} />}
-        title={
-          isCollapsed
-            ? gt("Show the question and its options")
-            : gt("Hide the question and its options")
-        }
-        data-pending-user-input-toggle={isCollapsed ? "collapsed" : "expanded"}
-        className="px-4 py-1.5"
-      >
-        <ComposerBanner.Content>
-          <span
-            className={cn("min-w-0 truncate text-muted-foreground", isCollapsed && "max-w-1/2")}
-            dir={textDirection(activeQuestion.header)}
-          >
-            {activeQuestion.header}
-          </span>
-          {isCollapsed ? (
-            <>
-              <ComposerBanner.Separator />
-              <span
-                className={cn("min-w-0 flex-1 truncate text-secondary-label", questionTextAlign)}
-                dir={markdownProseDirection(activeQuestion.question)}
-              >
-                {activeQuestion.question}
-              </span>
-            </>
-          ) : null}
-        </ComposerBanner.Content>
-        <ComposerBanner.Actions className="gap-0">
-          {prompt.questions.length > 1 ? (
-            <ComposerBanner.Count>
-              {questionIndex + 1}/{prompt.questions.length}
-            </ComposerBanner.Count>
-          ) : null}
-          <ComposerBanner.ToggleIcon expanded={!isCollapsed} />
-          {prompt.dismissible ? (
-            <ComposerBanner.Dismiss
-              render={<span role="button" tabIndex={0} />}
-              aria-label={gt("Dismiss question without answering")}
-              title={gt("Dismiss question without answering")}
-              disabled={isResponding}
-              data-pending-user-input-dismiss
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                onDismiss(prompt.requestId);
-              }}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter" && event.key !== " ") return;
-                event.preventDefault();
-                event.stopPropagation();
-                onDismiss(prompt.requestId);
-              }}
-            />
-          ) : null}
-        </ComposerBanner.Actions>
-      </CollapsibleTrigger>
-      <CollapsiblePanel>
-        <ComposerBanner.Scroll>
-          <ComposerBanner.Body className="ps-6 pe-4 pb-1 wrap-anywhere sm:ps-5.5">
+    <div dir={promptDirection} className="flex flex-col px-1 pt-3 pb-1" data-pending-user-input>
+      {/* One content column: the question, context and progress start 12px inside the option
+          highlights (8px from the panel edge); the last action ends 8px from right and bottom. */}
+      <ComposerBanner.Scroll>
+        <div className="flex flex-col gap-2 pb-1 wrap-anywhere">
+          <div className="px-3">
             <ChatMarkdown
               text={activeQuestion.question}
               cwd={cwd}
               threadRef={threadRef}
               lineBreaks
-              className={cn("pt-0.5 text-foreground/85", questionTextAlign)}
+              className={cn("text-foreground", questionTextAlign)}
             />
-            {/* Rows span the header row's width so the radios align with the question text and the shortcut column sits under the dismiss button. */}
-            <div className="-ms-2 mt-1.5 sm:-ms-1.5">
-              {activeQuestion.options.map((option, index) => {
-                const optionValue = option.value ?? option.label;
-                const isOptimisticallySelected =
-                  optimisticSingleSelect?.questionId === activeQuestion.id &&
-                  optimisticSingleSelect.optionValue === optionValue;
-                const isSelected =
-                  isOptimisticallySelected || draftSelectedOptions?.[index] === true;
-                const className = cn(
-                  questionTextAlign,
-                  "group flex w-full items-start gap-2.5 rounded-md bg-transparent py-1.5 ps-2 sm:ps-1.5 outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/25",
-                  isSelected ? "text-foreground" : "text-foreground/70 hover:bg-muted/30",
-                  (disabled || isResponding) && "opacity-50 cursor-not-allowed",
-                  !disabled && !isResponding && "cursor-pointer",
-                );
-                // The h-5 slots match the label's line box, so the indicator and shortcut stay on its first line.
-                const content = (
-                  <>
-                    <span className="pointer-events-none flex h-5 shrink-0 items-center">
-                      {activeQuestion.multiSelect ? (
-                        <CheckboxMark checked={isSelected} variant="contrast" />
-                      ) : (
-                        <OptionRadio checked={isSelected} />
-                      )}
-                    </span>
-                    <div className="min-w-0 flex-1 flex flex-col gap-0.5">
-                      <span className="text-sm font-medium" dir={textDirection(option.label)}>
-                        {option.label}
+          </div>
+          <div className="px-3 empty:hidden">
+            <ComposerPendingUserInputContext
+              threadRef={threadRef}
+              messageId={lastContextMessageId}
+              cwd={cwd}
+            />
+          </div>
+          <div className="mt-1 flex flex-col gap-0.5" role={multiSelect ? "group" : "radiogroup"}>
+            {activeQuestion.options.map((option, index) => {
+              const optionValue = option.value ?? option.label;
+              const isOptimisticallySelected =
+                optimisticSingleSelect?.questionId === activeQuestion.id &&
+                optimisticSingleSelect.optionValue === optionValue;
+              const isSelected = isOptimisticallySelected || draftSelectedOptions?.[index] === true;
+              const { text: optionTitle, recommended } = splitRecommendedLabel(option.label);
+              return (
+                <div key={`${activeQuestion.id}:${optionValue}`}>
+                  <button
+                    type="button"
+                    aria-pressed={isSelected}
+                    disabled={disabled || isResponding}
+                    onClick={() => {
+                      handleOptionSelection(activeQuestion.id, optionValue);
+                    }}
+                    className={cn(
+                      questionTextAlign,
+                      "group flex w-full flex-col items-stretch gap-1.5 rounded-xl bg-transparent px-3 py-3.5 outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                      isSelected ? "bg-(--shell-highlight)" : "hover:bg-foreground/4",
+                      (disabled || isResponding) && "cursor-not-allowed opacity-50",
+                      !disabled && !isResponding && "cursor-pointer",
+                    )}
+                  >
+                    {recommended ? (
+                      // On its own line above the title, so the mark lines up with the title.
+                      <span className="flex ps-6.5">
+                        <span className="rounded-full bg-primary/15 px-2 py-px text-xs font-medium text-primary">
+                          {gt("Recommended")}
+                        </span>
                       </span>
-                      {option.description && option.description !== option.label ? (
+                    ) : null}
+                    <span className="flex items-start gap-2.5">
+                      <span className="pointer-events-none flex h-5 shrink-0 items-center">
+                        {multiSelect ? (
+                          <CheckboxMark checked={isSelected} variant="contrast" />
+                        ) : (
+                          <OptionRadio checked={isSelected} />
+                        )}
+                      </span>
+                      <span className="flex min-w-0 flex-1 flex-col gap-1">
                         <span
-                          className="text-secondary-label text-2xs"
-                          dir={textDirection(option.description)}
+                          className="text-sm leading-5 font-medium text-foreground"
+                          dir={textDirection(optionTitle)}
                         >
-                          {option.description}
+                          {optionTitle}
+                        </span>
+                        {option.description && option.description !== option.label ? (
+                          <span
+                            className="text-ui leading-4 text-muted-foreground"
+                            dir={textDirection(option.description)}
+                          >
+                            {option.description}
+                          </span>
+                        ) : null}
+                      </span>
+                      {index < 9 ? (
+                        <span className="flex h-5 shrink-0 items-center">
+                          <Kbd>{index + 1}</Kbd>
                         </span>
                       ) : null}
-                    </div>
-                    {index < 9 ? (
-                      <span className="flex h-5 w-7 shrink-0 items-center justify-center sm:w-6">
-                        <Kbd>{index + 1}</Kbd>
-                      </span>
-                    ) : null}
-                  </>
-                );
-                // The preview sits outside the button: it can hold links, and a click on a single-select option advances.
-                return (
-                  <div key={`${activeQuestion.id}:${optionValue}`}>
-                    <button
-                      type="button"
-                      aria-pressed={isSelected}
-                      disabled={disabled || isResponding}
-                      onClick={() => {
-                        handleOptionSelection(activeQuestion.id, optionValue);
-                      }}
-                      className={className}
-                    >
-                      {content}
-                    </button>
-                    {option.preview ? (
-                      <ChatMarkdown
-                        text={option.preview}
-                        cwd={cwd}
-                        threadRef={threadRef}
-                        lineBreaks
-                        className="ps-9 pe-2 pb-1.5 text-xs text-foreground/70 sm:ps-8"
-                      />
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-          </ComposerBanner.Body>
-        </ComposerBanner.Scroll>
-      </CollapsiblePanel>
-    </Collapsible>
+                    </span>
+                  </button>
+                  {option.preview ? (
+                    <ChatMarkdown
+                      text={option.preview}
+                      cwd={cwd}
+                      threadRef={threadRef}
+                      lineBreaks
+                      className="ps-9.5 pe-3 pb-1.5 text-xs text-foreground/70"
+                    />
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </ComposerBanner.Scroll>
+      {actions ? (
+        <div className="mt-2 flex min-h-8 items-center gap-4" data-pending-user-input-actions>
+          {total > 1 ? (
+            <span className="ps-3 text-xs text-muted-foreground tabular-nums">
+              {gt("{current} of {total}", { current: questionIndex + 1, total })}
+            </span>
+          ) : null}
+          <span className="flex-1" />
+          {prompt.dismissible ? (
+            <TextAction
+              last={questionIndex === 0 && !showPrimary}
+              disabled={isResponding}
+              data-pending-user-input-dismiss
+              onClick={() => onDismiss(prompt.requestId)}
+            >
+              {gt("Skip")}
+            </TextAction>
+          ) : null}
+          {questionIndex > 0 ? (
+            <TextAction last={!showPrimary} disabled={isResponding} onClick={actions.onPrevious}>
+              {gt("Back")}
+            </TextAction>
+          ) : null}
+          {showPrimary ? (
+            <button
+              type="submit"
+              className={cn(messageActionPillClassName, "h-8 px-4 sm:h-8")}
+              disabled={primaryDisabled}
+            >
+              {actions.isLastQuestion
+                ? isResponding
+                  ? gt("Submitting...")
+                  : gt("Send")
+                : gt("Next", { $context: "button that goes to the next question" })}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
   );
 });
+
+/** A quiet text button. When it is the last action it ends in line with the question text, not at the pill edge. */
+function TextAction({
+  last,
+  className,
+  ...props
+}: Omit<ComponentProps<"button">, "type"> & { last: boolean }) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        "cursor-pointer text-sm font-medium text-secondary-label outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:opacity-50",
+        last && "me-3",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
 
 // Drawn with ui/radio-group's look instead of using its Radio: Radio only checks inside a
 // RadioGroup, whose arrow keys select options and would trip the single-select auto-advance.

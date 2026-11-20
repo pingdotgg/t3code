@@ -1,0 +1,82 @@
+.m-frame-slot {
+  flex: none;
+}
+
+.m-phone {
+  position: relative;
+  overflow: hidden;
+  transform-origin: top left;
+  border-radius: 55px;
+  background: var(--color-screen);
+  color: var(--color-foreground);
+  color-scheme: dark;
+  font-family: var(--m-font);
+  -webkit-font-smoothing: antialiased;
+  box-shadow:
+    0 0 0 1px rgb(255 255 255 / 0.08),
+    0 30px 80px rgb(0 0 0 / 0.45);
+  isolation: isolate;
+}
+
+.m-phone[data-mobile-theme="light"] {
+  color-scheme: light;
+  box-shadow:
+    0 0 0 1px rgb(0 0 0 / 0.1),
+    0 30px 80px rgb(0 0 0 / 0.18);
+}
+
+.m-screen {
+  position: absolute;
+  inset: 0;
+}
+
+.m-statusbar {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 28px 0 0;
+  pointer-events: none;
+  z-index: 50;
+}
+
+.m-statusbar-time {
+  width: 126px;
+  text-align: center;
+  font: 600 17px/22px var(--m-font);
+  letter-spacing: -0.2px;
+  padding-top: 4px;
+}
+
+.m-island {
+  position: absolute;
+  left: 50%;
+  top: 11px;
+  width: 124px;
+  height: 36px;
+  margin-left: -62px;
+  border-radius: 18px;
+  background: #000;
+}
+
+.m-statusbar-icons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 4px;
+}
+
+.m-home-indicator {
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  width: 139px;
+  height: 5px;
+  margin-left: -69px;
+  border-radius: 3px;
+  background: var(--color-foreground);
+  z-index: 50;
+  pointer-events: none;
+}

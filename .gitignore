@@ -53,3 +53,5 @@ node_modules/
 .pnpm-store/
 
 /packages/ssh/.ssh-launcher-test-*/
+.t3-mobile-lab
+.lab-shots/

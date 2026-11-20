@@ -60,6 +60,7 @@ import {
 } from "./features/keyboard/HardwareKeyboardCommandProvider";
 import { ReviewCommentComposerSheet } from "./features/review/ReviewCommentComposerSheet";
 import { ReviewSheet } from "./features/review/ReviewSheet";
+import { ThreadTerminalOptionsSheet } from "./features/terminal/ThreadTerminalOptionsSheet";
 import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRouteScreen";
 import { DevicePreviewRouteScreen } from "./features/devices/DevicePreviewRouteScreen";
 import { BrowserPreviewRouteScreen } from "./features/browser/BrowserPreviewRouteScreen";
@@ -158,7 +159,7 @@ import { useNativeLayoutMetrics } from "./native/native-layout-metrics";
 import { isPresentedRoute } from "./native/workspace-stack-projection";
 import { workspaceDetailRouter } from "./features/layout/workspace/workspace-detail-selection";
 
-const settingsPage = () => pageRoute({ itemStyle: "standard" });
+const settingsPage = () => pageRoute();
 
 const { title: _compactBrandTitle, ...compactBrandHeaderOptions } = getCompactBrandHeaderOptions();
 
@@ -227,14 +228,14 @@ const THREAD_SETTINGS_ROUTE = sheetRoute({
 
 // Search sheets push on Android like the branch picker; a formSheet there leaves the list's
 // header peeking above it once the keyboard opens.
-const SEARCH_SHEET_ROUTE = sheetRoute({ detent: 0.75, android: "card", itemStyle: "editor" });
+const SEARCH_SHEET_ROUTE = sheetRoute({ detent: 0.75, android: "card" });
 
 const SETTINGS_SCREENS = {
   Settings: createNativeStackScreen({
     screen: SettingsRouteScreen,
     linking: "settings",
     options: {
-      ...pageRoute({ itemStyle: "standard", root: true }),
+      ...pageRoute({ root: true }),
       ...(Platform.OS === "android" ? { animation: "none" as const } : {}),
       ...SETTINGS_LIST_PRESENTATION,
     },
@@ -370,10 +371,7 @@ const SETTINGS_SCREENS = {
   SettingsScheduledTasks: createNativeStackScreen({
     screen: SettingsScheduledTasksRouteScreen,
     linking: "settings/scheduled-tasks",
-    options: {
-      ...settingsPage(),
-      headerTitleStyle: { fontSize: 16, fontWeight: "800" },
-    },
+    options: settingsPage(),
   }),
   SettingsScheduledTaskNew: createNativeStackScreen({
     screen: SettingsScheduledTaskNewRouteScreen,
@@ -592,7 +590,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
     OrbitTask: createNativeStackScreen({
       screen: OrbitTaskRouteScreen,
       linking: { path: "tasks/:taskId", parse: { taskId: Number } },
-      options: pageRoute({ duoMinimize: "never", itemStyle: "standard" }),
+      options: pageRoute({ duoMinimize: "never" }),
     }),
     OrbitSubtask: createNativeStackScreen({
       screen: OrbitSubtaskRouteScreen,
@@ -600,7 +598,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
         path: "tasks/:taskId/subtasks/:subtaskId",
         parse: { taskId: Number, subtaskId: Number },
       },
-      options: pageRoute({ duoMinimize: "never", itemStyle: "standard" }),
+      options: pageRoute({ duoMinimize: "never" }),
     }),
     PullRequestGuideStop: createNativeStackScreen({
       screen: PullRequestGuideStopScreen,
@@ -616,7 +614,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
     }),
     PullRequestReviewers: createNativeStackScreen({
       screen: PullRequestReviewersScreen,
-      options: sheetRoute({ detent: 0.75, itemStyle: "editor", duoMinimize: "never" }),
+      options: sheetRoute({ detent: 0.75, duoMinimize: "never" }),
     }),
     PullRequestLabels: createNativeStackScreen({
       screen: PullRequestLabelsScreen,
@@ -737,11 +735,16 @@ const RootStackConfig = createWorkspaceStackNavigator({
     ThreadTerminal: createNativeStackScreen({
       screen: ThreadTerminalRouteScreen,
       linking: `${THREAD_LINKING_PREFIX}/terminal`,
-      options: pageRoute({ header: "solid" }),
+      // A terminal wants height and a keyboard; Android's formSheet can't host one.
+      options: sheetRoute({ detent: 0.75, android: "fullScreen" }),
+    }),
+    ThreadTerminalOptions: createNativeStackScreen({
+      screen: ThreadTerminalOptionsSheet,
+      options: sheetRoute({ detent: 0.55 }),
     }),
     ThreadInspectorFullscreen: createNativeStackScreen({
       screen: FullscreenThreadRouteScreen,
-      options: modalRoute({ header: "glass", itemStyle: "editor", duoMinimize: "onScrollUp" }),
+      options: modalRoute({ header: "glass", duoMinimize: "onScrollUp" }),
     }),
     ThreadDevicePreview: createNativeStackScreen({
       screen: DevicePreviewRouteScreen,

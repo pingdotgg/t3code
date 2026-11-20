@@ -4,8 +4,8 @@ const PENDING_USER_INPUT_VERTICAL_GAP = 12;
 
 export const ESTIMATED_KEYBOARD_HEIGHT = 336;
 
-/** Card transitions and feed insets must share timing to avoid drift. */
-export const USER_INPUT_TOGGLE_DURATION_MS = 220;
+/** Feed the question panel leaves in view above itself, so the thread stays in sight. */
+export const QUESTION_PANEL_FEED_PEEK = 96;
 
 export function derivePendingUserInputMaxHeight(input: {
   readonly windowHeight: number;

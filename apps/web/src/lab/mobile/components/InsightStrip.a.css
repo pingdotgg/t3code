@@ -1,0 +1,10 @@
+/* Variant A, "Tiles": production's cards laid straight on the page, two rows, no track. The third
+   column peeks past the edge, snapping per column. */
+[data-variant="a"] .m-ins-scroll {
+  scroll-padding-left: 8px;
+}
+[data-variant="a"] .m-ins-grid {
+  grid-template-columns: repeat(3, 160px);
+  gap: 6px;
+  padding: 0 8px;
+}

@@ -81,6 +81,8 @@
         "scripts/fetch-expo-schema.ts",
         "scripts/probe-claude-fork-local-rollback-replay.ts",
         "scripts/update-test-shard-weights.ts",
+        // Seeds the mobile UI lab's server by hand.
+        "scripts/mobile-lab-seed.ts",
         "scripts/verify-background-live.ts",
         "src/provider/testFixtures/*.mjs",
         // graphqlgen reads its config.
@@ -145,10 +147,15 @@
       // Worktree setup (scripts/setup-worktree.ts) runs this directly, and evidence
       // fixtures run under node.
       // toolbar-mockup.html loads the Conn toolbar preview, which knip does not read.
+      // The UI labs (lab.html, mobile.html) load their scripts from the HTML pages, and
+      // vite.lab.config.ts swaps modules by alias; their generators run by hand.
       "entry": [
         "scripts/warm-dep-cache.ts",
         "test/fixtures/**/*.mjs",
         "src/laravelToolbarPreview/main.tsx",
+        "vite.lab.config.ts",
+        "src/lab/**/*.{ts,tsx,mjs}",
+        "scripts/mobile-lab/*.mts",
       ],
       // UI component modules are copied and adapted as cohesive sets. Keep their
       // named subcomponents even before they have callers; the file audit still
@@ -186,6 +193,9 @@
         "scripts/generate-device-stream.mts",
         "src/features/devices/device-stream.browser.ts!",
         "src/features/browser/preview-stream.browser.ts!",
+        // The mobile UI lab (scripts/lab/lab.mts) turns on metro.config.js's icon aliases, which
+        // load these by path; its generators run by hand.
+        "src/lab/icons/**/*.{ts,tsx,mts}",
       ],
       // Fonts are configured as asset paths; Expo autolinks the native packages.
       "ignoreDependencies": [

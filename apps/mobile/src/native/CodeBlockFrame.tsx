@@ -1,13 +1,14 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { SymbolView, type AppSymbolName } from "../components/ui/AppSymbol";
 import { themeColorWithAlpha } from "../lib/mobileTheme";
+import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import type { NativeMarkdownTextStyle } from "./SelectableMarkdownText.types";
 
 /**
- * The native code block's border and header, for a fence drawn in React once it closes.
- * The block slot already applies the code block's outer margins.
+ * A code block as desktop draws it: one rounded surface, the language and the actions on a quiet
+ * row above the code, no divider. The block slot already applies the outer margins.
  */
 export function CodeBlockFrame(props: {
   readonly label: string;
@@ -16,28 +17,26 @@ export function CodeBlockFrame(props: {
   readonly children: ReactNode;
 }) {
   const { textStyle } = props;
+  const { themeAppearance } = useAppearancePreferences();
   return (
     <View
       style={[
         styles.block,
         {
           backgroundColor: textStyle.codeBlockBackgroundColor,
-          borderColor: textStyle.dividerColor,
+          // As on desktop: only a light surface needs an edge to read against the page.
+          borderColor: themeAppearance === "light" ? textStyle.dividerColor : "transparent",
         },
       ]}
     >
-      <View
-        style={[
-          styles.header,
-          { borderBottomColor: themeColorWithAlpha(textStyle.codeColor, 0.2) },
-        ]}
-      >
+      <View style={styles.header}>
         <Text
+          numberOfLines={1}
           style={[
             styles.label,
             {
-              color: themeColorWithAlpha(textStyle.codeColor, 0.6),
-              fontSize: textStyle.fontSize * 0.9 * 0.85,
+              color: themeColorWithAlpha(textStyle.codeColor, 0.55),
+              fontSize: textStyle.fontSize * 0.75,
             },
           ]}
         >
@@ -50,7 +49,17 @@ export function CodeBlockFrame(props: {
   );
 }
 
-/** A header icon; `active` draws it at full strength, as the native wrap toggle when on. */
+/** True for a moment after `flash()`, to show a copied check. */
+export function useCopiedFlash() {
+  const [copied, setCopied] = useState(false);
+  const flash = () => {
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1200);
+  };
+  return { copied, flash };
+}
+
+/** A quiet header icon; `active` draws it at full strength on a faint backing, as a toggle that is on. */
 export function CodeBlockHeaderButton(props: {
   readonly icon: AppSymbolName;
   readonly label: string;
@@ -58,21 +67,25 @@ export function CodeBlockHeaderButton(props: {
   readonly active?: boolean;
   readonly onPress: () => void;
 }) {
+  const { codeColor } = props.textStyle;
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={props.label}
-      hitSlop={10}
+      accessibilityState={props.active === undefined ? undefined : { selected: props.active }}
+      hitSlop={6}
       onPress={props.onPress}
+      style={({ pressed }) => [
+        styles.button,
+        {
+          backgroundColor: themeColorWithAlpha(codeColor, pressed ? 0.14 : props.active ? 0.1 : 0),
+        },
+      ]}
     >
       <SymbolView
         name={props.icon}
-        size={14}
-        tintColor={
-          props.active
-            ? props.textStyle.codeColor
-            : themeColorWithAlpha(props.textStyle.codeColor, 0.6)
-        }
+        size={15}
+        tintColor={props.active ? codeColor : themeColorWithAlpha(codeColor, 0.55)}
         type="monochrome"
       />
     </Pressable>
@@ -81,18 +94,27 @@ export function CodeBlockHeaderButton(props: {
 
 const styles = StyleSheet.create({
   block: {
-    borderRadius: 8,
+    borderRadius: 12,
     borderWidth: StyleSheet.hairlineWidth,
     overflow: "hidden",
   },
   header: {
-    minHeight: 32,
-    paddingHorizontal: 12,
+    minHeight: 30,
+    paddingLeft: 14,
+    paddingRight: 6,
+    paddingTop: 2,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: 8,
   },
-  label: { fontWeight: "500" },
-  actions: { flexDirection: "row", alignItems: "center", gap: 14 },
+  label: { flexShrink: 1, fontWeight: "500" },
+  actions: { flexDirection: "row", alignItems: "center", gap: 2 },
+  button: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
 });

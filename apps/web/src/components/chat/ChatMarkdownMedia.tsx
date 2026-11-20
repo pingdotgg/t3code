@@ -28,10 +28,17 @@ const CHAT_MARKDOWN_MEDIA_BOUNDS_CLASS_NAME = cn(
   CHAT_MARKDOWN_MEDIA_MAX_WIDTH_CLASS_NAME,
 );
 const CHAT_MARKDOWN_MEDIA_LAYOUT_CLASS_NAME = "inline-block!";
-const CHAT_MARKDOWN_MEDIA_FRAME_CLASS_NAME = "rounded-lg border border-border/40";
+const CHAT_MARKDOWN_MEDIA_FRAME_CLASS_NAME =
+  "rounded-lg border border-(--shell-divider)! border-t-(--shell-card-edge)!";
 const CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME = cn(
   "h-auto w-auto object-contain",
   CHAT_MARKDOWN_MEDIA_BOUNDS_CLASS_NAME,
+);
+// The inset and backing fill keep an image's own edge off the page, so a screenshot reads as an image.
+const CHAT_MARKDOWN_IMAGE_FRAMED_CLASS_NAME = cn(
+  CHAT_MARKDOWN_MEDIA_LAYOUT_CLASS_NAME,
+  CHAT_MARKDOWN_MEDIA_FRAME_CLASS_NAME,
+  "bg-(--shell-highlight)/60 p-1",
 );
 
 export function markdownImageCopy(alt: string, src: string, title: string | undefined): string {
@@ -84,10 +91,6 @@ export function authoredImageSizeStyle(
   return undefined;
 }
 
-const CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME = cn(
-  CHAT_MARKDOWN_MEDIA_LAYOUT_CLASS_NAME,
-  CHAT_MARKDOWN_MEDIA_FRAME_CLASS_NAME,
-);
 export const MarkdownLinkContext = createContext(false);
 /** The thread's workspace mutation id, so a host image the agent rewrites gets a fresh URL. */
 export const WorkspaceMutationIdContext = createContext<string | null | undefined>(undefined);
@@ -182,6 +185,8 @@ export function ChatMarkdownImage(props: {
   readonly alt: string;
   readonly copyMarkdown: string | undefined;
   readonly standalone: boolean;
+  /** Frame the picture. Defaults to `standalone`, so an image inside a sentence stays bare. */
+  readonly framed?: boolean | undefined;
   readonly className?: string | undefined;
   readonly style?: CSSProperties | undefined;
   readonly imageProps?:
@@ -234,6 +239,7 @@ export function ChatMarkdownImage(props: {
           draggable={false}
           className={cn(
             CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME,
+            (props.framed ?? props.standalone) && CHAT_MARKDOWN_IMAGE_FRAMED_CLASS_NAME,
             props.className,
             props.onImageExpand && "cursor-zoom-in",
           )}
@@ -483,10 +489,8 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
       alt={props.alt}
       copyMarkdown={props.copyMarkdown}
       standalone={props.standalone ?? true}
-      className={cn(
-        props.framed === false ? undefined : CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME,
-        props.className,
-      )}
+      framed={props.framed !== false}
+      className={props.className}
       style={style}
       imageProps={props.imageProps}
       actionsSource={actionsSource}

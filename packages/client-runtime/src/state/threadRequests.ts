@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  MessageId,
   ScopedThreadRef,
   ThreadId,
   OrchestrationV2ThreadProjection,
@@ -99,6 +100,32 @@ export interface ThreadPendingUserInput {
   readonly responseCapability: OrchestrationV2RuntimeRequest["responseCapability"]["type"];
   readonly responseMode?: "message";
   readonly dismissible: boolean;
+  /**
+   * The assistant messages the agent wrote earlier in the question's own turn, oldest first. Their
+   * text streams separately from the structure, so readers look it up by id.
+   */
+  readonly contextMessageIds?: ReadonlyArray<MessageId>;
+}
+
+/** The assistant messages before a question in the question's own run and provider turn. */
+function assistantMessageIdsBeforeQuestion(
+  turnItems: ReadonlyArray<ThreadStructure["turnItems"][number]>,
+  question: { readonly runId: unknown; readonly ordinal: number; readonly providerTurnId: unknown },
+): ReadonlyArray<MessageId> {
+  if (question.runId === null) return [];
+  return turnItems
+    .flatMap((candidate) =>
+      candidate.type === "assistant_message" &&
+      candidate.runId === question.runId &&
+      candidate.ordinal < question.ordinal &&
+      (candidate.providerTurnId === null ||
+        question.providerTurnId === null ||
+        candidate.providerTurnId === question.providerTurnId)
+        ? [candidate]
+        : [],
+    )
+    .sort((left, right) => left.ordinal - right.ordinal)
+    .map((candidate) => candidate.messageId);
 }
 
 export interface PendingThreadRequests {
@@ -261,6 +288,7 @@ export function derivePendingThreadRequests(
           candidate.type === "user_input_request" && candidate.requestId === request.id,
       );
       if (item === undefined || item.type !== "user_input_request") continue;
+      const contextMessageIds = assistantMessageIdsBeforeQuestion(projection.turnItems, item);
       userInputs.push({
         requestId: request.id,
         createdAt: DateTime.formatIso(request.createdAt),
@@ -269,6 +297,7 @@ export function derivePendingThreadRequests(
           multiSelect: question.multiSelect ?? false,
         })),
         responseCapability,
+        ...(contextMessageIds.length > 0 ? { contextMessageIds } : {}),
         dismissible: item.responseMode === "message" || responseCapability === "message",
         ...(item.responseMode === "message" || responseCapability === "message"
           ? { responseMode: "message" as const }

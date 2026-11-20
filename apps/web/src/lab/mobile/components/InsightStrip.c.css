@@ -1,0 +1,51 @@
+/* Variant C, "Carousel": one production card per page in a single row. The next card peeks in and
+   page dots say how many there are. Shortest block of the three. */
+[data-variant="c"] .m-ins-scroll {
+  scroll-padding-left: 8px;
+}
+[data-variant="c"] .m-ins-grid {
+  grid-template-columns: repeat(6, 337px);
+  gap: 8px;
+  padding: 0 8px;
+}
+[data-variant="c"] .m-ins-dots {
+  display: flex;
+  justify-content: center;
+  gap: 5px;
+  padding-top: 10px;
+}
+[data-variant="c"] .m-ins-dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--ins-line);
+  transition:
+    width 0.2s ease,
+    background-color 0.2s ease;
+}
+[data-variant="c"] .m-ins-dots span[data-active="true"] {
+  width: 14px;
+  background: var(--color-foreground-muted);
+}
+
+/* The chart card: header stacked on the left, the plot on the right, so it fits the strip's height. */
+[data-variant="c"] .m-ins-detail-head {
+  width: 112px;
+  padding-right: 0;
+}
+[data-variant="c"] .m-ins-detail-row {
+  flex-wrap: wrap;
+  row-gap: 0;
+}
+[data-variant="c"] .m-ins-detail .m-ins-value {
+  flex-basis: 100%;
+}
+[data-variant="c"] .m-ins-chart {
+  position: absolute;
+  right: 16px;
+  bottom: 8px;
+  margin-top: 0;
+}
+[data-variant="c"] .m-ins-close {
+  top: 8px;
+}

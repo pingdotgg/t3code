@@ -8,6 +8,9 @@
       --color-card: #fafafa;
       --color-grouped-card: #e9e9e9;
       --color-card-alt: #fcfcfc;
+      --color-card-face: #fafafa;
+      --color-card-face-border: #e2e2e3;
+      --color-card-face-edge: #e8e8e9;
       --color-card-translucent: rgba(255, 255, 255, 0.8);
       --color-thread-canvas: #fafafa;
       --color-thread-selected: #ffffff;
@@ -171,6 +174,9 @@
       --color-card: #000000;
       --color-grouped-card: #141414;
       --color-card-alt: #111111;
+      --color-card-face: #0e0e0e;
+      --color-card-face-border: #040404;
+      --color-card-face-edge: #090909;
       --color-card-translucent: rgba(17, 17, 17, 0.8);
       --color-thread-canvas: #000000;
       --color-thread-selected: #1a1b1b;
@@ -334,6 +340,9 @@
       --color-card: #f2e1f4;
       --color-grouped-card: #e5d1e7;
       --color-card-alt: #fdfafd;
+      --color-card-face: #f2e1f4;
+      --color-card-face-border: #e1cce3;
+      --color-card-face-edge: #e7d6e9;
       --color-card-translucent: rgba(250, 243, 251, 0.8);
       --color-thread-canvas: #f2e1f4;
       --color-thread-selected: #f8f8f7;
@@ -497,6 +506,9 @@
       --color-card: #171018;
       --color-grouped-card: #29232a;
       --color-card-alt: #2c2631;
+      --color-card-face: #241d25;
+      --color-card-face-border: #2b242c;
+      --color-card-face-edge: #312a32;
       --color-card-translucent: rgba(41, 35, 45, 0.8);
       --color-thread-canvas: #171018;
       --color-thread-selected: #261922;
@@ -660,6 +672,9 @@
       --color-card: #e2ede7;
       --color-grouped-card: #d3dcd7;
       --color-card-alt: #ecefed;
+      --color-card-face: #e2ede7;
+      --color-card-face-border: #cdd5d1;
+      --color-card-face-edge: #d7ddda;
       --color-card-translucent: rgba(243, 247, 244, 0.8);
       --color-thread-canvas: #e2ede7;
       --color-thread-selected: #bad7c9;
@@ -823,6 +838,9 @@
       --color-card: #21362b;
       --color-grouped-card: #33463c;
       --color-card-alt: #36413c;
+      --color-card-face: #2d4137;
+      --color-card-face-border: #36493f;
+      --color-card-face-edge: #3c4f45;
       --color-card-translucent: rgba(27, 40, 33, 0.8);
       --color-thread-canvas: #21362b;
       --color-thread-selected: #2f5641;
@@ -986,6 +1004,9 @@
       --color-card: #e4ecf2;
       --color-grouped-card: #d5dbe1;
       --color-card-alt: #edeff1;
+      --color-card-face: #e4ecf2;
+      --color-card-face-border: #cfd4db;
+      --color-card-face-edge: #d8dce2;
       --color-card-translucent: rgba(245, 247, 248, 0.8);
       --color-thread-canvas: #e4ecf2;
       --color-thread-selected: #bed4e5;
@@ -1149,6 +1170,9 @@
       --color-card: #1e2d3b;
       --color-grouped-card: #303d4b;
       --color-card-alt: #333b45;
+      --color-card-face: #2b3846;
+      --color-card-face-border: #33414e;
+      --color-card-face-edge: #394754;
       --color-card-translucent: rgba(23, 33, 43, 0.8);
       --color-thread-canvas: #1e2d3b;
       --color-thread-selected: #2f495f;
@@ -1312,6 +1336,9 @@
       --color-card: #f3eae5;
       --color-grouped-card: #e2d9d5;
       --color-card-alt: #f1efee;
+      --color-card-face: #f3eae5;
+      --color-card-face-border: #dcd2cf;
+      --color-card-face-edge: #e3dbd8;
       --color-card-translucent: rgba(249, 247, 245, 0.8);
       --color-thread-canvas: #f3eae5;
       --color-thread-selected: #e5ccc0;
@@ -1475,6 +1502,9 @@
       --color-card: #39281f;
       --color-grouped-card: #493931;
       --color-card-alt: #433835;
+      --color-card-face: #44342c;
+      --color-card-face-border: #4c3c34;
+      --color-card-face-edge: #52423a;
       --color-card-translucent: rgba(41, 30, 26, 0.8);
       --color-thread-canvas: #39281f;
       --color-thread-selected: #5d3f2d;
@@ -1638,6 +1668,9 @@
       --color-card: #edeaf4;
       --color-grouped-card: #ddd9e3;
       --color-card-alt: #f0eff2;
+      --color-card-face: #edeaf4;
+      --color-card-face-border: #d7d2dd;
+      --color-card-face-edge: #dfdbe4;
       --color-card-translucent: rgba(248, 247, 249, 0.8);
       --color-thread-canvas: #edeaf4;
       --color-thread-selected: #d4cce8;
@@ -1801,6 +1834,9 @@
       --color-card: #272139;
       --color-grouped-card: #383249;
       --color-card-alt: #383443;
+      --color-card-face: #332d44;
+      --color-card-face-border: #3b354c;
+      --color-card-face-edge: #413b52;
       --color-card-translucent: rgba(29, 25, 41, 0.8);
       --color-thread-canvas: #272139;
       --color-thread-selected: #3f345e;

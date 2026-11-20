@@ -158,7 +158,9 @@ export function resolveProjectScriptTerminalId(input: {
   return nextTerminalId(input.existingTerminalIds, input.uniqueSuffix);
 }
 
-export function projectScriptMenuIcon(icon: ProjectScript["icon"]) {
+export function projectScriptMenuIcon(
+  icon: ProjectScript["icon"],
+): "flask" | "checklist" | "wrench.and.screwdriver" | "hammer" | "ladybug" | "play" {
   if (icon === "test") return "flask";
   if (icon === "lint") return "checklist";
   if (icon === "configure") return "wrench.and.screwdriver";

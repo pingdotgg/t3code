@@ -26,21 +26,11 @@ import { useGT, useMessages } from "gt-react-native";
 import * as Option from "effect/Option";
 import {
   AuthOrchestrationOperateScope,
-  AuthTerminalOperateScope,
-  AuthTerminalReadScope,
-  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   isProviderNativeSubagentThread,
   MessageId,
   ThreadId,
-  type ProjectScript,
 } from "@t3tools/contracts";
-import {
-  projectScriptCwd,
-  projectScriptRuntimeEnv,
-  projectScriptTerminalInput,
-  resolveProjectScripts,
-} from "@t3tools/shared/projectScripts";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useConnectionsReady } from "../../state/workspace";
 import { useEnvironmentShellReadiness } from "../../state/shell";
@@ -65,7 +55,6 @@ import {
   useRemoteConnectionStatus,
   useRemoteEnvironmentRuntime,
 } from "../../state/use-remote-environment-registry";
-import { useKnownTerminalSessions } from "../../state/use-terminal-session";
 import { uuidv4 } from "../../lib/uuid";
 import {
   isAtomCommandInterrupted,
@@ -75,15 +64,7 @@ import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useSelectedThreadDetailState } from "../../state/use-thread-detail";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { GitActionProgressOverlay } from "./GitActionProgressOverlay";
-import {
-  buildTerminalMenuSessions,
-  nextOpenTerminalId,
-  resolveProjectScriptTerminalId,
-} from "../terminal/terminalMenu";
-import {
-  resolvePreferredThreadWorktreePath,
-  stagePendingTerminalLaunch,
-} from "../terminal/terminalLaunchContext";
+import { useThreadTerminalControls } from "../terminal/useThreadTerminalControls";
 import type { ThreadDetailScreenProps } from "./ThreadDetailScreen";
 import { ThreadScreenBinding, ThreadScreenFallback, ThreadScreenHost } from "./ThreadScreenHost";
 import { draftRouteIdentity } from "./thread-route-state";
@@ -385,14 +366,6 @@ function ThreadRouteContent(
     selectedThread?.environmentId ?? null,
     AuthOrchestrationOperateScope,
   );
-  const canReadTerminal = useEnvironmentScope(
-    selectedThread?.environmentId ?? null,
-    AuthTerminalReadScope,
-  );
-  const canOperateTerminal = useEnvironmentScope(
-    selectedThread?.environmentId ?? null,
-    AuthTerminalOperateScope,
-  );
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
   const { selectedThreadCwd } = useSelectedThreadWorktree();
@@ -570,18 +543,13 @@ function ThreadRouteContent(
         })
       : null,
   );
-  const { sessions: knownTerminalSessions } = useKnownTerminalSessions({
-    environmentId: selectedThread?.environmentId ?? null,
-    threadId: selectedThread?.id ?? null,
+  const terminalControls = useThreadTerminalControls({
+    thread: selectedThread,
+    project: selectedThreadProject,
+    serverSettings: routeEnvironmentRuntime?.serverConfig?.settings ?? null,
+    threadDetailWorktreePath: selectedThreadDetail?.thread.worktreePath ?? null,
+    openTerminal: (target) => void navigation.navigate("ThreadTerminal", target),
   });
-  const terminalMenuSessions = buildTerminalMenuSessions(
-    {
-      knownSessions: knownTerminalSessions ?? [],
-      workspaceRoot: selectedThreadProject?.workspaceRoot ?? null,
-    },
-    m,
-  );
-  const selectedThreadDetailWorktreePath = selectedThreadDetail?.thread.worktreePath ?? null;
   const handleReconnectEnvironment = () => {
     if (!environmentId) {
       return;
@@ -623,6 +591,11 @@ function ThreadRouteContent(
     <GitOverviewSheet
       presentation="inspector"
       route={{ params: { environmentId: environmentId!, threadId: threadId! } }}
+      onMergeBack={
+        mergeBackTargetThreadId !== null && mergeBackRun !== null
+          ? () => void handleMergeBack()
+          : undefined
+      }
     />
   );
   const renderFilesInspector = () =>
@@ -728,98 +701,6 @@ function ThreadRouteContent(
     }
   };
 
-  const handleOpenTerminal = (nextTerminalId?: string | null) => {
-    if (
-      !selectedThread ||
-      !selectedThreadProject?.workspaceRoot ||
-      (!readEnvironmentScope(selectedThread.environmentId, AuthTerminalReadScope) &&
-        !readEnvironmentScope(selectedThread.environmentId, AuthTerminalOperateScope))
-    ) {
-      return;
-    }
-
-    void navigation.navigate("ThreadTerminal", {
-      environmentId: String(selectedThread.environmentId),
-      threadId: String(selectedThread.id),
-      ...(nextTerminalId ? { terminalId: nextTerminalId } : {}),
-    });
-  };
-
-  const handleOpenNewTerminal = () => {
-    if (
-      !selectedThread ||
-      !selectedThreadProject?.workspaceRoot ||
-      !readEnvironmentScope(selectedThread.environmentId, AuthTerminalOperateScope)
-    ) {
-      return;
-    }
-
-    const nextId = nextOpenTerminalId({
-      listedTerminalIds: terminalMenuSessions.map((session) => session.terminalId),
-      ...(knownTerminalSessions === null ||
-      !readEnvironmentScope(selectedThread.environmentId, AuthTerminalReadScope)
-        ? { uniqueSuffix: uuidv4() }
-        : {}),
-    });
-    void navigation.navigate("ThreadTerminal", {
-      environmentId: String(selectedThread.environmentId),
-      threadId: String(selectedThread.id),
-      terminalId: nextId,
-    });
-  };
-
-  const handleRunProjectScript = async (script: ProjectScript) => {
-    if (
-      !selectedThread ||
-      !selectedThreadProject?.workspaceRoot ||
-      !readEnvironmentScope(selectedThread.environmentId, AuthTerminalOperateScope)
-    ) {
-      return;
-    }
-
-    const targetTerminalId = resolveProjectScriptTerminalId({
-      existingTerminalIds: terminalMenuSessions.map((session) => session.terminalId),
-      ...(knownTerminalSessions === null ||
-      !readEnvironmentScope(selectedThread.environmentId, AuthTerminalReadScope)
-        ? { uniqueSuffix: uuidv4() }
-        : {}),
-      hasRunningTerminal: terminalMenuSessions.some(
-        (session) => session.status === "running" || session.status === "starting",
-      ),
-    });
-    const preferredWorktreePath = resolvePreferredThreadWorktreePath({
-      threadShellWorktreePath: selectedThread.worktreePath ?? null,
-      threadDetailWorktreePath: selectedThreadDetailWorktreePath,
-    });
-    const cwd = projectScriptCwd({
-      project: { cwd: selectedThreadProject.workspaceRoot },
-      worktreePath: preferredWorktreePath,
-    });
-    const env = projectScriptRuntimeEnv({
-      project: { cwd: selectedThreadProject.workspaceRoot },
-      worktreePath: preferredWorktreePath,
-    });
-    stagePendingTerminalLaunch({
-      target: {
-        environmentId: selectedThread.environmentId,
-        threadId: selectedThread.id,
-        terminalId: targetTerminalId,
-      },
-      launch: {
-        cwd,
-        worktreePath: preferredWorktreePath,
-        env,
-        initialInput: projectScriptTerminalInput(script.command),
-        stopOnSettle: script.stopOnSettle ?? false,
-      },
-    });
-
-    void navigation.navigate("ThreadTerminal", {
-      environmentId: String(selectedThread.environmentId),
-      threadId: String(selectedThread.id),
-      terminalId: targetTerminalId,
-    });
-  };
   const threadGitControlProps = {
     environmentId: environmentIdRaw ?? "",
     threadId: threadId ?? "",
@@ -832,20 +713,14 @@ function ThreadRouteContent(
     currentBranch: selectedThread?.branch ?? null,
     gitStatus: gitStatus.data,
     gitOperationLabel: gitState.gitOperationLabel,
-    canOpenTerminal:
-      Boolean(selectedThreadProject?.workspaceRoot) && (canReadTerminal || canOperateTerminal),
-    canOperateTerminal,
+    canOpenTerminal: terminalControls.canOpenTerminal,
+    canOperateTerminal: terminalControls.canOperateTerminal,
     canOpenFiles: Boolean(selectedThreadProject?.workspaceRoot),
-    projectScripts: selectedThreadProject
-      ? resolveProjectScripts(
-          routeEnvironmentRuntime?.serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
-          selectedThreadProject,
-        )
-      : [],
-    terminalSessions: terminalMenuSessions,
-    onOpenTerminal: handleOpenTerminal,
-    onOpenNewTerminal: handleOpenNewTerminal,
-    onRunProjectScript: handleRunProjectScript,
+    projectScripts: terminalControls.projectScripts,
+    terminalSessions: terminalControls.terminalSessions,
+    onOpenTerminal: terminalControls.onOpenTerminal,
+    onOpenNewTerminal: terminalControls.onOpenNewTerminal,
+    onRunProjectScript: terminalControls.onRunProjectScript,
     onPull: gitActions.onPullSelectedThreadBranch,
     onRunAction: gitActions.onRunSelectedThreadGitAction,
   };

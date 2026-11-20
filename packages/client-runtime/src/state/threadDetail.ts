@@ -564,13 +564,28 @@ export function createEnvironmentThreadDetailAtoms<E>(
         (request) => request.status === "pending",
       );
       const ids = new Set(runtimeRequests.map((request) => request.id));
+      const isPendingRequestItem = (item: (typeof projection.turnItems)[number]) =>
+        (item.type === "approval_request" || item.type === "user_input_request") &&
+        ids.has(item.requestId);
+      // A question also needs the assistant messages that came before it in its run.
+      const questionRunIds = new Set(
+        ids.size === 0
+          ? []
+          : projection.turnItems.flatMap((item) =>
+              item.type === "user_input_request" && ids.has(item.requestId) && item.runId !== null
+                ? [item.runId]
+                : [],
+            ),
+      );
       const turnItems =
         ids.size === 0
           ? []
           : projection.turnItems.filter(
               (item) =>
-                (item.type === "approval_request" || item.type === "user_input_request") &&
-                ids.has(item.requestId),
+                isPendingRequestItem(item) ||
+                (item.type === "assistant_message" &&
+                  item.runId !== null &&
+                  questionRunIds.has(item.runId)),
             );
       if (
         previous === null ||

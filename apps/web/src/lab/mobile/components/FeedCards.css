@@ -1,0 +1,112 @@
+.m-user {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+.m-user-bubble {
+  max-width: 313px;
+  padding: 11px 20px;
+  border-radius: 26px;
+  background: var(--color-user-bubble);
+  color: var(--color-user-bubble-foreground);
+  font-size: 16px;
+  line-height: 23px;
+}
+.m-user-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-right: 8px;
+  font-size: 13px;
+  line-height: 17px;
+  color: var(--color-foreground-muted);
+}
+
+.m-working {
+  padding: 0 4px;
+}
+.m-working-label {
+  font-size: 14px;
+  line-height: 19px;
+  font-weight: 500;
+  color: var(--color-foreground-tertiary);
+  padding: 0 0 10px 4px;
+}
+.m-working-rule {
+  height: 1px;
+  background: var(--color-border);
+  opacity: 0.7;
+}
+
+.m-agentcard {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.m-agentcard-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-foreground-muted);
+}
+.m-agentcard-from {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  line-height: 19px;
+  font-weight: 500;
+  color: var(--color-foreground);
+}
+.m-agentcard-kind {
+  font-size: 14px;
+  line-height: 19px;
+}
+.m-agentcard-text {
+  font-size: 14px;
+  line-height: 19px;
+  color: var(--color-foreground-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.m-subagent {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.m-subagent-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 16px;
+}
+.m-subagent-model {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 17px;
+  color: var(--color-foreground-muted);
+  margin-left: 2px;
+}
+.m-subagent-elapsed {
+  font-size: 14px;
+  line-height: 19px;
+  color: var(--color-foreground-tertiary);
+}
+.m-subagent-title {
+  font-size: 14px;
+  line-height: 19px;
+  font-weight: 500;
+  color: var(--color-foreground);
+}
+.m-subagent-title[data-working="true"] {
+  font-weight: 400;
+}

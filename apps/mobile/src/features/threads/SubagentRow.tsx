@@ -17,10 +17,19 @@ import { View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIcon";
+import { WithStatusBadgeDot, type StatusBadgeState } from "../../components/StatusBadgeDot";
 import { cn } from "../../lib/cn";
 import { useEnvironmentServerConfig, useProject, useThreadShell } from "../../state/entities";
 import { SUBAGENT_TONE_TEXT_CLASS, SubagentStatusDot } from "./SubagentStatusDot";
-import { resolveSubagentRowPresentation } from "./threadAgentsPresentation";
+import { ThreadCardContent } from "./ThreadCardFace";
+import { resolveSubagentRowPresentation, type SubagentRowTone } from "./threadAgentsPresentation";
+
+const TONE_BADGE_STATE: Readonly<Record<SubagentRowTone, StatusBadgeState>> = {
+  working: "working",
+  completed: "done",
+  failed: "failed",
+  stopped: "waiting",
+};
 
 type SubagentRowSubagent = Pick<
   OrchestrationV2Subagent,
@@ -111,11 +120,7 @@ export function SubagentRow(props: {
   );
 }
 
-function SubagentMetadata(props: {
-  readonly environmentId: EnvironmentId;
-  readonly subagent: SubagentRowSubagent;
-}) {
-  const { environmentId, subagent } = props;
+function useSubagentMetadata(environmentId: EnvironmentId, subagent: SubagentRowSubagent) {
   const messages = useMessages();
   // A task in a linked environment runs a provider instance of that environment.
   const config = useEnvironmentServerConfig(subagent.remoteChild?.environmentId ?? environmentId);
@@ -163,28 +168,34 @@ function SubagentMetadata(props: {
   );
   const branchLabel = messages(msg("Branch", { $context: "field label" }));
   const effort = formatSubagentEffort({ modelSlug, modelSelection: selection, provider });
+  const icon = (size: number) =>
+    showBadge ? (
+      <ProviderInstanceIcon
+        provider={provider.driver}
+        iconUrl={provider.iconUrl}
+        size={size}
+        displayName={resolveProviderInstanceDisplayName(provider)}
+        accentColor={provider.accentColor}
+        showBadge
+      />
+    ) : driver === undefined ? (
+      <SymbolView name="robot" size={size - 1} tintColorClassName="accent-icon-muted" />
+    ) : (
+      <ProviderIcon provider={driver} iconUrl={provider?.iconUrl} size={size} />
+    );
+  const text = `${provider ? `${resolveProviderInstanceDisplayName(provider)} · ` : ""}${modelLabel}${
+    effort ? ` · ${effort}` : ""
+  }`;
+  return { icon, text, workspace, branchLabel };
+}
+
+function SubagentWorkspace(props: {
+  readonly workspace: ReturnType<typeof useSubagentMetadata>["workspace"];
+  readonly branchLabel: string;
+}) {
   return (
-    <View className="min-w-0 flex-row items-center gap-1.5">
-      {showBadge ? (
-        <ProviderInstanceIcon
-          provider={provider.driver}
-          iconUrl={provider.iconUrl}
-          size={12}
-          displayName={resolveProviderInstanceDisplayName(provider)}
-          accentColor={provider.accentColor}
-          showBadge
-        />
-      ) : driver === undefined ? (
-        <SymbolView name="robot" size={11} tintColorClassName="accent-icon-muted" />
-      ) : (
-        <ProviderIcon provider={driver} iconUrl={provider?.iconUrl} size={12} />
-      )}
-      <Text className="min-w-0 shrink text-xs text-foreground-muted" numberOfLines={1}>
-        {provider ? `${resolveProviderInstanceDisplayName(provider)} · ` : ""}
-        {modelLabel}
-        {effort ? ` · ${effort}` : ""}
-      </Text>
-      {workspace.map(({ label, value }) => (
+    <>
+      {props.workspace.map(({ label, value }) => (
         // Preserve the label against flattening without making it a separate accessibility stop.
         <View
           key={label}
@@ -194,7 +205,7 @@ function SubagentMetadata(props: {
         >
           <Text className="text-xs text-foreground-muted">·</Text>
           <SymbolView
-            name={label === branchLabel ? "arrow.triangle.branch" : "folder"}
+            name={label === props.branchLabel ? "arrow.triangle.branch" : "folder"}
             size={11}
             tintColorClassName="accent-icon-muted"
           />
@@ -203,6 +214,97 @@ function SubagentMetadata(props: {
           </Text>
         </View>
       ))}
+    </>
+  );
+}
+
+function SubagentMetadata(props: {
+  readonly environmentId: EnvironmentId;
+  readonly subagent: SubagentRowSubagent;
+}) {
+  const { icon, text, workspace, branchLabel } = useSubagentMetadata(
+    props.environmentId,
+    props.subagent,
+  );
+  return (
+    <View className="min-w-0 flex-row items-center gap-1.5">
+      {icon(12)}
+      <Text className="min-w-0 shrink text-xs text-foreground-muted" numberOfLines={1}>
+        {text}
+      </Text>
+      <SubagentWorkspace workspace={workspace} branchLabel={branchLabel} />
     </View>
+  );
+}
+
+/** The task as an inline card: provider and model with the status up top, then the title full width. */
+export function SubagentCardContent(props: {
+  readonly environmentId: EnvironmentId;
+  readonly subagent: SubagentRowSubagent;
+  readonly elapsed: ReactNode;
+  readonly canOpenRemote?: boolean;
+}) {
+  const messages = useMessages();
+  const presentation = resolveSubagentRowPresentation(
+    props.subagent,
+    props.canOpenRemote,
+    messages,
+  );
+  const detail = subagentCardDetail(presentation.detail);
+  const { icon, text, workspace, branchLabel } = useSubagentMetadata(
+    props.environmentId,
+    props.subagent,
+  );
+  return (
+    <ThreadCardContent
+      header={
+        <>
+          {/* The status is a dot on the icon's corner, ringed with the card fill. */}
+          <WithStatusBadgeDot
+            state={TONE_BADGE_STATE[presentation.tone]}
+            ringClassName="bg-card-face"
+            accessibilityLabel={presentation.statusLabel}
+          >
+            {icon(14)}
+          </WithStatusBadgeDot>
+          {presentation.runsOn !== null ? (
+            <Text numberOfLines={1} className="min-w-0 shrink text-xs text-foreground-muted">
+              <T>
+                on <Var>{presentation.runsOn}</Var>
+              </T>
+            </Text>
+          ) : null}
+          <Text className="min-w-0 shrink text-xs text-foreground-muted" numberOfLines={1}>
+            {text}
+          </Text>
+          <SubagentWorkspace workspace={workspace} branchLabel={branchLabel} />
+        </>
+      }
+      status={props.elapsed}
+      title={
+        <Text
+          numberOfLines={2}
+          className={cn(
+            "text-sm text-foreground",
+            presentation.tone !== "working" && "font-t3-medium",
+          )}
+        >
+          {presentation.title}
+        </Text>
+      }
+      meta={
+        detail ? (
+          <Text
+            numberOfLines={3}
+            className={cn(
+              "text-xs text-foreground-muted",
+              presentation.tone === "failed" && SUBAGENT_TONE_TEXT_CLASS.failed,
+            )}
+          >
+            {detail}
+          </Text>
+        ) : null
+      }
+    />
   );
 }

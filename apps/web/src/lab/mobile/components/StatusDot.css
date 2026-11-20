@@ -1,0 +1,40 @@
+.m-dot-host {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+/* The ring hangs 4pt past the icon's corner. */
+.m-dot-corner {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  pointer-events: none;
+}
+.m-dot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.m-dot-core {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.m-dot-core[data-state="working"] {
+  background: var(--color-adaptive-sky-600-400);
+}
+.m-dot-core[data-state="waiting"] {
+  background: var(--color-foreground-tertiary);
+}
+.m-dot-core[data-state="done"] {
+  background: var(--color-adaptive-emerald-600-400);
+}
+.m-dot-core[data-state="failed"] {
+  background: var(--color-danger-foreground);
+}
+.m-dot-core[data-state="limited"] {
+  background: var(--color-warning-foreground);
+}

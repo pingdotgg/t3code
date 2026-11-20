@@ -1,0 +1,64 @@
+.m-composer-slot {
+  padding: 0 12px 37px;
+}
+.m-composer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 47px;
+  padding: 4px 6px 4px 8px;
+  border-radius: 27px;
+  background: var(--color-composer-surface);
+  box-shadow: inset 0 0 0 0.5px var(--color-composer-border);
+  backdrop-filter: blur(24px);
+}
+.m-composer-plus {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-foreground);
+}
+.m-composer-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-foreground);
+  font: 17px/22px var(--m-font);
+}
+.m-composer-input::placeholder {
+  color: var(--color-placeholder);
+}
+.m-composer-provider {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 2px;
+}
+.m-composer-action {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+}
+.m-composer-action-send {
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+}
+.m-composer-action-stop {
+  background: color-mix(in srgb, #ef4444 16%, var(--color-composer-surface));
+}
+.m-composer-stop {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  background: #f87171;
+}

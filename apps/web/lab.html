@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Conn UI lab</title>
+    <!-- Nick's own Conn appearance (Orbit profile "Nick", 2026-11-17): custom dark theme "Dark Mono",
+         stock t3-code for light, dark mode on. Seeded into the app's theme storage before any app
+         code runs; `?theme=light` or `?theme=system` overrides the mode. -->
+    <script>
+      (function () {
+        var mode = new URLSearchParams(location.search).get("theme");
+        var appearance = mode === "light" || mode === "system" ? mode : "dark";
+        try {
+          localStorage.setItem(
+            "t3code:themes:v1",
+            JSON.stringify([
+              {
+                id: "dark-mono",
+                label: "Dark Mono",
+                appearance: "dark",
+                colors: {
+                  canvas: "oklch(0.1676 0 0)",
+                  chrome: "oklch(0.1676 0 0)",
+                  toolbar: "oklch(0.1676 0 0)",
+                  toolbarForeground: "oklch(0.9903 0 0)",
+                  toolbarBorder: "oklch(0.3649 0 0)",
+                  toolbarControl: "oklch(0.2837 0 0)",
+                  toolbarControlForeground: "oklch(0.9903 0 0)",
+                  toolbarControlHover: "oklch(0.3383 0 0)",
+                  surface: "oklch(0.1676 0 0)",
+                  surfaceRaised: "oklch(0.2200 0 0)",
+                  surfaceOverlay: "oklch(0.3235 0 0)",
+                  text: "oklch(0.9903 0 0)",
+                  textMuted: "oklch(0.6522 0 0)",
+                  border: "oklch(0.2700 0 0)",
+                  input: "oklch(0.5000 0 0)",
+                  focus: "oklch(0.8000 0 0)",
+                  accent: "oklch(0.9200 0 0)",
+                  accentForeground: "oklch(0.2220 0 0)",
+                  secondary: "oklch(0.2837 0 0)",
+                  secondaryForeground: "oklch(0.9903 0 0)",
+                  muted: "oklch(0.2443 0 0)",
+                  mutedForeground: "oklch(0.6919 0 0)",
+                  placeholder: "oklch(0.7216 0 0)",
+                  secondaryLabel: "oklch(0.6522 0 0)",
+                  iconMuted: "oklch(0.6522 0 0)",
+                  error: "oklch(0.655108 0.221148 23.473)",
+                  errorForeground: "oklch(0.702184 0.189226 22.228)",
+                  errorSurface: "oklch(0.2239 0.0292 350.1)",
+                  warning: "oklch(0.772406 0.172798 65.367)",
+                  warningForeground: "oklch(0.829017 0.171221 81.038)",
+                  warningSurface: "oklch(0.2544 0.023 84.5)",
+                  update: "oklch(0.8500 0 0)",
+                  updateForeground: "oklch(0.9000 0 0)",
+                  updateSurface: "oklch(0.3490 0 0)",
+                  accentSurface: "oklch(0.3383 0 0)",
+                  accentSurfaceForeground: "oklch(0.9903 0 0)",
+                  messageSurface: "oklch(0.3702 0 0)",
+                  messageForeground: "oklch(0.9903 0 0)",
+                  messageAction: "oklch(0.9200 0 0)",
+                  messageActionForeground: "oklch(0.2220 0 0)",
+                  messageActionHover: "oklch(0.9700 0 0)",
+                  codeBackground: "oklch(0.2216 0 0)",
+                  codeForeground: "oklch(0.9903 0 0)",
+                  searchMatchBackground: "oklch(0.55 0.1 85)",
+                  searchMatchForeground: "oklch(0.970151 0 0)",
+                  searchMatchActiveBackground: "oklch(0.774202 0.151946 74.331)",
+                  searchMatchActiveForeground: "oklch(0.216164 0.028283 77.423)",
+                  sidebar: "oklch(0.2154 0 0)",
+                  sidebarForeground: "oklch(0.9903 0 0)",
+                  sidebarMutedForeground: "oklch(0.6910 0 0)",
+                  sidebarControlSurface: "oklch(0.3428 0 0)",
+                  sidebarRowHover: "oklch(0.2784 0 0)",
+                  sidebarRowActive: "oklch(0.3189 0 0)",
+                  sidebarRowSelected: "oklch(0.3387 0 0)",
+                  sidebarBorder: "oklch(0.4836 0 0)",
+                  terminalBackground: "oklch(0.1676 0 0)",
+                  terminalForeground: "oklch(0.9903 0 0)",
+                  terminalCursor: "oklch(0.9200 0 0)",
+                  terminalScrollbar: "oklch(0.5861 0 0)",
+                  terminalScrollbarHover: "oklch(0.6816 0 0)",
+                },
+              },
+            ]),
+          );
+          localStorage.setItem(
+            "t3code:theme-halves:v1",
+            JSON.stringify({ light: "t3-code", dark: "dark-mono" }),
+          );
+          localStorage.setItem("t3code:theme-appearance-mode", appearance);
+          localStorage.setItem("t3code:theme-follow-system", String(appearance === "system"));
+          localStorage.setItem("t3code:theme", appearance === "light" ? "t3-code" : "dark-mono");
+        } catch (error) {}
+      })();
+    </script>
+    <!-- Live reload for the shared bundle: the watch build rewrites this page with new asset names,
+         so a changed ETag means a new build. Polls every 2 s while the tab is visible. Vite's own
+         HMR covers the dev server. -->
+    <script>
+      (function () {
+        var seen = null;
+        function check() {
+          // The dev server has its own hot reload.
+          if (document.querySelector('script[src="/@vite/client"]')) return;
+          if (document.visibilityState !== "visible") return;
+          fetch(location.pathname, { method: "HEAD", cache: "no-store" })
+            .then(function (response) {
+              var tag = response.headers.get("etag") || response.headers.get("last-modified");
+              if (!tag) return;
+              if (seen !== null && tag !== seen) location.reload();
+              seen = tag;
+            })
+            .catch(function () {});
+        }
+        check();
+        setInterval(check, 2000);
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/lab/main.tsx"></script>
+  </body>
+</html>

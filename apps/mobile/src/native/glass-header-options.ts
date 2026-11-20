@@ -9,6 +9,9 @@ export type AppScreenOptions = NativeStackNavigationOptions & {
   readonly unstable_headerMinimizationBehavior?: "onScrollUp" | "never";
 };
 
+/** Every native header: title centered (UIKit's standard item style), medium weight. */
+export const HEADER_TITLE_STYLE = { fontSize: 18, fontWeight: "500" } as const;
+
 /** A transparent bar that content scrolls under, with UIKit's scroll-edge blur where it has one. */
 export const GLASS_HEADER_OPTIONS: AppScreenOptions = {
   headerBackButtonDisplayMode: "minimal",
@@ -17,10 +20,9 @@ export const GLASS_HEADER_OPTIONS: AppScreenOptions = {
   headerShadowVisible: false,
   headerShown: true,
   headerStyle: NATIVE_LIQUID_GLASS_SUPPORTED ? { backgroundColor: "transparent" } : undefined,
-  headerTitleStyle: { fontSize: 18, fontWeight: "800" },
+  headerTitleStyle: HEADER_TITLE_STYLE,
   headerTransparent: NATIVE_LIQUID_GLASS_SUPPORTED,
   scrollEdgeEffects: NATIVE_LIQUID_GLASS_SUPPORTED
     ? nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version)
     : undefined,
-  unstable_navigationItemStyle: NATIVE_LIQUID_GLASS_SUPPORTED ? "editor" : undefined,
 };

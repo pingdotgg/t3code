@@ -16,14 +16,14 @@ describe("codeFenceRenderer", () => {
   it.each([
     ["mermaid", true, { kind: "mermaid" }],
     ["math", true, { kind: "math" }],
-    ["math", false, { kind: "native" }],
+    ["math", false, { kind: "highlight", language: "text" }],
     ["kotlin", true, { kind: "highlight", language: "kotlin" }],
     ["KOTLIN", true, { kind: "highlight", language: "kotlin" }],
     ["diff", true, { kind: "highlight", language: "diff" }],
-    ["ts", true, { kind: "native" }],
-    ["python", true, { kind: "native" }],
-    ["", true, { kind: "native" }],
-    ["text", true, { kind: "native" }],
+    ["ts", true, { kind: "highlight", language: "ts" }],
+    ["python", true, { kind: "highlight", language: "python" }],
+    ["", true, { kind: "highlight", language: "text" }],
+    ["text", true, { kind: "highlight", language: "text" }],
   ])("draws %j with math rendering %s as %j", (fence, mathRenderingEnabled, expected) => {
     expect(codeFenceRenderer(fence, mathRenderingEnabled)).toEqual(expected);
   });

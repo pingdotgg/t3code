@@ -17,7 +17,7 @@ export function useSheetStackOptions(): AppScreenOptions {
   const theme = useUniwindTheme();
   const background = theme["--color-sheet-solid"];
   return {
-    ...pageRoute({ itemStyle: "standard" }),
+    ...pageRoute(),
     animation: Platform.OS === "android" ? "default" : "slide_from_right",
     contentStyle: { backgroundColor: background },
     gestureEnabled: true,
@@ -45,7 +45,7 @@ export function StandaloneStack(props: {
       <NavigationContainer theme={navigationTheme}>
         <Standalone.Navigator
           screenOptions={{
-            ...pageRoute({ itemStyle: "standard" }),
+            ...pageRoute(),
             contentStyle: { backgroundColor: "transparent" },
             headerShown: Platform.OS !== "android",
             ...props.options,

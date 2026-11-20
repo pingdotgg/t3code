@@ -1,7 +1,5 @@
 import {
   ORBIT_TASK_LANES,
-  orbitTaskLabel,
-  orbitTaskLane,
   type OrbitTaskLane,
   type OrbitTasksPage,
   type OrbitTasksResult,
@@ -9,11 +7,8 @@ import {
   type OrbitTasksLiveStatus,
 } from "@t3tools/client-runtime/orbit-gateway";
 import {
-  CircleAlertIcon,
-  CircleDashedIcon,
   ListTodoIcon,
   LockIcon,
-  MessageCircleQuestionIcon,
   SearchIcon,
   SlidersHorizontalIcon,
   UnplugIcon,
@@ -21,10 +16,7 @@ import {
 import { useGT, useMessages } from "gt-react";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
-import { ProjectMonogram } from "~/components/ProjectMonogram";
 import { ToolbarGroup } from "~/components/ToolbarGroup";
-import { resolvePullRequestState } from "~/components/pullRequest/pullRequestPresentation";
-import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { Button } from "~/components/ui/button";
 import {
   Empty,
@@ -45,21 +37,18 @@ import {
 } from "~/components/ui/menu";
 import { Spinner } from "~/components/ui/spinner";
 import { useStableCallback } from "~/hooks/useStableCallback";
-import { cn } from "~/lib/utils";
-import { PROJECT_ICON_COLORS } from "~/projectIconColors";
-import { formatRelativeTimeLabel } from "~/timestampFormat";
 
 import { useOrbitTaskNavigation } from "./orbitAgentConversation";
 import { TaskDetail, type TasksPanelHost } from "./TaskDetail";
 import { TasksInsightsStrip } from "./TasksInsights";
 import { INSIGHT_PERIODS, INSIGHTS } from "@t3tools/client-runtime/orbit-gateway";
-import { INPUT_TONE } from "./taskDetail.logic";
+import { TaskCardButton, TaskCardPullRequestBadge } from "./TaskCardButton";
 import {
   followTasksUpdates,
   loadOrbitTasksClient,
   orbitTasksAvailability,
 } from "./orbitTasksClient";
-import { taskCardDetail, tasksBoardLanes, tasksErrorNotice } from "./tasksBoard.logic";
+import { tasksBoardLanes, tasksErrorNotice } from "./tasksBoard.logic";
 import {
   tasksPanelActions,
   useTasksBoardQuery,
@@ -256,7 +245,7 @@ function BoardToolbar() {
   const hidden = settings.hiddenLanes.length;
   return (
     // Sits under the tab bar like the file view's breadcrumb row.
-    <div className="flex shrink-0 items-center gap-2 border-b border-(--shell-divider)! px-2 py-toolbar">
+    <div className="flex shrink-0 items-center gap-2 px-2 py-toolbar">
       <InputGroup variant="soft" className="h-8 min-w-0 flex-1">
         <InputGroupAddon>
           <SearchIcon aria-hidden className="size-4 opacity-50" />
@@ -451,134 +440,20 @@ function LaneList(props: {
   );
 }
 
-/** Stands in for a favicon: Orbit Projects have no Conn project icon here. */
-function TaskProjectIcon(props: { project: OrbitTaskSummary["project"] }) {
-  const hash = [...props.project.slug].reduce((sum, char) => sum + char.charCodeAt(0), 0);
-  const color = PROJECT_ICON_COLORS[hash % PROJECT_ICON_COLORS.length]!.value;
-  return <ProjectMonogram text={(props.project.name[0] ?? "?").toUpperCase()} color={color} />;
-}
-
-/**
- * The status at the card's top right. In progress shows only the working icon: the lane already
- * says it runs, and the list has no run time to show. Input and Blocked need the user.
- */
-function TaskCardStatus(props: { task: OrbitTaskSummary }) {
-  const { task } = props;
-  const label = orbitTaskLabel(task);
-  if (task.attention?.kind === "question") {
-    return (
-      <span className={cn("flex items-center gap-1 font-medium", INPUT_TONE)}>
-        <MessageCircleQuestionIcon aria-hidden className="size-3.5" />
-        Input
-      </span>
-    );
-  }
-  if (label?.tone === "destructive") {
-    return (
-      <span className="flex items-center gap-1 font-medium text-destructive-foreground">
-        <CircleAlertIcon aria-hidden className="size-3.5" />
-        {label.label}
-      </span>
-    );
-  }
-  if (label?.tone === "muted") {
-    return <span className="text-muted-foreground">{label.label}</span>;
-  }
-  if (orbitTaskLane(task.status) === "in-progress") {
-    return (
-      <span className="flex items-center text-info-foreground">
-        <CircleDashedIcon aria-hidden className="size-3.5" />
-        <span className="sr-only">{label?.label ?? "In progress"}</span>
-      </span>
-    );
-  }
-  return (
-    <span className="text-muted-foreground/80 tabular-nums">
-      {formatRelativeTimeLabel(task.updatedAt)}
-    </span>
-  );
-}
-
 function TaskCard(props: {
   task: OrbitTaskSummary;
   /** With a URL the card's PR badge was clicked: the PR opens below the task. */
   onOpen: (laneTop: number, pullRequestUrl?: string) => void;
 }) {
-  const gt = useGT();
   const { task } = props;
-  const pr = task.pullRequest;
-  const prState = pr?.state ? resolvePullRequestState({ state: pr.state, isDraft: false }) : null;
-  const working = orbitTaskLane(task.status) === "in-progress" && task.attention === null;
-  const detail = taskCardDetail(task);
   const laneTop = (element: HTMLElement) => element.closest("ul")?.scrollTop ?? 0;
-  const badge = pr ? (
-    <>
-      {prState ? (
-        <prState.Icon aria-hidden className="size-3.5" />
-      ) : (
-        <PullRequestGlyph.pullRequest className="size-3.5" />
-      )}
-      #{pr.number}
-    </>
-  ) : null;
   return (
     <li className="relative">
-      <button
-        type="button"
-        onClick={(event) => props.onOpen(laneTop(event.currentTarget))}
-        className="flex w-full cursor-pointer flex-col gap-1.5 rounded-lg border border-(--shell-divider)! border-t-(--shell-card-edge)! bg-(--shell-card) px-3 py-2.5 text-left transition-colors hover:bg-(--shell-card)/70 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none dark:bg-(--shell-highlight)/70 dark:hover:bg-(--shell-highlight)"
-      >
-        <span className="flex items-center gap-1.5 text-ui leading-4">
-          <TaskProjectIcon project={task.project} />
-          <span className="min-w-0 flex-1 truncate text-muted-foreground tabular-nums">
-            #{task.id}
-          </span>
-          <span className="shrink-0">
-            <TaskCardStatus task={task} />
-          </span>
-        </span>
-        <span
-          className={cn(
-            "text-ui leading-5 text-foreground/90 [overflow-wrap:anywhere]",
-            // Background work recedes to regular weight, like a working thread.
-            working ? "font-normal" : "font-medium",
-          )}
-        >
-          {task.title}
-        </span>
-        {/* With no subtask count, machine or PR the line goes. */}
-        {detail || badge ? (
-          <span className="flex items-center gap-2 text-ui leading-4 text-muted-foreground tabular-nums">
-            <span className="min-w-0 flex-1 truncate">{detail}</span>
-            {/* Holds the badge's place; the badge itself is its own button over the card. */}
-            {badge ? (
-              <span aria-hidden className="invisible flex shrink-0 items-center gap-1">
-                {badge}
-              </span>
-            ) : null}
-          </span>
-        ) : null}
-      </button>
-      {pr && badge ? (
-        <button
-          type="button"
-          onClick={(event) => props.onOpen(laneTop(event.currentTarget), pr.url)}
-          aria-label={
-            prState
-              ? gt("Pull request #{number} ({state}). Open it in Tasks", {
-                  number: pr.number,
-                  state: prState.label,
-                })
-              : gt("Pull request #{number}. Open it in Tasks", { number: pr.number })
-          }
-          className={cn(
-            "absolute right-3.25 bottom-2.75 flex cursor-pointer items-center gap-1 rounded-sm text-ui leading-4 tabular-nums hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none",
-            prState?.toneClassName ?? "text-muted-foreground",
-          )}
-        >
-          {badge}
-        </button>
-      ) : null}
+      <TaskCardButton task={task} onClick={(event) => props.onOpen(laneTop(event.currentTarget))} />
+      <TaskCardPullRequestBadge
+        task={task}
+        onOpen={(event, url) => props.onOpen(laneTop(event.currentTarget), url)}
+      />
     </li>
   );
 }

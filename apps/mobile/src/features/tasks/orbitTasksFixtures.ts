@@ -426,8 +426,60 @@ function wireInsights(now: number) {
         tokens_per_merged_pr: millions * 1_000_000,
       })),
       daily: merges.map((merged, index) => ({ date: day(index), merged })),
+      breakdowns: {
+        model: [
+          {
+            key: "gpt-5.5-codex",
+            label: "GPT-5.5 Codex",
+            tasks: 14,
+            merged: 13,
+            tokens_per_merged_pr: 39_000_000,
+            lead_time_ms: 13_500_000,
+          },
+          {
+            key: "claude-opus-5-5",
+            label: "Claude Opus 5.5",
+            tasks: 10,
+            merged: 7,
+            tokens_per_merged_pr: 48_000_000,
+            lead_time_ms: 18_000_000,
+          },
+          {
+            key: "gemini-3-pro",
+            label: "Gemini 3 Pro",
+            tasks: 3,
+            merged: 2,
+            tokens_per_merged_pr: 50_000_000,
+            lead_time_ms: 16_000_000,
+          },
+        ],
+      },
     },
   };
+}
+
+/**
+ * Lab only: a series for every number the Gateway reports no history for, so each card in the
+ * lab has a sparkline (the mobile lab's trends). Values are in the insight's raw unit.
+ */
+const LAB_TRENDS: Readonly<Record<string, ReadonlyArray<number>>> = {
+  spent: [30, 34, 33, 38, 41, 40, 44, 47, 46, 52, 55, 58, 61, 63, 66].map((n) => n * 1_000_000),
+  wasted: [0.24, 0.25, 0.23, 0.22, 0.23, 0.21, 0.2, 0.21, 0.2, 0.19, 0.19, 0.18, 0.19, 0.18, 0.18],
+  delivery: [6.1, 5.8, 6.0, 5.4, 5.2, 5.5, 4.9, 4.8, 4.6, 4.7, 4.4, 4.3, 4.2].map(
+    (hours) => hours * 3_600_000,
+  ),
+  firstPass: [49, 51, 50, 53, 52, 54, 55, 53, 56, 57, 56, 58].map((n) => n / 100),
+  mergeWait: [52, 49, 50, 47, 46, 44, 45, 42, 41, 40, 39, 38].map((minutes) => minutes * 60_000),
+  reviewRounds: [2.1, 2.0, 2.0, 1.9, 1.9, 1.8, 1.8, 1.7, 1.7, 1.7, 1.6, 1.6, 1.6],
+};
+
+export function fixtureInsightTrend(id: string, now: number) {
+  const values = LAB_TRENDS[id];
+  if (!values) return null;
+  return values.map((value, index) => ({
+    date: new Date(now - (values.length - 1 - index) * 2 * DAY).toISOString().slice(0, 10),
+    value,
+  }));
 }
 
 /**

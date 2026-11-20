@@ -11,8 +11,15 @@ export const THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME = "py-2.5";
 export const THREAD_LIST_V2_ROW_DIVIDERS = false;
 /** Phone rows inset from the screen edge so their rounded surface reads. */
 export const THREAD_LIST_V2_ROW_INSET = 8;
-/** Phone card side padding: with the inset, row text sits 16pt from the screen edge. */
-const THREAD_LIST_V2_PHONE_ROW_PADDING_HORIZONTAL = 8;
+/** Phone card padding 12/8/12/4: with the 8pt inset the favicon sits on a 12pt edge. */
+const THREAD_LIST_V2_PHONE_ROW_PADDING = {
+  paddingTop: 12,
+  paddingRight: 8,
+  paddingBottom: 12,
+  paddingLeft: 4,
+} satisfies ViewStyle;
+/** Gap between phone rows. */
+const THREAD_LIST_V2_PHONE_ROW_GAP = 4;
 export const THREAD_LIST_V2_SIDEBAR_ROW_STYLE = {
   borderRadius: 12,
   paddingHorizontal: 12,
@@ -50,6 +57,7 @@ export function getThreadListV2RowAppearance(
     : {
         ...THREAD_LIST_V2_SIDEBAR_ROW_CONTAINER_STYLE,
         marginHorizontal: THREAD_LIST_V2_ROW_INSET,
+        marginBottom: THREAD_LIST_V2_PHONE_ROW_GAP,
       };
 
   return {
@@ -74,8 +82,7 @@ export function getThreadListV2RowAppearance(
       ? { ...style, ...THREAD_LIST_V2_SIDEBAR_ROW_STYLE }
       : {
           ...style,
-          ...THREAD_LIST_V2_SIDEBAR_ROW_STYLE,
-          paddingHorizontal: THREAD_LIST_V2_PHONE_ROW_PADDING_HORIZONTAL,
+          ...THREAD_LIST_V2_PHONE_ROW_PADDING,
         },
     swipeContainerStyle,
     swipeBackgroundColor: paneColor,

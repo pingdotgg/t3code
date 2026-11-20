@@ -67,15 +67,44 @@ export function loadOrbitTasksClient(): Promise<OrbitTasksClient | null> {
   return client;
 }
 
-/** Shares the existing desktop Gateway transport; no browser proxy or replica. */
+interface TasksFollower {
+  readonly listeners: Set<(status: OrbitTasksLiveStatus) => void>;
+  status: OrbitTasksLiveStatus;
+  stop: () => void;
+}
+
+let follower: TasksFollower | null = null;
+
+/**
+ * Shares the existing desktop Gateway transport; no browser proxy or replica. One connection
+ * serves every follower (the Tasks tabs and the chat's task cards); it closes with the last one.
+ */
 export function followTasksUpdates(
   client: OrbitTasksClient,
   onStatus: (status: OrbitTasksLiveStatus) => void,
 ): () => void {
-  const transport = clientTransport;
-  if (!transport) {
-    onStatus("polling");
-    return () => {};
+  if (follower === null) {
+    const created: TasksFollower = { listeners: new Set(), status: "connecting", stop: () => {} };
+    const publish = (status: OrbitTasksLiveStatus) => {
+      created.status = status;
+      for (const listener of created.listeners) listener(status);
+    };
+    const transport = clientTransport;
+    if (transport) {
+      created.stop = followOrbitTasks({ transport, client, onStatus: publish });
+    } else {
+      publish("polling");
+    }
+    follower = created;
   }
-  return followOrbitTasks({ transport, client, onStatus });
+  const current = follower;
+  current.listeners.add(onStatus);
+  if (current.status !== "connecting") onStatus(current.status);
+  return () => {
+    current.listeners.delete(onStatus);
+    if (current.listeners.size === 0 && follower === current) {
+      follower = null;
+      current.stop();
+    }
+  };
 }

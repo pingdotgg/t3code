@@ -1,0 +1,135 @@
+.m-tasks {
+  position: absolute;
+  inset: 0;
+  background: var(--color-screen);
+}
+.m-tasks-scroll {
+  position: absolute;
+  inset: 0;
+  padding: 58px 0 120px;
+}
+.m-tasks-bar {
+  position: relative;
+  height: 56px;
+  margin-bottom: 4px;
+}
+.m-tasks-title {
+  position: absolute;
+  inset: 4px 70px auto 70px;
+  text-align: center;
+}
+.m-tasks-title-text {
+  font-size: 17px;
+  line-height: 22px;
+  font-weight: 500;
+}
+.m-tasks-subtitle {
+  font-size: 13px;
+  line-height: 16px;
+  color: var(--color-foreground-muted);
+}
+.m-tasks-filter {
+  position: absolute;
+  top: 0;
+  right: 8px;
+}
+
+/* Tasks read like thread-list rows: no card fill or border, rows inset 8pt with 8pt padding, so
+   text sits 16pt from the screen edge. */
+.m-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 8px;
+}
+.m-task {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 8px 12px 4px;
+  border-radius: 12px;
+}
+/* Line 1: badge, then the title. Line 2: the properties, starting at the title's left edge. */
+.m-task-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-height: 23px;
+}
+/* The badge stays on the title's first line when the title wraps (18 tall in a 23 line). */
+.m-task-head > :first-child {
+  align-self: flex-start;
+  margin-top: 2.5px;
+}
+/* One line; a longer title ends in an ellipsis. */
+.m-task-head .m-task-title {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.m-task-project {
+  flex: none;
+  font-size: 14px;
+  line-height: 19px;
+  color: var(--color-foreground-muted);
+}
+
+.m-tile {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  font: 700 10px/13px var(--m-font);
+  color: #fff;
+}
+.m-task-id {
+  font-size: 14px;
+  line-height: 19px;
+  color: var(--color-foreground-muted);
+}
+.m-task-time {
+  margin-left: auto;
+  font-size: 14px;
+  line-height: 19px;
+  color: var(--color-foreground-tertiary);
+}
+.m-task-title {
+  font-size: 16px;
+  line-height: 23px;
+  font-weight: 500;
+  color: var(--color-foreground);
+}
+.m-task-title[data-recede="true"] {
+  font-weight: 400;
+}
+/* Badge 18 + gap 12: the properties start under the title. */
+.m-task-meta {
+  padding-left: 30px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.m-task-detail {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 17px;
+  color: var(--color-foreground-muted);
+}
+/* Inline at the end of the meta properties, after a dot separator. */
+.m-task-pr {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: top;
+  gap: 3px;
+  font-size: 13px;
+  line-height: 17px;
+  color: var(--color-adaptive-emerald-700-300);
+}
+.m-task-pr[data-state="merged"] {
+  color: var(--color-adaptive-violet-600-400);
+}

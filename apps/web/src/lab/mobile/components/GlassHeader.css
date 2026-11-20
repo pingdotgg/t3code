@@ -1,0 +1,78 @@
+.m-header {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 116px;
+  z-index: 20;
+  pointer-events: none;
+}
+/* Content scrolls under a progressive blur that fades into the page colour. */
+.m-header-fade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    var(--color-screen) 0%,
+    var(--color-screen) 80%,
+    color-mix(in srgb, var(--color-screen) 60%, transparent) 92%,
+    transparent 100%
+  );
+}
+.m-header-fade::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  backdrop-filter: blur(10px);
+  mask-image: linear-gradient(to bottom, transparent 40%, #000 70%, transparent 100%);
+}
+.m-header-row {
+  position: absolute;
+  inset: 62px 16px auto 16px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  pointer-events: auto;
+}
+.m-header-side {
+  width: 44px;
+  flex: none;
+}
+.m-header-side-end {
+  display: flex;
+  justify-content: flex-end;
+}
+.m-header-title {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  padding: 0 8px;
+}
+.m-header-title-text {
+  font-size: 17px;
+  line-height: 22px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.m-header-subtitle {
+  font-size: 13px;
+  line-height: 16px;
+  color: var(--color-foreground-muted);
+}
+
+.m-glass-button {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  background: var(--color-glass-surface);
+  backdrop-filter: blur(20px) saturate(1.6);
+  box-shadow:
+    inset 0 0 0 0.5px color-mix(in srgb, var(--color-foreground) 14%, transparent),
+    0 2px 10px rgb(0 0 0 / 0.12);
+}

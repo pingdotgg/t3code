@@ -14,9 +14,11 @@ export function ThreadStatusLine(props: {
   return (
     <div
       data-chat-thread-status-line="true"
-      className="mx-auto flex w-full min-w-0 max-w-(--chat-content-max-width) items-center gap-1.5 px-1 pb-2 text-muted-foreground text-sm [&_svg]:size-3.5 [&_svg]:shrink-0"
+      className="mx-auto flex w-full min-w-0 max-w-(--chat-content-max-width) items-center gap-1.5 px-0.5 pb-2 text-muted-foreground text-sm [&_svg]:size-4 [&_svg]:shrink-0"
     >
-      {props.icon}
+      <span aria-hidden className="flex w-6 shrink-0 items-center justify-center">
+        {props.icon}
+      </span>
       <span className="min-w-0 truncate">{props.label}</span>
       <span aria-hidden="true">·</span>
       <InlineButton disabled={props.actionDisabled} onClick={props.onAction}>

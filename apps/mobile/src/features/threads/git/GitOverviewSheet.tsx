@@ -29,6 +29,7 @@ import { ScreenContent } from "../../../components/ui/ScreenContent";
 import { SheetPane } from "../../../components/ui/SheetPane";
 import { InspectorSheetContext } from "../../layout/workspace-inspector-sheet";
 import { AppText as Text } from "../../../components/ui/AppText";
+import { PullRequestGlyph } from "../../pull-requests/pullRequestGlyphs";
 import { useEnvironmentQuery } from "../../../state/query";
 import { useThreadSelection } from "../../../state/use-thread-selection";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
@@ -48,6 +49,8 @@ type GitOverviewSheetProps = StaticScreenProps<{
   readonly threadId: string;
 }> & {
   readonly presentation?: "sheet" | "inspector";
+  /** Set when this thread's latest turn can merge back into the thread it came from. */
+  readonly onMergeBack?: () => void;
 };
 
 export function GitOverviewSheet(props: GitOverviewSheetProps) {
@@ -323,6 +326,17 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
             }
           }}
         />
+        {props.onMergeBack ? (
+          <ListRow
+            icon={PullRequestGlyph.merged}
+            label={gt("Merge back to source")}
+            description={gt("Bring this thread's latest turn into its source")}
+            onPress={() => {
+              const mergeBack = props.onMergeBack;
+              if (mergeBack) presentRoute(mergeBack);
+            }}
+          />
+        ) : null}
         <ListRow
           icon="point.topleft.down.curvedto.point.bottomright.up"
           label={gt("Branches & worktrees")}

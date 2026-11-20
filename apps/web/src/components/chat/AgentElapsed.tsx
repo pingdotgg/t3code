@@ -1,6 +1,7 @@
 import type { RuntimeSubagent } from "@t3tools/client-runtime/state/subagentRuntime";
 import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
 import { deriveSubagentElapsedMs } from "@t3tools/shared/orchestrationTiming";
+import { formatWorkingDurationLabel } from "@t3tools/client-runtime/state/models";
 import { msg, useMessages } from "gt-react";
 import type { MessageResolver } from "~/i18n/messages";
 import { tickTextContent } from "~/lib/tickTextContent";
@@ -47,15 +48,25 @@ function formatCompactElapsedSeconds(totalSeconds: number, resolve: MessageResol
   );
 }
 
+const formatWorkingElapsedSeconds = (totalSeconds: number, resolve: MessageResolver) =>
+  formatWorkingDurationLabel(totalSeconds * 1000, resolve);
+
 export function AgentElapsed({
   agent,
   compact = false,
+  working = false,
 }: {
   agent: Pick<RuntimeSubagent, "status" | "startedAt" | "completedAt">;
   compact?: boolean;
+  /** Reads like the sidebar's working time: "45s", "12m", "1h 3m". */
+  working?: boolean;
 }) {
   const m = useMessages();
-  const format = compact ? formatCompactElapsedSeconds : formatElapsedSeconds;
+  const format = working
+    ? formatWorkingElapsedSeconds
+    : compact
+      ? formatCompactElapsedSeconds
+      : formatElapsedSeconds;
   const live = isOrchestrationV2WorkActive(agent.status);
   const { status, startedAt, completedAt } = agent;
   if (deriveSubagentElapsedMs(agent, 0) === null) {

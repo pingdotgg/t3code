@@ -22,6 +22,7 @@ export function LabsSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection id="beta" title={gt("Beta")}>
         <BoringSidebarRow />
+        <TwoLineThreadRowsRow />
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
@@ -51,17 +52,11 @@ function BoringSidebarRow() {
           aria-label={gt("Boring sidebar (group by project)")}
         />
       }
-    >
-      {settings.boringSidebarEnabled ? (
-        <div className="mt-2 mb-2 border-l-2 border-(--shell-divider)! ps-3">
-          <BoringSidebarMultilineRow />
-        </div>
-      ) : null}
-    </SettingsRow>
+    />
   );
 }
 
-function BoringSidebarMultilineRow() {
+function TwoLineThreadRowsRow() {
   const searchableSetting = useSearchableSetting();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -69,9 +64,8 @@ function BoringSidebarMultilineRow() {
   return (
     <SettingsRow
       {...searchableSetting("boring-sidebar-multiline")}
-      className="px-0 py-2 sm:px-0"
       description={gt(
-        "Show folder threads on two lines: the title, then the branch, pull request, and agent.",
+        "Show sidebar threads on two lines: the title, then the branch, pull request, and agent.",
       )}
       control={
         <Switch
@@ -79,7 +73,7 @@ function BoringSidebarMultilineRow() {
           onCheckedChange={(checked) =>
             updateSettings({ boringSidebarMultilineRows: Boolean(checked) })
           }
-          aria-label={gt("Two-line folder rows")}
+          aria-label={gt("Two-line thread rows")}
         />
       }
     />

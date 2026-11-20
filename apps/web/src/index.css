@@ -2026,6 +2026,28 @@ html {
   list-style-type: disc;
 }
 
+/* Chat bullets: a drawn dot whose left edge sits on the paragraph text edge, with the item text
+   hanging after it, so the list lines up with the text above and below (Nick, 2026-11-20). */
+.chat-markdown > ul:not(:has(> li.task-list-item)) {
+  list-style-type: none;
+  padding-inline-start: 0;
+}
+.chat-markdown > ul:not(:has(> li.task-list-item)) > li {
+  position: relative;
+  padding-inline-start: 1rem;
+}
+.chat-markdown > ul:not(:has(> li.task-list-item)) > li::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: 0.0625rem;
+  top: calc(0.5lh - 0.15625rem);
+  width: 0.3125rem;
+  height: 0.3125rem;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.85;
+}
+
 /* Outside markers paint past the padding box, so the gutter must fit `0. `,
    measured per font in appearanceFonts. ChatMarkdown widens it inline for
    multi-digit markers; setting it here stops a nested ol inheriting that. */

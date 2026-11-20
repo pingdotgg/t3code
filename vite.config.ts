@@ -833,6 +833,7 @@ export default defineConfig({
           "apps/mobile/src/features/threads/ThreadQueueControl.tsx",
           "apps/mobile/src/features/review/ReviewCommentCard.tsx",
           "apps/mobile/src/features/threads/thread-list-v2-items.tsx",
+          "apps/mobile/src/features/tasks/TaskInsightsStrip.tsx",
           "apps/mobile/src/components/ui/SecretTextInput.android.tsx",
           "apps/mobile/src/lib/useMobileNavigationTheme.ts",
           "apps/mobile/src/native/T3ComposerEditor.ios.tsx",
@@ -842,6 +843,28 @@ export default defineConfig({
         ],
         rules: {
           "t3code/no-mobile-uniwind-theme-escape-hatches": ["error", { allowUniwindTheme: true }],
+        },
+      },
+      {
+        // The UI labs are design tools, not product code: fixture copy is English sample text,
+        // the mobile lab styles with plain CSS classes, its scripts are node tools, the generated
+        // icon maps list every glyph name, the stand-ins keep the hook names of the modules they
+        // replace, and the lab driver talks to the fake environment's RPC.
+        files: [
+          "apps/web/src/lab/**",
+          "apps/web/scripts/mobile-lab/**",
+          "apps/web/vite.lab.config.ts",
+          "apps/mobile/scripts/lab/**",
+          "apps/mobile/src/lab/**",
+        ],
+        rules: {
+          "shadcn/no-unknown-classes": "off",
+          "t3code/namespace-node-imports": "off",
+          "t3code/no-hookless-use-function": "off",
+          "t3code/no-mobile-pull-request-glyph-literals": "off",
+          "t3code/no-rpc-permission-bypass": "off",
+          "t3code/no-sparkles-icon": "off",
+          "t3code/no-untranslated-copy": "off",
         },
       },
     ],

@@ -239,6 +239,10 @@ export interface FakeThread {
   readonly runs: ReadonlyArray<OrchestrationV2Run>;
   readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
   readonly runtimeRequests?: OrchestrationV2ThreadProjection["runtimeRequests"];
+  /** Delegated tasks the thread's projection reports: their live status, model and times. */
+  readonly subagents?: OrchestrationV2ThreadProjection["subagents"];
+  /** Overrides fields of the thread's shell: project, branch, status, pull requests, timestamps. */
+  readonly shell?: Partial<OrchestrationV2ThreadShell>;
 }
 
 /** A thread of `turns` user prompts, each answered in markdown with a list and inline code. */
@@ -350,6 +354,7 @@ function shellOf(thread: FakeThread): OrchestrationV2ThreadShell {
     settledAt: thread.olderSettled ? AT : null,
     lastVisitedAt: AT,
     deletedAt: null,
+    ...thread.shell,
   };
 }
 
@@ -391,7 +396,7 @@ function projectionOf(thread: FakeThread): OrchestrationV2ThreadProjection {
     runs: [...thread.runs],
     attempts: [],
     nodes: [],
-    subagents: [],
+    subagents: [...(thread.subagents ?? [])],
     providerSessions: [],
     providerThreads: [...(thread.providerThreads ?? [])],
     providerTurns: [],
@@ -599,10 +604,14 @@ export function installFakeEnvironment(
   options?: {
     readonly acceptCommands?: boolean;
     readonly keybindings?: ResolvedKeybindingsConfig;
-    readonly extraProjects?: ReadonlyArray<Pick<OrchestrationProjectShell, "id" | "title">>;
+    readonly extraProjects?: ReadonlyArray<
+      Pick<OrchestrationProjectShell, "id" | "title"> & Partial<OrchestrationProjectShell>
+    >;
     /** Commands left unanswered even when accepting, until `rejectPendingCommand`. */
     readonly holdCommand?: (command: OrchestrationV2Command) => boolean;
     readonly providers?: ReadonlyArray<unknown>;
+    /** Lab: turns on the Pull requests page and its rail button. */
+    readonly pullRequests?: boolean;
   },
 ): Disposable {
   threads = fixtures;
@@ -613,6 +622,15 @@ export function installFakeEnvironment(
     ),
     keybindings: options?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS,
   };
+  if (options?.pullRequests) {
+    baseServerConfig = {
+      ...baseServerConfig,
+      environment: {
+        ...baseServerConfig.environment,
+        capabilities: { ...baseServerConfig.environment.capabilities, pullRequests: true },
+      },
+    };
+  }
   dispatched = [];
   acceptCommands = options?.acceptCommands === true;
   projects = [
@@ -620,7 +638,7 @@ export function installFakeEnvironment(
     ...(options?.extraProjects ?? []).map((extra) => ({
       ...project,
       ...extra,
-      workspaceRoot: `/workspace/${extra.title}`,
+      workspaceRoot: extra.workspaceRoot ?? `/workspace/${extra.title}`,
     })),
   ];
   holdCommand = options?.holdCommand ?? (() => false);

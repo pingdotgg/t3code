@@ -115,11 +115,7 @@ function TerminalHeader(props: {
     <AppBar
       title={gt("Terminal", { $context: "screen title" })}
       subtitle={props.subtitle}
-      onBack={props.onCloseTerminal}
-      backInSplitView={{
-        accessibilityLabel: gt("Back to chat"),
-        icon: "chevron.left",
-      }}
+      onClose={props.onCloseTerminal}
       menus={
         props.isEnvironmentReady
           ? [

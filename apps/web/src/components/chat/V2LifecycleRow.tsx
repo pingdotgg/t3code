@@ -23,9 +23,12 @@ import {
 } from "@t3tools/client-runtime/handoff";
 import {
   formatSubagentDisplayTitle,
+  resolveSubagentMetadata,
   subagentCardDetail,
 } from "@t3tools/client-runtime/state/subagent-display";
+import { formatSubagentEffort } from "@t3tools/client-runtime/state/thread-execution";
 import {
+  isOrchestrationV2WorkActive,
   ProviderDriverKind,
   type ModelSelection,
   type OrchestrationV2ModelSwitch,
@@ -61,7 +64,13 @@ import {
   shouldShowInstanceBadge,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
-import { formatShortTimestamp } from "../../timestampFormat";
+import { formatRelativeTimeLabel, formatShortTimestamp } from "../../timestampFormat";
+import { StatusDotBadge, type StatusDotState } from "../StatusDotBadge";
+import {
+  TASK_CARD_FACE_CLASS,
+  TASK_CARD_FACE_INTERACTIVE_CLASS,
+  TASK_CARD_FILL,
+} from "~/orbit/tasks/TaskCardButton";
 import { getTriggerDisplayModelName } from "./providerIconUtils";
 import { ProviderInstanceIcon, providerTextColor } from "./ProviderInstanceIcon";
 import { cn } from "~/lib/utils";
@@ -242,6 +251,7 @@ function SubagentAvatar({
   showBadge,
   anyInstanceBadge,
   status,
+  plain = false,
   className,
 }: {
   driver?: ProviderDriverKind | undefined;
@@ -251,8 +261,30 @@ function SubagentAvatar({
   showBadge: boolean;
   anyInstanceBadge: boolean;
   status?: OrchestrationV2TurnItem["status"] | undefined;
+  /** The bare provider icon, with no disc or status dot. */
+  plain?: boolean;
   className?: string;
 }) {
+  if (plain) {
+    return (
+      <span aria-hidden className={cn("inline-flex shrink-0 items-center", className)}>
+        {driver ? (
+          <ProviderInstanceIcon
+            driverKind={driver}
+            displayName={displayName ?? driver}
+            accentColor={accentColor}
+            acpRegistryIconUrl={iconUrl}
+            showBadge={showBadge}
+            size="compact"
+            className="z-auto"
+            iconClassName="size-3.5"
+          />
+        ) : (
+          <BotIcon className="size-3.5 text-muted-foreground" />
+        )}
+      </span>
+    );
+  }
   return (
     <span
       aria-hidden
@@ -302,6 +334,7 @@ export function EnvironmentSubagentAvatar({
   /** A task in a linked environment runs a provider instance there; its driver here is only a label. */
   remote?: OrchestrationV2RemoteTaskChild | undefined;
   status?: OrchestrationV2TurnItem["status"] | undefined;
+  plain?: boolean;
 }) {
   const providerEnvironmentId = remote?.environmentId ?? environmentId;
   const providersAtom = serverEnvironment.providersValueAtom(providerEnvironmentId);
@@ -349,6 +382,76 @@ export function EnvironmentSubagentAvatar({
       anyInstanceBadge={anyInstanceBadge}
     />
   );
+}
+
+/** "Claude · Opus 5.5 · high". Selects one string, so status pushes do not re-render it. */
+function SubagentModelText(props: {
+  environmentId: EnvironmentId;
+  providerInstanceId: ProviderInstanceId;
+  remote: OrchestrationV2RemoteTaskChild | undefined;
+  model: string | null;
+  modelSelection: OrchestrationV2Subagent["modelSelection"];
+}) {
+  const m = useMessages();
+  const providerEnvironmentId = props.remote?.environmentId ?? props.environmentId;
+  const settings = useAtomValue(serverEnvironment.settingsValueAtom(providerEnvironmentId));
+  const text = useAtomValue(
+    serverEnvironment.providersValueAtom(providerEnvironmentId),
+    (providers) => {
+      const provider = providers?.find((entry) => entry.instanceId === props.providerInstanceId);
+      const derived = deriveProviderInstanceEntries(providers ?? []);
+      const entries = settings ? brandProviderInstanceEntries(derived, settings) : derived;
+      const providerName = entries.find(
+        (entry) => entry.instanceId === props.providerInstanceId,
+      )?.displayName;
+      const hasModel = props.model !== null || props.modelSelection !== undefined;
+      const { modelLabel, modelSlug } = resolveSubagentMetadata(
+        { model: props.model, modelSelection: props.modelSelection, provider },
+        m,
+      );
+      const effort = formatSubagentEffort({
+        modelSlug,
+        modelSelection: props.modelSelection,
+        provider,
+      });
+      return [providerName, hasModel ? modelLabel : undefined, effort]
+        .filter((part): part is string => Boolean(part))
+        .join(" · ");
+    },
+  );
+  return <span className="min-w-0 truncate">{text}</span>;
+}
+
+/** The dot on the card's provider icon. A stopped or idle task has none. */
+function subagentStatusDot(status: OrchestrationV2TurnItem["status"]): StatusDotState | null {
+  switch (status) {
+    case "pending":
+    case "running":
+      return "working";
+    case "waiting":
+      return "waiting";
+    case "completed":
+      return "done";
+    case "failed":
+      return "failed";
+    default:
+      return null;
+  }
+}
+
+/** The time at the card's top right: how long it has run, or when it finished. */
+function SubagentCardTime(props: {
+  status: OrchestrationV2TurnItem["status"];
+  label: string;
+  timing: Parameters<typeof AgentElapsed>[0]["agent"];
+  eventTimestamp: string | undefined;
+}) {
+  const { status, timing } = props;
+  if (isOrchestrationV2WorkActive(status)) return <AgentElapsed agent={timing} working />;
+  const finished =
+    props.eventTimestamp ??
+    (timing.completedAt !== null ? formatRelativeTimeLabel(timing.completedAt) : props.label);
+  return <span className="text-muted-foreground/80 tabular-nums">{finished}</span>;
 }
 
 const NOTIFICATION_OUTCOME_STATUS: Record<
@@ -481,61 +584,75 @@ function SubagentTimelineLink(props: {
     startedAt: isoOrNull(agent?.startedAt ?? props.startedAt),
     completedAt: isoOrNull(agent?.completedAt ?? props.completedAt),
   };
+  const shown = status ?? liveStatus;
+  const working = isOrchestrationV2WorkActive(shown);
   const content = (
     <>
-      <EnvironmentSubagentAvatar
-        environmentId={props.parentRef.environmentId}
-        providerInstanceId={props.providerInstanceId}
-        driver={props.driver}
-        remote={remote}
-        status={status ?? undefined}
-      />
-      <span className="min-w-0 flex-1">
-        <span className="flex items-baseline gap-2">
-          <span className="min-w-0 truncate text-ui font-medium text-foreground">
-            {props.title}
-          </span>
+      <span className="flex w-full min-w-0 items-center gap-1.5 text-ui leading-4">
+        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-muted-foreground">
+          <StatusDotBadge state={subagentStatusDot(shown)} ring={TASK_CARD_FILL}>
+            <EnvironmentSubagentAvatar
+              environmentId={props.parentRef.environmentId}
+              providerInstanceId={props.providerInstanceId}
+              driver={props.driver}
+              remote={remote}
+              plain
+            />
+          </StatusDotBadge>
           {remote !== undefined ? (
-            <span className="shrink-0 text-xs text-muted-foreground">
+            <span className="shrink-0">
               {gt("on {environment}", { environment: remote.label })}
             </span>
           ) : null}
+          <SubagentModelText
+            environmentId={props.parentRef.environmentId}
+            providerInstanceId={props.providerInstanceId}
+            remote={remote}
+            model={agent?.model ?? null}
+            modelSelection={agent?.modelSelection}
+          />
         </span>
+        <span className="flex shrink-0 items-center gap-1.5 text-muted-foreground">
+          <SubagentCardTime
+            status={shown}
+            label={statusLabel}
+            timing={timing}
+            eventTimestamp={props.event?.timestamp}
+          />
+          {open !== null ? (
+            <ChevronRightIcon
+              aria-hidden
+              className="size-3.5 shrink-0 text-muted-foreground/60 transition-colors group-hover/subagent:text-foreground"
+            />
+          ) : null}
+        </span>
+      </span>
+      <span
+        className={cn(
+          "text-ui leading-5 text-foreground/90 [overflow-wrap:anywhere]",
+          // Background work recedes to regular weight, like a working thread.
+          working ? "font-normal" : "font-medium",
+        )}
+      >
+        {props.title}
+      </span>
+      {detail !== null ? (
         <span
           className={cn(
-            "block text-xs leading-relaxed",
+            "block text-ui leading-4",
             failed ? "text-destructive" : "text-muted-foreground",
           )}
         >
-          {detail === null ? (
-            statusLabel
-          ) : detail.includes("/") && !detail.includes(" ") ? (
+          {detail.includes("/") && !detail.includes(" ") ? (
             <MiddleTruncate value={detail} showTitle={false} className="flex" />
           ) : (
-            <span className="block truncate">{detail}</span>
+            <span className="line-clamp-3">{detail}</span>
           )}
         </span>
-      </span>
-      {detail !== null && (props.event !== undefined || status !== "completed") ? (
-        <span
-          className={cn("shrink-0 text-xs", failed ? "text-destructive" : "text-muted-foreground")}
-        >
-          {statusLabel}
-        </span>
-      ) : null}
-      <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-        {props.event ? props.event.timestamp : <SubagentElapsed agent={timing} />}
-      </span>
-      {open !== null ? (
-        <ChevronRightIcon
-          aria-hidden
-          className="size-3.5 shrink-0 text-muted-foreground/60 transition-colors group-hover/subagent:text-foreground"
-        />
       ) : null}
     </>
   );
-  const className =
-    "group/subagent flex w-full min-w-0 items-center gap-2.5 rounded-md px-2 py-1.5 text-left";
+  const className = cn("group/subagent min-w-0", TASK_CARD_FACE_CLASS);
   return (
     <Tooltip>
       <TooltipTrigger
@@ -552,10 +669,7 @@ function SubagentTimelineLink(props: {
               aria-label={gt("Open {title}", { title: props.title })}
               aria-description={statusLabel}
               onClick={open}
-              className={cn(
-                className,
-                "cursor-pointer transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
-              )}
+              className={cn(className, TASK_CARD_FACE_INTERACTIVE_CLASS)}
             >
               {content}
             </button>

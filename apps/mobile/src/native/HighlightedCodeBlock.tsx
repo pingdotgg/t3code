@@ -7,12 +7,27 @@ import { Menu } from "../components/ui/Menu";
 import { useMarkdownCodeHighlight } from "../features/threads/markdownCodeHighlightState";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import type { HighlightScheme } from "../lib/highlights";
-import { CodeBlockFrame, CodeBlockHeaderButton } from "./CodeBlockFrame";
+import { CodeBlockFrame, CodeBlockHeaderButton, useCopiedFlash } from "./CodeBlockFrame";
 import { fencedCodeMarkdown } from "./codeBlockMarkdown";
 import type { NativeMarkdownTextStyle } from "./SelectableMarkdownText.types";
 
 // Header names from enriched-markdown's CodeBlockLanguages.cpp that are not the fence capitalized.
 const FENCE_DISPLAY_NAMES: Readonly<Record<string, string>> = {
+  css: "CSS",
+  html: "HTML",
+  js: "JavaScript",
+  json: "JSON",
+  jsx: "JSX",
+  md: "Markdown",
+  py: "Python",
+  rs: "Rust",
+  sh: "Shell",
+  ts: "TypeScript",
+  tsx: "TSX",
+  typescript: "TypeScript",
+  javascript: "JavaScript",
+  yaml: "YAML",
+  yml: "YAML",
   cc: "C++",
   cpp: "C++",
   cxx: "C++",
@@ -39,6 +54,8 @@ const CODE_MENU_ACTIONS = [
   { id: "copy-markdown", title: msg("Copy as Markdown"), image: "doc.text" },
 ];
 
+const CODE_INSET = 14;
+
 /** A fence in a language enriched-markdown cannot colour, drawn like its native block. */
 export function HighlightedCodeBlock(props: {
   readonly code: string;
@@ -54,6 +71,11 @@ export function HighlightedCodeBlock(props: {
   const gt = useGT();
   const resolve = useMessages();
   const [wrapped, setWrapped] = useState(false);
+  const [viewportWidth, setViewportWidth] = useState(0);
+  const [contentWidth, setContentWidth] = useState(0);
+  const { copied, flash } = useCopiedFlash();
+  // Wrapping only matters for a line that overflows; a wrapped block keeps the toggle to undo it.
+  const canWrap = wrapped || contentWidth > viewportWidth + 1;
   const lines = useMarkdownCodeHighlight({
     code,
     language: props.language,
@@ -102,27 +124,41 @@ export function HighlightedCodeBlock(props: {
         );
       }}
     >
-      <Pressable style={{ padding: codeStyle.padding }}>{text}</Pressable>
+      <Pressable
+        style={{ paddingHorizontal: CODE_INSET, paddingTop: 2, paddingBottom: CODE_INSET }}
+      >
+        {text}
+      </Pressable>
     </Menu>
   );
   return (
     <CodeBlockFrame
-      label={FENCE_DISPLAY_NAMES[fence] ?? fence.charAt(0).toUpperCase() + fence.slice(1)}
+      // A fence without a language reads "Text", as on desktop, so the header row is never empty.
+      label={
+        fence.length === 0
+          ? gt("Text")
+          : (FENCE_DISPLAY_NAMES[fence] ?? fence.charAt(0).toUpperCase() + fence.slice(1))
+      }
       textStyle={textStyle}
       actions={
         <>
+          {canWrap ? (
+            <CodeBlockHeaderButton
+              icon="arrow.turn.down.left"
+              label={wrapped ? gt("Disable line wrap") : gt("Wrap lines")}
+              textStyle={textStyle}
+              active={wrapped}
+              onPress={() => setWrapped((value) => !value)}
+            />
+          ) : null}
           <CodeBlockHeaderButton
-            icon="text.alignleft"
-            label={wrapped ? gt("Disable line wrap") : gt("Wrap lines")}
-            textStyle={textStyle}
-            active={wrapped}
-            onPress={() => setWrapped((value) => !value)}
-          />
-          <CodeBlockHeaderButton
-            icon="doc.on.doc"
+            icon={copied ? "checkmark" : "doc.on.doc"}
             label={gt("Copy code")}
             textStyle={textStyle}
-            onPress={() => copyTextWithHaptic(code)}
+            onPress={() => {
+              copyTextWithHaptic(code);
+              flash();
+            }}
           />
         </>
       }
@@ -135,6 +171,8 @@ export function HighlightedCodeBlock(props: {
           // As in the thread feed: with the keyboard open, the first long-press reaches the copy menu.
           keyboardShouldPersistTaps="always"
           contentContainerStyle={{ flexGrow: 1 }}
+          onLayout={({ nativeEvent }) => setViewportWidth(nativeEvent.layout.width)}
+          onContentSizeChange={setContentWidth}
         >
           {content}
         </ScrollView>

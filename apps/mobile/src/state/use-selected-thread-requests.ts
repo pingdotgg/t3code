@@ -56,6 +56,13 @@ import { readEnvironmentScope } from "./session";
 
 const EMPTY_PENDING_REQUESTS: PendingThreadRequests = { approvals: [], userInputs: [] };
 
+/** An answer typed in the prompt box, submitted in the same tick it is written to its draft. */
+export interface UserInputAnswerOverride {
+  readonly questionId: string;
+  readonly customAnswer: string;
+  readonly attachmentCount: number;
+}
+
 const userInputDraftsByRequestKeyAtom = Atom.make<
   Record<string, Record<string, PendingUserInputDraftAnswer>>
 >({}).pipe(Atom.keepAlive, Atom.withLabel("mobile:user-input-drafts"));
@@ -353,12 +360,31 @@ export function useSelectedThreadRequests() {
     return result;
   };
 
-  const onSubmitUserInput = async () => {
+  const onSubmitUserInput = async (override?: UserInputAnswerOverride) => {
+    const overriddenQuestion = override
+      ? activePendingUserInput?.questions.find((entry) => entry.id === override.questionId)
+      : undefined;
+    // The render this closure belongs to predates the typed answer, so fold it in here.
+    const answers =
+      activePendingUserInput && override && overriddenQuestion
+        ? buildPendingUserInputAnswers(activePendingUserInput.questions, {
+            ...activePendingUserInputDrafts,
+            [override.questionId]: {
+              ...setPendingUserInputCustomAnswer(
+                overriddenQuestion,
+                activePendingUserInputDrafts[override.questionId],
+                override.customAnswer,
+              ),
+              attachmentCount: override.attachmentCount,
+              attachmentsBlocked: false,
+            },
+          })
+        : activePendingUserInputAnswers;
     if (
       !selectedThreadShell ||
       !activePendingUserInput ||
       activePendingUserInput.responseCapability === "not_resumable" ||
-      !activePendingUserInputAnswers ||
+      !answers ||
       !readEnvironmentScope(selectedThreadShell.environmentId, AuthOrchestrationOperateScope)
     ) {
       return;
@@ -416,7 +442,7 @@ export function useSelectedThreadRequests() {
       input: {
         threadId: selectedThreadShell.id,
         requestId: activePendingUserInput.requestId,
-        answers: activePendingUserInputAnswers,
+        answers,
         ...(attachmentsByQuestionId.size > 0
           ? { attachmentsByQuestionId: Object.fromEntries(attachmentsByQuestionId) }
           : {}),

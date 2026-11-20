@@ -162,6 +162,17 @@ export interface ThreadComposerProps {
   /** Sending declines a pending approval and redirects the agent, so `/side` is plain text. */
   readonly redirectsApproval: boolean;
   readonly canStopThread: boolean;
+  /**
+   * Set while an agent question is open. A draft sent from the box answers the current
+   * question; with the draft empty, this button moves on once that question has an answer.
+   */
+  readonly answerAction?: {
+    readonly ready: boolean;
+    readonly label: string;
+    /** Up sends the last answer; right moves to the next question. */
+    readonly icon: "arrow.up" | "arrow.right";
+    readonly onPress: () => void;
+  } | null;
   readonly environmentId: EnvironmentId;
   readonly projectCwd: string | null;
   readonly sendBlockedReason?: string | null;
@@ -311,6 +322,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     draftAttachments.length > 0 ||
     (queuedEdit?.existingAttachments.length ?? 0) > 0;
   const showStopAction = !hasContent && props.canStopThread && queuedEdit === null;
+  // A question being open makes the box's send an answer, never a queued follow-up.
+  const answerMode = props.answerAction != null && queuedEdit === null;
+  const answerAction = answerMode && !hasContent ? (props.answerAction ?? null) : null;
   const onResumeQueue = props.onResumeQueue;
   const [resumingQueue, setResumingQueue] = useState(false);
   const showResumeAction =
@@ -1031,7 +1045,28 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   onStart={voiceInput.start}
                   onCancel={voiceInput.cancel}
                 />
-                {showStopAction ? (
+                {answerAction ? (
+                  <>
+                    {showStopAction ? (
+                      <ComposerActionButton
+                        size={usesLargeControls ? "large" : "regular"}
+                        accessibilityLabel={gt("Stop agent")}
+                        icon="stop.fill"
+                        variant="danger"
+                        disabled={!props.canOperateThread}
+                        onPress={props.onStopThread}
+                      />
+                    ) : null}
+                    <ComposerActionButton
+                      size={usesLargeControls ? "large" : "regular"}
+                      accessibilityLabel={answerAction.label}
+                      icon={answerAction.icon}
+                      variant="primary"
+                      disabled={!props.canOperateThread || !answerAction.ready}
+                      onPress={answerAction.onPress}
+                    />
+                  </>
+                ) : showStopAction ? (
                   <ComposerActionButton
                     size={usesLargeControls ? "large" : "regular"}
                     accessibilityLabel={gt("Stop agent")}
@@ -1047,6 +1082,15 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                     icon="play"
                     disabled={!props.canOperateThread || resumingQueue}
                     onPress={() => void handleResumeQueue()}
+                  />
+                ) : answerMode ? (
+                  <ComposerActionButton
+                    size={usesLargeControls ? "large" : "regular"}
+                    accessibilityLabel={sendBlockedReason ?? gt("Send answer")}
+                    icon="arrow.up"
+                    variant="primary"
+                    disabled={!canSend}
+                    onPress={() => void handleSend()}
                   />
                 ) : (
                   <SendActionButton

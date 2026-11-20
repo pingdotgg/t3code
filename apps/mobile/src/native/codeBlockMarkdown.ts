@@ -1,34 +1,5 @@
 import { resolveHighlightLanguage } from "../lib/highlightLanguage";
 
-// Fences enriched-markdown colours itself: cpp/highlight/CodeBlockLanguages.cpp entries with a default grammar.
-const NATIVE_HIGHLIGHT_FENCES = new Set([
-  "bash",
-  "c",
-  "css",
-  "go",
-  "golang",
-  "html",
-  "java",
-  "javascript",
-  "js",
-  "json",
-  "jsx",
-  "markdown",
-  "md",
-  "py",
-  "python",
-  "rs",
-  "rust",
-  "sh",
-  "shell",
-  "ts",
-  "tsx",
-  "typescript",
-  "yaml",
-  "yml",
-  "zsh",
-]);
-
 /** A fenced code block for `code`, with a backtick fence longer than any backtick run inside it. */
 export function fencedCodeMarkdown(code: string, language: string): string {
   let longestRun = 0;
@@ -40,15 +11,18 @@ export function fencedCodeMarkdown(code: string, language: string): string {
 type CodeFenceRenderer =
   | { readonly kind: "mermaid" }
   | { readonly kind: "math" }
-  | { readonly kind: "highlight"; readonly language: string }
-  | { readonly kind: "native" };
+  | { readonly kind: "highlight"; readonly language: string };
 
-/** Mermaid and math fences first: highlights knows `mermaid` too, and would claim it as code. */
+/**
+ * Mermaid and math fences first: highlights knows `mermaid` too, and would claim it as code.
+ * Every other fence is drawn in React, so one header and one set of actions cover all code;
+ * enriched-markdown's own block has a fixed header with a divider.
+ */
 export function codeFenceRenderer(fence: string, mathRenderingEnabled: boolean): CodeFenceRenderer {
   if (fence === "mermaid") return { kind: "mermaid" };
   if (fence === "math" && mathRenderingEnabled) return { kind: "math" };
-  const name = fence.toLowerCase();
-  if (NATIVE_HIGHLIGHT_FENCES.has(name)) return { kind: "native" };
-  const language = resolveHighlightLanguage({ language: name });
-  return language === "text" ? { kind: "native" } : { kind: "highlight", language };
+  return {
+    kind: "highlight",
+    language: resolveHighlightLanguage({ language: fence.toLowerCase() }),
+  };
 }

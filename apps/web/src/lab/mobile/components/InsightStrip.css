@@ -1,0 +1,193 @@
+/* Shared by every insight variant. The card face (.m-ins) is production's, copied from desktop's
+   TasksInsights.tsx / InsightCharts.tsx: 10/12/8/12 padding, 1px border with a lighter top edge,
+   13/20 label, 18/24 medium value, 13/20 delta with a 14px trend icon, a 28px straight-segment
+   sparkline in the muted colour. Block layout, scrolling and indicators live in InsightStrip.a|b|c.css. */
+.m-ins-root {
+  /* Desktop's --shell-divider / --shell-card-edge, with the screen colour as the sidebar. */
+  --ins-divider: color-mix(in oklab, var(--color-screen) 89%, var(--color-foreground));
+  --ins-edge: color-mix(in oklab, var(--ins-divider) 96.5%, white);
+  /* Dark: --shell-highlight/70 (8% foreground at 70%). */
+  --ins-card: color-mix(in srgb, var(--color-foreground) 5.6%, transparent);
+  --ins-card-press: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+  --ins-track: color-mix(in srgb, var(--color-screen), black 22%);
+  --ins-line: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+  --ins-good: var(--color-adaptive-emerald-600-400);
+  --ins-bad: var(--color-danger-foreground);
+  position: relative;
+  margin-bottom: 12px;
+  /* The height is set inline from LAYOUT: the same for the strip and the chart card. */
+}
+.m-phone[data-mobile-theme="light"] .m-ins-root {
+  --ins-divider: color-mix(in oklab, var(--color-screen) 90%, var(--color-foreground));
+  --ins-edge: color-mix(in oklab, var(--ins-divider) 80%, white);
+  /* Light: --shell-card, the opaque panel colour. */
+  --ins-card: var(--color-screen);
+  --ins-card-press: color-mix(in srgb, var(--color-screen) 70%, transparent);
+  --ins-track: color-mix(in srgb, var(--color-screen), var(--color-foreground) 4%);
+  --ins-line: color-mix(in srgb, var(--color-foreground) 9%, transparent);
+  --ins-good: var(--color-adaptive-emerald-700-300);
+}
+
+.m-ins,
+.m-ins-detail {
+  --tone: var(--color-foreground-muted);
+}
+.m-ins-detail[data-tone="good"] {
+  --tone: var(--ins-good);
+}
+.m-ins-detail[data-tone="bad"] {
+  --tone: var(--ins-bad);
+}
+
+.m-ins-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+}
+.m-ins-grid {
+  display: grid;
+  grid-auto-flow: column;
+  width: max-content;
+}
+
+/* ---- the card face: production's ---- */
+.m-ins {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 10px 12px 8px;
+  border: 1px solid var(--ins-divider);
+  border-top-color: var(--ins-edge);
+  background: var(--ins-card);
+  text-align: left;
+  cursor: pointer;
+  scroll-snap-align: start;
+  -webkit-tap-highlight-color: transparent;
+}
+.m-ins:active {
+  background: var(--ins-card-press);
+}
+.m-ins-label {
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--color-foreground-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.m-ins-row {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+}
+.m-ins-value {
+  font-size: 18px;
+  line-height: 24px;
+  font-weight: 500;
+  color: var(--color-foreground);
+  white-space: nowrap;
+}
+.m-ins-value[data-empty="true"] {
+  color: color-mix(in srgb, var(--color-foreground-muted) 60%, transparent);
+}
+.m-ins-delta {
+  display: flex;
+  flex: none;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 13px;
+  line-height: 20px;
+  white-space: nowrap;
+  color: var(--color-foreground-muted);
+}
+.m-ins-delta svg {
+  flex: none;
+  align-self: center;
+}
+.m-ins-delta[data-tone="good"] {
+  color: var(--ins-good);
+}
+.m-ins-delta[data-tone="bad"] {
+  color: var(--ins-bad);
+}
+.m-ins-spark {
+  height: 28px;
+  margin-top: 4px;
+  color: var(--color-foreground-muted);
+}
+.m-ins-spark-svg {
+  display: block;
+  overflow: visible;
+}
+
+/* ---- the chart card a tap opens ---- */
+/* The card fills .m-ins-root, whose height is fixed per variant (LAYOUT in InsightStrip.tsx), so
+   swapping the strip for the chart never moves the task list. */
+.m-ins-detail {
+  position: relative;
+  box-sizing: border-box;
+  height: 100%;
+  margin-inline: 8px;
+  padding: 10px 12px 8px;
+  overflow: hidden;
+  border: 1px solid var(--ins-divider);
+  border-top-color: var(--ins-edge);
+  border-radius: 8px;
+  background: var(--ins-card);
+}
+.m-ins-detail-head {
+  padding-right: 36px;
+}
+/* Same type as the card it opens from (label 13/20, value 18/24/500, delta 13/20), so nothing
+   resizes on open. */
+.m-ins-detail-row {
+  margin-top: 4px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  white-space: nowrap;
+}
+.m-ins-period {
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--color-foreground-tertiary);
+}
+.m-ins-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--m-hl6);
+  color: var(--color-foreground-muted);
+}
+.m-ins-chart {
+  display: block;
+  margin-top: 18px;
+  touch-action: none;
+}
+.m-ins-series {
+  color: var(--tone);
+}
+.m-ins-grid-line {
+  stroke: var(--ins-line);
+}
+.m-ins-axis {
+  font-size: 11px;
+  fill: var(--color-foreground-tertiary);
+}
+.m-ins-crosshair {
+  stroke: color-mix(in srgb, var(--color-foreground) 28%, transparent);
+}
+.m-ins-dot {
+  fill: currentColor;
+  stroke: var(--color-screen);
+}

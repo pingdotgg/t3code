@@ -1,0 +1,57 @@
+.m-md {
+  font-size: 16px;
+  line-height: 23px;
+  color: var(--color-md-body);
+  overflow-wrap: anywhere;
+}
+.m-md > :first-child {
+  margin-top: 0;
+}
+.m-md > :last-child {
+  margin-bottom: 0;
+}
+.m-md p {
+  margin: 0 0 13px;
+}
+.m-md strong {
+  font-weight: 600;
+  color: var(--color-md-strong);
+}
+.m-md ul,
+.m-md ol {
+  margin: 0 0 13px;
+  padding-left: 22px;
+}
+.m-md li {
+  margin: 0 0 6px;
+  padding-left: 0;
+}
+.m-md li > ul,
+.m-md li > ol {
+  margin: 6px 0 0;
+}
+.m-md ol > li::marker {
+  font-weight: 600;
+}
+.m-md-code {
+  font-family: var(--m-mono);
+  font-size: 0.92em;
+  color: var(--color-md-code-text);
+}
+.m-md-img {
+  display: block;
+  max-width: 100%;
+  border-radius: 10px;
+}
+
+/* The question panel's context: a size smaller, every text and marker colour muted. */
+.m-md[data-muted="true"] {
+  font-size: 15px;
+  line-height: 21px;
+  color: var(--color-foreground-muted);
+}
+.m-md[data-muted="true"] strong,
+.m-md[data-muted="true"] .m-md-code,
+.m-md[data-muted="true"] li::marker {
+  color: var(--color-foreground-muted);
+}

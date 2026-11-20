@@ -153,6 +153,7 @@ export function AppBar(props: AppBarProps) {
     !compactSearch &&
     NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED &&
     isDuoDevice(deviceType);
+  const closeTrailing = props.onClose !== undefined && props.closePlacement === "trailing";
   if (props.embedded || props.sheet) return null;
   return (
     <>
@@ -213,7 +214,7 @@ export function AppBar(props: AppBarProps) {
             : undefined),
         }}
       />
-      {props.onClose ? (
+      {props.onClose && !closeTrailing ? (
         <Toolbar placement="left">
           <Toolbar.Button
             icon="xmark"
@@ -221,7 +222,7 @@ export function AppBar(props: AppBarProps) {
             onPress={props.onClose}
           />
         </Toolbar>
-      ) : rootBack || splitBack || sidebarToggle || compose ? (
+      ) : !props.onClose && (rootBack || splitBack || sidebarToggle || compose) ? (
         <Toolbar placement="left">
           {rootBack ? (
             <ScreenHeaderButton
@@ -256,8 +257,21 @@ export function AppBar(props: AppBarProps) {
       visibleMenus.length ||
       props.trailing ||
       props.confirm ||
+      closeTrailing ||
       closeInspector ? (
         <Toolbar placement="right">
+          {/* UIKit lays trailing items out from the edge, so the first one is the outermost. */}
+          {closeTrailing ? (
+            <ScreenHeaderButton
+              accessibilityLabel={props.closeAccessibilityLabel ?? gt("Close")}
+              icon="xmark"
+              onPress={props.onClose}
+              separateBackground
+            />
+          ) : null}
+          {closeTrailing && (actions.length > 0 || visibleMenus.length > 0) ? (
+            <Toolbar.Spacer width={8} />
+          ) : null}
           {actions.map(({ loading, ...action }) =>
             loading ? (
               <Toolbar.Custom key={action.accessibilityLabel}>

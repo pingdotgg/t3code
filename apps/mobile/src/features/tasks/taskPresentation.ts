@@ -12,6 +12,7 @@ import {
 } from "@t3tools/client-runtime/orbit-gateway";
 import { msg } from "gt-react-native";
 
+import type { StatusBadgeState } from "../../components/StatusBadgeDot";
 import type { AppSymbolName } from "../../components/ui/AppSymbol";
 
 /** The mobile list shows In progress first: it is what a phone checks. */
@@ -83,6 +84,20 @@ export interface RowStatus {
 }
 
 const WORKING_ICON = "circle.dashed" satisfies AppSymbolName;
+
+/**
+ * The task card's status dot: grey while it needs an answer, red when blocked or failed, blue
+ * while it runs, green when done. Anything else (backlog, to do, cancelled) is grey.
+ */
+export function taskDotState(task: OrbitTaskSummary): StatusBadgeState {
+  if (task.attention?.kind === "question") return "waiting";
+  if (task.status === "failed") return "failed";
+  const lane = orbitTaskLane(task.status);
+  if (task.attention !== null && task.attention.kind !== "observation" && lane === "in-progress")
+    return "failed";
+  if (lane === "in-progress") return "working";
+  return task.status === "completed" ? "done" : "waiting";
+}
 
 /**
  * A task row's right side. In progress shows only the timer, like a working thread; a question or
