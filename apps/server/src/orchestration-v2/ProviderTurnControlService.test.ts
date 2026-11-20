@@ -135,6 +135,7 @@ function layerProjectionStore(
       apply: () => Effect.void,
       getLimitRecoveryCandidates: () => Effect.die("unused getLimitRecoveryCandidates"),
       getLimitRecoveryWakeAt: () => Effect.die("unused getLimitRecoveryWakeAt"),
+      getLimitRecoveriesAwaitingReset: () => Effect.die("unused getLimitRecoveriesAwaitingReset"),
       getOpenRemoteDelegatedTasks: Effect.die("unused getOpenRemoteDelegatedTasks"),
       getAgentAwarenessSnapshot: () => Effect.die("unused awareness snapshot"),
       getShellSnapshot: () => Effect.die("unused getShellSnapshot"),

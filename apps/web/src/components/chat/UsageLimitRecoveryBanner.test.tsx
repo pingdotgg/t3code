@@ -6,7 +6,11 @@ import { usageLimitRecoveryBannerItem } from "./UsageLimitRecoveryBanner";
 
 const stoppedAt = new Date(2026, 9, 20, 12, 0);
 
-function bannerDescription(resetAt: Date, timestampFormat: TimestampFormat) {
+function bannerDescription(
+  resetAt: Date,
+  timestampFormat: TimestampFormat,
+  recoveryProps: Partial<Parameters<typeof usageLimitRecoveryBannerItem>[0]> = {},
+) {
   return usageLimitRecoveryBannerItem({
     runId: RunId.make("run-1"),
     errorCode: null,
@@ -18,6 +22,7 @@ function bannerDescription(resetAt: Date, timestampFormat: TimestampFormat) {
     recovery: null,
     timestampFormat,
     onChange: async () => {},
+    ...recoveryProps,
   }).description;
 }
 
@@ -29,6 +34,31 @@ describe("usageLimitRecoveryBannerItem", () => {
     using _now = vi.spyOn(Date, "now").mockReturnValue(stoppedAt.getTime());
     expect(bannerDescription(new Date(2026, 9, 20, 17, 30), timestampFormat)).toBe(expected);
   });
+
+  it.each([
+    [false, 14, "Resumes 18:00"],
+    [true, 14, "Resumes 14:00"],
+    [false, 20, "Resumes 20:00"],
+    [true, 20, "Resumes 20:00"],
+  ] as const)(
+    "shows the continuation time with early reset %s and snooze until %s",
+    (resetEarly, hour, expected) => {
+      using _now = vi.spyOn(Date, "now").mockReturnValue(stoppedAt.getTime());
+      const resetAt = new Date(2026, 9, 20, 18, 0);
+      expect(
+        bannerDescription(resetAt, "24-hour", {
+          snoozedUntil: new Date(2026, 9, 20, hour, 0).toISOString(),
+          recovery: {
+            runId: RunId.make("run-1"),
+            resetAt: resetAt.toISOString(),
+            autoResume: true,
+            snooze: false,
+            resetEarly,
+          },
+        }),
+      ).toBe(expected);
+    },
+  );
 
   it("names the day when the reset is tomorrow", () => {
     using _now = vi.spyOn(Date, "now").mockReturnValue(stoppedAt.getTime());

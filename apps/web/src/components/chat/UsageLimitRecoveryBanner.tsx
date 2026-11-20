@@ -63,7 +63,10 @@ export function usageLimitRecoveryBannerItem(
     <RecoveryActions key={`${runId}:${resetAt}`} {...props} />
   ) : null;
   const displayAt =
-    resumes && resetAt && snoozedUntil && Date.parse(snoozedUntil) > Date.parse(resetAt)
+    resumes &&
+    resetAt &&
+    snoozedUntil &&
+    (recovery?.resetEarly || Date.parse(snoozedUntil) > Date.parse(resetAt))
       ? snoozedUntil
       : resetAt;
   const resetDescription = displayAt
