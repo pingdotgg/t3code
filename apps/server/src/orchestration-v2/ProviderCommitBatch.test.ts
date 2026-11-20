@@ -523,6 +523,43 @@ it.effect.each([
   }),
 );
 
+it.effect("makes streams wait to read more once the shared backlog is full", () =>
+  Effect.gen(function* () {
+    const writer = yield* blockFirstCommit;
+    const recorder = yield* recordBatches(writer.block);
+    const leading = yield* recorder
+      .consume(Stream.make(event(-1)), recorder.process, Effect.succeed(false))
+      .pipe(Effect.forkScoped({ startImmediately: true }));
+    yield* Deferred.await(writer.started);
+    let arrivals = 0;
+    const streams = Array.from({ length: 5 }, (_, stream) =>
+      Array.from({ length: 64 }, (_, n) => snapshot(`${stream}:${n}`, `${stream}:${n}`)),
+    );
+    const consumers = yield* Effect.forEach(streams, (snapshots) =>
+      recorder
+        .consume(
+          Stream.fromIterable(snapshots).pipe(
+            Stream.tap(() =>
+              Effect.sync(() => {
+                arrivals++;
+              }),
+            ),
+          ),
+          recorder.process,
+          Effect.succeed(false),
+        )
+        .pipe(Effect.forkScoped({ startImmediately: true })),
+    );
+    yield* TestClock.adjust(0);
+    // 256 queued, plus at most one read per stream waiting for room.
+    assert.isAtMost(arrivals, 256 + streams.length);
+    yield* Deferred.succeed(writer.release, undefined);
+    yield* Fiber.join(leading);
+    yield* Effect.forEach(consumers, Fiber.join, { discard: true });
+    assert.lengthOf((yield* Queue.takeAll(recorder.output)).flat(), 1 + 5 * 64);
+  }),
+);
+
 it.effect.each([false, true])(
   "orders a backlog by focus, thread kind and a finishing control with starved=%s",
   (starved) =>

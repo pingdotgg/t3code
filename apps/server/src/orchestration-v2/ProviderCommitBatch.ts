@@ -7,6 +7,7 @@ import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import { ThreadViewers } from "./ThreadViewers.ts";
@@ -17,6 +18,8 @@ const MAX_BYTES = 1024 * 1024;
 const MAX_HOLD_NANOS = 100_000_000n;
 // A stream waiting this long ranks like a main thread, so subagents cannot starve.
 const STARVATION_MILLIS = 30_000;
+// Bounds snapshots held across stream queues; a full backlog makes streams wait to read more.
+const MAX_QUEUED = 4 * MAX_EVENTS;
 const encodeQueue = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 export const enabled = Config.Boolean("T3CODE_PROVIDER_COMMIT_BATCHING").pipe(
@@ -82,6 +85,8 @@ interface StreamState {
 }
 interface Job {
   readonly stream: StreamState;
+  /** Still in its stream's queue, holding one of the backlog's `MAX_QUEUED` slots. */
+  queued: boolean;
   readonly key: string;
   readonly threadId: string;
   readonly queuedAt: number;
@@ -103,6 +108,7 @@ interface Unit {
 interface Batch {
   readonly units: ReadonlyArray<Unit>;
   readonly reason: "ready" | "limit";
+  readonly dequeued: number;
 }
 
 /**
@@ -154,6 +160,7 @@ export const make = Effect.fn("ProviderCommitBatch.make")(function* (
 ) {
   const viewers = yield* ThreadViewers;
   const wake = yield* Queue.sliding<void>(1);
+  const backlog = yield* Semaphore.make(MAX_QUEUED);
   const streams = new Set<StreamState>();
   const pending = new Set<Job>();
   let closed = false;
@@ -164,6 +171,7 @@ export const make = Effect.fn("ProviderCommitBatch.make")(function* (
     closed = true;
     yield* Queue.shutdown(wake);
     for (const job of pending) yield* job.cancel;
+    yield* backlog.releaseAll;
   });
   yield* Effect.addFinalizer(() => shutdown);
   // These helpers run once per raw event; the shared transaction owns the tracing span.
@@ -183,6 +191,7 @@ export const make = Effect.fn("ProviderCommitBatch.make")(function* (
     };
     const job: Job = {
       stream,
+      queued: false,
       key: entity.key,
       threadId: entity.threadId,
       queuedAt: yield* Clock.currentTimeMillis,
@@ -224,13 +233,23 @@ export const make = Effect.fn("ProviderCommitBatch.make")(function* (
             }),
       cancel: Effect.suspend(() => {
         release();
-        return Deferred.interrupt(reply);
+        const dequeued = job.queued;
+        job.queued = false;
+        return Deferred.interrupt(reply).pipe(
+          Effect.andThen(dequeued ? backlog.release(1) : Effect.void),
+        );
       }),
       settled: Deferred.await(reply).pipe(Effect.exit, Effect.asVoid),
     };
-    yield* Effect.uninterruptibleMask(() =>
+    yield* Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
         if (closed) return yield* Deferred.interrupt(reply);
+        yield* restore(backlog.take(1));
+        if (closed) {
+          yield* backlog.release(1);
+          return yield* Deferred.interrupt(reply);
+        }
+        job.queued = true;
         pending.add(job);
         stream.unsettled++;
         stream.jobs.push(job);
@@ -268,6 +287,7 @@ export const make = Effect.fn("ProviderCommitBatch.make")(function* (
     if (ready.length === 0) return undefined;
     const units: Array<Unit> = [];
     let bytes = 0;
+    let dequeued = 0;
     let reason: Batch["reason"] = "ready";
     for (const { stream } of ready) {
       let take = 0;
@@ -279,11 +299,14 @@ export const make = Effect.fn("ProviderCommitBatch.make")(function* (
       }
       if (take < stream.jobs.length) reason = "limit";
       if (take === 0) break;
-      units.push(...coalesce(stream.jobs.splice(0, take)));
+      const taken = stream.jobs.splice(0, take);
+      for (const job of taken) job.queued = false;
+      dequeued += take;
+      units.push(...coalesce(taken));
       stream.servedAt = ++servings;
       if (units.length >= MAX_EVENTS || bytes >= MAX_BYTES) break;
     }
-    return { units, reason };
+    return { units, reason, dequeued };
   };
   // Commits a prefix of `units` in one transaction and returns how many it took.
   const commitPrefix = (units: ReadonlyArray<Unit>, reason: Batch["reason"]) =>
@@ -355,6 +378,7 @@ export const make = Effect.fn("ProviderCommitBatch.make")(function* (
       Effect.gen(function* () {
         const batch = nextBatch(yield* Clock.currentTimeMillis);
         if (batch === undefined) return yield* Queue.take(wake);
+        yield* backlog.release(batch.dequeued);
         let units = batch.units;
         while (units.length > 0) units = units.slice(yield* commitPrefix(units, batch.reason));
       }),
