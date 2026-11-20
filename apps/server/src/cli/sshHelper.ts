@@ -5,15 +5,66 @@ import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Argument, Command } from "effect/cli";
 
 import packageJson from "../../package.json" with { type: "json" };
+import { bootServiceBaseDirOf, bootServiceUnitPath } from "../cloud/bootService.ts";
 import { compareExactServiceVersions, isExactServiceVersion } from "../cloud/serviceProtocol.ts";
 import * as DesktopUpdateMarker from "../desktopUpdate/DesktopUpdateMarker.ts";
+import { resolveBaseDir } from "../os-jank.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import { serviceLauncherIsServing, stateDirOwned } from "../serviceLauncher.ts";
+
+/** Resolve once at launch; pairing must use that same home even in a non-login shell. */
+export const resolveSshServerHome = Effect.gen(function* () {
+  const environment = yield* HostProcess.Environment;
+  if (environment.T3CODE_HOME?.trim()) return yield* resolveBaseDir(environment.T3CODE_HOME);
+  const fs = yield* FileSystem.FileSystem;
+  const uid = yield* HostProcess.UserId;
+  const processRunner = yield* ProcessRunner.ProcessRunner;
+  // A non-login SSH session may lack this, so `busctl --user` cannot find the user bus.
+  const userManagerEnv =
+    (yield* HostProcess.Platform) === "linux" &&
+    !environment.XDG_RUNTIME_DIR &&
+    uid !== undefined &&
+    !(uid === 0 && environment.SUDO_USER)
+      ? { XDG_RUNTIME_DIR: `/run/user/${uid}` }
+      : undefined;
+  const serviceFile = yield* bootServiceUnitPath().pipe(
+    Effect.provideService(ProcessRunner.ProcessRunner, {
+      run: (request) =>
+        processRunner.run({ ...request, env: { ...userManagerEnv, ...request.env } }),
+    }),
+  );
+  const service =
+    serviceFile === undefined
+      ? ""
+      : yield* fs.readFileString(serviceFile).pipe(
+          Effect.catchIf(
+            (error) => error.reason._tag === "NotFound",
+            () => Effect.succeed(""),
+          ),
+        );
+  return yield* resolveBaseDir(bootServiceBaseDirOf(service));
+});
+
+const homeDir = Command.make("home-dir").pipe(
+  Command.withHandler(() =>
+    resolveSshServerHome.pipe(
+      Effect.provide(ProcessRunner.layer),
+      Effect.tap((home) =>
+        Effect.sync(() => {
+          process.stdout.write(home);
+        }),
+      ),
+    ),
+  ),
+);
 
 const canBind = (port: number) =>
   new Promise<boolean>((resolve) => {
@@ -197,5 +248,6 @@ export const sshHelperCommand = Command.make("__ssh-helper").pipe(
     updateRemaining,
     homeOwned,
     keepServer,
+    homeDir,
   ]),
 );
