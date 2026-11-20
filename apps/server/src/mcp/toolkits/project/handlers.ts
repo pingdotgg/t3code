@@ -6,6 +6,7 @@ import {
   type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   ProjectId,
   type Project as ProjectRecord,
+  type ServerProvider,
   T3_PROJECT_FILE_NAME,
 } from "@t3tools/contracts";
 import * as Digest from "effect/crypto/Digest";
@@ -115,6 +116,10 @@ const projectFileThreadEnvMode = Effect.fn("mcp.projectFileThreadEnvMode")(funct
   ).value;
 });
 
+// Anchored to the fatal line: other diagnostics, such as a dubious-ownership refusal, quote the path.
+const NON_REPOSITORY_FATAL =
+  /^fatal: (?:not a git repository|gitfile does not point to a valid repository)/im;
+
 /** Branches from the checkout's current branch, as the composer does; a checkout with no commit or a detached HEAD stays shared. */
 const defaultWorktreeStrategy = Effect.fn("mcp.defaultWorktreeStrategy")(function* (
   workspaceRoot: string,
@@ -124,11 +129,25 @@ const defaultWorktreeStrategy = Effect.fn("mcp.defaultWorktreeStrategy")(functio
   GitVcsDriver.GitVcsDriver
 > {
   const git = yield* GitVcsDriver.GitVcsDriver;
-  const hasCommit = yield* git.resolveCommit({ cwd: workspaceRoot, revision: "HEAD" }).pipe(
-    Effect.as(true),
-    Effect.orElseSucceed(() => false),
-  );
-  if (!hasCommit) return undefined;
+  const unreadable = new OrchestratorMcpFailure({
+    code: "orchestration_error",
+    message:
+      "Could not read the project's current branch for the new worktree. No thread was created. Retry, or pass workspaceStrategy.",
+  });
+  const commit = yield* git
+    .execute({
+      operation: "mcp.defaultWorktreeStrategy",
+      cwd: workspaceRoot,
+      // Not peeled: a branch whose tip object is missing still resolves, so only an unborn HEAD exits 1.
+      args: ["rev-parse", "--verify", "--quiet", "HEAD"],
+      allowNonZeroExit: true,
+      timeoutMs: 5_000,
+    })
+    .pipe(Effect.orElseSucceed(() => null));
+  // Only Git saying "no commit yet" (exit 1) or "not a repository" keeps the launch shared.
+  if (commit?.exitCode === 1 || (commit !== null && NON_REPOSITORY_FATAL.test(commit.stderr)))
+    return undefined;
+  if (commit?.exitCode !== 0) return yield* unreadable;
   // symbolic-ref skips the index, so a held index lock cannot drop the launch into the shared checkout.
   const head = yield* git
     .execute({
@@ -141,12 +160,7 @@ const defaultWorktreeStrategy = Effect.fn("mcp.defaultWorktreeStrategy")(functio
     .pipe(Effect.orElseSucceed(() => null));
   if (head?.exitCode === 1) return undefined;
   const branch = head?.exitCode === 0 ? head.stdout.trim() : "";
-  if (branch.length === 0)
-    return yield* new OrchestratorMcpFailure({
-      code: "orchestration_error",
-      message:
-        "Could not read the project's current branch for the new worktree. No thread was created. Retry, or pass workspaceStrategy.",
-    });
+  if (branch.length === 0) return yield* unreadable;
   return { type: "worktree" as const, baseRef: branch };
 });
 
@@ -268,10 +282,38 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           yield* assertProjectWorktree(project.workspaceRoot, input.workspaceStrategy.worktreePath);
         if (!replaying && input.modelSelection !== undefined) {
           const { instanceId, model } = input.modelSelection;
-          const providers = yield* (yield* ProviderRegistry.ProviderRegistry).getProviders;
-          const provider = providers.find((candidate) => candidate.instanceId === instanceId);
-          if (provider !== undefined)
-            yield* OrchestrationMcp.requireAdvertisedModel(provider, model);
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          // The thread runs in this folder, whose own provider config can add models.
+          const cwd =
+            input.workspaceStrategy?.type === "existing_worktree"
+              ? input.workspaceStrategy.worktreePath
+              : project?.workspaceRoot;
+          const requireModel = (
+            providers: ReadonlyArray<ServerProvider>,
+          ): Effect.Effect<void, OrchestratorMcpFailure> => {
+            const provider = OrchestrationMcp.withWorkspaceModels(providers, cwd).find(
+              (candidate) => candidate.instanceId === instanceId,
+            );
+            return provider === undefined
+              ? Effect.void
+              : OrchestrationMcp.requireAdvertisedModel(provider, model);
+          };
+          const checked = requireModel(yield* registry.getProviders);
+          yield* cwd === undefined
+            ? checked
+            : checked.pipe(
+                Effect.catchIf(
+                  (error) => error.code === "model_unavailable",
+                  () =>
+                    Project.ProjectService.pipe(
+                      Effect.flatMap((projects) => projects.workspaceScanDirectory(cwd)),
+                      Effect.flatMap((scanCwd) =>
+                        registry.refreshWorkspaceSnapshot({ instanceId, cwd, scanCwd }),
+                      ),
+                      Effect.flatMap(requireModel),
+                    ),
+                ),
+              );
         }
         const projectSettings =
           replaying || project === undefined
@@ -484,6 +526,12 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             ...(created.commitError === undefined ? {} : { commitError: created.commitError }),
           };
         }
+        if (input.defaultModelSelection !== undefined && input.defaultModelSelection !== null)
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message:
+              "Creating a project does not set its default model; set defaultModelSelection afterwards with t3_project_update.",
+          });
         const commandId = yield* newCommandId();
         return yield* projects
           .create({ ...input, workspaceRoot, commandId, projectId: ProjectId.make(commandId) })

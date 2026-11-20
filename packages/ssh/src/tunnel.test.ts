@@ -448,6 +448,45 @@ describe("ssh tunnel scripts", () => {
     }
   });
 
+  it("names missing tar before downloading the release archive", () => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-ssh-runner-"));
+    try {
+      const bin = NodePath.join(root, "bin");
+      const home = NodePath.join(root, "home");
+      NodeFS.mkdirSync(bin);
+      NodeFS.mkdirSync(home);
+      for (const tool of ["sh", "mkdir", "mktemp", "cat", "rm"]) {
+        NodeFS.symlinkSync(
+          NodeChildProcess.execFileSync("sh", ["-c", `command -v ${tool}`], {
+            encoding: "utf8",
+          }).trim(),
+          NodePath.join(bin, tool),
+        );
+      }
+      NodeFS.writeFileSync(
+        NodePath.join(bin, "uname"),
+        '#!/bin/sh\ncase "$1" in -s) echo Linux ;; -m) echo x86_64 ;; esac\n',
+        { mode: 0o755 },
+      );
+      NodeFS.writeFileSync(
+        NodePath.join(bin, "curl"),
+        '#!/bin/sh\necho "download attempt" >&2\nexit 1\n',
+        { mode: 0o755 },
+      );
+      const runner = NodePath.join(root, "run-t3.sh");
+      NodeFS.writeFileSync(runner, SshTunnel.buildRemoteT3RunnerScript(ARCHIVE));
+      const result = NodeChildProcess.spawnSync(NodePath.join(bin, "sh"), [runner, "--version"], {
+        encoding: "utf8",
+        env: { HOME: home, PATH: bin },
+      });
+      assert.notEqual(result.status, 0);
+      assert.include(result.stderr, "needs tar");
+      assert.notInclude(result.stderr, "download attempt");
+    } finally {
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it.effect("accepts launch JSON after remote shell startup noise", () => {
     const target = {
       alias: "devbox",
@@ -1148,6 +1187,83 @@ describe("ssh tunnel scripts", () => {
       }),
   );
 
+  it.effect.each([
+    { name: "rides a live ControlMaster", masterLive: true },
+    { name: "keeps the auth failure without a live ControlMaster", masterLive: false },
+  ])("when the tunnel cannot sign in again, $name", ({ masterLive }) =>
+    Effect.gen(function* () {
+      const denied = "julius@devbox: Permission denied (publickey,keyboard-interactive).\n";
+      const openedForwards: Array<string | undefined> = [];
+      const cancelledForwards: Array<string | undefined> = [];
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          const args = commandArgs(command);
+          const forward = args.includes("-L") ? args[args.indexOf("-L") + 1] : undefined;
+          const muxCommand = args.includes("-O") ? args[args.indexOf("-O") + 1] : undefined;
+          const failed = (stderr: string) => ({
+            ...makeSuccessfulProcess(""),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(255)),
+            stderr: Stream.make(new TextEncoder().encode(stderr)),
+          });
+          if (args.includes("-G")) {
+            return makeSuccessfulProcess("hostname devbox\ncontrolpath /tmp/t3-cm\n");
+          }
+          if (muxCommand === "check") {
+            return masterLive
+              ? makeSuccessfulProcess("")
+              : failed("Control socket connect: ENOENT\n");
+          }
+          if (muxCommand === "cancel") {
+            cancelledForwards.push(forward);
+            return makeSuccessfulProcess("");
+          }
+          if (forward !== undefined) {
+            // Only the signed-in master can pass the host's one-time-code prompt.
+            if (!masterLive || args.includes("ControlPath=none")) return failed(denied);
+            openedForwards.push(forward);
+            return muxCommand === "forward"
+              ? makeSuccessfulProcess("")
+              : makeRunningProcess(() => undefined);
+          }
+          return makeSuccessfulProcess('{"remotePort":3773}\n');
+        }),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            openedForwards.length > 0 ? testHttpClient.execute(request) : Effect.never,
+          ),
+        ),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshAuth.SshPasswordPrompt.disabledLayer,
+        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+      const target = { alias: "devbox", hostname: "devbox", username: null, port: null };
+      yield* Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        const result = yield* Effect.result(manager.ensureEnvironment(target));
+        if (!masterLive) {
+          assert.isTrue(Result.isFailure(result));
+          if (Result.isFailure(result)) {
+            assert.instanceOf(result.failure, SshCommandError);
+            assert.include(result.failure.message, "Permission denied");
+          }
+          assert.deepEqual(openedForwards, []);
+          return;
+        }
+        assert.equal(Result.isFailure(result) ? result.failure.message : "connected", "connected");
+        assert.lengthOf(openedForwards, 1);
+        yield* manager.disconnectEnvironment(target);
+        // The master keeps a forward after the client that asked for it exits.
+        assert.deepEqual(cancelledForwards, openedForwards);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    }),
+  );
+
   it.live("concurrent launches on one remote home record the server that owns it", () =>
     // The second row's server never publishes server-runtime.json.
     Effect.forEach([1_500, null, "wrapper"] as const, (variant) =>
@@ -1645,6 +1761,29 @@ const canBind = (port) =>
         assert.equal(pidAfterOlderClient, newerPid);
         assert.equal(yield* readServerVersion, "0.1.6");
       }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  // An NFS home can carry a ~/.t3 symlink whose target exists only on another host.
+  it.live.skipIf(windowsHost)("launches through a ~/.t3 symlink whose target is missing", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-dangling-home-" });
+      const home = `${root}/home`;
+      const target = `${root}/shared/t3`;
+      yield* fs.makeDirectory(home, { recursive: true });
+      yield* fs.symlink(target, `${home}/.t3`);
+      const launch = `${root}/launch.sh`;
+      yield* fs.writeFileString(
+        launch,
+        SshTunnel.buildRemoteLaunchScript({
+          archiveVersion: "0.1.6",
+          releaseBaseUrl: "http://127.0.0.1:9",
+        }),
+      );
+      const result = yield* runScript(home, [launch, "test-state"]);
+      assert.notInclude(result.stderr, "File exists");
+      assert.isTrue(yield* fs.exists(`${target}/ssh-launch/test-state`), result.stderr);
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live.skipIf(windowsHost)("a newer client still replaces an older managed server", () =>

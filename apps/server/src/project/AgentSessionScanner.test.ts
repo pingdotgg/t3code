@@ -3871,6 +3871,44 @@ describe("parseAgentSessionTranscript", () => {
       ],
       expected: { title: "/review", texts: ["/review", "Found two issues"] },
     },
+    {
+      name: "a prompt answered only by Claude's own sign-in error",
+      records: [
+        { type: "user", message: { role: "user", content: "plugin" } },
+        {
+          type: "assistant",
+          message: {
+            role: "assistant",
+            model: "<synthetic>",
+            content: [{ type: "text", text: "Invalid API key · Please run /login" }],
+          },
+        },
+      ],
+      expected: null,
+    },
+    {
+      name: "a conversation that ends in Claude's own sign-in error",
+      records: [
+        { type: "user", message: { role: "user", content: "plugin" } },
+        {
+          type: "assistant",
+          message: { role: "assistant", model: "claude-sonnet-4-5", content: "Which plugin?" },
+        },
+        { type: "user", message: { role: "user", content: "GitHub" } },
+        {
+          type: "assistant",
+          message: {
+            role: "assistant",
+            model: "<synthetic>",
+            content: [{ type: "text", text: "Invalid API key · Please run /login" }],
+          },
+        },
+      ],
+      expected: {
+        title: "plugin",
+        texts: ["plugin", "Which plugin?", "GitHub", "Invalid API key · Please run /login"],
+      },
+    },
   ])("imports a Claude session only if it got a request: $name", ({ records, expected }) => {
     const thread = AgentSessionScanner.parseAgentSessionTranscript({
       contents: records.map((record) => JSON.stringify(record)).join("\n"),
