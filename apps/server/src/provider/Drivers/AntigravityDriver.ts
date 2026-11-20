@@ -399,12 +399,13 @@ export const AntigravityDriver: ProviderDriver<
       };
     });
 
-    // The agy CLI ignores T3's browser helper during ACP `authenticate`, so Google sign-in runs its
-    // remote-friendly `--login`, which stores the sign-in where the ACP process reads it.
+    // The agy CLI ignores T3's browser helper during ACP `authenticate` and refuses it without a
+    // display, so both Google methods run its remote-friendly `--login`, which stores the sign-in
+    // where the ACP process reads it.
     const codeLogin = Effect.fn("AntigravityDriver.codeLogin")(function* (input: {
       readonly onAuthorizationUrl: (url: string) => Effect.Effect<void, AcpErrors.AcpError>;
     }) {
-      if (auth.authMethod !== "oauth-personal") return undefined;
+      if (!antigravityAuthUsesBrowser(auth.authMethod)) return undefined;
       const cwd = yield* fileSystem
         .makeTempDirectoryScoped({ prefix: "t3-antigravity-login-" })
         .pipe(
