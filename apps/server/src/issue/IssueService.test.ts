@@ -613,6 +613,9 @@ describe("IssueService with a standalone tracker", () => {
         ["web", "ENG"],
         ["web", "acme/web"],
       ]);
+      listed.length = 0;
+      yield* bound.list({ state: "open", excludeProjectIds: ["web" as ProjectId] });
+      expect(listed).toEqual(["github github.com acme/api"]);
       // A reference picks the project's tracker by kind; both are the project's own, so writable.
       const linearRef = {
         projectId: "web" as ProjectId,
