@@ -39,7 +39,7 @@ import * as ProviderLatestVersions from "./ProviderLatestVersions.ts";
 const LATEST_VERSION_TIMEOUT_MS = 4_000;
 const PROBE_TIMEOUT_MS = 10_000;
 const PROBE_MAX_BYTES = 256 * 1_024;
-const MISE_WRAPPER_MAX_BYTES = 16 * 1_024;
+const WRAPPER_SCRIPT_MAX_BYTES = 16 * 1_024;
 const PROVIDER_UPDATE_ACTION_TOAST_MESSAGE = "Install the update now or review provider settings.";
 
 const MAINTENANCE_CAPABILITIES_CACHE_TTL = Duration.hours(1);
@@ -255,12 +255,32 @@ function isYarnGlobalCommandPath(commandPath: string): boolean {
  * Paths mise owns. npm globals under mise's own Node belong to npm, which proves their prefix.
  * A command wrapper is a symlink to the `mise` binary, which dispatches on argv[0].
  */
-function isMiseCommandPath(commandPath: string): boolean {
+function isMiseCommandPath(commandPath: string, env: NodeJS.ProcessEnv): boolean {
   const normalized = normalizeCommandPath(commandPath);
+  const dir = (root: string | undefined, ...segments: ReadonlyArray<string>) =>
+    root ? [normalizeCommandPath(root).replace(/\/+$/, ""), ...segments].join("/") : undefined;
+  // `MISE_DATA_DIR` and friends move mise's layout off its usual `/mise/` paths.
+  const installRoots = [
+    dir(env.MISE_DATA_DIR, "installs"),
+    dir(env.MISE_DATA_DIR, "i"),
+    dir(env.MISE_SYSTEM_DATA_DIR, "installs"),
+    dir(env.MISE_INSTALLS_DIR),
+    dir(env.MISE_INSTALL_STORE_DIR),
+    dir(env.MISE_SYSTEM_INSTALLS_DIR),
+  ];
+  const otherRoots = [
+    dir(env.MISE_DATA_DIR, "shims"),
+    dir(env.MISE_DATA_DIR, "command-wrappers"),
+    dir(env.MISE_SYSTEM_DATA_DIR, "shims"),
+  ];
+  const under = (root: string | undefined) =>
+    root !== undefined && normalized.startsWith(`${root}/`);
   return (
     (normalized.includes("/mise/installs/") && !normalized.includes("/mise/installs/node/")) ||
     normalized.includes("/mise/shims/") ||
-    normalized.includes("/mise/command-wrappers/")
+    normalized.includes("/mise/command-wrappers/") ||
+    installRoots.some((root) => under(root) && !under(dir(root, "node"))) ||
+    otherRoots.some(under)
   );
 }
 
@@ -626,7 +646,9 @@ export const resolveMiseProviderMaintenance = Effect.fn("resolveMiseProviderMain
     const commandPaths = [context.resolvedCommandPath, context.realCommandPath];
     const isShim = isMiseExecutablePath(context.realCommandPath);
     const looksMise =
-      isShim || commandPaths.some(isMiseCommandPath) || (yield* isMiseWrapperScript(context));
+      isShim ||
+      commandPaths.some((commandPath) => isMiseCommandPath(commandPath, context.env)) ||
+      (yield* isMiseWrapperScript(context));
     const manual = (installPath: string) =>
       makeManualOnlyProviderMaintenanceCapabilities({ ...owner, installPath });
     const notOwned = (installPath: string) => (looksMise ? manual(installPath) : null);
@@ -1067,20 +1089,21 @@ export const resolveHomebrewProviderMaintenance = Effect.fn("resolveHomebrewProv
   },
 );
 
-const isMiseWrapperScript = Effect.fn("isMiseWrapperScript")(function* (
-  context: ProviderMaintenanceResolutionContext,
-) {
+/** The command's text when it is small enough to be a wrapper script, else "". */
+const readWrapperScript = Effect.fn("readWrapperScript")(function* (commandPath: string) {
   const fileSystem = yield* FileSystem.FileSystem;
-  const size = yield* fileSystem.stat(context.realCommandPath).pipe(
+  const size = yield* fileSystem.stat(commandPath).pipe(
     Effect.map((info) => Number(info.size)),
     Effect.orElseSucceed(() => Infinity),
   );
-  if (size > MISE_WRAPPER_MAX_BYTES) {
-    return false;
-  }
-  const script = yield* fileSystem
-    .readFileString(context.realCommandPath)
-    .pipe(Effect.orElseSucceed(() => ""));
+  if (size > WRAPPER_SCRIPT_MAX_BYTES) return "";
+  return yield* fileSystem.readFileString(commandPath).pipe(Effect.orElseSucceed(() => ""));
+});
+
+const isMiseWrapperScript = Effect.fn("isMiseWrapperScript")(function* (
+  context: ProviderMaintenanceResolutionContext,
+) {
+  const script = yield* readWrapperScript(context.realCommandPath);
   return script.startsWith("#!") && /\bmise\s+(?:x|exec)\b/.test(script);
 });
 
@@ -1089,7 +1112,7 @@ const isMiseWrapperScript = Effect.fn("isMiseWrapperScript")(function* (
  * or null when it does not. MacPorts prefixes are root-owned and its Claude port disables
  * `claude update`, so neither npm nor the native updater can upgrade these installs.
  */
-const resolveMacPortsOwner = Effect.fn("resolveMacPortsOwner")(function* (
+export const resolveMacPortsOwner = Effect.fn("resolveMacPortsOwner")(function* (
   context: ProviderMaintenanceResolutionContext,
 ) {
   if (context.platform === "win32") return null;
@@ -1108,22 +1131,29 @@ const resolveMacPortsOwner = Effect.fn("resolveMacPortsOwner")(function* (
   return /^[\w.+-]+$/.test(name) ? name : "";
 });
 
-// Volta bin links only identify its shim; the package image proves ownership.
+// Volta bin entries only identify its shim; the package image proves ownership.
+// POSIX links point at `volta-shim`; Windows Volta 2 writes `volta run %~n0 %*` scripts.
 const isVoltaPackageInstall = Effect.fn("isVoltaPackageInstall")(function* (
   context: ProviderMaintenanceResolutionContext,
   packageName: string,
 ) {
   const path = yield* Path.Path;
-  if (
-    path.basename(normalizeCommandPath(context.realCommandPath)).replace(/\.exe$/, "") !==
-    "volta-shim"
-  ) {
-    return false;
-  }
+  const fileSystem = yield* FileSystem.FileSystem;
   const voltaHome = path.dirname(path.dirname(context.resolvedCommandPath));
   const packageDir = path.join(voltaHome, "tools", "image", "packages", ...packageName.split("/"));
-  const fileSystem = yield* FileSystem.FileSystem;
-  return yield* fileSystem.exists(packageDir).pipe(Effect.orElseSucceed(() => false));
+  if (!(yield* fileSystem.exists(packageDir).pipe(Effect.orElseSucceed(() => false)))) {
+    return false;
+  }
+  if (/^volta-shim(?:\.exe)?$/.test(path.basename(normalizeCommandPath(context.realCommandPath)))) {
+    return true;
+  }
+  const script = (yield* readWrapperScript(context.realCommandPath))
+    .replace(/\r\n/g, "\n")
+    .replace(/\n$/, "");
+  return (
+    script === "@echo off\nvolta run %~n0 %*" ||
+    script === '#!/bin/bash\nvolta run "$(basename $0)" "$@"'
+  );
 });
 
 const resolveNpmGlobalPrefix = Effect.fn("resolveNpmGlobalPrefix")(function* (
