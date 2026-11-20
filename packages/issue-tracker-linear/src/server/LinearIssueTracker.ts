@@ -484,7 +484,8 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
 
       getIssue: Effect.fn("LinearIssueTracker.getIssue")(function* (input) {
         const identifier = yield* requireIdentifier("getIssue", input.key);
-        // Fetch the independent reads together. A missing issue can cancel the viewer read.
+        // One read of the viewer: the id matches reactions, the handle is what the client sees.
+        // A missing issue interrupts it rather than waiting for it.
         const [issue, me] = yield* Effect.all(
           [
             linear.getIssue(identifier, COMMENTS_PAGE).pipe(
