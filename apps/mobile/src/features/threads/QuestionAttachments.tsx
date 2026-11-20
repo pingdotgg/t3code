@@ -28,9 +28,11 @@ import {
   releaseUnusedComposerAttachmentFiles,
 } from "../../state/use-composer-drafts";
 import {
+  appendUnsentQuestionAttachments,
   changeQuestionAttachmentPreparation,
   questionAttachmentDraftKey,
   questionAttachmentPreparationAtom,
+  startQuestionImagePreparation,
 } from "../../state/question-attachments";
 
 export function QuestionAttachments(props: {
@@ -108,19 +110,23 @@ export function QuestionAttachments(props: {
       props.requestId,
       props.question.id,
     );
-    changeQuestionAttachmentPreparation(key, 1);
+    const preparation = startQuestionImagePreparation(key);
     void convertPastedImagesToAttachments({ uris })
       .then(async (result) => {
-        if (
-          scope.active &&
-          (appAtomRegistry.get(questionAttachmentPreparationAtom)[key] ?? 0) > 0
-        ) {
-          const problems = [
-            ...(result.error ? [result.error] : []),
-            ...(append(key, result.attachments) > 0 ? [gt("Too many attachments.")] : []),
-          ];
-          if (problems.length) Dialog.alert(gt("Could not paste image"), problems.join("\n\n"));
-        } else await releaseUnusedComposerAttachmentFiles(result.attachments);
+        const destination = preparation.destination();
+        if (destination === null || (destination === key && !scope.active)) {
+          await releaseUnusedComposerAttachmentFiles(result.attachments);
+          return;
+        }
+        const rejected =
+          destination === key
+            ? append(key, result.attachments)
+            : appendUnsentQuestionAttachments(destination, result.attachments);
+        const problems = [
+          ...(result.error ? [result.error] : []),
+          ...(rejected > 0 ? [gt("Too many attachments.")] : []),
+        ];
+        if (problems.length) Dialog.alert(gt("Could not paste image"), problems.join("\n\n"));
       })
       .catch((error) =>
         Dialog.alert(
@@ -128,7 +134,7 @@ export function QuestionAttachments(props: {
           errorDisplayMessage(error, m) ?? gt("Try again."),
         ),
       )
-      .finally(() => changeQuestionAttachmentPreparation(key, -1));
+      .finally(preparation.finish);
   });
   if (!selectedThread || props.question.allowCustomAnswer === false) return null;
   const { environmentId, id: threadId } = selectedThread;

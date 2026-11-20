@@ -15,6 +15,11 @@ import type {
 } from "@t3tools/contracts";
 import { create } from "zustand";
 import { DraftId, useComposerDraftStore } from "./composerDraftStore";
+import {
+  cancelPreparingComposerImages,
+  countPreparingComposerImages,
+  movePreparingComposerImagesToThread,
+} from "./components/chat/preparingComposerImages";
 import { releaseDraftAttachments } from "./lib/attachmentUploadQueue";
 import {
   carryDisplacedCustomAnswerIntoPrompt,
@@ -115,6 +120,7 @@ export function clearQuestionAttachmentDraft(
     }
   }
   store.clearComposerContent(key);
+  if (countPreparingComposerImages(key) > 0) cancelPreparingComposerImages(key);
   useQuestionAttachmentPreparation.setState(({ counts }) => {
     const next = { ...counts };
     delete next[key];
@@ -182,6 +188,11 @@ function returnUnsentAnswersToThreadDraft(
     (requestId) =>
       `${threadPrefix}${encodeURIComponent(`${JSON.stringify([requestId]).slice(0, -1)},`)}`,
   );
+  for (const key of Object.keys(useQuestionAttachmentPreparation.getState().counts)) {
+    if (requestPrefixes.some((requestPrefix) => key.startsWith(requestPrefix))) {
+      movePreparingComposerImagesToThread(key, target);
+    }
+  }
   const questionDrafts = Object.entries(store.draftsByThreadKey).filter(([key]) =>
     requestPrefixes.some((requestPrefix) => key.startsWith(requestPrefix)),
   );

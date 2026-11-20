@@ -18,15 +18,14 @@ import {
   type DraftId,
   composerFileMatchesReattachMarker,
   composerFileNeedsReattach,
+  composerTargetKey,
+  useComposerDraftStore,
 } from "../../composerDraftStore";
 import { type ComposerPromptEditorHandle } from "../ComposerPromptEditorTiptap";
 import type { PendingUserInputProgress } from "../../pendingUserInput";
 import type { ComposerAttachmentInsertion } from "../composerAttachmentInsertion";
 import { type PendingUserInput } from "../../session-logic";
-import {
-  changeQuestionAttachmentPreparation,
-  useQuestionAttachmentPreparation,
-} from "../../questionAttachments";
+import { changeQuestionAttachmentPreparation } from "../../questionAttachments";
 import {
   classifyComposerAttachmentFile,
   composerFileAttachmentMimeType,
@@ -57,6 +56,7 @@ import {
   addPreparingComposerImages,
   getPreparingComposerImages,
   isPreparingComposerImage,
+  movedPreparingImageThread,
   removePreparingComposerImages,
 } from "./preparingComposerImages";
 
@@ -286,9 +286,17 @@ export function useComposerAttachmentIntake(input: {
     const pendingInsertion = imageAttachmentsGetChips
       ? composerEditorRef.current?.captureAttachmentInsertion()
       : undefined;
-    for (const { id, file } of preparingImages) {
+    for (const image of preparingImages) {
+      const { id, file } = image;
+      const movedThread = movedPreparingImageThread(image);
       // Removed from the strip while an earlier image was compressing.
-      if (!isPreparingComposerImage(attachmentTargetKey, id)) continue;
+      if (
+        !isPreparingComposerImage(
+          movedThread ? composerTargetKey(movedThread) : attachmentTargetKey,
+          id,
+        )
+      )
+        continue;
       // A rejection must still reach the cleanup below: a leaked
       // placeholder would block sending from this draft for good.
       const result = await prepareImageForAttachment(
@@ -314,19 +322,20 @@ export function useComposerAttachmentIntake(input: {
       compressed.push({ id, file: result.file });
     }
     pendingInsertion?.dispose();
-    const questionDiscarded =
-      questionAttachmentTarget !== null &&
-      !useQuestionAttachmentPreparation.getState().counts[questionAttachmentTarget];
+    const movedThread = preparingImages.map(movedPreparingImageThread).find(Boolean);
+    const completionTargetKey = movedThread ? composerTargetKey(movedThread) : attachmentTargetKey;
+    const compressionError = [...compressionErrors].findLast(([id]) =>
+      isPreparingComposerImage(completionTargetKey, id),
+    )?.[1];
     // Same tick as the draft insert below, so the strip swaps placeholders for
     // real tiles in one render. A placeholder removed meanwhile stays removed.
     const stillPreparingIds = removePreparingComposerImages(
-      attachmentTargetKey,
+      completionTargetKey,
       new Set(preparingImages.map((image) => image.id)),
-      { cancelSubmission: compressionErrors.size > 0 || questionDiscarded },
+      { cancelSubmission: compressionError !== undefined },
     );
-    if (questionAttachmentTarget)
+    if (questionAttachmentTarget && !movedThread)
       changeQuestionAttachmentPreparation(questionAttachmentTarget, -stillPreparingIds.size);
-    if (questionDiscarded) return false;
     const nextImages: ComposerImageAttachment[] = compressed
       .filter(({ id }) => stillPreparingIds.has(id))
       .map(({ id, file }) => ({
@@ -339,18 +348,20 @@ export function useComposerAttachmentIntake(input: {
         file,
       }));
     const storedImageIds = new Set(
-      nextImages.length === 1 && nextImages[0]
-        ? addComposerImage(nextImages[0])
-        : nextImages.length > 1
-          ? addComposerImagesToDraft(nextImages)
-          : [],
+      movedThread
+        ? useComposerDraftStore.getState().addImages(movedThread, nextImages)
+        : nextImages.length === 1 && nextImages[0]
+          ? addComposerImage(nextImages[0])
+          : nextImages.length > 1
+            ? addComposerImagesToDraft(nextImages)
+            : [],
     );
     const storedImages = nextImages.filter((image) => storedImageIds.has(image.id));
     // The draft may be gone by now; revoking a URL the store already revoked is harmless.
     for (const image of nextImages) {
       if (!storedImageIds.has(image.id)) URL.revokeObjectURL(image.previewUrl);
     }
-    if (storedImages.length > 0 && imageAttachmentsGetChips) {
+    if (storedImages.length > 0 && imageAttachmentsGetChips && !movedThread) {
       insertedAny =
         insertAttachmentReferences(
           storedImages.map(imageContextReference),
@@ -362,10 +373,6 @@ export function useComposerAttachmentIntake(input: {
     // now other work (a failed send, an overlapping paste) may have set a
     // thread error this call knows nothing about, and clearing it would
     // swallow that message.
-    const compressionError = [...compressionErrors]
-      .filter(([id]) => stillPreparingIds.has(id))
-      .map(([, message]) => message)
-      .at(-1);
     if (compressionError !== undefined) {
       setThreadError(threadId, compressionError);
     }
