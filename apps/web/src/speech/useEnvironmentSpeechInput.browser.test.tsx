@@ -38,6 +38,7 @@ const mocks = vi.hoisted(() => ({
   voiceCapable: new Set<string>(),
   cloudVoiceCapable: new Set<string>(),
   canDictate: new Set<string>(),
+  scopeLookupFailed: new Set<string>(),
   prepared: new Map<string, unknown>(),
   primaryEnvironmentId: "primary-env",
   statusRequests: [] as string[],
@@ -69,7 +70,8 @@ vi.mock("../components/sidebar/mainAppLocation", () => ({
 }));
 vi.mock("../state/session", () => ({
   useEnvironmentScope: (id: string) => mocks.canDictate.has(id),
-  useEnvironmentScopeDenied: () => false,
+  useEnvironmentScopeDenied: (id: string) =>
+    !mocks.canDictate.has(id) && !mocks.scopeLookupFailed.has(id),
   usePreparedConnection: (environmentId: string | null) => {
     if (!environmentId || !mocks.connected.has(environmentId)) return Option.none();
     let prepared = mocks.prepared.get(environmentId);
@@ -229,6 +231,7 @@ function setup(options: { readonly destination?: string | null } = {}) {
   mocks.voiceCapable = new Set(["primary-env", THREAD_ENV, "env-a", "env-b"]);
   mocks.cloudVoiceCapable.clear();
   mocks.canDictate = new Set(mocks.voiceCapable);
+  mocks.scopeLookupFailed = new Set();
   mocks.prepared.clear();
   mocks.statusRequests = [];
   mocks.statusUnavailable = false;
@@ -462,20 +465,23 @@ it("keeps a recording alive when its last connected holder unmounts while offlin
   expect(mocks.transcribeCalls).toEqual(["env-a"]);
 });
 
-it.each(["authorization", "capability"] as const)(
-  "abandons a recording when connected destination %s is lost",
-  async (loss) => {
-    setup({ destination: "env-a" });
-    await using screen = await render(<Probe />);
-    await act(() => mocks.voice.start());
-    if (loss === "authorization") mocks.canDictate.delete("env-a");
-    else mocks.voiceCapable.delete("env-a");
-    await screen.rerender(<Probe />);
-    expect(mocks.voice.state.phase).toBe("idle");
-    await act(() => mocks.voice.stop());
-    expect(mocks.transcribeCalls).toEqual([]);
-  },
-);
+it.each([
+  ["authorization is denied", "idle"],
+  ["capability is lost", "idle"],
+  ["the session lookup fails", "recording"],
+] as const)("when a connected destination's %s, the recording ends up %s", async (loss, phase) => {
+  setup({ destination: "env-a" });
+  await using screen = await render(<Probe />);
+  await act(() => mocks.voice.start());
+  if (loss === "capability is lost") mocks.voiceCapable.delete("env-a");
+  else mocks.canDictate.delete("env-a");
+  if (loss === "the session lookup fails") mocks.scopeLookupFailed.add("env-a");
+  await screen.rerender(<Probe />);
+  expect(mocks.voice.state.phase).toBe(phase);
+  if (phase === "recording") return;
+  await act(() => mocks.voice.stop());
+  expect(mocks.transcribeCalls).toEqual([]);
+});
 
 it.each([
   ["a stored thread draft keeps recording into it", true],

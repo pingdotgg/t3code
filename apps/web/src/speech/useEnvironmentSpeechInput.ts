@@ -153,8 +153,9 @@ export function useVoiceTranscriptionDestination() {
           })
         : (environment?.label ?? null),
     prepared: supported && canDictate ? connection : null,
+    // Only an explicit denial or lost capability releases a recording; a failed lookup keeps it.
     retainOnDisconnect: Boolean(
-      environmentId && grant && (connection ? supported && canDictate : !scopeDenied),
+      environmentId && grant && !scopeDenied && (connection === null || supported),
     ),
   };
 }
