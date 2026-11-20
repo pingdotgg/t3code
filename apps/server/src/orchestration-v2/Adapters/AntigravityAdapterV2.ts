@@ -32,6 +32,7 @@ import {
 import {
   ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
   antigravitySubagentLaunches,
+  antigravitySwarmAtWork,
   describeAntigravitySubagentLaunches,
   readAntigravityChildrenAtWork,
 } from "../../provider/acp/AntigravityChildWork.ts";
@@ -298,6 +299,8 @@ export function makeAntigravityAcpAdapterFlavor(
       : {
           watchPromptOutcome: (sessionId: string) =>
             watchAntigravityPromptOutcome(profileDirectory, sessionId),
+          detachedWorkOutlivingPrompt: (sessionId: string) =>
+            antigravitySwarmAtWork(profileDirectory, sessionId),
           subagentsOutlivingPrompt: ({ sessionId, nativeTaskIds }) =>
             readAntigravityChildrenAtWork({
               profileDirectory,

@@ -998,6 +998,7 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
   detachedChildProfile?: string,
   /** agy 1.5.11 answers a steered prompt once the next one arrives, which runs to `releaseSteer`. */
   steering?: { readonly agentVersion: string; readonly holdsFirstPrompt: boolean },
+  initialTool?: EffectAcpSchema.SessionUpdate,
 ) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const path = yield* Path.Path;
@@ -1075,16 +1076,17 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
                 return { stopReason: "end_turn" as const };
               }
               yield* send(
-                detachedChildProfile === undefined
-                  ? { sessionUpdate: "tool_call", ...command, status: "in_progress" }
-                  : {
-                      sessionUpdate: "tool_call",
-                      toolCallId: "call_research",
-                      kind: "other",
-                      title: "Run invoke_subagent",
-                      status: "completed",
-                      rawInput: { TypeName: "research", Role: "Researcher", Prompt: "Read it" },
-                    },
+                initialTool ??
+                  (detachedChildProfile === undefined
+                    ? { sessionUpdate: "tool_call", ...command, status: "in_progress" }
+                    : {
+                        sessionUpdate: "tool_call",
+                        toolCallId: "call_research",
+                        kind: "other",
+                        title: "Run invoke_subagent",
+                        status: "completed",
+                        rawInput: { TypeName: "research", Role: "Researcher", Prompt: "Read it" },
+                      }),
               );
               yield* send({
                 sessionUpdate: "agent_message_chunk",
@@ -1211,6 +1213,67 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
 });
 
 describe("AntigravityAdapterV2 work after the prompt ends", () => {
+  it.live("keeps the run open for swarm workers after the launch tool completes", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const profile = yield* fs.makeTempDirectoryScoped({ prefix: "t3-antigravity-swarm-" });
+      const brain = path.join(profile, "antigravity-acp", "brain");
+      const swarm = path.join(brain, "mock-session-1", ".system_generated", "swarm");
+      const logs = path.join(brain, "worker-1", ".system_generated", "logs");
+      const transcript = path.join(logs, "transcript.jsonl");
+      yield* fs.makeDirectory(swarm, { recursive: true });
+      yield* fs.makeDirectory(logs, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(swarm, "members.json"),
+        JSON.stringify({
+          members: {
+            coordinator: { conversation_id: "mock-session-1", wake_mode: "working" },
+            worker: { conversation_id: "worker-1", wake_mode: "working" },
+          },
+        }),
+      );
+      yield* fs.writeFileString(
+        transcript,
+        JSON.stringify({ step_index: 0, type: "SYSTEM_MESSAGE", status: "DONE" }) + "\n",
+      );
+      const { offers, send, startTurn, throughPromptSettled, throughTerminal, usage } =
+        yield* openSessionWithRunningCommand({}, profile, undefined, {
+          sessionUpdate: "tool_call",
+          toolCallId: "call_swarm",
+          kind: "other",
+          title: "Run swarm",
+          status: "completed",
+          rawInput: { action: "add", name: "worker", brief: "Check the chart" },
+        });
+
+      yield* startTurn(1, false);
+      yield* throughPromptSettled;
+      yield* fs.writeFileString(
+        transcript,
+        [
+          {
+            step_index: 1,
+            type: "PLANNER_RESPONSE",
+            status: "DONE",
+            tool_calls: [{ name: "swarm_wait" }],
+          },
+          { step_index: 2, type: "GENERIC", status: "DONE" },
+        ]
+          .map((step) => JSON.stringify(step))
+          .join("\n") + "\n",
+      );
+      yield* send({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "The swarm checked the chart." },
+      });
+      yield* send(usage);
+      const events = yield* throughTerminal;
+      assert.include(JSON.stringify(events), "The swarm checked the chart.");
+      assert.lengthOf(offers, 0, "the worker report stays in the original run");
+    }).pipe(Effect.provide(layerSession)),
+  );
+
   // agy sets `IsDaemon` on a command it does not wait for. When it exits, the agent replies
   // with no prompt open.
   it.effect("continues in one run when a finished daemon wakes the agent", () =>

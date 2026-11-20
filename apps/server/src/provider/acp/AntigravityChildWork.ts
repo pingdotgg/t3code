@@ -367,32 +367,24 @@ function transcriptSteps(
   );
 }
 
-/** Reads the tail of the transcript at the named child's own unlinked profile path. */
-async function readChildTranscript(
+async function readTranscriptTail(
   profileRoot: string,
-  child: InvokeRecord["children"][number],
-  prompt: string,
+  conversationId: string,
+  logUri: string | undefined,
   byteCap: number,
 ) {
   const expected = (
     await antigravityManagedPath(
       profileRoot,
-      [
-        "antigravity-acp",
-        "brain",
-        child.conversationId,
-        ".system_generated",
-        "logs",
-        "transcript.jsonl",
-      ],
+      ["antigravity-acp", "brain", conversationId, ".system_generated", "logs", "transcript.jsonl"],
       "file",
     )
   )?.path;
   if (expected === undefined) return undefined;
-  if (child.logUri !== undefined) {
+  if (logUri !== undefined) {
     let named: string;
     try {
-      named = NodeURL.fileURLToPath(child.logUri);
+      named = NodeURL.fileURLToPath(logUri);
     } catch {
       return undefined;
     }
@@ -414,14 +406,48 @@ async function readChildTranscript(
     let lineStart = 0;
     if (tailStart > 0) {
       const newline = bytes.indexOf(0x0a);
-      if (newline === -1) return { steps: [], truncated: true };
+      if (newline === -1) return { contents: "", truncated: true };
       lineStart = newline + 1;
     }
     const contents = bytes.toString("utf8", lineStart);
-    return { steps: transcriptSteps(contents, prompt), truncated: tailStart > 0 };
+    return { contents, truncated: tailStart > 0 };
   } finally {
     await handle.close();
   }
+}
+
+const decodeSwarmRoster = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      members: Schema.Record(
+        Schema.String,
+        Schema.Struct({
+          conversation_id: Schema.String,
+          killed: Schema.optional(Schema.Boolean),
+          wake_mode: Schema.optional(Schema.String),
+        }),
+      ),
+    }),
+  ),
+);
+
+function swarmWorkerAtWork(transcript: string): boolean {
+  const lines = transcript.split("\n");
+  const results: Array<boolean> = [];
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const step = Option.getOrUndefined(decodeTranscriptLine(lines[index]));
+    if (index === lines.length - 1 && step?.type === "ERROR_MESSAGE") return false;
+    if (step?.type === "GENERIC") {
+      results.push(step.status === "DONE");
+      continue;
+    }
+    if (step?.type !== "PLANNER_RESPONSE" || step.status !== "DONE") return true;
+    const calls = step.tool_calls ?? [];
+    if (calls.length === 0) return results.length > 0;
+    const wait = calls.findIndex((call) => call.name === "swarm_wait");
+    return wait < 0 || results.length < calls.length || !results[results.length - 1 - wait];
+  }
+  return true;
 }
 
 class AntigravityChildWorkReadError extends Schema.TaggedError<AntigravityChildWorkReadError>()(
@@ -432,6 +458,42 @@ class AntigravityChildWorkReadError extends Schema.TaggedError<AntigravityChildW
     return "Could not read Antigravity subagent records.";
   }
 }
+
+/** Swarm launches complete immediately. The board and worker transcripts track the actual work. */
+export const antigravitySwarmAtWork = Effect.fn("antigravitySwarmAtWork")(function* (
+  profileDirectory: string,
+  sessionId: string,
+) {
+  if (!NATIVE_ID.test(sessionId)) return false;
+  const read = async () => {
+    const root = await antigravityProfileRoot(profileDirectory);
+    if (root === undefined) return false;
+    const file = await antigravityManagedPath(
+      root,
+      ["antigravity-acp", "brain", sessionId, ".system_generated", "swarm", "members.json"],
+      "file",
+    );
+    if (file === undefined || file.info.size > MAX_STEP_BYTES) return false;
+    const roster = Option.getOrUndefined(
+      decodeSwarmRoster(await NodeFSP.readFile(file.path, "utf8")),
+    );
+    if (roster === undefined) return false;
+    const workers = Object.values(roster.members);
+    if (workers.length > MAX_DETACHED_CHILDREN) return false;
+    for (const worker of workers) {
+      const id = worker.conversation_id;
+      if (worker.killed || id === sessionId || !NATIVE_ID.test(id)) continue;
+      const tail = await readTranscriptTail(root, id, undefined, MAX_STEP_BYTES);
+      const contents = tail?.contents.trimEnd();
+      if (contents ? swarmWorkerAtWork(contents) : worker.wake_mode === "working") return true;
+    }
+    return false;
+  };
+  return yield* Effect.tryPromise({
+    try: read,
+    catch: (cause) => new AntigravityChildWorkReadError({ cause }),
+  }).pipe(Effect.orElseSucceed(() => false));
+});
 
 /** Children a subagent tool call launched, proven by the parent's own session record. */
 export const readAntigravityChildWork = Effect.fn("readAntigravityChildWork")(function* (input: {
@@ -477,17 +539,20 @@ export const readAntigravityChildWork = Effect.fn("readAntigravityChildWork")(fu
       );
       return Promise.all(
         children.map(async (child, index) => {
-          const transcript = await readChildTranscript(
+          const transcript = await readTranscriptTail(
             profileRoot,
-            child,
-            launches[index]?.prompt ?? "",
+            child.conversationId,
+            child.logUri,
             byteCap,
           ).catch(() => undefined);
           return {
             conversationId: child.conversationId,
             role: launches[index]?.role ?? "",
             prompt: launches[index]?.prompt ?? "",
-            steps: transcript?.steps ?? null,
+            steps:
+              transcript === undefined
+                ? null
+                : transcriptSteps(transcript.contents, launches[index]?.prompt ?? ""),
             truncated: transcript?.truncated ?? false,
           };
         }),

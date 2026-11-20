@@ -526,6 +526,8 @@ export interface AcpAdapterV2Flavor {
     cwd: string,
   ) => Effect.Effect<void>;
   readonly subagentsIdleOnTurnCompletion?: boolean;
+  /** Checks native work that has no running ACP tool or subagent item. */
+  readonly detachedWorkOutlivingPrompt?: (sessionId: string) => Effect.Effect<boolean>;
   /**
    * Subagents the agent goes on running after its prompt, with no update when one ends. Asked
    * when the prompt ends and when a reply the agent started by itself ends; the native task ids
@@ -1676,6 +1678,7 @@ interface ActiveAcpTurn {
   readonly promptStarted: Deferred.Deferred<void, never>;
   promptUsage: EffectAcpSchema.Usage | undefined;
   backgroundFinalizeGeneration: number;
+  detachedWorkPending: boolean;
   /** `replyEndsWithUsageUpdate`: output arrived and its closing `usage_update` has not. */
   replyOpen: boolean;
   /** The agent's own id for this turn's prompt, from `forkFromTurn.nativeTurnId`. */
@@ -2701,11 +2704,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 // has no prompt, so nothing else ends it.
                 const held = yield* Ref.get(activeTurn);
                 if (
-                  flavor.toolOutlivesPrompt === undefined ||
+                  (flavor.toolOutlivesPrompt === undefined &&
+                    flavor.detachedWorkOutlivingPrompt === undefined) ||
                   held === null ||
                   !held.promptSettled ||
                   held.finalized ||
-                  !hasDeferredBackgroundWork(held)
+                  !(held.detachedWorkPending || hasDeferredBackgroundWork(held))
                 )
                   return;
                 for (const tool of held.tools.values()) {
@@ -8675,16 +8679,25 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const debounce = context.replyOpen
             ? ACP_OPEN_REPLY_QUIET_LIMIT
             : ACP_DEFERRED_FINALIZE_DEBOUNCE;
+          const canFinalize = () =>
+            context.promptSettled &&
+            !context.finalized &&
+            !context.interrupted &&
+            context.backgroundFinalizeGeneration === generation &&
+            !hasDeferredBackgroundWork(context);
           yield* Effect.gen(function* () {
-            yield* Effect.sleep(debounce);
-            if (
-              context.finalized ||
-              context.interrupted ||
-              context.backgroundFinalizeGeneration !== generation
-            ) {
-              return;
+            while (true) {
+              yield* Effect.sleep(debounce);
+              if (!canFinalize()) return;
+              const wasPending = context.detachedWorkPending;
+              if (flavor.detachedWorkOutlivingPrompt !== undefined) {
+                const pending = yield* flavor.detachedWorkOutlivingPrompt(context.nativeThreadId);
+                if (!canFinalize()) return;
+                context.detachedWorkPending = pending;
+              }
+              // Allow the last worker's wake to arrive after its native work has stopped.
+              if (!context.detachedWorkPending && !wasPending) break;
             }
-            if (hasDeferredBackgroundWork(context)) return;
             const status = context.promptSettledStatus ?? "completed";
             yield* finalizeTurn(context, status);
           }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
@@ -9070,8 +9083,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   if (context.finalized) return;
                   if (
                     defersFinalizeForBackgroundWork &&
+                    status === "completed" &&
+                    flavor.detachedWorkOutlivingPrompt !== undefined
+                  ) {
+                    context.detachedWorkPending = yield* flavor.detachedWorkOutlivingPrompt(
+                      context.nativeThreadId,
+                    );
+                    if (context.detachedWorkPending) yield* scheduleDeferredFinalize(context);
+                  }
+                  if (
+                    defersFinalizeForBackgroundWork &&
                     !context.interrupted &&
-                    hasDeferredBackgroundWork(context)
+                    (context.detachedWorkPending || hasDeferredBackgroundWork(context))
                   ) {
                     yield* closeTextStreams(context);
                     yield* (
@@ -9312,6 +9335,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               promptStarted,
               promptUsage: undefined,
               backgroundFinalizeGeneration: 0,
+              detachedWorkPending: false,
               replyOpen: false,
               nativePromptId: undefined,
               lastProgressAt: 0,
