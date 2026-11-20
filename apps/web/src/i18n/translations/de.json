@@ -139,6 +139,8 @@
   "1fa38fb049c6b56e": "Filter {number} braucht einen Pfad unter body, headers oder query und mindestens einen Wert.",
   "31ec02bdcb3920d1": "Filter {number} braucht einen Pfad unter body, headers oder query und einen Wert.",
   "81f613bb68d85bb7": "Nicht im Chat, sondern in einer privaten Datei, die die Befehle dieses Agenten 24 Stunden lang lesen können",
+  "07b56c0c12bd2de1": "Nicht im Chat, sondern in privaten Dateien, die die Befehle dieses Agenten 24 Stunden lang lesen können",
+  "6435447ce7656f13": "{label} anzeigen",
   "62ae4688ece05590": "Sicher gespeichert, dem Agenten nie angezeigt",
   "8c2d901183b4e219": "Geheimnis einfügen",
   "610aea624f895a78": "Sicher gespeichert und privat gehalten",
