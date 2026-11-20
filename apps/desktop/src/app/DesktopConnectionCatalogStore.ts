@@ -187,6 +187,18 @@ function decodeSecretBytes(
   );
 }
 
+const textEncoder = new TextEncoder();
+
+const isEmptyOrZeroFilled = (raw: string): boolean => {
+  for (let i = 0; i < raw.length; i += 1) {
+    const code = raw.charCodeAt(i);
+    if (code !== 0 && code !== 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d) {
+      return false;
+    }
+  }
+  return true;
+};
+
 const readDocument = (
   fileSystem: FileSystem.FileSystem,
   catalogPath: string,
@@ -205,20 +217,27 @@ const readDocument = (
             }),
           ),
     ),
-    Effect.flatMap((raw) =>
-      raw === null
-        ? Effect.succeed(Option.none<EncryptedConnectionCatalogDocument>())
-        : decodeEncryptedConnectionCatalogDocumentJson(raw).pipe(
-            Effect.asSome,
-            Effect.mapError(
-              (cause) =>
-                new DesktopConnectionCatalogStoreDocumentDecodeError({
-                  catalogPath,
-                  cause,
-                }),
-            ),
-          ),
-    ),
+    Effect.flatMap((raw) => {
+      if (raw === null) {
+        return Effect.succeed(Option.none<EncryptedConnectionCatalogDocument>());
+      }
+      if (isEmptyOrZeroFilled(raw)) {
+        return Effect.logWarning("Ignoring an empty or zero-filled desktop connection catalog.", {
+          catalogPath,
+          length: raw.length,
+        }).pipe(Effect.as(Option.none<EncryptedConnectionCatalogDocument>()));
+      }
+      return decodeEncryptedConnectionCatalogDocumentJson(raw).pipe(
+        Effect.asSome,
+        Effect.mapError(
+          (cause) =>
+            new DesktopConnectionCatalogStoreDocumentDecodeError({
+              catalogPath,
+              cause,
+            }),
+        ),
+      );
+    }),
   );
 
 const writeDocument = Effect.fn("desktop.connectionCatalogStore.writeDocument")(function* (input: {
@@ -251,7 +270,14 @@ const writeDocument = Effect.fn("desktop.connectionCatalogStore.writeDocument")(
     ),
   );
   yield* Effect.gen(function* () {
-    yield* input.fileSystem.writeFileString(tempPath, `${encoded}\n`).pipe(
+    // Flush the temp file before renaming so a crash or restart cannot leave a zero-filled catalog.
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const file = yield* input.fileSystem.open(tempPath, { flag: "w" });
+        yield* file.writeAll(textEncoder.encode(`${encoded}\n`));
+        yield* file.sync;
+      }),
+    ).pipe(
       Effect.mapError(
         (cause) =>
           new DesktopConnectionCatalogStoreWriteError({

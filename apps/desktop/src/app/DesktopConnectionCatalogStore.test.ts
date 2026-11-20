@@ -362,4 +362,60 @@ describe("DesktopConnectionCatalogStore", () => {
       assert.isNotEmpty(yield* savedFilesHolding(stateDir, original));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
+
+  it.effect("recovers from a zero-filled catalog file left by a crash", () =>
+    withStore(
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
+        const catalogPath = path.join(environment.stateDir, "connection-catalog.json");
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(catalogPath, "\0".repeat(376));
+
+        assert.deepStrictEqual(yield* store.get, Option.none());
+        assert.isTrue(yield* store.set(emptyCatalog));
+        assert.deepStrictEqual(yield* store.get, Option.some(emptyCatalog));
+      }),
+    ),
+  );
+
+  it.effect("syncs the temporary file to disk before renaming it into place", () =>
+    Effect.gen(function* () {
+      const baseFileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* baseFileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-connection-catalog-test-",
+      });
+      const events: string[] = [];
+      const trackingFileSystem = Layer.succeed(
+        FileSystem.FileSystem,
+        FileSystem.make({
+          ...baseFileSystem,
+          open: (filePath, options) =>
+            baseFileSystem.open(filePath, options).pipe(
+              Effect.map((file) =>
+                Object.create(file, {
+                  sync: {
+                    value: file.sync.pipe(
+                      Effect.tap(() => Effect.sync(() => void events.push("sync"))),
+                    ),
+                  },
+                }),
+              ),
+            ),
+          rename: (oldPath, newPath) =>
+            baseFileSystem
+              .rename(oldPath, newPath)
+              .pipe(Effect.tap(() => Effect.sync(() => void events.push("rename")))),
+        }),
+      );
+      const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
+        Effect.provide(layerFor(baseDir, true, null, trackingFileSystem)),
+      );
+
+      assert.isTrue(yield* store.set(emptyCatalog));
+      assert.deepStrictEqual(events, ["sync", "rename"]);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
 });
