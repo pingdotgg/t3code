@@ -12,6 +12,7 @@ export function authClientMetadata(
   const deviceModel = Device.modelName?.trim();
 
   return {
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- product name
     label: `${resolveMobileBrandName(appBrand)} Mobile`,
     deviceType:
       Device.deviceType === Device.DeviceType.TABLET

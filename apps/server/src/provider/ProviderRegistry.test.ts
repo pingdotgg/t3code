@@ -1323,6 +1323,41 @@ it.layer(
       );
     });
 
+    it("does not bring back models on a sub-provider that is now unavailable", () => {
+      const subProviderModel = (slug: string, subProvider: string) => ({
+        slug,
+        name: slug,
+        subProvider,
+        isCustom: false,
+        capabilities: null,
+      });
+      const previousProvider = {
+        instanceId: ProviderInstanceId.make("fx"),
+        driver: ProviderDriverKind.make("fx"),
+        status: "ready",
+        enabled: true,
+        installed: true,
+        auth: { status: "authenticated" },
+        checkedAt: "2026-04-14T00:00:00.000Z",
+        version: "0.0.17",
+        models: [subProviderModel("gateway:a", "Gateway"), subProviderModel("codex:b", "Codex")],
+        subProviders: [{ name: "Gateway" }, { name: "Codex" }],
+        slashCommands: [],
+        skills: [],
+      } as const satisfies ServerProvider;
+      const refreshedProvider = {
+        ...previousProvider,
+        status: "warning",
+        models: [],
+        subProviders: [{ name: "Gateway" }, { name: "Codex", unavailableReason: "Signed out." }],
+      } satisfies ServerProvider;
+
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, refreshedProvider).models,
+        [previousProvider.models[0]],
+      );
+    });
+
     it("retains ACP Registry models while discovery has not completed", () => {
       const previousProvider = {
         instanceId: ProviderInstanceId.make("acpRegistry_codex"),
@@ -1416,6 +1451,58 @@ it.layer(
       assert.deepStrictEqual(
         ProviderRegistry.mergeProviderSnapshot(previousProvider, failedProvider).models,
         [...previousProvider.models],
+      );
+    });
+
+    it("marks a ready catalog retained for one failed check", () => {
+      const readyProvider = {
+        instanceId: ProviderInstanceId.make("codex"),
+        driver: ProviderDriverKind.make("codex"),
+        status: "ready",
+        enabled: true,
+        installed: true,
+        auth: { status: "authenticated" },
+        checkedAt: "2026-10-30T00:00:00.000Z",
+        version: "1.0.0",
+        models: [{ slug: "gpt-5.5", name: "GPT-5.5", isCustom: false, capabilities: null }],
+        slashCommands: [],
+        skills: [],
+      } as const satisfies ServerProvider;
+      const failedProvider = {
+        ...readyProvider,
+        status: "error",
+        auth: { status: "unknown" },
+        checkedAt: "2026-10-30T00:01:00.000Z",
+        models: [],
+      } as const satisfies ServerProvider;
+      const merge = ProviderRegistry.mergeProviderSnapshot;
+
+      const failedOnce = merge(readyProvider, failedProvider);
+      assert.deepStrictEqual(failedOnce.models, [...readyProvider.models]);
+      assert.strictEqual(failedOnce.modelsRetained, true);
+      assert.strictEqual(merge(failedOnce, failedProvider).modelsRetained, true);
+      assert.strictEqual(
+        merge(failedOnce, { ...failedProvider, checkedAt: "2026-10-30T00:02:00.000Z" })
+          .modelsRetained,
+        undefined,
+      );
+      assert.strictEqual(merge(failedOnce, readyProvider).modelsRetained, undefined);
+      const customOnly = {
+        ...readyProvider,
+        models: [{ slug: "bailian", name: "bailian", isCustom: true, capabilities: null }],
+      } satisfies ServerProvider;
+      assert.strictEqual(
+        merge(customOnly, { ...failedProvider, models: customOnly.models }).modelsRetained,
+        true,
+      );
+      assert.strictEqual(
+        merge(readyProvider, { ...failedProvider, installed: false }).modelsRetained,
+        undefined,
+      );
+      assert.strictEqual(
+        merge(readyProvider, { ...failedProvider, auth: { status: "unauthenticated" } })
+          .modelsRetained,
+        undefined,
       );
     });
 
@@ -2008,7 +2095,7 @@ it.layer(
         installed: true,
         auth: { status: "authenticated", type: "oauth-personal", label: "Google account" },
         checkedAt: "2026-09-05T00:00:00.000Z",
-        version: "agy_acp_server_1.1.1",
+        version: "1.5.12",
         models: [
           {
             slug: "gemini-3.7-flash-high",
@@ -2082,6 +2169,55 @@ it.layer(
           }).auth,
           signedIn.auth,
         );
+      });
+
+      it("keeps scanned folders through health checks until Antigravity cannot run", () => {
+        const scanned = ["/project", "/plain"].reduce<ServerProvider>(
+          (provider, cwd) =>
+            ProviderRegistry.upsertProviderWorkspaceSnapshot(provider, cwd, {
+              ...signedIn,
+              skills: [{ name: "review", path: `${cwd}/SKILL.md`, enabled: true }],
+            }),
+          signedIn,
+        );
+        const healthCheck = { ...signedIn, checkedAt: "2026-09-05T00:01:00.000Z" };
+        const sessionFolder = {
+          cwd: "/project",
+          checkedAt: healthCheck.checkedAt,
+          slashCommands: [{ name: "swarm" }],
+          skills: [],
+        };
+        const kept = [
+          healthCheck,
+          restartProbe,
+          { ...restartProbe, installed: false, version: null },
+        ] satisfies ReadonlyArray<ServerProvider>;
+        for (const next of kept) {
+          assert.deepStrictEqual(
+            ProviderRegistry.mergeProviderSnapshot(scanned, { ...next, workspaceSnapshots: [] })
+              .workspaceSnapshots,
+            scanned.workspaceSnapshots,
+          );
+        }
+        assert.deepStrictEqual(
+          ProviderRegistry.mergeProviderSnapshot(scanned, {
+            ...healthCheck,
+            workspaceSnapshots: [sessionFolder],
+          }).workspaceSnapshots,
+          [...scanned.workspaceSnapshots!.slice(1), sessionFolder],
+        );
+        const cleared = [
+          { ...healthCheck, auth: { status: "unauthenticated" } },
+          { ...healthCheck, status: "disabled", enabled: false },
+          { ...healthCheck, status: "error", installed: false },
+        ] satisfies ReadonlyArray<ServerProvider>;
+        for (const next of cleared) {
+          assert.deepStrictEqual(
+            ProviderRegistry.mergeProviderSnapshot(scanned, { ...next, workspaceSnapshots: [] })
+              .workspaceSnapshots,
+            [],
+          );
+        }
       });
     });
 
@@ -3458,6 +3594,7 @@ it.layer(
             withBundledCompatibility({
               ...refreshedProvider,
               models: [...initialProvider.models],
+              modelsRetained: true,
             }),
           );
         }).pipe(Effect.provide(runtimeServices));

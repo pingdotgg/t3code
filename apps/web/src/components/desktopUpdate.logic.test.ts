@@ -59,6 +59,21 @@ describe("desktop update button state", () => {
     );
   });
 
+  it("never calls a build on the other track up to date", () => {
+    // A Stable build whose switch to Nightly did not finish; the updater discards every release.
+    const state: DesktopUpdateState = {
+      ...baseState,
+      status: "up-to-date",
+      channel: "nightly",
+      currentVersion: "0.1.5",
+      checkedAt: "2026-11-18T00:00:00.000Z",
+    };
+    expect(getDesktopUpdateButtonTooltip(state)).not.toBe("Up to date");
+    expect(
+      getDesktopUpdateButtonTooltip({ ...state, currentVersion: "0.1.6-nightly.20261118.1" }),
+    ).toBe("Up to date");
+  });
+
   it("prefers a newly available release over a stale downloaded version", () => {
     const state: DesktopUpdateState = {
       ...baseState,
@@ -124,6 +139,7 @@ it("uses Dulli's release repository and product name", () => {
   expect(
     getDesktopUpdateInstallConfirmationMessage(
       { availableVersion: "0.0.36-pi.1", downloadedVersion: null },
+      undefined,
       "T3 Dulli",
     ),
   ).toContain("restart T3 Dulli?");
