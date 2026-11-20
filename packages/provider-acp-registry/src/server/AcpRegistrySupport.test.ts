@@ -511,6 +511,27 @@ describe("AcpRegistrySupport", () => {
       const npmCommands = yield* fileSystem.readFileString(toolchain.logPath);
       expect(npmCommands.match(/^install --global /gmu)).toHaveLength(1);
       expect(npmCommands).toContain("install --global @example/acp@V1.2.3");
+
+      // A missing npm bin link must not select an unrelated command from the user's PATH.
+      const userBin = `${cacheDir}/user-bin`;
+      yield* fileSystem.makeDirectory(userBin);
+      yield* fileSystem.writeFileString(`${userBin}/example-agent`, "#!/bin/sh\n");
+      yield* fileSystem.chmod(`${userBin}/example-agent`, 0o755);
+      yield* fileSystem.remove(toolchain.executablePath);
+      const userEnvironment = {
+        ...toolchain.environment,
+        PATH: `${userBin}:${toolchain.environment.PATH}`,
+      };
+      const repaired = yield* resolver.resolve(settings(), "/workspace", userEnvironment);
+      expect(repaired.spawn.command).toBe(toolchain.executablePath);
+      const repairCommands = yield* fileSystem.readFileString(toolchain.logPath);
+      expect(repairCommands.match(/^install --global /gmu)).toHaveLength(2);
+
+      yield* fileSystem.remove(toolchain.executablePath);
+      const failedRepair = yield* resolver
+        .resolve(settings(), "/workspace", { ...userEnvironment, npm_config_bin_links: "false" })
+        .pipe(Effect.flip);
+      expect(failedRepair.reason).toBe("install_failed");
     }).pipe(
       Effect.scoped,
       Effect.provide(

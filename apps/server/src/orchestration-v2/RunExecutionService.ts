@@ -2055,7 +2055,11 @@ export const layer: Layer.Layer<
                           ).pipe(Effect.as(false)),
                       ),
                     );
-                    if (handedOff) return;
+                    if (handedOff) {
+                      // Its tool calls, the handoff's own among them, died with that process.
+                      yield* endWorkLostAfterRootRun(completedAt);
+                      return;
+                    }
                   }
                   yield* Effect.logWarning("orchestration V2 provider event ingestion failed", {
                     runId: input.run.id,
