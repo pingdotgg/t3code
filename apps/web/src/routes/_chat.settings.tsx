@@ -129,7 +129,7 @@ function SettingsContentLayout() {
   const contentScopeKey =
     location.pathname === "/settings/diagnostics" ||
     location.pathname === "/settings/providers" ||
-    location.pathname === "/settings/blender"
+    location.pathname === "/settings/integrations"
       ? environment?.environmentId
       : JSON.stringify(search);
   const [restoreSignal, setRestoreSignal] = useState(0);
@@ -171,7 +171,7 @@ function SettingsRouteLayout() {
       singleEnvironment={
         pathname === "/settings/providers" ||
         pathname === "/settings/secrets" ||
-        pathname === "/settings/blender"
+        pathname === "/settings/integrations"
       }
       deviceOnly={SETTINGS_DEVICE_ONLY_PATHS.has(pathname)}
       onChange={(next) => {

@@ -31,7 +31,7 @@ export type SettingsPath =
   | "/settings/threads"
   | "/settings/browser"
   | "/settings/devices"
-  | "/settings/blender"
+  | "/settings/integrations"
   | "/settings/scheduled-tasks"
   | "/settings/source-control"
   | "/settings/worktrees"
@@ -107,7 +107,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/threads": msg("Threads"),
   "/settings/browser": msg("Browser"),
   "/settings/devices": msg("Devices"),
-  "/settings/blender": msg("Blender"),
+  "/settings/integrations": msg("Integrations"),
   "/settings/scheduled-tasks": msg("Scheduled tasks"),
   "/settings/source-control": msg("Source control & issues"),
   "/settings/worktrees": msg("Worktrees"),
@@ -156,9 +156,13 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
       "/settings/threads",
       "/settings/browser",
       "/settings/devices",
-      "/settings/blender",
       "/settings/scheduled-tasks",
     ],
+  },
+  {
+    heading: msg("Integrations"),
+    headingHidden: true,
+    paths: ["/settings/integrations"],
   },
   {
     heading: msg("Code"),
@@ -1118,14 +1122,14 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "blender-enabled",
     title: msg("Use Blender"),
-    to: "/settings/blender",
+    to: "/settings/integrations",
     targetId: "blender",
     searchTerms: [msg("blender 3d model render export glb version install detect")],
   },
   {
     id: "blender-executable",
     title: msg("Blender executable"),
-    to: "/settings/blender",
+    to: "/settings/integrations",
     targetId: "blender",
     searchTerms: [msg("blender path binary override location install")],
   },
@@ -1500,7 +1504,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/threads": null,
   "/settings/browser": null,
   "/settings/devices": null,
-  "/settings/blender": "environment",
+  "/settings/integrations": "environment",
   "/settings/source-control": "environment-defaults",
   "/settings/worktrees": "project-defaults",
   "/settings/connections": "connections",
@@ -1514,7 +1518,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
 };
 
 const RENAMED_SETTINGS_PATHS: Readonly<Record<string, SettingsPath>> = {
-  "/settings/integrations": "/settings/browser",
+  "/settings/blender": "/settings/integrations",
   "/settings/storage": "/settings/maintenance",
   "/settings/beta": "/settings/labs",
 };
@@ -1523,6 +1527,7 @@ const SPLIT_SETTINGS_PATHS: ReadonlySet<string> = new Set([
   "/settings/appearance",
   "/settings/source-control",
   "/settings/connections",
+  "/settings/integrations",
   ...Object.keys(RENAMED_SETTINGS_PATHS),
 ]);
 // Section anchors that moved but are not search results themselves.
