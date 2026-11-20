@@ -60,7 +60,8 @@ export function BackgroundWorkDetails(props: {
             {props.tasks.map((task) => {
               const item = props.turnItems.findLast((candidate) =>
                 task.itemId === undefined
-                  ? (candidate.nativeItemRef?.nativeId || candidate.id) === task.taskId
+                  ? (candidate.nativeItemRef?.nativeId || candidate.id) ===
+                    (task.nativeItemId ?? task.taskId)
                   : candidate.id === task.itemId,
               );
               const command =

@@ -204,6 +204,32 @@ describe("derivePendingBackgroundWork", () => {
     ]);
   });
 
+  it("merges a failed run's still-open command with its distinct native task id", () => {
+    const task = {
+      taskId: "session/task-9",
+      nativeItemId: "call-9",
+      description: "Verify",
+      kind: "command" as const,
+      awaited: true as const,
+    };
+    expect(
+      derivePendingBackgroundWork({
+        latestRun: { id: "run-1" as never, ordinal: 1, status: "failed" },
+        providerThreads: [{ id: "pt-1" as never, pendingBackgroundTasks: [task] }],
+        turnItems: [
+          {
+            id: "item-9",
+            type: "command_execution",
+            status: "running",
+            title: null,
+            nativeItemRef: { nativeId: "call-9" },
+            input: "pnpm test",
+          },
+        ],
+      }),
+    ).toEqual([task]);
+  });
+
   it("excludes Grok persistent monitors", () => {
     const tasks = derivePendingBackgroundWork({
       latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },

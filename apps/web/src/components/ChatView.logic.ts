@@ -1594,6 +1594,7 @@ export function deriveThreadPendingBackgroundTasks(projection: ThreadStructure |
   const foregroundTaskIds = new Set<string>();
   for (const item of projection.turnItems) {
     if (item.runId === null || !liveRunIds.has(item.runId)) continue;
+    foregroundTaskIds.add(item.id);
     if (item.nativeItemRef?.nativeId) foregroundTaskIds.add(item.nativeItemRef.nativeId);
   }
   const latestRun =
@@ -1605,7 +1606,10 @@ export function deriveThreadPendingBackgroundTasks(projection: ThreadStructure |
       providerThreads: projection.providerThreads.map((thread) => ({
         ...thread,
         pendingBackgroundTasks: thread.pendingBackgroundTasks?.filter(
-          (task) => !foregroundTaskIds.has(task.taskId),
+          (task) =>
+            !foregroundTaskIds.has(task.taskId) &&
+            (task.nativeItemId === undefined || !foregroundTaskIds.has(task.nativeItemId)) &&
+            (task.itemId === undefined || !foregroundTaskIds.has(task.itemId)),
         ),
       })),
       turnItems: projection.turnItems.filter(
