@@ -1,10 +1,17 @@
 import {
   DEFAULT_CLIENT_SETTINGS,
+  DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ModelSelection,
+  type ServerSettings,
+  type ServerSettingsPatch,
 } from "@t3tools/contracts";
+import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { compileResolvedKeybindingsConfig } from "@t3tools/shared/keybindings";
+import { RegistryContext } from "@effect/atom-react";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { useState } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -12,8 +19,69 @@ import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 
 import { render } from "../../../test/render";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { __setClientSettingsForTests } from "../../hooks/useSettings";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
+
+const FAVORITES_ENV_ID = EnvironmentId.make("favorites-reorder-test");
+const favoritesTestState = vi.hoisted(() => ({
+  settingsAtom: null as Atom.Writable<ServerSettings | null> | null,
+  permissionAtom: null as Atom.Writable<boolean> | null,
+  savedPatches: [] as Array<ServerSettingsPatch>,
+  updateSettingsCommand: null as unknown,
+}));
+
+vi.mock(import("../../state/server"), async (original) => {
+  const actual = await original();
+  const updateSettings = {
+    ...actual.serverEnvironment.updateSettings,
+    permissionAtom: ((id: EnvironmentId | null) =>
+      id === FAVORITES_ENV_ID && favoritesTestState.permissionAtom
+        ? favoritesTestState.permissionAtom
+        : actual.serverEnvironment.updateSettings.permissionAtom(id)) as never,
+  };
+  favoritesTestState.updateSettingsCommand = updateSettings;
+  return {
+    ...actual,
+    serverEnvironment: {
+      ...actual.serverEnvironment,
+      settingsValueAtom: ((id: EnvironmentId) =>
+        id === FAVORITES_ENV_ID && favoritesTestState.settingsAtom
+          ? favoritesTestState.settingsAtom
+          : actual.serverEnvironment.settingsValueAtom(id)) as never,
+      updateSettings,
+    },
+  };
+});
+
+vi.mock(import("../../state/use-atom-command"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    useAtomCommand: ((command: unknown, options?: unknown) => {
+      const real = actual.useAtomCommand(command as never, options as never);
+      if (command !== favoritesTestState.updateSettingsCommand) return real;
+      return async (input: {
+        environmentId: EnvironmentId;
+        input: { patch: ServerSettingsPatch };
+      }) => {
+        if (input.environmentId !== FAVORITES_ENV_ID || !favoritesTestState.settingsAtom) {
+          return real(input as never);
+        }
+        favoritesTestState.savedPatches.push(input.input.patch);
+        const current = appAtomRegistry.get(favoritesTestState.settingsAtom);
+        if (current) {
+          appAtomRegistry.set(
+            favoritesTestState.settingsAtom,
+            applyServerSettingsPatch(current, input.input.patch),
+          );
+        }
+        return AsyncResult.success(undefined);
+      };
+    }) as never,
+  };
+});
+
 import { ProviderModelPicker } from "./ProviderModelPicker";
 
 it("keeps each registry image when adding a model from another ACP agent", async () => {
@@ -342,4 +410,199 @@ it("keeps the touch keyboard down while choosing a provider", async () => {
   await page.getByRole("button", { name: /^Claude/ }).click();
   await expect.element(page.getByRole("option", { name: /Claude model/ })).toBeVisible();
   await expect.element(search).not.toHaveFocus();
+});
+
+it("reorders favorites by drag handle and Alt+Arrow keys while keeping jumps and selection working", async () => {
+  const codex = ProviderInstanceId.make("codex");
+  const claude = ProviderInstanceId.make("claude");
+  const disabled = ProviderInstanceId.make("disabled");
+  const entries = deriveProviderInstanceEntries([
+    {
+      instanceId: codex,
+      driver: ProviderDriverKind.make("codex"),
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      models: [
+        { slug: "sol", name: "GPT Sol", isCustom: false, capabilities: {} },
+        { slug: "astra", name: "GPT Astra", isCustom: false, capabilities: {} },
+      ],
+      slashCommands: [],
+      skills: [],
+    },
+    {
+      instanceId: claude,
+      driver: ProviderDriverKind.make("claudeAgent"),
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      models: [{ slug: "opus", name: "Claude Opus", isCustom: false, capabilities: {} }],
+      slashCommands: [],
+      skills: [],
+    },
+    {
+      instanceId: disabled,
+      driver: ProviderDriverKind.make("cursor"),
+      enabled: false,
+      installed: true,
+      version: null,
+      status: "disabled",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      models: [{ slug: "hidden-fav", name: "Disabled Model", isCustom: false, capabilities: {} }],
+      slashCommands: [],
+      skills: [],
+    },
+  ]);
+
+  const initialFavorites = [
+    { provider: codex, model: "sol" },
+    { provider: disabled, model: "hidden-fav" },
+    { provider: claude, model: "opus" },
+    { provider: codex, model: "astra" },
+  ];
+  const settingsAtom = Atom.make<ServerSettings | null>({
+    ...DEFAULT_SERVER_SETTINGS,
+    favorites: initialFavorites,
+    providerModelPreferences: {},
+  });
+  const permissionAtom = Atom.make(true);
+  favoritesTestState.settingsAtom = settingsAtom;
+  favoritesTestState.permissionAtom = permissionAtom;
+  favoritesTestState.savedPatches = [];
+  using _favoritesReset = {
+    [Symbol.dispose]() {
+      favoritesTestState.settingsAtom = null;
+      favoritesTestState.permissionAtom = null;
+      favoritesTestState.savedPatches = [];
+    },
+  };
+
+  const keybindings = compileResolvedKeybindingsConfig(
+    ([1, 2, 3] as const).map((index) => ({
+      key: `mod+${index}`,
+      command: `modelPicker.jump.${index}` as const,
+      when: "modelPickerOpen",
+    })),
+  );
+  const onInstanceModelChange = vi.fn();
+
+  await using screen = await render(
+    <RegistryContext.Provider value={appAtomRegistry}>
+      <ProviderModelPicker
+        environmentId={FAVORITES_ENV_ID}
+        activeInstanceId={codex}
+        model="sol"
+        lockedProvider={null}
+        instanceEntries={entries}
+        modelOptionsByInstance={new Map(entries.map((entry) => [entry.instanceId, entry.models]))}
+        keybindings={keybindings}
+        triggerAriaLabel="Choose model"
+        onInstanceModelChange={onInstanceModelChange}
+      />
+    </RegistryContext.Provider>,
+  );
+
+  await screen.getByRole("button", { name: "Choose model" }).click();
+  await expect.element(page.getByRole("option", { name: /GPT Sol/ })).toBeVisible();
+
+  const optionOrder = () =>
+    page
+      .getByRole("option")
+      .elements()
+      .map((row) => [
+        row.textContent?.match(/GPT Sol|Claude Opus|GPT Astra/)?.[0],
+        row.querySelector("kbd")?.textContent?.slice(-1),
+      ]);
+
+  // Favorites appear in saved favorites order (cross-provider), each with a visible drag handle.
+  expect(optionOrder()).toEqual([
+    ["GPT Sol", "1"],
+    ["Claude Opus", "2"],
+    ["GPT Astra", "3"],
+  ]);
+  expect(document.querySelectorAll("[data-favorite-drag-handle]").length).toBe(3);
+
+  // Drag the third favorite (GPT Astra) onto the first row (GPT Sol) via its drag handle.
+  const firstRow = page.getByRole("option", { name: /GPT Sol/ }).element();
+  const thirdRow = page.getByRole("option", { name: /GPT Astra/ }).element();
+  const firstSortable = firstRow.closest<HTMLElement>("[data-model-picker-sortable-index]")!;
+  const thirdSortable = thirdRow.closest<HTMLElement>("[data-model-picker-sortable-index]")!;
+  const thirdHandle = thirdRow.querySelector<HTMLElement>("[data-favorite-drag-handle]")!;
+  const startRect = thirdHandle.getBoundingClientRect();
+  const targetRect = firstRow.getBoundingClientRect();
+  const startX = startRect.left + startRect.width / 2;
+  const startY = startRect.top + startRect.height / 2;
+  const targetY = targetRect.top + targetRect.height / 2;
+
+  const dragPointer = (type: string, clientY: number, buttons: number) =>
+    new PointerEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      isPrimary: true,
+      button: 0,
+      buttons,
+      pointerId: 1,
+      pointerType: "mouse",
+      clientX: startX,
+      clientY,
+    });
+
+  thirdHandle.dispatchEvent(dragPointer("pointerdown", startY, 1));
+  document.dispatchEvent(dragPointer("pointermove", startY - 8, 1));
+  await vi.waitFor(() => expect(thirdSortable.dataset.dragging).toBe("true"));
+  document.dispatchEvent(dragPointer("pointermove", targetY, 1));
+  await vi.waitFor(() =>
+    expect(firstSortable.style.transform).toMatch(/translate3d\(0px,\s*[1-9]/),
+  );
+  document.dispatchEvent(dragPointer("pointerup", targetY, 0));
+
+  await vi.waitFor(() =>
+    expect(optionOrder()).toEqual([
+      ["GPT Astra", "1"],
+      ["GPT Sol", "2"],
+      ["Claude Opus", "3"],
+    ]),
+  );
+  // Dragging did not accidentally select the model or close the picker.
+  expect(onInstanceModelChange).not.toHaveBeenCalled();
+  // Hidden/disabled favorites stay in their original slot when visible favorites reorder.
+  expect(favoritesTestState.savedPatches.at(-1)).toEqual({
+    favorites: [
+      { provider: codex, model: "astra" },
+      { provider: disabled, model: "hidden-fav" },
+      { provider: codex, model: "sol" },
+      { provider: claude, model: "opus" },
+    ],
+  });
+
+  // Keyboard reorder: move the highlighted first item (GPT Astra) down twice with Alt+ArrowDown.
+  const search = page.getByPlaceholder("Search models...");
+  await expect.element(search).toHaveFocus();
+  await userEvent.keyboard("{Alt>}{ArrowDown}{/Alt}");
+  await vi.waitFor(() =>
+    expect(optionOrder()).toEqual([
+      ["GPT Sol", "1"],
+      ["GPT Astra", "2"],
+      ["Claude Opus", "3"],
+    ]),
+  );
+  await userEvent.keyboard("{Alt>}{ArrowDown}{/Alt}");
+  await vi.waitFor(() =>
+    expect(optionOrder()).toEqual([
+      ["GPT Sol", "1"],
+      ["Claude Opus", "2"],
+      ["GPT Astra", "3"],
+    ]),
+  );
+
+  // Clicking a favorite row still selects the model normally.
+  await page.getByRole("option", { name: /Claude Opus/ }).click();
+  expect(onInstanceModelChange).toHaveBeenCalledWith(claude, "opus");
 });

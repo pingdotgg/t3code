@@ -1,7 +1,7 @@
 import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
 import { T, useGT } from "gt-react";
 import { memo } from "react";
-import { CheckIcon, StarIcon } from "lucide-react";
+import { CheckIcon, GripVerticalIcon, StarIcon } from "lucide-react";
 import { getDisplayModelName } from "./providerIconUtils";
 import { ComboboxItem } from "../ui/combobox";
 import { Button } from "../ui/button";
@@ -26,6 +26,9 @@ export const ModelListRow = memo(function ModelListRow(props: {
   isFavorite: boolean;
   /** In Favorites every row is starred, so the star shows only on hover. */
   favoriteStarOnHover?: boolean;
+  reorderable?: boolean;
+  isDragging?: boolean;
+  isAnyDragging?: boolean;
   isSelected: boolean;
   /** Marks this instance apart from another of the same provider. */
   showInstanceBadge: boolean;
@@ -41,6 +44,20 @@ export const ModelListRow = memo(function ModelListRow(props: {
     name: props.name,
     subProvider: props.subProvider,
   };
+  const providerIcon = (
+    <ProviderInstanceIcon
+      driverKind={props.driverKind}
+      displayName={props.providerDisplayName}
+      accentColor={props.providerAccentColor}
+      acpRegistryAgentId={props.acpRegistryAgentId}
+      acpRegistryIconUrl={props.acpRegistryIconUrl}
+      showBadge={props.showInstanceBadge}
+      className="size-4"
+      iconClassName="size-4"
+      indicatorBackground="var(--popover)"
+      badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs"
+    />
+  );
 
   const row = (
     <ComboboxItem
@@ -51,23 +68,39 @@ export const ModelListRow = memo(function ModelListRow(props: {
       disabled={Boolean(props.disabledReason)}
       className={cn(
         "group relative w-full !min-w-0 max-w-full cursor-pointer",
+        props.reorderable && "select-none",
+        props.isDragging && "cursor-grabbing",
         props.disabledReason &&
           "data-disabled:pointer-events-auto data-disabled:cursor-not-allowed",
       )}
     >
       {/* One row shape in every tab: the logo names the provider, so Favorites needs no second line. */}
-      <ProviderInstanceIcon
-        driverKind={props.driverKind}
-        displayName={props.providerDisplayName}
-        accentColor={props.providerAccentColor}
-        acpRegistryAgentId={props.acpRegistryAgentId}
-        acpRegistryIconUrl={props.acpRegistryIconUrl}
-        showBadge={props.showInstanceBadge}
-        className="size-4"
-        iconClassName="size-4"
-        indicatorBackground="var(--popover)"
-        badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs"
-      />
+      {props.reorderable ? (
+        <div className="flex shrink-0 items-center gap-1">
+          <Tooltip disabled={props.isAnyDragging === true}>
+            <TooltipTrigger
+              render={
+                <span
+                  data-favorite-drag-handle="true"
+                  aria-hidden="true"
+                  className={cn(
+                    "-ms-1 flex size-4 shrink-0 cursor-grab touch-none items-center justify-center rounded-xs text-muted-foreground/45 transition-colors hover:text-foreground group-hover:text-muted-foreground group-data-highlighted:text-muted-foreground active:cursor-grabbing",
+                    props.isDragging && "cursor-grabbing text-foreground",
+                  )}
+                >
+                  <GripVerticalIcon className="size-3.5 text-current" />
+                </span>
+              }
+            />
+            <TooltipPopup side="top" align="center">
+              <T>Drag to reorder</T>
+            </TooltipPopup>
+          </Tooltip>
+          {providerIcon}
+        </div>
+      ) : (
+        providerIcon
+      )}
       <div className="flex min-w-0 flex-1 items-center gap-2 text-left">
         <div
           className="min-w-0 truncate text-sm font-normal leading-snug"
@@ -103,12 +136,15 @@ export const ModelListRow = memo(function ModelListRow(props: {
       </div>
 
       <div className="flex shrink-0 items-center gap-1.5">
-        <Tooltip>
+        <Tooltip disabled={props.isAnyDragging === true}>
           <TooltipTrigger
             render={
               <Button
                 size="icon-xs"
                 variant="ghost-muted"
+                onPointerDown={(event) => {
+                  event.stopPropagation();
+                }}
                 onClick={(event) => {
                   event.stopPropagation();
                   props.onToggleFavorite(props.instanceId, props.slug);
@@ -144,7 +180,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
   }
 
   return (
-    <Tooltip>
+    <Tooltip disabled={props.isAnyDragging === true}>
       <TooltipTrigger render={row} />
       <TooltipPopup side="left" align="center">
         {props.disabledReason}

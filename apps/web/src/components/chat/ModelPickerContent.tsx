@@ -10,6 +10,19 @@ import {
 } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
 import { useAtomValue } from "@effect/atom-react";
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
+import { restrictToParentElement, restrictToVerticalAxis } from "@dnd-kit/modifiers";
+import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { AsyncResult } from "effect/reactivity";
 import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
 import { groupModelsBySubProvider } from "@t3tools/client-runtime/providerSubProviders";
 import { useNavigate } from "@tanstack/react-router";
@@ -21,6 +34,7 @@ import {
   useEffectEvent,
   useLayoutEffect,
   useRef,
+  type MouseEvent as ReactMouseEvent,
   type ReactNode,
   type RefObject,
 } from "react";
@@ -47,7 +61,7 @@ import {
 import { ModelEsque } from "./providerIconUtils";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { registerModelPickerContent } from "../../modelPickerVisibility";
-import { primaryServerKeybindingsAtom } from "../../state/server";
+import { primaryServerKeybindingsAtom, serverEnvironment } from "../../state/server";
 import {
   modelPickerJumpCommandForIndex,
   modelPickerJumpIndexFromCommand,
@@ -57,8 +71,10 @@ import {
 import {
   useEnvironmentModelPreferences,
   useToggleEnvironmentModelFavorite,
+  useUpdateEnvironmentModelPreferences,
 } from "~/hooks/useSettings";
 import { announce } from "~/lib/announce";
+import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { TooltipProvider } from "../ui/tooltip";
@@ -70,7 +86,14 @@ import {
   shouldShowInstanceBadge,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
-import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
+import {
+  favoriteModelKey,
+  pendingFavoriteOrder,
+  providerModelKey,
+  reorderVisibleFavorites,
+  sortProviderModelItems,
+  type FavoriteModelEntry,
+} from "../../modelOrdering";
 import { hasRuntimeModelCatalog } from "../../providerModels";
 
 type ModelPickerItem = {
@@ -171,6 +194,16 @@ function adjacentModelPickerProvider(input: {
 
 const EMPTY_MODEL_JUMP_LABELS = new Map<string, string>();
 const MODEL_LIST_ESTIMATED_ITEM_SIZE = 32;
+const FAVORITE_DRAG_MODIFIERS = [restrictToVerticalAxis, restrictToParentElement];
+// Model keys are internal ids; we announce drops with the model's display name via announce().
+const FAVORITE_DND_ACCESSIBILITY = {
+  announcements: {
+    onDragStart: () => undefined,
+    onDragOver: () => undefined,
+    onDragEnd: () => undefined,
+    onDragCancel: () => undefined,
+  },
+};
 // Rendered heights in `--spacing` units. Chrome is the search box and list padding, plus a 1px border.
 const ROW_UNITS = 8;
 const ROW_SEPARATOR_UNITS = 0.5;
@@ -318,6 +351,123 @@ function ModelPickerList({
   );
 }
 
+function SortableFavoriteRow({
+  id,
+  index,
+  children,
+}: {
+  readonly id: string;
+  readonly index: number;
+  readonly children: (isDragging: boolean) => ReactNode;
+}) {
+  const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  return (
+    <div
+      ref={setNodeRef}
+      data-model-picker-sortable-index={index}
+      data-dragging={isDragging ? "true" : undefined}
+      style={{ transform: CSS.Translate.toString(transform), transition }}
+      className={cn(
+        "relative",
+        isDragging && "z-20 rounded-sm bg-popover shadow-md ring-1 ring-border/70",
+      )}
+      // ComboboxItem prevents default in pointerdown capture; dnd-kit skips prevented presses, so activate before it.
+      onPointerDownCapture={(event) => {
+        if (event.target instanceof Element && event.target.closest("button")) return;
+        listeners?.onPointerDown?.(event);
+      }}
+    >
+      {children(isDragging)}
+    </div>
+  );
+}
+
+function ModelPickerSortableFavoritesList({
+  scrollContainerRef,
+  itemKeys,
+  onDragStart,
+  onDragEnd,
+  onDragCancel,
+  onPointerDownCapture,
+  onMouseUpCapture,
+  onClickCapture,
+  renderItem,
+}: {
+  scrollContainerRef: RefObject<HTMLDivElement | null>;
+  itemKeys: ReadonlyArray<string>;
+  onDragStart: (event: DragStartEvent) => void;
+  onDragEnd: (event: DragEndEvent) => void;
+  onDragCancel: () => void;
+  onPointerDownCapture: () => void;
+  onMouseUpCapture: (event: ReactMouseEvent<HTMLDivElement>) => void;
+  onClickCapture: (event: ReactMouseEvent<HTMLDivElement>) => void;
+  renderItem: (props: { item: string; index: number; isDragging: boolean }) => ReactNode;
+}) {
+  const [showTopScrollFade, setShowTopScrollFade] = useState(false);
+  const [showBottomScrollFade, setShowBottomScrollFade] = useState(false);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const updateScrollFades = (node: HTMLDivElement | null) => {
+    if (!node) return;
+    setShowTopScrollFade(node.scrollTop > 1);
+    setShowBottomScrollFade(node.scrollTop + node.clientHeight < node.scrollHeight - 1);
+  };
+
+  return (
+    <div
+      className="relative min-h-0 flex-1 overflow-hidden pr-px"
+      onPointerDownCapture={onPointerDownCapture}
+      onMouseUpCapture={onMouseUpCapture}
+      onClickCapture={onClickCapture}
+    >
+      <ComboboxListVirtualized>
+        <DndContext
+          accessibility={FAVORITE_DND_ACCESSIBILITY}
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          modifiers={FAVORITE_DRAG_MODIFIERS}
+          onDragStart={onDragStart}
+          onDragEnd={onDragEnd}
+          onDragCancel={onDragCancel}
+        >
+          <SortableContext items={[...itemKeys]} strategy={verticalListSortingStrategy}>
+            <div
+              ref={(node) => {
+                scrollContainerRef.current = node;
+                if (!node) return;
+                updateScrollFades(node);
+                const disconnect = observeResize(
+                  node.firstElementChild ? [node, node.firstElementChild] : node,
+                  () => updateScrollFades(node),
+                );
+                return () => {
+                  scrollContainerRef.current = null;
+                  disconnect();
+                };
+              }}
+              onScroll={(event) => updateScrollFades(event.currentTarget)}
+              className={cn(
+                "scrollbar-gutter-stable h-full overflow-x-hidden overflow-y-auto overscroll-y-contain py-1.5 [&::-webkit-scrollbar-track]:my-2",
+                getVirtualizedScrollFadeClassName({
+                  top: showTopScrollFade,
+                  bottom: showBottomScrollFade,
+                }),
+              )}
+            >
+              <div className="flex flex-col gap-0.5 pl-2 pr-px">
+                {itemKeys.map((item, index) => (
+                  <SortableFavoriteRow key={item} id={item} index={index}>
+                    {(isDragging) => renderItem({ item, index, isDragging })}
+                  </SortableFavoriteRow>
+                ))}
+              </div>
+            </div>
+          </SortableContext>
+        </DndContext>
+      </ComboboxListVirtualized>
+    </div>
+  );
+}
+
 // Capture gives picker shortcuts priority over the composer.
 function WindowKeyDownListener({ onKeyDown }: { onKeyDown: (event: KeyboardEvent) => void }) {
   const handleKeyDown = useEffectEvent(onKeyDown);
@@ -375,11 +525,21 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   } = props;
   const [searchQuery, setSearchQuery] = useState("");
   const modelListRef = useRef<LegendListRef | null>(null);
+  const sortableScrollRef = useRef<HTMLDivElement | null>(null);
   const pickerContentRef = useRef<HTMLDivElement>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes this picker's mount to global keydown handlers
   useLayoutEffect(() => registerModelPickerContent(), []);
   const highlightedModelKeyRef = useRef<string | null>(null);
+  const reorderSeqRef = useRef(0);
+  const isDraggingFavoriteRef = useRef(false);
+  const suppressClickAfterDragRef = useRef(false);
   const { favorites } = useEnvironmentModelPreferences(props.environmentId);
+  const canUpdatePreferences = useAtomValue(
+    serverEnvironment.updateSettings.permissionAtom(props.environmentId),
+  );
+  const [pendingFavorites, setPendingFavorites] =
+    useState<ReadonlyArray<FavoriteModelEntry> | null>(null);
+  const [draggingFavoriteKey, setDraggingFavoriteKey] = useState<string | null>(null);
   const activeEntry = props.instanceEntries.find(
     (entry) => entry.instanceId === props.activeInstanceId,
   );
@@ -479,12 +639,22 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const keybindings = providedKeybindings ?? serverKeybindings;
   const [searchHeight, setSearchHeight] = useState(0);
   const toggleFavorite = useToggleEnvironmentModelFavorite(props.environmentId);
+  const updateModelPreferences = useUpdateEnvironmentModelPreferences(props.environmentId);
+  const shownPendingFavorites = pendingFavoriteOrder(pendingFavorites, favorites);
+  if (pendingFavorites !== null && shownPendingFavorites === null) {
+    setPendingFavorites(null);
+  }
+  const displayedFavorites = shownPendingFavorites ?? favorites;
+  const favoriteOrder = displayedFavorites.map(favoriteModelKey);
 
   const focusSearchInput = () => {
     searchInputRef.current?.focus({ preventScroll: true });
   };
 
   const handleSelectInstance = (instanceId: ProviderInstanceId | "favorites") => {
+    isDraggingFavoriteRef.current = false;
+    suppressClickAfterDragRef.current = false;
+    setDraggingFavoriteKey(null);
     setSelectedInstanceId(instanceId);
     // Focusing the search on touch raises the on-screen keyboard on every provider tap.
     if (window.matchMedia("(pointer: coarse)").matches) return;
@@ -718,6 +888,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
     return sortProviderModelItems(result, {
       favoriteModelKeys: favoritesSet,
+      ...(selectedInstanceId === "favorites" ? { favoriteOrder } : {}),
       groupFavorites: selectedInstanceId !== "favorites",
       instanceOrder: selectedInstanceId === "favorites" ? instanceOrder : [],
     });
@@ -793,6 +964,36 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       ...(legacySection.isExpanded ? legacySection.legacyModels : []),
     ];
   })();
+  const canReorderFavorites =
+    selectedInstanceId === "favorites" &&
+    !isSearching &&
+    canUpdatePreferences &&
+    visibleModels.length > 1;
+  const handleReorderFavorites = (fromIndex: number, toIndex: number) => {
+    if (!canReorderFavorites) return;
+    const visibleKeys = visibleModels.map((model) =>
+      providerModelKey(model.instanceId, model.slug),
+    );
+    const nextFavorites = reorderVisibleFavorites(
+      displayedFavorites,
+      visibleKeys,
+      fromIndex,
+      toIndex,
+    );
+    const unchanged =
+      nextFavorites.length === displayedFavorites.length &&
+      nextFavorites.every(
+        (entry, index) => favoriteModelKey(entry) === favoriteModelKey(displayedFavorites[index]!),
+      );
+    if (unchanged) return;
+    const seq = ++reorderSeqRef.current;
+    setPendingFavorites(nextFavorites);
+    void updateModelPreferences({ favorites: nextFavorites }).then((result) => {
+      if (seq === reorderSeqRef.current && (!result || AsyncResult.isFailure(result))) {
+        setPendingFavorites(null);
+      }
+    });
+  };
 
   const selectedEntry =
     selectedInstanceId === "favorites" ? undefined : entryByInstanceId.get(selectedInstanceId);
@@ -934,6 +1135,53 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     announce(gt("Model: {name}", { name: name ?? selectedSlug }), "model-picker");
   };
 
+  const renderModelRow = (
+    modelKey: string,
+    index: number,
+    sortable?: { readonly isDragging: boolean },
+  ) => {
+    const model = filteredModelByKey.get(modelKey);
+    if (!model) {
+      return null;
+    }
+    const disabledReason = getModelDisabledReason?.(model.instanceId, model.slug) ?? null;
+    return (
+      <ModelListRow
+        key={modelKey}
+        index={index}
+        slug={model.slug}
+        name={model.name}
+        subProvider={model.subProvider}
+        instanceId={model.instanceId}
+        driverKind={model.driverKind}
+        providerDisplayName={model.instanceDisplayName}
+        providerAccentColor={model.instanceAccentColor}
+        acpRegistryAgentId={model.acpRegistryAgentId}
+        acpRegistryIconUrl={model.acpRegistryIconUrl}
+        isFavorite={favoritesSet.has(providerModelKey(model.instanceId, model.slug))}
+        isSelected={
+          selectedModelKeys !== undefined
+            ? selectedModelKeySet.has(modelKey)
+            : modelKey === activeModelKey
+        }
+        favoriteStarOnHover={selectedInstanceId === "favorites" && !isSearching}
+        {...(sortable
+          ? {
+              reorderable: true,
+              isDragging: sortable.isDragging,
+              isAnyDragging: draggingFavoriteKey !== null,
+            }
+          : {})}
+        showInstanceBadge={badgedInstanceIds.has(model.instanceId)}
+        showNewBadge={model.badge === "new"}
+        unavailable={model.isUnavailable === true}
+        jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
+        disabledReason={disabledReason}
+        onToggleFavorite={toggleFavorite}
+      />
+    );
+  };
+
   return (
     <TooltipProvider delay={0}>
       <WindowKeyDownListener onKeyDown={onWindowKeyDown} />
@@ -982,6 +1230,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           filteredItems={filteredItemKeys}
           filter={null}
           autoHighlight
+          highlightItemOnHover={!canReorderFavorites || draggingFavoriteKey === null}
           open
           virtualized
           multiple={onToggleModel !== undefined}
@@ -989,13 +1238,24 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           onItemHighlighted={(modelKey, eventDetails) => {
             highlightedModelKeyRef.current = typeof modelKey === "string" ? modelKey : null;
             if (eventDetails.reason === "keyboard" && eventDetails.index >= 0) {
-              void modelListRef.current?.scrollIndexIntoView?.({
-                index: eventDetails.index,
-                animated: false,
-              });
+              if (canReorderFavorites) {
+                sortableScrollRef.current
+                  ?.querySelector<HTMLElement>(
+                    `[data-model-picker-sortable-index="${eventDetails.index}"]`,
+                  )
+                  ?.scrollIntoView({ block: "nearest" });
+              } else {
+                void modelListRef.current?.scrollIndexIntoView?.({
+                  index: eventDetails.index,
+                  animated: false,
+                });
+              }
             }
           }}
           onValueChange={(value, details) => {
+            if (isDraggingFavoriteRef.current) {
+              return;
+            }
             const modelKey = Array.isArray(value)
               ? (value.find((key) => !selectedModelKeySet.has(key)) ??
                 [...selectedModelKeySet].find((key) => !value.includes(key)))
@@ -1034,12 +1294,49 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               value={searchQuery}
               onChange={(e) => {
                 if (!isSearching) setSearchHeight(pickerContentRef.current?.offsetHeight ?? 0);
+                isDraggingFavoriteRef.current = false;
+                suppressClickAfterDragRef.current = false;
+                setDraggingFavoriteKey(null);
                 setSearchQuery(e.target.value);
               }}
               onKeyDown={(e) => {
                 if (e.nativeEvent.isComposing || e.keyCode === 229) {
                   (e as typeof e & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
                   e.stopPropagation();
+                  return;
+                }
+                if (
+                  canReorderFavorites &&
+                  e.altKey &&
+                  !e.ctrlKey &&
+                  !e.metaKey &&
+                  !e.shiftKey &&
+                  (e.key === "ArrowUp" || e.key === "ArrowDown")
+                ) {
+                  const highlightedKey = highlightedModelKeyRef.current;
+                  const index = highlightedKey ? filteredItemKeys.indexOf(highlightedKey) : -1;
+                  const nextIndex = index + (e.key === "ArrowUp" ? -1 : 1);
+                  if (index < 0 || nextIndex < 0 || nextIndex >= filteredItemKeys.length) {
+                    (
+                      e as typeof e & { preventBaseUIHandler?: () => void }
+                    ).preventBaseUIHandler?.();
+                    e.preventDefault();
+                    e.stopPropagation();
+                    return;
+                  }
+                  e.stopPropagation();
+                  handleReorderFavorites(index, nextIndex);
+                  const movedModel = highlightedKey
+                    ? filteredModelByKey.get(highlightedKey)
+                    : undefined;
+                  announce(
+                    gt("Moved {name} to position {position} of {count}", {
+                      name: movedModel?.name ?? highlightedKey ?? "",
+                      position: nextIndex + 1,
+                      count: filteredItemKeys.length,
+                    }),
+                    "model-picker",
+                  );
                   return;
                 }
                 if (
@@ -1120,105 +1417,125 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               onTouchStart={(e) => e.stopPropagation()}
             />
 
-            <ModelPickerList
-              listRef={modelListRef}
-              itemKeys={filteredItemKeys}
-              extraData={modelListExtraData}
-              renderItem={({ item: modelKey, index }) => {
-                if (legacySection?.key === modelKey) {
-                  return (
-                    <ComboboxItem
-                      hideIndicator
-                      index={index}
-                      value={modelKey}
-                      aria-expanded={legacySection.isExpanded}
-                      className="group w-full cursor-pointer"
-                    >
-                      <span className="text-sm leading-snug text-muted-foreground group-hover:text-foreground group-data-highlighted:text-foreground">
-                        {legacySection.isExpanded
-                          ? gt("Show less", { $context: "collapses the list of older models" })
-                          : gt("Show more", { $context: "expands the list of older models" })}
-                      </span>
-                    </ComboboxItem>
-                  );
+            {canReorderFavorites ? (
+              <ModelPickerSortableFavoritesList
+                scrollContainerRef={sortableScrollRef}
+                itemKeys={filteredItemKeys}
+                onDragStart={(event) => {
+                  isDraggingFavoriteRef.current = true;
+                  suppressClickAfterDragRef.current = true;
+                  setDraggingFavoriteKey(String(event.active.id));
+                }}
+                onDragCancel={() => {
+                  isDraggingFavoriteRef.current = false;
+                  setDraggingFavoriteKey(null);
+                }}
+                onDragEnd={(event) => {
+                  isDraggingFavoriteRef.current = false;
+                  setDraggingFavoriteKey(null);
+                  if (!event.over || event.active.id === event.over.id) return;
+                  const fromIndex = filteredItemKeys.indexOf(String(event.active.id));
+                  const toIndex = filteredItemKeys.indexOf(String(event.over.id));
+                  if (fromIndex !== -1 && toIndex !== -1) {
+                    handleReorderFavorites(fromIndex, toIndex);
+                    const movedModel = filteredModelByKey.get(String(event.active.id));
+                    announce(
+                      gt("Moved {name} to position {position} of {count}", {
+                        name: movedModel?.name ?? String(event.active.id),
+                        position: toIndex + 1,
+                        count: filteredItemKeys.length,
+                      }),
+                      "model-picker",
+                    );
+                  }
+                }}
+                onPointerDownCapture={() => {
+                  suppressClickAfterDragRef.current = false;
+                }}
+                onMouseUpCapture={(event) => {
+                  if (!suppressClickAfterDragRef.current) return;
+                  event.stopPropagation();
+                }}
+                onClickCapture={(event) => {
+                  if (!suppressClickAfterDragRef.current) return;
+                  suppressClickAfterDragRef.current = false;
+                  event.preventDefault();
+                  event.stopPropagation();
+                }}
+                renderItem={({ item: modelKey, index, isDragging }) =>
+                  renderModelRow(modelKey, index, { isDragging })
                 }
-                const subProviderSection = subProviderSectionByKey.get(modelKey);
-                if (subProviderSection) {
-                  const unavailable = subProviderSection.unavailableReason !== undefined;
-                  return (
-                    <ComboboxItem
-                      hideIndicator
-                      index={index}
-                      value={modelKey}
-                      disabled={unavailable}
-                      aria-expanded={unavailable ? undefined : subProviderSection.isExpanded}
-                      className="group w-full cursor-pointer"
-                    >
-                      <div className="min-w-0 flex-1 text-left">
-                        <div className="flex min-w-0 items-center gap-2">
-                          <div className="min-w-0 truncate text-sm font-normal leading-snug">
-                            {subProviderSection.name}
+              />
+            ) : (
+              <ModelPickerList
+                listRef={modelListRef}
+                itemKeys={filteredItemKeys}
+                extraData={modelListExtraData}
+                renderItem={({ item: modelKey, index }) => {
+                  if (legacySection?.key === modelKey) {
+                    return (
+                      <ComboboxItem
+                        hideIndicator
+                        index={index}
+                        value={modelKey}
+                        aria-expanded={legacySection.isExpanded}
+                        className="group w-full cursor-pointer"
+                      >
+                        <span className="text-sm leading-snug text-muted-foreground group-hover:text-foreground group-data-highlighted:text-foreground">
+                          {legacySection.isExpanded
+                            ? gt("Show less", { $context: "collapses the list of older models" })
+                            : gt("Show more", { $context: "expands the list of older models" })}
+                        </span>
+                      </ComboboxItem>
+                    );
+                  }
+                  const subProviderSection = subProviderSectionByKey.get(modelKey);
+                  if (subProviderSection) {
+                    const unavailable = subProviderSection.unavailableReason !== undefined;
+                    return (
+                      <ComboboxItem
+                        hideIndicator
+                        index={index}
+                        value={modelKey}
+                        disabled={unavailable}
+                        aria-expanded={unavailable ? undefined : subProviderSection.isExpanded}
+                        className="group w-full cursor-pointer"
+                      >
+                        <div className="min-w-0 flex-1 text-left">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <div className="min-w-0 truncate text-sm font-normal leading-snug">
+                              {subProviderSection.name}
+                            </div>
+                            {unavailable ? (
+                              <Badge variant="outline" size="sm">
+                                {gt("Unavailable", {
+                                  $context: "backend cannot be used right now",
+                                })}
+                              </Badge>
+                            ) : null}
                           </div>
-                          {unavailable ? (
-                            <Badge variant="outline" size="sm">
-                              {gt("Unavailable", { $context: "backend cannot be used right now" })}
-                            </Badge>
-                          ) : null}
+                          <div className="mt-1 text-xs font-normal leading-snug text-muted-foreground">
+                            {subProviderSection.unavailableReason ??
+                              gt("{count, plural, one {{count} model} other {{count} models}}", {
+                                count: subProviderSection.models.length,
+                              })}
+                          </div>
                         </div>
-                        <div className="mt-1 text-xs font-normal leading-snug text-muted-foreground">
-                          {subProviderSection.unavailableReason ??
-                            gt("{count, plural, one {{count} model} other {{count} models}}", {
-                              count: subProviderSection.models.length,
-                            })}
-                        </div>
-                      </div>
-                      {unavailable ? null : (
-                        <ChevronRightIcon
-                          className={cn(
-                            "size-4 shrink-0 transition-transform",
-                            subProviderSection.isExpanded && "rotate-90",
-                          )}
-                        />
-                      )}
-                    </ComboboxItem>
-                  );
-                }
-                const model = filteredModelByKey.get(modelKey);
-                if (!model) {
-                  return null;
-                }
-                const disabledReason =
-                  getModelDisabledReason?.(model.instanceId, model.slug) ?? null;
-                return (
-                  <ModelListRow
-                    key={modelKey}
-                    index={index}
-                    slug={model.slug}
-                    name={model.name}
-                    subProvider={model.subProvider}
-                    instanceId={model.instanceId}
-                    driverKind={model.driverKind}
-                    providerDisplayName={model.instanceDisplayName}
-                    providerAccentColor={model.instanceAccentColor}
-                    acpRegistryAgentId={model.acpRegistryAgentId}
-                    acpRegistryIconUrl={model.acpRegistryIconUrl}
-                    isFavorite={favoritesSet.has(providerModelKey(model.instanceId, model.slug))}
-                    isSelected={
-                      selectedModelKeys !== undefined
-                        ? selectedModelKeySet.has(modelKey)
-                        : modelKey === activeModelKey
-                    }
-                    favoriteStarOnHover={selectedInstanceId === "favorites" && !isSearching}
-                    showInstanceBadge={badgedInstanceIds.has(model.instanceId)}
-                    showNewBadge={model.badge === "new"}
-                    unavailable={model.isUnavailable === true}
-                    jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
-                    disabledReason={disabledReason}
-                    onToggleFavorite={toggleFavorite}
-                  />
-                );
-              }}
-            />
+                        {unavailable ? null : (
+                          <ChevronRightIcon
+                            className={cn(
+                              "size-4 shrink-0 transition-transform",
+                              subProviderSection.isExpanded && "rotate-90",
+                            )}
+                          />
+                        )}
+                      </ComboboxItem>
+                    );
+                  }
+                  return renderModelRow(modelKey, index);
+                }}
+              />
+            )}
             <ModelPickerProviderNotices
               setupEntries={providerSetupEntries}
               updateRequiredNotices={updateRequiredNotices}
