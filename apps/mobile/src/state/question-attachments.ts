@@ -1,8 +1,17 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
+import {
+  pickComposerFiles,
+  pickComposerMedia,
+  type DraftComposerAttachment,
+} from "../lib/composerImages";
 import { appAtomRegistry } from "./atom-registry";
 import { startComposerDraftOperation } from "./composerDraftOperations";
-import { appendComposerDraftAttachments, getComposerDraftSnapshot } from "./use-composer-drafts";
+import {
+  appendComposerDraftAttachments,
+  getComposerDraftSnapshot,
+  releaseUnusedComposerAttachmentFiles,
+} from "./use-composer-drafts";
 
 export function questionAttachmentDraftPrefix(
   environmentId: EnvironmentId,
@@ -21,7 +30,7 @@ export function questionAttachmentDraftKey(
 export const questionAttachmentPreparationAtom = Atom.make<Record<string, number>>({}).pipe(
   Atom.keepAlive,
 );
-export function changeQuestionAttachmentPreparation(key: string, delta: number): void {
+function changeQuestionAttachmentPreparation(key: string, delta: number): void {
   const counts = appAtomRegistry.get(questionAttachmentPreparationAtom);
   if (delta < 0 && !(key in counts)) return;
   appAtomRegistry.set(questionAttachmentPreparationAtom, {
@@ -32,19 +41,24 @@ export function changeQuestionAttachmentPreparation(key: string, delta: number):
 
 const imagePreparations = new Map<string, Set<(threadKey: string | null) => void>>();
 
-/** A paste can outlive its question and finish in the thread draft. */
-export function startQuestionImagePreparation(key: string) {
+/** A paste or accepted picker selection can finish in the thread draft. */
+export function startQuestionImagePreparation(key: string, waitingForSelection = false) {
   let destination: string | null = key;
   let threadOperation: ReturnType<typeof startComposerDraftOperation> | undefined;
   const resolve = (threadKey: string | null) => {
-    destination = threadKey;
-    if (threadKey !== null) threadOperation = startComposerDraftOperation(threadKey);
+    destination = waitingForSelection ? null : threadKey;
+    if (destination !== null) threadOperation = startComposerDraftOperation(destination);
   };
   const pending = imagePreparations.get(key) ?? new Set();
   pending.add(resolve);
   imagePreparations.set(key, pending);
   changeQuestionAttachmentPreparation(key, 1);
   return {
+    acceptSelection: () => {
+      if (destination !== key) return false;
+      waitingForSelection = false;
+      return true;
+    },
     destination: () => (threadOperation?.signal.aborted ? null : destination),
     finish: () => {
       threadOperation?.finish();
@@ -71,4 +85,43 @@ export function appendUnsentQuestionAttachments(
     appendReference: true,
     insertion: { text, start: text.length, end: text.length },
   });
+}
+
+export async function pickQuestionAttachments(input: {
+  readonly key: string;
+  readonly kind: "media" | "files";
+  readonly maxUploadBytes?: number | undefined;
+  readonly isActive: () => boolean;
+  readonly append: (attachments: ReadonlyArray<DraftComposerAttachment>) => number;
+}): Promise<{ error: string | null; rejected: number }> {
+  const preparation = startQuestionImagePreparation(input.key, true);
+  try {
+    const existingCount = getComposerDraftSnapshot(input.key).attachments.length;
+    const acceptSelection = () => input.isActive() && preparation.acceptSelection();
+    const result =
+      input.kind === "files"
+        ? await pickComposerFiles({
+            existingCount,
+            maxBytes: input.maxUploadBytes,
+            acceptSelection,
+          })
+        : await pickComposerMedia({
+            existingCount,
+            maxVideoBytes: input.maxUploadBytes,
+            acceptSelection,
+          });
+    const attachments = "files" in result ? result.files : result.attachments;
+    const destination = preparation.destination();
+    if (destination === null || (destination === input.key && !input.isActive())) {
+      await releaseUnusedComposerAttachmentFiles(attachments);
+      return { error: null, rejected: 0 };
+    }
+    const rejected =
+      destination === input.key
+        ? input.append(attachments)
+        : appendUnsentQuestionAttachments(destination, attachments);
+    return { error: result.error, rejected };
+  } finally {
+    preparation.finish();
+  }
 }

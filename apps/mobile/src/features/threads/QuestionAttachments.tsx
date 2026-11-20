@@ -12,7 +12,6 @@ import { View, type TextInputInstance } from "react-native";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { ComposerAttachmentButton } from "./ComposerAttachmentButton";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
-import { pickComposerFiles, pickComposerMedia } from "../../lib/composerImages";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useNavigation } from "@react-navigation/native";
 import { useGT } from "gt-react-native";
@@ -29,9 +28,8 @@ import {
 } from "../../state/use-composer-drafts";
 import {
   appendUnsentQuestionAttachments,
-  changeQuestionAttachmentPreparation,
+  pickQuestionAttachments,
   questionAttachmentDraftKey,
-  questionAttachmentPreparationAtom,
   startQuestionImagePreparation,
 } from "../../state/question-attachments";
 
@@ -149,33 +147,17 @@ export function QuestionAttachments(props: {
   const attachments = drafts[key]?.attachments ?? [];
   const pick = async (kind: "media" | "files") => {
     const scope = pickerScope.current;
-    changeQuestionAttachmentPreparation(key, 1);
     const picked = await settlePromise(async () => {
-      const existingCount = appAtomRegistry.get(composerDraftsAtom)[key]?.attachments.length ?? 0;
-      const result =
-        kind === "files"
-          ? await pickComposerFiles({
-              existingCount,
-              maxBytes: capabilities?.fileAttachments?.maxUploadBytes,
-            })
-          : await pickComposerMedia({
-              existingCount,
-              maxVideoBytes: capabilities?.fileAttachments?.maxUploadBytes,
-            });
-      const picked = "files" in result ? result.files : result.attachments;
-      // Resolution on another client clears the reservation while the picker is open.
-      if (
-        !scope.active ||
-        (appAtomRegistry.get(questionAttachmentPreparationAtom)[key] ?? 0) === 0
-      ) {
-        await releaseUnusedComposerAttachmentFiles(picked);
-        return;
-      }
-      const rejected = append(key, picked);
-      if (result.error || rejected > 0)
+      const result = await pickQuestionAttachments({
+        key,
+        kind,
+        maxUploadBytes: capabilities?.fileAttachments?.maxUploadBytes,
+        isActive: () => scope.active,
+        append: (attachments) => append(key, attachments),
+      });
+      if (result.error || result.rejected > 0)
         Dialog.alert(gt("Could not attach file"), result.error ?? gt("Too many attachments."));
     });
-    changeQuestionAttachmentPreparation(key, -1);
     if (AsyncResult.isFailure(picked)) {
       const error = squashAtomCommandFailure(picked);
       Dialog.alert(gt("Could not attach file"), errorDisplayMessage(error, m) ?? gt("Try again."));
