@@ -449,6 +449,27 @@ describe("serverSettings helpers", () => {
     // A text generator has no provider snapshot; an empty list must not read as unusable.
     const on = settings(true);
     expect(resolveSourceControlWriterModelSelection(on, [], null)).toBe(selection);
+    expect(
+      resolveSourceControlWriterModelSelection(
+        on,
+        [
+          {
+            instanceId: generatorId,
+            driver: ProviderDriverKind.make("codex"),
+            enabled: false,
+            installed: false,
+            version: null,
+            status: "error",
+            auth: { status: "unauthenticated" },
+            checkedAt: "2026-07-27T00:00:00.000Z",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          },
+        ],
+        null,
+      ),
+    ).toBe(selection);
     expect(resolveSpeechPostProcessingModelSelection(on, [])).toBe(selection);
     expect(resolveReviewGuideModelSelection(on, [], null)).toBe(selection);
     expect(
@@ -540,6 +561,71 @@ describe("serverSettings helpers", () => {
     expect(resolveSourceControlWriterModelSelection(settings, [provider], null)).toBe(
       settings.textGenerationModelSelection,
     );
+  });
+
+  it("uses an available thread fallback and skips missing or unusable providers", () => {
+    const preferredFallback = createModelSelection(
+      ProviderInstanceId.make("gone-thread"),
+      "claude-opus-4-6",
+    );
+    const loadedProvider = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      driver: ProviderDriverKind.make("claudeAgent"),
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-07-27T00:00:00.000Z",
+      availability: "available",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    } satisfies ServerProvider;
+
+    const threadSelection = createModelSelection(loadedProvider.instanceId, "claude-opus-4-6");
+    expect(
+      resolveSourceControlWriterModelSelection(
+        DEFAULT_SERVER_SETTINGS,
+        [loadedProvider],
+        null,
+        threadSelection,
+      ),
+    ).toBe(threadSelection);
+    const dedicatedWriter = createModelSelection(loadedProvider.instanceId, "claude-haiku-4-5");
+    expect(
+      resolveSourceControlWriterModelSelection(
+        { ...DEFAULT_SERVER_SETTINGS, sourceControlWriterModelSelection: dedicatedWriter },
+        [loadedProvider],
+        null,
+        threadSelection,
+      ),
+    ).toBe(dedicatedWriter);
+    expect(
+      resolveSourceControlWriterModelSelection(
+        DEFAULT_SERVER_SETTINGS,
+        [{ ...loadedProvider, auth: { status: "unauthenticated" } }],
+        null,
+        threadSelection,
+      ),
+    ).toBe(DEFAULT_SERVER_SETTINGS.textGenerationModelSelection);
+
+    expect(
+      resolveSourceControlWriterModelSelection(
+        DEFAULT_SERVER_SETTINGS,
+        [loadedProvider],
+        null,
+        preferredFallback,
+      ),
+    ).toBe(DEFAULT_SERVER_SETTINGS.textGenerationModelSelection);
+    expect(
+      resolveSourceControlWriterModelSelection(
+        DEFAULT_SERVER_SETTINGS,
+        [{ ...loadedProvider, installed: false }],
+        null,
+        createModelSelection(loadedProvider.instanceId, "claude-opus-4-6"),
+      ),
+    ).toBe(DEFAULT_SERVER_SETTINGS.textGenerationModelSelection);
   });
 
   it("replaces providerInstances maps so omitted instance fields are cleared", () => {

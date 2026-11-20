@@ -135,6 +135,7 @@ import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { ChangeBreakdownGrid } from "./pullRequest/ChangeBreakdownGrid";
 import { useOpenLink } from "~/browser/useOpenLink";
+import { draftModelSelectionApplies, threadHasStarted } from "~/lib/chatThreadActions";
 
 interface GitActionsControlProps {
   gitCwd: string | null;
@@ -1011,6 +1012,20 @@ function CheckoutGitActionsControl({
     activeServerThreadShell ?? activeServerThreadProjection?.projection.thread ?? null;
   const isLocalDraftThread = activeDraftThread !== null && activeServerThread === null;
   const canChangeThreadBranch = canWriteSourceControl && (isLocalDraftThread || canOperateThread);
+  const composerDraft = useComposerDraftStore((store) => {
+    if (draftId) {
+      return store.getComposerDraft(draftId);
+    }
+    if (activeThreadRef) {
+      return store.getComposerDraft(activeThreadRef);
+    }
+    return null;
+  });
+  const threadModelSelection =
+    (composerDraft?.activeProvider &&
+    draftModelSelectionApplies(composerDraft, threadHasStarted(activeServerThreadShell))
+      ? composerDraft.modelSelectionByProvider[composerDraft.activeProvider]
+      : undefined) ?? activeServerThread?.modelSelection;
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
@@ -1322,6 +1337,7 @@ function CheckoutGitActionsControl({
       ...(filePaths ? { filePaths } : {}),
       ...(activeServerThread ? { threadId: activeServerThread.id } : {}),
       ...(activeDraftThread ? { projectId: activeDraftThread.projectId } : {}),
+      ...(threadModelSelection ? { modelSelection: threadModelSelection } : {}),
     });
 
     if (result._tag === "Failure") {

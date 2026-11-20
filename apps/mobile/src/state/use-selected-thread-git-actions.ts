@@ -28,6 +28,8 @@ import { useBranches } from "./queries";
 import { threadEnvironment } from "./threads";
 import { vcsActionManager, vcsEnvironment } from "./vcs";
 import { uuidv4 } from "../lib/uuid";
+import { scopedThreadKey } from "../lib/scopedEntities";
+import { getComposerDraftSnapshot } from "./use-composer-drafts";
 import { appAtomRegistry } from "./atom-registry";
 import { readEnvironmentScope, useEnvironmentScope } from "./session";
 import {
@@ -375,6 +377,11 @@ export function useSelectedThreadGitActions() {
       "run_change_request",
       m(msg("Running source control action")),
       async ({ thread, cwd }) => {
+        const modelSelection =
+          input.modelSelection ??
+          getComposerDraftSnapshot(scopedThreadKey(thread.environmentId, thread.id))
+            .modelSelection ??
+          thread.modelSelection;
         const result = await runStackedAction({
           actionId,
           action: input.action,
@@ -382,6 +389,7 @@ export function useSelectedThreadGitActions() {
           ...(input.featureBranch ? { featureBranch: input.featureBranch } : {}),
           ...(input.filePaths?.length ? { filePaths: [...input.filePaths] } : {}),
           threadId: thread.id,
+          modelSelection,
         });
         if (AsyncResult.isFailure(result)) {
           return result;

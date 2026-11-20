@@ -3676,7 +3676,7 @@ export const make = Effect.gen(function* () {
 
         const textGenerationSettings = yield* projectSettingsFor(input).pipe(
           Effect.flatMap(({ settings, projectId }) =>
-            settings.sourceControlWriterModelSelection === null
+            settings.sourceControlWriterModelSelection === null && input.modelSelection == null
               ? Effect.succeed({
                   modelSelection: settings.textGenerationModelSelection,
                   projectId,
@@ -3688,6 +3688,7 @@ export const make = Effect.gen(function* () {
                       settings,
                       providers,
                       projectId,
+                      input.modelSelection,
                     ),
                     projectId,
                     style: settings.sourceControlWritingStyle,
