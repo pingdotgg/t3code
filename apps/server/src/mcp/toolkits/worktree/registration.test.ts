@@ -63,7 +63,7 @@ const layerStubServices = Layer.mergeAll(
   Layer.mock(PeerLinks)({}),
   Layer.mock(RemoteDelegation)({}),
   Layer.mock(Orchestrator.OrchestratorV2)({}),
-  Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+  Layer.mock(ProjectionStore.ProjectionStoreV2)({ getThreadShell: () => Effect.succeed(null) }),
   Layer.mock(DeviceService.DeviceService)({}),
   Layer.mock(ThreadManagementService.ThreadManagementService)({}),
   Layer.mock(ProviderRegistry.ProviderRegistry)({}),

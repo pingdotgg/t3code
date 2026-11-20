@@ -22,16 +22,26 @@ const legacyNames = [
   "ProjectionThreadsAutoSettleDisabledAt",
 ] as const;
 
+const migrationLedgerExists = Effect.fn("migrationLedgerExists")(function* (table: string) {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql`
+    SELECT name FROM sqlite_master WHERE type = 'table' AND name = ${table}
+  `;
+  return rows.length > 0;
+});
+
 /** Move the released fork ledger to upstream numbering before upstream runs V2. */
 export const reconcileForkMigrationHistory = Effect.fn("reconcileForkMigrationHistory")(
   function* () {
     const sql = yield* SqlClient.SqlClient;
+    if (!(yield* migrationLedgerExists("effect_sql_migrations"))) return;
+    const legacy = yield* sql`
+      SELECT migration_id FROM effect_sql_migrations
+      WHERE migration_id IN (44, 48) AND name = ${legacyNames[0]}
+    `;
+    if (legacy.length === 0) return;
     yield* sql.withTransaction(
       Effect.gen(function* () {
-        const tables = yield* sql`
-          SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'
-        `;
-        if (tables.length === 0) return;
         const earlyFork = yield* sql`
           SELECT migration_id FROM effect_sql_migrations
           WHERE migration_id = 44 AND name = 'ProjectionThreadSubagentModelSelection'
@@ -82,15 +92,30 @@ export const reconcileForkMigrationHistory = Effect.fn("reconcileForkMigrationHi
 );
 
 const run = Migrator.make({});
+const forkMigrations = [
+  [1, "ProjectionThreadSubagentModelSelection", SubagentModelSelection],
+  [2, "ProjectionThreadsLastViewedAt", ThreadViewed],
+  [3, "AgentMailbox", AgentMailbox],
+  [4, "MailboxWake", MailboxWake],
+] as const;
+const latestForkMigrationId = forkMigrations.at(-1)?.[0] ?? 0;
+const forkLedger = "pseudocode_migrations";
 
 /** Fork additions have their own ledger so future upstream IDs cannot mask them. */
-export const runForkMigrations = () =>
-  run({
-    table: "pseudocode_migrations",
-    loader: Migrator.fromRecord({
-      "1_ProjectionThreadSubagentModelSelection": SubagentModelSelection,
-      "2_ProjectionThreadsLastViewedAt": ThreadViewed,
-      "3_AgentMailbox": AgentMailbox,
-      "4_MailboxWake": MailboxWake,
-    }),
+export const runForkMigrations = Effect.fn("runForkMigrations")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  if (yield* migrationLedgerExists(forkLedger)) {
+    const [latest] = yield* sql<{ readonly id: number | null }>`
+      SELECT MAX(migration_id) AS id FROM ${sql(forkLedger)}
+    `;
+    if ((latest?.id ?? 0) >= latestForkMigrationId) return [];
+  }
+  return yield* run({
+    table: forkLedger,
+    loader: Migrator.fromRecord(
+      Object.fromEntries(
+        forkMigrations.map(([id, name, migration]) => [`${id}_${name}`, migration]),
+      ),
+    ),
   });
+});

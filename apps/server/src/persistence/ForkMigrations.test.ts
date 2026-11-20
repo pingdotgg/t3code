@@ -54,7 +54,10 @@ it.effect.each([44, 47, 48, 49, 50, 51, 53, 56, 58])(
       }
       const credentials = yield* sql`SELECT * FROM auth_sessions`;
       yield* runMigrations();
-      assert.deepStrictEqual(yield* sql`SELECT * FROM auth_sessions`, credentials);
+      assert.deepStrictEqual(
+        yield* sql`SELECT * FROM auth_sessions`,
+        credentials.map((credential) => ({ ...credential, proof_key_thumbprint: null })),
+      );
       const messages = yield* sql`SELECT id, body, state FROM projection_mailbox_messages`;
       assert.deepStrictEqual(
         messages,

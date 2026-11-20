@@ -281,11 +281,6 @@ const cloneUrls = (raw: typeof RepositorySchema.Type) => ({
 });
 const repositoryPath = (repository: string) =>
   `repos/${repository.split("/").map(encodeURIComponent).join("/")}`;
-// Branch lookups ask `/pulls` for one head branch, which Forgejo 16 answers with only that
-// branch's pull requests. Older Forgejo and Gitea ignore the parameter and list every pull
-// request, so the scan stops here instead of reading the whole history on each refresh.
-const BRANCH_LOOKUP_MAX_PAGES = 5;
-
 type ForgejoPull = typeof ForgejoPullRequestSchema.Type;
 const updatedMillis = (pull: ForgejoPull) =>
   pull.updated_at?.pipe(Option.map(DateTime.toEpochMillis), Option.getOrUndefined);
@@ -426,7 +421,7 @@ export const make = Effect.gen(function* () {
         let firstPage: ReadonlyArray<ForgejoPull> | undefined;
         if (!unfiltered) {
           const results: ReturnType<typeof toForgejoChangeRequest>[] = [];
-          for (let page = 1; page <= BRANCH_LOOKUP_MAX_PAGES && results.length < limit; page++) {
+          for (let page = 1; results.length < limit; page++) {
             const items = yield* request(
               {
                 ...input,
