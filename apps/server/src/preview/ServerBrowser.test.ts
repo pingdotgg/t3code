@@ -45,6 +45,7 @@ import * as ServerBrowser from "./ServerBrowser.ts";
 import * as PreviewBrowser from "./PreviewBrowser.ts";
 
 vi.mock("./ServerBrowserContexts.ts", () => ({
+  grantPreviewPermissions: async () => {},
   presentAsChrome: async () => {},
   ServerBrowserContexts: class {
     private readonly onClose: ((context: BrowserContext) => void) | undefined;

@@ -5,7 +5,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import type { Browser, BrowserContext, CDPSession } from "playwright-core";
+import type { Browser, BrowserContext, CDPSession, Page } from "playwright-core";
 
 import { sandboxDisabled } from "./PreviewBrowserHost.ts";
 
@@ -131,6 +131,59 @@ export const presentAsChrome = async (
   const browser = await cdp.send("Browser.getVersion");
   const identity = chromeIdentity(browser, { ...host, release: NodeOS.release() });
   if (identity) await cdp.send("Emulation.setUserAgentOverride", identity);
+};
+
+const previewPermissions = new WeakMap<BrowserContext, Promise<void>>();
+
+/**
+ * Sets a server preview context's permissions once. Chromium clears a context's overrides when the
+ * session that set them detaches, and a later Playwright grant replaces the whole set, so the
+ * session lives as long as the context and both permissions go in one call. Loopback matches the
+ * desktop preview; Playwright's `local-network-access` would also grant LAN, which the desktop denies.
+ */
+export const grantPreviewPermissions = (context: BrowserContext, page: Page) => {
+  let granted = previewPermissions.get(context);
+  if (!granted) {
+    granted = setPreviewPermissions(context, page);
+    previewPermissions.set(context, granted);
+    void granted.catch(() => previewPermissions.delete(context));
+  }
+  return granted;
+};
+
+const pageBrowserContextId = async (context: BrowserContext, page: Page) => {
+  const pageSession = await context.newCDPSession(page);
+  try {
+    const { targetInfo } = await pageSession.send("Target.getTargetInfo");
+    return targetInfo.browserContextId;
+  } finally {
+    await pageSession.detach().catch(constVoid);
+  }
+};
+
+const setPreviewPermissions = async (context: BrowserContext, page: Page) => {
+  const browser = context.browser();
+  if (!browser) throw new Error("The preview context has no browser.");
+  const browserContextId = await pageBrowserContextId(context, page);
+  // Registered before the session exists, so a close during its creation still detaches it.
+  let session: CDPSession | undefined;
+  let closed = false;
+  context.once("close", () => {
+    closed = true;
+    void session?.detach().catch(constVoid);
+  });
+  const created = await browser.newBrowserCDPSession();
+  session = created;
+  try {
+    if (closed) throw new Error("The preview context closed.");
+    await created.send("Browser.grantPermissions", {
+      ...(browserContextId ? { browserContextId } : {}),
+      permissions: ["clipboardSanitizedWrite", "loopbackNetwork"],
+    });
+  } catch (cause) {
+    await created.detach().catch(constVoid);
+    throw cause;
+  }
 };
 
 export class ServerBrowserContexts {

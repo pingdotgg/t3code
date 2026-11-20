@@ -13,7 +13,11 @@ import * as Effect from "effect/Effect";
 import { chromium, type Browser, type BrowserContext, type BrowserType } from "playwright-core";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { presentAsChrome, ServerBrowserContexts } from "./ServerBrowserContexts.ts";
+import {
+  grantPreviewPermissions,
+  presentAsChrome,
+  ServerBrowserContexts,
+} from "./ServerBrowserContexts.ts";
 
 const launches = vi.hoisted(() => ({
   launch: vi.fn<BrowserType["launch"]>(),
@@ -481,4 +485,72 @@ describe("ServerBrowserContexts", () => {
       yield* Effect.promise(() => sendsOneChromeIdentity(host));
     }),
   );
+
+  it("grants preview loopback and clipboard access, keeping LAN denied, past the tab that set it", async () => {
+    const listen = (server: NodeHttp.Server) =>
+      new Promise<number>((resolve) =>
+        server.listen(0, "127.0.0.1", () =>
+          resolve((server.address() as NodeNet.AddressInfo).port),
+        ),
+      );
+    const target = NodeHttp.createServer((_request, response) =>
+      response.writeHead(200, { "access-control-allow-origin": "*" }).end("ok"),
+    );
+    const targetPort = await listen(target);
+    // Treated as a private-network address, so reaching it needs the local-network permission.
+    const lan = NodeHttp.createServer((_request, response) =>
+      response.writeHead(200, { "access-control-allow-origin": "*" }).end("ok"),
+    );
+    const lanPort = await listen(lan);
+    const pageServer = NodeHttp.createServer((_request, response) =>
+      response.writeHead(200, { "content-type": "text/html" }).end("<!doctype html>"),
+    );
+    const pagePort = await listen(pageServer);
+    const probe = (port: number) => `fetch("http://127.0.0.1:${port}/").then(
+      (response) => "ok " + response.status,
+      (error) => "blocked: " + error.message,
+    )`;
+    // Chromium's Local Network Access guards a loopback target only when the page is not on loopback.
+    launches.launch.mockImplementation((launch = {}) => {
+      const { executablePath: _installed, ...bundled } = launch;
+      return launchChromium({
+        ...bundled,
+        args: [
+          ...(bundled.args ?? []),
+          `--ip-address-space-overrides=127.0.0.1:${pagePort}=public,127.0.0.1:${lanPort}=private`,
+        ],
+      });
+    });
+    const pool = new ServerBrowserContexts({
+      ...options(),
+      env: { ...process.env, T3CODE_SERVER_BROWSER_SANDBOX: "0" },
+    });
+    const permission = (name: string) =>
+      `navigator.permissions.query({ name: ${JSON.stringify(name)} }).then((status) => status.state)`;
+    try {
+      const context = await pool.contextFor(INCOGNITO_BROWSER_PROFILE_ID);
+      const first = await context.newPage();
+      await first.goto(`http://127.0.0.1:${pagePort}/`);
+      expect(await first.evaluate(probe(targetPort))).toMatch(/^blocked/);
+      await grantPreviewPermissions(context, first);
+      await first.reload();
+      expect(await first.evaluate(probe(targetPort))).toBe("ok 200");
+      expect(await first.evaluate(probe(lanPort))).toMatch(/^blocked/);
+      expect(await first.evaluate(permission("clipboard-write"))).toBe("granted");
+      // Closing the tab that first set the grant must not take it from its neighbors.
+      const second = await context.newPage();
+      await second.goto(`http://127.0.0.1:${pagePort}/`);
+      await first.close();
+      expect(await second.evaluate(probe(targetPort))).toBe("ok 200");
+      expect(await second.evaluate(permission("clipboard-write"))).toBe("granted");
+    } finally {
+      await pool.close();
+      target.closeAllConnections();
+      lan.closeAllConnections();
+      pageServer.closeAllConnections();
+      await Promise.all(
+        [target, lan, pageServer].map((server) => new Promise((resolve) => server.close(resolve))),
+      );
+    }
+  });
 });
