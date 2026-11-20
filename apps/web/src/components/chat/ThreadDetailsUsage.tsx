@@ -76,6 +76,7 @@ export function ThreadDetailsUsage({
             fill={null}
             tone={null}
             value={gt("Unavailable")}
+            ariaDetail={notice}
             tooltip={<span className="text-foreground">{notice}</span>}
             opensUsage
           />
@@ -168,6 +169,10 @@ function LimitRow({
   const pace = paceOf(window, now);
   const timeLeft = paceRemainingPercent(window, now);
   const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
+  const resetTime =
+    window.resetsAt && resetsAt > now
+      ? formatUpcomingTimestamp(window.resetsAt, timestampFormat, now, undefined, m)
+      : null;
   return (
     <UsageRow
       label={window.label}
@@ -175,7 +180,13 @@ function LimitRow({
       tone={left <= 10 ? "error" : left <= 20 ? "warning" : null}
       tick={timeLeft}
       value={`${left}%`}
-      ariaValue={gt("{left}% left", { left })}
+      ariaValue={
+        pace
+          ? gt("{left}% left. {pace}", { left, pace: m(PACE_LABEL[pace]) })
+          : gt("{left}% left", { left })
+      }
+      // The absolute time only: a per-minute countdown in the name makes NVDA re-read the focused row.
+      ariaDetail={resetTime ? gt("Resets {time}", { time: resetTime }) : null}
       opensUsage
       tooltip={
         <>
@@ -187,11 +198,11 @@ function LimitRow({
               {m(PACE_LABEL[pace])} · {gt("{timeLeft}% of the window left", { timeLeft })}
             </span>
           ) : null}
-          {window.resetsAt && resetsAt > now ? (
+          {resetTime ? (
             <span className="text-muted-foreground">
               {gt("Resets in {duration} · {time}", {
                 duration: formatDuration(resetsAt - now, m),
-                time: formatUpcomingTimestamp(window.resetsAt, timestampFormat, now, undefined, m),
+                time: resetTime,
               })}
             </span>
           ) : null}
@@ -209,6 +220,7 @@ function UsageRow({
   tick = null,
   value,
   ariaValue = value,
+  ariaDetail = null,
   tooltip,
   muted = false,
   opensUsage = false,
@@ -221,13 +233,17 @@ function UsageRow({
   readonly tick?: number | null;
   readonly value: string;
   readonly ariaValue?: string;
+  /** Tooltip detail read as part of the aria-label, not a description: NVDA skips descriptions in browse mode. */
+  readonly ariaDetail?: string | null;
   readonly tooltip: ReactNode;
   readonly muted?: boolean;
   readonly opensUsage?: boolean;
 }) {
   const gt = useGT();
   const rowProps = {
-    "aria-label": gt("{label}: {value}", { label, value: ariaValue }),
+    "aria-label": ariaDetail
+      ? gt("{label}: {value}. {detail}", { label, value: ariaValue, detail: ariaDetail })
+      : gt("{label}: {value}", { label, value: ariaValue }),
     className: cn(
       "col-span-3 grid h-6 grid-cols-subgrid items-center rounded-lg px-2.5 outline-none hover:bg-black/[0.035] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-popup-open:bg-black/[0.035] dark:hover:bg-white/[0.08] dark:data-popup-open:bg-white/[0.08]",
       opensUsage
