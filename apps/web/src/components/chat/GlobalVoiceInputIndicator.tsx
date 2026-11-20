@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { useVoiceTranscriptionDestination } from "../../speech/useEnvironmentSpeechInput";
 import {
   useRetainedVoiceInputSession,
@@ -13,6 +14,7 @@ import { ComposerSpeechRecordingPill } from "./ComposerSpeechButton";
  * records into is off screen, shows it so it can be finished, cancelled, or returned to.
  */
 export function GlobalVoiceInputIndicator({ hidden = false }: { hidden?: boolean }) {
+  const gt = useGT();
   const { prepared, grantId, cloudProvider, cloudModel } = useVoiceTranscriptionDestination();
   const session = useRetainedVoiceInputSession({ prepared, grantId, cloudProvider, cloudModel });
   const { state, target, recordingStartedAt } = useVoiceInputSessionSnapshot(session);
@@ -25,7 +27,7 @@ export function GlobalVoiceInputIndicator({ hidden = false }: { hidden?: boolean
 
   return (
     <div className="pointer-events-none fixed inset-x-0 top-3 z-100 flex justify-center px-4">
-      <div className="pointer-events-auto flex max-w-full items-center gap-1 rounded-full bg-popover p-0.5 shadow-lg/5">
+      <div className="pointer-events-auto flex max-w-full items-center gap-1 rounded-full bg-popover p-0.5 shadow-lg/5 [-webkit-app-region:no-drag]">
         <Button
           type="button"
           size="sm-pill"
@@ -34,7 +36,7 @@ export function GlobalVoiceInputIndicator({ hidden = false }: { hidden?: boolean
           onClick={() => target.open?.()}
           className="min-w-0 shrink"
         >
-          <span className="truncate">{target.label ?? "Untitled thread"}</span>
+          <span className="truncate">{target.label ?? gt("Untitled thread")}</span>
         </Button>
         <ComposerSpeechRecordingPill
           state={state}
