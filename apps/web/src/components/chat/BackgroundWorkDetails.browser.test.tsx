@@ -1,13 +1,5 @@
 import "~/index.css";
-import {
-  EnvironmentId,
-  ProviderDriverKind,
-  ProviderThreadId,
-  RunId,
-  ThreadId,
-  TurnItemId,
-} from "@t3tools/contracts";
-import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { EnvironmentId, ProviderDriverKind, ThreadId, TurnItemId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
@@ -45,6 +37,7 @@ it("opens full command details for short labels and keeps pending tasks current"
     description?: string,
     status: "running" | "completed" = "completed",
     explicitItem = true,
+    nativeItemId?: string,
   ) => (
     <ThreadNow
       attention={null}
@@ -55,7 +48,8 @@ it("opens full command details for short labels and keeps pending tasks current"
         threadId: ThreadId.make("thread"),
         tasks: [
           {
-            taskId: "native-task",
+            taskId: nativeItemId ? "session/task-9" : "native-task",
+            nativeItemId,
             itemId: explicitItem ? TurnItemId.make("bash-1") : undefined,
             kind: "command",
             description,
@@ -100,6 +94,10 @@ it("opens full command details for short labels and keeps pending tasks current"
   await expect.element(page.getByText("Command output stream")).toBeVisible();
   await screen.rerender(view("Native fallback", "completed", false));
   await expect.element(page.getByText("Command output stream")).toBeVisible();
+  await screen.rerender(view("Run tests", "completed", false, "native-task"));
+  const dialog = page.getByRole("dialog");
+  await expect.element(dialog.getByRole("heading", { name: "Run tests" })).toBeVisible();
+  await expect.element(dialog.getByText("Command output stream")).toBeVisible();
   await page.getByRole("button", { name: "Close", exact: true }).click();
   await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
 });
@@ -134,73 +132,4 @@ it("gives a subagent the same status as the background work line", async () => {
   await expect
     .element(page.getByRole("dialog").getByText("Waiting", { exact: true }))
     .toBeVisible();
-});
-
-it("lists a command once when its native task ID differs from its tool call ID", async () => {
-  const threadId = ThreadId.make("thread");
-  const runId = RunId.make("run-1");
-  const providerThreadId = ProviderThreadId.make("provider-thread");
-  const command = {
-    id: TurnItemId.make("command-item"),
-    threadId,
-    runId,
-    nodeId: null,
-    providerThreadId,
-    providerTurnId: null,
-    nativeItemRef: {
-      driver: ProviderDriverKind.make("antigravity"),
-      nativeId: "call-9",
-      strength: "strong",
-    },
-    parentItemId: null,
-    ordinal: 1,
-    status: "running",
-    title: "Run tests",
-    startedAt: null,
-    completedAt: null,
-    updatedAt: DateTime.makeUnsafe("2026-11-09T00:00:00Z"),
-    type: "command_execution",
-    input: "pnpm test",
-    output: "Tests are running",
-  } as const;
-  const tasks = derivePendingBackgroundWork({
-    latestRun: { id: runId, ordinal: 1, status: "failed" },
-    providerThreads: [
-      {
-        id: providerThreadId,
-        pendingBackgroundTasks: [
-          {
-            taskId: "session/task-9",
-            nativeItemId: "call-9",
-            kind: "command",
-            description: "Run tests",
-            awaited: true,
-          },
-        ],
-      },
-    ],
-    turnItems: [command],
-  });
-  await using screen = await render(
-    <ThreadNow
-      attention={null}
-      syncPhase={null}
-      goal={null}
-      work={backgroundWorkNowItem({
-        environmentId: EnvironmentId.make("test"),
-        threadId,
-        tasks,
-        turnItems: [command],
-        stopDisabled: false,
-        stopping: false,
-        onStop: async () => undefined,
-        onOpenThread: () => undefined,
-      })}
-    />,
-  );
-  await screen.getByRole("button", { name: "Details", exact: true }).click();
-  const dialog = page.getByRole("dialog");
-  await expect.element(dialog.getByRole("heading", { name: "Background work" })).toBeVisible();
-  expect(dialog.getByRole("heading", { name: "Run tests", exact: true }).all()).toHaveLength(1);
-  await expect.element(dialog.getByText("Command output stream")).toBeVisible();
 });

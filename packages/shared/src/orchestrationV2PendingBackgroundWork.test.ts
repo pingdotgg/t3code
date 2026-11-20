@@ -177,58 +177,40 @@ describe("derivePendingBackgroundWork", () => {
     expect(tasks).toEqual([{ taskId: "cmd-1", description: "npm test", kind: "command" }]);
   });
 
-  it("dedupes roster entries against turn items by native task id", () => {
-    const tasks = derivePendingBackgroundWork({
-      latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
-      providerThreads: [
-        {
-          id: "pt-1" as never,
-          pendingBackgroundTasks: [
-            { taskId: "task-9", description: "Agent review", kind: "background_task" },
-          ],
-        },
-      ],
-      turnItems: [
-        {
-          id: "item-sub" as never,
-          type: "subagent",
-          status: "running",
-          title: "Agent review",
-          nativeItemRef: { nativeId: "task-9" },
-          prompt: "review the plan",
-        },
-      ],
-    });
-    expect(tasks).toEqual([
-      { taskId: "task-9", description: "Agent review", kind: "background_task" },
-    ]);
-  });
-
-  it("merges a failed run's still-open command with its distinct native task id", () => {
-    const task = {
-      taskId: "session/task-9",
-      nativeItemId: "call-9",
-      description: "Verify",
-      kind: "command" as const,
-      awaited: true as const,
-    };
-    expect(
-      derivePendingBackgroundWork({
-        latestRun: { id: "run-1" as never, ordinal: 1, status: "failed" },
+  it.each([
+    {
+      identity: "matching task ID",
+      runStatus: "completed",
+      task: { taskId: "task-9", description: "Agent review", kind: "background_task" },
+      item: { type: "subagent", nativeItemRef: { nativeId: "task-9" }, prompt: "review the plan" },
+    },
+    {
+      identity: "distinct native tool call ID",
+      runStatus: "failed",
+      task: {
+        taskId: "session/task-9",
+        nativeItemId: "call-9",
+        description: "Verify",
+        kind: "command",
+        awaited: true,
+      },
+      item: {
+        type: "command_execution",
+        nativeItemRef: { nativeId: "call-9" },
+        input: "pnpm test",
+      },
+    },
+  ] as const)(
+    "retains the roster entry for a running turn item with a $identity",
+    ({ runStatus, task, item }) => {
+      const tasks = derivePendingBackgroundWork({
+        latestRun: { id: "run-1" as never, ordinal: 1, status: runStatus },
         providerThreads: [{ id: "pt-1" as never, pendingBackgroundTasks: [task] }],
-        turnItems: [
-          {
-            id: "item-9",
-            type: "command_execution",
-            status: "running",
-            title: null,
-            nativeItemRef: { nativeId: "call-9" },
-            input: "pnpm test",
-          },
-        ],
-      }),
-    ).toEqual([task]);
-  });
+        turnItems: [{ ...item, id: "item-9", status: "running", title: task.description }],
+      });
+      expect(tasks).toEqual([task]);
+    },
+  );
 
   it("excludes Grok persistent monitors", () => {
     const tasks = derivePendingBackgroundWork({
