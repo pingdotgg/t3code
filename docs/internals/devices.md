@@ -16,6 +16,10 @@ with the server's Node; `npx` would make the first `device_open` after a reboot
 depend on the registry. The hub is a supervised child rather than an imported
 middleware because serve-sim loads private CoreSimulator frameworks through a
 native addon, and a crash there must not take the server down.
+On Linux the host starts the adb server ahead of the hub when nothing
+listens on port 5037: adb's own first-use probe connects before forking, and
+under WSL mirrored networking that connect to an unbound loopback port can hang
+for minutes, timing the hub's first device list out.
 
 Everything platform-specific sits behind
 [`DeviceHost`](../../apps/server/src/device/DeviceHost.ts). The service lists,
