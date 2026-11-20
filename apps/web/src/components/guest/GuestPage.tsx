@@ -567,6 +567,12 @@ function ExpiryLabel({ expiresAt }: { readonly expiresAt: string }) {
 const BUBBLE =
   "flex min-w-0 max-w-[80%] flex-col gap-2 rounded-2xl p-3 text-sm whitespace-pre-wrap [overflow-wrap:anywhere]";
 
+const UNPLACED_GUEST_MESSAGE_COLOR = {
+  pending: "text-foreground",
+  sent: "text-message-foreground",
+  dismissed: "text-muted-foreground",
+} satisfies Record<ThreadGuestMessageStatus, string>;
+
 const openInNewTab = (url: string) => window.open(url, "_blank", "noopener,noreferrer");
 /** Guests have no image viewer; the browser shows the picture in its own tab. */
 const openExpandedImage = (preview: ExpandedImagePreview) => {
@@ -594,7 +600,7 @@ function UnplacedGuestMessage({
         className={cn(
           BUBBLE,
           guestBubbleClassName(message.status !== "sent"),
-          message.status === "dismissed" ? "text-muted-foreground" : "text-message-foreground",
+          UNPLACED_GUEST_MESSAGE_COLOR[message.status],
         )}
       >
         <GuestMessageAttachments

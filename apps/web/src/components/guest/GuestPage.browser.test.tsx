@@ -15,13 +15,16 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { formatHex } from "culori/fn";
+import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 
 import { render } from "../../../test/render";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
+import { applyThemeColorPreview, applyThemePalette } from "../../themePalette";
+import { parseVsCodeThemeFile } from "../../vscodeThemeImport";
 import { GuestPage } from "./GuestPage";
 
 const SHARE_ID = "share-1";
@@ -283,6 +286,16 @@ describe("GuestPage", () => {
   });
 
   it("follows the end as replies stream, and shows the guest's own message even after they scrolled up", async () => {
+    const theme = parseVsCodeThemeFile({
+      type: "light",
+      colors: {
+        "editor.background": "#ffffff",
+        "editor.foreground": "#000000",
+        "chat.requestBubbleBackground": "#000000",
+      },
+    });
+    applyThemeColorPreview(theme.colors, theme.appearance);
+    onTestFinished(() => applyThemePalette("system", "light"));
     using _page = visit(`/guest?share=${SHARE_ID}`);
     using _session = vi
       .spyOn(window, "fetch")
@@ -351,7 +364,9 @@ describe("GuestPage", () => {
     await userEvent.type(screen.getByRole("textbox", { name: "Message" }), waiting.text);
     await userEvent.click(screen.getByRole("button", { name: "Send" }));
     send({ type: "view", view: { ...view, messages: [waiting] } });
-    await expect.element(screen.getByText(waiting.text)).toBeInTheDocument();
+    const pending = screen.getByText(waiting.text);
+    await expect.element(pending).toBeInTheDocument();
+    expect(formatHex(getComputedStyle(pending.element()).color)).toBe("#000000");
     await expectAtEnd();
 
     // The owner sends it: the run ends, the message becomes a row, and a new run's reply grows.
