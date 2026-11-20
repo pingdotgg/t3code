@@ -1139,6 +1139,13 @@ export function extractMcpToolCallIdentity(
   if (meta?.is_mcp_tool_call === true && server.length > 0 && tool.length > 0) {
     return { server, tool };
   }
+  // Antigravity marks MCP calls kind "execute" and names them only in rawInput.
+  const agyServer = typeof rawInput?.ServerName === "string" ? rawInput.ServerName.trim() : "";
+  const agyTool = typeof rawInput?.ToolName === "string" ? rawInput.ToolName.trim() : "";
+  if (agyServer.length > 0 && agyTool.length > 0) {
+    const input = isRecord(rawInput?.Arguments) ? rawInput.Arguments : undefined;
+    return { server: agyServer, tool: agyTool, ...(input === undefined ? {} : { input }) };
+  }
   // Kiro names the server in `_meta.kiro.serverName` and the call in `rawInput.tool_id`
   // ("<server>::<tool>"), with the tool's own input under `rawInput.arguments`.
   const kiroServer = isRecord(meta?.kiro) ? meta.kiro.serverName : undefined;
