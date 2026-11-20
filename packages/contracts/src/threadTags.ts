@@ -16,3 +16,16 @@ export type ThreadTag = typeof ThreadTag.Type;
 export const StoredThreadTags = Schema.Array(Schema.String).pipe(
   Schema.catchDecoding(() => Effect.succeedSome([])),
 );
+
+/** Built-in tag for threads moved out of the main sidebar into the Hidden section below Settled. */
+export const SIDEBAR_HIDDEN_THREAD_TAG: ThreadTag = "hidden";
+export const SCHEDULED_TASK_HIDDEN_THREAD_TAG: ThreadTag = "scheduled-task-hidden";
+
+export function isSidebarHiddenThread(thread: {
+  readonly tags?: ReadonlyArray<string> | undefined;
+}): boolean {
+  return (
+    thread.tags?.includes(SIDEBAR_HIDDEN_THREAD_TAG) === true ||
+    thread.tags?.includes(SCHEDULED_TASK_HIDDEN_THREAD_TAG) === true
+  );
+}

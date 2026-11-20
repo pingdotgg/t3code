@@ -57,6 +57,7 @@ import {
   type RuntimeMode,
   type ScheduledTask,
   type ScheduledTaskUpsertInput,
+  scheduledTaskSidebarVisibility,
   scheduledTaskThreadMode,
   type ServerProvider,
   type ServerProviderModel,
@@ -290,6 +291,7 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
     projectId: task.projectId,
     boundThreadId: task.threadId,
     freshSession: scheduledTaskThreadMode(task) === "fresh_session",
+    sidebarVisibility: scheduledTaskSidebarVisibility(task),
     schedule: task.schedule,
     nextRunAt: task.nextRunAt,
     lastRunStatus: task.lastRunStatus,
@@ -2391,6 +2393,9 @@ const make = Effect.gen(function* () {
           : bindToCurrentThread
             ? "continue"
             : "new_thread",
+        ...(input.sidebarVisibility === undefined
+          ? {}
+          : { sidebarVisibility: input.sidebarVisibility }),
         workspaceStrategy: yield* scheduledTaskWorkspaceStrategy(bindToCurrentThread, projectId),
         modelSelection,
         runtimeMode: limits.runtimeMode,
@@ -2499,6 +2504,9 @@ const make = Effect.gen(function* () {
                       scheduledTaskThreadMode(existing) === "new_thread")
                   ? "new_thread"
                   : "continue",
+          ...(input.sidebarVisibility === undefined
+            ? {}
+            : { sidebarVisibility: input.sidebarVisibility }),
           workspaceStrategy,
           modelSelection: existing.modelSelection,
           runtimeMode: existing.runtimeMode,

@@ -1056,8 +1056,12 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
     const fresh = yield* call("schedule_task", {
       scheduledTaskId: "task-auto",
       freshSession: true,
+      sidebarVisibility: "hidden",
     });
-    expect(fresh.structuredContent).toMatchObject({ freshSession: true });
+    expect(fresh.structuredContent).toMatchObject({
+      freshSession: true,
+      sidebarVisibility: "hidden",
+    });
     const incomplete = yield* call("schedule_task", { prompt: "Run nightly" });
     expect(declaredFailure(incomplete)).toMatchObject({ code: "invalid_request" });
   }).pipe(
@@ -1656,3 +1660,52 @@ it.effect(
     );
   },
 );
+
+it.effect("t3_thread_organize hide and unhide dispatch thread.tag.set for the hidden tag", () => {
+  const dispatched: Array<unknown> = [];
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const hideResult = yield* server
+      .callTool({ name: "t3_thread_organize", arguments: { action: "hide" } })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(hideResult.isError).toBe(false);
+    expect(hideResult.structuredContent).toEqual({ sequence: 1 });
+
+    const unhideResult = yield* server
+      .callTool({ name: "t3_thread_organize", arguments: { action: "unhide" } })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(unhideResult.isError).toBe(false);
+    expect(unhideResult.structuredContent).toEqual({ sequence: 2 });
+
+    expect(dispatched).toMatchObject([
+      { type: "thread.tag.set", threadId, tag: "hidden", tagged: true },
+      { type: "thread.tag.set", threadId, tag: "hidden", tagged: false },
+    ]);
+  }).pipe(
+    Effect.provide(
+      layerThreadToolkit.pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+            getProjectThreadRecords: ({ threadId: id }) =>
+              Effect.succeed(
+                McpToolAccessTestkit.idleThreadProjection(McpToolAccessTestkit.liveThreadShell(id)),
+              ),
+            dispatch: (command) => {
+              dispatched.push(command);
+              return Effect.succeed({ sequence: dispatched.length } as never);
+            },
+          }),
+        ),
+      ),
+    ),
+  );
+});

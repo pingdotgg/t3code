@@ -13,6 +13,7 @@ import {
   AuthSourceControlWriteScope,
   EnvironmentAuthorizationError,
   EnvironmentId,
+  SIDEBAR_HIDDEN_THREAD_TAG,
   type ScopedThreadRef,
   ThreadId,
   sessionGrantsScope,
@@ -335,6 +336,9 @@ export function useThreadActions() {
     reportFailure: false,
   });
   const unsnoozeThreadMutation = useOrchestrationCommand(threadEnvironment.unsnooze, {
+    reportFailure: false,
+  });
+  const setThreadTagMutation = useOrchestrationCommand(threadEnvironment.setTag, {
     reportFailure: false,
   });
   const markThreadUnread = useMarkThreadUnread();
@@ -951,6 +955,15 @@ export function useThreadActions() {
     });
   };
 
+  const setThreadHidden = async (target: ScopedThreadRef, hidden: boolean) => {
+    const permissionFailure = threadOperationFailure(target);
+    if (permissionFailure) return permissionFailure;
+    return setThreadTagMutation({
+      environmentId: target.environmentId,
+      input: { threadId: target.threadId, tag: SIDEBAR_HIDDEN_THREAD_TAG, tagged: hidden },
+    });
+  };
+
   const snoozeThread = async (target: ScopedThreadRef, snoozedUntil: string) => {
     if (!readEnvironmentServerConfigLoaded(target.environmentId)) {
       return AsyncResult.failure(
@@ -1054,6 +1067,7 @@ export function useThreadActions() {
     unsettleThread,
     snoozeThread,
     unsnoozeThread,
+    setThreadHidden,
     pinThread,
     unpinThread,
     confirmAndUnpinThread,

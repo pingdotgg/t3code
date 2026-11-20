@@ -22,9 +22,13 @@ import {
   type ScheduledTaskRunNowInput,
   type ScheduledTaskRunNowResult,
   type ScheduledTaskSetEnabledInput,
+  type ScheduledTaskSidebarVisibility,
   type ScheduledTaskThreadMode,
   type ScheduledTaskUpsertInput,
   managedPolicyDeniedMessage,
+  SCHEDULED_TASK_HIDDEN_THREAD_TAG,
+  scheduledTaskSidebarVisibility,
+  scheduledTaskSupportsSnoozeBetweenRuns,
   scheduledTaskThreadMode,
   managedRuntimeModeDenial,
 } from "@t3tools/contracts";
@@ -219,6 +223,7 @@ interface ScheduledTaskRow {
   readonly project_id: string;
   readonly thread_id: string | null;
   readonly thread_mode: string;
+  readonly sidebar_visibility: string;
   readonly workspace_strategy_json: string;
   readonly model_selection_json: string;
   readonly runtime_mode: string;
@@ -410,6 +415,7 @@ const decodeRow = Effect.fnUntraced(
       projectId: row.project_id,
       threadId: row.thread_id,
       threadMode: row.thread_mode,
+      sidebarVisibility: row.sidebar_visibility,
       workspaceStrategy,
       modelSelection,
       runtimeMode: row.runtime_mode,
@@ -499,6 +505,7 @@ export const layer = Layer.effect(
     const webhookPermits = yield* Ref.make<ReadonlyMap<ScheduledTaskId, Semaphore.Semaphore>>(
       new Map(),
     );
+    const visibilityEdits = yield* Semaphore.make(1);
     // Include creation time so late deliveries cannot decrement a recreated task's count.
     const webhookQueued = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
     const webhookRateWindows = yield* Ref.make<ReadonlyMap<ScheduledTaskId, RateWindow>>(new Map());
@@ -534,6 +541,7 @@ export const layer = Layer.effect(
         project_id,
         thread_id,
         thread_mode,
+        sidebar_visibility,
         workspace_strategy_json,
         model_selection_json,
         runtime_mode,
@@ -576,6 +584,7 @@ export const layer = Layer.effect(
         project_id,
         thread_id,
         thread_mode,
+        sidebar_visibility,
         workspace_strategy_json,
         model_selection_json,
         runtime_mode,
@@ -656,6 +665,7 @@ export const layer = Layer.effect(
           project_id,
           thread_id,
           thread_mode,
+          sidebar_visibility,
           workspace_strategy_json,
           model_selection_json,
           runtime_mode,
@@ -681,6 +691,7 @@ export const layer = Layer.effect(
           ${task.projectId},
           ${task.threadId},
           ${scheduledTaskThreadMode(task)},
+          ${scheduledTaskSidebarVisibility(task)},
           ${JSON.stringify(task.workspaceStrategy)},
           ${JSON.stringify(task.modelSelection)},
           ${task.runtimeMode},
@@ -713,6 +724,7 @@ export const layer = Layer.effect(
             ELSE COALESCE(excluded.thread_id, NULLIF(scheduled_tasks.thread_id, ${unboundThreadId}))
           END,
           thread_mode = excluded.thread_mode,
+          sidebar_visibility = excluded.sidebar_visibility,
           workspace_strategy_json = excluded.workspace_strategy_json,
           model_selection_json = excluded.model_selection_json,
           runtime_mode = excluded.runtime_mode,
@@ -881,15 +893,26 @@ export const layer = Layer.effect(
     // cleanup here; a later deletion finds the binding. An unconfirmed lookup keeps the binding.
     const bindThread = Effect.fn("ScheduledTaskService.bindThread")(
       function* (task: ScheduledTask, threadId: ThreadId) {
-        yield* sql`
+        const bound = yield* sql`
           UPDATE scheduled_tasks SET thread_id = ${threadId}
           WHERE task_id = ${task.id} AND created_at = ${task.createdAt}
             AND project_id = ${task.projectId}
             AND thread_id IS NULL AND thread_mode != 'new_thread'
+          RETURNING task_id
         `;
         const shell = yield* threadManagement.getThreadShell(threadId);
-        if (shell === null || shell.deletedAt != null) yield* deleteForThread(threadId);
+        if (shell === null || shell.deletedAt != null) {
+          yield* deleteForThread(threadId);
+        } else if (bound.length > 0) {
+          const current = yield* findTask(task.id);
+          if (current !== null && current.threadId === threadId) {
+            yield* syncBoundThreadVisibility({ ...task, threadId }, current, yield* localNow);
+          }
+        } else if (scheduledTaskSidebarVisibility(task) === "hidden") {
+          yield* clearUnownedHiddenTag(threadId);
+        }
       },
+      visibilityEdits.withPermits(1),
       Effect.catchCause((cause) =>
         Effect.logWarning("Could not bind a scheduled task to its first thread.", cause),
       ),
@@ -904,6 +927,7 @@ export const layer = Layer.effect(
       startedAtIso: string,
       threadId: ThreadId,
       messageId: MessageId,
+      reusedExistingThread: boolean,
     ) {
       const shell = yield* threadManagement.getThreadShell(threadId);
       if (shell === null) return;
@@ -918,15 +942,77 @@ export const layer = Layer.effect(
       });
       if (run === null || !ThreadManagementService.isTerminalRunStatus(run.status)) return;
       if (run.status === "completed") {
-        const removed = yield* sql`
-          DELETE FROM scheduled_tasks
-          WHERE task_id = ${taskId} AND last_run_at = ${startedAtIso}
-            AND last_run_status = 'succeeded' AND next_run_at IS NULL
-            AND json_extract(schedule_json, '$.type') = 'once'
-            AND julianday(last_run_at) >= julianday(json_extract(schedule_json, '$.runAt'))
-          RETURNING task_id
-        `;
-        if (removed.length > 0) yield* notifyChanged;
+        yield* visibilityEdits.withPermits(1)(
+          Effect.gen(function* () {
+            const [removed] = yield* sql<{
+              readonly thread_id: ThreadId | null;
+              readonly sidebar_visibility: string;
+            }>`
+              DELETE FROM scheduled_tasks
+              WHERE task_id = ${taskId} AND last_run_at = ${startedAtIso}
+                AND last_run_status = 'succeeded' AND next_run_at IS NULL
+                AND json_extract(schedule_json, '$.type') = 'once'
+                AND julianday(last_run_at) >= julianday(json_extract(schedule_json, '$.runAt'))
+              RETURNING thread_id, sidebar_visibility
+            `;
+            if (removed !== undefined) {
+              if (
+                removed.thread_id !== null &&
+                (reusedExistingThread || removed.thread_id !== threadId) &&
+                removed.sidebar_visibility === "hidden"
+              ) {
+                yield* clearUnownedHiddenTag(removed.thread_id);
+              }
+              yield* notifyChanged;
+              return;
+            }
+            const currentTask = yield* findTask(taskId).pipe(Effect.orElseSucceed(() => null));
+            if (
+              currentTask !== null &&
+              currentTask.enabled &&
+              currentTask.lastRunAt === startedAtIso &&
+              currentTask.threadId === threadId &&
+              currentTask.nextRunAt !== null &&
+              scheduledTaskSidebarVisibility(currentTask) === "snooze_between_runs" &&
+              scheduledTaskSupportsSnoozeBetweenRuns({
+                scheduleType: currentTask.schedule.type,
+                threadMode: scheduledTaskThreadMode(currentTask),
+              })
+            ) {
+              const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+              const nextRunMs = Date.parse(currentTask.nextRunAt);
+              if (Number.isFinite(nextRunMs) && nextRunMs > nowMs) {
+                const shell = yield* threadManagement
+                  .getThreadShell(threadId)
+                  .pipe(Effect.orElseSucceed(() => null));
+                if (
+                  shell !== null &&
+                  (shell.snoozedUntil == null || shell.snoozedByTaskId === taskId) &&
+                  canSnoozeTaskThread(shell)
+                ) {
+                  yield* threadManagement
+                    .dispatch({
+                      type: "thread.snooze",
+                      commandId: CommandId.make(`scheduled-task-snooze:${taskId}:${startedAtIso}`),
+                      threadId,
+                      snoozedUntil: currentTask.nextRunAt,
+                      scheduledTaskId: taskId,
+                      expectedRunId: run.id,
+                    })
+                    .pipe(
+                      Effect.catchCause((cause) =>
+                        Effect.logWarning("Could not snooze scheduled task thread after run", {
+                          taskId,
+                          threadId,
+                          cause,
+                        }),
+                      ),
+                    );
+                }
+              }
+            }
+          }),
+        );
         return;
       }
       // Only the run's failed errors feed latestRootProviderFailure; a long-lived task
@@ -1128,6 +1214,9 @@ export const layer = Layer.effect(
                     },
                     createdBy: active.createdBy,
                     creationSource: active.creationSource,
+                    ...(scheduledTaskSidebarVisibility(active) === "hidden"
+                      ? { tags: [SCHEDULED_TASK_HIDDEN_THREAD_TAG] }
+                      : {}),
                   })
                   .pipe(
                     Effect.map((launched) => launched.threadId),
@@ -1215,7 +1304,13 @@ export const layer = Layer.effect(
           );
         if (written) yield* notifyChanged;
         if (written && threadId !== null) {
-          yield* recordRunOutcome(active.id, startedAtIso, threadId, messageId).pipe(
+          yield* recordRunOutcome(
+            active.id,
+            startedAtIso,
+            threadId,
+            messageId,
+            active.threadId !== null,
+          ).pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("Could not record scheduled run outcome", {
                 taskId: active.id,
@@ -1408,6 +1503,7 @@ export const layer = Layer.effect(
       listRows().pipe(
         Effect.map((tasks) => ({
           tasks,
+          supportsSidebarVisibility: true,
           timeZone: DateTime.zoneToString(DateTime.zoneMakeLocal()),
         })),
         Effect.mapError((cause) => taskError("Could not list schedule tasks.", { cause })),
@@ -1447,6 +1543,135 @@ export const layer = Layer.effect(
           return yield* taskError("That thread belongs to a different project.", { taskId });
         }
       },
+    );
+
+    const canSnoozeTaskThread = (shell: {
+      readonly status: string;
+      readonly latestRun?: { readonly status: string } | null;
+    }): boolean =>
+      shell.latestRun?.status !== "failed" &&
+      !["preparing", "queued", "starting", "running", "waiting", "failed"].includes(shell.status);
+
+    const unsnoozeTaskBoundThreadIfScheduled = Effect.fn(
+      "ScheduledTaskService.unsnoozeTaskBoundThreadIfScheduled",
+    )(
+      function* (task: ScheduledTask) {
+        if (
+          task.threadId === null ||
+          scheduledTaskSidebarVisibility(task) !== "snooze_between_runs"
+        ) {
+          return;
+        }
+        const threadId = ThreadId.make(task.threadId);
+        const shell = yield* threadManagement.getThreadShell(threadId);
+        if (shell?.snoozedUntil != null && shell.snoozedByTaskId === task.id) {
+          const id = yield* random.uuidV4();
+          yield* threadManagement.dispatch({
+            type: "thread.unsnooze",
+            commandId: CommandId.make(`scheduled-task-unsnooze:${id}`),
+            threadId,
+            reason: "user",
+            scheduledTaskId: task.id,
+          });
+        }
+      },
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Could not unsnooze previously bound scheduled task thread", { cause }),
+      ),
+    );
+
+    const clearUnownedHiddenTag = Effect.fn("ScheduledTaskService.clearUnownedHiddenTag")(
+      function* (threadId: ThreadId) {
+        const otherOwners = yield* sql`
+          SELECT 1 FROM scheduled_tasks
+          WHERE thread_id = ${threadId} AND sidebar_visibility = 'hidden'
+          LIMIT 1
+        `;
+        if (otherOwners.length > 0) return;
+        const id = yield* random.uuidV4();
+        yield* threadManagement.dispatch({
+          type: "thread.tag.set",
+          commandId: CommandId.make(`scheduled-task-tag:${id}`),
+          threadId,
+          tag: SCHEDULED_TASK_HIDDEN_THREAD_TAG,
+          tagged: false,
+        });
+      },
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Could not clear task-owned sidebar tag", { cause }),
+      ),
+    );
+
+    const syncBoundThreadVisibility = Effect.fn("ScheduledTaskService.syncBoundThreadVisibility")(
+      function* (previous: ScheduledTask | null, next: ScheduledTask, now: DateTime.DateTime) {
+        const sameBinding = previous !== null && previous.threadId === next.threadId;
+        const prevVisibility = previous === null ? null : scheduledTaskSidebarVisibility(previous);
+        const nextVisibility = scheduledTaskSidebarVisibility(next);
+
+        // If the previous bound thread lost ownership (unbound, rebound, or project-moved) or
+        // snooze-between-runs was disabled/changed, wake it if still snoozed to the task's timer.
+        if (
+          previous !== null &&
+          prevVisibility === "snooze_between_runs" &&
+          (!sameBinding || nextVisibility !== "snooze_between_runs" || !next.enabled)
+        ) {
+          yield* unsnoozeTaskBoundThreadIfScheduled(previous);
+        }
+        if (
+          previous?.threadId != null &&
+          prevVisibility === "hidden" &&
+          (!sameBinding || nextVisibility !== "hidden")
+        ) {
+          yield* clearUnownedHiddenTag(ThreadId.make(previous.threadId));
+        }
+
+        if (next.threadId === null) return;
+        const threadId = ThreadId.make(next.threadId);
+        const prevSameVisibility = sameBinding ? prevVisibility : null;
+
+        if (nextVisibility === "hidden" && prevSameVisibility !== "hidden") {
+          const id = yield* random.uuidV4();
+          yield* threadManagement.dispatch({
+            type: "thread.tag.set",
+            commandId: CommandId.make(`scheduled-task-tag:${id}`),
+            threadId,
+            tag: SCHEDULED_TASK_HIDDEN_THREAD_TAG,
+            tagged: true,
+          });
+        }
+
+        if (
+          nextVisibility === "snooze_between_runs" &&
+          next.enabled &&
+          next.nextRunAt !== null &&
+          (!sameBinding ||
+            prevSameVisibility !== "snooze_between_runs" ||
+            previous.enabled !== true ||
+            previous.nextRunAt !== next.nextRunAt)
+        ) {
+          const nextRunMs = Date.parse(next.nextRunAt);
+          if (Number.isFinite(nextRunMs) && nextRunMs > DateTime.toEpochMillis(now)) {
+            const shell = yield* threadManagement.getThreadShell(threadId);
+            if (
+              shell !== null &&
+              canSnoozeTaskThread(shell) &&
+              (shell.snoozedUntil == null || shell.snoozedByTaskId === next.id)
+            ) {
+              const id = yield* random.uuidV4();
+              yield* threadManagement.dispatch({
+                type: "thread.snooze",
+                commandId: CommandId.make(`scheduled-task-snooze:${id}`),
+                threadId,
+                snoozedUntil: next.nextRunAt,
+                scheduledTaskId: next.id,
+              });
+            }
+          }
+        }
+      },
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Could not sync bound thread sidebar visibility", { cause }),
+      ),
     );
 
     const upsert: ScheduledTaskService["Service"]["upsert"] = Effect.fn(
@@ -1501,6 +1726,16 @@ export const layer = Layer.effect(
           ? managedRuntimeModeDenial(managedPolicy.summary, input.runtimeMode)
           : undefined;
       if (modeDenial !== undefined) return yield* taskError(modeDenial, { taskId: id });
+      const supportsSnoozeBetweenRuns = scheduledTaskSupportsSnoozeBetweenRuns({
+        scheduleType: input.schedule.type,
+        threadMode,
+      });
+      if (input.sidebarVisibility === "snooze_between_runs" && !supportsSnoozeBetweenRuns) {
+        return yield* taskError(
+          "Snooze between runs requires a recurring schedule that reuses one thread.",
+          { taskId: id },
+        );
+      }
       // Keep the existing next_run_at when the schedule itself is untouched:
       // editing a title or prompt must not postpone (or resurrect) a due
       // run — only schedule/enabled changes restart the clock.
@@ -1584,6 +1819,13 @@ export const layer = Layer.effect(
         isSameSchedule(existingTask.schedule, schedule);
       if (!scheduleUnchanged)
         yield* requireFutureOnce({ enabled: input.enabled, schedule }, now, id);
+      const storedVisibility =
+        existingTask === null ? "default" : scheduledTaskSidebarVisibility(existingTask);
+      const sidebarVisibility: ScheduledTaskSidebarVisibility =
+        input.sidebarVisibility ??
+        (storedVisibility === "snooze_between_runs" && !supportsSnoozeBetweenRuns
+          ? "default"
+          : storedVisibility);
       const task: ScheduledTask = {
         id,
         title: input.title,
@@ -1593,6 +1835,7 @@ export const layer = Layer.effect(
         projectId: input.projectId,
         threadId,
         threadMode,
+        sidebarVisibility,
         workspaceStrategy,
         modelSelection: input.modelSelection,
         runtimeMode: input.runtimeMode,
@@ -1617,8 +1860,10 @@ export const layer = Layer.effect(
         webhook,
       );
       yield* notifyChanged;
-      return { task: (yield* findTask(id)) ?? task };
-    });
+      const savedTask = (yield* findTask(id)) ?? task;
+      yield* syncBoundThreadVisibility(existingTask, savedTask, now);
+      return { task: savedTask };
+    }, visibilityEdits.withPermits(1));
 
     const setEnabled: ScheduledTaskService["Service"]["setEnabled"] = Effect.fn(
       "ScheduledTaskService.setEnabled",
@@ -1664,10 +1909,15 @@ export const layer = Layer.effect(
         return yield* taskError("Schedule task not found.", { taskId: input.id });
       }
       yield* notifyChanged;
-      return {
-        task: { ...existing, enabled: input.enabled, nextRunAt: next, updatedAt: iso(now) },
+      const updatedTask = {
+        ...existing,
+        enabled: input.enabled,
+        nextRunAt: next,
+        updatedAt: iso(now),
       };
-    });
+      yield* syncBoundThreadVisibility(existing, updatedTask, now);
+      return { task: updatedTask };
+    }, visibilityEdits.withPermits(1));
 
     const forgetWebhookTask = (id: ScheduledTaskId) =>
       Effect.all(
@@ -1701,12 +1951,21 @@ export const layer = Layer.effect(
         { discard: true },
       );
 
-    const deleteTask: ScheduledTaskService["Service"]["delete"] = (input) =>
-      deleteRow(input.id).pipe(
-        Effect.andThen(forgetWebhookTask(input.id)),
-        Effect.andThen(notifyChanged),
-        Effect.as({ id: input.id }),
-      );
+    const deleteTask: ScheduledTaskService["Service"]["delete"] = Effect.fn(
+      "ScheduledTaskService.delete",
+    )(function* (input) {
+      const existing = yield* findTask(input.id).pipe(Effect.orElseSucceed(() => null));
+      yield* deleteRow(input.id);
+      yield* forgetWebhookTask(input.id);
+      if (existing !== null) {
+        yield* unsnoozeTaskBoundThreadIfScheduled(existing);
+        if (existing.threadId !== null && scheduledTaskSidebarVisibility(existing) === "hidden") {
+          yield* clearUnownedHiddenTag(ThreadId.make(existing.threadId));
+        }
+      }
+      yield* notifyChanged;
+      return { id: input.id };
+    }, visibilityEdits.withPermits(1));
 
     const deleteForThread = Effect.fn("ScheduledTaskService.deleteForThread")(function* (
       threadId: ThreadId,

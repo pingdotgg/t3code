@@ -939,6 +939,84 @@ describe("buildThreadListV2ListItems", () => {
     expect(threadJumpTarget(items, "thread.jump.2")?.id).toBe("settled");
     expect(threadJumpTarget(items, "thread.jump.3")).toBeNull();
   });
+
+  it("places hidden-tagged threads in a collapsed Hidden shelf below Settled", () => {
+    const threads = [
+      makeThread({
+        id: ThreadId.make("active"),
+        title: "Active thread",
+        createdAt: "2026-06-01T09:00:00.000Z",
+      }),
+      makeThread({
+        id: ThreadId.make("settled"),
+        title: "Settled thread",
+        createdAt: "2026-06-01T08:00:00.000Z",
+        settledOverride: "settled",
+        settledAt: "2026-06-01T08:30:00.000Z",
+      }),
+      makeThread({
+        id: ThreadId.make("webhook-hidden"),
+        title: "Webhook hidden thread",
+        createdAt: "2026-06-01T10:00:00.000Z",
+        tags: ["hidden"],
+      }),
+    ];
+    const collapsed = buildThreadListV2Items({
+      threads,
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      settledShelfExpanded: true,
+      hiddenShelfExpanded: false,
+    });
+    const collapsedItems = buildThreadListV2ListItems({
+      items: collapsed.items,
+      pendingTasks: [],
+      settledCount: collapsed.settledCount,
+      settledShelfExpanded: true,
+      settledShelfHeaderIndex: collapsed.settledShelfHeaderIndex,
+      hiddenCount: collapsed.hiddenCount,
+      hiddenShelfExpanded: false,
+      hiddenShelfHeaderIndex: collapsed.hiddenShelfHeaderIndex,
+    });
+    expect(collapsed.hiddenCount).toBe(1);
+    expect(collapsedItems.map((item) => item.type)).toEqual([
+      "v2-thread",
+      "v2-settled-shelf",
+      "v2-thread",
+      "v2-hidden-shelf",
+    ]);
+
+    const expanded = buildThreadListV2Items({
+      threads,
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      settledShelfExpanded: true,
+      hiddenShelfExpanded: true,
+    });
+    const expandedItems = buildThreadListV2ListItems({
+      items: expanded.items,
+      pendingTasks: [],
+      settledCount: expanded.settledCount,
+      settledShelfExpanded: true,
+      settledShelfHeaderIndex: expanded.settledShelfHeaderIndex,
+      hiddenCount: expanded.hiddenCount,
+      hiddenShelfExpanded: true,
+      hiddenShelfHeaderIndex: expanded.hiddenShelfHeaderIndex,
+    });
+    expect(expandedItems.map((item) => item.type)).toEqual([
+      "v2-thread",
+      "v2-settled-shelf",
+      "v2-thread",
+      "v2-hidden-shelf",
+      "v2-thread",
+    ]);
+    const hiddenRow = expandedItems.at(-1);
+    expect(hiddenRow?.type === "v2-thread" ? hiddenRow.item.thread.id : null).toBe(
+      "webhook-hidden",
+    );
+  });
 });
 
 describe("pending mobile thread moves", () => {

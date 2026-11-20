@@ -116,6 +116,7 @@ const thread = {
   hasPendingApprovals: false,
   hasPendingUserInput: false,
   pendingRequestId: "request-1",
+  tags: [] as ReadonlyArray<string>,
   session: null as { status: string } | null,
   latestTurn: { turnId: "turn", state: "running", completedAt: null as string | null },
 };
@@ -130,6 +131,7 @@ function toV2ThreadShell(input: typeof thread) {
     id: input.id,
     projectId: "project",
     title: input.title,
+    tags: input.tags,
     providerInstanceId: "codex",
     modelSelection: { instanceId: "codex", model: "gpt-5.4" },
     runtimeMode: "full-access",
@@ -418,6 +420,27 @@ it.each([false, true])(
     expect(TestNotification.sent.map(({ title }) => title)).toEqual(["Thread completed"]);
   },
 );
+
+it("hiding a thread closes its completion toast without dismissing approval alerts", async () => {
+  await using app = setup();
+  state.inApp = true;
+  focused = true;
+  state.toast.mockReturnValueOnce("completed").mockReturnValueOnce("approval");
+  app.start();
+  const completion = {
+    latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:01:00Z" },
+  };
+  state.shells.set("one", shell(completion));
+  state.shells.set("one", shell({ ...completion, hasPendingApprovals: true }));
+  state.shells.set(
+    "one",
+    shell({ ...completion, hasPendingApprovals: true, tags: ["scheduled-task-hidden"] }),
+  );
+  expect(state.toast).toHaveBeenCalledTimes(2);
+  expect(state.closeToast.mock.calls).toEqual([["completed"]]);
+  state.shells.set("two", shell({ ...completion, tags: ["hidden"] }));
+  expect(state.toast).toHaveBeenCalledTimes(2);
+});
 
 it("opening a thread or removing its environment closes only its in-app toasts, and disabling notifications closes the rest", async () => {
   await using app = setup();

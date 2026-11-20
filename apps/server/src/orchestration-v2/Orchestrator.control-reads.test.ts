@@ -514,6 +514,38 @@ const completeAndSnoozeThread = Effect.fn("test.completeAndSnoozeThread")(functi
   return { threadId, completedAt, snoozedUntil };
 });
 
+it.effect("stale scheduled snoozes and unowned wakes succeed without changing the thread", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const { threadId, snoozedUntil } = yield* completeAndSnoozeThread("scheduled-snooze-noop", 5);
+    const scheduledTaskId = "task:stale";
+    yield* orchestrator.dispatch({
+      type: "thread.unsnooze",
+      commandId: CommandId.make("unowned-wake"),
+      threadId,
+      reason: "user",
+      scheduledTaskId,
+    });
+    assert.deepEqual((yield* projections.getThreadShell(threadId))?.snoozedUntil, snoozedUntil);
+    yield* orchestrator.dispatch({
+      type: "thread.unsnooze",
+      commandId: CommandId.make("manual-wake"),
+      threadId,
+      reason: "user",
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.snooze",
+      commandId: CommandId.make("stale-scheduled-snooze"),
+      threadId,
+      snoozedUntil: DateTime.formatIso(snoozedUntil),
+      scheduledTaskId,
+      expectedRunId: RunId.make("run:older"),
+    });
+    assert.isNull((yield* projections.getThreadShell(threadId))?.snoozedUntil);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("mark unread retires an expired snooze so a dismissed wake stays dismissed", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;

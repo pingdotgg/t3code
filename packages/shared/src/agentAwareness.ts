@@ -1,5 +1,6 @@
 import {
   isListedThreadLineage,
+  isSidebarHiddenThread,
   type EnvironmentId,
   isProviderNativeSubagentThread,
   type OrchestrationV2ThreadShell,
@@ -96,6 +97,7 @@ export interface ProjectThreadAwarenessV2Input {
     | "pendingRuntimeRequest"
     | "settledOverride"
     | "status"
+    | "tags"
     | "title"
     | "updatedAt"
   >;
@@ -114,6 +116,7 @@ export function projectThreadAwarenessV2(
     return null;
   }
   if (phase === "completed" && thread.latestRunStopRequested === true) return null;
+  if (phase === "completed" && isSidebarHiddenThread(thread)) return null;
   // Resolve the phase first so live or waiting work stays visible after settlement.
   const runStatus = thread.activityRunStatus ?? thread.status;
   if (

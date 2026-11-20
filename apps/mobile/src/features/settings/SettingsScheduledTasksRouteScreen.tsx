@@ -12,6 +12,7 @@ import type {
   EnvironmentId,
   ProjectId,
   ScheduledTask,
+  ScheduledTaskSidebarVisibility,
   ScheduledTaskThreadMode,
   ScheduledTaskUpsertInput,
 } from "@t3tools/contracts";
@@ -19,6 +20,7 @@ import {
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   MAX_WEBHOOK_FILTERS,
   resolveEnvironmentMachineKind,
+  scheduledTaskSupportsSnoozeBetweenRuns,
   scheduledTaskThreadMode,
 } from "@t3tools/contracts";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
@@ -79,6 +81,7 @@ import { SettingsSection } from "./components/SettingsSection";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 import {
   changeDraftProject,
+  clampDraftSidebarVisibility,
   editDraft,
   parseIntervalMinutes,
   scheduledTaskDefaultModel,
@@ -886,6 +889,9 @@ function TaskForm({
       threadId: draft.threadId,
       ...(draft.threadId === null && draft.task?.threadId != null ? { unbindThread: true } : {}),
       ...(offersThreadModes ? { threadMode: draft.threadMode } : {}),
+      ...(tasks.data?.supportsSidebarVisibility === true
+        ? { sidebarVisibility: clampDraftSidebarVisibility(draft) }
+        : {}),
       workspaceStrategy:
         draft.workspace === "root"
           ? { type: "root" }
@@ -1062,7 +1068,13 @@ function TaskForm({
               )}
               onSelect={(id) => {
                 if (id === "new_thread")
-                  setDraft((current) => ({ ...unbindDraftFromThread(current), threadMode: id }));
+                  setDraft((current) => ({
+                    ...unbindDraftFromThread(current),
+                    threadMode: id,
+                    ...(current.sidebarVisibility === "snooze_between_runs"
+                      ? { sidebarVisibility: "default" as const }
+                      : {}),
+                  }));
                 else if (id === "continue" || id === "fresh_session")
                   setDraft((current) => ({ ...current, threadMode: id }));
               }}
@@ -1081,6 +1093,52 @@ function TaskForm({
               disabled={!draft.projectId || saving || dictationPending || environmentUnavailable}
             />
           ) : null}
+          {tasks.data?.supportsSidebarVisibility === true &&
+            (() => {
+              const canSnoozeBetweenRuns = scheduledTaskSupportsSnoozeBetweenRuns({
+                scheduleType: draft.schedule.mode,
+                threadMode: draft.threadMode,
+              });
+              const effectiveVisibility: ScheduledTaskSidebarVisibility =
+                clampDraftSidebarVisibility(draft);
+              return (
+                <SelectRow
+                  label={gt("Sidebar")}
+                  borderTop
+                  value={
+                    effectiveVisibility === "hidden"
+                      ? gt("Hide in Hidden section")
+                      : effectiveVisibility === "snooze_between_runs"
+                        ? gt("Snooze between runs")
+                        : gt("Show in main list")
+                  }
+                  actions={[
+                    {
+                      id: "default",
+                      title: gt("Show in main list"),
+                      state: effectiveVisibility === "default" ? "on" : undefined,
+                    },
+                    {
+                      id: "snooze_between_runs",
+                      title: gt("Snooze between runs"),
+                      state: effectiveVisibility === "snooze_between_runs" ? "on" : undefined,
+                      attributes: canSnoozeBetweenRuns ? undefined : { disabled: true },
+                    },
+                    {
+                      id: "hidden",
+                      title: gt("Hide in Hidden section"),
+                      state: effectiveVisibility === "hidden" ? "on" : undefined,
+                    },
+                  ]}
+                  onSelect={(id) => {
+                    if (id === "default" || id === "snooze_between_runs" || id === "hidden") {
+                      if (id === "snooze_between_runs" && !canSnoozeBetweenRuns) return;
+                      setDraft((current) => ({ ...current, sidebarVisibility: id }));
+                    }
+                  }}
+                />
+              );
+            })()}
         </SettingsSection>
 
         <SettingsSection title={gt("Workspace")}>
@@ -1171,21 +1229,29 @@ function TaskForm({
               onSelect={(mode) => {
                 setTimePickerOpen(false);
                 setRunAtPicker(null);
-                setDraft((current) => ({
-                  ...current,
-                  prompt:
-                    mode === "webhook" && !current.prompt.trim()
-                      ? DEFAULT_WEBHOOK_PROMPT
-                      : current.prompt,
-                  schedule: {
+                setDraft((current) => {
+                  const nextSchedule = {
                     ...current.schedule,
                     mode,
                     runAt:
                       mode === "once" && !current.schedule.runAt
                         ? new Date(Math.ceil(Date.now() / 3_600_000) * 3_600_000).toISOString()
                         : current.schedule.runAt,
-                  },
-                }));
+                  };
+                  return {
+                    ...current,
+                    prompt:
+                      mode === "webhook" && !current.prompt.trim()
+                        ? DEFAULT_WEBHOOK_PROMPT
+                        : current.prompt,
+                    schedule: nextSchedule,
+                    sidebarVisibility: clampDraftSidebarVisibility({
+                      schedule: nextSchedule,
+                      threadMode: current.threadMode,
+                      sidebarVisibility: current.sidebarVisibility,
+                    }),
+                  };
+                });
               }}
             />
           </View>

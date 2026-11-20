@@ -1,10 +1,16 @@
-import { isWebhookDedupeTemplate, scheduledTaskThreadMode } from "@t3tools/contracts";
+import {
+  isWebhookDedupeTemplate,
+  scheduledTaskSidebarVisibility,
+  scheduledTaskSupportsSnoozeBetweenRuns,
+  scheduledTaskThreadMode,
+} from "@t3tools/contracts";
 import type {
   ModelSelection,
   ServerConfig,
   ProjectId,
   RuntimeMode,
   ScheduledTask,
+  ScheduledTaskSidebarVisibility,
   ScheduledTaskThreadMode,
   ScheduledTaskUpsertSchedule,
   ScheduledTaskWebhookSignature,
@@ -208,6 +214,7 @@ export type ScheduledTaskDraft = {
   readonly modelSelectionIsExplicit: boolean;
   readonly schedule: ScheduleDraft;
   readonly threadMode: ScheduledTaskThreadMode;
+  readonly sidebarVisibility: ScheduledTaskSidebarVisibility;
   readonly workspace: Workspace;
   readonly baseRef: string;
   readonly checkoutPath: string;
@@ -238,6 +245,7 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.schedule.coalesceWindowSeconds,
     draft.schedule.filters.map(({ path, op, value }) => [path, op, value]),
     draft.threadMode,
+    draft.sidebarVisibility,
     draft.workspace,
     draft.baseRef,
     draft.checkoutPath,
@@ -252,6 +260,21 @@ export function hasScheduledTaskDraftChanges(
   current: ScheduledTaskDraft,
 ): boolean {
   return draftSignature(initial) !== draftSignature(current);
+}
+
+export function clampDraftSidebarVisibility(
+  draft: Pick<ScheduledTaskDraft, "schedule" | "threadMode" | "sidebarVisibility">,
+): ScheduledTaskSidebarVisibility {
+  if (
+    draft.sidebarVisibility === "snooze_between_runs" &&
+    !scheduledTaskSupportsSnoozeBetweenRuns({
+      scheduleType: draft.schedule.mode,
+      threadMode: draft.threadMode,
+    })
+  ) {
+    return "default";
+  }
+  return draft.sidebarVisibility;
 }
 
 export function moveDraftToThread(
@@ -300,6 +323,7 @@ export function createDraft(
     modelSelectionIsExplicit: false,
     schedule: DEFAULT_SCHEDULE,
     threadMode: "new_thread",
+    sidebarVisibility: "default",
     workspace: "worktree",
     baseRef: "",
     checkoutPath: "",
@@ -320,6 +344,7 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
     modelSelectionIsExplicit: true,
     schedule: scheduleDraftForTask(task),
     threadMode: scheduledTaskThreadMode(task),
+    sidebarVisibility: scheduledTaskSidebarVisibility(task),
     workspace: task.workspaceStrategy.type,
     baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "",
     checkoutPath:

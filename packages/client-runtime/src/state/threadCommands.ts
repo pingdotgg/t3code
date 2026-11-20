@@ -50,6 +50,7 @@ import {
   reorderPinnedThread,
   reorderActiveThread,
   setThreadAutoSettle,
+  setThreadTag,
   settleThread,
   snoozeThread,
   startThreadTurn,
@@ -219,6 +220,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     unsnooze: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:unsnooze",
       execute: unsnoozeThread,
+      scheduler,
+      concurrency,
+    }),
+    setTag: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:set-tag",
+      execute: setThreadTag,
       scheduler,
       concurrency,
     }),
@@ -447,6 +454,7 @@ export function createThreadEnvironmentAtoms<R, E>(
     unsnooze: rowAction(sent.unsnooze),
     pin: rowAction(sent.pin),
     unpin: rowAction(sent.unpin),
+    setTag: rowAction(sent.setTag),
   };
   const optimistic = createOptimisticThreadLifecycle(snapshotAtom);
   const disconnectedAtom = Atom.family((environmentId: EnvironmentId) =>

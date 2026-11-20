@@ -6,8 +6,11 @@ import {
   ScheduledTaskId,
   type ScheduledTask,
   type ScheduledTaskSchedule,
+  type ScheduledTaskSidebarVisibility,
   type ScheduledTaskThreadMode,
   type ScheduledTaskUpsertSchedule,
+  scheduledTaskSidebarVisibility,
+  scheduledTaskSupportsSnoozeBetweenRuns,
   scheduledTaskThreadMode,
   type ModelSelection,
   type RuntimeMode,
@@ -132,6 +135,7 @@ export interface DraftState {
   /** The thread the form opened with, so a save can tell a cleared destination from an unbound one. */
   readonly savedThreadId: string;
   readonly threadMode: ScheduledTaskThreadMode;
+  readonly sidebarVisibility: ScheduledTaskSidebarVisibility;
   readonly workspaceMode: WorkspaceMode;
   readonly baseRef: string;
   readonly startFromOrigin: boolean;
@@ -334,6 +338,7 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     threadId: task.threadId ?? "",
     savedThreadId: task.threadId ?? "",
     threadMode: scheduledTaskThreadMode(task),
+    sidebarVisibility: scheduledTaskSidebarVisibility(task),
     workspaceMode: task.workspaceStrategy.type,
     baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "",
     startFromOrigin:
@@ -370,6 +375,25 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     filters,
     savedFilters: filters,
   };
+}
+
+export function draftScheduleType(mode: ScheduleMode): ScheduledTaskSchedule["type"] {
+  return mode === "fixed" ? "fixed_time" : mode;
+}
+
+export function clampDraftSidebarVisibility(
+  draft: Pick<DraftState, "scheduleMode" | "threadMode" | "sidebarVisibility">,
+): ScheduledTaskSidebarVisibility {
+  if (
+    draft.sidebarVisibility === "snooze_between_runs" &&
+    !scheduledTaskSupportsSnoozeBetweenRuns({
+      scheduleType: draftScheduleType(draft.scheduleMode),
+      threadMode: draft.threadMode,
+    })
+  ) {
+    return "default";
+  }
+  return draft.sidebarVisibility;
 }
 
 export function moveDraftToThread(

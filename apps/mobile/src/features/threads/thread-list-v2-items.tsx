@@ -27,6 +27,8 @@ import {
 } from "@t3tools/client-runtime/state/models";
 import {
   AuthOrchestrationOperateScope,
+  isSidebarHiddenThread,
+  SIDEBAR_HIDDEN_THREAD_TAG,
   type EnvironmentId,
   type EnvironmentMachineKind,
 } from "@t3tools/contracts";
@@ -343,6 +345,12 @@ const SHELF_COPY = {
     collapse: msg("Collapses the settled threads."),
     expand: msg("Expands the settled threads."),
   },
+  hidden: {
+    label: msg("Hidden", { $context: "thread list section" }),
+    count: msg("{count, plural, one {{count} hidden thread} other {{count} hidden threads}}"),
+    collapse: msg("Collapses the hidden threads."),
+    expand: msg("Expands the hidden threads."),
+  },
 } as const;
 
 function ThreadListV2ShelfHeader(
@@ -384,6 +392,12 @@ export const ThreadListV2SettledShelfHeader = memo(function ThreadListV2SettledS
   props: ThreadListV2ShelfHeaderProps,
 ) {
   return <ThreadListV2ShelfHeader {...props} kind="settled" />;
+});
+
+export const ThreadListV2HiddenShelfHeader = memo(function ThreadListV2HiddenShelfHeader(
+  props: ThreadListV2ShelfHeaderProps,
+) {
+  return <ThreadListV2ShelfHeader {...props} kind="hidden" />;
 });
 
 export const ThreadListV2ShowMoreRow = memo(function ThreadListV2ShowMoreRow(props: {
@@ -912,6 +926,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
 
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   const markThreadUnread = useAtomCommand(threadEnvironment.markUnread, { reportFailure: false });
+  const setThreadTag = useAtomCommand(threadEnvironment.setTag);
+  const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
+  const hiddenRow = isSidebarHiddenThread(thread);
   const handleAcknowledgeWoke = useCallback(() => {
     if (props.wokeAt === null) return;
     void visitThread({
@@ -924,13 +941,15 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     () => [
       ...(prBadgeLabel ? [{ name: "openPullRequests", label: prBadgeLabel }] : []),
       ...(showsWoke ? [{ name: "dismissWoke", label: gt("Dismiss Woke notification") }] : []),
+      ...(hiddenRow && canOperateThread && props.settlementSupported
+        ? [{ name: "unhide", label: gt("Show in sidebar") }]
+        : []),
     ],
-    [gt, prBadgeLabel, showsWoke],
+    [canOperateThread, gt, hiddenRow, prBadgeLabel, props.settlementSupported, showsWoke],
   );
 
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
   const handleRename = useCallback(() => onRenameThread(thread), [onRenameThread, thread]);
-  const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
   const canShareWithGuest = useCanShareWithGuest(thread.environmentId);
   const navigation = useNavigation();
   const handleRegenerateTitle = useCallback(
@@ -962,7 +981,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const handleMoveDown = useCallback(() => onMoveThread?.(thread, "down"), [onMoveThread, thread]);
   const handleArchive = useCallback(() => onArchiveThread(thread), [onArchiveThread, thread]);
 
-  const canUnsettle = variant === "slim";
+  const canUnsettle = hiddenRow ? thread.settledOverride === "settled" : variant === "slim";
   // The gate's only time-dependent edge is the queued-turn grace window, so its
   // expiry is known without a clock: evaluate at the message's own timestamp.
   // A gate held by runtime status has no expiry, and no clock tick opens it.
@@ -973,7 +992,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const snoozeGateNowMs = useNowAfter(snoozeGateExpiryMs === null ? null : snoozeGateExpiryMs + 1);
   const snoozeGateNow = new Date(snoozeGateNowMs).toISOString();
   const swipeActions = resolveThreadListV2SwipeActions({
-    variant,
+    variant: hiddenRow ? (canUnsettle ? "slim" : "card") : variant,
     settlementSupported: props.settlementSupported,
     snoozeSupported: props.snoozeSupported,
     snoozable: canSnooze(thread, { now: snoozeGateNow }),
@@ -1113,6 +1132,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       ...(canShareWithGuest
         ? [{ id: "share-guest", title: gt("Share with guest"), image: "person.badge.plus" }]
         : []),
+      ...(props.settlementSupported
+        ? [
+            isSidebarHiddenThread(thread)
+              ? { id: "unhide", title: gt("Show in sidebar"), image: "eye" }
+              : { id: "hide", title: gt("Hide from sidebar"), image: "eye.slash" },
+          ]
+        : []),
     ];
     if (snoozedRow) {
       return layoutThreadListV2RowMenuActions(
@@ -1202,7 +1228,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     gt,
     m,
     swipeActions.secondary,
-    thread.branch,
+    thread,
     titleMenuItems,
   ]);
   const handleMenuAction = useCallback(
@@ -1211,6 +1237,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (nativeEvent.event === "settle") handleSettle();
       if (nativeEvent.event === "unsettle") handleUnsettle();
       if (nativeEvent.event === "unsnooze") handleUnsnooze();
+      if (nativeEvent.event === "hide" || nativeEvent.event === "unhide") {
+        void setThreadTag({
+          environmentId: thread.environmentId,
+          input: {
+            threadId: thread.id,
+            tag: SIDEBAR_HIDDEN_THREAD_TAG,
+            tagged: nativeEvent.event === "hide",
+          },
+        });
+      }
       if (nativeEvent.event === "pin") handlePin();
       if (nativeEvent.event === "unpin") handleUnpin();
       if (nativeEvent.event === "auto-settle:enabled") handleSetAutoSettle(true);
@@ -1288,6 +1324,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       handleUnsettle,
       handleUnsnooze,
       markThreadUnread,
+      setThreadTag,
       setCustomSnoozeOpen,
       snoozePresets,
       props.snoozePresets,
@@ -1631,6 +1668,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     cardContent
   );
 
+  const performRowAccessibilityAction = (name: string) => {
+    if (name === "openPullRequests") handleOpenPullRequests();
+    if (name === "dismissWoke") handleAcknowledgeWoke();
+    if (name === "unhide") handleMenuAction({ nativeEvent: { event: "unhide" } });
+  };
+
   const rowContent = (close: () => void) =>
     variant === "card" ? (
       <RowPressable
@@ -1643,10 +1686,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         accessibilityRole="button"
         accessibilityState={{ selected }}
         accessibilityActions={rowAccessibilityActions}
-        onAccessibilityAction={(event) => {
-          if (event.nativeEvent.actionName === "openPullRequests") handleOpenPullRequests();
-          if (event.nativeEvent.actionName === "dismissWoke") handleAcknowledgeWoke();
-        }}
+        onAccessibilityAction={(event) =>
+          performRowAccessibilityAction(event.nativeEvent.actionName)
+        }
         onPress={() => {
           close();
           selectThread();
@@ -1673,6 +1715,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         accessibilityLabel={rowAccessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ selected }}
+        accessibilityActions={rowAccessibilityActions}
+        onAccessibilityAction={(event) =>
+          performRowAccessibilityAction(event.nativeEvent.actionName)
+        }
         className={rowAppearance.className}
         onPress={() => {
           close();
