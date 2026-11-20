@@ -126,6 +126,7 @@ import {
   ScheduledTaskBranchPickerRouteScreen,
   ScheduledTaskThreadPickerRouteScreen,
 } from "./features/settings/ScheduledTaskPickerScreens";
+import { WorktreeBaseBranchPickerRouteScreen } from "./features/settings/WorktreeBaseBranchPickerRouteScreen";
 import { SettingsKeyboardRouteScreen } from "./features/settings/SettingsKeyboardRouteScreen";
 import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRouteScreen";
 import { SettingsVoiceRouteScreen } from "./features/settings/SettingsVoiceRouteScreen";
@@ -195,6 +196,7 @@ const ROUTE_TITLES: Readonly<Record<string, string>> = {
   SettingsScheduledTaskNew: msg("New scheduled task"),
   SettingsScheduledTaskEdit: msg("Edit scheduled task"),
   SettingsScheduledTaskBranch: msg("Base branch"),
+  SettingsWorktreeBaseBranch: msg("Base branch"),
   SettingsScheduledTaskThread: msg("Destination"),
   SettingsClientStorage: msg("Client Storage"),
   SettingsDiagnostics: msg("Diagnostics"),
@@ -383,6 +385,10 @@ const SETTINGS_SCREENS = {
   }),
   SettingsScheduledTaskBranch: createNativeStackScreen({
     screen: ScheduledTaskBranchPickerRouteScreen,
+    options: settingsPage(),
+  }),
+  SettingsWorktreeBaseBranch: createNativeStackScreen({
+    screen: WorktreeBaseBranchPickerRouteScreen,
     options: settingsPage(),
   }),
   SettingsScheduledTaskThread: createNativeStackScreen({

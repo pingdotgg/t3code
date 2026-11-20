@@ -2975,6 +2975,8 @@ export default function ChatView(props: ChatViewProps) {
     runtimeMode,
     isLocalDraftThread,
     canOverrideServerThreadEnvMode,
+    envMode,
+    setPendingServerThreadBranch,
     setPendingServerThreadEnvModeEntry,
     setPendingServerThreadStartFromOriginByThreadId,
     scheduleComposerFocus: scheduleComposerFocusStable,

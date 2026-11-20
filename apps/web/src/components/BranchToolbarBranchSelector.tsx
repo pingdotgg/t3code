@@ -1,3 +1,5 @@
+import { useAtomValue } from "@effect/atom-react";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
@@ -39,6 +41,7 @@ import { useProjectClone } from "../state/projectClones";
 import { readThreadShell, useProject, useQuietThreadShell } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
+import { serverEnvironment } from "~/state/server";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { vcsEnvironment } from "../state/vcs";
@@ -60,9 +63,9 @@ import {
   resolveBranchSelectionTarget,
   resolveBranchToolbarValue,
   resolveConfirmedSelectedRef,
-  resolveDefaultWorktreeBaseBranch,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
+  resolveWorktreeBaseBranchCandidate,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
@@ -162,6 +165,9 @@ export function BranchToolbarBranchSelector({
       ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
       : null;
   const activeProject = useProject(activeProjectRef);
+  const environmentServerSettings = useAtomValue(
+    serverEnvironment.settingsValueAtom(environmentId),
+  );
 
   const activeThreadId = serverThread?.id ?? (draftThread ? threadId : undefined);
   const activeThreadBranch =
@@ -613,9 +619,18 @@ export function BranchToolbarBranchSelector({
     });
   };
 
-  const worktreeBaseBranchCandidate = isInitialBranchesLoadPending
-    ? null
-    : resolveDefaultWorktreeBaseBranch(refs);
+  // Wait for settings too, so the repository default cannot claim the draft before a configured base arrives.
+  const worktreeBaseBranchCandidate =
+    isInitialBranchesLoadPending || environmentServerSettings === null
+      ? null
+      : resolveWorktreeBaseBranchCandidate({
+          configuredBaseBranch: resolveProjectSettings(
+            environmentServerSettings,
+            activeProject?.id ?? null,
+          ).settings.newWorktreesBaseBranch,
+          isRepo: branchRefState.data?.isRepo ?? branchStatusQuery.data?.isRepo ?? false,
+          refs,
+        });
 
   const projectCloneDone = useProjectClone(activeProjectRef)?.phase === "done";
   const refreshStaleRefs = useEffectEvent(() => {

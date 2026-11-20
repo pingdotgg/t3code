@@ -34,6 +34,18 @@ describe("resolveSendEnvMode", () => {
 });
 
 describe("resolveProjectSettings", () => {
+  it("lets a project return to the repository default when its environment sets a base branch", () => {
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      newWorktreesBaseBranch: "dev",
+      projectSettingsOverrides: { [projectId]: { newWorktreesBaseBranch: "" } },
+    };
+    expect(resolveProjectSettings(settings, projectId).settings.newWorktreesBaseBranch).toBe("");
+    expect(resolveProjectSettings(settings, otherProjectId).settings.newWorktreesBaseBranch).toBe(
+      "dev",
+    );
+  });
+
   it("ignores an override left undefined by a forward-compatible decode", () => {
     const resolved = resolveProjectSettings(
       {
