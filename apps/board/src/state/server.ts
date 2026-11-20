@@ -4,7 +4,7 @@ import { createServerEnvironmentAtoms } from "@t3tools/client-runtime/state/serv
 import { Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
-import { isOrchestratorInstance } from "../orchestrator/orchestratorInstance";
+import { isBoardInstance } from "../orchestrator/orchestratorInstance";
 import { engineEnvironmentIdAtom, environmentCatalog } from "./projects";
 
 export const environmentSession = createEnvironmentSessionAtoms(connectionAtomRuntime);
@@ -24,7 +24,7 @@ export const engineProvidersAtom = Atom.make((get): ReadonlyArray<ServerProvider
   if (entry === undefined) return NO_PROVIDERS;
   const providers =
     get(serverEnvironment.configValueAtom(entry.target.environmentId))?.providers ?? NO_PROVIDERS;
-  return providers.filter((provider) => !isOrchestratorInstance(provider.instanceId));
+  return providers.filter((provider) => !isBoardInstance(provider.instanceId));
 }).pipe(Atom.withLabel("engine-providers"));
 
 /** The engine's settings, which the settings screen edits through `server.updateSettings`. */

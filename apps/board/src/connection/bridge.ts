@@ -10,6 +10,7 @@ type EngineBridge = Pick<
   | "resolveFolder"
   | "readLocalState"
   | "writeLocalState"
+  | "ensurePstack"
 >;
 
 // Without the main process there is no WSL to ask, so the engine rejects a folder that is missing.
@@ -54,6 +55,14 @@ function webBridge(): EngineBridge {
     resolveFolder: (text) => Promise.resolve(webFolder(text)),
     readLocalState: () => Promise.resolve(localStorage.getItem(LOCAL_STATE_KEY) ?? ""),
     writeLocalState: (text) => Promise.resolve(localStorage.setItem(LOCAL_STATE_KEY, text)),
+    ensurePstack: () => {
+      const dir = import.meta.env.AGENT_BOARD_PSTACK_DIR;
+      return Promise.resolve(
+        dir
+          ? { ok: true, dir }
+          : { ok: false, reason: "Set AGENT_BOARD_PSTACK_DIR to a pstack-t3 checkout." },
+      );
+    },
   };
 }
 

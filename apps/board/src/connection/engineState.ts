@@ -33,8 +33,14 @@ export interface BoardBridge {
   /** The text of the file in the app's user data folder, empty when there is none. */
   readonly readLocalState: () => Promise<string>;
   readonly writeLocalState: (text: string) => Promise<void>;
+  /** Clones or refreshes the pstack-t3 checkout the board's Claude instances load, and returns its folder. */
+  readonly ensurePstack: () => Promise<PstackResult>;
   readonly browser: BrowserHost;
 }
+
+export type PstackResult =
+  | { readonly ok: true; readonly dir: string }
+  | { readonly ok: false; readonly reason: string };
 
 export type FolderResult =
   | { readonly ok: true; readonly path: string }
