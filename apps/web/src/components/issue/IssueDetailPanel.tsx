@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useGT } from "gt-react";
 import { issueEventSentence, issueWriteAccess } from "@t3tools/client-runtime/issue-presentation";
 import { prependIssueComments } from "@t3tools/client-runtime/state/issues";
 import {
@@ -48,6 +49,7 @@ import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
+import { Badge } from "../ui/badge";
 import { Button, InlineButton } from "../ui/button";
 import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
@@ -448,6 +450,7 @@ export function IssueDetailPanel({
   /** Opens a linked change request beside this one; absent, the link goes to the host. */
   onSelectPullRequest?: ((reference: PullRequestRef) => void) | undefined;
 }) {
+  const gt = useGT();
   const detailQuery = useEnvironmentQuery(
     issueEnvironment.detail({ environmentId, input: reference }),
   );
@@ -858,10 +861,18 @@ export function IssueDetailPanel({
               item.kind === "comment" ? (
                 <article
                   key={`c:${item.comment.id}`}
-                  className="flex flex-col gap-2 rounded-lg border border-border/60 p-3"
+                  className={cn(
+                    "flex flex-col gap-2 rounded-lg border border-border/60 p-3",
+                    item.comment.internal && "border-warning/32 bg-warning-surface",
+                  )}
                 >
                   <PullRequestMetaLine className="text-xs text-muted-foreground">
                     <PullRequestActorLabel actor={item.comment.author} />
+                    {item.comment.internal ? (
+                      <Badge size="sm" variant="warning">
+                        {gt("Internal note")}
+                      </Badge>
+                    ) : null}
                     {item.comment.url ? (
                       <InlineButton
                         tone="muted"
@@ -911,6 +922,7 @@ export function IssueDetailPanel({
           environmentId={environmentId}
           reference={reference}
           blocked={canComment ? null : (blocked ?? "You cannot comment here.")}
+          audiences={detail.commentAudiences === true}
         />
       ) : null}
     </div>

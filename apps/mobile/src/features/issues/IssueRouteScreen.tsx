@@ -1,9 +1,11 @@
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { useGT } from "gt-react-native";
 import { issueEventSentence } from "@t3tools/client-runtime/issue-presentation";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { prependIssueComments } from "@t3tools/client-runtime/state/issues";
 import type {
   IssueComment,
+  IssueCommentAudience,
   IssueEvent,
   IssueLinkedPullRequest,
   IssueReaction,
@@ -26,6 +28,7 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { Menu } from "../../components/ui/Menu";
 import { RefreshControl } from "../../components/ui/RefreshControl";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
+import { I18nProvider } from "../../i18n/I18nProvider";
 import { useComposerBottomInset } from "../../components/ComposerSurface";
 import { ANDROID_READING_MAX_WIDTH, CHAT_CONTENT_MAX_WIDTH } from "../../lib/layout";
 import { relativeTime } from "../../lib/time";
@@ -270,14 +273,26 @@ function IssueCommentCard(props: {
   readonly comment: IssueComment;
   readonly canReact: boolean;
 }) {
+  const gt = useGT();
   const { comment } = props;
   return (
-    <View className="gap-3 rounded-2xl bg-grouped-card p-3">
+    <View
+      className={
+        comment.internal
+          ? "gap-3 rounded-2xl border border-warning-border bg-warning p-3"
+          : "gap-3 rounded-2xl bg-grouped-card p-3"
+      }
+    >
       <View className="flex-row items-center gap-2">
         <PullRequestAvatar actor={comment.author} size={22} />
         <Text className="min-w-0 flex-1 text-sm font-t3-medium" numberOfLines={1}>
           {comment.author?.login ?? "Unknown author"}
         </Text>
+        {comment.internal ? (
+          <Text className="text-2xs font-t3-medium text-warning-foreground">
+            {gt("Internal note")}
+          </Text>
+        ) : null}
         <Text className="text-2xs text-foreground-tertiary">{relativeTime(comment.createdAt)}</Text>
       </View>
       <PullRequestMarkdown markdown={comment.body} />
@@ -328,7 +343,11 @@ function IssueLoadingBody() {
 
 // Selecting another issue reuses this route, so the draft, older comments and errors are keyed.
 export function IssueRouteScreen({ route }: StaticScreenProps<IssueParams>) {
-  return <IssueRoute key={issueParamsKey(route.params)} params={route.params} />;
+  return (
+    <I18nProvider>
+      <IssueRoute key={issueParamsKey(route.params)} params={route.params} />
+    </I18nProvider>
+  );
 }
 
 function IssueRoute({ params }: { readonly params: IssueParams }) {
@@ -428,9 +447,9 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
       cursor: result.value.nextCursor,
     });
   };
-  const submitComment = (body: string) =>
+  const submitComment = (body: string, audience?: IssueCommentAudience) =>
     access?.comment === true
-      ? run("comment", () => postComment({ ...target, input: { ...target.input, body } }))
+      ? run("comment", () => postComment({ ...target, input: { ...target.input, body, audience } }))
       : Promise.resolve(false);
   const moveTo = (state: string) =>
     void run("state", () => setState({ ...target, input: { ...target.input, state } }));
@@ -639,6 +658,7 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
                 label={issue?.displayKey ?? params.issueKey}
                 blocked={commentBlocked}
                 posting={busy === "comment"}
+                audiences={detail?.commentAudiences === true}
                 bottomInset={composerBottomInset}
                 contentMaxWidth={contentMaxWidth}
                 onSubmit={submitComment}

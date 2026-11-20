@@ -370,7 +370,9 @@ To list a Linear team's or a Jira Cloud project's issues beside a project's, con
 under Settings → Source control & issues, then choose the team or project there. Linear takes an
 API key; Jira takes your site (`yourteam.atlassian.net`), your account email, and an API token.
 Jira issues move along their workflow's transitions, and have no reactions or linked pull
-requests here. A new Jira issue is filed as a Task.
+requests here. A new Jira issue is filed as a Task. In a Jira Service Management project, every
+comment is either an **Internal note**, which the customer never sees, or a **Reply to customer**;
+choose one before sending.
 
 Select an issue to open it beside the list: description, comments, state changes, linked pull
 requests, labels, assignees, and reactions. Linked pull requests open in the same panel. You can
