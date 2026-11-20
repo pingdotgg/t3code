@@ -1632,7 +1632,8 @@ const make = Effect.gen(function* () {
   const prepareContext = async (context: BrowserContext) => {
     if (preparedContexts.has(context)) return;
     preparedContexts.add(context);
-    await context.grantPermissions(["clipboard-write"]);
+    // Headless Chromium cannot answer the Local Network Access prompt, so pages could never reach localhost.
+    await context.grantPermissions(["clipboard-write", "local-network-access"]);
   };
 
   const recordCopies = async (cdp: CDPSession) => {
