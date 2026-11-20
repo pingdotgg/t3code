@@ -364,8 +364,9 @@ sidebar nests it there, and it counts as a delegated thread
 (`isDelegatedAppThread`). Each of its runs that ends completed, failed, or
 interrupted sends the parent a `delegated_task` notice with the run's last reply,
 steered into the parent's turn or queued to wake it, so the parent need not wait
-or poll. Runs the thread's own monitor woke, cancelled runs, and archived parents
-get no notice. A launch from an outside agent has no parent.
+or poll. Runs the user started in the thread, runs its own monitor woke,
+cancelled runs, and archived parents get no notice. A launch from an outside
+agent has no parent.
 
 Set `clientRequestId` on the initial launch to make it retryable. After an error
 or a lost reply, resend the same request with the same key from the same

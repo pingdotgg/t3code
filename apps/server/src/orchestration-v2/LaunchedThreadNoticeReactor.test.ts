@@ -87,6 +87,8 @@ const runToEnd = Effect.fn("test.runToEnd")(function* (input: {
   readonly reply?: string;
   readonly senderThreadId?: ThreadId;
   readonly notification?: OrchestrationV2Notification;
+  /** The user typed the message in the worker itself. */
+  readonly typed?: boolean;
 }) {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -105,8 +107,9 @@ const runToEnd = Effect.fn("test.runToEnd")(function* (input: {
     },
     ...(input.senderThreadId === undefined ? {} : { senderThreadId: input.senderThreadId }),
     ...(input.notification === undefined ? {} : { notification: input.notification }),
-    createdBy: "agent",
-    creationSource: input.notification === undefined ? "mcp" : "server",
+    createdBy: input.typed === true ? "user" : "agent",
+    creationSource:
+      input.typed === true ? "web" : input.notification === undefined ? "mcp" : "server",
   });
   const { runs } = yield* projections.getThreadRecords(input.threadId, ["runs"]);
   const run = runs.find((candidate) => candidate.userMessageId === messageId)!;
@@ -205,7 +208,8 @@ it.layer(layerTest)("a thread launched from another", (it) => {
         summary: 'Launched thread "Worker" was interrupted',
       });
 
-      // A run its own pull request watch woke, and one that never ran, tell it nothing.
+      // A run its own pull request watch woke, one that never ran, and one the user started in the
+      // worker itself tell it nothing: the launcher did not ask for them.
       const watched = yield* runToEnd({
         threadId: worker,
         key: "watched",
@@ -224,6 +228,14 @@ it.layer(layerTest)("a thread launched from another", (it) => {
         status: "cancelled",
       });
       yield* reactor.handle(cancelled);
+      const typed = yield* runToEnd({
+        threadId: worker,
+        key: "typed",
+        status: "completed",
+        reply: "Renamed it as you asked.",
+        typed: true,
+      });
+      yield* reactor.handle(typed);
       assert.equal((yield* notices(launcher)).length, 2);
     }),
   );
