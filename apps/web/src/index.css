@@ -1936,6 +1936,10 @@ code {
   color: var(--contrast-muted-foreground);
 }
 
+.chat-markdown:where(.user-message-markdown) :is(h1, h2, h3, h4, h5) {
+  color: var(--contrast-message-foreground);
+}
+
 .chat-markdown:where(.user-message-markdown) h6 {
   color: var(--contrast-message-muted-foreground);
 }

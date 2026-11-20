@@ -584,7 +584,7 @@ describe("MessagesTimeline messages", () => {
       const file = { type: "file", id: "notes", name: "notes.txt", mimeType: "text/plain" };
       const lines = Array.from({ length: 60 }, (_, index) => `Line ${index}`).join("\n");
       await using screen = await renderTimeline([
-        message(`###### Small heading\n\n${lines}`, {}, "long"),
+        message(`# Main heading\n\n###### Small heading\n\n${lines}`, {}, "long"),
         message("See the notes", { attachments: [{ ...file, sizeBytes: 100 }] }, "file-row"),
         message("", { attachments: [{ ...file, id: "card", sizeBytes: 100 }] }, "file-card"),
         message(AGENT_MESSAGE, { createdBy: "agent", senderThreadId: SENDER_THREAD_ID }, "agent"),
@@ -595,7 +595,8 @@ describe("MessagesTimeline messages", () => {
 
       const inks = {
         disclosure: screen.button("Show full message"),
-        heading: screen.container.querySelector<HTMLElement>("h6")!,
+        heading: screen.getByRole("heading", { name: "Main heading" }).element() as HTMLElement,
+        smallHeading: screen.container.querySelector<HTMLElement>("h6")!,
         fileRowDownload: screen.buttons("Download notes.txt")[0]!,
         fileCardDownload: screen.buttons("Download notes.txt")[1]!,
         fileCardSize: screen.getByText("TXT · 100 B").element() as HTMLElement,
