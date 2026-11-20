@@ -1,5 +1,5 @@
 import { LegendList } from "@legendapp/list/react";
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 
 export interface WorkItemListItem {
   readonly key: string;
@@ -11,6 +11,13 @@ export interface WorkItemListItem {
 const itemKey = (item: WorkItemListItem) => item.key;
 const itemType = (item: WorkItemListItem) => item.type;
 const renderItem = ({ item }: { item: WorkItemListItem }) => item.node;
+
+// Chrome stops re-checking content-visibility on rows moved with moveBefore, so a row
+// LegendList reorders can stay blank on screen; without it the list falls back to insertBefore.
+const withoutMoveBefore = (host: HTMLDivElement | null) => {
+  const slots = host?.querySelector(".legend-list-content-container > div");
+  if (slots) Object.defineProperty(slots, "moveBefore", { value: undefined });
+};
 
 /**
  * A list page's rows, mounted only near the view. It scrolls the page's own scroller, so the
@@ -26,17 +33,22 @@ export function WorkItemWindowedList({
   scrollElement: HTMLElement | null;
   estimatedItemSize: number;
 }) {
+  const host = useRef<HTMLDivElement>(null);
   return (
-    <LegendList<WorkItemListItem>
-      data={items}
-      keyExtractor={itemKey}
-      getItemType={itemType}
-      renderItem={renderItem}
-      extraData={items}
-      recycleItems={false}
-      scrollElement={scrollElement}
-      estimatedItemSize={estimatedItemSize}
-      drawDistance={720}
-    />
+    <div ref={host} className="contents">
+      <LegendList<WorkItemListItem>
+        data={items}
+        keyExtractor={itemKey}
+        getItemType={itemType}
+        renderItem={renderItem}
+        extraData={items}
+        recycleItems={false}
+        scrollElement={scrollElement}
+        estimatedItemSize={estimatedItemSize}
+        drawDistance={720}
+        // The rows' container exists once the list has laid out its first rows.
+        onLoad={() => withoutMoveBefore(host.current)}
+      />
+    </div>
   );
 }
