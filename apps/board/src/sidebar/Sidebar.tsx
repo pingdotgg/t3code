@@ -9,7 +9,13 @@ import { Section } from "./Section";
 const footerIcon =
   "grid size-6 place-items-center rounded-md text-muted enabled:hover:bg-hover enabled:hover:text-fg disabled:opacity-60";
 
-export function Sidebar({ footer }: { footer?: ReactNode }) {
+export function Sidebar({
+  footer,
+  onOpenSettings,
+}: {
+  footer?: ReactNode;
+  onOpenSettings: () => void;
+}) {
   const [adding, setAdding] = useState(false);
   return (
     <aside
@@ -48,7 +54,12 @@ export function Sidebar({ footer }: { footer?: ReactNode }) {
         {footer}
         <div className="flex items-center gap-1">
           <Tooltip text="Settings">
-            <button type="button" disabled aria-label="Settings" className={footerIcon}>
+            <button
+              type="button"
+              aria-label="Settings"
+              onClick={onOpenSettings}
+              className={footerIcon}
+            >
               <Settings className="size-4" />
             </button>
           </Tooltip>
