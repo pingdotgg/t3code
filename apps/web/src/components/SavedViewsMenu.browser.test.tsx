@@ -71,6 +71,30 @@ function storedViews(): ReadonlyArray<SavedView<PullRequestListPreferences>> {
 }
 
 describe("SavedViewsMenu", () => {
+  it("renders a toolbar-group button that keeps only its icon when collapsed", async () => {
+    using _fixture = setup();
+    const grouped = (collapsed: boolean) => (
+      <SavedViewsMenu
+        grouped
+        collapsed={collapsed}
+        kind={PULL_REQUEST_SAVED_VIEWS}
+        preferences={reviewing}
+        onApply={() => undefined}
+      />
+    );
+    await using screen = await render(grouped(false));
+    const trigger = () =>
+      screen.container.querySelector<HTMLButtonElement>('[aria-label="Saved pull request views"]')!;
+    expect(trigger().textContent).toContain("Views");
+    expect(trigger().className).toContain("h-6.5");
+    await screen.rerender(grouped(true));
+    expect(trigger().textContent).toBe("");
+    expect(trigger().className).toContain("size-6.5");
+    expect(trigger().querySelector("svg")).not.toBeNull();
+    await openMenu(screen);
+    expect(document.body.textContent).toContain("Save current view…");
+  });
+
   it("saves a named filter setup and restores it after remounting", async () => {
     using fixture = setup();
     const { menu } = fixture;

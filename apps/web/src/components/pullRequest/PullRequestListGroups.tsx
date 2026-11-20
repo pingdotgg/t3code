@@ -1,10 +1,8 @@
 import type { EnvironmentId, PullRequestAction } from "@t3tools/contracts";
-import { EyeIcon, LayersIcon, PenLineIcon, UsersIcon, type LucideIcon } from "lucide-react";
 import { useMessages } from "gt-react";
 import { useDeferredValue, type RefCallback } from "react";
 
 import { cn } from "~/lib/utils";
-import { Separator } from "../ui/separator";
 import {
   pullRequestEntryKey,
   scorePullRequestMatch,
@@ -16,12 +14,6 @@ import {
   PullRequestSpeedModeProvider,
   type PullRequestSpeedActionResult,
 } from "./PullRequestSpeedActions";
-
-const GROUP_ICONS: Record<string, LucideIcon> = {
-  authored: PenLineIcon,
-  reviewRequested: EyeIcon,
-  others: UsersIcon,
-};
 
 const MATCHED_ELSEWHERE_SCORE = 10;
 const FIRST_PAINT_ROWS = 24;
@@ -45,13 +37,15 @@ function PullRequestGroupHeader({
   count: number;
 }) {
   const resolve = useMessages();
-  const Icon = GROUP_ICONS[group.key] ?? LayersIcon;
+  // Nick 2026-11-19: the section title is the label and count, no icon.
   return (
-    <div className="flex items-center gap-2 px-3 pb-1 text-xs font-medium text-muted-foreground/70">
-      <Icon aria-hidden className="size-3.5 shrink-0" />
+    // Label · count, one size and weight (Nick 2026-11-19); the dot is the rows' meta separator.
+    <div className="flex items-center gap-1.5 px-3 pb-1.5 text-ui leading-5 font-medium text-muted-foreground">
       <h2 className="shrink-0">{resolve(group.label)}</h2>
-      <span className="shrink-0 tabular-nums text-muted-foreground/50">{count}</span>
-      <Separator className="min-w-2 flex-1" />
+      <span aria-hidden className="text-muted-foreground/50">
+        ·
+      </span>
+      <span className="shrink-0 tabular-nums">{count}</span>
     </div>
   );
 }
@@ -97,9 +91,17 @@ export function PullRequestListGroups({
   const counts = new Map(groups.map((group) => [group.key, group.entries.length]));
   return (
     <PullRequestSpeedModeProvider>
-      <div className={cn("space-y-3", sweepingKeys.size > 0 && "**:pointer-events-none")}>
-        {shownGroups.map((group) => (
-          <div key={group.key} className="space-y-0.5">
+      {/* Sections run edge to edge of the card (-mx-2 undoes the page's side inset), each after the
+          first under a full-width divider: 14px from the last row's text above, 14px to the heading. */}
+      <div className={cn("-mx-2 flex flex-col", sweepingKeys.size > 0 && "**:pointer-events-none")}>
+        {shownGroups.map((group, index) => (
+          <div
+            key={group.key}
+            className={cn(
+              "space-y-0.5 px-1",
+              index > 0 && "mt-1 border-t border-(--shell-divider) pt-3.5",
+            )}
+          >
             {group.label ? (
               <PullRequestGroupHeader
                 group={group}

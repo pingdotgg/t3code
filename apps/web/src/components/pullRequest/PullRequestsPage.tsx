@@ -18,7 +18,6 @@ import type {
   PullRequestListCursors,
   PullRequestListInput,
   PullRequestListResult,
-  PullRequestListState,
   PullRequestSummary,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
@@ -91,15 +90,15 @@ import { PullRequestListEmptyState } from "./PullRequestListEmptyState";
 import { PullRequestListGhost } from "./PullRequestGhosts";
 import { type PullRequestRowTarget } from "./PullRequestRow";
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
-import { RightPanelTabs } from "../RightPanelTabs";
+import { ChatRightPanel } from "../chat/ChatRightPanel";
 import { isCommandPaletteOpen } from "~/commandPaletteBus";
 import { isElectron } from "~/env";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "~/keybindings";
 import { registerCommands } from "~/shortcuts/dispatcher";
 import { isTerminalFocused } from "~/lib/terminalFocus";
-import { PanelLayoutControls, RightPanelMaximizeControl } from "../chat/PanelLayoutControls";
+import { PanelLayoutControls, WorkspaceTitlebarControls } from "../chat/PanelLayoutControls";
 import { Button } from "../ui/button";
-import { SidebarInset, useMobileSidebarSheetMounted } from "../ui/sidebar";
+import { SidebarInset } from "../ui/sidebar";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useOpenPanelPullRequestUrl } from "~/hooks/useOpenPanelPullRequestUrl";
@@ -125,7 +124,6 @@ import {
   type EnvironmentQueryTarget,
 } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { cn } from "~/lib/utils";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
 import {
@@ -1115,7 +1113,7 @@ export function PullRequestsPage() {
     },
   );
   const rightPanelAvailable = selectedPullRequestSurface !== null;
-  const mobileSidebarSheetMounted = useMobileSidebarSheetMounted();
+  const [layoutElement, setLayoutElement] = useState<HTMLElement | null>(null);
   const [maximized, setMaximized] = useState(false);
   const rightPanelMaximized = rightPanelState.isOpen && maximized;
   if (!rightPanelState.isOpen && maximized) setMaximized(false);
@@ -1207,6 +1205,7 @@ export function PullRequestsPage() {
       value={search.q ?? ""}
       label={gt("Search pull requests")}
       placeholder={gt("Search pull requests, or label:bug")}
+      soft
       busy={typedQuery.length > 0 && (!querySettled || showingCarried)}
       onChange={(query) => updateListScope({ q: query || undefined })}
       onSubmit={submitQuery}
@@ -1232,21 +1231,15 @@ export function PullRequestsPage() {
     />
   );
   const openPanelControls = (
-    <div
-      className={cn(
-        "absolute top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
-        mobileSidebarSheetMounted && "hidden",
-      )}
-      data-workspace-titlebar-controls
+    <WorkspaceTitlebarControls
+      showMaximizeControl
+      rightPanelOpen={rightPanelState.isOpen}
+      animationsActive={panelAnimationsActive}
+      maximized={rightPanelMaximized}
+      onToggleMaximized={toggleRightPanelMaximized}
     >
-      {rightPanelState.isOpen ? (
-        <RightPanelMaximizeControl
-          maximized={rightPanelMaximized}
-          onToggle={toggleRightPanelMaximized}
-        />
-      ) : null}
       {panelToggleControls}
-    </div>
+    </WorkspaceTitlebarControls>
   );
   const listError = listQuery.error
     ? `${environmentLabels.get(listQuery.error.environmentId) || gt("Environment")}: ${listQuery.error.message}`
@@ -1369,19 +1362,22 @@ export function PullRequestsPage() {
       Icon: environmentMachineIcon(resolveEnvironmentMachineKind(environment.serverConfig)),
     })),
   ];
-  const sortMenu = (
+  const sortMenu = ({ collapsed }: { collapsed: boolean }) => (
     <PullRequestCompactFilterMenu
+      grouped
       label={gt("Sort pull requests")}
       triggerIcon={<ArrowDownUpIcon aria-hidden className="size-4" />}
       triggerLabel={gt("Sort", { $context: "verb, sort a list" })}
-      outlined
+      iconOnly={collapsed}
       value={sort}
       options={resolveFilterOptions(SORT_OPTIONS, resolve)}
       onChange={(next) => updateListScope({ sort: next })}
     />
   );
-  const filtersMenu = (
+  const filtersMenu = ({ collapsed }: { collapsed: boolean }) => (
     <PullRequestFiltersMenuInSidebarOrder
+      grouped
+      collapsed={collapsed}
       onOpenChange={setFiltersOpen}
       state={search.state}
       stateOptions={resolveFilterOptions(STATE_TABS, resolve)}
@@ -1427,57 +1423,39 @@ export function PullRequestsPage() {
       }
     />
   );
+  const savedViewsMenu = ({ collapsed }: { collapsed: boolean }) => (
+    <SavedViewsMenu
+      grouped
+      collapsed={collapsed}
+      kind={PULL_REQUEST_SAVED_VIEWS}
+      preferences={search}
+      onApply={(preferences) => updateListScope(pullRequestSavedViewPatch(preferences))}
+    />
+  );
   const columnProps = {
     refreshing,
     onRefresh: () => void refreshFromHost(),
-    searchValue: search.q ?? "",
-    involvement: search.involvement,
-    state: search.state,
     host: search.host,
     hostMenuOptions,
-    onInvolvement: (involvement: PullRequestInvolvement) => updateListScope({ involvement }),
-    onState: (state: PullRequestListState) => updateListScope({ state }),
     onHost: (host: string | undefined) => updateListScope({ host }),
     searchInput,
     sortMenu,
     filtersMenu,
-    savedViewsMenu: (
-      <SavedViewsMenu
-        kind={PULL_REQUEST_SAVED_VIEWS}
-        preferences={search}
-        onApply={(preferences) => updateListScope(pullRequestSavedViewPatch(preferences))}
-      />
+    savedViewsMenu,
+    titlebarControls: !pullRequestsSupported ? null : rightPanelPresent ? (
+      // Panel open: the controls live at the root; this keeps the header's drag region off them.
+      isElectron ? (
+        <span
+          aria-hidden
+          className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] h-[var(--workspace-topbar-height)] w-28 [-webkit-app-region:no-drag]"
+        />
+      ) : null
+    ) : (
+      // Panel closed: inside the header, where a no-drag descendant beats its desktop drag region.
+      openPanelControls
     ),
-    rightPanelControl: !pullRequestsSupported ? null : (
-      <span
-        aria-hidden
-        className={cn(
-          "shrink-0",
-          rightPanelState.isOpen ? "-ml-3 w-0" : "w-7 sm:w-5",
-          panelAnimationsActive && "transition-[width,margin] ease-out",
-        )}
-        style={
-          panelAnimationsActive
-            ? { transitionDuration: `${panelAnimationDurationMs}ms` }
-            : undefined
-        }
-      />
-    ),
-    titlebarControls:
-      // While the panel is closed the strip lives inside the header: a no-drag
-      // descendant beats the header's desktop drag-region, where a floating
-      // sibling loses (app-region hit-testing ignores z-index).
-      pullRequestsSupported ? (
-        rightPanelPresent ? (
-          <span
-            aria-hidden
-            className="pointer-events-none absolute inset-y-0 left-full w-7 [-webkit-app-region:no-drag]"
-          />
-        ) : (
-          openPanelControls
-        )
-      ) : null,
     rightPanelOpen: rightPanelState.isOpen,
+    rightPanelPresent,
     maximizedAway: rightPanelMaximized,
     listBody,
     scrollRef,
@@ -1584,19 +1562,25 @@ export function PullRequestsPage() {
 
   return (
     <SidebarInset className="h-full min-h-0 overflow-hidden overscroll-y-none">
-      <div className="relative flex min-h-0 flex-1">
+      {/* ChatView's frame: the shell glass, the header and card in the column, the panel beside. */}
+      <div
+        ref={setLayoutElement}
+        className="relative flex h-full min-h-0 min-w-0 flex-1 overflow-hidden bg-(--shell-fill) backdrop-blur-(--shell-blur) backdrop-saturate-(--shell-saturate)"
+      >
         {pullRequestsSupported && rightPanelPresent ? openPanelControls : null}
         <PullRequestsColumn {...columnProps} />
 
         {rightPanelPresent && renderedPullRequestSurface && panelEnvironmentId !== null ? (
-          <RightPanelTabs
-            mode="inline"
+          <ChatRightPanel
+            sheet={false}
+            workspaceLayoutElement={layoutElement}
+            widthStorageKey="t3code:pull-request-panel-width"
+            sheetAnimationDurationMs={0}
+            onCloseSheet={() => undefined}
             open={rightPanelState.isOpen}
             maximized={rightPanelMaximized}
             keybindings={keybindings}
             getShortcutContext={getShortcutContext}
-            widthStorageKey="t3code:pull-request-panel-width"
-            defaultWidth={typeof window === "undefined" ? 640 : Math.floor(window.innerWidth / 2)}
             surfaces={renderedRightPanelSurfaces}
             environmentId={panelEnvironmentId}
             activeSurfaceId={renderedPullRequestSurface.id}
@@ -1715,7 +1699,7 @@ export function PullRequestsPage() {
                 if (phase === "done") refreshListAndStats(undefined, panelEnvironmentId);
               }}
             />
-          </RightPanelTabs>
+          </ChatRightPanel>
         ) : null}
       </div>
     </SidebarInset>

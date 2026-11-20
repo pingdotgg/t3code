@@ -30,6 +30,7 @@ import { type EnvironmentQueryTarget, usePullRequestFilterOptions } from "~/stat
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Button } from "../ui/button";
+import { cn } from "~/lib/utils";
 
 import {
   Menu,
@@ -100,6 +101,7 @@ export function PullRequestSearchInput({
   busy,
   label,
   placeholder,
+  soft = false,
   onChange,
   onSubmit,
 }: {
@@ -107,16 +109,26 @@ export function PullRequestSearchInput({
   busy?: boolean;
   label: string;
   placeholder: string;
+  /** The panel toolbars' soft field: pill-shaped, 32px, filling its row. */
+  soft?: boolean;
   onChange: (value: string) => void;
   onSubmit: (value: string) => void;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   return (
-    <InputGroup className="min-w-0 flex-1 **:[input]:h-9 sm:**:[input]:h-8">
+    <InputGroup
+      {...(soft ? { variant: "soft" as const } : {})}
+      className={cn("min-w-0 flex-1", soft ? "h-8" : "**:[input]:h-9 sm:**:[input]:h-8")}
+    >
       <InputGroupAddon>
-        {busy ? <Spinner aria-hidden /> : <SearchIcon aria-hidden />}
+        {busy ? (
+          <Spinner aria-hidden />
+        ) : (
+          <SearchIcon aria-hidden className={cn(soft && "size-4 opacity-50")} />
+        )}
       </InputGroupAddon>
       <InputGroupInput
+        {...(soft ? { size: "sm" as const } : {})}
         type="search"
         value={draft ?? value}
         onFocus={() => setDraft(value)}
@@ -531,7 +543,12 @@ export function PullRequestFiltersMenu({
   projectEnvironmentId,
   unavailable,
   onProject,
+  grouped = false,
+  collapsed = false,
 }: {
+  /** Renders the trigger as a ghost button for a ToolbarGroup; `collapsed` keeps only its icon. */
+  grouped?: boolean;
+  collapsed?: boolean;
   onOpenChange?: (open: boolean) => void;
   state: PullRequestListState;
   stateOptions: ReadonlyArray<PullRequestFilterOption<PullRequestListState>>;
@@ -605,13 +622,35 @@ export function PullRequestFiltersMenu({
   ];
   return (
     <Menu onOpenChange={onOpenChange}>
-      <MenuTrigger render={<Button variant="outline" />}>
+      <MenuTrigger
+        render={
+          grouped ? (
+            <Button variant="ghost-muted" size={collapsed ? "icon-toolbar" : "toolbar"} />
+          ) : (
+            <Button variant="outline" />
+          )
+        }
+        {...(collapsed
+          ? {
+              "aria-label":
+                filterCount > 0 ? gt("Filters ({count})", { count: filterCount }) : gt("Filters"),
+              title: gt("Filters"),
+            }
+          : {})}
+      >
         <ListFilterIcon className="size-4" />
-        <span>
-          <T>Filters</T>
-        </span>
+        {collapsed ? null : (
+          <span>
+            <T>Filters</T>
+          </span>
+        )}
         {filterCount > 0 ? (
-          <span className="rounded-full bg-muted px-1.5 text-xs text-muted-foreground tabular-nums">
+          <span
+            className={cn(
+              "rounded-full bg-muted px-1.5 text-xs text-muted-foreground tabular-nums",
+              collapsed && "absolute -top-1 -right-1 z-10 px-1 text-3xs leading-4",
+            )}
+          >
             {filterCount}
           </span>
         ) : null}

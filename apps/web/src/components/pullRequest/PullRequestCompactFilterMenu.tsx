@@ -16,6 +16,7 @@ export function PullRequestCompactFilterMenu<Value extends string>({
   triggerIcon,
   triggerLabel,
   outlined = false,
+  grouped = false,
   iconOnly = false,
   value,
   options,
@@ -26,6 +27,9 @@ export function PullRequestCompactFilterMenu<Value extends string>({
   triggerIcon?: ReactNode;
   triggerLabel?: string;
   outlined?: boolean;
+  /** A ghost button for a ToolbarGroup, 26px like the pill's icon buttons. */
+  grouped?: boolean;
+  /** Shows only the icon: `triggerIcon`, else the chosen option's own. */
   iconOnly?: boolean;
   value: Value;
   options: ReadonlyArray<PullRequestFilterOption<Value>>;
@@ -35,15 +39,16 @@ export function PullRequestCompactFilterMenu<Value extends string>({
   const gt = useGT();
   const current = options.find((option) => option.value === value) ?? options[0];
   if (!current) return null;
+  const valueLabel = gt("{label}: {value}", { label, value: current.label });
   return (
     <Menu>
       <MenuTrigger
-        aria-label={
-          triggerLabel || iconOnly ? gt("{label}: {value}", { label, value: current.label }) : label
-        }
-        title={iconOnly ? gt("{label}: {value}", { label, value: current.label }) : undefined}
+        aria-label={triggerLabel || iconOnly ? valueLabel : label}
+        title={iconOnly ? valueLabel : undefined}
         render={
-          outlined ? (
+          grouped ? (
+            <Button variant="ghost-muted" size={iconOnly ? "icon-toolbar" : "toolbar"} />
+          ) : outlined ? (
             <Button variant="outline" size={iconOnly ? "icon" : "default"} />
           ) : (
             <Button variant="ghost-muted" size="sm" />
@@ -52,7 +57,7 @@ export function PullRequestCompactFilterMenu<Value extends string>({
         className={cn("min-w-0", className)}
       >
         {iconOnly ? (
-          <current.Icon aria-hidden className="size-4" />
+          (grouped && triggerIcon) || <current.Icon aria-hidden className="size-4" />
         ) : triggerLabel ? (
           <>
             {triggerIcon}
