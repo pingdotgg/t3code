@@ -100,7 +100,9 @@ jobs:
 
   list_closed_previews:
     name: List closed relay previews
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target'
+    # Relay previews exist only in pingdotgg/t3code. On a fork this job waits
+    # for a Blacksmith runner that never comes until GitHub cancels it.
+    if: github.repository == 'pingdotgg/t3code' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request_target'
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     outputs:
