@@ -215,6 +215,7 @@ export const CursorDriver: ProviderDriver<
       auth.withAccess,
       () => catalogModels,
       () => catalogSdkModels,
+      sdkRunner,
     );
 
     const checkProvider = auth.readApiKey.pipe(
