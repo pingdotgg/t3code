@@ -505,6 +505,8 @@ export default defineConfig({
         excludeFiles: [
           "apps/mobile/src/components/ui/AppSymbol.tsx",
           "apps/mobile/src/components/ui/AppSymbol.android.tsx",
+          "apps/mobile/src/components/ui/connGlyphs.generated.ts",
+          "apps/mobile/src/native/connHeaderIcons.generated.ts",
           "apps/mobile/src/features/pull-requests/pullRequestGlyphs.ts",
         ],
         rules: { "t3code/no-mobile-pull-request-glyph-literals": "error" },

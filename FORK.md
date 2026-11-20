@@ -206,30 +206,32 @@ Sources:
 - Web (`apps/web/`): `src/icons/` (`lucide-react.ts`, `connIcon.tsx`),
   `tsconfig.json` (`paths`), `vite.config.ts`, `components/sidebar/workspaceVisuals.tsx`.
 
-### iOS icons
+### Mobile icons
 
-On iOS, thread feed icons in messages and the work log are Phosphor. The rest of
-the app, including native toolbars, tab bars and menus, keeps SF Symbols.
-Android keeps Tabler. `AppSymbol.tsx` (upstream's iOS implementation since its platform-primitive
-refactor, #33173; Conn's version replaces it) also uses SF Symbols for git icons
-that upstream drew with Tabler.
+Mobile draws the Superheroicons **24px** solid set (`assets/conn/superheroicons/24/solid/`;
+web and desktop stay on 16px). The manifest's `sf` map names a glyph for each SF Symbol name
+the app uses.
 
-`symbols.json` maps SF names to Phosphor icons and weights: solid by default,
-bold for carets and line glyphs that solid would box. Inside `ConnSymbolScope`
-around `ThreadFeed` in `ThreadDetailScreen.tsx`, `AppSymbol.tsx` requests
-mapped names with a `conn.` prefix. `ConnSymbols.swift` swaps `UIImage`'s
-`systemImageNamed` methods only for those names.
+- iOS: `node scripts/build-conn-symbols.ts` builds a custom symbol per mapped name
+  (`ConnSymbols.xcassets`, `ConnSymbolNames.swift`). `ConnSymbols.swift` swaps
+  `UIImage`'s `systemImageNamed` methods so every caller gets them: `AppSymbol.tsx`
+  (expo-symbols), tab bars and menus. Unmapped names stay SF Symbols.
+- Native header buttons take template images instead (`assets/header-icons/`,
+  `src/native/connHeaderIcons.generated.ts`), so they draw the glyph at 24pt; build header
+  icons with `connHeaderIcon(name)` (react-navigation items) or `connScreensHeaderIcon(name)`
+  (react-native-screens items). `V5StackHeader` converts SF names itself.
+- Android: the same script writes `src/components/ui/connGlyphs.generated.ts`;
+  `AppSymbol.android.tsx` draws it with react-native-svg (`ConnGlyph.tsx`).
+- Composer chips: `apps/mobile/scripts/sync-context-chip-icons.mjs` renders the
+  manifest's `chips` from the 24px set.
 
-After changing `symbols.json`, run `node scripts/build-conn-symbols.ts`. It
-builds custom symbols and `ConnSymbolNames.swift`. Commit the output and rebuild
-the app.
+Run the scripts after changing the set and commit their output.
 
 Sources:
 
-- `apps/mobile/modules/conn-symbols/` (`symbols.json`, `ios/`).
-- `scripts/build-conn-symbols.ts`.
-- Mobile (`apps/mobile/src/`): `components/ui/AppSymbol.tsx`,
-  `components/ConnSymbolScope.tsx`, `features/threads/ThreadDetailScreen.tsx`.
+- `assets/conn/superheroicons/`, `scripts/build-conn-symbols.ts`.
+- `apps/mobile/modules/conn-symbols/ios/`, `apps/mobile/src/components/ui/`
+  (`AppSymbol.tsx`, `AppSymbol.android.tsx`, `ConnGlyph.tsx`), `apps/mobile/src/native/connHeaderIcon.ts`.
 
 ### Workspaces
 
@@ -1363,10 +1365,8 @@ Sources:
    - `apps/web/src/icons/lucide-react.ts`: generated; take upstream's new
      Lucide names into `assets/conn/superheroicons/manifest.json` (ask the icon
      set for a glyph) and regenerate.
-   - `apps/mobile/src/features/threads/ThreadDetailScreen.tsx`: keep
-     `<ConnSymbolScope>` around `<ThreadFeed>`.
    - `apps/mobile/src/components/ui/AppSymbol.tsx` (was `AppSymbol.ios.tsx` until 2026-11-10): keep Conn's version (no
-     Tabler; `conn.` names inside `ConnSymbolScope`).
+     Tabler; every name through expo-symbols and `ConnSymbols.swift`).
    - Work-log icon unions (`thread-work-log.tsx`): keep both sides' icons.
    - `apps/web/vite.config.ts` (`resolve.alias`), `apps/web/tsconfig.json`
      (`paths`), `apps/web/package.json` (`lucide-react-original`), `apps/mobile/package.json`
@@ -1470,11 +1470,10 @@ Sources:
    `apps/desktop/src/window/DesktopWindow.test.ts`. Run `vp run i18n:check` and
    `vp run brand:check` ([i18n and the app name](#i18n-and-the-app-name)). Run `vp i`
    first: merges change dependencies. When the web typecheck reports a Lucide name missing from
-   `apps/web/src/icons/lucide-react.ts`, add a line for it (the Lucide icon and
-   the closest Phosphor icon). New SF Symbol names in the mobile thread feed
-   stay SF Symbols until they get an entry in
-   `apps/mobile/modules/conn-symbols/symbols.json` and
-   `node scripts/build-conn-symbols.ts` runs. If upstream bumps a vendored
+   `apps/web/src/icons/lucide-react.ts`, or the mobile typecheck an SF name missing
+   from `AppSymbolName`, ask the icon set to map it in
+   `assets/conn/superheroicons/manifest.json`, copy the set in, and run
+   `node scripts/generate-conn-icons.ts` and `node scripts/build-conn-symbols.ts`. If upstream bumps a vendored
    tarball in `apps/mobile/deps`, rebuild Conn's as described below.
 4. Publish the exact build commit to an origin `sync/` branch
    (`node scripts/publish-sync-branch.ts`; a dated `sync/<yyyy-mm-dd>` tip

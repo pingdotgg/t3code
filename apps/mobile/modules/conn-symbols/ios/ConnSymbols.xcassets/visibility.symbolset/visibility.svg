@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="3300" height="2200">
+ <g id="Notes">
+  <text id="template-version" x="3036" y="1933">Template v.2.0</text>
+ </g>
+ <g id="Guides">
+  <line id="Baseline-S" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="696" y2="696"/>
+  <line id="Capline-S" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="625.541" y2="625.541"/>
+  <line id="Baseline-M" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="1126" y2="1126"/>
+  <line id="Capline-M" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="1055.54" y2="1055.54"/>
+  <line id="Baseline-L" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="1556" y2="1556"/>
+  <line id="Capline-L" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="1485.54" y2="1485.54"/>
+  <line id="left-margin-Regular-M" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="1500" x2="1500" y1="1026" y2="1146"/>
+  <line id="right-margin-Regular-M" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="1598" x2="1598" y1="1026" y2="1146"/>
+ </g>
+ <g id="Symbols">
+  <g id="Regular-M" transform="matrix(1 0 0 1 1500 1126)">
+   <path d="M 49 -22.98 a 12.25 12.25 0 1 0 0 -24.5 12.25 12.25 0 0 0 0 24.5 Z"/>
+   <path d="M 5.402 -37.488 C 11.478 -55.745 28.698 -68.918 49.004 -68.918 C 69.298 -68.918 86.509 -55.757 92.594 -37.517 C 93.084 -36.039 93.084 -34.446 92.594 -32.972 C 86.522 -14.715 69.298 -1.543 48.996 -1.543 C 28.702 -1.543 11.486 -14.703 5.406 -32.943 A 7.195 7.195 0 0 1 5.406 -37.488 Z M 70.438 -35.23 A 21.438 21.438 0 0 0 27.562 -35.23 A 21.438 21.438 0 1 0 70.438 -35.23 Z"/>
+  </g>
+ </g>
+</svg>

@@ -24,6 +24,7 @@ import {
   type HeaderBarButtonItemWithMenu,
   type HeaderBarButtonSearchBarPlacementItem,
 } from "react-native-screens";
+import { connHeaderIcon } from "./connHeaderIcon";
 
 // UIKit's bar margins, and the width of a glass bar button.
 const BAR_MARGINS = 32;
@@ -55,11 +56,13 @@ function convertIcon(
     | HeaderBarButtonItemWithMenu["icon"],
 ) {
   if (!icon) return undefined;
-  if (icon.type === "image")
-    return icon.tinted === false
-      ? { type: "imageSource" as const, imageSource: icon.source }
-      : { type: "templateSource" as const, templateSource: icon.source };
-  return icon;
+  // Conn: SF names become the icon set's template images (connHeaderIcon).
+  const resolved = icon.type === "sfSymbol" ? connHeaderIcon(icon.name) : icon;
+  if (resolved.type === "image")
+    return resolved.tinted === false
+      ? { type: "imageSource" as const, imageSource: resolved.source }
+      : { type: "templateSource" as const, templateSource: resolved.source };
+  return resolved;
 }
 
 function convertMenu(menu: MenuInput, id: string): StackHeaderMenuIOS {
@@ -211,10 +214,9 @@ export function V5StackHeader(props: {
         // code reads the title only as the button's accessibility label there.
         searchFieldAccessory: filterInSearchField,
         ...(filterInSearchField ? { title: "Filter" } : {}),
-        icon: {
-          type: "sfSymbol",
-          name: mailSearch.filterSystemImageName ?? "line.3.horizontal.decrease",
-        },
+        icon: convertIcon(
+          connHeaderIcon(mailSearch.filterSystemImageName ?? "line.3.horizontal.decrease"),
+        ),
         menu: convertMenu(mailSearch.filterMenu, "filter-menu"),
       });
     if (bottomSearch) {
@@ -234,7 +236,7 @@ export function V5StackHeader(props: {
         type: "item",
         id: mailSearch.composeButtonId ?? "compose",
         identifier: "workspace-trailing-action",
-        icon: { type: "sfSymbol", name: mailSearch.composeSystemImageName ?? "square.and.pencil" },
+        icon: convertIcon(connHeaderIcon(mailSearch.composeSystemImageName ?? "square.and.pencil")),
         onPress: mailSearch.onComposePress,
       });
   }
@@ -259,7 +261,7 @@ export function V5StackHeader(props: {
       type: "item",
       id: "workspace-compose",
       title: gt("New task"),
-      icon: { type: "sfSymbol", name: "square.and.pencil" },
+      icon: convertIcon(connHeaderIcon("square.and.pencil")),
       onPress: props.onCompose,
     };
     if (trailing.length)
@@ -280,7 +282,7 @@ export function V5StackHeader(props: {
         type: "item",
         id: "dismiss-keyboard",
         title: gt("Dismiss keyboard"),
-        icon: { type: "sfSymbol", name: "keyboard.chevron.compact.down" },
+        icon: convertIcon(connHeaderIcon("keyboard.chevron.compact.down")),
         onPress: () => void KeyboardController.dismiss(),
         // The folded bar is short; keep this out of the overflow menu.
         visibilityPriority: "high",

@@ -15,6 +15,7 @@ import { PullRequestGlyph } from "../../pull-requests/pullRequestGlyphs";
 import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import type { WorkspaceTab } from "./workspace-tabs-state";
+import { connHeaderIcon } from "../../../native/connHeaderIcon";
 
 const SWITCHER_HEIGHT = 48;
 // The selected pill sits this far inside the glass, with concentric corners. The
@@ -149,7 +150,7 @@ export function WorkspacePhoneBar(props: {
   const settingsItem = withNativeGlassHeaderItem({
     accessibilityLabel: "Open settings",
     axisBehavior: "horizontalOnly",
-    icon: { name: "ellipsis", type: "sfSymbol" } as const,
+    icon: connHeaderIcon("ellipsis"),
     identifier: "workspace-settings",
     label: "",
     onPress: () => selectTab("settings"),
@@ -229,7 +230,7 @@ export function WorkspacePhoneBar(props: {
                 withNativeGlassHeaderItem({
                   accessibilityLabel: "New chat",
                   axisBehavior: "horizontalOnly",
-                  icon: { name: "plus", type: "sfSymbol" } as const,
+                  icon: connHeaderIcon("plus"),
                   identifier: "workspace-new-task",
                   label: "",
                   onPress: openNewTask,

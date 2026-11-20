@@ -12,12 +12,11 @@ public final class ConnSymbolsAppDelegateSubscriber: ExpoAppDelegateSubscriber {
   }
 }
 
-/// Returns Conn's Phosphor custom symbols (ConnSymbols.xcassets, built by
-/// scripts/build-conn-symbols.ts) for `conn.<sf name>` names, where `<sf name>` is in
-/// `connSymbolNames`. `AppSymbol.ios.tsx` asks for those names inside a
-/// `ConnSymbolScope` (the thread feed); plain SF Symbol names, and so native
-/// toolbars, tab bars and menus, are untouched. Swapping `UIImage`'s
-/// `systemImageNamed` methods lets expo-symbols load them; custom symbols keep symbol
+/// Returns Conn's custom symbols (ConnSymbols.xcassets, built by
+/// scripts/build-conn-symbols.ts from the Superheroicons 16px solid set) for every SF
+/// Symbol name in `connSymbolNames`, so SymbolView, native toolbars, tab bars and menus
+/// all draw Conn's icons. Other names stay SF Symbols. Swapping `UIImage`'s
+/// `systemImageNamed` methods lets every caller load them; custom symbols keep symbol
 /// sizing, weight scale and tint.
 enum ConnSymbols {
   private final class BundleMarker {}
@@ -44,12 +43,8 @@ enum ConnSymbols {
     )
   }
 
-  private static let prefix = "conn."
-
   private static func assetName(_ name: String) -> String? {
-    guard name.hasPrefix(prefix) else { return nil }
-    let asset = String(name.dropFirst(prefix.count))
-    return connSymbolNames.contains(asset) ? asset : nil
+    connSymbolNames.contains(name) ? name : nil
   }
 
   static func image(named name: String, configuration: UIImage.Configuration?) -> UIImage? {

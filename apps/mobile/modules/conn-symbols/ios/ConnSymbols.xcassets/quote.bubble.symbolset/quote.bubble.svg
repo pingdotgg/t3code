@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="3300" height="2200">
+ <g id="Notes">
+  <text id="template-version" x="3036" y="1933">Template v.2.0</text>
+ </g>
+ <g id="Guides">
+  <line id="Baseline-S" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="696" y2="696"/>
+  <line id="Capline-S" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="625.541" y2="625.541"/>
+  <line id="Baseline-M" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="1126" y2="1126"/>
+  <line id="Capline-M" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="1055.54" y2="1055.54"/>
+  <line id="Baseline-L" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="1556" y2="1556"/>
+  <line id="Capline-L" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="1485.54" y2="1485.54"/>
+  <line id="left-margin-Regular-M" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="1500" x2="1500" y1="1026" y2="1146"/>
+  <line id="right-margin-Regular-M" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="1598" x2="1598" y1="1026" y2="1146"/>
+ </g>
+ <g id="Symbols">
+  <g id="Regular-M" transform="matrix(1 0 0 1 1500 1126)">
+   <path d="M 83.059 -69.289 A 8.677 8.677 0 0 1 85.75 -62.793 v 30.625 a 29.604 29.604 0 0 1 -8.971 21.654 A 29.604 29.604 0 0 1 55.125 -1.543 a 3.063 3.063 0 0 1 -3.062 -3.062 v -12.25 a 3.063 3.063 0 0 1 3.063 -3.062 12.25 12.25 0 0 0 12.25 -12.25 V -35.23 H 61.25 a 9.188 9.188 0 0 1 -9.187 -9.187 v -18.375 A 9.188 9.188 0 0 1 61.25 -71.98 h 15.312 a 8.677 8.677 0 0 1 6.497 2.691 Z m -39.812 0 a 8.677 8.677 0 0 1 2.691 6.497 v 30.625 a 29.604 29.604 0 0 1 -8.971 21.654 A 29.604 29.604 0 0 1 15.312 -1.543 3.063 3.063 0 0 1 12.25 -4.605 v -12.25 a 3.063 3.063 0 0 1 3.063 -3.062 12.25 12.25 0 0 0 12.25 -12.25 V -35.23 h -6.125 A 9.188 9.188 0 0 1 12.25 -44.418 v -18.375 A 9.188 9.188 0 0 1 21.438 -71.98 H 36.75 a 8.677 8.677 0 0 1 6.497 2.691 Z"/>
+  </g>
+ </g>
+</svg>

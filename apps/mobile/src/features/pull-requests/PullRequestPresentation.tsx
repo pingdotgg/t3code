@@ -1,7 +1,6 @@
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
 import type { PullRequestActor } from "@t3tools/contracts";
-import IconAlertTriangle from "@tabler/icons-react-native/IconAlertTriangle";
 import { Image } from "expo-image";
 import { useGT } from "gt-react-native";
 import { View } from "react-native";
@@ -11,6 +10,8 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
 import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 import { EmptyState } from "../../components/ui/EmptyState";
+import { ConnGlyph } from "../../components/ui/ConnGlyph";
+import { CONN_GLYPH_BY_SF_NAME } from "../../components/ui/connGlyphs.generated";
 
 export function PullRequestReadStatus(props: {
   readonly pending: boolean;
@@ -39,9 +40,19 @@ export function PullRequestConflictBadge(props: { readonly surfaceClassName: str
   const { color: surface } = useResolveClassNames(props.surfaceClassName);
   return (
     <View pointerEvents="none" className="absolute -right-1 -bottom-1">
-      <IconAlertTriangle size={15} strokeWidth={2.5} color={surface} fill={surface} />
+      <ConnGlyph
+        glyph={CONN_GLYPH_BY_SF_NAME["exclamationmark.triangle"]}
+        size={15}
+        color={surface}
+        stroke={surface}
+        strokeWidth={3.75}
+      />
       <View className="absolute inset-0">
-        <IconAlertTriangle size={15} strokeWidth={2.5} color={color} />
+        <ConnGlyph
+          glyph={CONN_GLYPH_BY_SF_NAME["exclamationmark.triangle"]}
+          size={15}
+          color={color}
+        />
       </View>
     </View>
   );

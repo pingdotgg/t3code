@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="3300" height="2200">
+ <g id="Notes">
+  <text id="template-version" x="3036" y="1933">Template v.2.0</text>
+ </g>
+ <g id="Guides">
+  <line id="Baseline-S" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="696" y2="696"/>
+  <line id="Capline-S" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="625.541" y2="625.541"/>
+  <line id="Baseline-M" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="1126" y2="1126"/>
+  <line id="Capline-M" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="1055.54" y2="1055.54"/>
+  <line id="Baseline-L" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="1556" y2="1556"/>
+  <line id="Capline-L" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="263" x2="3036" y1="1485.54" y2="1485.54"/>
+  <line id="left-margin-Regular-M" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="1500" x2="1500" y1="1026" y2="1146"/>
+  <line id="right-margin-Regular-M" style="fill:none;stroke:#27AAE1;opacity:1;stroke-width:0.5;" x1="1598" x2="1598" y1="1026" y2="1146"/>
+ </g>
+ <g id="Symbols">
+  <g id="Regular-M" transform="matrix(1 0 0 1 1500 1126)">
+   <path d="M 49 -75.043 C 70.989 -75.043 88.813 -57.219 88.813 -35.23 C 88.813 -13.241 70.989 4.582 49 4.582 C 27.011 4.582 9.188 -13.241 9.188 -35.23 C 9.188 -57.219 27.011 -75.043 49 -75.043 Z M 38.281 -50.543 C 36.076 -50.543 34.9 -48.832 34.459 -47.954 A 8.003 8.003 0 0 0 33.688 -44.418 C 33.688 -43.201 33.928 -41.947 34.459 -40.881 C 34.9 -40.003 36.072 -38.293 38.281 -38.293 C 40.486 -38.293 41.662 -40.003 42.103 -40.881 C 42.634 -41.943 42.875 -43.201 42.875 -44.418 C 42.875 -45.634 42.634 -46.888 42.103 -47.954 C 41.662 -48.832 40.49 -50.543 38.281 -50.543 Z M 55.897 -47.954 C 55.366 -46.888 55.125 -45.634 55.125 -44.418 A 8.003 8.003 0 0 0 55.897 -40.881 C 56.338 -40.003 57.514 -38.293 59.719 -38.293 C 61.928 -38.293 63.1 -40.003 63.541 -40.881 C 64.072 -41.947 64.313 -43.201 64.313 -44.418 C 64.313 -45.634 64.072 -46.892 63.541 -47.954 C 63.1 -48.832 61.924 -50.543 59.719 -50.543 C 57.51 -50.543 56.338 -48.832 55.897 -47.954 Z M 64.157 -20.073 A 3.063 3.063 0 1 0 59.829 -24.401 A 15.312 15.312 0 0 1 38.171 -24.401 A 3.063 3.063 0 0 0 33.843 -20.073 A 21.438 21.438 0 0 0 64.157 -20.073 Z"/>
+  </g>
+ </g>
+</svg>

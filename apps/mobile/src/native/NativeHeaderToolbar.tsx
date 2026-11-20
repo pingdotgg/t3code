@@ -18,6 +18,7 @@ import type { ColorValue } from "react-native";
 import type { HeaderBarButtonSearchBarPlacementItem } from "react-native-screens";
 import { NativeWorkspaceTabActivityContext } from "./v5-workspace-context";
 import { NativeStackScreenOptions, useScreenOptionsWriter } from "./StackHeader";
+import { connHeaderIcon } from "./connHeaderIcon";
 
 function labelFromChildren(children: ReactNode): string {
   const parts: string[] = [];
@@ -48,7 +49,7 @@ type NativeStackOptionsWithToolbar = NativeStackNavigationOptions & {
 };
 
 function iconFromProp(icon: unknown): NativeStackHeaderIcon | undefined {
-  if (typeof icon === "string") return { type: "sfSymbol", name: icon as never };
+  if (typeof icon === "string") return connHeaderIcon(icon);
   if (
     typeof icon === "object" &&
     icon !== null &&

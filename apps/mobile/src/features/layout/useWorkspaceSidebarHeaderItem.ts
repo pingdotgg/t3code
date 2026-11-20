@@ -1,6 +1,7 @@
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { withNativeGlassHeaderItem } from "./native-glass-header-items";
 import { useSidebarToggle } from "./useSidebarToggle";
+import { connHeaderIcon } from "../../native/connHeaderIcon";
 
 /** `useSidebarToggle` as a native header item. */
 export function useWorkspaceSidebarHeaderItem() {
@@ -10,7 +11,7 @@ export function useWorkspaceSidebarHeaderItem() {
   return withNativeGlassHeaderItem({
     axisBehavior: usesNativeWorkspaceColumns ? "horizontalOnly" : undefined,
     accessibilityLabel: toggle.accessibilityLabel,
-    icon: { name: toggle.icon, type: "sfSymbol" as const },
+    icon: connHeaderIcon(toggle.icon),
     identifier: "thread-left-sidebar",
     label: toggle.accessibilityLabel,
     onPress: toggle.onPress,

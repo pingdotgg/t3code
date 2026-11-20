@@ -9,69 +9,33 @@ const repositoryRoot = NodePath.resolve(appDirectory, "../..");
 const outputDirectory = NodePath.join(appDirectory, "assets/context-chip-icons");
 const generatedModulePath = NodePath.join(appDirectory, "src/lib/contextChipIcons.generated.ts");
 
-const requireFromWeb = NodeModule.createRequire(
-  NodePath.join(repositoryRoot, "apps/web/package.json"),
-);
 const requireFromScripts = NodeModule.createRequire(
   NodePath.join(repositoryRoot, "scripts/package.json"),
 );
 const sharp = requireFromScripts("sharp");
-const lucideIconsDirectory = NodePath.join(
-  NodePath.dirname(requireFromWeb.resolve("lucide-react/package.json")),
-  "dist/esm/icons",
+// Chip icons draw Conn's icon set (assets/conn/superheroicons), like every other icon.
+const iconSetDirectory = NodePath.join(repositoryRoot, "assets/conn/superheroicons");
+const iconManifest = JSON.parse(
+  NodeFS.readFileSync(NodePath.join(iconSetDirectory, "manifest.json"), "utf8"),
 );
-const webChipSource = NodeFS.readFileSync(
-  NodePath.join(repositoryRoot, "apps/web/src/components/composerInlineChip.ts"),
-  "utf8",
-);
-const skillSvg = webChipSource.match(/SKILL_CHIP_ICON_SVG = `([\s\S]*?)`;/)?.[1];
 
-if (!skillSvg) {
-  throw new Error(
-    "Could not read SKILL_CHIP_ICON_SVG from apps/web/src/components/composerInlineChip.ts",
-  );
+// Chip token -> glyph concept, from the icon set's `chips` map.
+const chipIcons = iconManifest.chips;
+
+function glyphSvg(concept) {
+  return NodeFS.readFileSync(NodePath.join(iconSetDirectory, "24/solid", `${concept}.svg`), "utf8");
 }
 
-const lucideIcons = [
-  "bot",
-  "circle-dashed",
-  "film",
-  "git-merge",
-  "git-pull-request-arrow",
-  "git-pull-request-closed",
-  "git-pull-request-draft",
-  "image",
-  "message-circle",
-  "messages-square",
-  "mouse-pointer-click",
-  "server",
-  "terminal",
-];
-
-async function lucideSvg(name) {
-  const module = await import(
-    NodeURL.pathToFileURL(NodePath.join(lucideIconsDirectory, `${name}.js`)).href
-  );
-  const body = module.__iconNode
-    .map(([tag, { key: _key, ...attributes }]) => {
-      const attributeText = Object.entries(attributes)
-        .map(([attribute, value]) => `${attribute}="${value}"`)
-        .join(" ");
-      return `<${tag} ${attributeText}/>`;
-    })
-    .join("");
-  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
-}
-
-async function renderIcon(token, svg) {
+// `boxSize` is the source's drawing box: 24 for glyphs (mobile draws the 24px set) and logos.
+async function renderIcon(token, svg, boxSize = 24) {
   const sized = svg
-    .replace(/^<svg[^>]*?>/, (tag) =>
+    .replace(/^\s*<svg[^>]*?>/, (tag) =>
       tag
-        .replace(/ (?:width|height)="[^"]*"/g, "")
+        .replace(/ (?:width|height|xmlns)="[^"]*"/g, "")
         .replace("<svg ", '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" '),
     )
     .replaceAll("currentColor", "#ffffff");
-  await sharp(Buffer.from(sized), { density: 72 * (64 / 24) })
+  await sharp(Buffer.from(sized), { density: 72 * (64 / boxSize) })
     .resize(64, 64)
     .png()
     .toFile(NodePath.join(outputDirectory, `${token}.png`));
@@ -80,10 +44,9 @@ async function renderIcon(token, svg) {
 NodeFS.rmSync(outputDirectory, { recursive: true, force: true });
 NodeFS.mkdirSync(outputDirectory, { recursive: true });
 
-for (const name of lucideIcons) {
-  await renderIcon(name, await lucideSvg(name));
+for (const [token, concept] of Object.entries(chipIcons)) {
+  await renderIcon(token, glyphSvg(concept), 24);
 }
-await renderIcon("skill", skillSvg);
 
 // Provider logos, so a model chip can show what the model menu shows. Native chips take images,
 // not SVG. Logos that swap between black and white per theme take the text color, like the chip;
@@ -157,7 +120,7 @@ for (const { driverKind, svg } of providerLogos) {
   await renderIcon(`provider-${driverKind}`, svg);
 }
 
-const tokens = [...lucideIcons, "skill"].sort();
+const tokens = Object.keys(chipIcons).sort();
 const generatedSource = `import type { ImageSourcePropType } from "react-native";\n\nexport const CONTEXT_CHIP_ICON_SOURCES = {\n${tokens
   .map(
     (token) =>

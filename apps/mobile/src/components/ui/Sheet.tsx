@@ -12,6 +12,7 @@ const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Pl
 
 export type { SheetProps } from "./Sheet.types";
 import type { SheetProps } from "./Sheet.types";
+import { connScreensHeaderIcon } from "../../native/connHeaderIcon";
 
 /** Native presentation. Scrollable children use automatic insets beneath the iOS header. */
 export function Sheet(props: SheetProps) {
@@ -60,7 +61,7 @@ export function Sheet(props: SheetProps) {
               headerRightBarButtonItems={[
                 {
                   type: "button",
-                  icon: { name: "xmark", type: "sfSymbol" },
+                  icon: connScreensHeaderIcon("xmark"),
                   accessibilityLabel: gt("Close {title}", { title: props.title }),
                   identifier: `app-sheet-close-${screenId}`,
                   disabled: props.dismissDisabled,

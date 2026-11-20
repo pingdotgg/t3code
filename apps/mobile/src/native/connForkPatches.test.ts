@@ -69,9 +69,13 @@ describe("Conn react-native-enriched-markdown patch", () => {
 });
 
 describe("Conn symbols", () => {
-  it("ships a generated symbol for every name in symbols.json", () => {
+  it("ships a generated symbol for every SF name in the icon set", () => {
     const names = Object.keys(
-      JSON.parse(read("modules/conn-symbols/symbols.json")) as Record<string, unknown>,
+      (
+        JSON.parse(read("../../assets/conn/superheroicons/manifest.json")) as {
+          sf: Record<string, string>;
+        }
+      ).sf,
     );
     const generated = read("modules/conn-symbols/ios/ConnSymbolNames.swift");
     for (const name of names) {
@@ -89,10 +93,5 @@ describe("Conn symbols", () => {
 
   it("sends every iOS icon through expo-symbols", () => {
     expect(read("src/components/ui/AppSymbol.tsx")).not.toContain("@tabler/icons-react-native");
-  });
-
-  it("limits Phosphor symbols to the thread feed", () => {
-    expect(read("src/components/ui/AppSymbol.tsx")).toContain("useConnSymbolScope");
-    expect(read("src/features/threads/ThreadDetailScreen.tsx")).toContain("<ConnSymbolScope>");
   });
 });
