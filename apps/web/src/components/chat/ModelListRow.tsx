@@ -1,7 +1,7 @@
 import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
 import { T, useGT } from "gt-react";
 import { memo } from "react";
-import { CheckIcon, StarIcon } from "lucide-react";
+import { CheckIcon, GripVerticalIcon, StarIcon } from "lucide-react";
 import { getDisplayModelName } from "./providerIconUtils";
 import { ComboboxItem } from "../ui/combobox";
 import { Button } from "../ui/button";
@@ -26,6 +26,9 @@ export const ModelListRow = memo(function ModelListRow(props: {
   isFavorite: boolean;
   /** In Favorites every row is starred, so the star shows only on hover. */
   favoriteStarOnHover?: boolean;
+  reorderable?: boolean;
+  isDragging?: boolean;
+  isAnyDragging?: boolean;
   isSelected: boolean;
   /** Marks this instance apart from another of the same provider. */
   showInstanceBadge: boolean;
@@ -51,6 +54,8 @@ export const ModelListRow = memo(function ModelListRow(props: {
       disabled={Boolean(props.disabledReason)}
       className={cn(
         "group relative w-full !min-w-0 max-w-full cursor-pointer",
+        props.reorderable && "select-none",
+        props.isDragging && "cursor-grabbing",
         props.disabledReason &&
           "data-disabled:pointer-events-auto data-disabled:cursor-not-allowed",
       )}
@@ -103,12 +108,15 @@ export const ModelListRow = memo(function ModelListRow(props: {
       </div>
 
       <div className="flex shrink-0 items-center gap-1.5">
-        <Tooltip>
+        <Tooltip disabled={props.isAnyDragging === true}>
           <TooltipTrigger
             render={
               <Button
                 size="icon-xs"
                 variant="ghost-muted"
+                onPointerDown={(event) => {
+                  event.stopPropagation();
+                }}
                 onClick={(event) => {
                   event.stopPropagation();
                   props.onToggleFavorite(props.instanceId, props.slug);
@@ -135,6 +143,29 @@ export const ModelListRow = memo(function ModelListRow(props: {
           </TooltipPopup>
         </Tooltip>
         {props.jumpLabel ? <Kbd>{props.jumpLabel}</Kbd> : null}
+        {props.reorderable ? (
+          <Tooltip disabled={props.isAnyDragging === true}>
+            <TooltipTrigger
+              render={
+                <span
+                  data-favorite-drag-handle="true"
+                  aria-hidden="true"
+                  className={cn(
+                    "flex size-4 shrink-0 cursor-grab touch-none items-center justify-center rounded-xs text-muted-foreground transition-opacity hover:text-foreground active:cursor-grabbing",
+                    props.isDragging
+                      ? "cursor-grabbing text-foreground opacity-100"
+                      : "opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100",
+                  )}
+                >
+                  <GripVerticalIcon className="size-3.5 text-current" />
+                </span>
+              }
+            />
+            <TooltipPopup side="top" align="center">
+              <T>Drag to reorder</T>
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
       </div>
     </ComboboxItem>
   );
@@ -144,7 +175,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
   }
 
   return (
-    <Tooltip>
+    <Tooltip disabled={props.isAnyDragging === true}>
       <TooltipTrigger render={row} />
       <TooltipPopup side="left" align="center">
         {props.disabledReason}

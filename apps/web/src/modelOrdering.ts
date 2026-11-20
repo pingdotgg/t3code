@@ -10,8 +10,17 @@ export interface ProviderModelItem extends ModelSlugItem {
   readonly instanceId: ProviderInstanceId;
 }
 
+export interface FavoriteModelEntry {
+  readonly provider: ProviderInstanceId;
+  readonly model: string;
+}
+
 export function providerModelKey(instanceId: ProviderInstanceId, slug: string): string {
   return `${instanceId}:${slug}`;
+}
+
+export function favoriteModelKey(entry: FavoriteModelEntry): string {
+  return providerModelKey(entry.provider, entry.model);
 }
 
 function rankByValue(values: ReadonlyArray<string>): ReadonlyMap<string, number> {
@@ -59,11 +68,13 @@ export function sortProviderModelItems<T extends ProviderModelItem>(
   items: ReadonlyArray<T>,
   options?: {
     readonly favoriteModelKeys?: ReadonlySet<string> | ReadonlyArray<string>;
+    readonly favoriteOrder?: ReadonlyArray<string>;
     readonly groupFavorites?: boolean;
     readonly instanceOrder?: ReadonlyArray<ProviderInstanceId>;
   },
 ): T[] {
   const favoriteModelKeys = toSet(options?.favoriteModelKeys);
+  const favoriteOrder = rankByValue(options?.favoriteOrder ?? []);
   const instanceOrder = new Map(
     Arr.map(options?.instanceOrder ?? [], (instanceId, index) => [instanceId, index] as const),
   );
@@ -78,9 +89,75 @@ export function sortProviderModelItems<T extends ProviderModelItem>(
           ),
         ]
       : []),
+    ...(favoriteOrder.size > 0
+      ? [
+          byOptionalRank<T>((item) =>
+            favoriteOrder.get(providerModelKey(item.instanceId, item.slug)),
+          ),
+        ]
+      : []),
     byOptionalRank((item) => instanceOrder.get(item.instanceId)),
     byOptionalRank((item) => originalOrder.get(providerModelKey(item.instanceId, item.slug))),
   ];
 
   return Arr.sort(items, Order.combineAll(orders));
+}
+
+export function reorderVisibleFavorites<T extends FavoriteModelEntry>(
+  allFavorites: ReadonlyArray<T>,
+  visibleKeys: ReadonlyArray<string>,
+  fromIndex: number,
+  toIndex: number,
+): T[] {
+  if (
+    fromIndex === toIndex ||
+    fromIndex < 0 ||
+    toIndex < 0 ||
+    fromIndex >= visibleKeys.length ||
+    toIndex >= visibleKeys.length
+  ) {
+    return [...allFavorites];
+  }
+
+  const deduped: T[] = [];
+  const byKey = new Map<string, T>();
+  for (const favorite of allFavorites) {
+    const key = favoriteModelKey(favorite);
+    if (byKey.has(key)) continue;
+    byKey.set(key, favorite);
+    deduped.push(favorite);
+  }
+
+  const nextVisibleKeys = [...visibleKeys];
+  const [moved] = nextVisibleKeys.splice(fromIndex, 1);
+  if (moved === undefined) return deduped;
+  nextVisibleKeys.splice(toIndex, 0, moved);
+
+  const nextVisibleEntries: T[] = [];
+  const visibleKeySet = new Set<string>();
+  for (const key of nextVisibleKeys) {
+    const entry = byKey.get(key);
+    if (!entry || visibleKeySet.has(key)) continue;
+    visibleKeySet.add(key);
+    nextVisibleEntries.push(entry);
+  }
+
+  let visibleCursor = 0;
+  return deduped.map((entry) =>
+    visibleKeySet.has(favoriteModelKey(entry)) ? nextVisibleEntries[visibleCursor++]! : entry,
+  );
+}
+
+export function pendingFavoriteOrder<T extends FavoriteModelEntry>(
+  pending: ReadonlyArray<T> | null,
+  saved: ReadonlyArray<T>,
+): ReadonlyArray<T> | null {
+  if (pending === null || pending.length !== saved.length) return null;
+  const savedKeys = saved.map(favoriteModelKey);
+  const pendingKeys = pending.map(favoriteModelKey);
+  const savedKeySet = new Set(savedKeys);
+  const pendingKeySet = new Set(pendingKeys);
+  if (savedKeySet.size !== pendingKeySet.size) return null;
+  if (!pendingKeys.every((key) => savedKeySet.has(key))) return null;
+  return pendingKeys.some((key, index) => key !== savedKeys[index]) ? pending : null;
 }
