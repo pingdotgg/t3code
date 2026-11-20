@@ -320,6 +320,10 @@ describe("default merge-readiness ranking", () => {
         displayPullRequestGroups(groups, sort, "", stats, settled.stats, "all")[0]!.entries;
       const expected = sort === "largest" ? [1, 2, 3] : [2, 1, 3];
       expect(display(loadedStats).map((row) => row.number)).toEqual(expected);
+      const shown = display(loadedStats);
+      display(mergePullRequestDiffStats(loadedStats, batches)).forEach((row, index) =>
+        expect(row).toBe(shown[index]),
+      );
 
       const detail = { ...rows[2]!, additions: sort === "largest" ? 1_000 : 1, deletions: 0 };
       const detailStats = mergePullRequestDiffStats(loadedStats, [detail]);

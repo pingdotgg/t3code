@@ -1286,7 +1286,8 @@ export function PullRequestsPage() {
   const prefetchEntry = usePullRequestIntentPrefetch((entry) =>
     listedPullRequestsBySurface.has(pullRequestListEntryId(entry)),
   );
-  const selectEntry = (entry: PullRequestRowTarget) => {
+  // Stable, so the memoized rows skip the page's re-renders.
+  const selectEntry = useStableCallback((entry: PullRequestRowTarget) => {
     if (rightPanelRef === null) return;
     useRightPanelStore.getState().openPullRequest(rightPanelRef, entry);
     updateSearch({
@@ -1296,7 +1297,7 @@ export function PullRequestsPage() {
       selectedEnvironmentId: entry.environmentId,
       selectedHost: entry.host,
     });
-  };
+  });
 
   const searchInput = (
     <PullRequestSearchInput

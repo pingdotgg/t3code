@@ -825,6 +825,22 @@ function withDiffStat<Entry extends PullRequestListEntry & { readonly environmen
   return stat === undefined ? entry : { ...entry, ...stat };
 }
 
+// A shown row keeps its merged entry while its counts hold, so a memoized row skips the page's
+// re-renders.
+const shownEntriesWithDiffStat = new WeakMap<PullRequestListEntry, PullRequestListEntry>();
+
+function shownWithDiffStat<Entry extends PullRequestListEntry & { readonly environmentId: string }>(
+  entry: Entry,
+  statsByRow: ReadonlyMap<string, { readonly additions: number; readonly deletions: number }>,
+): Entry {
+  const merged = withDiffStat(entry, statsByRow);
+  if (merged === entry) return entry;
+  const held = shownEntriesWithDiffStat.get(entry) as Entry | undefined;
+  if (held?.additions === merged.additions && held.deletions === merged.deletions) return held;
+  shownEntriesWithDiffStat.set(entry, merged);
+  return merged;
+}
+
 export function displayPullRequestGroups<Entry extends EnvironmentPullRequestEntry>(
   groups: ReadonlyArray<PullRequestGroup<Entry>>,
   sort: PullRequestListSort,
@@ -836,7 +852,7 @@ export function displayPullRequestGroups<Entry extends EnvironmentPullRequestEnt
   const displayed = new Map(
     groups.flatMap((group) =>
       group.entries.map(
-        (entry) => [pullRequestEntryKey(entry), withDiffStat(entry, statsByRow)] as const,
+        (entry) => [pullRequestEntryKey(entry), shownWithDiffStat(entry, statsByRow)] as const,
       ),
     ),
   );
