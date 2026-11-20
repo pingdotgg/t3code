@@ -441,13 +441,10 @@ function withAntigravityEditPatches(
   });
 }
 
-export function normalizeAntigravityToolCall(
-  toolCall: AcpToolCallState,
-  readPreEditFile = readAntigravityPreEditFile,
-): AcpToolCallState {
+export function extractAntigravityCommand(toolCall: AcpToolCallState): string | undefined {
   const input = Option.getOrUndefined(decodeNativeToolFields(toolCall.data.rawInput));
   const output = Option.getOrUndefined(decodeNativeToolFields(toolCall.data.rawOutput));
-  const nativeCommand =
+  const command =
     input?.CommandLine ??
     input?.command_line ??
     input?.commandLine ??
@@ -455,6 +452,16 @@ export function normalizeAntigravityToolCall(
     output?.commandLine ??
     output?.command_line ??
     toolCall.command;
+  return command?.trim() ? command : undefined;
+}
+
+export function normalizeAntigravityToolCall(
+  toolCall: AcpToolCallState,
+  readPreEditFile = readAntigravityPreEditFile,
+): AcpToolCallState {
+  const input = Option.getOrUndefined(decodeNativeToolFields(toolCall.data.rawInput));
+  const output = Option.getOrUndefined(decodeNativeToolFields(toolCall.data.rawOutput));
+  const nativeCommand = extractAntigravityCommand(toolCall);
   const command = nativeCommand?.trim() ? boundText(nativeCommand.trim()) : undefined;
   const nativeCwd =
     input?.Cwd ??
