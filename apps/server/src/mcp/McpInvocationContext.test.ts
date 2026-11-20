@@ -103,9 +103,10 @@ it("takes a message as the user's only from an outside client that says a person
     providerSessionId: "provider-session-1",
     providerInstanceId: ProviderInstanceId.make("codex"),
   };
+  const typed = { ...client, typedByUser: true };
   const actor = McpInvocationContext.mcpMessageActor;
-  expect(actor({ thread: undefined, client }, true)).toBe("user");
-  expect(actor({ thread: undefined, client }, undefined)).toBe("agent");
-  expect(actor({ thread: undefined, client: { ...client, linked: true } }, true)).toBe("agent");
-  expect(actor({ thread, client: undefined }, true)).toBe("agent");
+  expect(actor({ thread: undefined, client: typed })).toBe("user");
+  expect(actor({ thread: undefined, client })).toBe("agent");
+  expect(actor({ thread: undefined, client: { ...typed, linked: true } })).toBe("agent");
+  expect(actor({ thread, client: typed })).toBe("agent");
 });

@@ -1881,7 +1881,7 @@ it.effect(
 );
 
 it.effect(
-  "narrows an OAuth client's modes to the T3-Mode-Limit it sends, and never widens them",
+  "narrows an OAuth client's modes to the T3-Mode-Limit it sends, and reads T3-Typed-By-User",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1918,7 +1918,9 @@ it.effect(
               starts: McpToolAccess.startsThreads(
                 (input) => input,
                 (_, modes) =>
-                  Effect.succeed({ modes: `${modes.runtimeMode}/${modes.interactionMode}` }),
+                  Effect.map(McpInvocationContext.McpInvocationContext, (scope) => ({
+                    modes: `${modes.runtimeMode}/${modes.interactionMode}${McpInvocationContext.mcpMessageActor(scope) === "user" ? " by user" : ""}`,
+                  })),
                 "stamped",
               ),
             }),
@@ -1964,9 +1966,14 @@ it.effect(
           ),
         );
         /** Starts a thread as the client, with `limit` as T3-Mode-Limit; the HTTP status or the outcome. */
-        const start = (limit: string | undefined, args: Record<string, string> = {}) =>
+        const start = (
+          limit: string | undefined,
+          args: Record<string, string> = {},
+          extraHeaders: Record<string, string> = {},
+        ) =>
           Effect.gen(function* () {
             const headers = {
+              ...extraHeaders,
               accept: "application/json, text/event-stream",
               authorization: `Bearer ${clientToken}`,
               ...(limit === undefined ? {} : { "t3-mode-limit": limit }),
@@ -2021,6 +2028,11 @@ it.effect(
         expect(yield* start("auto")).toBe(400);
         expect(yield* start("auto/default/extra")).toBe(400);
         expect(yield* start("root/default")).toBe(400);
+        // Only a client that says a person typed the request's message sends as the user.
+        expect(yield* start(undefined, {}, { "t3-typed-by-user": "1" })).toBe(
+          "auto/default by user",
+        );
+        expect(yield* start(undefined, {}, { "t3-typed-by-user": "yes" })).toBe("auto/default");
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

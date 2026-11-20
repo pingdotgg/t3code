@@ -550,13 +550,6 @@ export const OrchestratorMcpThreadReadResult = Schema.Struct({
 });
 export type OrchestratorMcpThreadReadResult = typeof OrchestratorMcpThreadReadResult.Type;
 
-/** Honored only for a client outside any T3 thread that is not a linked environment. */
-export const OrchestratorMcpTypedByUser = Schema.optional(
-  Schema.Boolean.annotate({
-    description: "Outside a T3 thread: a person typed this message as written.",
-  }),
-);
-
 export const OrchestratorMcpThreadSendInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
   threadId: ThreadId,
@@ -569,7 +562,6 @@ export const OrchestratorMcpThreadSendInput = Schema.Struct({
     }),
   ),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
-  typedByUser: OrchestratorMcpTypedByUser,
 });
 export type OrchestratorMcpThreadSendInput = typeof OrchestratorMcpThreadSendInput.Type;
 

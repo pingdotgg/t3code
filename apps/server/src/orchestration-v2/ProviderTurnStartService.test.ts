@@ -3333,7 +3333,7 @@ effectIt.effect.each([
   { name: "an agent", createdBy: "agent" as const },
   // A scheduled delivery keeps its task author's createdBy.
   { name: "a scheduled task", scheduledTaskId: ScheduledTaskId.make("task") },
-  // An MCP client's `typedByUser` is its own word, so it does not reach sign-out.
+  // An MCP client's word that a person typed it (`T3-Typed-By-User`) does not reach sign-out.
   { name: "an MCP client's message typed by the user", creationSource: "mcp" as const },
 ])("does not let $name sign a provider out", ({ name: _name, ...sender }) =>
   Effect.gen(function* () {

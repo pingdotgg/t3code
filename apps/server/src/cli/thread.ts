@@ -30,6 +30,7 @@ import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import { mcpToolSession, type McpToolSession } from "../mcp/AcpMcpStdioBridge.ts";
+import { TYPED_BY_USER_HEADER } from "../mcp/McpInvocationContext.ts";
 import { expandHomePath } from "../os-jank.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { readLiveServerRuntimeState } from "../serverRuntimeState.ts";
@@ -245,6 +246,8 @@ const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E,
       endpoint: new URL("/mcp", origin).href,
       authorization: `Bearer ${issued.token}`,
       clientName: "t3-thread-cli",
+      // A person types what this command sends, so the model reads it as theirs.
+      headers: { [TYPED_BY_USER_HEADER]: "1" },
     }).pipe(Effect.mapError((cause) => new ThreadServerUnreachableError({ origin, cause })));
     return yield* run(makeThreadTools(session, origin));
   }).pipe(
@@ -870,7 +873,6 @@ const threadStartCommand = Command.make("start", {
               projectId: project.id,
               title,
               message,
-              typedByUser: true,
               ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
               ...(modelSelection === undefined ? {} : { modelSelection }),
             },
@@ -913,7 +915,7 @@ const threadSendCommand = Command.make("send", {
           const followWakes = flags.wait ? yield* threadIsIdle(tools, threadId) : false;
           const sent = yield* tools.call(
             "t3_thread_send",
-            { threadId, message, mode: "queue", typedByUser: true },
+            { threadId, message, mode: "queue" },
             OrchestratorMcpThreadSendResult,
           );
           if (flags.wait) {

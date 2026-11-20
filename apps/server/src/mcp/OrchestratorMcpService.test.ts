@@ -5147,13 +5147,13 @@ describe("OrchestratorMcpService thread lookup", () => {
           ...(senderThread === undefined ? {} : { senderThread }),
         },
       });
-      const sendAs = (scope: McpInvocationScope, typedByUser?: true) =>
+      const sendAs = (scope: McpInvocationScope) =>
         Effect.gen(function* () {
           const inputs: Array<ThreadManagementService.ThreadManagementSendInput> = [];
           const sent = yield* Ref.make(0);
           yield* Effect.gen(function* () {
             const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
-            yield* mcp.sendToThread(scope, { threadId: target.id, message: "hello", typedByUser });
+            yield* mcp.sendToThread(scope, { threadId: target.id, message: "hello" });
           }).pipe(
             Effect.provide(
               service([target], sent, {
@@ -5176,7 +5176,11 @@ describe("OrchestratorMcpService thread lookup", () => {
       assert.isUndefined(fromLink?.senderThreadId);
       assert.isUndefined((yield* sendAs(linked()))?.linkedSender);
       assert.strictEqual((yield* sendAs(client))?.createdBy, "agent");
-      assert.strictEqual((yield* sendAs(client, true))?.createdBy, "user");
+      const typed: McpInvocationScope = {
+        ...client,
+        client: { sessionId: "app", label: "T3 WoW", access: "full-access", typedByUser: true },
+      };
+      assert.strictEqual((yield* sendAs(typed))?.createdBy, "user");
     }),
   );
 
