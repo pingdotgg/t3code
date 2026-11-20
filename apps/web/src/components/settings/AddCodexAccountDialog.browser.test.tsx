@@ -13,7 +13,7 @@ import { act, render } from "../../../test/render";
 import { AppAtomRegistryProvider, appAtomRegistry as registry } from "../../rpc/atomRegistry";
 
 const setup = vi.hoisted(() => ({
-  update: vi.fn(async () => ({ _tag: "Success" as const })),
+  update: vi.fn(async (): Promise<{ _tag: "Success" | "Failure" }> => ({ _tag: "Success" })),
 }));
 
 const providersAtom = vi.hoisted(() => ({ current: null as unknown }));
@@ -96,7 +96,32 @@ function Owner({
 }
 
 describe("AddCodexAccountDialog", () => {
+  it("hides the header Close button only while saving the account", async () => {
+    providersAtom.current = Atom.make<ReadonlyArray<ServerProvider> | null>([]);
+    const save = Promise.withResolvers<Awaited<ReturnType<typeof setup.update>>>();
+    setup.update.mockImplementationOnce(() => save.promise);
+    await using _screen = await render(
+      <AppAtomRegistryProvider>
+        <Owner onClose={() => {}} onAccountCreated={() => {}} />
+      </AppAtomRegistryProvider>,
+    );
+
+    const close = page.getByRole("button", { name: "Close", exact: true });
+    try {
+      await userEvent.click(page.getByRole("button", { name: "Continue" }));
+      await expect.element(page.getByRole("button", { name: "Adding account…" })).toBeDisabled();
+      expect(close.query()).toBeNull();
+    } finally {
+      await act(() => save.resolve({ _tag: "Failure" }));
+    }
+
+    await expect.element(close).toBeVisible();
+    await userEvent.keyboard("{Escape}");
+    await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+  });
+
   it("plays its close animation before the owner unmounts it once the account connects", async () => {
+    setup.update.mockClear();
     const atom = Atom.make<ReadonlyArray<ServerProvider> | null>([]).pipe(Atom.keepAlive);
     providersAtom.current = atom;
     const onClose = vi.fn();
