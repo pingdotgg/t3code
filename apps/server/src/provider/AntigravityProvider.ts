@@ -376,6 +376,8 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     provider: ProviderDriverKind.make("antigravity"),
     packageName: null,
   });
+  const resolveMaintenance =
+    options.resolveMaintenance ?? (() => Effect.succeed(manualMaintenance));
   const snapshotSettings = yield* makeProviderSnapshotSettingsSource(settings);
   const metadataChanges = SubscriptionRef.changes(metadata);
   const snapshotChanges = options.releaseChanges
@@ -385,7 +387,8 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       )
     : metadataChanges;
   const managed = yield* makeManagedServerProvider({
-    resolveMaintenance: options.resolveMaintenance ?? (() => Effect.succeed(manualMaintenance)),
+    // The health probe already resolves the executable and records its ownership.
+    resolveMaintenance: () => resolveMaintenance(),
     getSettings: snapshotSettings.getSettings,
     streamSettings: snapshotSettings.streamSettings,
     haveSettingsChanged: haveProviderSnapshotSettingsChanged,
@@ -562,7 +565,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   });
 
   return {
-    snapshot: { ...managed, getSnapshot },
+    snapshot: { ...managed, getSnapshot, resolveMaintenance },
     onSessionStarted,
     onConfigOptionsUpdated,
     onAvailableCommands,

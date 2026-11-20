@@ -226,9 +226,7 @@ export const AntigravityDriver: ProviderDriver<
           const executable = yield* installation
             .resolve(settings.binaryPath, processEnvironment)
             .pipe(Effect.orElseSucceed(() => null));
-          const managed = executable?.source === "managed";
-          yield* Ref.set(usesManagedRuntime, managed);
-          if (managed && (yield* updateChecksEnabled)) yield* installation.refreshUpdate;
+          yield* Ref.set(usesManagedRuntime, executable?.source === "managed");
         }
         if (!(yield* Ref.get(usesManagedRuntime))) return manualMaintenance;
         const install = yield* installation.state;
@@ -236,7 +234,10 @@ export const AntigravityDriver: ProviderDriver<
           provider: DRIVER,
           packageName: null,
           update: null,
-          managedInstall: { lockKey: "antigravity-managed" },
+          managedInstall: {
+            lockKey: "antigravity-managed",
+            refreshLatestVersion: installation.refreshUpdate,
+          },
           latestVersion: install.version,
           // The installer has already chosen between the channel release and the installed version.
           compareVersions: (current, latest) => (current === latest ? 0 : -1),

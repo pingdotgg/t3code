@@ -1289,27 +1289,39 @@ export const layer = Layer.effect(
     ) {
       yield* manifestService.forceRefresh;
       const instances = yield* instanceRegistry.listInstances;
-      yield* Effect.forEach(
+      const maintenance = yield* Effect.forEach(
         instances.filter(
           (instance) => input.instanceId === undefined || input.instanceId === instance.instanceId,
         ),
         (instance) =>
           Effect.gen(function* () {
             yield* instance.invalidateCaches ?? Effect.void;
-            // Instance and full refreshes resolve installer metadata fresh
-            // themselves; a cached workspace refresh needs it resolved here.
+            // Resolve Antigravity ownership before checking its release channel. Other
+            // drivers resolve it in the probe that follows, except on a cached workspace refresh.
             const maintenance = yield* instance.snapshot.resolveMaintenance({
               fresh:
-                input.instanceId !== undefined && input.cwd !== undefined && input.fresh !== true,
+                instance.driverKind === "antigravity" ||
+                (input.instanceId !== undefined && input.cwd !== undefined && input.fresh !== true),
             });
             yield* Effect.forEach(
               latestProviderVersionCacheKeys(maintenance),
               latestVersions.invalidate,
               { discard: true },
             );
+            return maintenance;
           }),
-        { concurrency: "unbounded", discard: true },
+        { concurrency: "unbounded" },
       );
+      const releaseChecks = new Map<string, Effect.Effect<string | null>>();
+      for (const { managedInstall } of maintenance) {
+        if (managedInstall?.refreshLatestVersion) {
+          releaseChecks.set(managedInstall.lockKey, managedInstall.refreshLatestVersion);
+        }
+      }
+      yield* Effect.forEach(releaseChecks.values(), (check) => check, {
+        concurrency: "unbounded",
+        discard: true,
+      });
     });
 
     const refreshModelCatalog = Effect.fn("ProviderRegistry.refreshModelCatalog")(function* () {

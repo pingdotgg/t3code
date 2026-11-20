@@ -506,20 +506,20 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               );
             }
 
-            const manifest = yield* manifestService.current;
             // Check compatibility against what an unpinned command would install now.
-            const candidateVersion =
-              targetVersion ??
-              (yield* invalidateLatestProviderVersion(fresh).pipe(
+            const lookupCandidate =
+              fresh.managedInstall?.refreshLatestVersion ??
+              invalidateLatestProviderVersion(fresh).pipe(
                 Effect.andThen(resolveLatestProviderVersion(fresh)),
                 Effect.provideService(HttpClient.HttpClient, httpClient),
                 Effect.provideService(
                   ProviderLatestVersions.ProviderLatestVersions,
                   latestVersions,
                 ),
-              ));
+              );
+            const candidateVersion = targetVersion ?? (yield* lookupCandidate);
             const advisory = ModelManifest.providerCompatibility(
-              manifest,
+              yield* manifestService.current,
               provider,
               candidateVersion,
             );
@@ -554,7 +554,9 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               const precheck = yield* verifyFromRefresh(
                 providerRegistry.refreshInstance(instanceId),
                 provider,
-                fresh,
+                fresh.managedInstall === undefined
+                  ? fresh
+                  : { ...fresh, latestVersion: candidateVersion },
                 instanceId,
                 "pre-update",
               );
@@ -599,7 +601,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                     return yield* new ServerProviderUpdateError({
                       provider,
                       reason:
-                        "Could not determine the Antigravity release to install. Check for updates and try again.",
+                        "Could not determine which provider version to install. Check for updates and try again.",
                     });
                   }
                   yield* providerInstallation.run(

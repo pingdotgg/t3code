@@ -189,7 +189,10 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     managedDirectory: root,
     state: SubscriptionRef.get(installState),
     changes: SubscriptionRef.changes(installState),
-    refreshUpdate: options.refreshUpdate?.(installState) ?? Effect.void,
+    refreshUpdate: (options.refreshUpdate?.(installState) ?? Effect.void).pipe(
+      Effect.andThen(SubscriptionRef.get(installState)),
+      Effect.map((state) => state.version),
+    ),
     checkForUpdate: Deferred.succeed(checkedForUpdate, undefined).pipe(Effect.asVoid),
     compatibility: (version) =>
       Effect.succeed(
@@ -427,7 +430,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
     }),
   );
 
-  it.effect("awaits a release lookup on an explicit refresh", () =>
+  it.effect("awaits the release only when explicitly checking for updates", () =>
     Effect.gen(function* () {
       const lookupStarted = yield* Deferred.make<void>();
       const lookupFinished = yield* Deferred.make<void>();
@@ -444,10 +447,18 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
             ),
           ),
       });
-      const refreshing = yield* h.instance.snapshot.refresh.pipe(Effect.forkScoped);
+      const snapshot = yield* h.instance.snapshot.refresh;
+      expect(yield* Deferred.isDone(lookupStarted)).toBe(false);
+      expect(snapshot.versionAdvisory?.latestVersion).toBeNull();
+      const maintenance = yield* h.instance.snapshot.resolveMaintenance({ fresh: true });
+      expect(yield* Deferred.isDone(lookupStarted)).toBe(false);
+      const check = maintenance.managedInstall?.refreshLatestVersion;
+      if (check === undefined) throw new Error("Missing managed update check");
+      const refreshing = yield* check.pipe(Effect.forkScoped);
       yield* Deferred.await(lookupStarted);
       yield* Deferred.succeed(lookupFinished, undefined);
-      expect((yield* Fiber.join(refreshing)).versionAdvisory).toMatchObject({
+      expect(yield* Fiber.join(refreshing)).toBe("1.5.13");
+      expect((yield* h.instance.snapshot.refresh).versionAdvisory).toMatchObject({
         status: "behind_latest",
         latestVersion: "1.5.13",
       });

@@ -126,7 +126,7 @@ interface AntigravityInstallationService {
   readonly state: Effect.Effect<ProviderInstallState>;
   readonly changes: Stream.Stream<ProviderInstallState>;
   readonly checkForUpdate: Effect.Effect<void>;
-  readonly refreshUpdate: Effect.Effect<void>;
+  readonly refreshUpdate: Effect.Effect<string | null>;
   readonly remove: (
     protectedBinaryPaths?: ReadonlyArray<string>,
   ) => Effect.Effect<void, AntigravityInstallationError>;
@@ -1227,16 +1227,27 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     ),
   );
 
+  const eligibleAsset = Effect.fn("AntigravityInstallation.eligibleAsset")(function* (
+    asset: AntigravityCliReleaseAsset | null,
+  ) {
+    return asset !== null && !(yield* isWithdrawn(asset.version)) ? asset : null;
+  });
+  const preferInstalled = (version: string, asset: AntigravityCliReleaseAsset | null) =>
+    asset === null || compareSemverVersions(version, asset.version) > 0;
+
+  const updateChecksEnabled = options.updateChecksEnabled ?? Effect.succeed(true);
   let lastUpdateCheck: number | undefined;
+  let latestLookup = 0;
   const refreshRelease = Effect.fn("AntigravityInstallation.refreshRelease")(function* (
     explicit = false,
   ) {
     if (options.releaseAsset !== undefined || !supported) return;
-    if (!explicit && !(yield* options.updateChecksEnabled ?? Effect.succeed(true))) return;
+    if (!explicit && !(yield* updateChecksEnabled)) return;
     const now = yield* Clock.currentTimeMillis;
     if (!explicit && lastUpdateCheck !== undefined && now - lastUpdateCheck < UPDATE_CHECK_INTERVAL)
       return;
     lastUpdateCheck = now;
+    const lookup = ++latestLookup;
     const musl =
       platform === "linux" &&
       (yield* fs.exists(
@@ -1250,26 +1261,25 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       Effect.timeout("10 seconds"),
       Effect.orElseSucceed(() => null),
     );
-    if (latest === null) return;
-    if (yield* isWithdrawn(latest.version)) {
-      releaseAsset = null;
-      return;
-    }
-    releaseAsset = latest;
-    yield* SubscriptionRef.updateEffect(state, (value) =>
-      isRunning(value)
-        ? Effect.succeed(value)
-        : Effect.gen(function* () {
-            const keepInstalled =
-              value.installedVersion !== null &&
-              compareSemverVersions(value.installedVersion, latest.version) > 0 &&
-              !(yield* isWithdrawn(value.installedVersion));
-            return {
-              ...value,
-              version: keepInstalled ? value.installedVersion : latest.version,
-              totalBytes: null,
-            };
-          }),
+    if (latest === null || lookup !== latestLookup) return;
+    yield* gate.withPermit(
+      SubscriptionRef.updateEffect(state, (value) =>
+        Effect.gen(function* () {
+          const asset = yield* eligibleAsset(latest);
+          const keepInstalled =
+            value.installedVersion !== null &&
+            preferInstalled(value.installedVersion, asset) &&
+            !(yield* isWithdrawn(value.installedVersion));
+          if (lookup !== latestLookup) return value;
+          releaseAsset = asset;
+          if (isRunning(value)) return value;
+          return {
+            ...value,
+            version: keepInstalled ? value.installedVersion : (asset?.version ?? null),
+            totalBytes: null,
+          };
+        }),
+      ),
     );
   });
 
@@ -1299,13 +1309,12 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
               `Google does not publish an Antigravity runtime for ${platform}-${arch}. Use a supported remote environment or a custom executable.`,
             );
           }
-          const offered = releaseAsset;
-          const asset = offered !== null && !(yield* isWithdrawn(offered.version)) ? offered : null;
+          const asset = yield* eligibleAsset(releaseAsset);
           const installed = yield* resolve().pipe(Effect.option);
           const reuse =
             Option.isSome(installed) &&
             installed.value.source === "managed" &&
-            (asset === null || compareSemverVersions(installed.value.version!, asset.version) > 0)
+            preferInstalled(installed.value.version!, asset)
               ? installed.value
               : undefined;
           if (asset === null && reuse === undefined)
@@ -1544,7 +1553,13 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     state: SubscriptionRef.get(state),
     changes: SubscriptionRef.changes(state),
     checkForUpdate: refreshRelease().pipe(Effect.ignore),
-    refreshUpdate: refreshRelease(true).pipe(Effect.ignore),
+    refreshUpdate: updateChecksEnabled.pipe(
+      Effect.flatMap((enabled) =>
+        enabled ? refreshRelease(true).pipe(Effect.ignore) : Effect.void,
+      ),
+      Effect.andThen(SubscriptionRef.get(state)),
+      Effect.map((current) => current.version),
+    ),
     remove,
   });
 });

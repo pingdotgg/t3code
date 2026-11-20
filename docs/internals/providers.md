@@ -121,6 +121,8 @@ set `managedInstall` instead, and the runner updates it through
 [`ProviderInstallation`](../../apps/server/src/provider/providerInstallation.ts), the same install
 its setup section starts. The runner passes the version it checked for compatibility, and the
 installer refuses if the selected release changed before the install could start.
+Explicit update checks and update runs refresh the Antigravity release offer once per installation.
+Routine health checks use the installer's hourly throttle.
 
 ## Protocol traps
 
