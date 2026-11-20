@@ -23,6 +23,11 @@ import {
   makeAntigravityStdoutTransform,
 } from "../antigravityAuthSupport.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import {
+  acpPermissionDisposition,
+  type AcpRuntimePolicy,
+} from "@t3tools/provider-acp/server/clientPolicy";
+import type { AcpSessionModeState } from "@t3tools/provider-acp/server/runtimeModel";
 import packageJson from "../../../package.json" with { type: "json" };
 import { normalizeAntigravitySessionUpdate } from "./AntigravityProtocol.ts";
 
@@ -153,18 +158,36 @@ export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
     case "auto-accept-edits":
       return "auto_edit";
     case "auto":
+      return "auto";
     case "approval-required":
       return "default";
   }
 }
 
 /**
- * The agy CLI rejects the managed runtime's `yolo` and `auto_edit`. It stays in `default`, where
- * it asks before acting and T3 answers from the live runtime policy, so permission changes apply
- * on the next turn without a restart.
+ * The agy CLI rejects `yolo` and `auto_edit`, and sessions without native Auto reject `auto`.
+ * Those stay in `default`, where it asks before acting and T3 answers from the live runtime
+ * policy, so permission changes apply on the next turn without a restart.
  */
-export function antigravityCliSessionMode(modeId: string): string {
+export function antigravitySessionMode(
+  modeId: string,
+  modeState: AcpSessionModeState | undefined,
+): string {
+  if (modeId === "auto") {
+    return modeState?.availableModes.some((mode) => mode.id === "auto") === true
+      ? "auto"
+      : "default";
+  }
   return modeId === "yolo" || modeId === "auto_edit" ? "default" : modeId;
+}
+
+export function antigravityPermissionDisposition(
+  policy: AcpRuntimePolicy,
+  request: EffectAcpSchema.RequestPermissionRequest,
+) {
+  const disposition = acpPermissionDisposition(policy, request);
+  // agy's Auto has already reviewed what it sends; the user decides unless the sandbox forbids it.
+  return policy.runtimeMode === "auto" && disposition !== "deny" ? "ask" : disposition;
 }
 
 /** The runtime mode an Antigravity session mode grants; the inverse of `antigravityPermissionMode`. */
@@ -174,6 +197,8 @@ export function antigravityRuntimeModeForSessionMode(modeId: string): RuntimeMod
       return "full-access";
     case "auto_edit":
       return "auto-accept-edits";
+    case "auto":
+      return "auto";
     case "default":
       return "approval-required";
     default:
@@ -461,11 +486,17 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
     } else if (audio) {
       blocks.push({ type: "audio", data: Buffer.from(bytes).toString("base64"), mimeType });
     } else {
+      const encoding =
+        bytes[0] === 0xff && bytes[1] === 0xfe
+          ? "UTF-16LE"
+          : bytes[0] === 0xfe && bytes[1] === 0xff
+            ? "UTF-16BE"
+            : "UTF-8";
       const decoded = yield* Effect.try({
-        try: () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+        try: () => new TextDecoder(encoding, { fatal: true }).decode(bytes),
         catch: () =>
           EffectAcpErrors.AcpRequestError.invalidParams(
-            `Attachment '${attachment.name}' is not a UTF-8 text file.`,
+            `Attachment '${attachment.name}' is not a ${encoding} text file.`,
           ),
       });
       if (decoded.includes("\0")) {

@@ -20,6 +20,8 @@ const TOKEN_VARIABLES = [
   "GITHUB_ENTERPRISE_TOKEN",
 ] as const;
 
+const ENTERPRISE_TOKEN_VARIABLES = ["GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"] as const;
+
 const hostSettings = (
   hosts: Record<string, { readonly account?: string; readonly enabled?: boolean }>,
 ) =>
@@ -33,16 +35,30 @@ function harness(
   tokens: Record<string, string> = {},
 ) {
   const calls: Array<ReadonlyArray<string>> = [];
-  const envs: Array<Readonly<Record<string, string | undefined>> | undefined> = [];
   const run: SourceControlHost.SourceControlHost["Service"]["process"]["run"] = (input) =>
     Effect.sync(() => {
       calls.push(input.args);
-      envs.push(input.env);
       const user = input.args[input.args.indexOf("--user") + 1];
       if (input.args.includes("--user") && user !== undefined && signedOut.includes(user)) {
         return {
           exitCode: ChildProcessSpawner.ExitCode(0),
           stdout: "",
+          stderr: "",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        };
+      }
+      // gh hands the enterprise variables to every host but github.com.
+      const fromEnterpriseEnv = input.args.includes("github.com")
+        ? undefined
+        : ENTERPRISE_TOKEN_VARIABLES.map(
+            (name) =>
+              (input.env !== undefined && name in input.env ? input.env : process.env)[name],
+          ).find(Boolean);
+      if (fromEnterpriseEnv !== undefined) {
+        return {
+          exitCode: ChildProcessSpawner.ExitCode(0),
+          stdout: `${fromEnterpriseEnv}\n`,
           stderr: "",
           stdoutTruncated: false,
           stderrTruncated: false,
@@ -74,7 +90,7 @@ function harness(
       ),
     ),
   );
-  return { layer, calls, envs };
+  return { layer, calls };
 }
 
 describe("GitHubCredentials", () => {
@@ -94,19 +110,6 @@ describe("GitHubCredentials", () => {
       expect(Redacted.value(credential.token)).toBe("from-env");
       expect(credential.source).toBe("env");
       expect(calls).toEqual([]);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("keeps an Enterprise token from reaching gh for a host GH_HOST does not name", () => {
-    vi.stubEnv("GH_ENTERPRISE_TOKEN", "enterprise-token");
-    vi.stubEnv("GH_HOST", "ghe.example.com");
-    const { layer, envs } = harness();
-    return Effect.gen(function* () {
-      const credentials = yield* GitHubCredentials.GitHubCredentials;
-      const credential = yield* credentials.get("other.example.com");
-      expect(credential.source).toBe("gh");
-      expect(envs).toHaveLength(1);
-      for (const name of TOKEN_VARIABLES) expect(envs[0]?.[name]).toBe("");
     }).pipe(Effect.provide(layer));
   });
 
@@ -194,6 +197,22 @@ describe("GitHubCredentials", () => {
       );
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect.each(ENTERPRISE_TOKEN_VARIABLES)(
+    "keeps %s away from a host other than GH_HOST",
+    (name) => {
+      vi.stubEnv("GH_HOST", "ghe.corp.example");
+      vi.stubEnv(name, "enterprise-secret");
+      const { layer } = harness();
+      return Effect.gen(function* () {
+        const credentials = yield* GitHubCredentials.GitHubCredentials;
+        const other = yield* credentials.get("git.other.example");
+        expect(Redacted.value(other.token)).toBe("active-token");
+        const own = yield* credentials.get("ghe.corp.example");
+        expect(Redacted.value(own.token)).toBe("enterprise-secret");
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("never hands a token to a host that is not a plain hostname", () => {
     vi.stubEnv("GH_TOKEN", "env-token");
