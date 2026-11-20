@@ -185,7 +185,8 @@ export function fileLinkLabel(
 ): string {
   const suffix = parentSuffixByPath.get(file.path.replaceAll("\\", "/"));
   return [
-    fileBasename(file.path),
+    // macOS stores many names in NFD; compose them for display only.
+    fileBasename(file.path).normalize("NFC"),
     suffix,
     file.line
       ? `L${file.line}${file.endLine ? `–${file.endLine}` : file.column ? `:C${file.column}` : ""}`
