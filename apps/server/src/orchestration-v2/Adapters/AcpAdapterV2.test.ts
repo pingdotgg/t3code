@@ -45,6 +45,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
+import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -476,6 +477,8 @@ function makeMockRuntime(input: {
     | ((runtimeOrdinal: number) => Readonly<Record<string, string>>);
   readonly protocolEvents?: Queue.Queue<EffectAcpProtocol.AcpProtocolLogEvent>;
   readonly cancelBehavior?: AcpSessionRuntime.AcpSessionRuntimeOptions["cancelBehavior"];
+  // Also opts into replay-idle readiness, which runtimes leave off by default.
+  readonly sessionLoadReplayIdleGap?: Duration.Input;
   readonly ownDescendantProcessGroups?: boolean;
   readonly ownDetachedProcessGroup?: boolean;
   readonly processGroupPlatform?: NodeJS.Platform;
@@ -516,6 +519,12 @@ function makeMockRuntime(input: {
         AcpSessionRuntime.layer({
           ...runtimeInput,
           ...(input.cancelBehavior === undefined ? {} : { cancelBehavior: input.cancelBehavior }),
+          ...(input.sessionLoadReplayIdleGap === undefined
+            ? {}
+            : {
+                sessionLoadReplayIdleGap: input.sessionLoadReplayIdleGap,
+                sessionLoadReplayIdleReadiness: true,
+              }),
           ...(input.ownDetachedProcessGroup === undefined
             ? {}
             : { ownDetachedProcessGroup: input.ownDetachedProcessGroup }),
@@ -614,6 +623,7 @@ const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
   ) => AcpSessionRuntime.AcpSessionRuntime["Service"]["prompt"];
   readonly cancelled?: Deferred.Deferred<void>;
   readonly followAgentWorkState?: boolean;
+  readonly sessionScope?: Scope.Scope;
 }) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const natives: Array<AcpSessionRuntime.AcpSessionRuntime["Service"]> = [];
@@ -654,12 +664,15 @@ const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
     cwd: process.cwd(),
   });
   const modelSelection = { instanceId, model: "default" } as const;
-  const runtime = yield* adapter.openSession({
+  const opened = adapter.openSession({
     threadId,
     providerSessionId: ProviderSessionId.make("provider-session-acp-prompt-inactivity"),
     modelSelection,
     runtimePolicy,
   });
+  const runtime = yield* input.sessionScope === undefined
+    ? opened
+    : opened.pipe(Effect.provideService(Scope.Scope, input.sessionScope));
   const providerThread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
   const startTurn = (ordinal: number) =>
     DateTime.now.pipe(
@@ -4214,6 +4227,17 @@ describe("AcpAdapterV2", () => {
                         }),
                       ),
                     );
+                  // Copilot 1.0.114 names the subagent only by agentId, on the delta and the chunk.
+                  const agentChunk = (text: string, agentId: string) =>
+                    raw("assistant.message_delta", { deltaContent: text }, agentId).pipe(
+                      Effect.andThen(
+                        update({
+                          sessionUpdate: "agent_message_chunk",
+                          content: { type: "text", text },
+                          _meta: { "github.com/copilot": { agentId } },
+                        }),
+                      ),
+                    );
                   const launch = (toolCallId: string, description: string, mode: string) =>
                     update({
                       sessionUpdate: "tool_call",
@@ -4251,10 +4275,10 @@ describe("AcpAdapterV2", () => {
                     _meta: { "github.com/copilot": { agentId: "agent-a" } },
                   });
                   yield* chunk("`a.txt` says", "task-a");
-                  yield* chunk("`b.txt` has", "task-b");
+                  yield* agentChunk("`b.txt` has", "agent-b");
                   yield* chunk(" hello.", "task-a");
                   yield* chunk("a.txt b.txt", "task-bg");
-                  yield* chunk(" three lines.", "task-b");
+                  yield* agentChunk(" three lines.", "agent-b");
                   for (const [task, agent, text] of [
                     ["task-a", "agent-a", "`a.txt` says hello."],
                     ["task-b", "agent-b", "`b.txt` has three lines."],
@@ -4637,16 +4661,54 @@ describe("AcpAdapterV2", () => {
             item.changes[0]?.oldPath === "/workspace/old.ts",
         ),
       );
-      const read = items.find((item) => item.type === "dynamic_tool" && item.toolName === "Read");
-      assert.deepEqual(
-        read?.type === "dynamic_tool" ? { title: read.title, input: read.input } : null,
-        { title: "Read src/env.ts", input: { path: "src/env.ts" } },
-      );
+      const readItem = (nativeId: string) => {
+        const item = items.findLast(
+          (candidate) =>
+            candidate.type === "dynamic_tool" &&
+            candidate.toolName === "Read" &&
+            candidate.nativeItemRef?.nativeId?.endsWith(nativeId) === true,
+        );
+        return item?.type === "dynamic_tool"
+          ? { title: item.title, input: item.input, viewedImagePath: item.viewedImagePath }
+          : null;
+      };
+      assert.deepEqual(readItem("structured-read"), {
+        title: "Read src/env.ts",
+        input: { path: "src/env.ts" },
+        viewedImagePath: undefined,
+      });
+      assert.deepEqual(readItem("structured-image-read"), {
+        title: "Read /workspace/mockup.png",
+        input: { file_path: "/workspace/mockup.png", start_line: 0, end_line: 799 },
+        viewedImagePath: "/workspace/mockup.png",
+      });
       const search = items.find((item) => item.type === "file_search");
       assert.deepEqual(
         search?.type === "file_search" ? { title: search.title, pattern: search.pattern } : null,
         { title: "Searched TODO in web", pattern: "apps/web" },
       );
+      const fileSearch = (nativeId: string) => {
+        const item = items.find(
+          (candidate) =>
+            candidate.type === "file_search" &&
+            candidate.nativeItemRef?.nativeId?.endsWith(nativeId) === true,
+        );
+        return item?.type === "file_search"
+          ? { pattern: item.pattern, results: item.results }
+          : null;
+      };
+      assert.deepEqual(fileSearch("structured-search-explicit-location"), {
+        pattern: "README.md",
+        results: [{ fileName: "README.md", preview: "# Title" }],
+      });
+      assert.deepEqual(fileSearch("structured-search-query-only"), {
+        pattern: "TODO",
+        results: [{ fileName: "TODO", preview: "src/a.ts: TODO" }],
+      });
+      assert.deepEqual(fileSearch("structured-search-query-no-output"), {
+        pattern: "FIXME",
+        results: undefined,
+      });
       const webItem = (nativeId: string, status: string) => {
         const item = items.findLast(
           (candidate) =>
@@ -4672,6 +4734,25 @@ describe("AcpAdapterV2", () => {
         title: "Web search: t3 code",
         patterns: ["t3 code"],
         results: [{ url: "https://t3.codes" }, { url: "https://github.com/pingdotgg/t3code" }],
+      });
+      assert.deepEqual(webItem("antigravity-web-search", "completed"), {
+        title: "Web search: top story on Hacker News today",
+        patterns: ["top story on Hacker News today"],
+        results: [
+          {
+            url: "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGYNzfz",
+          },
+        ],
+      });
+      assert.deepEqual(webItem("antigravity-run-search-web", "completed"), {
+        title: "Web search: top story on Hacker News today",
+        patterns: ["top story on Hacker News today"],
+        results: undefined,
+      });
+      assert.deepEqual(webItem("antigravity-web-search-streamed", "completed"), {
+        title: "Web search: streamed citations",
+        patterns: ["streamed citations"],
+        results: [{ url: "https://example.com/streamed_(detail)" }],
       });
       assert.deepEqual(webItem("grok-web-fetch", "completed")?.results, [
         { url: "https://t3.codes", snippet: "T3 Code page" },
@@ -4851,6 +4932,312 @@ describe("AcpAdapterV2", () => {
           }),
         );
       }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.live("enables model switching when session/load answers with a model after replay idle", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const lateConfigOptions = yield* Deferred.make<void>();
+      let acpRuntime: AcpSessionRuntime.AcpSessionRuntime["Service"] | undefined;
+      const publishedConfigurations: Array<ReadonlyArray<EffectAcpSchema.SessionConfigOption>> = [];
+      const instanceId = ProviderInstanceId.make("acp-test-late-session-load");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          onSessionConfigurationUpdate: (configOptions) =>
+            Effect.sync(() => publishedConfigurations.push(configOptions)),
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            environment: {
+              T3_ACP_DELAY_LOAD_SESSION_AFTER_REPLAY: "1",
+              T3_ACP_LOAD_SESSION_DELAY_MS: "500",
+            },
+            sessionLoadReplayIdleGap: "100 millis",
+            wrapRuntime: (runtime) => {
+              acpRuntime = runtime;
+              return {
+                ...runtime,
+                getEvents: () =>
+                  runtime
+                    .getEvents()
+                    .pipe(
+                      Stream.tap((event) =>
+                        event._tag === "ConfigOptionsUpdated"
+                          ? Deferred.succeed(lateConfigOptions, undefined)
+                          : Effect.void,
+                      ),
+                    ),
+              };
+            },
+          }),
+        },
+        selfInvocation,
+      });
+      const runtime = yield* adapter.openSession({
+        threadId: ThreadId.make("thread-acp-late-session-load"),
+        providerSessionId: ProviderSessionId.make("provider-session-acp-late-session-load"),
+        modelSelection: { instanceId, model: "default" },
+        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        }),
+        initialNativeThreadId: "mock-session-1",
+      });
+
+      yield* Deferred.await(lateConfigOptions).pipe(Effect.timeoutOption("5 seconds"));
+      yield* acpRuntime!.drainEvents;
+
+      assert.isTrue(
+        runtime.providerSession.capabilities.sessions.supportsModelSwitchInSession,
+        "model switching stays disabled after the late session/load response offered a model",
+      );
+      // Registry agents fill their model picker from this callback.
+      assert.equal(
+        publishedConfigurations.filter((options) =>
+          options.some((option) => option.category === "model"),
+        ).length,
+        1,
+        "the late session/load configuration must reach the catalog exactly once",
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("applies the thread's model after a late session/load that lands during open", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+      const adoptionHandled = yield* Deferred.make<void>();
+      const adopted = yield* Deferred.make<void>();
+      const publishedConfigurations: Array<ReadonlyArray<EffectAcpSchema.SessionConfigOption>> = [];
+      let publications = 0;
+      let acpRuntime: AcpSessionRuntime.AcpSessionRuntime["Service"] | undefined;
+      const instanceId = ProviderInstanceId.make("acp-test-late-session-load-selection");
+      const threadId = ThreadId.make("thread-acp-late-session-load-selection");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          onSessionEvent: (event) =>
+            event._tag === "SessionSetupAdopted"
+              ? Deferred.succeed(adoptionHandled, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+          // Holds openSession's own publication until the adapter has seen the
+          // late response, so adoption overlaps session configuration.
+          onSessionConfigurationUpdate: (configOptions) =>
+            (publications++ === 0 ? Deferred.await(adoptionHandled) : Effect.void).pipe(
+              Effect.andThen(Effect.sync(() => publishedConfigurations.push(configOptions))),
+              Effect.andThen(
+                configOptions.some((option) => option.category === "model")
+                  ? Deferred.succeed(adopted, undefined)
+                  : Effect.void,
+              ),
+            ),
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            protocolEvents,
+            environment: {
+              T3_ACP_DELAY_LOAD_SESSION_AFTER_REPLAY: "1",
+              T3_ACP_LOAD_SESSION_DELAY_MS: "500",
+            },
+            sessionLoadReplayIdleGap: "100 millis",
+            wrapRuntime: (runtime) => {
+              acpRuntime = runtime;
+              return runtime;
+            },
+          }),
+        },
+        selfInvocation,
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "composer-2" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-late-load-selection"),
+        modelSelection,
+        runtimePolicy,
+        initialNativeThreadId: "mock-session-1",
+      });
+      yield* Deferred.await(adopted).pipe(Effect.timeoutOption("5 seconds"));
+      yield* acpRuntime!.drainEvents;
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* Queue.clear(protocolEvents);
+
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          modelSelection,
+          now: yield* DateTime.now,
+        }),
+      );
+      const methods: Array<string> = [];
+      while (!methods.includes("session/prompt")) {
+        const event = yield* Queue.take(protocolEvents);
+        if (event.direction !== "outgoing") continue;
+        const method = rawProtocolMethod(event);
+        if (method !== undefined) methods.push(method);
+      }
+
+      assert.include(
+        methods,
+        "session/set_config_option",
+        "the selected model was only applied to the provisional setup, which offered no model",
+      );
+      assert.isTrue(
+        publishedConfigurations.at(-1)?.some((option) => option.category === "model"),
+        "the provisional catalog was published over the late session/load one",
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  // Adoption either reaches the adapter after openSession configured the
+  // provisional setup, or before it, so openSession configures the adopted one.
+  it.live.each([false, true])(
+    "restores the native build mode after a Plan turn that followed a late session/load (adopted before configuration: %s)",
+    (adoptedBeforeConfiguration) =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const path = yield* Path.Path;
+        const selfInvocation = yield* resolveSelfInvocation();
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+        const adopted = yield* Deferred.make<void>();
+        const adoptionHandled = yield* Deferred.make<void>();
+        let holdFirstModeRead = adoptedBeforeConfiguration;
+        let acpRuntime: AcpSessionRuntime.AcpSessionRuntime["Service"] | undefined;
+        const instanceId = ProviderInstanceId.make("acp-test-late-session-load-plan");
+        const threadId = ThreadId.make("thread-acp-late-session-load-plan");
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            onSessionEvent: (event) =>
+              event._tag === "SessionSetupAdopted"
+                ? Deferred.succeed(adoptionHandled, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath,
+              protocolEvents,
+              environment: {
+                T3_ACP_DELAY_LOAD_SESSION_AFTER_REPLAY: "1",
+                T3_ACP_LOAD_SESSION_DELAY_MS: "500",
+              },
+              sessionLoadReplayIdleGap: "100 millis",
+              wrapRuntime: (runtime) => {
+                acpRuntime = runtime;
+                return {
+                  ...runtime,
+                  getModeState: Effect.suspend(() => {
+                    if (!holdFirstModeRead) return runtime.getModeState;
+                    holdFirstModeRead = false;
+                    return Deferred.await(adoptionHandled).pipe(
+                      Effect.andThen(runtime.getModeState),
+                    );
+                  }),
+                  getEvents: () =>
+                    runtime
+                      .getEvents()
+                      .pipe(
+                        Stream.tap((event) =>
+                          event._tag === "SessionSetupAdopted"
+                            ? Deferred.succeed(adopted, undefined)
+                            : Effect.void,
+                        ),
+                      ),
+                };
+              },
+            }),
+          },
+          selfInvocation,
+        });
+        const policy = (interactionMode: "default" | "plan") =>
+          ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode,
+            cwd: process.cwd(),
+          });
+        const planPolicy = policy("plan");
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-late-load-plan"),
+          modelSelection,
+          runtimePolicy: planPolicy,
+          initialNativeThreadId: "mock-session-1",
+        });
+        yield* Deferred.await(adopted).pipe(Effect.timeoutOption("5 seconds"));
+        yield* acpRuntime!.drainEvents;
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy: planPolicy,
+        });
+        yield* Queue.clear(protocolEvents);
+        const now = yield* DateTime.now;
+        const runTurn = Effect.fnUntraced(function* (
+          ordinal: number,
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+        ) {
+          yield* runtime.startTurn(
+            makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal }),
+          );
+          yield* runtime.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runDrain,
+          );
+          const modeValues: Array<unknown> = [];
+          while (true) {
+            const event = yield* Queue.take(protocolEvents);
+            if (event.direction !== "outgoing") continue;
+            const request = rawProtocolRequest(event);
+            if (request?.method === "session/prompt") return modeValues;
+            if (request?.method === "session/set_config_option") {
+              modeValues.push((request.params as { readonly value?: unknown }).value);
+            }
+          }
+        });
+
+        // Configured against the adopted setup, openSession already switched to Plan.
+        assert.deepEqual(
+          yield* runTurn(0, planPolicy),
+          adoptedBeforeConfiguration ? [] : ["architect"],
+        );
+        assert.deepEqual(
+          yield* runTurn(1, policy("default")),
+          ["ask"],
+          "Build must restore the mode the late session/load reported, not the provisional setup's",
+        );
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.live("creates a fresh ACP identity when recovering an exhausted target", () =>
@@ -5149,6 +5536,65 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  // regression: #34160 a turn failed as silent right after the computer woke from sleep
+  it.effect.each([
+    { label: "a timer due during sleep fires on wake", timerCountsSleep: true, asleep: "2 hours" },
+    { label: "the host wakes before the deadline", timerCountsSleep: true, asleep: "9 minutes" },
+    {
+      label: "timers pause while only wall time jumps",
+      timerCountsSleep: false,
+      asleep: "2 hours",
+    },
+  ] as const)(
+    "does not count host sleep as prompt inactivity when $label",
+    ({ timerCountsSleep, asleep }) =>
+      Effect.gen(function* () {
+        const testClock = yield* TestClock.testClockWith(Effect.succeed);
+        const awake = yield* Latch.make(true);
+        let wallJumpMillis = 0;
+        // macOS and Windows timers count sleep and fire on the first tick after wake; on Linux
+        // timers pause while the wall clock jumps.
+        const hostClock: TestClock.TestClock = {
+          ...testClock,
+          currentTimeMillisUnsafe: () => testClock.currentTimeMillisUnsafe() + wallJumpMillis,
+          currentTimeMillis: Effect.sync(
+            () => testClock.currentTimeMillisUnsafe() + wallJumpMillis,
+          ),
+          sleep: (duration) => testClock.sleep(duration).pipe(Effect.andThen(awake.await)),
+        };
+        yield* Effect.gen(function* () {
+          const harness = yield* makePromptInactivityHarness({
+            environment: (runtimeOrdinal) =>
+              runtimeOrdinal === 1 ? { T3_ACP_HANG_PROMPT_FOREVER: "1" } : {},
+          });
+          yield* harness.startTurn(1);
+          yield* TestClock.adjust("5 minutes");
+          yield* harness.emitUpdate({
+            sessionId: "mock-session-1",
+            update: {
+              sessionUpdate: "agent_thought_chunk",
+              content: { type: "text", text: "Still working." },
+            },
+          });
+          if (timerCountsSleep) {
+            yield* awake.close;
+            yield* TestClock.adjust(asleep);
+            yield* awake.open;
+          } else {
+            wallJumpMillis = Duration.toMillis(asleep);
+          }
+          yield* TestClock.adjust(Duration.millis(15 * 60_000 - 1));
+          assert.isTrue(yield* harness.nextTurnRejected(2));
+
+          yield* TestClock.adjust("2 minutes");
+          yield* harness.startTurn(2);
+          const [silent, next] = yield* harness.terminals(2);
+          assert.equal(silent?.status, "failed");
+          assert.equal(next?.status, "completed");
+        }).pipe(Effect.provideService(Clock.Clock, hostClock));
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect(
     "holds the inactivity timeout while a tool runs and restarts it when the tool ends",
     () =>
@@ -5396,6 +5842,42 @@ describe("AcpAdapterV2", () => {
         const terminal = events.at(-1);
         assert.equal(terminal?.type === "turn.terminal" ? terminal.status : undefined, "failed");
       }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("ends a running T3 MCP tool call when its session closes mid-prompt", () =>
+    Effect.gen(function* () {
+      const sessionScope = yield* Scope.make();
+      const harness = yield* makePromptInactivityHarness({
+        sessionScope,
+        environment: () => ({ T3_ACP_EMIT_TRACKED_TOOL_CALL_KIND_THEN_HANG: "other" }),
+      });
+      const trackedToolStatus = (event: ProviderAdapter.ProviderAdapterV2Event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.nativeItemRef?.nativeId === "tracked-tool-call"
+          ? event.turnItem.status
+          : undefined;
+      yield* harness.startTurn(1);
+      yield* harness.runtime.events.pipe(
+        Stream.filter((event) => trackedToolStatus(event) !== undefined),
+        Stream.runHead,
+      );
+      // t3_worktree_handoff releases the live session while its own tool call is open.
+      yield* Scope.close(sessionScope, Exit.void);
+      // The event queue outlives the session; only events emitted by the close remain.
+      const after = yield* harness.runtime.events.pipe(
+        Stream.filter((event) => trackedToolStatus(event) !== undefined),
+        Stream.map(trackedToolStatus),
+        Stream.takeUntil((status) => status !== "pending" && status !== "running"),
+        Stream.runCollect,
+        Effect.map((collected) => Array.from(collected)),
+        Effect.timeoutOption("1 second"),
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("1 second");
+      const statuses = Option.getOrElse(yield* Fiber.join(after), () => []);
+      // regression: #39410 the handoff's tool call stayed running after the session closed.
+      assert.include(["completed", "failed", "interrupted", "cancelled"], statuses.at(-1));
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.live("does not poll the process ledger while a cgroup lease owns teardown", () =>
