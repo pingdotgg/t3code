@@ -7,6 +7,7 @@ import { useState } from "react";
 import { useProjects, useVisibleThreadShells } from "~/state/entities";
 import { useThreadSearch } from "~/state/queries";
 
+import { threadLinkMatcher } from "./ThreadLinkPicker.logic";
 import { Command, CommandInput, CommandItem, CommandList } from "./ui/command";
 
 type ThreadShell = ReturnType<typeof useVisibleThreadShells>[number];
@@ -37,10 +38,19 @@ export function ThreadLinkPicker({
   const eligibleThreads = threads
     .filter((thread) => thread.environmentId === environmentId && thread.archivedAt === null)
     .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  const candidates = searchItems(eligibleThreads, query, (thread) => [
+  const ranked = searchItems(eligibleThreads, query, (thread) => [
     thread.title,
     { value: projectNames.get(thread.projectId) ?? "", weight: SEARCH_SECONDARY_FIELD_WEIGHT },
   ]);
+  const matches = threadLinkMatcher(query);
+  const seen = new Set(ranked);
+  const candidates = [
+    ...ranked,
+    ...eligibleThreads.filter(
+      (thread) =>
+        !seen.has(thread) && matches(`${thread.title} ${projectNames.get(thread.projectId) ?? ""}`),
+    ),
+  ];
   return (
     <Command mode="none" value={query} onValueChange={setQuery} aria-label={gt("Choose a thread")}>
       <CommandInput placeholder={gt("Search threads or projects...")} disabled={pending} />

@@ -1285,6 +1285,7 @@ export const runChangeRequestStep = Effect.fn("runChangeRequestStep")(function* 
     readonly fallbackRefName: string | null;
     readonly emit: GitActionProgressEmitter;
     readonly reads: ChangeRequestVcsReads;
+    readonly draft?: boolean | undefined;
     readonly threadId?: ThreadId | undefined;
     readonly pushRemoteRef?:
       | { readonly remoteName: string; readonly upstreamRef: string }
@@ -1424,6 +1425,7 @@ export const runChangeRequestStep = Effect.fn("runChangeRequestStep")(function* 
   yield* provider
     .createChangeRequest({
       cwd: reads.providerCwd,
+      ...(input.draft ? { draft: true } : {}),
       baseRefName: baseBranch,
       headSelector: headContext.preferredHeadSelector,
       ...(provider.kind === "gitlab" &&
@@ -2883,12 +2885,16 @@ export const make = Effect.gen(function* () {
         emit: () => Effect.void,
         reads,
         baseBranch: input.baseBranch,
+        draft: input.draft,
         content: { title: input.title, body: input.body },
       }),
     );
     // The thread's branch PR comes from status, which may hold the lookup from before.
     if (result.status === "created") yield* invalidateStatus(input.cwd);
-    if (input.draft === true && !(yield* draftOpened(input, result))) {
+    const openedAsDraft =
+      result.status === "created" &&
+      (yield* sourceControlProvider(input.cwd)).createsDraftChangeRequests === true;
+    if (input.draft === true && !openedAsDraft && !(yield* draftOpened(input, result))) {
       // A retry finds the open PR and drafts it then.
       return yield* new GitManagerError({
         operation: "createPullRequest",

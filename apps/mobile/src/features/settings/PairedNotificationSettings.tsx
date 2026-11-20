@@ -1,4 +1,4 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { useState, type JSX } from "react";
 import { Platform } from "react-native";
@@ -7,7 +7,8 @@ import { AppText as Text } from "../../components/ui/AppText";
 import * as Dialog from "../../components/ui/Dialog";
 import { runtime } from "../../lib/runtime";
 import { uuidv4 } from "../../lib/uuid";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import {
   supportsPairedAndroidNotifications,
@@ -27,7 +28,7 @@ import { SettingsRow } from "./components/SettingsRow";
 
 export function PairedNotificationSettings(): JSX.Element | null {
   const preferences = useAtomValue(mobilePreferencesAtom);
-  const save = useAtomSet(updateMobilePreferencesAtom, { mode: "promise" });
+  const save = useAtomCommand(saveMobilePreferences, { reportFailure: false });
   const statuses = useAtomValue(pairedNotificationStatusesAtom);
   const { savedConnectionsById } = useSavedRemoteConnections();
   const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
