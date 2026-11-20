@@ -1452,7 +1452,7 @@ function ThreadSettingsMainContent(props: {
       {!searching ? (
         <ScrollView
           bounces={false}
-          className="max-h-[45%] shrink"
+          className="max-h-[45%] grow-0 shrink"
           showsVerticalScrollIndicator={false}
         >
           <ThreadSettingsOptionsItem onOpenSubmenu={props.onOpenSubmenu} />
