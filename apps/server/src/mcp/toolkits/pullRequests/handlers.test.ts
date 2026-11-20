@@ -697,12 +697,33 @@ describe("pull request guide tools", () => {
           }),
           id: ProjectId.make("project-web"),
         };
-        const harness = yield* makeHarness({ projects: [makeProject(), other] });
+        // A fork's canonical key follows its upstream; its own repository is `origin`.
+        const fork = {
+          ...makeProject({
+            canonicalKey: "github.com/acme/web",
+            locator: {
+              source: "git-remote",
+              remoteName: "upstream",
+              remoteUrl: "https://github.com/acme/web.git",
+            },
+            origin: {
+              canonicalKey: "github.com/someone/web",
+              remoteUrl: "https://github.com/someone/web.git",
+            },
+            provider: SourceControlProviderKind.make("github"),
+            displayName: "acme/web",
+            owner: "acme",
+            name: "web",
+          }),
+          id: ProjectId.make("project-fork"),
+        };
+        const harness = yield* makeHarness({ projects: [makeProject(), other, fork] });
         const result = yield* harness.call("write_pull_request_guides", {
           pullRequests: [
             { url: "https://github.com/acme/web/pull/7" },
             { repository: "t3tools/t3code", number: 12 },
             { url: "https://github.com/someone/else/pull/1" },
+            { url: "https://github.com/someone/web/pull/3" },
           ],
         });
         expect(
@@ -711,6 +732,7 @@ describe("pull request guide tools", () => {
           ["acme/web", 7, "started"],
           ["t3tools/t3code", 12, "started"],
           ["someone/else", 1, "failed"],
+          ["someone/web", 3, "started"],
         ]);
         expect(result.guides[2]?.detail).toContain("No project in this environment");
         expect(
@@ -718,6 +740,7 @@ describe("pull request guide tools", () => {
         ).toEqual([
           ["project-web", 7],
           [PROJECT_ID, 12],
+          ["project-fork", 3],
         ]);
       }),
   );
@@ -1024,6 +1047,7 @@ describe("source control tools", () => {
     Effect.gen(function* () {
       const actions: Array<PullRequestActionInput> = [];
       let lowerHead: string | undefined = "bbb";
+      let targetHead = "stale";
       const layer = (number: number, state: "open" | "merged", headSha: string | undefined) => ({
         number,
         state,
@@ -1044,7 +1068,7 @@ describe("source control tools", () => {
                   layers: [
                     layer(40, "merged", "aaa"),
                     layer(41, "open", lowerHead),
-                    layer(42, "open", "stale"),
+                    layer(42, "open", targetHead),
                     layer(43, "open", "ddd"),
                   ],
                 }),
@@ -1064,12 +1088,19 @@ describe("source control tools", () => {
           ],
         },
       ]);
+      const fullHead = "c0ffee1234567890abcdef1234567890abcdef12";
+      targetHead = fullHead;
+      yield* harness.call("pull_request_merge", { expectedHeadSha: "c0ffee1", stack: true });
+      expect(actions[1]?.expectedStackHeads).toEqual([
+        { number: 41, headSha: "bbb" },
+        { number: 42, headSha: fullHead },
+      ]);
       lowerHead = undefined;
       const unpinned = yield* harness
         .call("pull_request_merge", { expectedHeadSha: "ccc", stack: true })
         .pipe(Effect.flip);
       expect(unpinned._tag).toBe("PullRequestForgeError");
-      expect(actions).toHaveLength(1);
+      expect(actions).toHaveLength(2);
     }),
   );
 

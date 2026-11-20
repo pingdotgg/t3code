@@ -29,7 +29,10 @@ import { resolveTarget, type ResolvedTarget } from "../../../pullRequest/pullReq
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
 import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 import { reviewPositionInPatch } from "../../../pullRequest/pullRequestReviewPosition.ts";
-import { pullRequestSyncKey } from "../../../pullRequest/pullRequestSyncKey.ts";
+import {
+  ownPullRequestRepositories,
+  pullRequestSyncKey,
+} from "../../../pullRequest/pullRequestSyncKey.ts";
 import { sourceControlDefinitions } from "../../../sourceControl/sourceControlDefinitions.ts";
 import {
   normalizeThreadPullRequestKey,
@@ -61,6 +64,7 @@ import {
   PullRequestProjectNotFoundError,
   PullRequestsToolkit,
   type ThreadPullRequestEntry,
+  alreadyEndedWatchNext,
   CHILD_PULL_REQUEST_REPORT_NEXT,
 } from "./tools.ts";
 
@@ -232,23 +236,11 @@ function projectForPullRequest(
       { projectId: project.id, host: target.host, repository: target.repository, number: 1 },
       project.repositoryIdentity ?? undefined,
     );
-    const projectKey =
-      project.repositoryIdentity == null
-        ? null
-        : pullRequestSyncKey(
-            {
-              projectId: project.id,
-              repository:
-                sourceControlDefinitions.repositorySelector(project.repositoryIdentity) ?? "",
-              number: 1,
-            },
-            project.repositoryIdentity,
-          );
     return (
       own !== null &&
-      projectKey !== null &&
-      own.host === projectKey.host &&
-      own.repository === projectKey.repository
+      ownPullRequestRepositories(project.repositoryIdentity).some(
+        ({ key }) => own.host === key.host && own.repository === key.repository,
+      )
     );
   };
   if (preferred !== undefined && matches(preferred)) return preferred;
@@ -326,6 +318,11 @@ const make = Effect.gen(function* () {
     return yield* watches
       .setWatching({ threadId, target: input, watching, until: input.until })
       .pipe(
+        Effect.map((result) =>
+          result.state === undefined
+            ? result
+            : { ...result, next: alreadyEndedWatchNext(result.state) },
+        ),
         Effect.catchTags({
           PullRequestWatchThreadNotFoundError: (error) =>
             threadNotFound(engine, scope, error.threadId, error.message),
@@ -418,7 +415,13 @@ const make = Effect.gen(function* () {
     const expectedStackHeads: Array<{ readonly number: number; readonly headSha: string }> = [];
     for (const layer of stack.layers.slice(0, end + 1)) {
       if (layer.state === "merged") continue;
-      const headSha = layer.number === ref.number ? input.expectedHeadSha : layer.headSha;
+      const headSha =
+        layer.number !== ref.number
+          ? layer.headSha
+          : layer.headSha !== undefined &&
+              PullRequestService.isHeadSha(layer.headSha, input.expectedHeadSha)
+            ? layer.headSha
+            : input.expectedHeadSha;
       if (headSha === undefined)
         return yield* new PullRequestForgeError({
           detail: `The host did not report PR #${layer.number}'s head, so the stack cannot be pinned. Try again.`,
