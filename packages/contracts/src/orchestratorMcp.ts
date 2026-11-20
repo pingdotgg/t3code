@@ -708,8 +708,7 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
 export type OrchestratorMcpCapabilitiesResult = typeof OrchestratorMcpCapabilitiesResult.Type;
 
 const OrchestratorMcpScheduledTaskWorkspace = Schema.Literals(["checkout", "worktree"]).annotate({
-  description:
-    "Unbound only: run in the project checkout, or a new worktree per run. Unset: worktree; updates keep it.",
+  description: "Unbound only: the project checkout, or a new worktree per run (default).",
 });
 
 export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
