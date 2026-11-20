@@ -318,6 +318,12 @@ type TestClaudeCapabilities = {
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
   readonly models?: ReadonlyArray<ModelInfo>;
+  readonly usage?: {
+    readonly rate_limits_available: boolean;
+    readonly rate_limits?: {
+      readonly seven_day?: { readonly utilization: number; readonly resets_at: string | null };
+    };
+  };
 };
 
 function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
@@ -4666,6 +4672,40 @@ it.layer(
         assert.strictEqual(status.auth.status, "authenticated");
         assert.strictEqual(status.auth.type, "customEndpoint");
         assert.strictEqual(status.auth.label, "Custom API endpoint");
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
+    it.effect("does not report the local login's limits for a custom endpoint", () =>
+      Effect.gen(function* () {
+        const environment = yield* mergeProviderInstanceEnvironment([], {
+          ANTHROPIC_BASE_URL: "https://hub.example.ts.net:8317",
+        });
+        const status = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          claudeCapabilities({
+            tokenSource: "none",
+            apiKeySource: "none",
+            apiProvider: "firstParty",
+            usage: {
+              rate_limits_available: true,
+              rate_limits: {
+                seven_day: { utilization: 0, resets_at: "2026-11-26T06:00:00Z" },
+              },
+            },
+          }),
+          environment,
+        );
+        assert.strictEqual(status.auth.type, "customEndpoint");
+        assert.strictEqual(status.usageLimits?.unavailable?.reason, "unsupported");
+        assert.deepStrictEqual(status.usageLimits?.windows, []);
       }).pipe(
         Effect.provide(
           layerMockSpawner((args) => {
