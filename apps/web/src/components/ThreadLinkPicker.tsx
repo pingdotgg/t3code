@@ -3,10 +3,10 @@ import { CheckIcon, MessageSquareIcon } from "lucide-react";
 import { T, useGT } from "gt-react";
 import { useState } from "react";
 
-import { normalizeSearchText } from "~/lib/utils";
 import { useProjects, useVisibleThreadShells } from "~/state/entities";
 import { useThreadSearch } from "~/state/queries";
 
+import { threadLinkMatcher } from "./ThreadLinkPicker.logic";
 import { Command, CommandInput, CommandItem, CommandList } from "./ui/command";
 
 type ThreadShell = ReturnType<typeof useVisibleThreadShells>[number];
@@ -34,15 +34,13 @@ export function ThreadLinkPicker({
       .filter((project) => project.environmentId === environmentId)
       .map((project) => [project.id, project.title]),
   );
-  const search = normalizeSearchText(query);
+  const matches = threadLinkMatcher(query);
   const candidates = threads
     .filter(
       (thread) =>
         thread.environmentId === environmentId &&
         thread.archivedAt === null &&
-        normalizeSearchText(`${thread.title} ${projectNames.get(thread.projectId) ?? ""}`).includes(
-          search,
-        ),
+        matches(`${thread.title} ${projectNames.get(thread.projectId) ?? ""}`),
     )
     .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   return (
