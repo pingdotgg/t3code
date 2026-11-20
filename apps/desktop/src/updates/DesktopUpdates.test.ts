@@ -4,6 +4,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { DESKTOP_UPDATE_RESTART_MARKER_FILE, DesktopUpdateStateSchema } from "@t3tools/contracts";
 import { computeReleaseNotes } from "electron-updater/out/providers/GitHubProvider.js";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -80,6 +81,73 @@ const stableUpdateInfo = (
 };
 
 describe("DesktopUpdates", () => {
+  it.effect("retains a completed download when an overlapping availability callback resumes", () =>
+    Effect.gen(function* () {
+      const timestampRequested = yield* Deferred.make<void>();
+      const releaseTimestamp = yield* Deferred.make<void>();
+      const availabilityHandled = yield* Deferred.make<void>();
+      const progressHandled = yield* Deferred.make<void>();
+      const logger = Logger.make(({ message }) => {
+        if (Array.isArray(message) && message.includes("update available")) {
+          Deferred.doneUnsafe(availabilityHandled, Effect.void);
+        }
+        if (Array.isArray(message) && message.includes("download progress")) {
+          Deferred.doneUnsafe(progressHandled, Effect.void);
+        }
+      });
+      const clock = yield* Clock.Clock;
+      let pauseNextTimestamp = false;
+      const callbackClock: Clock.Clock = {
+        ...clock,
+        currentTimeMillis: Effect.suspend(() => {
+          if (!pauseNextTimestamp) return clock.currentTimeMillis;
+          pauseNextTimestamp = false;
+          return Deferred.succeed(timestampRequested, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseTimestamp)),
+            Effect.andThen(clock.currentTimeMillis),
+          );
+        }),
+      };
+      const harness = makeHarness();
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure.pipe(Effect.provideService(Clock.Clock, callbackClock));
+          const { changes } = yield* updates.subscribe;
+
+          pauseNextTimestamp = true;
+          harness.emit("update-available", { version: "1.2.4" });
+          yield* Deferred.await(timestampRequested);
+          harness.emit("update-downloaded", { version: "1.2.4" });
+          const downloaded = Option.getOrThrow(yield* Stream.runHead(changes));
+          assert.equal(downloaded.status, "downloaded");
+
+          const sentStates = harness.sentStates.length;
+          yield* Deferred.succeed(releaseTimestamp, undefined);
+          yield* Deferred.await(availabilityHandled);
+          const resumed = yield* updates.getState;
+          assert.equal(harness.sentStates.length, sentStates);
+          assert.equal(resumed.status, "downloaded");
+          assert.equal(resumed.downloadedVersion, "1.2.4");
+          assert.equal(resumed.downloadPercent, 100);
+
+          harness.emit("download-progress", { percent: 80 });
+          yield* Deferred.await(progressHandled);
+          const afterProgress = yield* updates.getState;
+          assert.equal(harness.sentStates.length, sentStates);
+          assert.equal(afterProgress.status, "downloaded");
+          assert.equal(afterProgress.downloadedVersion, "1.2.4");
+          assert.equal(afterProgress.downloadPercent, 100);
+        }),
+      ).pipe(
+        Effect.provide(
+          Layer.merge(harness.layer, Logger.layer([logger], { mergeWithExisting: false })),
+        ),
+      );
+    }),
+  );
+
   it.effect("updates Linux .deb installs and leaves other non-AppImage installs off", () =>
     Effect.gen(function* () {
       const linuxState = (packageType: string | undefined) =>
