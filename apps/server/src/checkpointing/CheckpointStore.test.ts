@@ -641,6 +641,12 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
           expect(switched.patch).toContain("-# test\n+# on b\n");
           expect(switched.patch).toContain("b/b.txt");
           expect(switched.authored).toBeNull();
+          const switchedBase = yield* checkpointStore.resolveDiffBase({
+            cwd: tmp,
+            fromCheckpointRef: first,
+            toCheckpointRef: second,
+          });
+          expect(yield* git(tmp, ["show", `${switchedBase}:README.md`])).toBe("# test");
 
           // A reset also moves HEAD off a commit, and what it removed is the turn's doing.
           yield* git(tmp, ["add", "."]);

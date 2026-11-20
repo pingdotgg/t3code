@@ -3,7 +3,11 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
-import { createGitDiffFileContentsLoader } from "./diffFileContents";
+import {
+  claimHighlightContextLoad,
+  createGitDiffFileContentsLoader,
+  releaseHighlightContextLoad,
+} from "./diffFileContents";
 import { getRenderablePatch } from "./diffRendering";
 
 const originalLines = Array.from({ length: 40 }, (_, index) => `line ${index + 1}`);
@@ -160,5 +164,41 @@ describe("createGitDiffFileContentsLoader", () => {
     )(parsePartialFileDiff(patch));
 
     expect(loaded.oldFile?.contents).toBe("a\nb\n  c\nd\ne");
+  });
+});
+
+describe("claimHighlightContextLoad", () => {
+  it("claims a patch whose hunk starts below the top of the file once per mount", () => {
+    const fileDiff = partialFileDiff();
+
+    expect(claimHighlightContextLoad(fileDiff)).toBe(true);
+    expect(claimHighlightContextLoad(fileDiff)).toBe(false);
+    releaseHighlightContextLoad(fileDiff);
+    expect(claimHighlightContextLoad(fileDiff)).toBe(true);
+  });
+
+  it("does not claim again after the files failed to load", async () => {
+    const fileDiff = partialFileDiff();
+    const loader = loaderReturning(toContents(originalLines), toContents(originalLines));
+
+    await expect(loader(fileDiff)).rejects.toThrow("changed since the diff was loaded");
+    releaseHighlightContextLoad(fileDiff);
+
+    expect(claimHighlightContextLoad(fileDiff)).toBe(false);
+  });
+
+  it.each([
+    {
+      name: "a patch whose only hunk starts at the first line",
+      patch: ["--- a/a.py", "+++ b/a.py", "@@ -1,2 +1,2 @@", "-old", "+new", " kept", ""],
+    },
+    {
+      name: "an added file",
+      patch: ["new file mode 100644", "--- /dev/null", "+++ b/a.py", "@@ -0,0 +1 @@", "+new", ""],
+    },
+  ])("leaves $name as parsed", ({ patch }) => {
+    const fileDiff = parsePartialFileDiff(["diff --git a/a.py b/a.py", ...patch].join("\n"));
+
+    expect(claimHighlightContextLoad(fileDiff)).toBe(false);
   });
 });

@@ -121,6 +121,9 @@ export function useReviewSections(input: {
             ...section,
             diff: activeTurnDiff.data?.diff ?? section.diff,
             isLoading: activeTurnDiff.isPending,
+            ...(canReadFiles && activeTurnDiff.data?.source
+              ? { turnSource: activeTurnDiff.data.source }
+              : {}),
           }
         : section;
     }
