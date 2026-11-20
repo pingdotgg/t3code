@@ -394,21 +394,7 @@ export function useComposerAttachmentIntake(input: {
     }
     if (movedThread && storedImages.length > 0) {
       const serialized = await serializeComposerImages(storedImages, []);
-      const current = draftStore.getComposerDraft(movedThread);
-      if (current) {
-        const owned = new Set(current.images);
-        const ownedIds = new Set(
-          storedImages.filter((image) => owned.has(image)).map(({ id }) => id),
-        );
-        const persistedIds = new Set(current.persistedAttachments.map(({ id }) => id));
-        const recovered = serialized.filter(({ id }) => ownedIds.has(id) && !persistedIds.has(id));
-        if (recovered.length > 0) {
-          await draftStore.syncPersistedAttachments(movedThread, [
-            ...current.persistedAttachments,
-            ...recovered,
-          ]);
-        }
-      }
+      await draftStore.appendPersistedAttachments(movedThread, storedImages, serialized);
     }
     return insertedAny;
   };
