@@ -9,6 +9,10 @@ import "../../index.css";
 
 const state = vi.hoisted(() => ({ available: false }));
 
+function setup({ available }: { available: boolean }) {
+  state.available = available;
+}
+
 vi.mock(import("../../hooks/useSettings"), async (original) => ({
   ...(await original()),
   usePrimarySettingsAvailable: () => state.available,
@@ -40,7 +44,7 @@ it.each([
     reason: "This connection lacks permission to change settings on the primary environment.",
   },
 ])("explains server settings availability ($available)", async ({ available, reason }) => {
-  state.available = available;
+  setup({ available });
   const changed = vi.fn();
   await using screen = await render(
     <SettingsRow
