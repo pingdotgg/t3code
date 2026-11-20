@@ -5,9 +5,9 @@ import { expect } from "e2e";
 import { environmentId, runPromise, test, WEB } from "./t3.ts";
 
 test(
-  "A ChatGPT sign-in return reaches the primary environment discovered at startup",
+  "A ChatGPT sign-in return reaches the primary environment after a failed discovery request",
   WEB,
-  async ({ t3, app, screen }) => {
+  async ({ t3, app, browser, screen }) => {
     const primaryId = EnvironmentId.make(await runPromise(environmentId(app.baseUrl)));
     const state = "scenario-auth-state";
     const redirectUri = "http://127.0.0.1:1455/auth/callback";
@@ -37,10 +37,21 @@ test(
       ),
     );
 
-    await t3.open(`${delivery.pathname}${delivery.search}${delivery.hash}`);
+    await t3.open();
+    let firstDescriptorAborted = false;
+    await browser.route("**/.well-known/t3/environment", async (route) => {
+      if (firstDescriptorAborted) {
+        await route.fallback();
+        return;
+      }
+      firstDescriptorAborted = true;
+      await route.abort();
+    });
+    await app.open(`${delivery.pathname}${delivery.search}${delivery.hash}`);
     // The server rejects the fake flow before any request to the identity provider.
     await expect(
       screen.getByText("Return to the provider and try again.", { exact: true }),
     ).toBeVisible();
+    expect(firstDescriptorAborted).toBe(true);
   },
 );

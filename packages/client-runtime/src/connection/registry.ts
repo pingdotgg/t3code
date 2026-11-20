@@ -2,7 +2,6 @@ import { msg } from "gt-i18n";
 import { translatableDetail } from "../errors/translatable.ts";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
@@ -100,10 +99,11 @@ export class EnvironmentRegistry extends Context.Service<
     readonly entries: SubscriptionRef.SubscriptionRef<
       ReadonlyMap<EnvironmentId, ConnectionCatalogEntry>
     >;
-    /** Catalog snapshots starting after the first successful platform reconciliation. */
-    readonly entriesAfterPlatformDiscovery: Stream.Stream<
-      ReadonlyMap<EnvironmentId, ConnectionCatalogEntry>
-    >;
+    /** Catalog snapshots, with null while platform discovery cannot rule out an unknown target. */
+    readonly entriesAfterPlatformDiscovery: Stream.Stream<ReadonlyMap<
+      EnvironmentId,
+      ConnectionCatalogEntry
+    > | null>;
     readonly networkStatus: SubscriptionRef.SubscriptionRef<NetworkStatus>;
     readonly start: Effect.Effect<void>;
     /**
@@ -124,6 +124,7 @@ export class EnvironmentRegistry extends Context.Service<
     ) => Effect.Effect<void, ConnectionBlockedError>;
     readonly reconcilePlatform: (
       registrations: ReadonlyArray<PlatformConnectionRegistration>,
+      discoveryComplete?: boolean,
     ) => Effect.Effect<void>;
     readonly remove: (
       environmentId: EnvironmentId,
@@ -275,7 +276,7 @@ export const make = Effect.gen(function* () {
   );
   const entries =
     yield* SubscriptionRef.make<ReadonlyMap<EnvironmentId, ConnectionCatalogEntry>>(initialEntries);
-  const platformReconciled = yield* Deferred.make<void>();
+  const platformDiscoveryComplete = yield* SubscriptionRef.make(false);
   const networkStatus = yield* SubscriptionRef.make(yield* connectivity.status);
   const serviceScopes = yield* SubscriptionRef.make<
     ReadonlyMap<EnvironmentId, EnvironmentServiceScope>
@@ -858,12 +859,16 @@ export const make = Effect.gen(function* () {
   // span per poll would make idle clients export traces continuously.
   const reconcilePlatform = Effect.fnUntraced(function* (
     platformRegistrations: ReadonlyArray<PlatformConnectionRegistration>,
+    discoveryComplete = true,
   ) {
-    if (Equal.equals(appliedPlatformRegistrations, platformRegistrations)) return;
-    appliedPlatformRegistrations = undefined;
-    if (yield* applyPlatformRegistrations(platformRegistrations)) {
-      appliedPlatformRegistrations = platformRegistrations;
-      yield* Deferred.succeed(platformReconciled, undefined);
+    if (!Equal.equals(appliedPlatformRegistrations, platformRegistrations)) {
+      appliedPlatformRegistrations = undefined;
+      if (yield* applyPlatformRegistrations(platformRegistrations)) {
+        appliedPlatformRegistrations = platformRegistrations;
+      }
+    }
+    if ((yield* SubscriptionRef.get(platformDiscoveryComplete)) !== discoveryComplete) {
+      yield* SubscriptionRef.set(platformDiscoveryComplete, discoveryComplete);
     }
   }, reconcileLock.withPermits(1));
 
@@ -1203,8 +1208,21 @@ export const make = Effect.gen(function* () {
 
   return EnvironmentRegistry.of({
     entries,
-    entriesAfterPlatformDiscovery: Stream.unwrap(
-      Deferred.await(platformReconciled).pipe(Effect.as(SubscriptionRef.changes(entries))),
+    entriesAfterPlatformDiscovery: Stream.merge(
+      SubscriptionRef.changes(entries),
+      SubscriptionRef.changes(platformDiscoveryComplete),
+    ).pipe(
+      // A poll can change catalog membership and discovery status together.
+      Stream.mapEffect(() =>
+        reconcileLock.withPermits(1)(
+          SubscriptionRef.get(platformDiscoveryComplete).pipe(
+            Effect.flatMap((complete) =>
+              complete ? SubscriptionRef.get(entries) : Effect.succeed(null),
+            ),
+          ),
+        ),
+      ),
+      Stream.changes,
     ),
     networkStatus,
     start,

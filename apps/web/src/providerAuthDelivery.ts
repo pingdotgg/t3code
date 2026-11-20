@@ -37,7 +37,7 @@ async function completeProviderAuth(delivery: ProviderAuthDelivery): Promise<voi
     const presentation = get(presentationAtom);
     if (presentation === null) {
       return AsyncResult.flatMap(get(entriesAfterPlatformDiscoveryAtom), (entries) =>
-        entries.has(delivery.environmentId)
+        entries === null || entries.has(delivery.environmentId)
           ? AsyncResult.initial()
           : AsyncResult.success("missing"),
       );
