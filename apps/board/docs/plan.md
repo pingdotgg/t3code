@@ -2,7 +2,7 @@
 
 Agent Board is a desktop app for running projects through an orchestrator on the T3 Code engine. The sidebar lists T3 projects, each project lists its boards, and each board shows one orchestrator, its tickets in lanes, the agents working each ticket, artifact cards, and For-you cards. The workflow it shows is the XEO-3330 run from November 2026.
 The rule the program enforces is that the engine stays upstream. No PR edits a file that exists upstream, except `pnpm-lock.yaml`. Every PR passes `apps/board/scripts/check-engine-untouched.mjs`. The repo's lint and dependency standards apply to every file in the repo, and fail only on lines we add or change.
-The PRs, in stack order, are B0, B1, S1, K1, B2, U1, B3, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, B12, and O1.
+The PRs, in stack order, are B0, B1, S1, K1, B2, U1, B3, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, B12, and O1.
 
 ## How to read this
 
@@ -38,9 +38,9 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
 - [ ] Follow this dependency graph. Base each PR on its parent's branch, because the execution playbook stacks.
   - [ ] B0 is first. It branches from `main` of `13kparkin/t3code`.
   - [ ] B1 after B0. S1 after B1. K1 after S1. B2 after K1. U1 after B2. B3 after U1. W1 after B3. B4 after W1. B5 after B4. B6 after B5.
-  - [ ] B7 after B6. C1 after B7. B8 after C1. B9 after B8. B10 after B9. B11 after B10. B12 after B11. O1 after B12.
+  - [ ] B7 after B6. C1 after B7. B8 after C1. B9 after B8. B10 after B9. B11 after B10. W2 after B11. B12 after W2. O1 after B12.
 - [ ] Hold the file boundaries. Every PR touches only `apps/board/**`, `.github/workflows/agent-board.yml`, and `pnpm-lock.yaml`. S1 also adds `standards/**`, `.vite-hooks/pre-push`, and `.claude/settings.json`, which upstream does not have. K1 and B12 write outside the repo only through their install scripts.
-- [ ] Hold the review gate. B1, B2, U1, W1, B4, B5, B6, B7, C1, B8, B9, B10, and B11 change an interaction. They post their screenshots and video in chat at merge, so the operator can ask for a follow-up PR.
+- [ ] Hold the review gate. B1, B2, U1, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, and W2 change an interaction. They post their screenshots and video in chat at merge, so the operator can ask for a follow-up PR.
 - [ ] Cap building agents at 2 at once, and run a push as the only heavy job, because this machine has 15 GB of RAM and 4 cores.
 
 ### PR mechanics, for every PR
@@ -1115,9 +1115,70 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends B11 to the base-branch stack and the operator lands it bottom-up.
 
-## Port the omp skills for T3 agents (B12)
+## Keep the engine and providers up to date from Settings (W2)
 
 **Depends on.** B11.
+
+**Files.**
+
+- [ ] Create `apps/board/src/settings/UpdatesPage.tsx`.
+- [ ] Create `apps/board/src/state/updates.ts` and `apps/board/src/state/updates.test.ts`.
+- [ ] Edit `apps/board/src/settings/SettingsNav.tsx`, `apps/board/src/settings/settingsModel.ts`, and `apps/board/src/sidebar/EngineVersion.tsx`.
+
+**Build.**
+
+- [ ] Add an Updates page to W1's settings screen. Keep W1's Orca layout and its `SettingsSection` and `SettingsRow` rows, so the board keeps one settings look. Take the page's content, states, and wording from T3 web's own provider update UI, read only, in `apps/web/src/components/settings/ProviderInstanceCard.tsx`, `apps/web/src/components/ProviderUpdatesAction.tsx`, `apps/web/src/components/sidebar/updateEverything.logic.ts`, and `apps/web/src/components/ProviderUpdateLaunchNotification.logic.ts`.
+- [ ] In the Engine section, show the installed engine version and the latest npm release, an **Update now** button that runs B4's existing update flow in `apps/board/src/state/engineUpdateAtoms.ts`, and an **Update the engine automatically** switch that starts off.
+- [ ] In the Providers section, show one row per provider instance with its current and latest version and status from `providers[].versionAdvisory`, and its progress from `providers[].updateState`. **Update** calls `server.updateProvider` when `canUpdate` is true, and otherwise the row shows `updateCommand` with a copy button.
+- [ ] Add a **Check for provider updates** switch bound to T3's `enableProviderUpdateChecks` through `server.updateSettings`, and an **Update providers automatically** switch that starts off. Keep the board's own switches where W1 keeps board settings.
+- [ ] Add **Update everything**, which runs each offered update in turn, as T3's sidebar action does.
+- [ ] In `state/updates.ts`, decide each item's action as a pure function of the offer, the switch, and the active runs. An automatic update starts only when no thread on that engine, or on that provider instance, has an active run. Otherwise it waits and starts when those runs go idle. It never interrupts a run, and each automatic update shows a toast and a last-updated line on the page.
+- [ ] When an update is offered and its switch is off, show a dot on the sidebar's settings icon and one toast per new version, as T3's launch notification does. The toast opens the Updates page.
+
+**You see.**
+
+- [ ] Settings has an Updates page in the board's Orca layout that lists the engine, Claude Code, and Codex with their versions, updates each one on a click or automatically between runs, and the sidebar flags an offered update.
+
+**Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] `updates.test.ts` maps fixed inputs of offer, switch, and active runs to literal expected actions, covering offered with the switch off, automatic with no runs, automatic with an active run, a finished run releasing a waiting update, and an instance whose `canUpdate` is false. Run `vp test run src/state/updates.test.ts` from `apps/board`.
+
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe. Every provider lane runs its engine with `HOME` and `NPM_CONFIG_PREFIX` under `/tmp/<lane>/`, so an update never touches the operator's own Claude Code, Codex, or `~/.t3`.
+
+- [ ] Lane 1. Regression lane against trunk. Trunk has no Updates page, so record that fact. Open it at head. Save `w2-updates.png`. Pass when the engine, Claude Code, and Codex rows show their current versions.
+- [ ] Lane 2. Point the lane's Claude instance at an older Claude Code installed under the lane's scratch prefix. Save `w2-behind.png`. Pass when its row shows it behind with the latest version.
+- [ ] Lane 3. Click **Update** on that row. Save `w2-provider-update.png`. Pass when the row moves through running to succeeded and then shows the new version.
+- [ ] Lane 4. Turn **Check for provider updates** off. Save `w2-checks-off.txt`. Pass when T3's `enableProviderUpdateChecks` reads false from the server config.
+- [ ] Lane 5. Turn **Update providers automatically** on while a turn runs on that instance. Save `w2-auto-wait.png`. Pass when the update waits for the turn to end, then runs, and a toast reports it.
+- [ ] Lane 6. In the scratch WSL distro from the boot recipe, install the T3 service one release behind npm's latest and turn **Update the engine automatically** on. Save `w2-engine-auto.png`. Pass when the footer shows the latest version with no click, then unregister the distro.
+- [ ] Lane 7. With both switches off and an update offered, launch twice. Save `w2-notify.png`. Pass when the settings icon shows the dot and only the first launch shows the toast.
+- [ ] Lane 8. With two updates offered, click **Update everything**. Save `w2-everything.png`. Pass when both finish in turn.
+- [ ] Lane 9. Run the Windows app and open the Updates page. Save `w2-windows.png` from a full-window capture. Pass when it matches the other settings pages' layout.
+- [ ] Lane 10. Run the boundary check and the standards check at head. Save `w2-checks.txt`. Pass when both exit 0.
+
+**Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] Metric. Time from clicking Updates in the settings list to the page's first paint.
+- [ ] Probe. Log `board:updates-open` and `board:updates-painted` ten times.
+- [ ] Baseline. Record the Worktrees page's open time at head as the comparison.
+- [ ] Rule. The median stays under 100 ms, recorded for O1.
+
+**Review gate.** The operator reviews at merge.
+
+- [ ] Copy lane 1, 3, and 7 screenshots into `apps/board/docs/media/w2-review-<slug>.png`.
+- [ ] Record a 30 to 60 second video of the change from a lane. Save it as `apps/board/docs/media/w2-review.mp4`.
+- [ ] Post the screenshots and the video in chat for the operator at merge.
+
+**Merge.**
+
+- [ ] Root's clean verdict at the exact head SHA.
+- [ ] Bugbot triage done.
+- [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
+- [ ] The root appends W2 to the base-branch stack and the operator lands it bottom-up.
+
+## Port the omp skills for T3 agents (B12)
+
+**Depends on.** W2.
 
 **Files.**
 
