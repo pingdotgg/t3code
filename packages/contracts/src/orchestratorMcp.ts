@@ -168,6 +168,12 @@ export const OrchestratorMcpTerminalDelegatedTaskStatus = Schema.Literals([
 export type OrchestratorMcpTerminalDelegatedTaskStatus =
   typeof OrchestratorMcpTerminalDelegatedTaskStatus.Type;
 
+// Waits return before common MCP client deadlines; callers wait again with the returned handle.
+export const ORCHESTRATOR_MCP_MAX_WAIT_TIMEOUT_MS = 45_000;
+const OrchestratorMcpWaitTimeoutMs = Schema.Finite.check(
+  Schema.isLessThanOrEqualTo(ORCHESTRATOR_MCP_MAX_WAIT_TIMEOUT_MS),
+);
+
 export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   task: OrchestratorMcpPrompt,
   // Some providers send the whole target object as JSON text.
@@ -188,7 +194,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
         "Default 'async'. 'wait' only if this turn needs the result. A question or approval ends the wait.",
     }),
   ),
-  timeoutMs: Schema.optional(Schema.Finite).annotate({
+  timeoutMs: Schema.optional(OrchestratorMcpWaitTimeoutMs).annotate({
     description: "Mode 'wait' only. At most 45 s. A timeout does not cancel the child.",
   }),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
@@ -580,7 +586,7 @@ export const OrchestratorMcpThreadWaitInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
   threadId: ThreadId,
   runId: Schema.optional(RunId),
-  timeoutMs: Schema.optional(Schema.Finite),
+  timeoutMs: Schema.optional(OrchestratorMcpWaitTimeoutMs),
   untilDelegatedWorkSettled: Schema.optional(
     Schema.Boolean.annotate({
       description:

@@ -1,6 +1,7 @@
 import {
   type EnvironmentId,
   OrchestratorMcpFailure,
+  ORCHESTRATOR_MCP_MAX_WAIT_TIMEOUT_MS,
   type OrchestratorMcpEnvironmentLinksResult,
   OrchestratorMcpThreadInterruptInput,
   OrchestratorMcpThreadInterruptResult,
@@ -31,7 +32,6 @@ import * as PeerMcpClient from "./PeerMcpClient.ts";
 
 // Match local waits: return before MCP client timeouts and T3 Connect's ~100 s idle drop.
 const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
-const MAX_WAIT_TIMEOUT_MS = 45_000;
 
 type Scope = McpInvocationContext.McpInvocationScope;
 
@@ -225,7 +225,7 @@ const make = Effect.gen(function* () {
       {
         ...input,
         timeoutMs: Math.min(
-          MAX_WAIT_TIMEOUT_MS,
+          ORCHESTRATOR_MCP_MAX_WAIT_TIMEOUT_MS,
           Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
         ),
       },

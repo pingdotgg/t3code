@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import {
   OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpDelegateTaskResult,
+  OrchestratorMcpThreadWaitInput,
   OrchestratorMcpThreadWaitResult,
 } from "./orchestratorMcp.ts";
 
@@ -67,6 +68,21 @@ describe("orchestrator MCP contracts", () => {
         pendingApproval: { ...pendingApproval, kind: "user_input" },
       }),
     ).toThrow();
+  });
+
+  it("rejects wait timeouts above the 45 s cap instead of shortening them", () => {
+    const decodeThreadWaitInput = Schema.decodeUnknownSync(OrchestratorMcpThreadWaitInput);
+    const wait = { threadId: "thread-child-1" };
+    expect(decodeThreadWaitInput({ ...wait, timeoutMs: 45_000 }).timeoutMs).toBe(45_000);
+    expect(() => decodeThreadWaitInput({ ...wait, timeoutMs: 600_000 })).toThrow();
+    const task = { task: "Report.", mode: "wait" };
+    expect(decodeDelegateTaskInput({ ...task, timeoutMs: 45_000 }).timeoutMs).toBe(45_000);
+    expect(() => decodeDelegateTaskInput({ ...task, timeoutMs: 600_000 })).toThrow();
+    for (const input of [OrchestratorMcpThreadWaitInput, OrchestratorMcpDelegateTaskInput]) {
+      expect(JSON.stringify(Schema.toJsonSchemaDocument(input).schema)).toContain(
+        '"timeoutMs":{"anyOf":[{"type":"number","maximum":45000}',
+      );
+    }
   });
 
   it("decodes a running-task next written by another version", () => {
