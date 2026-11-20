@@ -206,11 +206,13 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   yield* fs.writeFileString(runtime.sentinelPath, "1.2.3\n");
 
   const markersAtStop: boolean[] = [];
+  const markersAtPreparation: boolean[] = [];
   const commands: string[] = [];
   const invocations: ProcessRunner.ProcessRunInput[] = [];
   const timeouts = new Map<string, unknown>();
   const control: {
     failCommand: string | undefined;
+    interruptCommand?: string;
     stateAfterStop?: string;
     /** `undefined` makes `loginctl show-user` fail, as when logind does not know the user. */
     linger: string | undefined;
@@ -242,14 +244,23 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     ) {
       const command = `${input.command} ${input.args.join(" ")}`;
       commands.push(command);
+      const marker = path.join(baseDir, "runtime", DESKTOP_UPDATE_RESTART_MARKER_FILE);
       if (
         command === "systemctl --user stop t3code.service" ||
+        command === "systemctl --user disable --now t3code.service" ||
+        command === "systemctl --user restart --no-block t3code.service" ||
+        command.startsWith("launchctl bootout --wait ") ||
         (input.command === "schtasks" && input.args[0] === "/End")
       ) {
-        markersAtStop.push(
-          yield* fs.exists(path.join(baseDir, "runtime", DESKTOP_UPDATE_RESTART_MARKER_FILE)),
-        );
+        markersAtStop.push(yield* fs.exists(marker));
       }
+      if (
+        command === "systemctl --user daemon-reload" ||
+        (input.command === "schtasks" && input.args[0] === "/Create")
+      ) {
+        markersAtPreparation.push(yield* fs.exists(marker));
+      }
+      if (command === control.interruptCommand) return yield* Effect.interrupt;
       invocations.push(input);
       timeouts.set(command, input.timeout);
       if (command === "systemctl --user reset-failed t3code.service") control.startLimitHit = false;
@@ -414,6 +425,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     invocations,
     timeouts,
     markersAtStop,
+    markersAtPreparation,
     control,
     runtime,
   };
@@ -1206,12 +1218,13 @@ process.disconnect();
 
   it.effect("pauses only this home's running service for maintenance, even when it fails", () =>
     Effect.gen(function* () {
-      const { service, commands, control, makeService } = yield* makeHarness();
+      const { service, commands, control, makeService, markersAtStop } = yield* makeHarness();
       yield* service.install();
       const failure = yield* service
         .withStopped(Effect.failSync(() => (control.active ? "running" : "repair failed")))
         .pipe(Effect.flip);
       expect(failure).toBe("repair failed");
+      expect(markersAtStop).toEqual([false]);
       expect(control.active).toBe(true);
 
       control.failCommand = "systemctl --user stop t3code.service";
@@ -1347,7 +1360,16 @@ process.disconnect();
     "queues an in-service restart without stopping the caller, even on handoff failure",
     () =>
       Effect.gen(function* () {
-        const { service, fs, statePath, commands, control, makeService } = yield* makeHarness();
+        const {
+          service,
+          fs,
+          statePath,
+          commands,
+          control,
+          makeService,
+          markersAtStop,
+          markersAtPreparation,
+        } = yield* makeHarness();
         const plan = yield* service.install();
         const state = yield* fs.readFileString(statePath);
         const relayMarker = `${plan.baseDir}/runtime/${DESKTOP_UPDATE_RESTART_MARKER_FILE}`;
@@ -1362,6 +1384,22 @@ process.disconnect();
         expect(commands).toEqual(["systemctl --user daemon-reload"]);
         expect(control.active).toBe(true);
         expect(yield* fs.exists(relayMarker)).toBe(false);
+        expect(markersAtPreparation.at(-1)).toBe(false);
+        expect(markersAtStop).toEqual([]);
+
+        const queueCommand = "systemctl --user restart --no-block t3code.service";
+        control.failCommand = queueCommand;
+        expect((yield* inside.restart.pipe(Effect.flip))._tag).toBe("BootServiceCommandError");
+        expect(markersAtStop).toEqual([true]);
+        expect(yield* fs.exists(relayMarker)).toBe(false);
+
+        control.failCommand = undefined;
+        control.interruptCommand = queueCommand;
+        const interrupted = yield* inside.restart.pipe(Effect.forkScoped);
+        expect((yield* Fiber.await(interrupted))._tag).toBe("Failure");
+        expect(markersAtStop).toEqual([true, true]);
+        expect(yield* fs.exists(relayMarker)).toBe(false);
+        delete control.interruptCommand;
 
         control.failCommand = undefined;
         commands.length = 0;
@@ -1373,6 +1411,8 @@ process.disconnect();
           "systemctl --user restart --no-block t3code.service",
         ]);
         expect(outcome).toBe("queued");
+        expect(markersAtStop).toEqual([true, true, true]);
+        expect(markersAtPreparation).not.toContain(true);
         expect(yield* fs.exists(relayMarker)).toBe(true);
         expect(yield* fs.readFileString(statePath)).toBe(state);
         expect(yield* fs.readFileString(marker)).toBe("1.2.3\n");
@@ -1457,7 +1497,8 @@ process.disconnect();
 
   it.effect("installs, reports current state, and uninstalls on macOS", () =>
     Effect.gen(function* () {
-      const { service, fs, statePath, commands, timeouts, runtime } = yield* makeHarness("darwin");
+      const { service, fs, statePath, commands, timeouts, runtime, markersAtStop } =
+        yield* makeHarness("darwin");
       const path = yield* Path.Path;
       const plan = yield* service.install();
 
@@ -1480,7 +1521,13 @@ process.disconnect();
         current: true,
         installedVersion: "1.2.3",
       });
+      const relayMarker = path.join(plan.baseDir, "runtime", DESKTOP_UPDATE_RESTART_MARKER_FILE);
+      expect(yield* service.restart).toBe("restarted");
+      expect(markersAtStop).toEqual([true]);
+      expect(yield* fs.exists(relayMarker)).toBe(false);
       expect(yield* service.uninstall).toBe(true);
+      expect(markersAtStop).toEqual([true, false]);
+      expect(yield* fs.exists(relayMarker)).toBe(false);
       expect((yield* service.status).installed).toBe(false);
       expect(commands.some((command) => command.startsWith("systemctl "))).toBe(false);
       // launchd can take 90s to bootout; the runner's 60s default could let bootstrap race it.
@@ -1583,8 +1630,16 @@ process.disconnect();
 
   it.effect("hands an in-service install and restart to Task Scheduler on Windows", () =>
     Effect.gen(function* () {
-      const { service, fs, statePath, commands, control, makeService, markersAtStop } =
-        yield* makeHarness("win32");
+      const {
+        service,
+        fs,
+        statePath,
+        commands,
+        control,
+        makeService,
+        markersAtStop,
+        markersAtPreparation,
+      } = yield* makeHarness("win32");
       const plan = yield* service.install();
       const inside = yield* makeService(undefined, "1.2.4", undefined, true);
       const relayMarker = `${plan.baseDir}/runtime/${DESKTOP_UPDATE_RESTART_MARKER_FILE}`;
@@ -1613,9 +1668,12 @@ process.disconnect();
       expect(yield* fs.exists(relayMarker)).toBe(true);
       yield* fs.remove(relayMarker);
 
+      expect(markersAtPreparation).not.toContain(true);
       control.failCommand = handoff[0];
       expect((yield* inside.restart.pipe(Effect.flip))._tag).toBe("BootServiceCommandError");
       expect(yield* fs.exists(relayMarker)).toBe(false);
+      expect(markersAtPreparation.at(-1)).toBe(false);
+      expect(markersAtStop).toEqual([true, true]);
     }),
   );
 
