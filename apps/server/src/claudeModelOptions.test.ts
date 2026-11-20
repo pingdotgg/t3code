@@ -19,19 +19,24 @@ const selection = (
 
 describe("compileClaudeModelSelection", () => {
   it("compiles context, effort, and settings together", () => {
-    expect(
-      compileClaudeModelSelection(
-        selection("claude-opus-4-6", [
-          { id: "contextWindow", value: "1m" },
-          { id: "effort", value: "max" },
-          { id: "fastMode", value: true },
-        ]),
-      ),
-    ).toMatchObject({
-      apiModelId: "claude-opus-4-6[1m]",
-      effort: "max",
-      settings: { fastMode: true },
-    });
+    expect(compileClaudeModelSelection(selection("claude-haiku-4-5-20251001", [])).apiModelId).toBe(
+      "claude-haiku-4-5-20251001",
+    );
+    for (const model of ["claude-opus-4-6", "claude-opus-4-6-20261101"]) {
+      expect(
+        compileClaudeModelSelection(
+          selection(model, [
+            { id: "contextWindow", value: "1m" },
+            { id: "effort", value: "max" },
+            { id: "fastMode", value: true },
+          ]),
+        ),
+      ).toMatchObject({
+        apiModelId: model + "[1m]",
+        effort: "max",
+        settings: { fastMode: true },
+      });
+    }
   });
 
   it("runs Ultracode at the chosen effort and reads the old Ultracode effort as xhigh", () => {

@@ -233,7 +233,10 @@ export function resolveClaudeCatalogModel(
     catalog.models.find((entry) => entry.model.slug === value) ??
     catalog.models.find((entry) =>
       entry.model.aliases?.some((alias) => alias.toLowerCase() === value.toLowerCase()),
-    )
+    ) ??
+    (/^claude-.+-\d{8}$/.test(value)
+      ? resolveClaudeCatalogModel(catalog, value.replace(/-\d{8}$/, ""))
+      : undefined)
   );
 }
 
@@ -546,7 +549,11 @@ export function resolveClaudeCatalogApiModelId(
   modelSelection: ModelSelection,
 ): string {
   const entry = resolveClaudeCatalogModel(catalog, modelSelection.model);
-  const slug = entry?.apiModel ?? entry?.model.slug ?? modelSelection.model;
+  const slug =
+    entry?.apiModel ??
+    (/^claude-.+-\d{8}$/.test(modelSelection.model)
+      ? modelSelection.model
+      : (entry?.model.slug ?? modelSelection.model));
   const descriptors = getProviderOptionDescriptors({
     caps: entry?.model.capabilities ?? EMPTY_CAPABILITIES,
     selections: modelSelection.options,

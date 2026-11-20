@@ -225,6 +225,10 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
     return true;
   }
 
+  if (provider.driver === ProviderDriverKind.make("claudeAgent")) {
+    return !provider.installed;
+  }
+
   const isAntigravity = provider.driver === ProviderDriverKind.make("antigravity");
   const isCodex = provider.driver === ProviderDriverKind.make("codex");
   const isOpenCode = provider.driver === ProviderDriverKind.make("opencode");

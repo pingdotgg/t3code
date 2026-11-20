@@ -5,7 +5,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
-import { discoverClaudeSkills as discoverSkills } from "./ClaudeSkills.ts";
+import {
+  discoverClaudeSkills as discoverSkills,
+  readClaudeConnectionSettings,
+} from "./ClaudeSkills.ts";
 import { planClaudeSkillDispatch } from "./ClaudeSkillDispatch.ts";
 
 // Windows makes the managed directory fixture-controlled without reading host policy or skills.
@@ -29,6 +32,32 @@ const writeSkill = Effect.fn(function* (
 });
 
 it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
+  it.effect("coerces connection settings environment values like Claude Code", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const configDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-settings-" });
+      const env = {
+        ANTHROPIC_BASE_URL: "https://gateway.example",
+        CLAUDE_CODE_USE_BEDROCK: false,
+        CLAUDE_CODE_USE_VERTEX: true,
+        CLAUDE_CODE_USE_FOUNDRY: 1,
+      };
+      yield* fs.writeFileString(path.join(configDir, "settings.json"), JSON.stringify({ env }));
+      const settings = yield* readClaudeConnectionSettings(
+        { homePath: configDir },
+        undefined,
+        {},
+      ).pipe(Effect.provideService(HostProcess.Platform, "win32"));
+      assert.deepStrictEqual(settings.env, {
+        ANTHROPIC_BASE_URL: "https://gateway.example",
+        CLAUDE_CODE_USE_BEDROCK: "false",
+        CLAUDE_CODE_USE_VERTEX: "true",
+        CLAUDE_CODE_USE_FOUNDRY: "1",
+      });
+    }),
+  );
+
   it.effect("discovers enabled plugin skills with manifest names and ignores skill overrides", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
