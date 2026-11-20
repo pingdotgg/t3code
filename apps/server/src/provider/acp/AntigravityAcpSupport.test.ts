@@ -133,6 +133,107 @@ describe("Antigravity Auto", () => {
       ).toBe("deny");
     },
   );
+
+  it.each(["auto", "auto-accept-edits"] as const)(
+    "pre-approves T3's own MCP tools in %s while still asking for third-party MCP and shell commands",
+    (runtimeMode) => {
+      const policy = { runtimeMode, cwd: "/workspace" };
+      const t3McpRequests: ReadonlyArray<EffectAcpSchema.RequestPermissionRequest> = [
+        {
+          sessionId: "session-1",
+          toolCall: {
+            toolCallId: "call-1",
+            title: "Run mcp_t3-code_preview_status",
+            kind: "execute",
+          },
+          options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+        },
+        {
+          sessionId: "session-1",
+          toolCall: {
+            toolCallId: "call-2",
+            title: "Run mcp_t3-code_t3_thread_list?",
+            kind: "other",
+          },
+          options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+        },
+        {
+          sessionId: "session-1",
+          toolCall: {
+            toolCallId: "call-3",
+            title: "Running preview_status",
+            kind: "execute",
+          },
+          options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+        },
+        {
+          sessionId: "session-1",
+          toolCall: {
+            toolCallId: "call-4",
+            title: "MCP Tool delegate_task",
+            kind: "execute",
+            rawInput: { ServerName: "t3-code", ToolName: "delegate_task", Arguments: {} },
+          },
+          options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+        },
+      ];
+      for (const request of t3McpRequests) {
+        expect(antigravityPermissionDisposition(policy, request)).toBe("allow");
+        // Supervised and explicit on-request approval policies must keep asking.
+        expect(
+          antigravityPermissionDisposition(
+            { runtimeMode: "approval-required", cwd: "/workspace" },
+            request,
+          ),
+        ).toBe("ask");
+        expect(
+          antigravityPermissionDisposition({ ...policy, approvalPolicy: "on-request" }, request),
+        ).toBe("ask");
+        // Read-only sandbox denials must stay denied.
+        expect(
+          antigravityPermissionDisposition(
+            { ...policy, sandboxPolicy: { type: "readOnly" } },
+            request,
+          ),
+        ).toBe("deny");
+      }
+
+      const mustAsk: ReadonlyArray<EffectAcpSchema.RequestPermissionRequest> = [
+        {
+          sessionId: "session-1",
+          toolCall: {
+            toolCallId: "call-third-party",
+            title: "Run mcp_github_create_issue",
+            kind: "execute",
+          },
+          options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+        },
+        {
+          sessionId: "session-1",
+          toolCall: {
+            toolCallId: "call-third-party-proxy",
+            title: "MCP Tool preview_status",
+            kind: "execute",
+            rawInput: { ServerName: "other-server", ToolName: "preview_status", Arguments: {} },
+          },
+          options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+        },
+        {
+          sessionId: "session-1",
+          toolCall: {
+            toolCallId: "call-shell-spoof",
+            title: "rm -rf / && acp-mcp-call t3_thread_list '{}'",
+            kind: "execute",
+            rawInput: { CommandLine: "rm -rf / && acp-mcp-call t3_thread_list '{}'" },
+          },
+          options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+        },
+      ];
+      for (const request of mustAsk) {
+        expect(antigravityPermissionDisposition(policy, request)).toBe("ask");
+      }
+    },
+  );
 });
 
 describe("applyAntigravityAcpModelSelection", () => {

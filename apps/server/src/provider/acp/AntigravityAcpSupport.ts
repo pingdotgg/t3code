@@ -25,9 +25,15 @@ import {
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   acpPermissionDisposition,
+  unknownRecord,
   type AcpRuntimePolicy,
 } from "@t3tools/provider-acp/server/clientPolicy";
-import type { AcpSessionModeState } from "@t3tools/provider-acp/server/runtimeModel";
+import {
+  extractMcpToolCallIdentity,
+  parsePermissionRequest,
+  type AcpSessionModeState,
+} from "@t3tools/provider-acp/server/runtimeModel";
+import { T3_MCP_TOOL_NAMES } from "@t3tools/shared/t3McpToolPresentation";
 import packageJson from "../../../package.json" with { type: "json" };
 import { normalizeAntigravitySessionUpdate } from "./AntigravityProtocol.ts";
 
@@ -181,13 +187,57 @@ export function antigravitySessionMode(
   return modeId === "yolo" || modeId === "auto_edit" ? "default" : modeId;
 }
 
+function isAntigravityT3McpRequest(request: EffectAcpSchema.RequestPermissionRequest): boolean {
+  const rawInput = unknownRecord(request.toolCall.rawInput);
+  // Shell commands must never be treated as MCP calls even if their command line mentions acp-mcp-call.
+  if (
+    rawInput !== undefined &&
+    (typeof rawInput.CommandLine === "string" ||
+      typeof rawInput.command === "string" ||
+      typeof rawInput.executable === "string")
+  ) {
+    return false;
+  }
+  const title = request.toolCall.title?.trim();
+  if (title !== undefined && /\bacp-mcp-call\b/.test(title)) {
+    return false;
+  }
+  const toolCall = parsePermissionRequest(request).toolCall;
+  if (toolCall === undefined) return false;
+  const { command: _command, ...toolCallWithoutCommand } = toolCall;
+  const mcpToolCall =
+    request.toolCall._meta === undefined
+      ? toolCallWithoutCommand
+      : {
+          ...toolCallWithoutCommand,
+          data: { ...toolCallWithoutCommand.data, meta: request.toolCall._meta },
+        };
+  const identity = extractMcpToolCallIdentity(mcpToolCall);
+  return identity?.server === "t3-code" && T3_MCP_TOOL_NAMES.has(identity.tool);
+}
+
 export function antigravityPermissionDisposition(
   policy: AcpRuntimePolicy,
   request: EffectAcpSchema.RequestPermissionRequest,
 ) {
   const disposition = acpPermissionDisposition(policy, request);
+  if (disposition === "deny") return "deny";
+  const requiresExplicitApproval =
+    policy.approvalPolicy === undefined
+      ? policy.runtimeMode === "approval-required"
+      : policy.approvalPolicy !== "never";
+  // T3 injects and authorizes its own `t3-code` MCP server; pre-approve it in Auto and
+  // Auto-accept edits just like Claude and OpenCode do, while keeping Supervised and
+  // third-party MCP servers unchanged.
+  if (
+    !requiresExplicitApproval &&
+    (policy.runtimeMode === "auto" || policy.runtimeMode === "auto-accept-edits") &&
+    isAntigravityT3McpRequest(request)
+  ) {
+    return "allow";
+  }
   // agy's Auto has already reviewed what it sends; the user decides unless the sandbox forbids it.
-  return policy.runtimeMode === "auto" && disposition !== "deny" ? "ask" : disposition;
+  return policy.runtimeMode === "auto" ? "ask" : disposition;
 }
 
 /** The runtime mode an Antigravity session mode grants; the inverse of `antigravityPermissionMode`. */
