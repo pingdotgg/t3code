@@ -782,7 +782,7 @@ it.effect("refused steps stay refused with approvals off", () =>
       {
         ok: false,
         denied:
-          "not a step computer use takes (click, type, press, scroll, surface, open_url, pointer)",
+          "not a step computer use takes (click, type, press, scroll, surface, open_url, choose_file, pointer)",
       },
     );
     assert.strictEqual((yield* taskOf(task.taskId))?.status, "blocked");
