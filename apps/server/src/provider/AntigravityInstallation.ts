@@ -189,10 +189,16 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
   const platform = yield* HostProcess.Platform;
   const arch = yield* HostProcess.Architecture;
   const environment = yield* HostProcess.Environment;
+  const nativeWindowsArch =
+    environment.PROCESSOR_ARCHITEW6432 ?? environment.PROCESSOR_ARCHITECTURE;
+  const releaseArch =
+    platform === "win32" && arch === "x64" && nativeWindowsArch?.toUpperCase() === "ARM64"
+      ? "arm64"
+      : arch;
   let releaseAsset = options.releaseAsset ?? null;
   const supported =
     options.releaseAsset === undefined
-      ? antigravityCliTarget(platform, arch) !== null
+      ? antigravityCliTarget(platform, releaseArch) !== null
       : options.releaseAsset !== null;
   const cliExecutableName = platform === "win32" ? "agy.exe" : "antigravity";
   const managedDirectory = path.join(
@@ -1234,11 +1240,11 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       (yield* fs.exists(
         arch === "arm64" ? "/lib/libc.musl-aarch64.so.1" : "/lib/libc.musl-x86_64.so.1",
       ));
-    const target = antigravityCliTarget(platform, arch, musl);
+    const target = antigravityCliTarget(platform, releaseArch, musl);
     const latest = yield* http.get(`${ANTIGRAVITY_CLI_MANIFEST_BASE}/${target}.json`).pipe(
       Effect.flatMap(HttpClientResponse.filterStatusOk),
       Effect.flatMap((response) => response.json),
-      Effect.map((json) => parseAntigravityCliRelease(json, platform, arch, musl)),
+      Effect.map((json) => parseAntigravityCliRelease(json, platform, releaseArch, musl)),
       Effect.timeout("10 seconds"),
       Effect.orElseSucceed(() => null),
     );

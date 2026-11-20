@@ -97,6 +97,7 @@ interface HarnessOptions {
   readonly platform?: NodeJS.Platform;
   readonly arch?: NodeJS.Architecture;
   readonly path?: string;
+  readonly environment?: NodeJS.ProcessEnv;
   readonly previous?: boolean;
   readonly fileSystem?: FileSystem.FileSystem;
   readonly spawner?: ChildProcessSpawner.ChildProcessSpawner["Service"];
@@ -184,7 +185,10 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
     Effect.provideService(FileSystem.FileSystem, trackedFs),
     Effect.provideService(HostProcess.Platform, platform),
     Effect.provideService(HostProcess.Architecture, arch),
-    Effect.provideService(HostProcess.Environment, { PATH: options.path ?? "" }),
+    Effect.provideService(HostProcess.Environment, {
+      PATH: options.path ?? "",
+      ...options.environment,
+    }),
     Effect.provideService(ModelManifest.ModelManifest, {
       current: options.manifest ?? Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
       refresh: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
@@ -201,10 +205,12 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
             return Effect.gen(function* () {
               yield* options.beforeManifest ?? Effect.void;
               const version = options.nativeVersion ?? "1.5.7";
-              const folder = platform === "win32" ? "windows-x64" : "linux-x64";
+              const cpu = request.url.endsWith("/windows_arm64.json") ? "arm64" : "x64";
+              const folder =
+                platform === "win32" ? `windows-${cpu === "arm64" ? "arm" : "x64"}` : "linux-x64";
               const manifest = {
                 version,
-                url: `https://storage.googleapis.com/antigravity-public/antigravity-cli/${version}-123/${folder}/cli_${platform === "win32" ? "windows_x64.exe" : "linux_x64.tar.gz"}`,
+                url: `https://storage.googleapis.com/antigravity-public/antigravity-cli/${version}-123/${folder}/cli_${platform === "win32" ? `windows_${cpu}.exe` : "linux_x64.tar.gz"}`,
                 sha512: Hex.encode(yield* digest.digest(Digest.sha512, archive).pipe(Effect.orDie)),
               };
               return HttpClientResponse.fromWeb(
@@ -359,14 +365,20 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       }),
   );
 
-  it.effect.each([true, false])(
-    "respects background update checks (%s) while allowing explicit installation",
-    (enabled) =>
+  it.effect.each([
+    ["windows_amd64", true, {}],
+    ["windows_amd64", false, {}],
+    ["windows_arm64", true, { PROCESSOR_ARCHITEW6432: "ARM64", PROCESSOR_ARCHITECTURE: "AMD64" }],
+    ["windows_arm64", false, { PROCESSOR_ARCHITECTURE: "ARM64" }],
+  ] as const)(
+    "requests the %s manifest with background update checks enabled=%s",
+    ([target, enabled, environment]) =>
       Effect.gen(function* () {
         const { installation, requests } = yield* makeHarness({
           native: true,
           archive: Buffer.from(serverContents),
           platform: "win32",
+          environment,
           updateChecksEnabled: Effect.succeed(enabled),
         });
         yield* installation.checkForUpdate;
@@ -383,6 +395,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         }
         yield* installation.start;
         expect((yield* terminalState(installation)).phase).toBe("succeeded");
+        expect(requests[0]).toMatch(new RegExp(`/manifests/${target}\\.json$`, "u"));
       }),
   );
 
