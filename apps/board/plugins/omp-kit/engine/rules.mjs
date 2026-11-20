@@ -156,8 +156,16 @@ const TOOL_ALIASES = {
   bash: ["bash"],
 };
 
-// omp names an MCP tool `mcp__<server>_<tool>` where Claude Code says `mcp__<server>__<tool>`, so one scope token can use either spelling.
-const ompToolName = (claudeName) => claudeName.replace(/^mcp__(.+?)__(.+)$/, "mcp__$1_$2");
+// omp names an MCP tool `mcp__<server>_<tool>` and folds the server name to [a-z_] (`linear-server` becomes `linear_server`), where Claude Code says `mcp__<server>__<tool>`, so one scope token can use either spelling.
+const ompToolName = (claudeName) =>
+  claudeName.replace(
+    /^mcp__(.+?)__(.+)$/,
+    (_, server, tool) =>
+      `mcp__${server
+        .replace(/[^a-z_]+/g, "_")
+        .replace(/_+/g, "_")
+        .replace(/^_|_$/g, "")}_${tool}`,
+  );
 
 function scopeAllowsTool(scope, toolName, paths) {
   if (scope.anyTool) return true;

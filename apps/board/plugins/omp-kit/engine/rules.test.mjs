@@ -56,6 +56,8 @@ scope:
   - tool:write
   - tool:bash
   - tool:mcp__linear_save_issue
+  - tool:mcp__linear_server_save_issue
+  - tool:mcp__linear_server_save_comment
   - tool:mcp__t3-code__set_issue_state
 ---
 
@@ -434,6 +436,21 @@ NodeTest.describe("omp-kit approval rule for MCP write tools", () => {
           "ask",
         );
       }
+    },
+  );
+
+  NodeTest.test(
+    "Given the Linear server is named linear-server, when its writes and a read are replayed, then each write asks every time and the read stays silent",
+    (t) => {
+      const { root, env } = makeEnvironment();
+      t.after(() => NodeFS.rmSync(root, { recursive: true, force: true }));
+      const ask = (toolName, input) =>
+        preToolUse(env, "s-server", toolName, input)?.hookSpecificOutput.permissionDecision ?? null;
+
+      NodeAssert.equal(ask("mcp__linear-server__save_issue", { title: "x" }), "ask");
+      NodeAssert.equal(ask("mcp__linear-server__get_issue", { id: "LIN-1" }), null);
+      NodeAssert.equal(ask("mcp__linear-server__save_comment", { body: "a" }), "ask");
+      NodeAssert.equal(ask("mcp__linear-server__save_comment", { body: "b" }), "ask");
     },
   );
 
