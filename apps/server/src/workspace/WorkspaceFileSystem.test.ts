@@ -369,10 +369,11 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         }),
     );
 
-    it.effect("does not read server state files", () =>
+    it.effect("does not read or write server state files", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const config = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const cwd = yield* makeTempDir;
         yield* writeTextFile(config.secretsDir, "example.bin", "example\n");
@@ -385,6 +386,24 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           const error = yield* workspaceFileSystem.readFile(input).pipe(Effect.flip);
           expect(error).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
         }
+        const secrets = path.relative(config.stateDir, config.secretsDir);
+        for (const relativePath of [
+          "statev2.sqlite",
+          path.join(secrets, "example.bin"),
+          path.join(secrets, "new.bin"),
+        ]) {
+          const error = yield* workspaceFileSystem
+            .writeFile({ cwd: config.stateDir, relativePath, contents: "overwritten\n" })
+            .pipe(Effect.flip);
+          expect(error).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
+        }
+        expect(yield* fileSystem.readFileString(path.join(config.stateDir, "statev2.sqlite"))).toBe(
+          "example\n",
+        );
+        expect(yield* fileSystem.readFileString(path.join(config.secretsDir, "example.bin"))).toBe(
+          "example\n",
+        );
+        expect(yield* fileSystem.exists(path.join(config.secretsDir, "new.bin"))).toBe(false);
         const metadata = yield* workspaceFileSystem.getMetadata({
           paths: [
             path.join(config.secretsDir, "example.bin"),
