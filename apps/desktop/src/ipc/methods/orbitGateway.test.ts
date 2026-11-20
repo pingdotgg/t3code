@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { INSIGHT_PERIODS } from "@t3tools/client-runtime/orbit-gateway";
 
 import { isAllowedConnQuery, resolveConnUrl, resolveRootUrl } from "./orbitGateway.ts";
 
@@ -164,6 +165,12 @@ describe("resolveRootUrl", () => {
       resolveRootUrl({ method, path: "/task-insights", query })?.pathname ?? null;
     expect(insights({})).toBe("/api/v1/task-insights");
     expect(insights({ period: "7d", project_id: "78" })).toBe("/api/v1/task-insights");
+    // Every period the board offers must pass; 24h was refused and showed dashes.
+    for (const period of INSIGHT_PERIODS) {
+      expect(insights({ period })).toBe("/api/v1/task-insights");
+      expect(insights({ period, project_id: "78" })).toBe("/api/v1/task-insights");
+    }
+    expect(insights({ period: "24h" })).toBe("/api/v1/task-insights");
     expect(insights({ period: "90d" })).toBeNull();
     expect(insights({ project_id: "0" })).toBeNull();
     expect(insights({ period: "30d", search: "x" })).toBeNull();

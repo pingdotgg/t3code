@@ -1,7 +1,7 @@
 import * as Electron from "electron";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { DEFAULT_ORBIT_GATEWAY_URL } from "@t3tools/client-runtime/orbit-gateway";
+import { DEFAULT_ORBIT_GATEWAY_URL, INSIGHT_PERIODS } from "@t3tools/client-runtime/orbit-gateway";
 
 import * as DesktopIpc from "../DesktopIpc.ts";
 import { ORBIT_GATEWAY_SEND_CHANNEL } from "../channels.ts";
@@ -81,10 +81,12 @@ const ROOT_CALLS: ReadonlyArray<{ readonly method: "GET" | "POST"; readonly patt
   { method: "POST", pattern: /^\/broadcasting\/auth$/ },
 ];
 
-/** The Tasks board's insights: a period, and optionally one Project. */
+/** The Tasks board's insights: one of the board's periods, and optionally one Project. */
 function isTaskInsightsQuery(query: Readonly<Record<string, string>>): boolean {
   return Object.entries(query).every(([key, value]) =>
-    key === "period" ? value === "7d" || value === "30d" : key === "project_id" && isOrbitId(value),
+    key === "period"
+      ? INSIGHT_PERIODS.some((period) => period === value)
+      : key === "project_id" && isOrbitId(value),
   );
 }
 
