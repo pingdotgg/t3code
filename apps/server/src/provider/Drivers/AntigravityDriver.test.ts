@@ -667,6 +667,51 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
   );
 
   it.effect.skipIf(windowsHost)(
+    "runs text generation in an isolated profile even when the instance profile has hooks and MCP",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        const configDirectory = h.path.join(h.profileDirectory, "config");
+        const acpDirectory = h.path.join(h.profileDirectory, "antigravity-acp");
+        yield* h.fs.makeDirectory(configDirectory, { recursive: true });
+        yield* h.fs.makeDirectory(acpDirectory, { recursive: true });
+        yield* h.fs.writeFileString(
+          h.path.join(configDirectory, "hooks.json"),
+          '{"guard":{"PreInvocation":[{"command":"exit 1"}]}}',
+        );
+        yield* h.fs.writeFileString(
+          h.path.join(configDirectory, "mcp_config.json"),
+          '{"mcpServers":{"ai-memory":{"command":"mem"}}}',
+        );
+        yield* h.fs.writeFileString(
+          h.path.join(acpDirectory, "antigravity-oauth-token"),
+          '{"token":{"access_token":"tok"}}',
+        );
+
+        yield* h.refresh();
+        const snapshot = yield* h.instance.snapshot.getSnapshot;
+        expect(snapshot.supportsTextGeneration).toBe(true);
+
+        const launchesBefore = h.launches.length;
+        yield* h.instance.textGeneration
+          .generateThreadTitle({
+            cwd: h.profileDirectory,
+            message: "Name this thread",
+            modelSelection: { instanceId: h.instance.instanceId, model: "gemini-test-low" },
+          })
+          .pipe(Effect.ignore);
+        const textLaunch = h.launches
+          .slice(launchesBefore)
+          .find((launch) => launch.command === h.first.executablePath);
+        expect(textLaunch).toBeDefined();
+        expect(textLaunch?.profileDirectory).toBeDefined();
+        expect(textLaunch?.profileDirectory).not.toBe(h.profileDirectory);
+        expect(yield* h.fs.exists(textLaunch!.profileDirectory!)).toBe(false);
+        yield* h.assertClosed;
+      }),
+  );
+
+  it.effect.skipIf(windowsHost)(
     "removes runtime temp directories left by a previous server on create",
     () =>
       Effect.gen(function* () {
