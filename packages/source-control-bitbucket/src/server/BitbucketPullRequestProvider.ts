@@ -170,15 +170,16 @@ export const make = Effect.gen(function* () {
     });
   };
 
-  // The pull request itself carries the detail, so a rate-limited secondary read degrades it.
+  // The pull request itself carries the detail, so a rate-limited secondary read only makes it partial.
   const recoverDetailRead = <A>(
     read: Effect.Effect<A, BitbucketPullRequestApi.BitbucketPullRequestApiError>,
     fallback: A,
   ) =>
     recoverRead(read, fallback).pipe(
+      Effect.map((value) => ({ value, partial: false })),
       Effect.catchIf(
         (error) => bitbucketProviderFailure(error).reason === "rate-limited",
-        () => Effect.succeed(fallback),
+        () => Effect.succeed({ value: fallback, partial: true }),
       ),
     );
 
@@ -254,10 +255,10 @@ export const make = Effect.gen(function* () {
         Effect.map(
           ([
             pullRequest,
-            diffStat,
-            mergeability,
-            checks,
-            canWrite,
+            { value: diffStat, partial: diffStatPartial },
+            { value: mergeability, partial: mergeabilityPartial },
+            { value: checks, partial: checksPartial },
+            { value: canWrite, partial: canWritePartial },
           ]): ProviderChangeRequestDetail => ({
             ...toChangeRequest(pullRequest),
             mergeability,
@@ -272,6 +273,9 @@ export const make = Effect.gen(function* () {
             // Bitbucket exposes no strategy permissions; unsupported strategies fail at merge.
             mergeCapabilities: { merge: true, squash: true, rebase: true },
             viewerPermissions: bitbucketViewerPermissions({ canWrite }),
+            ...(diffStatPartial || mergeabilityPartial || checksPartial || canWritePartial
+              ? { partial: true }
+              : {}),
           }),
         ),
       );

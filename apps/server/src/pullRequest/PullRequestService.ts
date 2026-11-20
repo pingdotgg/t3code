@@ -1909,6 +1909,12 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  // Fallback values from failed secondary reads; they must not be cached or replace a fuller reading.
+  const partialDetails = new WeakSet<PullRequestDetail>();
+  const flagged = (changeRequest: ProviderChangeRequestDetail, detail: PullRequestDetail) => {
+    if (changeRequest.partial === true) partialDetails.add(detail);
+    return detail;
+  };
   const detailUncached: PullRequestService["Service"]["detail"] = (input) =>
     requireProject(input).pipe(
       Effect.flatMap((project) =>
@@ -1926,68 +1932,70 @@ export const make = Effect.gen(function* () {
           ],
           { concurrency: 2 },
         ).pipe(
-          Effect.map(([{ value: changeRequest, observedAt }, viewer]): PullRequestDetail => ({
-            provider: project.api.kind,
-            capabilities: project.api.capabilities,
-            projectId: project.project.id,
-            projectTitle: project.project.title,
-            workspaceRoot: project.project.workspaceRoot,
-            repository: project.repository,
-            number: changeRequest.number,
-            title: changeRequest.title,
-            body: changeRequest.body,
-            url: changeRequest.url,
-            author: changeRequest.author,
-            state: changeRequest.state,
-            isDraft: changeRequest.isDraft,
-            mergeability: changeRequest.mergeability,
-            ...(changeRequest.rebaseRequired === undefined
-              ? {}
-              : { rebaseRequired: changeRequest.rebaseRequired }),
-            additions: changeRequest.additions,
-            deletions: changeRequest.deletions,
-            changedFiles: changeRequest.changedFiles,
-            headBranch: changeRequest.headBranch,
-            ...(changeRequest.headRepositoryNameWithOwner === undefined
-              ? {}
-              : { headRepositoryNameWithOwner: changeRequest.headRepositoryNameWithOwner }),
-            ...(changeRequest.headSha ? { headSha: changeRequest.headSha } : {}),
-            baseBranch: changeRequest.baseBranch,
-            createdAt: changeRequest.createdAt,
-            updatedAt: changeRequest.updatedAt,
-            observedAt,
-            mergedAt: changeRequest.mergedAt,
-            ...(changeRequest.mergeCommitSha
-              ? { mergeCommitSha: changeRequest.mergeCommitSha }
-              : {}),
-            ...(changeRequest.mergedBy ? { mergedBy: changeRequest.mergedBy } : {}),
-            closedAt: changeRequest.closedAt,
-            reviewers: changeRequest.reviewers,
-            labels: changeRequest.labels,
-            checks: changeRequest.checks,
-            mergeCapabilities: changeRequest.mergeCapabilities,
-            viewerPermissions: changeRequest.viewerPermissions,
-            ...(viewer === null || viewer.trim().length === 0 ? {} : { viewer }),
-            ...(changeRequest.baseComparison === undefined
-              ? {}
-              : { baseComparison: changeRequest.baseComparison }),
-            ...(changeRequest.behindBy === undefined ? {} : { behindBy: changeRequest.behindBy }),
-            ...(changeRequest.autoMergeEnabled === undefined
-              ? {}
-              : { autoMergeEnabled: changeRequest.autoMergeEnabled }),
-            ...(changeRequest.autoMergeMethod === undefined
-              ? {}
-              : { autoMergeMethod: changeRequest.autoMergeMethod }),
-            ...(changeRequest.maintainerCanModify === undefined
-              ? {}
-              : { maintainerCanModify: changeRequest.maintainerCanModify }),
-            ...(changeRequest.workflowApprovalsRequired === undefined
-              ? {}
-              : { workflowApprovalsRequired: changeRequest.workflowApprovalsRequired }),
-            ...(changeRequest.mergeQueueRemoval === undefined
-              ? {}
-              : { mergeQueueRemoval: changeRequest.mergeQueueRemoval }),
-          })),
+          Effect.map(([{ value: changeRequest, observedAt }, viewer]) =>
+            flagged(changeRequest, {
+              provider: project.api.kind,
+              capabilities: project.api.capabilities,
+              projectId: project.project.id,
+              projectTitle: project.project.title,
+              workspaceRoot: project.project.workspaceRoot,
+              repository: project.repository,
+              number: changeRequest.number,
+              title: changeRequest.title,
+              body: changeRequest.body,
+              url: changeRequest.url,
+              author: changeRequest.author,
+              state: changeRequest.state,
+              isDraft: changeRequest.isDraft,
+              mergeability: changeRequest.mergeability,
+              ...(changeRequest.rebaseRequired === undefined
+                ? {}
+                : { rebaseRequired: changeRequest.rebaseRequired }),
+              additions: changeRequest.additions,
+              deletions: changeRequest.deletions,
+              changedFiles: changeRequest.changedFiles,
+              headBranch: changeRequest.headBranch,
+              ...(changeRequest.headRepositoryNameWithOwner === undefined
+                ? {}
+                : { headRepositoryNameWithOwner: changeRequest.headRepositoryNameWithOwner }),
+              ...(changeRequest.headSha ? { headSha: changeRequest.headSha } : {}),
+              baseBranch: changeRequest.baseBranch,
+              createdAt: changeRequest.createdAt,
+              updatedAt: changeRequest.updatedAt,
+              observedAt,
+              mergedAt: changeRequest.mergedAt,
+              ...(changeRequest.mergeCommitSha
+                ? { mergeCommitSha: changeRequest.mergeCommitSha }
+                : {}),
+              ...(changeRequest.mergedBy ? { mergedBy: changeRequest.mergedBy } : {}),
+              closedAt: changeRequest.closedAt,
+              reviewers: changeRequest.reviewers,
+              labels: changeRequest.labels,
+              checks: changeRequest.checks,
+              mergeCapabilities: changeRequest.mergeCapabilities,
+              viewerPermissions: changeRequest.viewerPermissions,
+              ...(viewer === null || viewer.trim().length === 0 ? {} : { viewer }),
+              ...(changeRequest.baseComparison === undefined
+                ? {}
+                : { baseComparison: changeRequest.baseComparison }),
+              ...(changeRequest.behindBy === undefined ? {} : { behindBy: changeRequest.behindBy }),
+              ...(changeRequest.autoMergeEnabled === undefined
+                ? {}
+                : { autoMergeEnabled: changeRequest.autoMergeEnabled }),
+              ...(changeRequest.autoMergeMethod === undefined
+                ? {}
+                : { autoMergeMethod: changeRequest.autoMergeMethod }),
+              ...(changeRequest.maintainerCanModify === undefined
+                ? {}
+                : { maintainerCanModify: changeRequest.maintainerCanModify }),
+              ...(changeRequest.workflowApprovalsRequired === undefined
+                ? {}
+                : { workflowApprovalsRequired: changeRequest.workflowApprovalsRequired }),
+              ...(changeRequest.mergeQueueRemoval === undefined
+                ? {}
+                : { mergeQueueRemoval: changeRequest.mergeQueueRemoval }),
+            }),
+          ),
         ),
       ),
     );
@@ -2983,7 +2991,10 @@ export const make = Effect.gen(function* () {
     return { serve, dropExpired };
   })();
 
-  const makeLastGoodRead = <A>(capacity: number) => {
+  const makeLastGoodRead = <A>(
+    capacity: number,
+    isPartial: (value: A) => boolean = () => false,
+  ) => {
     const held = new Map<string, { readonly at: number; readonly value: A }>();
     const record = (key: string, value: A) =>
       Effect.map(Clock.currentTimeMillis, (at) => {
@@ -2994,9 +3005,20 @@ export const make = Effect.gen(function* () {
         }
         held.set(key, { at, value });
       });
+    const recent = (key: string) =>
+      Effect.map(Clock.currentTimeMillis, (now) => {
+        const snapshot = held.get(key);
+        return snapshot === undefined || now - snapshot.at > Duration.toMillis(STALE_DETAIL_WINDOW)
+          ? undefined
+          : snapshot.value;
+      });
     const read = (key: string, effect: Effect.Effect<A, PullRequestError>) =>
       effect.pipe(
-        Effect.tap((value) => record(key, value)),
+        Effect.flatMap((value) =>
+          isPartial(value)
+            ? Effect.map(recent(key), (snapshot) => snapshot ?? value)
+            : Effect.as(record(key, value), value),
+        ),
         Effect.catchTags({
           PullRequestOperationError: (error) => {
             if (!isPullRequestProviderError(error.cause)) {
@@ -3006,19 +3028,14 @@ export const make = Effect.gen(function* () {
             if (provider.reason !== "failed" && provider.reason !== "rate-limited") {
               return Effect.fail(error);
             }
-            return Effect.flatMap(Clock.currentTimeMillis, (now) => {
-              const snapshot = held.get(key);
-              if (
-                snapshot === undefined ||
-                now - snapshot.at > Duration.toMillis(STALE_DETAIL_WINDOW)
-              ) {
-                return Effect.fail(error);
-              }
-              return Effect.logWarning("using recent pull request data after a failed refresh", {
-                operation: error.operation,
-                reason: provider.reason,
-              }).pipe(Effect.as(snapshot.value));
-            });
+            return Effect.flatMap(recent(key), (snapshot) =>
+              snapshot === undefined
+                ? Effect.fail(error)
+                : Effect.logWarning("using recent pull request data after a failed refresh", {
+                    operation: error.operation,
+                    reason: provider.reason,
+                  }).pipe(Effect.as(snapshot)),
+            );
           },
         }),
       );
@@ -3030,7 +3047,9 @@ export const make = Effect.gen(function* () {
     return { peek: (key: string) => held.get(key)?.value, read, record, serveHeld };
   };
   const lastGoodSummary = makeLastGoodRead<PullRequestSummary>(DETAIL_CACHE_CAPACITY);
-  const lastGoodDetail = makeLastGoodRead<PullRequestDetail>(DETAIL_CACHE_CAPACITY);
+  const lastGoodDetail = makeLastGoodRead<PullRequestDetail>(DETAIL_CACHE_CAPACITY, (value) =>
+    partialDetails.has(value),
+  );
 
   // A shared monotonic counter prevents evicted scopes reusing epochs held by old entries.
   let epochCounter = 0;
@@ -3371,6 +3390,7 @@ export const make = Effect.gen(function* () {
       return detailUncached(refOfCacheKey(key)).pipe(
         Effect.tap(
           Effect.fn("PullRequestService.recordDetailStats")(function* (value: PullRequestDetail) {
+            if (partialDetails.has(value)) return;
             // GitHub and Azure detail include the same checks; the checks TTL counts from their observation.
             // Azure detail answers a failed policy read with no checks, which must not be cached.
             if (
@@ -3403,7 +3423,9 @@ export const make = Effect.gen(function* () {
     {
       capacity: DETAIL_CACHE_CAPACITY,
       timeToLive: (exit) =>
-        Exit.isSuccess(exit) ? detailTimeToLive(exit.value.state) : Duration.zero,
+        Exit.isSuccess(exit) && !partialDetails.has(exit.value)
+          ? detailTimeToLive(exit.value.state)
+          : Duration.zero,
     },
   );
   const summaryFromDetail = (
@@ -3509,6 +3531,7 @@ export const make = Effect.gen(function* () {
     const read = Cache.get(detailCache, key).pipe(
       Effect.tap((value) => {
         if (value.state === "merged") noteMerged(input);
+        if (partialDetails.has(value)) return Effect.void;
         const summary = summaryFromDetail(value, lastGoodSummary.peek(key));
         return noteDetailReading(input, summary).pipe(
           Effect.andThen(
@@ -3520,7 +3543,11 @@ export const make = Effect.gen(function* () {
       }),
     );
     return input.allowStale === false
-      ? read.pipe(Effect.tap((value) => lastGoodDetail.record(key, value)))
+      ? read.pipe(
+          Effect.tap((value) =>
+            partialDetails.has(value) ? Effect.void : lastGoodDetail.record(key, value),
+          ),
+        )
       : lastGoodDetail.serveHeld(key, read);
   };
 

@@ -130,6 +130,9 @@ for (const operation of [
             });
           } else {
             expect(result._tag).toBe("Success");
+            if (!isActivityRead && result._tag === "Success") {
+              expect("partial" in result.success && result.success.partial).toBe(status === 429);
+            }
           }
         }
       }),
@@ -175,7 +178,10 @@ it.effect("returns the pull request when only its diffstat read is rate limited"
       }),
     );
 
-    expect(result).toMatchObject({ _tag: "Success", success: { title: "Rate limited diffstat" } });
+    expect(result).toMatchObject({
+      _tag: "Success",
+      success: { title: "Rate limited diffstat", partial: true },
+    });
   }),
 );
 

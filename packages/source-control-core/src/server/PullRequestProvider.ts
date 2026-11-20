@@ -276,6 +276,8 @@ export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
   readonly autoMergeMethod?: PullRequestMergeMethod;
   readonly workflowApprovalsRequired?: number;
   readonly mergeQueueRemoval?: PullRequestMergeQueueRemoval;
+  /** A secondary read failed and its fields hold fallbacks, so it must not replace a full reading. */
+  readonly partial?: boolean;
 }
 
 export interface ProviderChangeRequestActivity {

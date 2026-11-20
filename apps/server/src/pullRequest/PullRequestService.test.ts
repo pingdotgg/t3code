@@ -2086,6 +2086,41 @@ it.effect(
     }),
 );
 
+it.effect("a partial detail is returned without replacing a fuller reading", () =>
+  Effect.gen(function* () {
+    let partial = false;
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "cloud", workspaceRoot: "/cloud", repository: "acme/web" }),
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequest: ({ number }) =>
+            Effect.sync(() =>
+              partial
+                ? { ...hostedChangeRequest("Body", 0), number, changedFiles: 0, partial: true }
+                : { ...hostedChangeRequest("Body", 120), number },
+            ),
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+
+    yield* service.detail(reference);
+    partial = true;
+    yield* TestClock.adjust("61 seconds");
+    const fresh = yield* service.detail({ ...reference, allowStale: false });
+    const reopened = yield* service.detail(reference);
+    const cold = yield* service.detail({ ...reference, number: 2 });
+
+    expect({ fresh, reopened, cold }).toMatchObject({
+      fresh: { additions: 0, changedFiles: 0 },
+      reopened: { additions: 120, changedFiles: 2 },
+      cold: { number: 2, additions: 0, changedFiles: 0 },
+    });
+  }),
+);
+
 it.effect("refuses a repository that does not belong to the requested project", () =>
   Effect.gen(function* () {
     const service = yield* makeService({
