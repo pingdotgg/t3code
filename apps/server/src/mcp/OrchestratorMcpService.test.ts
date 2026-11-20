@@ -5129,7 +5129,7 @@ describe("OrchestratorMcpService thread lookup", () => {
     }),
   );
 
-  it.effect("records the linked environment's thread that sent a message", () =>
+  it.effect("records whether the user or a linked environment's thread sent a message", () =>
     Effect.gen(function* () {
       const target = liveThreadShell(ThreadId.make("thread:target"));
       const sender = {
@@ -5174,7 +5174,12 @@ describe("OrchestratorMcpService thread lookup", () => {
       const fromLink = yield* sendAs(linked(sender));
       assert.deepStrictEqual(fromLink?.linkedSender, sender);
       assert.isUndefined(fromLink?.senderThreadId);
-      assert.isUndefined((yield* sendAs(linked()))?.linkedSender);
+      assert.strictEqual(fromLink?.createdBy, "agent");
+      const fromBareLink = yield* sendAs(linked());
+      assert.isUndefined(fromBareLink?.linkedSender);
+      assert.strictEqual(fromBareLink?.createdBy, "agent");
+      // A client the user signed in, such as the `t3` CLI, sends as the user.
+      assert.strictEqual((yield* sendAs(client))?.createdBy, "user");
     }),
   );
 

@@ -990,6 +990,7 @@ it.effect("a client launches with the fallback for an exhausted default", () =>
       modelSelection: fallbackModel,
     });
     expect(launched[0]?.modelSelection).toEqual(fallbackModel);
+    expect(launched[0]?.createdBy).toBe("user");
   }),
 );
 

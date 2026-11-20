@@ -123,6 +123,7 @@ import {
   clientModeCeiling,
   type McpInvocationScope,
   type McpThreadInvocationScope,
+  mcpMessageActor,
   requireThreadScope,
   threadLinkFor,
 } from "./McpInvocationContext.ts";
@@ -3645,7 +3646,7 @@ const make = Effect.gen(function* () {
           attachments: [],
           mode,
           ...(input.freshContext ? { freshContext: true } : {}),
-          createdBy: "agent",
+          createdBy: mcpMessageActor(scope),
           creationSource: "mcp",
         })
         .pipe(

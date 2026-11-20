@@ -6,6 +6,7 @@ import {
   PreviewAutomationUnavailableError,
   type ProviderInstanceId,
   type ProviderInteractionMode,
+  type OrchestrationV2Actor,
   type OrchestrationV2LinkedSender,
   type RuntimeMode,
   type ThreadId,
@@ -160,6 +161,17 @@ export interface McpInvocationScope {
   /** False when the calling thread's project is on no forge T3 reads; `/mcp` reads it per request. */
   readonly forge?: boolean;
 }
+
+/**
+ * Who a message an MCP caller sends comes from. A client the user signed in from outside a thread,
+ * such as the `t3` CLI, acts for the user; a thread's agent or a linked environment's does not.
+ */
+export const mcpMessageActor = (
+  scope: Pick<McpInvocationScope, "thread" | "client">,
+): OrchestrationV2Actor =>
+  scope.thread === undefined && scope.client !== undefined && scope.client.linked !== true
+    ? "user"
+    : "agent";
 
 /**
  * T3 Code renders `t3-thread://` links as thread chips. Other MCP clients cannot open them, so
