@@ -5268,11 +5268,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           const existing = links.find((link) => threadIssueKeysEqual(link, command));
           if (command.type === "thread.issue.unlink") {
             if (!existing) return thread;
-            return {
-              ...thread,
-              issues: links.filter((link) => link !== existing),
-              updatedAt: now,
-            };
+            return { ...thread, issues: links.filter((link) => link !== existing), updatedAt: now };
           }
           if (existing) return thread;
           return {
@@ -5383,9 +5379,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                       command.checksPending !== undefined
                         ? command.checksPending
                         : existing.snapshot?.checksState === "pending" ||
-                          existing.endedWatch?.checksPending === true) && {
-                        checksPending: true,
-                      }),
+                          existing.endedWatch?.checksPending === true) && { checksPending: true }),
                       ...(existing.endedWatch?.checksAwaitedSince !== undefined && {
                         checksAwaitedSince: existing.endedWatch.checksAwaitedSince,
                       }),
