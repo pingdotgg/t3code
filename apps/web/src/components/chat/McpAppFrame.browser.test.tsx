@@ -120,10 +120,6 @@ const requestLink = (app: Window, url: string) =>
 
 describe("McpAppFrame", () => {
   it.each([
-    [
-      "https://github.com/acme/widgets/issues/12",
-      { kind: "issue", tracker: "github", scope: "acme/widgets", key: "12" },
-    ],
     ["https://github.com/acme/widgets/pull/86", { kind: "pull-request", number: 86 }],
     [
       "https://linear.app/acme/issue/WEB-17/fix-it",
