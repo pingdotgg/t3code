@@ -6,6 +6,7 @@ import {
   CommandId,
   ContextTransferId,
   EnvironmentId,
+  MessageId,
   NodeId,
   type OrchestrationV2Run,
   ProjectId,
@@ -231,6 +232,14 @@ const laptop = clientScope("laptop", true, "auto");
 const desk = clientScope("desk", true, "auto");
 const trusted = clientScope("trusted", true, "full-access");
 const claudeCode = clientScope("claude-code", false, "full-access");
+const threadScope = (threadId: ThreadId): McpInvocationContext.McpInvocationScope => ({
+  environmentId: EnvironmentId.make("environment:box"),
+  requestNamespace: `provider:${threadId}`,
+  thread: { threadId, providerSessionId: `provider:${threadId}`, providerInstanceId: instanceId },
+  client: undefined,
+  capabilities: new Set(["orchestration"]),
+  issuedAt: 0,
+});
 
 const call = (
   scope: McpInvocationContext.McpInvocationScope,
@@ -349,6 +358,41 @@ it.layer(Layer.provideMerge(layerTools, layerOrchestration))("work a link starts
       assert.deepEqual((yield* projections.getThreadShell(task))?.delegatedFrom, delegatedFrom);
       const claimed = yield* launch(claudeCode, "Claims a parent", { delegatedFrom });
       assert.equal((yield* projections.getThreadShell(claimed))?.delegatedFrom, undefined);
+
+      // A thread here that launches one is its parent, whatever parent it names.
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const launcher = ThreadId.make("thread:launcher");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create:launcher"),
+        threadId: launcher,
+        projectId,
+        title: "Launcher",
+        modelSelection: { instanceId, model: "gpt-5" },
+        runtimeMode: "auto",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("start:launcher"),
+        threadId: launcher,
+        messageId: MessageId.make("message:launcher"),
+        text: "Launch a worker.",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const worker = yield* launch(threadScope(launcher), "Worker", { delegatedFrom });
+      assert.deepEqual((yield* projections.getThreadShell(worker))?.delegatedFrom, {
+        environmentId: "environment:box",
+        threadId: launcher,
+        title: "Launcher",
+      });
     }),
   );
 
