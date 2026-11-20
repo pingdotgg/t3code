@@ -76,10 +76,11 @@ export const buildFeedbackTrace = (input: {
   readonly driverOf: (run: OrchestrationV2Run) => string | undefined;
   readonly submittingRunId: OrchestrationV2Run["id"];
 }): FeedbackTrace => {
-  const runs = input.runs
+  const window = feedbackTraceWindow(input.turns);
+  const started = input.runs
     .filter((run) => run.startedAt !== null)
-    .toSorted((a, b) => a.ordinal - b.ordinal)
-    .slice(-feedbackTraceWindow(input.turns));
+    .toSorted((a, b) => a.ordinal - b.ordinal);
+  const runs = started.slice(-window);
   const firstTextTurn = input.withText ? runs.length - input.turns + 1 : Infinity;
   const turnOf = new Map(runs.map((run, index) => [run.id, { turn: index + 1, run }] as const));
   // The `t3_feedback` call making this report is still running; listed, it reads as a hung call.
@@ -88,7 +89,8 @@ export const buildFeedbackTrace = (input: {
     item.type === "dynamic_tool" &&
     outcome(item) === "unfinished" &&
     resolveT3ToolName(item.toolName ?? "", input.t3Tools) === "t3_feedback";
-  let truncated = false;
+  // Asked for more turns than the window holds, in a thread long enough to have them.
+  let truncated = input.turns > window && started.length >= window;
   const entries = input.items
     .filter(
       (item) =>

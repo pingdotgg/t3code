@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  feedbackConversationHint,
   feedbackPreviewFields,
   feedbackRequestDisplay,
   feedbackTraceLines,
+  feedbackTraceSummary,
 } from "./feedbackRequest.ts";
 
 describe("feedbackRequestDisplay", () => {
@@ -57,5 +59,21 @@ describe("feedback preview", () => {
       { key: "0", line: "Turn 1 · You · 5 characters", text: "Hello" },
       { key: "1", line: "Turn 1 · t3_thread_read · error · 1.5 s" },
     ]);
+    // Text only in turn 4 of 5: the wording reaches back to it, not "the last turn".
+    const older = {
+      turns: 5,
+      textTurns: 1,
+      truncated: false,
+      entries: [
+        { turn: 4, type: "user" as const, length: 5, text: "Hello" },
+        { turn: 5, type: "tool" as const, tool: "shell", outcome: "ok" as const },
+      ],
+    };
+    expect(feedbackTraceSummary(older)).toBe(
+      "Outline of 5 recent turns, message text of the last 2 turns",
+    );
+    expect(feedbackConversationHint(older)).toBe(
+      "Adds the text of your messages and the agent's replies in the last 2 turns.",
+    );
   });
 });

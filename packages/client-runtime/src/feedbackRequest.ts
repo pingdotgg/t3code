@@ -99,28 +99,32 @@ export function feedbackTraceLines(
   });
 }
 
+type Trace = NonNullable<AgentFeedbackPreview["trace"]>;
+
+// Counted back to the oldest turn with text, so a newer turn without any is still inside it.
+const textSpan = (trace: Trace) => {
+  const withText = trace.entries.filter((entry) => entry.text !== undefined);
+  return withText.length === 0
+    ? 0
+    : trace.turns - Math.min(...withText.map((entry) => entry.turn)) + 1;
+};
+
 /** What the outline holds, in one line. */
-export function feedbackTraceSummary(
-  trace: NonNullable<AgentFeedbackPreview["trace"]>,
-  resolve: MFunctionType = mFallback,
-): string {
+export function feedbackTraceSummary(trace: Trace, resolve: MFunctionType = mFallback): string {
   return resolve(
     msg(
       "Outline of {turns, plural, one {{turns} recent turn} other {{turns} recent turns}}, {textTurns, plural, =0 {no message text} one {message text of the last turn} other {message text of the last {textTurns} turns}}{truncated, select, yes {, shortened to fit} other {}}",
-      { turns: trace.turns, textTurns: trace.textTurns, truncated: trace.truncated ? "yes" : "no" },
+      { turns: trace.turns, textTurns: textSpan(trace), truncated: trace.truncated ? "yes" : "no" },
     ),
   );
 }
 
 /** What the conversation switch adds: the text of the turns the agent said the problem spans. */
-export function feedbackConversationHint(
-  trace: NonNullable<AgentFeedbackPreview["trace"]>,
-  resolve: MFunctionType = mFallback,
-): string {
+export function feedbackConversationHint(trace: Trace, resolve: MFunctionType = mFallback): string {
   return resolve(
     msg(
       "Adds the text of your messages and the agent's replies in the last {textTurns, plural, one {turn} other {{textTurns} turns}}.",
-      { textTurns: trace.textTurns },
+      { textTurns: textSpan(trace) },
     ),
   );
 }

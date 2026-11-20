@@ -40,6 +40,7 @@ import {
 } from "./FeedbackReport.ts";
 import { listFeedbackReports } from "./FeedbackList.ts";
 import * as Feedback from "./FeedbackService.ts";
+import { buildFeedbackTrace } from "./FeedbackTrace.ts";
 import * as Store from "./FeedbackStore.ts";
 
 const threadId = ThreadId.make("thread:feedback");
@@ -106,6 +107,23 @@ const turnItems = [
   item(6, { type: "dynamic_tool", toolName: "mcp__t3-code__t3_feedback", status: "running" }),
   item(6, { type: "dynamic_tool", toolName: "t3-code-thread_1_t3_feedback", status: "running" }),
 ];
+
+it("says so when the report asks for more turns than a trace can hold", () => {
+  const many = Array.from({ length: 81 }, (_, index) => run(index + 1));
+  const trace = (turns: number) =>
+    buildFeedbackTrace({
+      runs: many,
+      items: many.map((_, index) => item(index + 1, { type: "user_message", text: "Hi" })),
+      turns,
+      withText: true,
+      sensitive: [],
+      t3Tools: [],
+      driverOf: () => undefined,
+      submittingRunId: many.at(-1)!.id,
+    });
+  expect(trace(100)).toMatchObject({ turns: 80, textTurns: 80, truncated: true });
+  expect(trace(80)).toMatchObject({ turns: 80, textTurns: 80, truncated: false });
+});
 
 const harness = Effect.gen(function* () {
   const mode = yield* Ref.make<AgentFeedbackMode>("auto");
