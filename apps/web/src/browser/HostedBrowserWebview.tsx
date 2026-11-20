@@ -30,6 +30,7 @@ import { resolveHostedBrowserWebviewWrapperStyle } from "./hostedBrowserWebviewS
 import { usePreviewWebviewConfig } from "./previewWebviewConfigState";
 import { useBrowserLayoutZoomFactor } from "./useBrowserLayoutZoomFactor";
 import { useBrowserViewportResize } from "./useBrowserViewportResize";
+import { subscribeWebviewFocusDismissal } from "./webviewFocusDismissal";
 import {
   INITIAL_WEBVIEW_CRASH_RECOVERY_STATE,
   planWebviewCrashRecovery,
@@ -201,7 +202,7 @@ export function HostedBrowserWebview(props: {
     webview.addEventListener("did-attach", register);
     webview.addEventListener("dom-ready", register);
     webview.addEventListener("render-process-gone", recoverGuest);
-    webview.addEventListener("focus", dismissHostPopups);
+    const unsubscribeFocus = subscribeWebviewFocusDismissal(window, webview, dismissHostPopups);
     webview.addEventListener("ipc-message", guestPointerDown);
     register();
     return () => {
@@ -210,7 +211,7 @@ export function HostedBrowserWebview(props: {
       webview.removeEventListener("did-attach", register);
       webview.removeEventListener("dom-ready", register);
       webview.removeEventListener("render-process-gone", recoverGuest);
-      webview.removeEventListener("focus", dismissHostPopups);
+      unsubscribeFocus();
       webview.removeEventListener("ipc-message", guestPointerDown);
     };
   }, [
