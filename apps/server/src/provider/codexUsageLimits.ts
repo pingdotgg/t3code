@@ -37,6 +37,7 @@ export interface CodexResetCreditsSummary {
 }
 
 const SESSION_MINS = 5 * 60;
+const DAY_MINS = 24 * 60;
 const WEEK_MINS = 7 * 24 * 60;
 const MONTH_MINS = 30 * 24 * 60;
 
@@ -49,11 +50,18 @@ function isoFromEpochSeconds(value: number | null | undefined): string | undefin
 function kindForDuration(mins: number): ServerProviderUsageWindow["kind"] {
   if (mins >= MONTH_MINS) return "monthly";
   if (mins >= WEEK_MINS) return "weekly";
+  if (mins >= DAY_MINS) return "daily";
   return "session";
 }
 
 function labelForKind(kind: ServerProviderUsageWindow["kind"]): string {
-  return kind === "session" ? "Session" : kind === "weekly" ? "Weekly" : "Monthly";
+  return kind === "session"
+    ? "Session"
+    : kind === "daily"
+      ? "Daily"
+      : kind === "weekly"
+        ? "Weekly"
+        : "Monthly";
 }
 
 /** primary/secondary are positions; without windowDurationMins, paid plans use 5-hour/weekly windows and Free/Go use monthly. */

@@ -556,9 +556,10 @@ export function displayLimitWindows(pool: LimitPool) {
 
 const WINDOW_KIND_ORDER: Record<ServerProviderUsageWindow["kind"], number> = {
   session: 0,
-  weekly: 1,
-  monthly: 2,
-  other: 3,
+  daily: 1,
+  weekly: 2,
+  monthly: 3,
+  other: 4,
 };
 
 export function collectLimitPools(
