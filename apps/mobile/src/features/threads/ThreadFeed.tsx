@@ -153,9 +153,11 @@ import {
   Pressable,
   StyleSheet,
   type ColorValue,
+  type ViewProps,
   useWindowDimensions,
   View,
 } from "react-native";
+import { requireNativeView, requireOptionalNativeModule } from "expo";
 import { Image as ExpoImage } from "expo-image";
 import { useResolveClassNames } from "uniwind";
 import { useReduceMotionEnabled } from "../../lib/appState";
@@ -3118,6 +3120,20 @@ function DisclosureRow(props: {
   );
 }
 
+const nativeControls =
+  Platform.OS === "android"
+    ? requireOptionalNativeModule<{
+        hasThreadFeedTouchView?: () => boolean;
+      }>("T3NativeControls")
+    : null;
+const NativeThreadFeedTouchView = nativeControls?.hasThreadFeedTouchView?.()
+  ? requireNativeView<ViewProps>("T3NativeControls", "ThreadFeedTouchView")
+  : null;
+
+function ThreadFeedTouchView(props: ViewProps) {
+  return NativeThreadFeedTouchView ? <NativeThreadFeedTouchView {...props} /> : <View {...props} />;
+}
+
 const THREAD_FEED_MAINTAIN_SCROLL_AT_END = {
   animated: false,
   on: { dataChange: true, itemLayout: true, layout: true },
@@ -4351,9 +4367,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         {/* In a split, rows only re-wrap in the render that hands the list its new width. A native
             column resize would re-wrap them first, and the list would place the taller or shorter
             rows at their old offsets until their measurements came back. */}
-        <View
-          className="flex-1"
-          style={splitLayout && viewportWidth > 0 ? { width: viewportWidth } : undefined}
+        <ThreadFeedTouchView
+          style={{ flex: 1, width: splitLayout && viewportWidth > 0 ? viewportWidth : undefined }}
         >
           {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- ThreadFeedScrollView is passed through the iOS-only spread below; the prop rejects undefined. */}
           <KeyboardAwareLegendList
@@ -4464,7 +4479,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               paddingRight: contentHorizontalPadding + contentRightInset,
             }}
           />
-        </View>
+        </ThreadFeedTouchView>
         {presentedFeed.length === 0 &&
         !props.worktreeSetup &&
         props.activeWorkStartedAt === null &&
