@@ -41,6 +41,7 @@ export const CODE_BLOCK_LANGUAGES = [
   { id: "toml", label: "TOML" },
   { id: "tsx", label: "TSX" },
   { id: "typescript", label: "TypeScript" },
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- code language name
   { id: "verilog", label: "Verilog" },
   { id: "vhdl", label: "VHDL" },
   { id: "vue", label: "Vue" },
