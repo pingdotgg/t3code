@@ -10,7 +10,8 @@ import { AsyncResult } from "effect/reactivity";
 import { useNavigation } from "@react-navigation/native";
 import { useGT, useMessages } from "gt-react-native";
 import { useState } from "react";
-import { Linking, Platform, View } from "react-native";
+import { Platform, View } from "react-native";
+import { tryOpenExternalUrl } from "../../../lib/openExternalUrl";
 import Svg, { Path } from "react-native-svg";
 import { withUniwind } from "uniwind";
 
@@ -175,7 +176,7 @@ export function IssueTrackerCredentialForm(props: {
             label={gt("Create one")}
             tone="text"
             size="compact"
-            onPress={() => void Linking.openURL(helpUrl).catch(() => undefined)}
+            onPress={() => void tryOpenExternalUrl(helpUrl)}
           />
         ) : null}
         {tracker.connected ? (
