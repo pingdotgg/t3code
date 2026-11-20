@@ -214,6 +214,24 @@ describe("AzureDevOpsIssueTracker", () => {
     }),
   );
 
+  it.effect("reads a Bug's text from Repro Steps when it has no Description", () =>
+    Effect.gen(function* () {
+      const { "System.Description": _description, ...fields } = WORK_ITEM.fields;
+      const bug = {
+        ...WORK_ITEM,
+        fields: { ...fields, "Microsoft.VSTS.TCM.ReproSteps": "<div>Open the composer.</div>" },
+      };
+      const api = yield* tracker((args) => (args[0] === "boards" ? encode(bug) : answer(args)));
+      const issue = yield* api.getIssue({
+        cwd: "/w",
+        host: "dev.azure.com",
+        scope: "acme/Web App",
+        key: "7",
+      });
+      expect(issue.body).toBe("<div>Open the composer.</div>");
+    }),
+  );
+
   it.effect("filters open work items by the project's own finished states", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
