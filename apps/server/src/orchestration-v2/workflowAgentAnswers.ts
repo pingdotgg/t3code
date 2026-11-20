@@ -2,7 +2,10 @@ import type { OrchestrationV2WorkflowAgent } from "@t3tools/contracts";
 
 import { field, text } from "./unknownField.ts";
 
-export type WorkflowAgentMetadata = Pick<OrchestrationV2WorkflowAgent, "effort" | "speed"> & {
+export type WorkflowAgentMetadata = Pick<
+  OrchestrationV2WorkflowAgent,
+  "effort" | "speed" | "model"
+> & {
   readonly messageId?: string;
 };
 
@@ -22,11 +25,13 @@ export function mergeWorkflowAgentMetadata(
     const messageId = text(field(message, "id"));
     const effort = text(field(entry, "effort"));
     const speed = text(field(field(message, "usage"), "speed"));
+    const model = text(field(message, "model"));
     metadata = {
       ...(messageId !== undefined && messageId === metadata.messageId ? metadata : {}),
       ...(messageId === undefined ? {} : { messageId }),
       ...(effort === undefined ? {} : { effort }),
       ...(speed === undefined ? {} : { speed }),
+      ...(model === undefined || model === "<synthetic>" ? {} : { model }),
     };
   }
   return metadata;

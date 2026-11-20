@@ -7956,8 +7956,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : new Map(current).set(nativeThreadId, { ...entry, messages });
           });
 
-        // Claude Code records the effort a subagent ran at only in its transcript.
-        const readSubagentTranscriptEffort = Effect.fnUntraced(function* (
+        // Only the transcript records a subagent's effort, and its model when its reply called no tool.
+        const readSubagentTranscriptMetadata = Effect.fnUntraced(function* (
           context: ActiveClaudeTurnContext,
           taskId: string,
           completed: boolean,
@@ -8010,7 +8010,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             yield* Effect.sleep(WORKFLOW_MEMBER_TRANSCRIPT_FLUSH_MS);
             yield* read();
           }
-          return metadata.effort;
+          return metadata;
         });
 
         const updateClaudeSubagentNode = Effect.fnUntraced(function* (input: {
@@ -8117,24 +8117,31 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             workflow === undefined
               ? undefined
               : withWorkflowMemberThreadIds(workflow, childThreadId);
-          // Unstated effort stays unknown until the transcript reports it: a custom agent definition may override the owner's.
+          const knownModel = input.model ?? priorTask?.model ?? null;
+          // Unstated effort and model stay unknown until the transcript reports them: a custom agent definition may override the owner's.
           // Read it before the settle: a run stops consuming events once its subagents settle.
+          const transcript =
+            existingSubagent !== undefined &&
+            (existingSubagent.effort === undefined || knownModel === null) &&
+            lifecycleChanged &&
+            input.status !== "running" &&
+            existingSubagent.task.modelSelection !== undefined &&
+            (input.nativeTaskType ?? existingSubagent.nativeTaskType) !== CLAUDE_WORKFLOW_TASK_TYPE
+              ? yield* readSubagentTranscriptMetadata(
+                  input.context,
+                  input.taskId,
+                  input.status === "completed",
+                )
+              : undefined;
           const effort =
             existingSubagent === undefined
               ? input.effort
-              : (existingSubagent.effort ??
-                (lifecycleChanged &&
-                input.status !== "running" &&
-                existingSubagent.task.modelSelection !== undefined &&
-                (input.nativeTaskType ?? existingSubagent.nativeTaskType) !==
-                  CLAUDE_WORKFLOW_TASK_TYPE
-                  ? yield* readSubagentTranscriptEffort(
-                      input.context,
-                      input.taskId,
-                      input.status === "completed",
-                    )
-                  : undefined));
-          const model = input.model ?? priorTask?.model ?? null;
+              : (existingSubagent.effort ?? transcript?.effort);
+          const model =
+            knownModel ??
+            (transcript?.model === undefined
+              ? null
+              : canonicalClaudeSubagentModel(modelCatalog, transcript.model));
           const task = {
             ...(priorTask ?? {
               id: nodeId,
