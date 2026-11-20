@@ -70,7 +70,7 @@ const utf8Bytes = (value: unknown): number => {
   try {
     return Buffer.byteLength(JSON.stringify(value) ?? "", "utf8");
   } catch {
-    return MAX_PROXY_SCHEMA_BYTES;
+    return Number.POSITIVE_INFINITY;
   }
 };
 
@@ -108,20 +108,31 @@ export const make = (
         .slice(0, MAX_RESULTS)
         .map((match) => match.tool);
       if (options?.mode === "deferred-proxy") {
-        let usedBytes = 0;
-        return found.map((tool): ListedTool => {
+        const results: Array<ListedTool> = [];
+        for (const tool of found) {
           const withSchema: ListedTool = {
             name: tool.name,
             description: tool.description,
             inputSchema: tool.inputSchema,
           };
-          const size = utf8Bytes(withSchema);
-          if (usedBytes === 0 || usedBytes + size <= MAX_PROXY_SCHEMA_BYTES) {
-            usedBytes += size;
-            return withSchema;
+          if (utf8Bytes({ tools: [...results, withSchema] }) <= MAX_PROXY_SCHEMA_BYTES) {
+            results.push(withSchema);
+            continue;
           }
-          return { name: tool.name, description: tool.description };
-        });
+          const compact: ListedTool = { name: tool.name, description: tool.description };
+          if (utf8Bytes({ tools: [...results, compact] }) <= MAX_PROXY_SCHEMA_BYTES) {
+            results.push(compact);
+            continue;
+          }
+          if (results.length === 0) {
+            results.push({
+              name: tool.name,
+              description: `${tool.description.slice(0, 200)} (Truncated: exceeds response budget.)`,
+            });
+          }
+          break;
+        }
+        return results;
       }
       if (found.length > 0) {
         load(

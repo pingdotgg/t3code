@@ -6,6 +6,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -1445,9 +1446,18 @@ const enabledWhenFallbackClient = {
   clientInfo: { name: "t3-code", version: packageJson.version },
 } as const;
 
-const isToolRegistrationEnabled = (annotations: Context.Context<never>): boolean => {
+const isToolRegistrationEnabled = (
+  annotations: Context.Context<never>,
+  initializePayload?: (typeof McpSchema.Initialize.payloadSchema)["Type"],
+): boolean => {
   const enabledWhen = Context.getOrUndefined(annotations, McpSchema.EnabledWhen);
-  return enabledWhen === undefined || enabledWhen(enabledWhenFallbackClient);
+  if (enabledWhen === undefined) return true;
+  if (initializePayload !== undefined) return enabledWhen(initializePayload);
+  const fiber = Fiber.getCurrent();
+  const client = fiber
+    ? Context.getOrUndefined(fiber.context, McpSchema.McpServerClient)
+    : undefined;
+  return enabledWhen(client?.initializePayload ?? enabledWhenFallbackClient);
 };
 
 const layerToolExposure = Layer.effect(
@@ -1568,7 +1578,7 @@ const registerToolCall = Effect.fn("McpHttpServer.registerToolCall")(function* (
                   const entry = server.tools.find(
                     (candidate) =>
                       candidate.tool.name === name &&
-                      isToolRegistrationEnabled(candidate.annotations),
+                      isToolRegistrationEnabled(candidate.annotations, client.initializePayload),
                   );
                   if (entry !== undefined) {
                     return Effect.succeed(

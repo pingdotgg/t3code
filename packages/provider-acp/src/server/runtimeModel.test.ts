@@ -1806,6 +1806,30 @@ describe("extractMcpToolCallIdentity", () => {
 
     expect(extractMcpToolCallIdentity(toolCall)).toBeUndefined();
   });
+
+  it("unwraps T3 tool_call when Antigravity routes it through call_mcp_tool", () => {
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "call-mcp-proxy-1",
+      kind: "execute",
+      title: "MCP Tool tool_call",
+      status: "completed",
+      rawInput: {
+        ServerName: "t3-code",
+        ToolName: "tool_call",
+        Arguments: {
+          name: "html_render",
+          arguments: { title: "Chart", html: "<p>hi</p>", height: 240 },
+        },
+      },
+    });
+
+    expect(extractMcpToolCallIdentity(toolCall)).toEqual({
+      server: "t3-code",
+      tool: "html_render",
+      input: { title: "Chart", html: "<p>hi</p>", height: 240 },
+    });
+  });
 });
 
 describe("embeddedTerminalIdsFromSessionUpdate", () => {

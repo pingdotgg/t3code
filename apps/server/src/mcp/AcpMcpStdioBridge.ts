@@ -10,6 +10,7 @@ import * as Stream from "effect/Stream";
 import { discardResponseBody, responsePayloads } from "@t3tools/shared/mcpResponsePayloads";
 
 import {
+  MCP_TOOL_EXPOSURE_HEADER,
   type McpToolExposureMode,
   parseMcpToolExposureMode,
 } from "@t3tools/provider-core/server/mcpSession";
@@ -244,7 +245,7 @@ export function runAcpMcpStdioBridge(options: AcpMcpStdioBridgeOptions): Effect.
                 authorization: options.authorization,
                 ...(options.toolExposure === undefined
                   ? {}
-                  : { "t3-tool-exposure": options.toolExposure }),
+                  : { [MCP_TOOL_EXPOSURE_HEADER]: options.toolExposure }),
                 ...(sessionId === null ? {} : { "mcp-session-id": sessionId }),
                 ...(protocolVersion === null ? {} : { "mcp-protocol-version": protocolVersion }),
               },

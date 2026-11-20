@@ -2059,10 +2059,28 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
         failure: OrchestratorMcpFailure,
         failureMode: "return",
       }).annotate(McpSchema.EnabledWhen, () => false);
+      const oversizedTool = Tool.make("oversized_budget_tool", {
+        description: "Budget boundary test tool with a giant schema.",
+        parameters: Schema.Struct({
+          payload: Schema.String.annotate({ description: "x".repeat(8_500) }),
+        }),
+        success: Schema.Struct({ ok: Schema.Boolean }),
+        failure: OrchestratorMcpFailure,
+        failureMode: "return",
+      });
+      const smallBudgetTool = Tool.make("small_budget_tool", {
+        description: "Budget boundary test tool with a small schema.",
+        parameters: Schema.Struct({ flag: Schema.optional(Schema.Boolean) }),
+        success: Schema.Struct({ ok: Schema.Boolean }),
+        failure: OrchestratorMcpFailure,
+        failureMode: "return",
+      });
       const OptionalToolkit = Toolkit.make(
         tool("delegate_task", "Delegates a task."),
         tool("preview_open", "Opens a browser preview."),
         tool("schedule_task", "Schedules a task."),
+        oversizedTool,
+        smallBudgetTool,
         disabledTool,
       );
       const reads = McpToolAccess.reads(() => Effect.succeed({ ok: true }));
@@ -2077,6 +2095,8 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
               delegate_task: reads,
               preview_open: reads,
               schedule_task: reads,
+              oversized_budget_tool: reads,
+              small_budget_tool: reads,
               disabled_secret: reads,
             }),
           ),
@@ -2207,8 +2227,10 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
         "device_list",
         "device_open",
         "device_screenshot",
+        "oversized_budget_tool",
         "preview_open",
         "schedule_task",
+        "small_budget_tool",
       ]);
       // Unlisted tools stay callable.
       expect((yield* deferring.call("schedule_task", {})).result?.structuredContent).toEqual({
@@ -2235,6 +2257,28 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
         ],
       });
       expect(yield* proxying.listed).toEqual(["delegate_task", "tool_call", "tool_search"]);
+
+      // An oversized schema falls back to name + description so the whole response stays <= 8 KB, while small matches keep schemas.
+      const budgetSearch = yield* proxying.call("tool_search", { query: "budget" });
+      const budgetPayload = budgetSearch.result?.structuredContent as {
+        readonly tools: ReadonlyArray<{
+          readonly name: string;
+          readonly description: string;
+          readonly inputSchema?: unknown;
+        }>;
+      };
+      expect(Buffer.byteLength(JSON.stringify(budgetPayload), "utf8")).toBeLessThanOrEqual(8_000);
+      expect(budgetPayload.tools).toEqual([
+        {
+          name: "oversized_budget_tool",
+          description: "Budget boundary test tool with a giant schema.",
+        },
+        {
+          name: "small_budget_tool",
+          description: "Budget boundary test tool with a small schema.",
+          inputSchema: expect.objectContaining({ type: "object" }),
+        },
+      ]);
 
       // tool_call invokes optional tools, preserves image content, blocks disabled/meta tools, and returns schema on bad args.
       expect(
@@ -2267,8 +2311,10 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
         "device_list",
         "device_open",
         "device_screenshot",
+        "oversized_budget_tool",
         "preview_open",
         "schedule_task",
+        "small_budget_tool",
       ]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),

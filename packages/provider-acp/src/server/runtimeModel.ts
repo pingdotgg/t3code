@@ -1142,7 +1142,11 @@ function unwrapT3ToolCallProxy(
         ? rawInput.arguments
         : undefined;
   const delegated = typeof innerRaw?.name === "string" ? innerRaw.name.trim() : "";
-  if (delegated.length === 0 || delegated === T3_MCP_TOOL_CALL_PROXY) {
+  if (
+    delegated.length === 0 ||
+    delegated === T3_MCP_TOOL_CALL_PROXY ||
+    delegated === "tool_search"
+  ) {
     return identity;
   }
   const delegatedInput = isRecord(innerRaw?.arguments) ? innerRaw.arguments : {};
@@ -1173,7 +1177,10 @@ export function extractMcpToolCallIdentity(
   const proxiedTool = typeof rawInput?.ToolName === "string" ? rawInput.ToolName.trim() : "";
   if (proxiedServer.length > 0 && proxiedTool.length > 0) {
     const input = isRecord(rawInput?.Arguments) ? rawInput.Arguments : undefined;
-    return { server: proxiedServer, tool: proxiedTool, ...(input === undefined ? {} : { input }) };
+    return unwrapT3ToolCallProxy(
+      { server: proxiedServer, tool: proxiedTool, ...(input === undefined ? {} : { input }) },
+      input,
+    );
   }
   // Kiro names the server in `_meta.kiro.serverName` and the call in `rawInput.tool_id`
   // ("<server>::<tool>"), with the tool's own input under `rawInput.arguments`.
@@ -1280,7 +1287,10 @@ export function extractMcpToolCallIdentity(
     const match = ACP_MCP_FALLBACK_CALL.exec(command);
     if (match?.[1] !== undefined) {
       const input = acpMcpFallbackInput(match[2]);
-      return { server: "t3-code", tool: match[1], ...(input === undefined ? {} : { input }) };
+      return unwrapT3ToolCallProxy(
+        { server: "t3-code", tool: match[1], ...(input === undefined ? {} : { input }) },
+        input,
+      );
     }
   }
   return undefined;
