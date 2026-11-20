@@ -53,6 +53,13 @@ const AuthFile = Schema.Struct({
       plan_type: Schema.optional(Schema.String),
     }),
   ),
+  /** The hub reports Devin quota signals on the auth file itself; no upstream call is needed. */
+  quota: Schema.optional(
+    Schema.Struct({
+      observed_at: Schema.optional(Schema.String),
+      signals: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+    }),
+  ),
 });
 const AuthFiles = Schema.Struct({ files: Schema.Array(AuthFile) });
 const AuthFileModels = Schema.Struct({
@@ -299,6 +306,40 @@ const GROK_CLI_VERSION = "1.0.77";
 const ANTIGRAVITY_SUMMARY_URL =
   "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary";
 
+/** Devin reports remaining-percent signals keyed by window, refreshed when the hub proxies requests. */
+const DEVIN_QUOTA_WINDOWS: ReadonlyArray<{
+  readonly id: string;
+  readonly kind: "session" | "weekly";
+  readonly label: string;
+  readonly percentSignal: string;
+  readonly resetSignal: string;
+  readonly windowDurationMins: number;
+}> = [
+  {
+    id: "daily",
+    kind: "session",
+    label: "Daily",
+    percentSignal: "daily_quota_remaining_percent",
+    resetSignal: "daily_quota_reset_at",
+    windowDurationMins: 24 * 60,
+  },
+  {
+    id: "weekly",
+    kind: "weekly",
+    label: "Weekly",
+    percentSignal: "weekly_quota_remaining_percent",
+    resetSignal: "weekly_quota_reset_at",
+    windowDurationMins: 7 * 24 * 60,
+  },
+];
+
+const devinSignalPercent = (signals: Record<string, string>, key: string) => {
+  const raw = signals[key]?.trim().replace(/%$/, "");
+  if (raw === undefined || raw === "") return undefined;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 100 ? parsed : undefined;
+};
+
 // Keyed by the auth-files `provider`; accounts of any other provider are skipped.
 const HUB_PROVIDERS = new Map<string, HubProvider>([
   ["codex", CODEX_HUB],
@@ -397,6 +438,43 @@ const HUB_PROVIDERS = new Map<string, HubProvider>([
             usageLimits: { ...usageLimits, credentialFingerprint },
           }),
         });
+      }),
+    },
+  ],
+  [
+    "devin",
+    {
+      driver: ProviderDriverKind.make("devin"),
+      // Devin quota signals arrive on the auth file itself; read never calls upstream.
+      header: () => ({}),
+      read: Effect.fnUntraced(function* ({ account, checkedAt }) {
+        const signals = account.quota?.signals ?? {};
+        const windows = DEVIN_QUOTA_WINDOWS.flatMap((slot) => {
+          const remaining = devinSignalPercent(signals, slot.percentSignal);
+          if (remaining === undefined) return [];
+          const resetsAt = signals[slot.resetSignal]?.trim();
+          return [
+            {
+              id: slot.id,
+              kind: slot.kind,
+              label: slot.label,
+              usedPercent: 100 - remaining,
+              ...(resetsAt ? { resetsAt } : {}),
+              windowDurationMins: slot.windowDurationMins,
+            },
+          ];
+        });
+        if (windows.length === 0) {
+          return yield* new UsageLimitSourceError({
+            detail: "The hub has not observed this account's Devin quota yet.",
+          });
+        }
+        const plan = signals.plan?.trim();
+        return {
+          ...listedIdentity(account),
+          ...(plan ? { plan } : {}),
+          usageLimits: makeUsageLimits({ checkedAt, windows }),
+        };
       }),
     },
   ],

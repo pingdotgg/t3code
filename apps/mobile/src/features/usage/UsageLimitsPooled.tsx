@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
 import { providerClients } from "@t3tools/client-runtime/provider-clients";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
@@ -35,6 +35,9 @@ import { environmentPresentations } from "../../state/presentation";
 import { refillLabel, ResetCredits, resetLabels } from "./UsageLimitsSection";
 import { usageProviderKind, useProviderColors } from "./usageProviders";
 
+const driverLabel = (driver: LimitAccount["driver"]) =>
+  providerClients.get(driver)?.label ?? PROVIDER_DISPLAY_NAMES[driver] ?? driver;
+
 const PACE_LABEL = {
   ahead: msg("Ahead of pace"),
   on: msg("On pace"),
@@ -43,7 +46,7 @@ const PACE_LABEL = {
 
 function accountName(account: LimitAccount, resolve: MessageResolver) {
   if (account.displayName) return account.displayName;
-  if (!account.email) return providerClients.get(account.driver)?.label ?? account.driver;
+  if (!account.email) return driverLabel(account.driver);
   return (
     emailInitials(account.email) || resolve(msg("Account", { $context: "fallback account name" }))
   );
@@ -507,7 +510,7 @@ export function UsageLimitsSection({
               <View className="flex-row items-center gap-2 px-1">
                 <ProviderIcon provider={pool.driver} size={18} />
                 <Text className="text-base font-t3-medium text-foreground">
-                  {providerClients.get(pool.driver)?.label ?? pool.driver}
+                  {driverLabel(pool.driver)}
                 </Text>
               </View>
               {windows.map((window) => {
@@ -630,9 +633,7 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
               <View className="flex-row items-center gap-2">
                 <ProviderIcon provider={account.driver} size={24} />
                 <Text className="flex-1 text-xl font-t3-bold text-foreground">
-                  {account.displayName ??
-                    providerClients.get(account.driver)?.label ??
-                    account.driver}
+                  {account.displayName ?? driverLabel(account.driver)}
                 </Text>
               </View>
               {account.email ? (
