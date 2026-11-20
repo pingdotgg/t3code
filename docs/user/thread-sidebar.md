@@ -244,6 +244,12 @@ thread** from its long-press menu on mobile.
 **Thread ID** copies the bare ID for scripts and the `t3` CLI. See
 [keybindings](./keybindings.md) for custom configuration.
 
+On web and desktop, when a message contains a thread chip, both threads list each
+other under **Lineage** in thread details. Rolling back the turn that sent the chip
+removes the link, unless another message still mentions that thread. Only threads
+on the same machine are listed, and the machine's T3 Code server must be up to date.
+Hover or focus a thread in the sidebar to see the threads it's linked to.
+
 ## Inspect agent work
 
 **Limited** means the provider stopped on a usage or rate limit. The conversation

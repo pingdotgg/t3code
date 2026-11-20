@@ -33,6 +33,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerConfig from "../config.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
@@ -160,6 +161,8 @@ const makeLaptopWith = (
       ),
     );
     const layerThreads = ThreadManagement.layer.pipe(
+      Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({})),
+      Layer.provide(layerDatabase),
       Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
       Layer.provideMerge(Layer.merge(layerOrchestrator, ServerSettings.layerTest())),
     );

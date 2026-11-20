@@ -5,6 +5,7 @@ import * as DateTime from "effect/DateTime";
 import {
   deriveThreadRelationshipGraph,
   immediateThreadRelationships,
+  isParentThreadRelationship,
   orderWebThreadLineageRows,
   resolveMergeBackTargetThreadId,
   threadRelationshipRowStatus,
@@ -92,6 +93,77 @@ describe("thread relationships", () => {
       );
     },
   );
+
+  it("adds mention links in both directions without making either side a parent", () => {
+    const a = ThreadId.make("a");
+    const b = ThreadId.make("b");
+    const c = ThreadId.make("c");
+    const graph = deriveThreadRelationshipGraph({
+      threads: [
+        { id: a, activityRunStatus: "running", lineage: { parentThreadId: null } },
+        { id: b, status: "completed", lineage: { parentThreadId: null } },
+        { id: c, status: "idle", lineage: { parentThreadId: null } },
+      ] as never,
+      projection: null,
+      mentions: {
+        threadId: a,
+        links: [
+          { threadId: b, direction: "mentions" },
+          { threadId: c, direction: "mentionedBy" },
+        ],
+      },
+    });
+    const rows = immediateThreadRelationships(graph, a);
+    const bRow = rows.find((row) => row.threadId === b)!;
+    const cRow = rows.find((row) => row.threadId === c)!;
+    expect(bRow.edge).toEqual({
+      sourceThreadId: a,
+      targetThreadId: b,
+      kind: "mention",
+      status: null,
+    });
+    expect(cRow.edge).toEqual({
+      sourceThreadId: c,
+      targetThreadId: a,
+      kind: "mention",
+      status: null,
+    });
+    expect(isParentThreadRelationship(cRow.edge, a)).toBe(false);
+    expect(threadRelationshipRowStatus(graph, bRow)).toBe("completed");
+    expect(threadRelationshipRowStatus(graph, cRow)).toBe("idle");
+  });
+
+  it.each([
+    {
+      name: "keeps the lineage edge when a mentioned thread is also a fork",
+      bLineage: { parentThreadId: ThreadId.make("a"), relationshipToParent: "fork" },
+      directions: ["mentions"],
+      edge: { kind: "fork" },
+    },
+    {
+      name: "shows one outgoing row when two threads mention each other",
+      bLineage: { parentThreadId: null },
+      directions: ["mentionedBy", "mentions"],
+      edge: { sourceThreadId: ThreadId.make("a") },
+    },
+  ] as const)("$name", ({ bLineage, directions, edge }) => {
+    const a = ThreadId.make("a");
+    const b = ThreadId.make("b");
+    const graph = deriveThreadRelationshipGraph({
+      threads: [
+        { id: a, lineage: { parentThreadId: null } },
+        { id: b, lineage: bLineage },
+      ] as never,
+      projection: null,
+      mentions: {
+        threadId: a,
+        links: directions.map((direction) => ({ threadId: b, direction })),
+      },
+    });
+    const rows = immediateThreadRelationships(graph, a).filter((row) => row.threadId === b);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.edge).toMatchObject(edge);
+  });
 
   it("keeps an older activity run visible over a newer cancelled run", () => {
     const parent = ThreadId.make("thread-parent");

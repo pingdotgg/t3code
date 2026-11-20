@@ -3911,6 +3911,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getThreadFamily: "orchestration.getThreadFamily",
   getThreadTitles: "orchestration.getThreadTitles",
   getThreadLinkMetadata: "orchestration.getThreadLinkMetadata",
+  getThreadMentionLinks: "orchestration.getThreadMentionLinks",
   getWorktreeThreadIds: "orchestration.getWorktreeThreadIds",
   getOlderSettledThreads: "orchestration.getOlderSettledThreads",
   getThreadProjection: "orchestration.getThreadProjection",
@@ -4062,6 +4063,21 @@ export const OrchestrationV2GetThreadTitlesInput = Schema.Struct({
 
 /** Titles of the requested threads that exist, archived ones included. Deleted and unknown ids are absent. */
 export const OrchestrationV2ThreadTitles = Schema.Record(ThreadId, Schema.String);
+
+export const OrchestrationV2GetThreadMentionLinksInput = Schema.Struct({ threadId: ThreadId });
+export type OrchestrationV2GetThreadMentionLinksInput =
+  typeof OrchestrationV2GetThreadMentionLinksInput.Type;
+
+export const OrchestrationV2ThreadMentionLink = Schema.Struct({
+  threadId: ThreadId,
+  direction: Schema.Literals(["mentions", "mentionedBy"]),
+});
+export type OrchestrationV2ThreadMentionLink = typeof OrchestrationV2ThreadMentionLink.Type;
+
+export const OrchestrationV2ThreadMentionLinks = Schema.Struct({
+  links: Schema.Array(OrchestrationV2ThreadMentionLink),
+});
+export type OrchestrationV2ThreadMentionLinks = typeof OrchestrationV2ThreadMentionLinks.Type;
 
 export const OrchestrationV2ThreadLinkMetadata = Schema.Struct({
   title: Schema.String,
@@ -4601,6 +4617,10 @@ export const OrchestrationV2RpcSchemas = {
   getThreadLinkMetadata: {
     input: OrchestrationV2GetThreadTitlesInput,
     output: Schema.Record(ThreadId, OrchestrationV2ThreadLinkMetadata),
+  },
+  getThreadMentionLinks: {
+    input: OrchestrationV2GetThreadMentionLinksInput,
+    output: OrchestrationV2ThreadMentionLinks,
   },
   getWorktreeThreadIds: {
     input: OrchestrationV2GetWorktreeThreadIdsInput,

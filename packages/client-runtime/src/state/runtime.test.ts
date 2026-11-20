@@ -10,6 +10,7 @@ import {
   type IssueListResult,
   ORCHESTRATION_V2_WS_METHODS,
   type OrchestrationV2ArchivedShellSnapshot,
+  type OrchestrationV2ShellSnapshot,
   ThreadId,
   ProjectId,
   type ReviewDiffPreviewInput,
@@ -1405,6 +1406,78 @@ describe("environment query lifecycle", () => {
     }),
   );
 
+  it.effect("skips the thread mention links request on servers without it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeEnvironmentQueryHarness(Effect.void, {
+          rpcSession: {
+            initialConfig: Effect.succeed({}),
+            client: {},
+          } as unknown as RpcSession.RpcSession,
+        });
+        const runtime = harness.runtime as unknown as Atom.AtomRuntime<
+          EnvironmentRegistry.EnvironmentRegistry | HttpClient.HttpClient
+        >;
+        const atom = createOrchestrationEnvironmentAtoms(runtime).threadMentionLinks({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadId: ThreadId.make("thread") },
+        });
+        const registry = yield* mountEnvironmentQuery(atom);
+        expect(yield* readEnvironmentQuery(registry, atom)).toEqual({ links: [] });
+      }),
+    ),
+  );
+
+  it.effect("re-checks thread mention links when the thread runs or rolls back", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const requests = yield* Queue.unbounded<void>();
+        const harness = yield* makeEnvironmentQueryHarness(Effect.void, {
+          rpcSession: {
+            initialConfig: Effect.succeed({ threadMentionLinks: true }),
+            client: {
+              [ORCHESTRATION_V2_WS_METHODS.getThreadMentionLinks]: () =>
+                Queue.offer(requests, undefined).pipe(Effect.as({ links: [] })),
+            },
+          } as unknown as RpcSession.RpcSession,
+        });
+        const shell = (thread: { latestRunId: string; status: string; title: string }) => ({
+          snapshot: Option.some({
+            threads: [{ id: ThreadId.make("thread"), ...thread }],
+          } as unknown as OrchestrationV2ShellSnapshot),
+          removedAt: new Map(),
+        });
+        const shellState = Atom.make<Pick<EnvironmentShellState, "removedAt" | "snapshot">>(
+          shell({ latestRunId: "run-1", status: "completed", title: "A" }),
+        ).pipe(Atom.keepAlive);
+        const runtime = harness.runtime as unknown as Atom.AtomRuntime<
+          EnvironmentRegistry.EnvironmentRegistry | HttpClient.HttpClient
+        >;
+        const atom = createOrchestrationEnvironmentAtoms(runtime, {
+          shellState: () => shellState,
+        }).threadMentionLinks({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadId: ThreadId.make("thread") },
+        });
+        const registry = yield* mountEnvironmentQuery(atom);
+        expect(yield* readEnvironmentQuery(registry, atom)).toEqual({ links: [] });
+        yield* Queue.take(requests);
+
+        registry.set(shellState, shell({ latestRunId: "run-1", status: "completed", title: "B" }));
+        expect(registry.get(atom).waiting).toBe(false);
+        expect(yield* Queue.size(requests)).toBe(0);
+
+        registry.set(shellState, shell({ latestRunId: "run-2", status: "completed", title: "B" }));
+        yield* Queue.take(requests);
+        registry.set(
+          shellState,
+          shell({ latestRunId: "run-2", status: "rolled_back", title: "B" }),
+        );
+        yield* Queue.take(requests);
+      }),
+    ),
+  );
+
   it.effect("re-checks thread titles when one of their threads leaves the shell", () =>
     Effect.gen(function* () {
       const requests = yield* Queue.unbounded<Deferred.Deferred<Record<string, string>>>();
@@ -1420,10 +1493,12 @@ describe("environment query lifecycle", () => {
           },
         } as unknown as RpcSession.RpcSession,
       });
-      const shellState = Atom.make<Pick<EnvironmentShellState, "removedAt">>({
+      const shellState = Atom.make<Pick<EnvironmentShellState, "removedAt" | "snapshot">>({
+        snapshot: Option.none(),
         removedAt: new Map(),
       }).pipe(Atom.keepAlive);
       const removed = (entries: ReadonlyArray<readonly [string, number]>) => ({
+        snapshot: Option.none(),
         removedAt: new Map(entries.map(([id, sequence]) => [ThreadId.make(id), sequence])),
       });
       // Thread titles never use the HTTP client.
@@ -1477,7 +1552,8 @@ describe("environment query lifecycle", () => {
           },
         } as unknown as RpcSession.RpcSession,
       });
-      const shellState = Atom.make<Pick<EnvironmentShellState, "removedAt">>({
+      const shellState = Atom.make<Pick<EnvironmentShellState, "removedAt" | "snapshot">>({
+        snapshot: Option.none(),
         removedAt: new Map(),
       }).pipe(Atom.keepAlive);
       const runtime = harness.runtime as unknown as Atom.AtomRuntime<
@@ -1500,14 +1576,14 @@ describe("environment query lifecycle", () => {
       expect(yield* archivedIds).toEqual([]);
 
       // Another client archives the thread, then deletes it from the archive.
-      registry.set(shellState, { removedAt: new Map([[v2ThreadId, 2]]) });
+      registry.set(shellState, { snapshot: Option.none(), removedAt: new Map([[v2ThreadId, 2]]) });
       expect(registry.get(atom).waiting).toBe(true);
       yield* Deferred.succeed(
         yield* Queue.take(requests),
         page([{ ...v2ThreadShell, archivedAt: v2Now }]),
       );
       expect(yield* archivedIds).toEqual([v2ThreadId]);
-      registry.set(shellState, { removedAt: new Map([[v2ThreadId, 3]]) });
+      registry.set(shellState, { snapshot: Option.none(), removedAt: new Map([[v2ThreadId, 3]]) });
       yield* Deferred.succeed(yield* Queue.take(requests), page([]));
       expect(yield* archivedIds).toEqual([]);
     }),

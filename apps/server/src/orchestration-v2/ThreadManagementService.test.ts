@@ -89,9 +89,10 @@ it("stamps authoritative provenance on commands that create threads or messages"
   expect(stamped).not.toHaveProperty("initialMessage");
 });
 
-const layerReceiptsTest = CommandReceiptStore.layer.pipe(
-  Layer.provide(SqlitePersistence.layerMemory),
-);
+const layerStoresTest = Layer.merge(
+  CommandReceiptStore.layer,
+  Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({}),
+).pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 
 const layerDispatchChokepointTest =
   (settingsLayer: ReturnType<typeof ServerSettings.layerTest>) => (dispatched: Array<string>) =>
@@ -119,7 +120,7 @@ const layerDispatchChokepointTest =
         }),
       ),
       Layer.provide(settingsLayer),
-      Layer.provideMerge(layerReceiptsTest),
+      Layer.provideMerge(layerStoresTest),
     );
 
 it.effect(
@@ -278,7 +279,7 @@ it.effect.each([
       }),
     ),
     Layer.provide(ServerSettings.layerTest()),
-    Layer.provideMerge(layerReceiptsTest),
+    Layer.provideMerge(layerStoresTest),
   );
 
   return Effect.gen(function* () {
@@ -347,7 +348,7 @@ it.effect("waitForThread follows a restart continuation instead of the cut run",
         }),
       ),
       Layer.provide(ServerSettings.layerTest()),
-      Layer.provide(layerReceiptsTest),
+      Layer.provide(layerStoresTest),
     );
     const service = yield* ThreadManagementService.ThreadManagementService.pipe(
       Effect.provide(layerTest),
@@ -427,7 +428,7 @@ it.effect("waitForThread can wait past an ended run for the thread's delegated w
         }),
       ),
       Layer.provide(ServerSettings.layerTest()),
-      Layer.provide(layerReceiptsTest),
+      Layer.provide(layerStoresTest),
     );
     const service = yield* ThreadManagementService.ThreadManagementService.pipe(
       Effect.provide(layerTest),
@@ -496,7 +497,7 @@ it.effect("waitForThread settles delegated work on a thread rolled back past its
         }),
       ),
       Layer.provide(ServerSettings.layerTest()),
-      Layer.provide(layerReceiptsTest),
+      Layer.provide(layerStoresTest),
     );
     const service = yield* ThreadManagementService.ThreadManagementService.pipe(
       Effect.provide(layerTest),
@@ -552,7 +553,7 @@ it.effect("waitForThread returns the cut run once its continuation is declined",
         }),
       ),
       Layer.provide(ServerSettings.layerTest()),
-      Layer.provide(layerReceiptsTest),
+      Layer.provide(layerStoresTest),
     );
     const service = yield* ThreadManagementService.ThreadManagementService.pipe(
       Effect.provide(layerTest),
@@ -646,7 +647,7 @@ it.effect.each([
           ),
         ),
         Layer.provide(ServerSettings.layerTest()),
-        Layer.provide(layerReceiptsTest),
+        Layer.provide(layerStoresTest),
       );
       const result = yield* Effect.gen(function* () {
         const service = yield* ThreadManagementService.ThreadManagementService;
@@ -799,7 +800,7 @@ it.effect.each([
         }),
       ),
       Layer.provide(ServerSettings.layerTest()),
-      Layer.provide(layerReceiptsTest),
+      Layer.provide(layerStoresTest),
     );
     const service = yield* ThreadManagementService.ThreadManagementService.pipe(
       Effect.provide(layerTest),
@@ -948,7 +949,7 @@ it.effect.each([
         }),
       ),
       Layer.provide(ServerSettings.layerTest()),
-      Layer.provide(layerReceiptsTest),
+      Layer.provide(layerStoresTest),
     );
     yield* Effect.gen(function* () {
       const service = yield* ThreadManagementService.ThreadManagementService;
@@ -995,7 +996,7 @@ it.effect("Force stop refuses once a newer run has started, before killing anyth
         }),
       ),
       Layer.provide(ServerSettings.layerTest()),
-      Layer.provide(layerReceiptsTest),
+      Layer.provide(layerStoresTest),
     );
     const error = yield* Effect.gen(function* () {
       const service = yield* ThreadManagementService.ThreadManagementService;
@@ -1040,7 +1041,7 @@ it.effect(
           }),
         ),
         Layer.provide(ServerSettings.layerTest()),
-        Layer.provide(layerReceiptsTest),
+        Layer.provide(layerStoresTest),
       );
 
       yield* Effect.gen(function* () {

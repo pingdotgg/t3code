@@ -1,5 +1,6 @@
 import {
   isOrchestrationV2WorkActive,
+  type OrchestrationV2ThreadMentionLink,
   type OrchestrationV2ThreadShell,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -7,7 +8,7 @@ import * as DateTime from "effect/DateTime";
 
 import type { ThreadStructure } from "./models.ts";
 
-export type ThreadRelationshipKind = "parent" | "fork" | "subagent" | "transfer";
+export type ThreadRelationshipKind = "parent" | "fork" | "subagent" | "transfer" | "mention";
 
 export interface ThreadRelationshipNode {
   readonly threadId: ThreadId;
@@ -50,6 +51,10 @@ function edgeKey(edge: ThreadRelationshipEdge): string {
 export function deriveThreadRelationshipGraph(input: {
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
   readonly projection: ThreadStructure | null;
+  readonly mentions?: {
+    readonly threadId: ThreadId;
+    readonly links: ReadonlyArray<OrchestrationV2ThreadMentionLink>;
+  };
 }): ThreadRelationshipGraph {
   const threadsById = new Map<ThreadId, OrchestrationV2ThreadShell>();
   for (const thread of input.threads) {
@@ -127,6 +132,22 @@ export function deriveThreadRelationshipGraph(input: {
     }
   }
 
+  if (input.mentions !== undefined) {
+    const { threadId, links } = input.mentions;
+    // Outgoing links go first, so a mutual mention shows as the outgoing direction.
+    for (const direction of ["mentions", "mentionedBy"] as const) {
+      for (const link of links) {
+        if (link.direction !== direction) continue;
+        addEdge({
+          sourceThreadId: direction === "mentions" ? threadId : link.threadId,
+          targetThreadId: direction === "mentions" ? link.threadId : threadId,
+          kind: "mention",
+          status: null,
+        });
+      }
+    }
+  }
+
   return { nodes, edges: [...edgesByKey.values()] };
 }
 
@@ -156,14 +177,19 @@ export function isParentThreadRelationship(
   edge: ThreadRelationshipEdge,
   currentThreadId: ThreadId,
 ): boolean {
-  return edge.kind !== "transfer" && edge.targetThreadId === currentThreadId;
+  return (
+    edge.kind !== "transfer" && edge.kind !== "mention" && edge.targetThreadId === currentThreadId
+  );
 }
 
 export function threadRelationshipRowStatus(
   graph: ThreadRelationshipGraph,
   row: Pick<ThreadRelationshipWalkRow, "threadId" | "edge">,
 ): string | null {
-  if (row.edge.kind === "transfer" || row.threadId === row.edge.targetThreadId) {
+  if (
+    row.edge.kind === "transfer" ||
+    (row.edge.kind !== "mention" && row.threadId === row.edge.targetThreadId)
+  ) {
     return row.edge.status;
   }
   const thread = graph.nodes.get(row.threadId)?.thread;

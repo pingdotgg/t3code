@@ -29,6 +29,7 @@ import * as Stream from "effect/Stream";
 import * as EventStore from "./EventStore.ts";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { CLAUDE_PROVIDER } from "./Adapters/ClaudeAdapterV2.ts";
@@ -57,6 +58,7 @@ const adapter = {
 } as ProviderAdapter.ProviderAdapterV2["Service"];
 const layerDatabase = SqlitePersistence.layerMemory;
 const layerTest = ThreadManagementService.layer.pipe(
+  Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({})),
   Layer.provideMerge(
     Layer.mergeAll(
       layerDatabase,
@@ -2116,6 +2118,7 @@ it.effect.each([
         }),
       );
       const layerLive = ThreadManagementService.layer.pipe(
+        Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({})),
         Layer.provide(layerSessionsStartingFollowUpFirst),
         Layer.provideMerge(
           Layer.mergeAll(
