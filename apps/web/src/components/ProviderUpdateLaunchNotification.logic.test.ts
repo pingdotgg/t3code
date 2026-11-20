@@ -130,7 +130,7 @@ describe("provider update launch notification logic", () => {
     ).toBe(true);
   });
 
-  it("offers updates for a runtime the server installs, which has no command", () => {
+  it("offers one-click updates for a runtime the server installs, which has no command", () => {
     const managed = updateCandidate({ driver: driver("antigravity"), updateCommand: null });
     const ownExecutable = provider({
       driver: driver("antigravity"),
