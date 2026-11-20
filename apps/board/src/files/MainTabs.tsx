@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 
 import { BrowserSurface } from "../browser/BrowserSurface";
 import { browserAtom } from "../browser/browserTabs";
+import { DiffView } from "../changes/DiffView";
 import { filesViewAtom, sameFile } from "../state/filesView";
 import { FilesView } from "./FilesView";
 import { MainTabStrip } from "./MainTabStrip";
@@ -31,7 +32,11 @@ export function MainTabs({ files, children }: { files: FilesBoard | null; childr
         </div>
         {shown !== null && (
           <div className="absolute inset-0 flex">
-            <FilesView file={shown} />
+            {shown.diff === undefined ? (
+              <FilesView file={shown} />
+            ) : (
+              <DiffView file={shown} diff={shown.diff} />
+            )}
           </div>
         )}
         {surface !== null && (

@@ -21,7 +21,7 @@ setCustomExtension("xsl", "xml");
 setCustomExtension("xslt", "xml");
 
 // Only one highlighter type can be active per thread, so every creation site must pass this value.
-const PREFERRED_HIGHLIGHTER: HighlighterTypes = "highlights";
+export const PREFERRED_HIGHLIGHTER: HighlighterTypes = "highlights";
 
 const highlighterPromises = new Map<string, Promise<DiffsHighlighter>>();
 

@@ -1,5 +1,5 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
-import { Files, type LucideIcon, MessageSquare } from "lucide-react";
+import { Files, GitBranch, type LucideIcon, MessageSquare } from "lucide-react";
 import { useContext } from "react";
 
 import { Tooltip } from "../ui/Tooltip";
@@ -8,6 +8,7 @@ import { type PanelTab, panelAtom, setPanelTab } from "./panel";
 const TABS = [
   { id: "chat", label: "Orchestrator", hint: "Orchestrator", icon: MessageSquare },
   { id: "explorer", label: "Explorer", hint: "Explorer (Ctrl+⇧+E)", icon: Files },
+  { id: "changes", label: "Source Control", hint: "Source Control (Ctrl+⇧+G)", icon: GitBranch },
 ] as const satisfies ReadonlyArray<{
   id: PanelTab;
   label: string;

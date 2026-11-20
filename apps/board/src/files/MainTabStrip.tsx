@@ -1,5 +1,5 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
-import { Bot, FileText, Globe, LayoutDashboard, Plus } from "lucide-react";
+import { Bot, FileDiff, FileText, Globe, LayoutDashboard, Plus } from "lucide-react";
 import { useContext } from "react";
 
 import {
@@ -16,6 +16,7 @@ import type { Tab } from "../browser/tabs";
 import {
   closeFile,
   type FileRef,
+  fileKey,
   filesViewAtom,
   sameFile,
   showBoard,
@@ -33,6 +34,14 @@ const pageLabel = (tab: Tab): string => {
     return "New tab";
   }
 };
+
+/** A file's name, a file's diff the way Orca names it, and the diff of every file by what it compares. */
+function tabLabel(file: FileRef): string {
+  if (file.diff === undefined) return nameOf(file.path);
+  if (file.path !== "") return `${nameOf(file.path)} (diff)`;
+  if (file.diff.kind === "commit") return `Commit ${file.diff.sha.slice(0, 7)}`;
+  return file.diff.kind === "branch-range" ? "Branch changes" : "Changes";
+}
 
 /**
  * The tabs of the main view, the way Orca's draw them: the board first, then each open file, each
@@ -62,10 +71,16 @@ export function MainTabStrip({ files }: { files: ReadonlyArray<FileRef> }) {
       </button>
       {files.map((file) => (
         <ClosableTab
-          key={`${file.cwd}/${file.path}`}
+          key={fileKey(file)}
           shown={active !== null && sameFile(active, file)}
-          icon={<FileText className="size-3.5 shrink-0" aria-hidden />}
-          label={nameOf(file.path)}
+          icon={
+            file.diff === undefined ? (
+              <FileText className="size-3.5 shrink-0" aria-hidden />
+            ) : (
+              <FileDiff className="size-3.5 shrink-0 text-amber-300" aria-hidden />
+            )
+          }
+          label={tabLabel(file)}
           onSelect={() => showFile(registry, file)}
           onClose={() => closeFile(registry, file)}
         />

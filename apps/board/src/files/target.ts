@@ -7,24 +7,33 @@ export interface FilesRoot {
   /** The folder the engine lists inside, which is the `cwd` of every call. */
   readonly cwd: string;
   readonly label: string;
+  /** The branch a ticket worktree's work is compared against, from `tickets.json`. Null compares against the default branch. */
+  readonly base: string | null;
 }
 
 /** The roots of a board, the project first and then each ticket worktree once. */
 export function boardRoots(
   project: { readonly title: string; readonly workspaceRoot: string },
-  tickets: ReadonlyArray<{ readonly key: string; readonly worktreePath?: string | null }>,
+  tickets: ReadonlyArray<{
+    readonly key: string;
+    readonly worktreePath?: string | null;
+    readonly base?: string | null;
+  }>,
 ): ReadonlyArray<FilesRoot> {
-  const roots: FilesRoot[] = [{ cwd: trimSlashes(project.workspaceRoot), label: project.title }];
+  const roots: FilesRoot[] = [
+    { cwd: trimSlashes(project.workspaceRoot), label: project.title, base: null },
+  ];
   for (const ticket of tickets) {
     const cwd = trimSlashes(ticket.worktreePath ?? "");
     if (cwd !== "" && !roots.some((root) => root.cwd === cwd)) {
-      roots.push({ cwd, label: `${ticket.key} worktree` });
+      roots.push({ cwd, label: `${ticket.key} worktree`, base: ticket.base ?? null });
     }
   }
   return roots;
 }
 
-const trimSlashes = (path: string) => path.replace(/\/+$/, "");
+/** A folder as the engine takes it, without a trailing slash, which is what a root's `cwd` is. */
+export const trimSlashes = (path: string) => path.replace(/\/+$/, "");
 
 /** What the file view needs to know about the board it browses. */
 export interface FilesBoard {
@@ -41,6 +50,8 @@ export interface FileTarget {
   readonly path: string;
   /** The thread a media URL is minted under. */
   readonly mediaThreadId: string;
+  /** The line a text file opens at, which the file view scrolls to and marks. */
+  readonly line?: number;
 }
 
 export const absolutePathOf = (target: Pick<FileTarget, "cwd" | "path">) =>
@@ -68,9 +79,10 @@ export function locate(
   return best === null ? null : { root: best, path: absolutePath.slice(best.cwd.length + 1) };
 }
 
-export const fileTarget = (board: FilesBoard, { cwd, path }: FileRef): FileTarget => ({
+export const fileTarget = (board: FilesBoard, { cwd, path, line }: FileRef): FileTarget => ({
   environmentId: board.environmentId,
   cwd,
   path,
   mediaThreadId: board.mediaThreadId,
+  ...(line === undefined ? {} : { line }),
 });
