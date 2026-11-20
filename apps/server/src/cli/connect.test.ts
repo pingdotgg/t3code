@@ -18,7 +18,11 @@ import { Command } from "effect/cli";
 
 import { makeCli } from "../binCli.ts";
 import { CLOUD_CLI_DESIRED_LINK_SECRET } from "../cloud/CliState.ts";
-import { CLOUD_ENDPOINT_RUNTIME_CONFIG, CLOUD_LINKED_USER_ID } from "../cloud/config.ts";
+import {
+  CLOUD_ENDPOINT_RUNTIME_CONFIG,
+  CLOUD_LINKED_USER_ID,
+  RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+} from "../cloud/config.ts";
 import {
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
@@ -156,6 +160,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
                   `${baseDir}/userdata/secrets/${CLOUD_ENDPOINT_RUNTIME_CONFIG}.bin`,
                   "{}",
                 ),
+                fs.writeFileString(
+                  `${baseDir}/userdata/secrets/${RELAY_ENVIRONMENT_CREDENTIAL_SECRET}.bin`,
+                  "relay_credential",
+                ),
               ])
             : fs.writeFileString(
                 `${baseDir}/userdata/secrets/${CLOUD_CLI_DESIRED_LINK_SECRET}.bin`,
@@ -242,6 +250,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
 
         assert.deepEqual(requests, ["POST /api/connect/reachability"]);
         assert.notInclude(printed, "Exposure: disabled");
+        assert.notInclude(printed, "Authorization: missing");
         assert.notInclude(printed, "Next:");
       }),
     );

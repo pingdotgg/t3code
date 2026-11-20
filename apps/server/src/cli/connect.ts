@@ -41,6 +41,7 @@ import {
   CLOUD_LINKED_USER_ID,
   isAgentActivityPublishingEnabledValue,
   PUBLISH_AGENT_ACTIVITY_SECRET,
+  RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
   RELAY_URL_SECRET,
 } from "../cloud/config.ts";
 import { relayUrlConfig } from "../cloud/publicConfig.ts";
@@ -677,7 +678,8 @@ const connectStatusCommand = Command.make("status", {
         const [
           cliDesired,
           managedTunnel,
-          authenticated,
+          cliAuthenticated,
+          relayCredential,
           cloudUserId,
           relayUrl,
           publishAgentActivity,
@@ -689,6 +691,7 @@ const connectStatusCommand = Command.make("status", {
             CliState.readCliDesiredCloudLink,
             secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
             tokens.hasCredential,
+            secrets.get(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
             secrets.get(CLOUD_LINKED_USER_ID),
             secrets.get(RELAY_URL_SECRET),
             secrets.get(PUBLISH_AGENT_ACTIVITY_SECRET),
@@ -700,6 +703,8 @@ const connectStatusCommand = Command.make("status", {
         );
         // A link made in the desktop, web, or mobile app saves the tunnel config but no CLI marker.
         const desired = cliDesired || Option.isSome(managedTunnel);
+        // Such a link authorizes the environment with its relay credential, not a CLI sign-in.
+        const authenticated = cliAuthenticated || Option.isSome(relayCredential);
         // A publish-only link has no tunnel for other devices to reach.
         const reachability =
           desired && linkMode === "managed" ? yield* checkLiveReachability() : null;
