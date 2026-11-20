@@ -115,7 +115,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
   const forgeRepositoryName = identity?.origin
     ? identity.origin.displayName
     : identity?.displayName;
-  const forgeRepository = useEnvironmentQuery(
+  const forgeLookupAtom =
     project && identity?.provider && forgeRepositoryName
       ? sourceControlEnvironment.repository({
           environmentId: project.environmentId,
@@ -125,8 +125,9 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
             cwd: project.workspaceRoot,
           },
         })
-      : null,
-  ).data;
+      : null;
+  const forgeLookup = useEnvironmentQuery(forgeLookupAtom);
+  const forgeRepository = forgeLookup.data;
   const sshUrl = cloneUrlForProtocol(sourceUrl, "ssh", forgeRepository);
   const httpsUrl = cloneUrlForProtocol(sourceUrl, "https", forgeRepository);
   const remoteUrl =
@@ -182,11 +183,13 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
   const [error, setError] = useState<string | null>(null);
 
   // The project or every target can vanish while the dialog is open. Submitting
-  // before the file list loads would silently skip the default .env copies.
+  // before the file list loads would silently skip the default .env copies, and
+  // before the forge lookup would send a guessed clone URL the clone keeps.
   const unavailable =
     project === null ||
     target === null ||
-    (canListFiles && allIgnoredFiles.data === null && allIgnoredFiles.error === null);
+    (canListFiles && allIgnoredFiles.data === null && allIgnoredFiles.error === null) ||
+    (forgeLookupAtom !== null && forgeLookup.data === null && forgeLookup.error === null);
   const toggleFile = (file: ProjectIgnoredFile, checked: boolean) => {
     const next = new Map(selectedFiles);
     if (!checked) next.delete(file.path);
