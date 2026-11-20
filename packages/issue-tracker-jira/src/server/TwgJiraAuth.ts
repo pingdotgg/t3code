@@ -1,7 +1,8 @@
 /**
  * Jira sessions from the TWG login (Atlassian's Teamwork Graph CLI) on the server's machine. TWG
  * keeps its credential store and refresh token; this reads its session export, holds the access
- * token in memory only, and sends an OAuth session through Atlassian's API gateway.
+ * token in memory only, and sends an OAuth session through Atlassian's API gateway. The gateway
+ * serves no private API, so such a session's linked pull requests are read with TWG itself.
  */
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -32,7 +33,39 @@ const EXPORTED = new Set([
   "TWG_PROFILE",
 ]);
 
+/** Teamwork Graph's edge from a work item to a pull request linked to it, not only mentioning it. */
+const LINKED_PULL_REQUEST = "jira_work_item_links_external_pull_request";
+
 const Resources = Schema.Array(Schema.Struct({ id: Schema.String, url: Schema.String }));
+const Text = Schema.optional(Schema.NullOr(Schema.String));
+const ContextRelationships = Schema.optional(
+  Schema.Array(
+    Schema.Struct({
+      relationshipName: Schema.String,
+      targets: Schema.Array(
+        Schema.Struct({
+          title: Text,
+          name: Text,
+          url: Text,
+          status: Text,
+          displayId: Text,
+          pullRequestId: Text,
+        }),
+      ),
+    }),
+  ),
+);
+/** What `twg context jira workitem -o json` prints: graph edges, read as data. */
+const decodeContext = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      data: Schema.Struct({
+        relationships: ContextRelationships,
+        relationshipSummary: ContextRelationships,
+      }),
+    }),
+  ),
+);
 const decodeClaims = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({ sub: Schema.optional(Schema.String), exp: Schema.optional(Schema.Number) }),
@@ -111,6 +144,64 @@ export const make = Effect.gen(function* () {
       return yield* refuse("TWG could not supply a session. Check its login on this environment.");
     }
     return result.stdout;
+  });
+
+  /** The pull requests Teamwork Graph links to an issue, as TWG reads them for this login. */
+  const linkedPullRequests = Effect.fn("TwgJiraAuth.linkedPullRequests")(function* (
+    session: JiraApi.JiraSession,
+    issueId: string,
+  ) {
+    const failed = (cause?: unknown) =>
+      JiraApi.fail(
+        "linkedPullRequests",
+        "failed",
+        "TWG could not read the issue's linked pull requests.",
+        cause === undefined ? {} : { cause },
+      );
+    if (!/^\d+$/u.test(issueId)) return yield* failed();
+    const result = yield* host.process
+      .run({
+        operation: "TwgJiraAuth.linkedPullRequests",
+        command: "twg",
+        args: [
+          "context",
+          "jira",
+          "workitem",
+          issueId,
+          "--site",
+          new URL(session.origin).hostname,
+          ...(session.profile ? ["--profile", session.profile] : []),
+          "--relationships",
+          LINKED_PULL_REQUEST,
+          "--detail",
+          "full",
+          // TWG reads back seven days unless asked; a link belongs to the issue however old.
+          "--since",
+          "3650d",
+          "--output",
+          "json",
+          "--output-summary",
+          "none",
+        ],
+        cwd: ".",
+        env: { TWG_AGENT_DEFAULTS: "1" },
+        allowNonZeroExit: true,
+        timeoutMs: 30_000,
+        maxOutputBytes: 4 * 1024 * 1024,
+        outputMode: "error",
+      })
+      .pipe(Effect.mapError(failed));
+    const context = result.exitCode === 0 ? decodeContext(result.stdout) : Option.none();
+    if (Option.isNone(context)) return yield* failed();
+    const { relationships, relationshipSummary } = context.value.data;
+    return (relationships ?? relationshipSummary ?? [])
+      .flatMap((edge) => (edge.relationshipName === LINKED_PULL_REQUEST ? edge.targets : []))
+      .map((target) => ({
+        id: target.displayId ?? target.pullRequestId ?? null,
+        name: target.title ?? target.name ?? null,
+        url: target.url ?? null,
+        status: target.status ?? null,
+      }));
   });
 
   const load = Effect.fn("TwgJiraAuth.load")(function* (
@@ -272,6 +363,7 @@ export const make = Effect.gen(function* () {
             cache = { ...cache, until: 0, refused: session };
           }
         }, gate.withPermits(1)),
+        linkedPullRequests,
       });
     },
   };

@@ -168,6 +168,11 @@ export class JiraSessions extends Context.Service<
     readonly resolve: (rejected?: JiraSession) => Effect.Effect<JiraSession, IssueTrackerError>;
     /** Stops later operations from reusing a session Jira refused. */
     readonly reject: (session: JiraSession) => Effect.Effect<void>;
+    /** An issue's linked pull requests, read by the login itself for an OAuth session. */
+    readonly linkedPullRequests: (
+      session: JiraSession,
+      issueId: string,
+    ) => Effect.Effect<ReadonlyArray<JiraDevelopmentPullRequest>, IssueTrackerError>;
   }
 >()("@t3tools/issue-tracker-jira/server/JiraApi/JiraSessions") {}
 
@@ -297,7 +302,8 @@ export class JiraApi extends Context.Service<
     ) => Effect.Effect<ReadonlyArray<JiraUser>, IssueTrackerError>;
     /**
      * The pull requests the development panel shows for an issue, by its numeric id. Jira serves
-     * them only through `dev-status`, the undocumented API behind that panel.
+     * them only through `dev-status`, the undocumented API behind that panel, which Atlassian's
+     * gateway does not serve to an OAuth session; the session's login reads those instead.
      */
     readonly developmentPullRequests: (
       issueId: string,
@@ -637,6 +643,10 @@ export const make = Effect.gen(function* () {
   const developmentPullRequests: JiraApi["Service"]["developmentPullRequests"] = Effect.fn(
     "JiraApi.developmentPullRequests",
   )(function* (issueId) {
+    const site = yield* storedSite("developmentPullRequests");
+    if (site.session?.oauth === true && Option.isSome(sessions)) {
+      return yield* sessions.value.linkedPullRequests(site.session, issueId);
+    }
     // The detail is read per integration; the summary names those holding pull requests.
     const summary = yield* send("developmentSummary", DevelopmentSummary, {
       method: "GET",

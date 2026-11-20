@@ -49,6 +49,7 @@ function setup() {
     token: jwt(),
     profile: "work" as string | null,
     exported: undefined as string | undefined,
+    context: "",
     exitCode: 0,
     onRefresh: () => {},
     respond: undefined as ((seen: Seen) => unknown) | undefined,
@@ -86,7 +87,8 @@ function setup() {
             ].join("\n");
           return {
             exitCode: ChildProcessSpawner.ExitCode(state.exitCode),
-            stdout: input.args[0] === "env" ? exported : "",
+            stdout:
+              input.args[0] === "env" ? exported : input.args[0] === "context" ? state.context : "",
             stderr: "",
             stdoutTruncated: false,
             stderrTruncated: false,
@@ -371,7 +373,90 @@ describe("TwgJiraAuth", () => {
             authorization: `Basic ${btoa("sam@example.test:api-key")}`,
           }),
         ]);
+        // The site serves its development panel to a token, so TWG is not asked for it.
+        mock.state.respond = () => ({ summary: {} });
+        const operation = yield* mock.operations;
+        expect(yield* (yield* operation()).developmentPullRequests("10007")).toEqual([]);
+        expect(mock.requests.at(-1)?.url).toBe(`${SITE}/rest/dev-status/latest/issue/summary`);
+        expect(mock.processes.some((call) => call.args[0] === "context")).toBe(false);
       }),
+  );
+
+  it.effect("reads an OAuth session's linked pull requests with TWG, not through the gateway", () =>
+    Effect.gen(function* () {
+      const mock = setup();
+      const pullRequest = (number: number, title: string) => ({
+        ari: `ari:cloud:jira:${CLOUD}:pull-request/${number}`,
+        type: "ExternalPullRequest",
+        title,
+        name: title,
+        url: `https://github.com/acme/web/pull/${number}`,
+        status: "MERGED",
+        displayId: `#${number}`,
+        pullRequestId: String(number),
+        provider: { name: "GitHub" },
+      });
+      mock.state.context = JSON.stringify({
+        apiVersion: "1",
+        command: "context.jira.workitem",
+        data: {
+          object: { ari: `ari:cloud:jira:${CLOUD}:issue/10007`, type: "JiraIssue" },
+          relationships: [
+            {
+              relationshipName: "jira_work_item_links_external_pull_request",
+              direction: "forward",
+              targetType: "ExternalPullRequest",
+              targets: [pullRequest(482, "Keep the return path")],
+            },
+            {
+              relationshipName: "external_pull_request_mentions_jira_work_item",
+              direction: "inverse",
+              targetType: "ExternalPullRequest",
+              targets: [pullRequest(9, "Only mentions it")],
+            },
+          ],
+        },
+        meta: {},
+      });
+      const operation = yield* mock.operations;
+      expect(yield* (yield* operation()).developmentPullRequests("10007")).toEqual([
+        {
+          id: "#482",
+          name: "Keep the return path",
+          url: "https://github.com/acme/web/pull/482",
+          status: "MERGED",
+        },
+      ]);
+      expect(mock.processes.at(-1)?.args).toEqual([
+        "context",
+        "jira",
+        "workitem",
+        "10007",
+        "--site",
+        "acme.atlassian.net",
+        "--profile",
+        "work",
+        "--relationships",
+        "jira_work_item_links_external_pull_request",
+        "--detail",
+        "full",
+        "--since",
+        "3650d",
+        "--output",
+        "json",
+        "--output-summary",
+        "none",
+      ]);
+      expect(mock.requests.some((seen) => seen.url.includes("/rest/dev-status/"))).toBe(false);
+
+      // Anything but a context answer is refused rather than read, and never echoed.
+      mock.state.context = `export TWG_OAUTH_ACCESS_TOKEN=$'${mock.first}'`;
+      const refused = yield* (yield* operation())
+        .developmentPullRequests("10007")
+        .pipe(Effect.flip);
+      expect(refused.detail).toBe("TWG could not read the issue's linked pull requests.");
+      expect(JSON.stringify(refused)).not.toContain(mock.first);
+    }),
   );
 
   it.effect("keeps one login through a whole write, then follows what Settings saved next", () =>
