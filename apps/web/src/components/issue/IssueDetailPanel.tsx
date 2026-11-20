@@ -3,6 +3,7 @@ import { issueEventSentence, issueWriteAccess } from "@t3tools/client-runtime/is
 import { prependIssueComments } from "@t3tools/client-runtime/state/issues";
 import {
   issueAssigneeHeld,
+  issueAssigneeSearchView,
   issueAssigneesAfterPicks,
   issueLabelsAfterPicks,
   issuePicksAfterFailedWrite,
@@ -43,6 +44,7 @@ import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { issueEnvironment, refreshIssueLists } from "~/state/issues";
 import { useProjects, useThreadShell } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
+import { useDebouncedValue } from "~/state/queries";
 import { useEnvironmentScope } from "~/state/session";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -313,14 +315,23 @@ function IssueAssigneePicker({
   const candidatesQuery = useEnvironmentQuery(
     open ? issueEnvironment.candidates({ environmentId, input: reference }) : null,
   );
-  const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
-  const needle = query.toLowerCase();
-  const candidates = (candidatesQuery.data?.assignees ?? []).filter(
-    (candidate) =>
-      needle.length === 0 ||
-      candidate.login.toLowerCase().includes(needle) ||
-      (candidate.name ?? "").toLowerCase().includes(needle),
+  const debouncedQuery = useDebouncedValue(query.trim(), 250);
+  const searchable = candidatesQuery.data?.assigneeSearch === true;
+  const hostQuery = searchable && debouncedQuery.length > 0 ? debouncedQuery : null;
+  const search = useEnvironmentQuery(
+    open && hostQuery !== null
+      ? issueEnvironment.candidates({ environmentId, input: { ...reference, query: hostQuery } })
+      : null,
   );
+  const view = issueAssigneeSearchView({
+    loaded: candidatesQuery.data?.assignees ?? [],
+    searchable,
+    query,
+    debouncedQuery,
+    search,
+  });
+  const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
+  const candidates = view.candidates;
   const onOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen);
     if (nextOpen) {
@@ -360,8 +371,8 @@ function IssueAssigneePicker({
       query={query}
       onQueryChange={setQuery}
       searchLabel="Search people"
-      isPending={candidatesQuery.isPending && candidatesQuery.data === null}
-      error={candidatesQuery.data === null ? candidatesQuery.error : null}
+      isPending={(candidatesQuery.isPending && candidatesQuery.data === null) || view.pending}
+      error={candidatesQuery.data === null ? candidatesQuery.error : view.error}
       candidates={candidates}
       emptyLabel="Nobody can be assigned here."
       noMatchLabel="Nobody matches that."
