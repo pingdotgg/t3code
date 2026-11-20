@@ -513,8 +513,8 @@ const COLLAPSIBLE_WHITESPACE = /[ \t\n\r\f]+/g;
 function preformattedCellText(text: string): string {
   return text
     .replace(/\r\n?|\n/g, CELL_LINE_BREAK)
-    .replaceAll("\t", " ".repeat(4))
-    .replaceAll(" ", " ");
+    .replaceAll("\t", "\u00a0".repeat(4))
+    .replaceAll(" ", "\u00a0");
 }
 
 /** Collects a cell's text with block edges and breaks marked, and each formula as its TeX. */
@@ -577,7 +577,7 @@ function htmlCellContent(cell: Element): string {
       const text = atLineStart || pendingBlockEdge ? token.replace(/^ +/, "") : token;
       if (!text) continue;
       if (pendingBlockEdge && !atLineStart) html = `${html.replace(/ +$/, "")}<br>`;
-      html += escapeHtml(text).replaceAll(" ", "&nbsp;");
+      html += escapeHtml(text).replaceAll("\u00a0", "&nbsp;");
       atLineStart = false;
       pendingBlockEdge = false;
     }
