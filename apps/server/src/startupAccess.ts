@@ -84,6 +84,16 @@ export const acceptsPrivateNetworkConnection = (socket: {
     (address) => address !== undefined && isPrivateNetworkAddress(address),
   );
 
+/** The connection arrived on loopback or one of `localHosts`, never another interface. */
+export const acceptsConnectionOnLocalHosts = (
+  socket: { readonly localAddress?: string | undefined },
+  localHosts: ReadonlyArray<string>,
+): boolean => {
+  const address = socket.localAddress?.replace(/^::ffff:/i, "");
+  if (address === undefined) return false;
+  return address === "::1" || address.startsWith("127.") || localHosts.includes(address);
+};
+
 const CLOSED_CONNECTION_LOG_INTERVAL_NANOS = 60_000_000_000n;
 
 /**
@@ -92,14 +102,16 @@ const CLOSED_CONNECTION_LOG_INTERVAL_NANOS = 60_000_000_000n;
  * a connect flood from outside cannot grow the service log without bound.
  */
 // Untraced: the captured context would otherwise tie every later warning to a span that ended at startup.
-export const closeNonPrivateNetworkConnections = Effect.fnUntraced(function* (
+const closeConnectionsUnless = Effect.fnUntraced(function* (
   server: NodeHttp.Server,
+  accepts: (socket: NodeNet.Socket) => boolean,
+  message: string,
 ) {
   const runSync = Effect.runSyncWith(yield* Effect.context<never>());
   let nextLogAt: bigint | undefined;
   let closedSinceLastLog = 0;
   server.on("connection", (socket) => {
-    if (acceptsPrivateNetworkConnection(socket)) return;
+    if (accepts(socket)) return;
     // Read before destroy: Node forgets localAddress once the handle closes.
     const addresses = { localAddress: socket.localAddress, remoteAddress: socket.remoteAddress };
     socket.destroy();
@@ -112,7 +124,7 @@ export const closeNonPrivateNetworkConnections = Effect.fnUntraced(function* (
           return;
         }
         nextLogAt = now + CLOSED_CONNECTION_LOG_INTERVAL_NANOS;
-        yield* Effect.logWarning("closed a connection outside the private network", {
+        yield* Effect.logWarning(message, {
           ...addresses,
           ...(closedSinceLastLog > 0 ? { closedSinceLastLog } : {}),
         });
@@ -120,6 +132,40 @@ export const closeNonPrivateNetworkConnections = Effect.fnUntraced(function* (
       }),
     );
   });
+});
+
+export const closeNonPrivateNetworkConnections = (server: NodeHttp.Server) =>
+  closeConnectionsUnless(
+    server,
+    acceptsPrivateNetworkConnection,
+    "closed a connection outside the private network",
+  );
+
+/** A wildcard listener serves only connections that arrive on loopback or one of `localHosts`. */
+export const closeConnectionsOutsideLocalHosts = (
+  server: NodeHttp.Server,
+  localHosts: ReadonlyArray<string>,
+) =>
+  closeConnectionsUnless(
+    server,
+    (socket) => acceptsConnectionOnLocalHosts(socket, localHosts),
+    "closed a connection on an address this server does not serve",
+  );
+
+/** Installs every connection filter the server config asks for. */
+export const applyConnectionFilters = Effect.fnUntraced(function* (
+  server: NodeHttp.Server,
+  config: {
+    readonly privateNetworkOnly?: boolean | undefined;
+    readonly acceptedLocalHosts?: ReadonlyArray<string> | undefined;
+  },
+) {
+  if (config.privateNetworkOnly) {
+    yield* closeNonPrivateNetworkConnections(server);
+  }
+  if (config.acceptedLocalHosts) {
+    yield* closeConnectionsOutsideLocalHosts(server, config.acceptedLocalHosts);
+  }
 });
 
 export const loopbackUrlHostForAddress = (address: NetAddress.InetAddress): string =>

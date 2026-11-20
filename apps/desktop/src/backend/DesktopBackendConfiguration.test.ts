@@ -23,6 +23,7 @@ import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "../wsl/DesktopWslServerTree.ts";
+import { pickDistroIpv4 } from "../wsl/wslPathParsing.ts";
 
 const layerShellEnvironment = (prepared = true) =>
   Layer.succeed(DesktopShellEnvironment.DesktopShellEnvironment, {
@@ -39,20 +40,23 @@ const layerBackendConfiguration = (prepared = true) =>
     Layer.provide(DesktopState.layer),
   );
 
-const layerServerExposure = Layer.succeed(DesktopServerExposure.DesktopServerExposure, {
-  getState: Effect.die("unexpected getState"),
-  backendConfig: Effect.succeed({
-    port: 4888,
-    bindHost: "0.0.0.0",
-    httpBaseUrl: new URL("http://127.0.0.1:4888"),
-    tailscaleServeEnabled: true,
-    tailscaleServePort: 8443,
-  }),
-  configureFromSettings: () => Effect.die("unexpected configureFromSettings"),
-  setMode: () => Effect.die("unexpected setMode"),
-  setTailscaleServeEnabled: () => Effect.die("unexpected setTailscaleServeEnabled"),
-  getAdvertisedEndpoints: Effect.succeed([]),
-} satisfies DesktopServerExposure.DesktopServerExposure["Service"]);
+const makeLayerServerExposure = (bindHost: string) =>
+  Layer.succeed(DesktopServerExposure.DesktopServerExposure, {
+    getState: Effect.die("unexpected getState"),
+    backendConfig: Effect.succeed({
+      port: 4888,
+      bindHost,
+      httpBaseUrl: new URL("http://127.0.0.1:4888"),
+      tailscaleServeEnabled: true,
+      tailscaleServePort: 8443,
+    }),
+    configureFromSettings: () => Effect.die("unexpected configureFromSettings"),
+    setMode: () => Effect.die("unexpected setMode"),
+    setTailscaleServeEnabled: () => Effect.die("unexpected setTailscaleServeEnabled"),
+    getAdvertisedEndpoints: Effect.succeed([]),
+  } satisfies DesktopServerExposure.DesktopServerExposure["Service"]);
+
+const layerServerExposure = makeLayerServerExposure("0.0.0.0");
 
 function layerEnvironment(
   baseDir: string,
@@ -764,6 +768,81 @@ describe("DesktopBackendConfiguration", () => {
           OTEL_RESOURCE_ATTRIBUTES: "deployment.environment.name=staging",
         }),
       );
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("resolveWsl binds loopback only when network access is off and Windows dials it", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+      // `hostname -I` output; loopback stands in for the host address a mirrored distro reports.
+      const cases = [
+        { exposureBindHost: "127.0.0.1", distroIp: null, url: "127.0.0.1", bind: "127.0.0.1" },
+        {
+          exposureBindHost: "127.0.0.1",
+          distroIp: "127.0.0.1",
+          url: "127.0.0.1",
+          bind: "127.0.0.1",
+        },
+        // NAT keeps the wildcard for wslhost loopback forwarding, but serves only loopback and the
+        // distro IP, not an in-distro tailnet address.
+        {
+          exposureBindHost: "127.0.0.1",
+          distroIp: "172.27.0.99",
+          url: "172.27.0.99",
+          bind: "0.0.0.0",
+          accepted: ["172.27.0.99"],
+        },
+        {
+          exposureBindHost: "127.0.0.1",
+          distroIp: "100.101.102.103 172.27.0.99",
+          url: "172.27.0.99",
+          bind: "0.0.0.0",
+          accepted: ["172.27.0.99"],
+        },
+        { exposureBindHost: "0.0.0.0", distroIp: "127.0.0.1", url: "127.0.0.1", bind: "0.0.0.0" },
+        {
+          exposureBindHost: "0.0.0.0",
+          distroIp: "172.27.0.99",
+          url: "172.27.0.99",
+          bind: "0.0.0.0",
+        },
+      ];
+
+      for (const { exposureBindHost, distroIp, url, bind, accepted } of cases) {
+        const config = yield* Effect.gen(function* () {
+          const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+          return yield* configuration.resolveWsl({ port: 5050, distro: null });
+        }).pipe(
+          Effect.provide(
+            layerBackendConfiguration().pipe(
+              Layer.provideMerge(makeLayerServerExposure(exposureBindHost)),
+              Layer.provideMerge(DesktopAppSettings.layerTest()),
+              Layer.provideMerge(DesktopWslServerTree.layerTest()),
+              Layer.provideMerge(
+                DesktopWslEnvironment.layerTest({
+                  isAvailable: true,
+                  windowsToWslPath: () => Option.some("/mnt/c/repo/apps/server/src/index.ts"),
+                  getDistroIp: (_distro, options) =>
+                    Option.fromNullishOr(pickDistroIpv4(distroIp ?? "", options)),
+                }),
+              ),
+              Layer.provideMerge(layerEnvironment(baseDir, { platform: "win32" })),
+            ),
+          ),
+        );
+        assert.deepEqual(
+          {
+            url: config.httpBaseUrl.hostname,
+            bind: config.bootstrap.host,
+            accepted: config.bootstrap.acceptedLocalHosts,
+          },
+          { url, bind, accepted },
+          `network access bind ${exposureBindHost}, distro IP ${distroIp}`,
+        );
+      }
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
