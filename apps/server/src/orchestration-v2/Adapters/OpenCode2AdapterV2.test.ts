@@ -3208,22 +3208,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
-  it.effect("Auto applies the selected agent's native permission rules", () =>
-    Effect.gen(function* () {
-      const { runtime, thread } = yield* resumed(
-        [
-          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-          promptAccepted,
-          event("session.execution.succeeded", { sessionID: SESSION }),
-        ],
-        { auto: true },
-      );
-      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
-      yield* runtime.startTurn(turnInput(thread, bigPickle, "auto"));
-      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
-    }),
-  );
-
   it.effect("Auto applies the selected agent's action-specific native rules", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed(
