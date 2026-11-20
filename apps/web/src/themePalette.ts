@@ -1732,19 +1732,34 @@ export function getThemeColorVariable(role: ThemeColorRole): string {
 export const THEME_PREVIEW_ID = "__preview";
 
 const MESSAGE_CONTRAST_TARGET_VARIABLE = "--message-contrast-target";
+const MESSAGE_MUTED_FOREGROUND_VARIABLE = "--message-muted-foreground";
 
-function applyMessageContrastTarget(root: HTMLElement, colors: ThemeColors): void {
+function applyMessageInkVariables(root: HTMLElement, colors: ThemeColors): void {
   const canvas = compositeThemeColor(colors.canvas, THEME_WHITE_FOREGROUND);
   const surface = compositeThemeColor(colors.messageSurface, canvas);
   const foreground = compositeThemeColor(colors.messageForeground, surface);
-  const foregroundIsLighter = themeRelativeLuminance(foreground) > themeRelativeLuminance(surface);
+  const surfaceLuminance = themeRelativeLuminance(surface);
+  const foregroundIsLighter = themeRelativeLuminance(foreground) > surfaceLuminance;
   const sameSide = foregroundIsLighter ? THEME_WHITE_FOREGROUND : THEME_BLACK_FOREGROUND;
   // Preserve the foreground's contrast direction when both endpoints are readable.
   const useWhite =
-    themeContrastRatio(sameSide, surface) >= 4.5
-      ? foregroundIsLighter
-      : themeRelativeLuminance(surface) < 0.179;
+    themeContrastRatio(sameSide, surface) >= 4.5 ? foregroundIsLighter : surfaceLuminance < 0.179;
   root.style.setProperty(MESSAGE_CONTRAST_TARGET_VARIABLE, useWhite ? "white" : "black");
+
+  // The theme's muted text is solved against the canvas, which a themed bubble can be far
+  // from. Muted text across the bubble from its contrast target would cross it as contrast rises.
+  const muted = compositeThemeColor(colors.mutedForeground, surface);
+  const mutedIsLighter = themeRelativeLuminance(muted) > surfaceLuminance;
+  const solved = solveOklchLightness(
+    themeRgbToOklch(mutedIsLighter === useWhite ? muted : foreground),
+    [surface],
+    4.5,
+    useWhite ? "lighter" : "darker",
+  );
+  root.style.setProperty(
+    MESSAGE_MUTED_FOREGROUND_VARIABLE,
+    themeRgbToHexColor(themeOklchToRgb(solved)),
+  );
 }
 
 /** Callers must restore the stored theme with refreshTheme when the draft closes. */
@@ -1762,7 +1777,7 @@ export function applyThemeColorPreview(
   for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
     if (isThemeColor(value)) root.style.setProperty(APP_THEME_VARIABLES[role], value);
   }
-  applyMessageContrastTarget(root, colors);
+  applyMessageInkVariables(root, colors);
   applyContextChipVariables(root, colors);
   applyThemeCss(css);
   setThemePreviewAppearance(appearance);
@@ -1786,13 +1801,14 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
     for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
       root.style.setProperty(APP_THEME_VARIABLES[role], value);
     }
-    applyMessageContrastTarget(root, colors);
+    applyMessageInkVariables(root, colors);
     applyContextChipVariables(root, colors);
     return;
   }
 
   delete root.dataset.themeId;
   root.style.removeProperty(MESSAGE_CONTRAST_TARGET_VARIABLE);
+  root.style.removeProperty(MESSAGE_MUTED_FOREGROUND_VARIABLE);
   for (const variable of Object.values(APP_THEME_VARIABLES)) {
     root.style.removeProperty(variable);
   }
