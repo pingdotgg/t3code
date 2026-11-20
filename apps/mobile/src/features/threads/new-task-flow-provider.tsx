@@ -17,6 +17,7 @@ import type {
 import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  defaultRuntimeModeForProvider,
   MessageId,
   repositoryGroupingKeyOf,
   ThreadId,
@@ -427,13 +428,7 @@ export function NewTaskFlowProvider(
   const draftStartFromOrigin = selectedProjectDraft.workspaceSelection?.startFromOrigin;
   const startFromOrigin =
     isGitRepo && (draftStartFromOrigin ?? projectSettings.settings.newWorktreesStartFromOrigin);
-  const defaultRuntimeMode = projectSettings.settings.defaultRuntimeMode;
   const managedPolicy = selectedEnvironmentServerConfig?.managedPolicy;
-  const runtimeMode = resolveNewThreadRuntimeMode(
-    selectedProjectDraft.runtimeMode,
-    defaultRuntimeMode,
-    managedPolicy,
-  );
 
   // Antigravity keeps unavailable selections so sign-out or a catalog change
   // cannot switch the user's model.
@@ -492,6 +487,16 @@ export function NewTaskFlowProvider(
     selectedEnvironmentServerConfig?.providers.find(
       (provider) => provider.instanceId === selectedModel?.instanceId,
     ) ?? null;
+  const defaultRuntimeMode = defaultRuntimeModeForProvider({
+    driverKind: selectedProviderStatus?.driver,
+    defaultRuntimeMode: projectSettings.settings.defaultRuntimeMode,
+    sparrowDefaultRuntimeMode: projectSettings.settings.sparrowDefaultRuntimeMode,
+  });
+  const runtimeMode = resolveNewThreadRuntimeMode(
+    selectedProjectDraft.runtimeMode,
+    defaultRuntimeMode,
+    managedPolicy,
+  );
   const setSelectedModelKey = (
     key: string | null,
     options?: ReadonlyArray<ProviderOptionSelection>,

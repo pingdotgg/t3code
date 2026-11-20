@@ -1755,6 +1755,13 @@ function ThreadDetailBody(
                               props.selectedThread.modelSelection.instanceId,
                           )?.supportedRuntimeModes
                         }
+                        runtimeModes={
+                          props.serverConfig?.providers.find(
+                            (provider) =>
+                              provider.instanceId ===
+                              props.selectedThread.modelSelection.instanceId,
+                          )?.runtimeModes
+                        }
                         policy={props.serverConfig?.managedPolicy}
                       />
                     ) : null}

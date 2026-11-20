@@ -1,11 +1,17 @@
 import { managedRuntimeModeDenial } from "@t3tools/client-runtime/contract-labels";
-import type { ManagedPolicySummary, RuntimeMode } from "@t3tools/contracts";
+import {
+  compatibleRuntimeMode,
+  type ClassicRuntimeMode,
+  type ManagedPolicySummary,
+  type RuntimeMode,
+  type ServerProviderRuntimeMode,
+} from "@t3tools/contracts";
 import { msg } from "gt-react-native";
 
 import { m, type MessageResolver } from "../../i18n/messages";
 
 export const RUNTIME_MODE_CHOICES: ReadonlyArray<{
-  readonly mode: RuntimeMode;
+  readonly mode: ClassicRuntimeMode;
   readonly label: string;
   readonly description: string;
 }> = [
@@ -31,15 +37,55 @@ export const RUNTIME_MODE_CHOICES: ReadonlyArray<{
   },
 ];
 
+const EXTRA_RUNTIME_MODE_CHOICES: ReadonlyArray<{
+  readonly mode: RuntimeMode;
+  readonly label: string;
+  readonly description: string;
+}> = [
+  {
+    mode: "read-only",
+    label: msg("Read only"),
+    description: msg(
+      "Allow read and search tools only; block edits, shell commands, and MCP calls.",
+    ),
+  },
+  {
+    mode: "workspace-write",
+    label: msg("Workspace write"),
+    description: msg("Auto-approve workspace edits and shell; ask otherwise."),
+  },
+];
+
 export function runtimeModeChoicesForSupportedModes(
   supportedRuntimeModes: ReadonlyArray<RuntimeMode> | undefined,
-) {
-  return supportedRuntimeModes && supportedRuntimeModes.length > 0
-    ? RUNTIME_MODE_CHOICES.filter((choice) => supportedRuntimeModes.includes(choice.mode))
-    : RUNTIME_MODE_CHOICES;
+  providerRuntimeModes?: ReadonlyArray<ServerProviderRuntimeMode> | undefined,
+): ReadonlyArray<RuntimeModeChoice> {
+  const known = new Map<RuntimeMode, RuntimeModeChoice>(
+    [...EXTRA_RUNTIME_MODE_CHOICES, ...RUNTIME_MODE_CHOICES].map((c) => [c.mode, c]),
+  );
+  if (providerRuntimeModes && providerRuntimeModes.length > 0) {
+    return providerRuntimeModes.map((entry) => {
+      const fallback = known.get(entry.mode);
+      return {
+        mode: entry.mode,
+        label: entry.label ?? fallback?.label ?? entry.mode,
+        description: entry.description ?? fallback?.description ?? "",
+      };
+    });
+  }
+  if (supportedRuntimeModes && supportedRuntimeModes.length > 0) {
+    return supportedRuntimeModes.flatMap((mode) => {
+      const choice = known.get(mode);
+      return choice ? [choice] : [];
+    });
+  }
+  return RUNTIME_MODE_CHOICES;
 }
 
-export type RuntimeModeChoice = (typeof RUNTIME_MODE_CHOICES)[number] & {
+export type RuntimeModeChoice = {
+  readonly mode: RuntimeMode;
+  readonly label: string;
+  readonly description: string;
   /** Set when a target environment's managed policy caps runtime modes below this one. */
   readonly disabledReason?: string;
 };
@@ -79,9 +125,10 @@ export function compatibleRuntimeModeForChoices(
   runtimeMode: RuntimeMode,
   choices: ReadonlyArray<{ readonly mode: RuntimeMode }>,
 ): RuntimeMode {
-  return choices.some((choice) => choice.mode === runtimeMode)
-    ? runtimeMode
-    : (choices[0]?.mode ?? runtimeMode);
+  return compatibleRuntimeMode(
+    runtimeMode,
+    choices.map((choice) => choice.mode),
+  );
 }
 
 export { selectableProviderOptionChoices as selectableChoices } from "@t3tools/client-runtime/model-traits";

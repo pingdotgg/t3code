@@ -73,6 +73,7 @@ export interface SettingsSearchItem {
   readonly peerLinksOnly?: boolean;
   readonly fastWorktreeCheckoutOnly?: boolean;
   readonly textGeneratorsOnly?: boolean;
+  readonly sparrowProviderOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
 }
@@ -90,6 +91,7 @@ export interface SettingsSearchAvailability {
   readonly hasFastWorktreeCheckoutEnvironment?: boolean;
   /** An environment without a provider allow-list, which hides text generators. */
   readonly hasTextGeneratorsEnvironment?: boolean;
+  readonly hasSparrowProvider?: boolean;
   readonly hasPrimaryEnvironment?: boolean;
 }
 
@@ -323,6 +325,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "project-defaults",
     searchTerms: [
       msg("new thread default runtime mode supervised approvals auto accept edits full access"),
+    ],
+  },
+  {
+    id: "sparrow-permissions",
+    title: msg("Sparrow permissions"),
+    to: "/settings/threads",
+    scope: "project-defaults",
+    sparrowProviderOnly: true,
+    searchTerms: [
+      msg("sparrow default runtime mode permissions read only workspace write full access"),
     ],
   },
   {
@@ -820,7 +832,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Provider update checks"),
     to: "/settings/maintenance",
     searchTerms: [
-      msg("installed cli versions newer available codex claude cursor grok fx kiro opencode"),
+      msg(
+        "installed cli versions newer available codex claude cursor grok fx kiro opencode sparrow",
+      ),
     ],
     scope: "environment-defaults",
   },
@@ -1043,7 +1057,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/providers",
     searchTerms: [
       msg(
-        "agents cli codex claude cursor grok fx kiro opencode antigravity google sign in sign out install subscription instances authentication api key models configuration binary path config directory codex_home shadow home endpoint arguments environment variables display name accent color custom favorite hidden auto compact native sessions import resume",
+        "agents cli codex claude cursor grok fx kiro opencode sparrow antigravity google sign in sign out install subscription instances authentication api key models configuration binary path config directory codex_home shadow home endpoint arguments environment variables display name accent color custom favorite hidden auto compact native sessions import resume",
       ),
     ],
   },
@@ -1638,7 +1652,8 @@ export function filterAvailableSettingsSearchItems(
       (!item.peerLinksOnly || availability.hasPeerLinkHost === true) &&
       (!item.fastWorktreeCheckoutOnly ||
         availability.hasFastWorktreeCheckoutEnvironment === true) &&
-      (!item.textGeneratorsOnly || availability.hasTextGeneratorsEnvironment === true),
+      (!item.textGeneratorsOnly || availability.hasTextGeneratorsEnvironment === true) &&
+      (!item.sparrowProviderOnly || availability.hasSparrowProvider === true),
   );
 }
 

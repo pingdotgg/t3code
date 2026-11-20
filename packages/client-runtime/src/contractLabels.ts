@@ -102,10 +102,14 @@ export function managedRuntimeModeCeilingMessage(
   resolve: MFunctionType = mFallback,
 ): string {
   switch (ceiling) {
+    case "read-only":
+      return resolve(msg("{organization} limits threads to Read only.", { organization }));
     case "approval-required":
       return resolve(msg("{organization} limits threads to Supervised.", { organization }));
     case "auto-accept-edits":
       return resolve(msg("{organization} limits threads to Auto-accept edits.", { organization }));
+    case "workspace-write":
+      return resolve(msg("{organization} limits threads to Workspace write.", { organization }));
     case "auto":
       return resolve(msg("{organization} limits threads to Auto.", { organization }));
     case "full-access":

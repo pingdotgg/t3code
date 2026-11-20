@@ -5,6 +5,7 @@ import type {
   RuntimeMode,
   ServerProvider,
   ServerProviderAuth,
+  ServerProviderRuntimeMode,
   ServerProviderSkill,
   ServerProviderSlashCommand,
   ServerProviderModel,
@@ -112,6 +113,7 @@ export interface ServerProviderPresentation {
   readonly showInteractionModeToggle?: boolean;
   readonly reportsContextWindow?: boolean;
   readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode>;
+  readonly runtimeModes?: ReadonlyArray<ServerProviderRuntimeMode>;
   readonly supportsConversationRollback?: boolean;
 }
 
@@ -320,6 +322,9 @@ export function buildServerProvider(input: {
     ...(input.presentation.supportedRuntimeModes === undefined
       ? {}
       : { supportedRuntimeModes: [...input.presentation.supportedRuntimeModes] }),
+    ...(input.presentation.runtimeModes === undefined
+      ? {}
+      : { runtimeModes: [...input.presentation.runtimeModes] }),
     enabled: input.enabled,
     installed: input.probe.installed,
     version: input.probe.version,

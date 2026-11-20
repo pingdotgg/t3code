@@ -10,10 +10,16 @@ import {
 it.each(RuntimeMode.literals)("keeps MCP access within the %s policy ceiling", (maxRuntimeMode) => {
   const ceiling = { organization: "Example", maxRuntimeMode };
   expect(resolveMcpAccess("auto", ceiling, false)).toBe(
-    maxRuntimeMode === "full-access" ? "auto" : maxRuntimeMode,
+    maxRuntimeMode === "full-access"
+      ? "auto"
+      : maxRuntimeMode === "workspace-write"
+        ? "auto-accept-edits"
+        : maxRuntimeMode,
   );
   expect(resolveMcpAccess("read-only", ceiling, false)).toBe("read-only");
-  expect(resolveMcpAccess("approval-required", ceiling, false)).toBe("approval-required");
+  expect(resolveMcpAccess("approval-required", ceiling, false)).toBe(
+    maxRuntimeMode === "read-only" ? "read-only" : "approval-required",
+  );
 });
 
 it("checks a typed code even in a signed-in browser, and approves without one at Read only", () => {

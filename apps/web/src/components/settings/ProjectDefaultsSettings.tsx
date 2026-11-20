@@ -2,10 +2,13 @@ import { managedRuntimeModeDenial } from "@t3tools/client-runtime/contract-label
 import {
   DEFAULT_SERVER_SETTINGS,
   type ModelSelection,
+  type RuntimeMode,
+  SparrowRuntimeMode,
   type WorktreeSubmodules,
 } from "@t3tools/contracts";
 import { createModelSelection, pickModelSelection } from "@t3tools/shared/model";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { hasEnabledSparrowProvider } from "@t3tools/shared/serverSettings";
 import { useNavigate } from "@tanstack/react-router";
 import { T, useGT, useMessages } from "gt-react";
 
@@ -106,7 +109,22 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     fallbackSelection?.model,
   );
   const mixedPermissions = useScopedSettingsMixed(["defaultRuntimeMode"]);
-  const PermissionIcon = runtimeModeConfig[settings.defaultRuntimeMode].icon;
+  const mixedSparrowPermissions = useScopedSettingsMixed(["sparrowDefaultRuntimeMode"]);
+  const sparrowEnabled =
+    targets.length > 0
+      ? targets.some((candidate) =>
+          hasEnabledSparrowProvider({
+            settings: candidate.settings,
+            providers:
+              providersByEnvironment.get(candidate.environmentId) ?? EMPTY_SERVER_PROVIDERS,
+            projectId: candidate.projectId,
+          }),
+        )
+      : hasEnabledSparrowProvider({
+          settings,
+          providers,
+          projectId: target?.projectId ?? null,
+        });
   const mixedWorkspace = useScopedSettingsMixed(["defaultThreadEnvMode"]);
   const mixedAutoPull = useScopedSettingsMixed(["defaultAutoPull"]);
   const mixedAgentCredits = useScopedSettingsMixed(["removeAgentCreditsOnMerge"]);
@@ -350,6 +368,85 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     />
   ) : null;
 
+  const renderPermissionModeRow = <Mode extends RuntimeMode>(row: {
+    readonly searchId: "default-permissions" | "sparrow-permissions";
+    readonly settingKey: "defaultRuntimeMode" | "sparrowDefaultRuntimeMode";
+    readonly mixed: boolean;
+    readonly value: Mode;
+    readonly defaultValue: Mode;
+    readonly modes: ReadonlyArray<Mode>;
+    readonly description: string;
+    readonly resetAriaLabel: string;
+    readonly triggerAriaLabel: string;
+    readonly onChange: (mode: Mode) => void;
+  }) => {
+    const ActiveIcon = runtimeModeConfig[row.value].icon;
+    return (
+      <SettingsRow
+        serverScoped
+        settingKeys={[row.settingKey]}
+        mixed={row.mixed}
+        {...searchableSetting(row.searchId)}
+        description={row.description}
+        resetAction={
+          row.value !== row.defaultValue ? (
+            <SettingResetButton
+              ariaLabel={row.resetAriaLabel}
+              onClick={() => row.onChange(row.defaultValue)}
+            />
+          ) : null
+        }
+        control={
+          <Select
+            value={row.mixed ? null : row.value}
+            onValueChange={(value) => {
+              if (value) row.onChange(value);
+            }}
+          >
+            <SelectTrigger size="sm" aria-label={row.triggerAriaLabel}>
+              {!row.mixed && <ActiveIcon className="size-3.5 shrink-0 text-muted-foreground" />}
+              <SelectValue>
+                {row.mixed
+                  ? gt("Mixed", { $context: "values differ across targets" })
+                  : m(runtimeModeConfig[row.value].label)}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              {row.modes.map((mode) => {
+                const option = runtimeModeConfig[mode];
+                const Icon = option.icon;
+                const managedReason = firstManagedDenial(
+                  connectedEnvironments.map(
+                    (environment) => environment.serverConfig?.managedPolicy,
+                  ),
+                  (policy) => managedRuntimeModeDenial(policy, mode, m),
+                );
+                return (
+                  <SelectItem
+                    key={mode}
+                    value={mode}
+                    disabled={managedReason !== undefined}
+                    className="min-w-64"
+                  >
+                    <div className="grid gap-0.5">
+                      <span className="inline-flex items-center gap-1.5 font-medium">
+                        <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+                        {m(option.label)}
+                      </span>
+                      <span className="text-xs leading-4 text-muted-foreground">
+                        {managedReason ?? m(option.description)}
+                      </span>
+                    </div>
+                  </SelectItem>
+                );
+              })}
+            </SelectPopup>
+          </Select>
+        }
+      />
+    );
+  };
+
   return (
     <SettingsSection
       id={category === "source-control" ? "source-control-defaults" : "project-defaults"}
@@ -365,78 +462,37 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
         <>
           {modelRow}
           {fallbackRow}
-          <SettingsRow
-            serverScoped
-            settingKeys={["defaultRuntimeMode"]}
-            mixed={mixedPermissions}
-            {...searchableSetting("default-permissions")}
-            description={
-              isProjectScope
-                ? gt("Permissions for new threads in this project.")
-                : gt("Default permissions for new threads. Projects can override them.")
-            }
-            resetAction={
-              settings.defaultRuntimeMode !== DEFAULT_SERVER_SETTINGS.defaultRuntimeMode ? (
-                <SettingResetButton
-                  ariaLabel={gt("Reset default permissions to default")}
-                  onClick={() =>
-                    updateSettings({
-                      defaultRuntimeMode: DEFAULT_SERVER_SETTINGS.defaultRuntimeMode,
-                    })
-                  }
-                />
-              ) : null
-            }
-            control={
-              <Select
-                value={mixedPermissions ? null : settings.defaultRuntimeMode}
-                onValueChange={(value) => {
-                  if (value) updateSettings({ defaultRuntimeMode: value });
-                }}
-              >
-                <SelectTrigger size="sm" aria-label={gt("Default permissions")}>
-                  {!mixedPermissions && (
-                    <PermissionIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                  )}
-                  <SelectValue>
-                    {mixedPermissions
-                      ? gt("Mixed", { $context: "values differ across targets" })
-                      : m(runtimeModeConfig[settings.defaultRuntimeMode].label)}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  {runtimeModeOptions.map((mode) => {
-                    const option = runtimeModeConfig[mode];
-                    const Icon = option.icon;
-                    const managedReason = firstManagedDenial(
-                      connectedEnvironments.map(
-                        (environment) => environment.serverConfig?.managedPolicy,
-                      ),
-                      (policy) => managedRuntimeModeDenial(policy, mode, m),
-                    );
-                    return (
-                      <SelectItem
-                        key={mode}
-                        value={mode}
-                        disabled={managedReason !== undefined}
-                        className="min-w-64"
-                      >
-                        <div className="grid gap-0.5">
-                          <span className="inline-flex items-center gap-1.5 font-medium">
-                            <Icon className="size-3.5 shrink-0 text-muted-foreground" />
-                            {m(option.label)}
-                          </span>
-                          <span className="text-xs leading-4 text-muted-foreground">
-                            {managedReason ?? m(option.description)}
-                          </span>
-                        </div>
-                      </SelectItem>
-                    );
-                  })}
-                </SelectPopup>
-              </Select>
-            }
-          />
+          {renderPermissionModeRow({
+            searchId: "default-permissions",
+            settingKey: "defaultRuntimeMode",
+            mixed: mixedPermissions,
+            value: settings.defaultRuntimeMode,
+            defaultValue: DEFAULT_SERVER_SETTINGS.defaultRuntimeMode,
+            modes: runtimeModeOptions,
+            description: isProjectScope
+              ? gt("Permissions for new threads in this project.")
+              : gt("Default permissions for new threads. Projects can override them."),
+            resetAriaLabel: gt("Reset default permissions to default"),
+            triggerAriaLabel: gt("Default permissions"),
+            onChange: (defaultRuntimeMode) => updateSettings({ defaultRuntimeMode }),
+          })}
+          {sparrowEnabled
+            ? renderPermissionModeRow({
+                searchId: "sparrow-permissions",
+                settingKey: "sparrowDefaultRuntimeMode",
+                mixed: mixedSparrowPermissions,
+                value: settings.sparrowDefaultRuntimeMode,
+                defaultValue: DEFAULT_SERVER_SETTINGS.sparrowDefaultRuntimeMode,
+                modes: SparrowRuntimeMode.literals,
+                description: isProjectScope
+                  ? gt("Permissions for new Sparrow threads in this project.")
+                  : gt("Default permissions for new Sparrow threads. Projects can override them."),
+                resetAriaLabel: gt("Reset Sparrow permissions to default"),
+                triggerAriaLabel: gt("Sparrow permissions"),
+                onChange: (sparrowDefaultRuntimeMode) =>
+                  updateSettings({ sparrowDefaultRuntimeMode }),
+              })
+            : null}
           {workspaceRow}
         </>
       ) : (

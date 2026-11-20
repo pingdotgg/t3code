@@ -749,6 +749,7 @@ function codexRuntimeModeTurnDefaults(runtimeMode: RuntimeMode): {
   readonly sandboxPolicy: CodexSchema.V2TurnStartParams__SandboxPolicy;
 } {
   switch (runtimeMode) {
+    case "read-only":
     case "approval-required":
       return {
         approvalPolicy: "untrusted",
@@ -758,6 +759,7 @@ function codexRuntimeModeTurnDefaults(runtimeMode: RuntimeMode): {
         },
       };
     case "auto-accept-edits":
+    case "workspace-write":
       return {
         approvalPolicy: "on-request",
         approvalsReviewer: "user",

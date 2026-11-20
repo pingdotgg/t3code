@@ -218,6 +218,12 @@ const PACKAGE_FIELD_TEXT: ReadonlyMap<string, string> = new Map([
     "Additional CLI arguments passed to pi --mode rpc on session start.",
     msg("Additional CLI arguments passed to pi --mode rpc on session start."),
   ],
+  ["Sparrow HOME path", msg("Sparrow HOME path")],
+  ["Path to the Sparrow CLI binary.", msg("Path to the Sparrow CLI binary.")],
+  [
+    "Custom HOME directory for Sparrow's .config/sparrow and session state.",
+    msg("Custom HOME directory for Sparrow's .config/sparrow and session state."),
+  ],
   [
     "Scoped to one repository, project, or workspace. Create it in that item's Bitbucket settings.",
     msg(

@@ -27,7 +27,7 @@ import {
   resolveApprovalDecision,
   resolveMcpAccess,
 } from "./ConnectAgentSurface.logic";
-import { runtimeModeConfig } from "../chat/runtimeModeConfig";
+import { classicRuntimeModeConfig } from "../chat/runtimeModeConfig";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -44,7 +44,7 @@ export const accessConfig: Record<
     description: msg("Read projects and threads. Cannot start, message or change anything."),
     icon: EyeIcon,
   },
-  ...runtimeModeConfig,
+  ...classicRuntimeModeConfig,
 };
 
 const ARM_DELAY_MS = 700;

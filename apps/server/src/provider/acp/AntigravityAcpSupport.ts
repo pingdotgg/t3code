@@ -156,9 +156,11 @@ export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
     case "full-access":
       return "yolo";
     case "auto-accept-edits":
+    case "workspace-write":
       return "auto_edit";
     case "auto":
       return "auto";
+    case "read-only":
     case "approval-required":
       return "default";
   }

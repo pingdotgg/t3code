@@ -3,7 +3,12 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import { DEFAULT_SERVER_SETTINGS, type ScopedProjectRef, type ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  defaultRuntimeModeForProvider,
+  type ScopedProjectRef,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { type AnyRouter, useRouter } from "@tanstack/react-router";
 import {
   composerDraftHasUserContent,
@@ -168,19 +173,20 @@ export function createNewThreadHandler(router: AnyRouter) {
       project?.id ?? null,
       project,
     );
+    const providers = environmentServerConfigs.get(projectRef.environmentId)?.providers ?? [];
     const configuredDefaultModelSelection = projectSettings.settings.defaultModelSelection ?? null;
+    const automaticModelSelection = resolveProjectDefaultProviderModelSelection(
+      providers,
+      targetServerSettings,
+      projectRef.projectId,
+    );
+    const stickyActiveProvider = useComposerDraftStore.getState().stickyActiveProvider;
     const fallbackResolution = resolveNewThreadModelSelection({
       defaultSelection:
         configuredDefaultModelSelection ??
-        (carryModelSelection || useComposerDraftStore.getState().stickyActiveProvider !== null
-          ? null
-          : resolveProjectDefaultProviderModelSelection(
-              environmentServerConfigs.get(projectRef.environmentId)?.providers ?? [],
-              targetServerSettings,
-              projectRef.projectId,
-            )),
+        (carryModelSelection || stickyActiveProvider !== null ? null : automaticModelSelection),
       fallbackSelection: targetServerSettings.fallbackModelSelection ?? null,
-      providers: environmentServerConfigs.get(projectRef.environmentId)?.providers ?? [],
+      providers,
       settings: targetServerSettings,
       projectId: projectRef.projectId,
       now: Date.now(),
@@ -188,7 +194,20 @@ export function createNewThreadHandler(router: AnyRouter) {
     const projectDefaultModelSelection = fallbackResolution.fallback
       ? fallbackResolution.selection
       : configuredDefaultModelSelection;
-    const defaultRuntimeMode = projectSettings.settings.defaultRuntimeMode;
+    const initialProviderInstanceId =
+      stickyActiveProvider ??
+      carryModelSelection?.instanceId ??
+      projectDefaultModelSelection?.instanceId ??
+      automaticModelSelection?.instanceId ??
+      null;
+    const initialProviderDriver = providers.find(
+      (provider) => provider.instanceId === initialProviderInstanceId,
+    )?.driver;
+    const defaultRuntimeMode = defaultRuntimeModeForProvider({
+      driverKind: initialProviderDriver,
+      defaultRuntimeMode: projectSettings.settings.defaultRuntimeMode,
+      sparrowDefaultRuntimeMode: projectSettings.settings.sparrowDefaultRuntimeMode,
+    });
     const resolveModelSelectionOverride = (destinationDraftId: DraftId) =>
       resolveNewThreadModelSelectionOverride({
         projectDefaultSelection: projectDefaultModelSelection ?? null,
