@@ -187,7 +187,7 @@ export class GitManager extends Context.Service<
       input: GitRunStackedActionInput,
       options?: GitRunStackedActionOptions,
     ) => Effect.Effect<GitRunStackedActionResult, GitManagerServiceError>;
-    /** Opens a PR for the checkout's pushed branch, or returns the one already open. */
+    /** Pushes the checkout's branch when needed, then opens its PR or returns the one already open. */
     readonly createPullRequest: (input: {
       readonly cwd: string;
       readonly projectId: ProjectId;
@@ -844,6 +844,22 @@ export const make = Effect.gen(function* () {
       yield* shareBranchBase(cwd, result.branch);
     }
     return result;
+  });
+  const createPrNeedsPush = Effect.fn("GitManager.createPrNeedsPush")(function* (
+    cwd: string,
+    status: {
+      readonly branch: string | null;
+      readonly hasUpstream: boolean;
+      readonly aheadCount: number;
+    },
+  ) {
+    if (!status.branch) return false;
+    if (!status.hasUpstream || status.aheadCount > 0) return true;
+    // A current upstream says nothing about a separate push remote, which may lack HEAD.
+    const target = yield* gitCore
+      .resolvePushTarget(cwd, { branch: status.branch, hasUpstream: true })
+      .pipe(Effect.orElseSucceed(() => null));
+    return target?.viaPushRemote === true;
   });
   const readWorktreeCreationSettings = serverSettingsService.getSettings.pipe(
     Effect.map((settings) => ({
@@ -2649,11 +2665,27 @@ export const make = Effect.gen(function* () {
   const createPullRequest: GitManager["Service"]["createPullRequest"] = Effect.fn(
     "GitManager.createPullRequest",
   )(function* (input) {
+    const status = yield* gitCore.statusDetails(input.cwd);
+    const push = (yield* createPrNeedsPush(input.cwd, status))
+      ? yield* pushCurrentBranch(input.cwd, status.branch).pipe(
+          Effect.mapError(
+            (cause) =>
+              new GitManagerError({
+                operation: "createPullRequest",
+                cwd: input.cwd,
+                detail: `Could not push ${status.branch}: ${cause.detail}${cause.reason === undefined ? "" : ` (${cause.reason})`}`,
+                cause,
+              }),
+          ),
+        )
+      : null;
     const result = yield* openPrFromBranch(
       input.cwd,
       null,
       () => Effect.void,
-      undefined,
+      push && "pushRemote" in push && push.pushRemote && push.upstreamBranch
+        ? { remoteName: push.pushRemote, upstreamRef: push.upstreamBranch }
+        : undefined,
       input.baseBranch,
       input.draft === true,
       () => Effect.succeed({ title: input.title, body: input.body }),
@@ -3614,26 +3646,12 @@ export const make = Effect.gen(function* () {
       > {
         const initialStatus = yield* gitCore.statusDetails(input.cwd);
         const wantsCommit = isCommitAction(input.action);
-        const upToDateBranch =
-          input.action === "create_pr" &&
-          initialStatus.hasUpstream &&
-          initialStatus.aheadCount === 0
-            ? initialStatus.branch
-            : null;
-        // A current upstream says nothing about a separate push remote, which may lack HEAD.
-        const pushTarget = upToDateBranch
-          ? yield* gitCore
-              .resolvePushTarget(input.cwd, { branch: upToDateBranch, hasUpstream: true })
-              .pipe(Effect.orElseSucceed(() => null))
-          : null;
         const wantsPush =
           input.action === "push" ||
           input.action === "commit_push" ||
           input.action === "commit_push_pr" ||
           (input.action === "create_pr" &&
-            (!initialStatus.hasUpstream ||
-              initialStatus.aheadCount > 0 ||
-              pushTarget?.viaPushRemote === true));
+            (!initialStatus.hasUpstream || (yield* createPrNeedsPush(input.cwd, initialStatus))));
         const wantsPr = input.action === "create_pr" || input.action === "commit_push_pr";
 
         if (input.featureBranch && !wantsCommit) {

@@ -4426,7 +4426,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       }),
   );
 
-  it.effect("createPullRequest refuses a branch with commits it has not pushed", () =>
+  it.effect("createPullRequest pushes the branch before opening its PR", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
@@ -4434,27 +4434,72 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
       yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
       yield* runGit(repoDir, ["checkout", "-b", "feature/unpushed"]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "feature/unpushed"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "first.txt"), "first\n");
+      yield* runGit(repoDir, ["add", "first.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "First commit"]);
+      const remoteHead = (branch: string) =>
+        runGit(repoDir, ["ls-remote", "origin", `refs/heads/${branch}`]).pipe(
+          Effect.map((result) => result.stdout.split("\t")[0]),
+        );
+      const localHead = () =>
+        runGit(repoDir, ["rev-parse", "HEAD"]).pipe(Effect.map((result) => result.stdout.trim()));
+
+      // A branch without an upstream is published first.
+      const unpublished = yield* makeManager({ providerScenario: { prListSequence: [[], []] } });
+      yield* unpublished.manager.createPullRequest({
+        cwd: repoDir,
+        projectId: ProjectId.make("project-1"),
+        title: "Feature",
+        body: "Body",
+      });
+      expect(yield* remoteHead("feature/unpushed")).toBe(yield* localHead());
+      expect(created(unpublished.providerCalls)).toMatchObject([
+        { headSelector: "feature/unpushed" },
+      ]);
+
+      // Commits made after publishing are pushed too.
       NodeFS.writeFileSync(NodePath.join(repoDir, "late.txt"), "late\n");
       yield* runGit(repoDir, ["add", "late.txt"]);
       yield* runGit(repoDir, ["commit", "-m", "Late commit"]);
-      const { manager, providerCalls } = yield* makeManager({
-        providerScenario: { prListSequence: [[], []] },
+      const ahead = yield* makeManager({ providerScenario: { prListSequence: [[], []] } });
+      yield* ahead.manager.createPullRequest({
+        cwd: repoDir,
+        projectId: ProjectId.make("project-1"),
+        title: "Feature",
+        body: "Body",
       });
+      expect(yield* remoteHead("feature/unpushed")).toBe(yield* localHead());
+      expect(created(ahead.providerCalls)).toHaveLength(1);
 
+      // A rejected push fails with git's reason and opens nothing; it never forces.
+      const otherDir = yield* makeTempDir("t3code-git-manager-other-");
+      yield* runGit(otherDir, ["clone", "--branch", "feature/unpushed", remoteDir, "."]);
+      yield* runGit(otherDir, ["config", "user.email", "other@example.com"]);
+      yield* runGit(otherDir, ["config", "user.name", "Other"]);
+      NodeFS.writeFileSync(NodePath.join(otherDir, "theirs.txt"), "theirs\n");
+      yield* runGit(otherDir, ["add", "theirs.txt"]);
+      yield* runGit(otherDir, ["commit", "-m", "Their commit"]);
+      yield* runGit(otherDir, ["push"]);
+      const theirHead = yield* remoteHead("feature/unpushed");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "mine.txt"), "mine\n");
+      yield* runGit(repoDir, ["add", "mine.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "My commit"]);
+      const rejected = yield* makeManager({ providerScenario: { prListSequence: [[], []] } });
       const error = yield* Effect.flip(
-        manager.createPullRequest({
+        rejected.manager.createPullRequest({
           cwd: repoDir,
           projectId: ProjectId.make("project-1"),
           title: "Feature",
           body: "Body",
         }),
       );
+      expect(error.message).toContain("Could not push feature/unpushed");
+      expect(error.message).toContain("Pull or rebase, then push again");
+      expect(yield* remoteHead("feature/unpushed")).toBe(theirHead);
+      expect(created(rejected.providerCalls)).toEqual([]);
+      yield* runGit(repoDir, ["fetch", "origin"]);
+      yield* runGit(repoDir, ["reset", "--hard", "origin/feature/unpushed"]);
 
-      expect(error.message).toContain("1 unpushed commit");
-      expect(created(providerCalls)).toEqual([]);
-
-      // An open PR is returned as it is; returning it publishes nothing.
       const open = {
         number: 7,
         title: "Feature",
@@ -4492,7 +4537,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       ]);
 
       // A draft of a PR the host does not list yet fails, so a retry drafts it.
-      yield* runGit(repoDir, ["push"]);
       const unlisted = yield* makeManager({
         providerScenario: { prListSequence: [[], []], createsDraftChangeRequests: false },
       });
