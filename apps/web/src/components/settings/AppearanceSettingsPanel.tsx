@@ -169,6 +169,18 @@ export function AppearanceSettingsPanel() {
 
       <SettingsSection id="appearance-interface" title={gt("Interface")}>
         <SettingsRow
+          title={gt("Theme button")}
+          description={gt("Show a button in the chat header to choose a theme.")}
+          devicePreference
+          control={
+            <Switch
+              checked={settings.showThemeButton}
+              onCheckedChange={(checked) => updateSettings({ showThemeButton: Boolean(checked) })}
+              aria-label={gt("Show theme button")}
+            />
+          }
+        />
+        <SettingsRow
           {...searchableSetting("setting-appearance-contrast")}
           description={gt("Adjust the contrast of colors and borders across the interface.")}
           resetAction={

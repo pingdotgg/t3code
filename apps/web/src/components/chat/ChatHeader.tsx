@@ -11,7 +11,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { T, useGT, Var } from "gt-react";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon, PaletteIcon } from "lucide-react";
 import {
   memo,
   useEffect,
@@ -20,6 +20,8 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
+import { openCommandPalette } from "../../commandPaletteBus";
+import { Button } from "../ui/button";
 import { isTrailingDoubleClick } from "../Sidebar.logic";
 import { Badge } from "../ui/badge";
 import { MiddleTruncate } from "../ui/middle-truncate";
@@ -85,6 +87,7 @@ export const ChatHeader = memo(function ChatHeader({
   onFindInThread,
 }: ChatHeaderProps) {
   const gt = useGT();
+  const showThemeButton = useClientSettings((settings) => settings.showThemeButton);
   const activeProjectName = activeProject?.isScratch ? gt("No project") : activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const interfaceFont = useClientSettings((settings) => settings.fontFamilySans);
@@ -412,6 +415,26 @@ export const ChatHeader = memo(function ChatHeader({
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
       {isServerThread ? <GuestShareIndicator threadRef={activeThreadRef} /> : null}
+      {showThemeButton ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost-muted"
+                size="icon-sm"
+                className="shrink-0 [-webkit-app-region:no-drag]"
+                aria-label={gt("Change theme")}
+                onClick={() => openCommandPalette({ open: "change-theme" })}
+              />
+            }
+          >
+            <PaletteIcon aria-hidden />
+          </TooltipTrigger>
+          <TooltipPopup>
+            <T>Change theme</T>
+          </TooltipPopup>
+        </Tooltip>
+      ) : null}
     </div>
   );
 });
