@@ -19,7 +19,7 @@ vi.mock("../components/ChatView.logic", () => ({
   agentControlledBrowserCloseConfirmation: () => null,
 }));
 vi.mock("../previewStateStore", () => ({
-  useThreadPreviewState: () => ({ sessions: {}, desktopByTabId: {} }),
+  usePreviewTabs: () => ({ sessions: {}, desktopByTabId: {} }),
   setActivePreviewTab: () => {},
   beginPreviewSessionClose: () => {},
   cancelPreviewSessionClose: () => {},
@@ -38,6 +38,7 @@ vi.mock("../state/entities", () => ({
   useProject: () => null,
   readThreadShell: () => null,
 }));
+vi.mock("../sharedProjectPanels", () => ({ usePanelScopeRef: (ref: unknown) => ref }));
 vi.mock("../state/terminalSessions", () => ({ useKnownTerminalSessions: () => null }));
 vi.mock("../composerDraftStore", async () => {
   const Schema = await import("effect/Schema");

@@ -9,6 +9,7 @@ import { useShallow } from "zustand/react/shallow";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import type { TerminalContextSelection } from "../../lib/terminalContext";
 import { usePanelAnimationSettings, usePanelPresence } from "../../panelAnimations";
+import { panelScopeKey } from "../../panelScope";
 import { useThreadRefs } from "../../state/entities";
 import { useTerminalUiStateStore } from "../../terminalUiStateStore";
 import {
@@ -31,6 +32,11 @@ interface ChatTerminalDrawersProps {
   readonly closeShortcutLabel: string | undefined;
   readonly keybindings: ResolvedKeybindingsConfig;
   readonly onAddTerminalContext: (selection: TerminalContextSelection) => void;
+}
+
+function drawerKeyOf(threadKey: string | null): string | null {
+  const threadRef = threadKey === null ? null : parseScopedThreadKey(threadKey);
+  return threadRef ? panelScopeKey(threadRef) : null;
 }
 
 /**
@@ -64,12 +70,29 @@ export function ChatTerminalDrawers(props: ChatTerminalDrawersProps) {
     panelAnimationDurationMs,
   );
   const [mountedTerminalThreadKeys, setMountedTerminalThreadKeys] = useState<string[]>([]);
+  const activeDrawerKey = drawerKeyOf(activeThreadKey);
+  // One mounted thread per drawer, so threads sharing a drawer take one hidden slot.
+  const mountedDrawerOwnerKeys = mountedTerminalThreadKeys.filter(
+    (threadKey, index) =>
+      threadKey === activeThreadKey ||
+      (drawerKeyOf(threadKey) !== activeDrawerKey &&
+        !mountedTerminalThreadKeys
+          .slice(index + 1)
+          .some((laterKey) => drawerKeyOf(laterKey) === drawerKeyOf(threadKey))),
+  );
   const existingOpenTerminalThreadKeys = (() => {
     const existingThreadKeys = new Set<string>([...serverThreadKeys, ...draftThreadKeys]);
-    return openTerminalThreadKeys.filter((nextThreadKey) => existingThreadKeys.has(nextThreadKey));
+    const openDrawerKeys = new Set(openTerminalThreadKeys);
+    // Open state is stored under the drawer's key, which a shared drawer does not share with a thread.
+    return mountedDrawerOwnerKeys.filter((threadKey) => {
+      const drawerKey = drawerKeyOf(threadKey);
+      return (
+        existingThreadKeys.has(threadKey) && drawerKey !== null && openDrawerKeys.has(drawerKey)
+      );
+    });
   })();
   const reconciledMountedTerminalThreadKeys = reconcileMountedTerminalThreadIds({
-    currentThreadIds: mountedTerminalThreadKeys,
+    currentThreadIds: mountedDrawerOwnerKeys,
     openThreadIds: existingOpenTerminalThreadKeys,
     activeThreadId: activeThreadKey,
     activeThreadTerminalOpen: activeTerminalDrawerPresence.present,
@@ -83,25 +106,35 @@ export function ChatTerminalDrawers(props: ChatTerminalDrawersProps) {
   ) {
     setMountedTerminalThreadKeys(reconciledMountedTerminalThreadKeys);
   }
-  const mountedTerminalThreadRefs = mountedTerminalThreadKeys.flatMap((mountedThreadKey) => {
+  // Threads sharing a project's drawer mount it once, keyed by its owner so it survives switching.
+  const mountedDrawerKeys = new Set<string>();
+  const mountedTerminalThreadRefs = [
+    ...mountedTerminalThreadKeys.filter((threadKey) => threadKey === activeThreadKey),
+    ...mountedTerminalThreadKeys.filter((threadKey) => threadKey !== activeThreadKey),
+  ].flatMap((mountedThreadKey) => {
     const mountedThreadRef = parseScopedThreadKey(mountedThreadKey);
-    return mountedThreadRef ? [{ key: mountedThreadKey, threadRef: mountedThreadRef }] : [];
+    if (!mountedThreadRef) return [];
+    const drawerKey = panelScopeKey(mountedThreadRef);
+    if (mountedDrawerKeys.has(drawerKey)) return [];
+    mountedDrawerKeys.add(drawerKey);
+    return [{ key: mountedThreadKey, drawerKey, threadRef: mountedThreadRef }];
   });
 
-  return mountedTerminalThreadRefs.map(({ key: mountedThreadKey, threadRef: mountedThreadRef }) => (
-    <PersistentThreadTerminalDrawer
-      key={mountedThreadKey}
-      threadRef={mountedThreadRef}
-      threadId={mountedThreadRef.threadId}
-      active={mountedThreadKey === activeThreadKey}
-      composerHeight={mountedThreadKey === activeThreadKey ? props.composerHeight : 0}
-      launchContext={mountedThreadKey === activeThreadKey ? props.launchContext : null}
-      splitShortcutLabel={props.splitShortcutLabel}
-      splitVerticalShortcutLabel={props.splitVerticalShortcutLabel}
-      newShortcutLabel={props.newShortcutLabel}
-      closeShortcutLabel={props.closeShortcutLabel}
-      keybindings={props.keybindings}
-      onAddTerminalContext={props.onAddTerminalContext}
-    />
-  ));
+  return mountedTerminalThreadRefs.map(
+    ({ key: mountedThreadKey, drawerKey, threadRef: mountedThreadRef }) => (
+      <PersistentThreadTerminalDrawer
+        key={drawerKey}
+        threadRef={mountedThreadRef}
+        active={mountedThreadKey === activeThreadKey}
+        composerHeight={mountedThreadKey === activeThreadKey ? props.composerHeight : 0}
+        launchContext={mountedThreadKey === activeThreadKey ? props.launchContext : null}
+        splitShortcutLabel={props.splitShortcutLabel}
+        splitVerticalShortcutLabel={props.splitVerticalShortcutLabel}
+        newShortcutLabel={props.newShortcutLabel}
+        closeShortcutLabel={props.closeShortcutLabel}
+        keybindings={props.keybindings}
+        onAddTerminalContext={props.onAddTerminalContext}
+      />
+    ),
+  );
 }

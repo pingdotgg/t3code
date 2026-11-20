@@ -159,6 +159,7 @@ import {
 import { AsyncResult } from "effect/reactivity";
 import { isElectron } from "../env";
 import { useActiveThreadRef } from "../hooks/useActiveThreadRef";
+import { usePanelScopeRef } from "../sharedProjectPanels";
 import { composerRequiresModifier } from "../composer-logic";
 import {
   derivePhase,
@@ -342,6 +343,7 @@ import { QueuedRunsControl, type QueuedRunsControlHandle } from "./chat/QueuedRu
 import { useThreadLinkedPullRequest } from "./pullRequest/useThreadLinkedPullRequest";
 import { useProactivePanels } from "../hooks/useProactivePanels";
 import { useIncrementalTimelineEntries } from "../hooks/useIncrementalTimelineEntries";
+import { useRightPanelPreviewTabs } from "../hooks/useRightPanelPreviewTabs";
 import { useRightPanelSurfaceClose } from "../hooks/useRightPanelSurfaceClose";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { modelFallbackBannerItem } from "./chat/ComposerUsageLimits";
@@ -1017,20 +1019,24 @@ export default function ChatView(props: ChatViewProps) {
   const activeMessageCount = isServerThread
     ? Math.max(committedServerMessageIds.size, serverProjection?.messages.length ?? 0)
     : 0;
+  const panelScopeRef = usePanelScopeRef(
+    activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null,
+  );
+  const terminalThreadId = panelScopeRef?.threadId ?? null;
   const runningTerminalIds = useThreadRunningTerminalIds({
     environmentId: activeThread?.environmentId ?? null,
-    threadId: activeThreadId,
+    threadId: terminalThreadId,
   });
   const activeThreadKnownSessionsRaw = useKnownTerminalSessions({
     environmentId: activeThread?.environmentId ?? null,
-    threadId: activeThreadId,
+    threadId: terminalThreadId,
   });
   const activeThreadKnownSessions = (() => {
-    if (activeThreadId === null || activeThreadKnownSessionsRaw === null) {
+    if (terminalThreadId === null || activeThreadKnownSessionsRaw === null) {
       return [];
     }
     return activeThreadKnownSessionsRaw.filter(
-      (session) => session.target.threadId === activeThreadId,
+      (session) => session.target.threadId === terminalThreadId,
     );
   })();
   const activeServerOrderedTerminalIds = activeThreadKnownSessions.map(
@@ -1107,6 +1113,7 @@ export default function ChatView(props: ChatViewProps) {
     selectActiveRightPanelSurface(state.byThreadKey, activeThreadRef),
   );
   const activePreviewState = useThreadPreviewState(activeThreadRef);
+  const rightPanelPreviewTabs = useRightPanelPreviewTabs(activeThreadRef);
   const activePreviewServerEpoch = activePreviewState.serverEpoch;
   const resolvePreviewRuntimeTabId = activeThreadRef
     ? (tabId: string) => previewRuntimeTabId(activeThreadRef, activePreviewServerEpoch, tabId)
@@ -4063,7 +4070,7 @@ export default function ChatView(props: ChatViewProps) {
         <ChatRightPanel
           sheet={shouldUsePlanSidebarSheet}
           workspaceLayoutElement={workspaceLayoutElement}
-          widthStorageKey={`t3code:preview-panel-width:${activeThreadKey}`}
+          widthStorageKey={`t3code:preview-panel-width:${panelScopeRef ? scopedThreadKey(panelScopeRef) : activeThreadKey}`}
           sheetAnimationDurationMs={panelAnimationsActive ? panelAnimationDurationMs : 0}
           onCloseSheet={closePreviewPanelStable}
           open={rightPanelOpen}
@@ -4085,8 +4092,8 @@ export default function ChatView(props: ChatViewProps) {
           environmentId={activeThreadRef.environmentId}
           activeSurfaceId={renderedRightPanelSurface?.id ?? null}
           pendingSurfaceIds={pendingFileSurfaceIds}
-          previewSessions={activePreviewState.sessions}
-          desktopByTabId={activePreviewState.desktopByTabId}
+          previewSessions={rightPanelPreviewTabs.sessions}
+          desktopByTabId={rightPanelPreviewTabs.desktopByTabId}
           previewRuntimeTabId={resolvePreviewRuntimeTabId}
           terminalLabelsById={activeTerminalLabelsById}
           onActivate={activateRightPanelSurfaceStable}

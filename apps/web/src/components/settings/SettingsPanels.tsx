@@ -615,6 +615,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.ghqCloneLayout !== DEFAULT_UNIFIED_SETTINGS.ghqCloneLayout
       ? [gt("Clone into host folders")]
       : []),
+    ...(settings.sharedProjectPanels !== DEFAULT_UNIFIED_SETTINGS.sharedProjectPanels
+      ? [gt("Shared project panels")]
+      : []),
     ...(settings.confirmThreadUnpin !== DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin
       ? [gt("Unpin confirmation")]
       : []),
@@ -741,6 +744,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       confirmTerminalClose: DEFAULT_UNIFIED_SETTINGS.confirmTerminalClose,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
       confirmThreadUnpin: DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin,
+      sharedProjectPanels: DEFAULT_UNIFIED_SETTINGS.sharedProjectPanels,
       confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
       threadTitleInstructions: DEFAULT_UNIFIED_SETTINGS.threadTitleInstructions,
@@ -962,6 +966,39 @@ export function GeneralSettingsPanel() {
                 updateSettings({ sidebarWorkingShelfEnabled: Boolean(checked) })
               }
               aria-label={gt("Working section")}
+            />
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection id="panels" title={gt("Panels")}>
+        <SettingsRow
+          {...setting("shared-project-panels")}
+          description={
+            <T>
+              Threads in a project's main checkout share one right panel and terminal drawer, with
+              the same terminals, browser tabs and open files. Worktree threads keep their own.
+            </T>
+          }
+          resetAction={
+            settings.sharedProjectPanels !== DEFAULT_UNIFIED_SETTINGS.sharedProjectPanels ? (
+              <SettingResetButton
+                ariaLabel={gt("Reset shared project panels to default")}
+                onClick={() =>
+                  updateSettings({
+                    sharedProjectPanels: DEFAULT_UNIFIED_SETTINGS.sharedProjectPanels,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sharedProjectPanels}
+              onCheckedChange={(checked) =>
+                updateSettings({ sharedProjectPanels: Boolean(checked) })
+              }
+              aria-label={gt("Shared project panels")}
             />
           }
         />

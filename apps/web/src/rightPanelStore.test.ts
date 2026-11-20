@@ -1,16 +1,19 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { type EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
+import { type EnvironmentId, ProjectId, RunId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { useClosedViewStore } from "./closedViewStore";
+import { projectPanelRef, setSharedPanelResolver } from "./panelScope";
 import { reopenClosedView } from "./reopenClosedView";
 import {
+  browserSurfaceThreadRef,
   hostRightPanel,
   migratePersistedRightPanelState,
   pullRequestSurface,
   pullRequestSurfaceId,
   selectActiveRightPanel,
   selectActiveRightPanelSurface,
+  selectBrowserTabOwnerIds,
   selectThreadPanelVisibility,
   selectThreadRightPanelState,
   useRightPanelStore,
@@ -40,6 +43,41 @@ async function reloadRightPanelStore() {
 }
 
 describe("rightPanelStore", () => {
+  it("shares one panel between threads of a project while each keeps its own browser tabs", () => {
+    const projectRef = projectPanelRef(refA.environmentId, ProjectId.make("project-1"));
+    setSharedPanelResolver((ref) => (ref === refA || ref === refB ? projectRef : null));
+    try {
+      const store = useRightPanelStore.getState();
+      store.openFile(refA, "src/app.ts");
+      store.reconcileBrowserSurfaces(refA, ["tab-a"]);
+      store.reconcileBrowserSurfaces(refB, ["tab-b"]);
+      const panel = () =>
+        selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refB);
+      expect(panel().surfaces.map((surface) => surface.id)).toEqual([
+        "file:src/app.ts",
+        "browser:tab-a",
+        "browser:tab-b",
+      ]);
+      expect(panel()).toBe(
+        selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA),
+      );
+      const tabA = panel().surfaces[1] ?? null;
+      expect(browserSurfaceThreadRef(refB, tabA)).toEqual(refA);
+      expect(selectBrowserTabOwnerIds(useRightPanelStore.getState().byThreadKey, refB)).toEqual([
+        refA.threadId,
+      ]);
+
+      store.reconcileBrowserSurfaces(refB, []);
+      store.removeThread(refB);
+      expect(panel().surfaces.map((surface) => surface.id)).toEqual([
+        "file:src/app.ts",
+        "browser:tab-a",
+      ]);
+    } finally {
+      setSharedPanelResolver(() => null);
+    }
+  });
+
   it("opens a hosted side chat's panel actions in its parent's panel until unhosted", () => {
     const store = useRightPanelStore.getState();
     const unhost = hostRightPanel(refB, refA);

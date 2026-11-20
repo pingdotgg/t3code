@@ -17,7 +17,9 @@ import {
 import { useDiffPanelStore } from "../../diffPanelStore";
 import { type ThreadPanelPresentation } from "../../rightPanelLayout";
 import {
+  browserSurfaceThreadRef,
   selectThreadPanelOpen,
+  selectThreadRightPanelState,
   type RightPanelSurface,
   useRightPanelStore,
 } from "../../rightPanelStore";
@@ -167,7 +169,12 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   const openFileSurfaceStable = useStableCallback(openFileSurface);
   const closePreviewPanel = () => {
     if (activeThreadRef) {
-      if (activeRightPanelSurface?.kind === "preview" && activeRightPanelSurface.resourceId) {
+      if (
+        activeRightPanelSurface?.kind === "preview" &&
+        activeRightPanelSurface.resourceId &&
+        // Another thread's tab cannot float here: the floating browser shows this thread's sessions.
+        browserSurfaceThreadRef(activeThreadRef, activeRightPanelSurface) === activeThreadRef
+      ) {
         usePreviewMiniPlayerStore
           .getState()
           .open(activeThreadRef, browserMiniPlayerSource(activeRightPanelSurface.resourceId));
@@ -193,6 +200,16 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     const activeTabId = activePreviewState.activeTabId;
     if (activeTabId) {
       useRightPanelStore.getState().openBrowser(activeThreadRef, activeTabId);
+    } else if (
+      selectThreadRightPanelState(
+        useRightPanelStore.getState().byThreadKey,
+        activeThreadRef,
+      ).surfaces.some(
+        (surface) => browserSurfaceThreadRef(activeThreadRef, surface) !== activeThreadRef,
+      )
+    ) {
+      // Another thread's tab is already in the shared panel: show it instead of adding one.
+      useRightPanelStore.getState().open(activeThreadRef, "preview");
     } else {
       createBrowserSurface();
     }
@@ -202,7 +219,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     if (!activeThreadRef) return;
     useRightPanelStore.getState().activateSurface(activeThreadRef, surface.id);
     if (surface.kind === "preview" && surface.resourceId) {
-      setActivePreviewTab(activeThreadRef, surface.resourceId);
+      setActivePreviewTab(browserSurfaceThreadRef(activeThreadRef, surface), surface.resourceId);
     }
     if (surface.kind === "terminal") {
       focusTerminal(activeThreadRef, surface.activeTerminalId);

@@ -20,6 +20,7 @@ import {
   useRightPanelStore,
   type RightPanelSurface,
 } from "../rightPanelStore";
+import { usePanelScopeRef } from "../sharedProjectPanels";
 import { useProject, useQuietThreadShell } from "../state/entities";
 import { useEnvironmentScope } from "../state/session";
 import { useKnownTerminalSessions, useTerminalDrawerSessions } from "../state/terminalSessions";
@@ -42,7 +43,6 @@ interface TerminalLaunchLocationWithEnv {
 
 interface PersistentThreadTerminalDrawerProps {
   threadRef: { environmentId: EnvironmentId; threadId: ThreadId };
-  threadId: ThreadId;
   active: boolean;
   composerHeight: number;
   launchContext: PersistentTerminalLaunchContext | null;
@@ -56,7 +56,6 @@ interface PersistentThreadTerminalDrawerProps {
 
 export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDrawer({
   threadRef,
-  threadId,
   active,
   composerHeight,
   launchContext,
@@ -82,6 +81,7 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
     selectThreadTerminalUiState(state.terminalUiStateByThreadKey, threadRef),
   );
   const visible = active && terminalUiState.terminalOpen;
+  const threadId = usePanelScopeRef(threadRef).threadId;
   const metadata = useTerminalDrawerSessions(threadRef.environmentId, threadId);
   const knownTerminalSessions = metadata?.sessions;
   const snapshotId = metadata?.snapshotId;
@@ -287,9 +287,10 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
       ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
       : null;
   const project = useProject(projectRef);
+  const terminalThreadId = usePanelScopeRef(threadRef).threadId;
   const knownTerminalSessions = useKnownTerminalSessions({
     environmentId: threadRef.environmentId,
-    threadId: threadRef.threadId,
+    threadId: terminalThreadId,
   });
   const threadWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
   const activeSummary =
@@ -343,7 +344,7 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
       mode="panel"
       visible={visible}
       threadRef={threadRef}
-      threadId={threadRef.threadId}
+      threadId={terminalThreadId}
       cwd={cwd}
       worktreePath={worktreePath}
       runtimeEnv={runtimeEnv}

@@ -879,6 +879,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("ghq clone destination host owner repository root layout")],
   },
   {
+    id: "shared-project-panels",
+    title: msg("Shared project panels"),
+    to: "/settings/general",
+    searchTerms: [msg("right panel terminal drawer browser tabs per project thread sidebar")],
+  },
+  {
     id: "unpin-confirmation",
     title: msg("Unpin confirmation"),
     to: "/settings/general",

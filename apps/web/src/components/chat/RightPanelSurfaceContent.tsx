@@ -16,7 +16,11 @@ import SideChatPane from "./SideChatPane";
 import type { ComposerImageAttachment, DraftId } from "../../composerDraftStore";
 import type { ShortcutMatchContext } from "../../keybindings";
 import type { SideChatParentPanel } from "../../lib/sideChatPane";
-import { type RightPanelSurface, useRightPanelStore } from "../../rightPanelStore";
+import {
+  browserSurfaceThreadRef,
+  type RightPanelSurface,
+  useRightPanelStore,
+} from "../../rightPanelStore";
 import {
   PersistentThreadTerminalPanel,
   type PersistentThreadTerminalPanelProps,
@@ -93,7 +97,7 @@ export function RightPanelSurfaceContent(props: {
         <Suspense fallback={null}>
           <PreviewPanel
             mode="embedded"
-            threadRef={threadRef}
+            threadRef={browserSurfaceThreadRef(threadRef, surface)}
             tabId={surface.resourceId}
             configuredUrls={props.configuredPreviewUrls}
             visible={visible}
