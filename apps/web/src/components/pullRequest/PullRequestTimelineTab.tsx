@@ -297,7 +297,7 @@ function ConversationCard({
       input: { ...reactions.reference, commentId: editable.id, kind: editable.kind, body },
     });
     if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "Could not update the task" });
+      toastManager.add({ type: "error", title: m(msg("Could not update the task")) });
       return false;
     }
     return true;

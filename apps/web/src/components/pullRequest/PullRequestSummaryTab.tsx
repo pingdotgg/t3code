@@ -743,7 +743,7 @@ export function PullRequestSummaryTab({
         input: { ...reference, commentId: comment.id, kind: comment.kind, body },
       });
       if (result._tag === "Failure") {
-        toastManager.add({ type: "error", title: "Could not update the task" });
+        toastManager.add({ type: "error", title: m(msg("Could not update the task")) });
         return false;
       }
       return true;
