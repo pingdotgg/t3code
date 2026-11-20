@@ -3512,11 +3512,12 @@ it.effect(
 
         // First while the thread's current open is in flight, then once it is live.
         yield* Ref.set(duringCurrentOpen, openHistoricalApp.pipe(Effect.asVoid, Effect.orDie));
+        const currentSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
         yield* manager.open({
           threadId: appThread,
-          providerSessionId: idAllocator.derive.providerSession({
-            providerInstanceId: modelSelection.instanceId,
-          }),
+          providerSessionId: currentSessionId,
           modelSelection,
           runtimePolicy,
         });
@@ -3529,6 +3530,10 @@ it.effect(
           (yield* registry.resolve(token))?.thread.providerInstanceId,
           modelSelection.instanceId,
         );
+
+        // The historical session must not keep the thread attached, or it would keep the credential alive.
+        yield* manager.release({ providerSessionId: currentSessionId, reason: "manual_shutdown" });
+        assert.isUndefined(yield* registry.resolve(token));
       }).pipe(
         Effect.provide(
           layerTest({

@@ -541,6 +541,8 @@ export const layerWithOptions = (
       interface PreparedMcpCredential {
         readonly mcpCredentialId: string | undefined;
         readonly issued: boolean;
+        /** Another instance holds the thread's credential, so this attachment must not stay. */
+        readonly yielded?: true;
       }
       /** ACP and OpenCode consume credentials during openSession; reserve them against revocation until publication. */
       const mcpCredentialReservations = new Map<string, number>();
@@ -587,7 +589,9 @@ export const layerWithOptions = (
                         entry.runtime.instanceId !== providerInstanceId &&
                         entry.attachedThreadIds.has(threadId),
                     );
-                  if (heldElsewhere) return { mcpCredentialId: undefined, issued: false };
+                  if (heldElsewhere) {
+                    return { mcpCredentialId: undefined, issued: false, yielded: true };
+                  }
                 }
                 // Live providers build MCP clients once; reuse credentials across workspace handoffs.
                 const { browser: browserToolsAvailable, device: deviceToolsAvailable } =
@@ -1822,6 +1826,11 @@ export const layerWithOptions = (
                 input.yieldToOtherInstance,
               );
               preparedForCleanup = prepared;
+              if (prepared.yielded === true) {
+                yield* removeThreadAttachment({ ...input, runtime: attached });
+                attachedTo = undefined;
+                return;
+              }
               if (prepared.mcpCredentialId !== undefined) {
                 const mcpCredentialId = prepared.mcpCredentialId;
                 yield* Ref.update(sessions, (current) => {
