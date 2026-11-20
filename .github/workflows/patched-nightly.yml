@@ -40,8 +40,8 @@ jobs:
           FORK_REPOSITORY: ${{ github.repository }}
           WORKFLOW_SHA: ${{ github.sha }}
           # Newest upstream nightly merged into main; upstream-sync.yml moves these two together.
-          PATCH_BASE: v0.1.12-nightly.20261120.4994
-          PATCH_BASE_SHA: 602e5b32f58e14e02b5885222f1c172049650312
+          PATCH_BASE: v0.1.12-nightly.20261120.5009
+          PATCH_BASE_SHA: f0a2aa10f5165413e863db9f1502dc4bb6fa42e8
         run: |
           set -euo pipefail
 
