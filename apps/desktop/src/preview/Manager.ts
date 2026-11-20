@@ -726,12 +726,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const restoreFrameCaptureWebContentsBackgroundThrottling = Effect.fnUntraced(function* (
     webContentsIds: ReadonlySet<number>,
   ) {
+    const window = currentMainWindow;
+    const enabled =
+      window === undefined || window.isDestroyed() || !window.isVisible() || window.isMinimized();
     yield* Effect.forEach(
       webContentsIds,
       (webContentsId) => {
         const wc = webContents.fromId(webContentsId);
         if (!wc || wc.isDestroyed()) return Effect.void;
-        return setFrameCaptureWebContentsBackgroundThrottling(wc, true).pipe(
+        return setFrameCaptureWebContentsBackgroundThrottling(wc, enabled).pipe(
           Effect.retry({ times: 2 }),
           Effect.catch((error) =>
             Effect.logWarning("Failed to restore preview webview frame capture throttling.", {
