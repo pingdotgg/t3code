@@ -2,7 +2,7 @@
 
 Agent Board is a desktop app for running projects through an orchestrator on the T3 Code engine. The sidebar lists T3 projects, each project lists its boards, and each board shows one orchestrator, its tickets in lanes, the agents working each ticket, artifact cards, and For-you cards. The workflow it shows is the XEO-3330 run from November 2026.
 The rule the program enforces is that the engine stays upstream. No PR edits a file that exists upstream, except `pnpm-lock.yaml`. Every PR passes `apps/board/scripts/check-engine-untouched.mjs`. The repo's lint and dependency standards apply to every file in the repo, and fail only on lines we add or change.
-The PRs, in stack order, are B0, B1, S1, K1, B2, U1, B3, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, B12, and O1.
+The PRs, in stack order, are B0, B1, S1, K1, B2, U1, B3, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, C2, F1, D1, L1, B12, and O1.
 
 ## How to read this
 
@@ -12,7 +12,7 @@ The program runs `skill://poteto-mode/playbooks/autopilot-stack.md`. The operato
 
 Speed comes last, by the operator's call. Each PR still runs its perf probe and records the numbers, which checks its perf boxes. A missed perf rule never blocks a merge. O1, the last PR, fixes every recorded miss.
 
-The board is a UI over T3's engine. Every feature drives a capability T3 already has, and a PR that needs one T3 lacks stops and reports it instead of building engine logic in the board. Screens take their layout and components from Orca, drawn in the board's T3 dark tokens.
+The board is a UI over T3's engine. Every feature drives a capability T3 already has, and a PR that needs one T3 lacks stops and reports it instead of building engine logic in the board. Screens take their layout and components from Orca, drawn in the board's T3 dark tokens. The board reaches T3 through `@t3tools/contracts` and `@t3tools/client-runtime/<subpath>`, and from C2 on also through `@t3tools/shared/<subpath>`. It never imports from `apps/*` or `packages/*/src`, so a T3 web component is copied as a pattern, never imported.
 
 Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
@@ -38,9 +38,9 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
 - [ ] Follow this dependency graph. Base each PR on its parent's branch, because the execution playbook stacks.
   - [ ] B0 is first. It branches from `main` of `13kparkin/t3code`.
   - [ ] B1 after B0. S1 after B1. K1 after S1. B2 after K1. U1 after B2. B3 after U1. W1 after B3. B4 after W1. B5 after B4. B6 after B5.
-  - [ ] B7 after B6. C1 after B7. B8 after C1. B9 after B8. B10 after B9. B11 after B10. B12 after B11. O1 after B12.
-- [ ] Hold the file boundaries. Every PR touches only `apps/board/**`, `.github/workflows/agent-board.yml`, and `pnpm-lock.yaml`. S1 also adds `standards/**`, `.vite-hooks/pre-push`, and `.claude/settings.json`, which upstream does not have. K1 and B12 write outside the repo only through their install scripts.
-- [ ] Hold the review gate. B1, B2, U1, W1, B4, B5, B6, B7, C1, B8, B9, B10, and B11 change an interaction. They post their screenshots and video in chat at merge, so the operator can ask for a follow-up PR.
+  - [ ] B7 after B6. C1 after B7. B8 after C1. B9 after B8. B10 after B9. B11 after B10. W2 after B11. R1 after W2. C2 after R1. F1 after C2. D1 after F1. L1 after D1. B12 after L1. O1 after B12.
+- [ ] Hold the file boundaries. Every PR touches only `apps/board/**`, `.github/workflows/agent-board.yml`, and `pnpm-lock.yaml`. S1 also adds `standards/**`, `.vite-hooks/pre-push`, and `.claude/settings.json`, which upstream does not have. K1 and B12 write outside the repo only through their install scripts, and B12 also owns the separate `13kparkin/pstack-t3` repo.
+- [ ] Hold the review gate. B1, B2, U1, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, C2, F1, D1, and L1 change an interaction. They post their screenshots and video in chat at merge, so the operator can ask for a follow-up PR.
 - [ ] Cap building agents at 2 at once, and run a push as the only heavy job, because this machine has 15 GB of RAM and 4 cores.
 
 ### PR mechanics, for every PR
@@ -1115,52 +1115,424 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends B11 to the base-branch stack and the operator lands it bottom-up.
 
-## Port the omp skills for T3 agents (B12)
+## Keep the engine and providers up to date from Settings (W2)
 
 **Depends on.** B11.
 
 **Files.**
 
-- [ ] Create `apps/board/skills/ponytail/SKILL.md`, `apps/board/skills/pre-pr-reviewer/SKILL.md`, and `apps/board/skills/simplify/SKILL.md`.
-- [ ] Create `apps/board/skills/orchestrate/SKILL.md`.
-- [ ] Create `apps/board/scripts/install-skills.mjs` and `apps/board/scripts/install-skills.test.mjs`.
-- [ ] Edit `apps/board/src/orchestrator/brief.md` to point at the `orchestrate` skill.
+- [ ] Create `apps/board/src/settings/UpdatesPage.tsx`.
+- [ ] Create `apps/board/src/state/updates.ts` and `apps/board/src/state/updates.test.ts`.
+- [ ] Edit `apps/board/src/settings/SettingsNav.tsx`, `apps/board/src/settings/settingsModel.ts`, `apps/board/src/sidebar/EngineVersion.tsx`, and `apps/board/src/sidebar/Sidebar.tsx`.
 
 **Build.**
 
-- [ ] Port `ponytail`, `pre-pr-reviewer`, and `simplify` from omp as Claude Code and Codex skills, per `skill://poteto-mode/playbooks/authoring-a-skill.md`.
-- [ ] Write the `orchestrate` skill from the omp orchestrate and autopilot-stack playbooks, rewritten for T3's `delegate_task`, `t3_thread_*`, and `request_secret` tools, the board store contract, and the B6 role registry.
-- [ ] In the `orchestrate` skill, map each lifecycle step to a registry role. The ticket owner is `task` or `poteto-agent` with `worktree` isolation. The owner spawns its reviewers (`reviewer`, `security-reviewer`, `comment-sicko`, and `thermo-nuclear-review-subagent`) with `shared` isolation, so they read the ticket's worktree. Research is `scout`, mechanical edits are `sonic`, and document reviews are the `egm-*` roles. A fix round goes to the owner thread with `t3_thread_send`, not to a new agent.
-- [ ] In `install-skills.mjs`, link each skill folder into `~/.claude/skills/` and the Codex skills folder, and skip links that already point there.
-- [ ] Also turn on Codex memories in `~/.codex/config.toml`, with `[features] memories = true` and `memories.disable_on_external_context = false`, because every T3 thread uses the T3 MCP server. Leave every other key as it is.
+- [ ] Add an Updates page to W1's settings screen. Keep W1's Orca layout and its `SettingsSection` and `SettingsRow` rows, so the board keeps one settings look. Take the page's content, states, and wording from T3 web's own provider update UI, read only, in `apps/web/src/components/settings/ProviderInstanceCard.tsx`, `apps/web/src/components/ProviderUpdatesAction.tsx`, `apps/web/src/components/sidebar/updateEverything.logic.ts`, and `apps/web/src/components/ProviderUpdateLaunchNotification.logic.ts`.
+- [ ] In the Engine section, show the installed engine version and the latest npm release, an **Update now** button that runs B4's existing update flow in `apps/board/src/state/engineUpdateAtoms.ts`, and an **Update the engine automatically** switch that starts off.
+- [ ] In the Providers section, show one row per provider instance with its current and latest version and status from `providers[].versionAdvisory`, and its progress from `providers[].updateState`. **Update** calls `server.updateProvider` when `canUpdate` is true, and otherwise the row shows `updateCommand` with a copy button.
+- [ ] Add a **Check for provider updates** switch bound to T3's `enableProviderUpdateChecks` through `server.updateSettings`, and an **Update providers automatically** switch that starts off. Keep the board's own switches where W1 keeps board settings.
+- [ ] Add **Update everything**, which runs each offered update in turn, as T3's sidebar action does.
+- [ ] In `state/updates.ts`, decide each item's action as a pure function of the offer, the switch, and the active runs. An automatic update starts only when no thread on that engine, or on that provider instance, has an active run. Otherwise it waits and starts when those runs go idle. It never interrupts a run, and each automatic update shows a toast and a last-updated line on the page.
+- [ ] When an update is offered and its switch is off, show a dot on the sidebar's settings icon and one toast per new version, as T3's launch notification does. The toast opens the Updates page.
+- [ ] In `Sidebar.tsx`, move the engine status and version to the very bottom of the left sidebar, below the settings and help icons.
 
 **You see.**
 
-- [ ] `node apps/board/scripts/install-skills.mjs` links four skills, and a T3 Claude thread lists them in its provider skills.
+- [ ] Settings has an Updates page in the board's Orca layout that lists the engine, Claude Code, and Codex with their versions, updates each one on a click or automatically between runs, and the sidebar flags an offered update. The engine status sits at the bottom of the sidebar, below the settings and help icons.
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] `install-skills.test.mjs` runs the script against a temporary home. The first run creates four links, the second run reports four skipped links, and a link that points elsewhere is reported and left alone. Run `node --test apps/board/scripts/install-skills.test.mjs`.
+- [ ] `updates.test.ts` maps fixed inputs of offer, switch, and active runs to literal expected actions, covering offered with the switch off, automatic with no runs, automatic with an active run, a finished run releasing a waiting update, and an instance whose `canUpdate` is false. Run `vp test run src/state/updates.test.ts` from `apps/board`.
 
-**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe.
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe. Every provider lane runs its engine with `HOME` and `NPM_CONFIG_PREFIX` under `/tmp/<lane>/`, so an update never touches the operator's own Claude Code, Codex, or `~/.t3`.
 
-- [ ] Lane 1. Regression lane against trunk. Trunk does not have the skills, so record that fact. Run the install script at head. Save `b12-install.txt`. Pass when four links exist in `~/.claude/skills/`.
-- [ ] Lane 2. Run the install script again. Save `b12-reinstall.txt`. Pass when it reports four skipped links and changes nothing.
-- [ ] Lane 3. Read the provider skills for the Claude instance from the server config. Save `b12-claude-skills.txt`. Pass when all four skills are listed.
-- [ ] Lane 4. Read the provider skills for the Codex instance. Save `b12-codex-skills.txt`. Pass when all four skills are listed.
-- [ ] Lane 5. Start a board orchestrator and ask it to plan two tickets. Save `b12-plan.txt`. Pass when `tickets.json` follows the board schema.
-- [ ] Lane 6. Let the orchestrator start one ticket. Save `b12-owner.txt`. Pass when the owner's title is `[<key>] task`, its role is `implementation`, and it runs in a new worktree.
-- [ ] Lane 7. Let the owner reach code-ready. Save `b12-review.txt`. Pass when a child titled `[<key>] reviewer` runs with role `review` in the owner's checkout and its thread shows no file edit.
-- [ ] Lane 8. Ask an agent to apply ponytail on a small change. Save `b12-ponytail.txt`. Pass when the agent's reply ends with the skipped and risk lines.
-- [ ] Lane 9. Run two T3 Codex threads in the same project, where the first states a project fact. Save `b12-codex-memory.txt`. Pass when `~/.codex/memories_v2/` holds that fact after the first thread goes idle, or record the gap if Codex never writes it.
-- [ ] Lane 10. Run the boundary check at head. Save `b12-boundary.txt`. Pass when it exits 0.
+- [ ] Lane 1. Regression lane against trunk. Trunk has no Updates page, so record that fact. Open it at head. Save `w2-updates.png`. Pass when the engine, Claude Code, and Codex rows show their current versions.
+- [ ] Lane 2. Point the lane's Claude instance at an older Claude Code installed under the lane's scratch prefix. Save `w2-behind.png`. Pass when its row shows it behind with the latest version.
+- [ ] Lane 3. Click **Update** on that row. Save `w2-provider-update.png`. Pass when the row moves through running to succeeded and then shows the new version.
+- [ ] Lane 4. Turn **Check for provider updates** off. Save `w2-checks-off.txt`. Pass when T3's `enableProviderUpdateChecks` reads false from the server config.
+- [ ] Lane 5. Turn **Update providers automatically** on while a turn runs on that instance. Save `w2-auto-wait.png`. Pass when the update waits for the turn to end, then runs, and a toast reports it.
+- [ ] Lane 6. In the scratch WSL distro from the boot recipe, install the T3 service one release behind npm's latest and turn **Update the engine automatically** on. Save `w2-engine-auto.png`. Pass when the footer shows the latest version with no click, then unregister the distro.
+- [ ] Lane 7. With both switches off and an update offered, launch twice. Save `w2-notify.png`. Pass when the settings icon shows the dot and only the first launch shows the toast.
+- [ ] Lane 8. With two updates offered, click **Update everything**. Save `w2-everything.png`. Pass when both finish in turn.
+- [ ] Lane 9. Run the Windows app and open the Updates page. Save `w2-windows.png` from a full-window capture. Pass when it matches the other settings pages' layout and the sidebar shows the settings and help icons above the engine status.
+- [ ] Lane 10. Run the boundary check and the standards check at head. Save `w2-checks.txt`. Pass when both exit 0.
 
 **Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Metric. Wall time of the install script. Trunk does not have it, so the budget is absolute.
-- [ ] Probe. Run `time node apps/board/scripts/install-skills.mjs` five times.
-- [ ] Baseline. Record that trunk has no script, then record the head times.
-- [ ] Rule. The median stays under 1 s.
+- [ ] Metric. Time from clicking Updates in the settings list to the page's first paint.
+- [ ] Probe. Log `board:updates-open` and `board:updates-painted` ten times.
+- [ ] Baseline. Record the Worktrees page's open time at head as the comparison.
+- [ ] Rule. The median stays under 100 ms, recorded for O1.
+
+**Review gate.** The operator reviews at merge.
+
+- [ ] Copy lane 1, 3, and 7 screenshots into `apps/board/docs/media/w2-review-<slug>.png`.
+- [ ] Record a 30 to 60 second video of the change from a lane. Save it as `apps/board/docs/media/w2-review.mp4`.
+- [ ] Post the screenshots and the video in chat for the operator at merge.
+
+**Merge.**
+
+- [ ] Root's clean verdict at the exact head SHA.
+- [ ] Bugbot triage done.
+- [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
+- [ ] The root appends W2 to the base-branch stack and the operator lands it bottom-up.
+
+## Keep the orchestrator's rules after compaction (R1)
+
+**Depends on.** W2.
+
+**Files.**
+
+- [ ] Create `apps/board/src/orchestrator/orchestratorInstance.ts` and `apps/board/src/orchestrator/orchestratorInstance.test.ts`.
+- [ ] Create `apps/board/docs/skill-feed-probe.md`.
+- [ ] Edit `apps/board/src/orchestrator/brief.md`, `apps/board/src/orchestrator/brief.ts`, `apps/board/src/orchestrator/launch.ts`, `apps/board/src/state/orchestrator.ts`, `apps/board/src/state/boardModel.ts`, and `apps/board/src/board/AgentCard.tsx`.
+
+**Build.**
+
+- [ ] Record the skill feed probe's measured results in `docs/skill-feed-probe.md`, from `/tmp/skill-probe/evidence/`. An appended system prompt file survived `/compact` 10 of 10 times. A rule only in the first message survived short chats but was lost from the summary in 2 of 2 long orchestrator sessions. A `$skill` survived 4 of 4 short chats. `--disallowedTools` removed Claude Code's built-in subagent tool, and a built-in subagent call otherwise becomes a T3 child thread the board shows as an unassigned card.
+- [ ] Split `brief.md` into standing rules and board facts. The standing rules hold the store contract, the role registry, how to reach the user, the builder-cap rule, and how to work. The board facts hold the board folder, the builder cap's number, and the project. The standing rules tell the orchestrator that after a compaction it finds its board folder by matching its own thread ID to `orchestratorThreadId` in `.agentboard/*/board.json` under its working folder.
+- [ ] In `orchestratorInstance.ts`, create or reuse one orchestrator Claude instance per engine through T3's own instance settings. Give it the standing rules as an appended system prompt, through `--append-system-prompt` or `--append-system-prompt-file` in its launch arguments, and `--disallowedTools "Task,Agent"`. Use the form that the live lanes show reaches the session. Children keep running on their roles' targets, so they never get the orchestrator's rules.
+- [ ] Start every new orchestrator on that instance, keep C1's model and effort choice within it, and move an existing board's orchestrator to it on its next turn.
+- [ ] For a Codex orchestrator, find whether T3 can give Codex standing instructions that survive compaction. If it can't, keep the brief in the first message and say so in the new-board dialog.
+- [ ] Fix the standing rules the end-to-end run broke, per `apps/board/docs/e2e-run-2026-11-20.md`. Open each PR against the base the user named, or ask the user before stacking. Say when a ticket moves to `verifying` and to `pr`. Take every time from `date -u +%Y-%m-%dT%H:%M:%SZ`. Tell every agent that changes or checks files to leave its evidence in `<its worktree>/.omp/artifacts/<ticket key>/` with a `README.txt` that lists each file and what it proves, which B9 reads. Require evidence on every merge condition, as an absolute path or a link. Also find why the run's reviewers fell back to the orchestrator's model because the instance did not offer `claude-fable-5-1`, when B6 measured it offered, and fix it if the cause is in the board.
+- [ ] In `boardModel.ts` and `AgentCard.tsx`, flag a child thread that T3 created from a provider subagent call, not from `delegate_task`, with an "Outside the role registry" badge.
+
+**You see.**
+
+- [ ] An orchestrator still follows its rules and knows its board after a compaction, can't start Claude's built-in subagents, and any agent started outside the registry shows a badge.
+
+**Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] `orchestratorInstance.test.ts` builds the instance settings from fixed standing rules and checks the literal launch arguments, reuses an existing orchestrator instance instead of adding a second one, and leaves every other instance unchanged. Run `vp test run src/orchestrator/orchestratorInstance.test.ts` from `apps/board`.
+
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe.
+
+- [ ] Lane 1. Regression lane against trunk. Run a long orchestrator session with a goal and a scout on trunk and at head, then `/compact` and ask for the builder cap and where tickets go. Save `r1-compact.png`. Pass when head answers from its rules with no read of old session files, and record trunk's answer.
+- [ ] Lane 2. After `/compact` at head, ask for the board folder. Save `r1-board-folder.txt`. Pass when it names the right folder.
+- [ ] Lane 3. Create two boards, then ask a child for a phrase that only the standing rules hold. Save `r1-instance.txt`. Pass when both orchestrators run on one orchestrator instance, the engine gained exactly one instance, and the child doesn't know the phrase.
+- [ ] Lane 4. Rerun the end-to-end goal from `apps/board/docs/e2e-run-2026-11-20.md` verbatim, with CI on a local runner. Save `r1-e2e.md`. Pass when the PR bases follow the goal's words or the orchestrator asks first, each ticket passes through `verifying` and `pr`, every ticket frame shows a nonzero artifact count, every merge condition has evidence, decision times match the real clock within 2 minutes, and reviewers run on `claude-fable-5-1` when the instance offers it.
+- [ ] Lane 5. Ask the orchestrator to use Claude's built-in subagent tool. Save `r1-builtin.txt`. Pass when no extra child thread appears.
+- [ ] Lane 6. Open a board created on trunk and send a message. Save `r1-migrate.txt`. Pass when that turn runs on the orchestrator instance.
+- [ ] Lane 7. Switch the model in C1's picker. Save `r1-switch.txt`. Pass when the turn stays on the orchestrator instance with the new model.
+- [ ] Lane 8. On a trunk-style instance, force a built-in subagent call. Save `r1-badge.png`. Pass when its card shows the badge.
+- [ ] Lane 9. Create a Codex orchestrator and run the lane 1 check. Save `r1-codex.txt`. Pass when the result and the dialog's note match.
+- [ ] Lane 10. Run the boundary check and the standards check at head. Save `r1-checks.txt`. Pass when both exit 0.
+
+**Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] Metric. Time from sending a message to the orchestrator's first streamed token.
+- [ ] Probe. Send the same short message ten times on trunk and ten at head.
+- [ ] Baseline. Record trunk's times.
+- [ ] Rule. The head median stays within 500 ms of trunk's, recorded for O1.
+
+**Review gate.** The operator reviews at merge.
+
+- [ ] Copy lane 1, 5, and 8 screenshots or captures into `apps/board/docs/media/r1-review-<slug>.png`.
+- [ ] Record a 30 to 60 second video of the change from a lane. Save it as `apps/board/docs/media/r1-review.mp4`.
+- [ ] Post the screenshots and the video in chat for the operator at merge.
+
+**Merge.**
+
+- [ ] Root's clean verdict at the exact head SHA.
+- [ ] Bugbot triage done.
+- [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
+- [ ] The root appends R1 to the base-branch stack and the operator lands it bottom-up.
+
+## Format the orchestrator chat the way T3 does (C2)
+
+**Depends on.** R1.
+
+**Files.**
+
+- [ ] Create `apps/board/src/chat/CodeBlock.tsx`, `apps/board/src/chat/WorkLog.tsx`, and `apps/board/src/chat/MessageActions.tsx`.
+- [ ] Create `apps/board/src/chat/markdownBlocks.ts` and `apps/board/src/chat/markdownBlocks.test.ts`.
+- [ ] Edit `apps/board/src/chat/Markdown.tsx`, `apps/board/src/chat/AssistantRow.tsx`, `apps/board/src/chat/UserRow.tsx`, `apps/board/src/chat/WorkRow.tsx`, `apps/board/src/chat/timeline.ts`, `apps/board/package.json`, and `standards/.dependency-cruiser.cjs`.
+
+**Build.**
+
+- [ ] Let the board import `@t3tools/shared/<subpath>`. Add `shared` to the allowed packages in the `board-reaches-t3-through-contracts` rule and add the package to `apps/board/package.json`.
+- [ ] Copy each piece's behavior from T3 web, read only, and never import from `apps/web`. The sources are `apps/web/src/components/ChatMarkdown.tsx`, `apps/web/src/components/chat/MarkdownCodeBlock.tsx`, `apps/web/src/components/chat/markdownStreamBlocks.ts`, `apps/web/src/components/chat/WorkLog.tsx`, `apps/web/src/components/chat/MessageCopyButton.tsx`, and the components they use.
+- [ ] In `CodeBlock.tsx`, color fenced code with the same Shiki highlighter and theme T3 web uses, with a copy button and the language label.
+- [ ] In `markdownBlocks.ts`, split a reply into markdown blocks so a streaming reply re-renders only its last block, as T3's stream blocks do.
+- [ ] In `WorkLog.tsx`, show each tool call with its icon and label, a command's output, the files it changed, and a failed call's error, as T3's work log does.
+- [ ] In `Markdown.tsx`, render `$skill` mentions as chips, file links that open B9's viewer for artifacts, PR and issue links that open B11's panel, Mermaid blocks, math, GitHub alerts, `<details>` blocks, and tables, as T3's chat markdown does.
+- [ ] In `MessageActions.tsx`, give each message a copy button and a timestamp, and show the running turn's elapsed time.
+
+**You see.**
+
+- [ ] The orchestrator chat reads like T3's chat, with colored code and copy, a full work log, skill chips, working links, diagrams, and per-message copy and time.
+
+**Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] `markdownBlocks.test.ts` splits a fixed streamed reply with a paragraph, a fenced block cut mid-stream, and a list into literal expected blocks, and keeps every finished block unchanged as text appends. Run `vp test run src/chat/markdownBlocks.test.ts` from `apps/board`.
+
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe.
+
+- [ ] Lane 1. Regression lane against trunk. On trunk a fenced TypeScript block renders plain. Ask the orchestrator for one at head. Save `c2-code.png`. Pass when its tokens are colored and copy puts the exact code on the clipboard.
+- [ ] Lane 2. Open one thread in the lane engine's own T3 web app and in the board. Save `c2-side-by-side.png`. Pass when code, lists, tables, links, and tool rows match T3's layout in the board's tokens.
+- [ ] Lane 3. Run a turn that runs a shell command and edits a file. Save `c2-worklog.png`. Pass when the command, its output, and the changed file show in the work log.
+- [ ] Lane 4. Stream a reply of about 4,000 words. Save `c2-stream.png`. Pass when finished blocks never re-render while the last one grows, read from React profiler marks.
+- [ ] Lane 5. Send a message that names a skill. Save `c2-skill.png`. Pass when the mention renders as a chip.
+- [ ] Lane 6. Get a reply that links an artifact path. Save `c2-filelink.png`. Pass when the link opens B9's viewer on that file.
+- [ ] Lane 7. Get a reply with a Mermaid block, an equation, and a GitHub alert. Save `c2-extras.png`. Pass when all three render.
+- [ ] Lane 8. Copy a message and read its timestamp. Save `c2-copy.txt`. Pass when the clipboard holds the message's markdown and the time matches the thread's record.
+- [ ] Lane 9. Run the Windows app on a long thread. Save `c2-windows.png` from a full-window capture. Pass when code blocks and the work log fit the panel.
+- [ ] Lane 10. Run the boundary check, the standards check, and the dependency rules at head. Save `c2-checks.txt`. Pass when all three exit 0.
+
+**Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] Metric. The gap from `board:token-received` to `board:token-painted` while a reply of about 4,000 words streams.
+- [ ] Probe. Log both marks for every update of that reply.
+- [ ] Baseline. Record trunk's gaps on the same reply.
+- [ ] Rule. The p95 stays under 50 ms, recorded for O1.
+
+**Review gate.** The operator reviews at merge.
+
+- [ ] Copy lane 1, 2, and 3 screenshots into `apps/board/docs/media/c2-review-<slug>.png`.
+- [ ] Record a 30 to 60 second video of the change from a lane. Save it as `apps/board/docs/media/c2-review.mp4`.
+- [ ] Post the screenshots and the video in chat for the operator at merge.
+
+**Merge.**
+
+- [ ] Root's clean verdict at the exact head SHA.
+- [ ] Bugbot triage done.
+- [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
+- [ ] The root appends C2 to the base-branch stack and the operator lands it bottom-up.
+
+## Browse, read, and edit files in a Files panel (F1)
+
+**Depends on.** C2.
+
+**Files.**
+
+- [ ] Create `apps/board/src/files/FilesPanel.tsx`, `apps/board/src/files/FileTree.tsx`, `apps/board/src/files/FilePreview.tsx`, and `apps/board/src/files/FileEditor.tsx`.
+- [ ] Create `apps/board/src/files/saveSession.ts` and `apps/board/src/files/saveSession.test.ts`.
+- [ ] Edit `apps/board/src/artifacts/ArtifactViewer.tsx`, `apps/board/src/domain/artifact.ts`, and the right panel host B11 created.
+
+**Build.**
+
+- [ ] Add a Files panel beside B11's browser panel, as one right-side panel with tabs, the way Orca's right sidebar holds its file explorer and source control. Its root picker lists the project and every ticket worktree on the board.
+- [ ] Copy behavior from T3 web's file browser, read only, and never import from `apps/web`. The sources are `apps/web/src/components/files/FileBrowserPanel.tsx`, `FileExplorerPane.tsx`, `FilePreviewPanel.tsx`, `fileSaveSessions.ts`, `fileTreeExpansion.ts`, and `useDirectoryEntries`. Use the same tree and code packages T3 web uses.
+- [ ] In `FileTree.tsx`, list folders lazily through `projects.listEntries` with paths relative to the chosen root's `cwd`, and keep expansion per root.
+- [ ] In `FilePreview.tsx`, show code with C2's colors, markdown rendered, images through signed media URLs, TSV and CSV as tables through `@t3tools/shared/delimitedPreview`, PDFs as pages, and a placeholder for other binaries, each with copy and download.
+- [ ] In `FileEditor.tsx`, **Edit** turns a text file into an editor, and **Save** writes through `projects.writeFile` with a path relative to its root.
+- [ ] In `saveSession.ts`, keep the contents at open, the edits, and the disk contents at save. When the disk changed since open, show the conflict with **Keep mine**, **Take theirs**, and a view of both, and never overwrite either side silently.
+- [ ] Open artifacts in the same preview and editor. Evidence kinds, meaning screenshots, proofs, scripts, diffs, and `decisions.tsv`, stay read-only, because review and merge readiness rely on them. The orchestrator's own files never open for edit.
+- [ ] After a save under a board's store or a ticket worktree, offer **Tell the orchestrator**, which sends "I edited <path>. Re-read it." to that board's orchestrator.
+- [ ] When the connection lacks filesystem write scope, follow T3's own permission flow, and show T3's reason when it refuses.
+
+**You see.**
+
+- [ ] A Files tab beside the browser shows the project's and each worktree's file tree, previews any file, edits and saves text files with conflict protection, and keeps evidence read-only.
+
+**Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] `saveSession.test.ts` maps open, edit, and save with an unchanged disk to a write, a changed disk to a conflict, **Keep mine** to a write over the new disk contents, and **Take theirs** to discarded edits, each with literal expected contents. Run `vp test run src/files/saveSession.test.ts` from `apps/board`.
+
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe.
+
+- [ ] Lane 1. Regression lane against trunk. Trunk has no Files panel, so record that fact. Open it at head on a seeded project. Save `f1-tree.png`. Pass when the tree matches `git ls-files` for the folders opened.
+- [ ] Lane 2. Switch the root to a ticket worktree. Save `f1-worktree.png`. Pass when the tree shows that worktree's files, including its `.omp/artifacts/`.
+- [ ] Lane 3. Open a TypeScript file, a markdown file, an image, a TSV, and a PDF. Save `f1-previews.png`. Pass when each renders as the Build boxes say.
+- [ ] Lane 4. Edit and save a project file. Save `f1-edit.png`. Pass when `projects.readFile` returns the new text.
+- [ ] Lane 5. While editing, rewrite the file from a lane script, then save. Save `f1-conflict.png`. Pass when the conflict shows, and both **Keep mine** and **Take theirs** leave the expected contents.
+- [ ] Lane 6. Open a screenshot, a proof, and `decisions.tsv` from the artifact cards. Save `f1-readonly.png`. Pass when none offers **Edit** and a store `plan.md` does.
+- [ ] Lane 7. Save a store `plan.md`, then press **Tell the orchestrator** on a real Claude orchestrator. Save `f1-tell.png`. Pass when its reply quotes the new line.
+- [ ] Lane 8. Copy and download a file. Save `f1-copy.txt`. Pass when the clipboard and the downloaded file match the file's contents.
+- [ ] Lane 9. Run the Windows app with the Files tab open next to the board. Save `f1-windows.png` from a full-window capture. Pass when the tree, preview, and tabs fit beside the board.
+- [ ] Lane 10. Run the boundary check, the standards check, and the dependency rules at head. Save `f1-checks.txt`. Pass when all three exit 0.
+
+**Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] Metric. Time from expanding a folder of 2,000 entries to its rows' first paint, and from pressing **Edit** on a 1 MB file to the editor's first paint.
+- [ ] Probe. Log `board:tree-expand`, `board:tree-painted`, `board:editor-open`, and `board:editor-painted` ten times each.
+- [ ] Baseline. Trunk has no panel. Record the head times.
+- [ ] Rule. Both medians stay under 100 ms, recorded for O1.
+
+**Review gate.** The operator reviews at merge.
+
+- [ ] Copy lane 1, 3, and 5 screenshots into `apps/board/docs/media/f1-review-<slug>.png`.
+- [ ] Record a 30 to 60 second video of the change from a lane. Save it as `apps/board/docs/media/f1-review.mp4`.
+- [ ] Post the screenshots and the video in chat for the operator at merge.
+
+**Merge.**
+
+- [ ] Root's clean verdict at the exact head SHA.
+- [ ] Bugbot triage done.
+- [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
+- [ ] The root appends F1 to the base-branch stack and the operator lands it bottom-up.
+
+## Review a branch's changes in a Changes panel (D1)
+
+**Depends on.** F1.
+
+**Files.**
+
+- [ ] Create `apps/board/src/changes/ChangesPanel.tsx`, `apps/board/src/changes/DiffView.tsx`, and `apps/board/src/changes/CommitList.tsx`.
+- [ ] Create `apps/board/src/changes/changeSet.ts` and `apps/board/src/changes/changeSet.test.ts`.
+- [ ] Edit the right panel host, `apps/board/src/board/TicketFrame.tsx`, `apps/board/src/board/AgentCard.tsx`, and `apps/board/src/board/PrChip.tsx`.
+
+**Build.**
+
+- [ ] Add a Changes tab next to Files, the way Orca's source control view sits beside its explorer. It works on the same roots as Files, the project and each ticket worktree.
+- [ ] Copy behavior from T3 web's diff panel, read only, and never import from `apps/web`. The sources are `apps/web/src/components/DiffPanel.tsx`, `DiffPanelShell.tsx`, `DiffWorkerPoolProvider.tsx`, `DiffFilePathCopyButton.tsx`, and `apps/web/src/components/diffs/`. Use the same diff package T3 web uses.
+- [ ] Offer two sources, as T3 does. **Uncommitted** reads `review.getDiffPreview` with `sourceKind: "working-tree"`. **Branch** reads it with `sourceKind: "branch-range"` against the ticket's base from `tickets.json`, or the default branch for the project.
+- [ ] In `CommitList.tsx`, list the branch's commits from `review.getBranchCommits`, and show one commit's diff with `commitSha`.
+- [ ] In `DiffView.tsx`, show a changed-file tree with added and removed counts, unified and split views, an ignore-whitespace switch, and the full file through `review.getDiffFileContents` on expand.
+- [ ] In `changeSet.ts`, turn a diff preview into the file tree and totals as a pure function.
+- [ ] Open a ticket's branch diff from its frame, its agent cards, and its PR chip. Clicking a file opens it in F1's Files panel at that line.
+
+**You see.**
+
+- [ ] A Changes tab shows a project's or a ticket worktree's uncommitted changes, its branch diff against the base, and each commit, in unified or split view, and opens straight from a ticket.
+
+**Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] `changeSet.test.ts` turns a fixed diff preview with an added, a modified, a renamed, and a deleted file into a literal expected tree with per-file and total counts. Run `vp test run src/changes/changeSet.test.ts` from `apps/board`.
+
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe.
+
+- [ ] Lane 1. Regression lane against trunk. Trunk has no Changes panel, so record that fact. Make uncommitted edits in a seeded project and open **Uncommitted** at head. Save `d1-uncommitted.png`. Pass when the files and counts match `git diff --stat`.
+- [ ] Lane 2. Open **Branch** on a ticket worktree with three commits over its base. Save `d1-branch.png`. Pass when the files and counts match `git diff --stat <base>...HEAD`.
+- [ ] Lane 3. Pick one commit. Save `d1-commit.png`. Pass when the diff matches `git show --stat <sha>`.
+- [ ] Lane 4. Switch between unified and split, and turn on ignore whitespace on a whitespace-only change. Save `d1-views.png`. Pass when both views render and the whitespace change hides.
+- [ ] Lane 5. Expand a file to its full contents. Save `d1-full.png`. Pass when the unchanged lines show around the hunks.
+- [ ] Lane 6. Diff a renamed and a deleted file. Save `d1-rename.png`. Pass when both show with their change type.
+- [ ] Lane 7. Open the diff from a ticket frame, an agent card, and a PR chip. Save `d1-entry.png`. Pass when each opens that ticket's branch diff.
+- [ ] Lane 8. Click a changed file. Save `d1-open-file.png`. Pass when F1's Files panel opens it at the changed line.
+- [ ] Lane 9. Run the Windows app with a 50-file diff open. Save `d1-windows.png` from a full-window capture. Pass when the tree and diff fit beside the board.
+- [ ] Lane 10. Run the boundary check, the standards check, and the dependency rules at head. Save `d1-checks.txt`. Pass when all three exit 0.
+
+**Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] Metric. Time from opening a 50-file, 5,000-line branch diff to the first file's hunks painting.
+- [ ] Probe. Log `board:diff-open` and `board:diff-painted` ten times.
+- [ ] Baseline. Trunk has no panel. Record the head times.
+- [ ] Rule. The median stays under 500 ms, recorded for O1.
+
+**Review gate.** The operator reviews at merge.
+
+- [ ] Copy lane 1, 2, and 4 screenshots into `apps/board/docs/media/d1-review-<slug>.png`.
+- [ ] Record a 30 to 60 second video of the change from a lane. Save it as `apps/board/docs/media/d1-review.mp4`.
+- [ ] Post the screenshots and the video in chat for the operator at merge.
+
+**Merge.**
+
+- [ ] Root's clean verdict at the exact head SHA.
+- [ ] Bugbot triage done.
+- [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
+- [ ] The root appends D1 to the base-branch stack and the operator lands it bottom-up.
+
+## Start work from Linear and GitHub issues (L1)
+
+**Depends on.** D1.
+
+**Files.**
+
+- [ ] Create `apps/board/src/settings/IntegrationsPage.tsx`.
+- [ ] Create `apps/board/src/issues/IssuePicker.tsx` and `apps/board/src/issues/IssueChip.tsx`.
+- [ ] Create `apps/board/src/issues/issueLinks.ts` and `apps/board/src/issues/issueLinks.test.ts`.
+- [ ] Edit `apps/board/src/board/CreateBoard.tsx`, `apps/board/src/board/TicketFrame.tsx`, `apps/board/src/settings/SettingsNav.tsx`, `apps/board/src/domain/ticket.ts`, `apps/board/src/domain/forYou.ts`, `apps/board/src/orchestrator/brief.md`, and `apps/board/src/orchestrator/brief.ts`.
+
+**Build.**
+
+- [ ] Add an Integrations page to the settings screen in W1's Orca layout. Connect Linear with a personal API key through `issueTrackers.connect`, which T3 probes and keeps as an engine secret. Show each tracker from `issueTrackers.list`, disconnect with a null token, and bind each project to a Linear team through `issueTrackers.bindProject`. Copy the flow from T3 web's `apps/web/src/components/settings/IntegrationsSettings.tsx` and `IssueTrackerSettings.tsx`, read only.
+- [ ] Give the new-board dialog a **Create From** row like Orca's Create worktree dialog in `/home/kyle/personalDev/main/artifacts/agent-board-prototype/refs/orca-create-worktree.png`, with Prompt, GitHub, Linear, Branch, and Name tabs and a search box. The Linear and GitHub tabs search through `issues.list` and `issues.candidates`, and the Branch tab lists bases from `vcs.listRefs`. Copy issue rows and search from T3 web's `apps/web/src/components/issue/`, read only.
+- [ ] Picking an issue fills the board's name and goal, and the orchestrator's first message carries the issue's description and comments from `issues.detail` and `issues.comments`.
+- [ ] Add an optional `issue` field, holding the tracker and the key, to the ticket schema in `domain/ticket.ts`, and tell the orchestrator in `brief.md` to set it when a ticket maps to an issue, such as a Linear child issue.
+- [ ] In `IssueChip.tsx`, show a linked ticket's issue key, state, and assignee from `issues.detail` on its frame, open the issue in B11's panel on click, and list its linked threads from `issues.linkedThreads`.
+- [ ] Route every tracker write through the operator. `brief.md` tells the orchestrator to ask for a create, a state change, or a comment as a For-you item of a new `tracker_write` kind that states the exact change. **Approve** makes that change through `issues.create`, `issues.setState`, or `issues.comment` and messages the orchestrator the result, and **Hold** changes nothing.
+- [ ] Gate the agents' own tracker tools, per `apps/board/docs/issue-tools-probe.md`. Every agent in a T3 thread has T3's eight issue tools, named `mcp__t3-code__*` in Claude threads and `mcp__t3_code__*` in Codex threads, and T3 runs `create_issue`, `comment_on_issue`, and `set_issue_state` with no approval in every runtime mode. For Claude threads, write a permission rule that asks for those three tools into the project's and each ticket worktree's `.claude/settings.local.json`, so each call waits as an engine approval card in B8's For-you lane. For Codex threads, gate the three `mcp__t3_code__` writes and Codex's own `mcp__codex_apps__linear_*` writes through Codex's approval settings, or turn tracker writes off for Codex orchestrators and say why in the dialog. The operator's `omp-kit` Linear rule never fires on an MCP tool, so it is no fallback. Reads stay free.
+- [ ] Add **Add from Linear** to the orchestrator card. It opens the same picker and sends the picked issue to the orchestrator as a new ticket request.
+- [ ] In `issueLinks.ts`, keep the pure pieces, which find issue keys in text, join tickets to issues, and turn an approved `tracker_write` item into the T3 call's input.
+
+**You see.**
+
+- [ ] Settings connects Linear, the new-board dialog starts a board from a Linear or GitHub issue like Orca's dialog, ticket frames show their issue's state, and every write to the tracker waits for the operator's approval.
+
+**Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] `issueLinks.test.ts` finds the keys in a fixed text, joins a fixed `tickets.json` to fixed issues, and turns approved create, state, and comment items into literal expected `issues.create`, `issues.setState`, and `issues.comment` inputs. Run `vp test run src/issues/issueLinks.test.ts` from `apps/board`.
+
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe. Linear lanes read the operator's workspace with a key the operator enters at lane time, and never write to it. Write lanes use a scratch Linear workspace key the operator provides, or a throwaway GitHub repo.
+
+- [ ] Lane 1. Regression lane against trunk. Trunk's dialog has no Create From row, so record that fact. Connect Linear at head. Save `l1-connect.png`. Pass when `issueTrackers.list` shows Linear connected and the key appears in no board file or log.
+- [ ] Lane 2. Bind the project to a team. Save `l1-bind.png`. Pass when `issues.list` returns that team's issues.
+- [ ] Lane 3. Search the Linear tab. Save `l1-search.png`. Pass when the results match Linear's own search for the same text.
+- [ ] Lane 4. Create a board from an issue. Save `l1-from-issue.png`. Pass when the orchestrator's first message holds the issue's description and comments.
+- [ ] Lane 5. Load a `tickets.json` whose tickets link child issues. Save `l1-ticket-chip.png`. Pass when each frame shows the key, state, and assignee Linear reports.
+- [ ] Lane 6. Search the GitHub tab on a throwaway repo with three issues. Save `l1-github.png`. Pass when all three are listed and one starts a board.
+- [ ] Lane 7. Have a real Claude orchestrator change an issue's state in the scratch tracker twice, once through a `tracker_write` item and once by calling `set_issue_state` itself, then have a Codex orchestrator call it once. Save `l1-write.png`. Pass when every call waits for the operator with the exact change shown, **Hold** leaves the issue unchanged, and **Approve** changes it.
+- [ ] Lane 8. Use **Add from Linear** on an existing board. Save `l1-add.png`. Pass when the orchestrator adds a ticket linked to that issue.
+- [ ] Lane 9. Run the Windows app and open the new-board dialog on the Linear tab. Save `l1-windows.png` from a full-window capture. Pass when it matches the layout of Orca's dialog in the reference screenshot.
+- [ ] Lane 10. Run the boundary check, the standards check, and the dependency rules at head. Save `l1-checks.txt`. Pass when all three exit 0.
+
+**Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] Metric. Time from a keystroke in the Linear search to its results' paint.
+- [ ] Probe. Log `board:issue-search` and `board:issue-results` twenty times.
+- [ ] Baseline. Trunk has no search. Record the head times.
+- [ ] Rule. The median stays under 300 ms, recorded for O1.
+
+**Review gate.** The operator reviews at merge.
+
+- [ ] Copy lane 3, 5, and 7 screenshots into `apps/board/docs/media/l1-review-<slug>.png`.
+- [ ] Record a 30 to 60 second video of the change from a lane. Save it as `apps/board/docs/media/l1-review.mp4`.
+- [ ] Post the screenshots and the video in chat for the operator at merge.
+
+**Merge.**
+
+- [ ] Root's clean verdict at the exact head SHA.
+- [ ] Bugbot triage done.
+- [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
+- [ ] The root appends L1 to the base-branch stack and the operator lands it bottom-up.
+
+## Port pstack to T3 and run the orchestrator in poteto-mode (B12)
+
+**Depends on.** L1.
+
+**Files.**
+
+- [ ] Create the private repo `13kparkin/pstack-t3` with an `upstream` branch and a `main` branch, laid out like `13kparkin/pstack-omp`.
+- [ ] In that repo, create `skills/pstack-t3/SKILL.md` and `scripts/sync-upstream`.
+- [ ] Create `apps/board/scripts/install-skills.mjs` and `apps/board/scripts/install-skills.test.mjs`.
+- [ ] Edit `apps/board/src/orchestrator/orchestratorInstance.ts` and `apps/board/src/orchestrator/brief.md`.
+
+**Build.**
+
+- [ ] Seed `upstream` from the `cursor/plugins` pstack commit that `pstack-omp`'s `upstream` branch last records, keeping its `Upstream-Commit:` trailers. Copy `scripts/sync-upstream` from `pstack-omp`. `git diff upstream main -- skills agents` is the whole T3 adaptation.
+- [ ] Write `skills/pstack-t3/SKILL.md` with the same sections as `pstack-omp`'s adapter. Children start with `delegate_task` and a role, isolation, target, and title. The role map points at the board's 18-role registry. Results come from T3 thread reads and the thread family. Waiting relies on T3 waking the parent when a child finishes or asks. The human is reached through `foryou.jsonl` and `request_secret`. Claude Code's built-in subagent tool is never used.
+- [ ] Change other skills only where they name OMP mechanics, the same way `pstack-omp` changed them. Mention a skill as `$name` at the start of a word, never inside backticks, because T3 only expands that form.
+- [ ] In `install-skills.mjs`, install `pstack-t3` as a Claude Code plugin at user scope, the way K1 installs `omp-kit`, link its skills into the Codex skills folder, and skip anything that already points there. Also turn on Codex memories in `~/.codex/config.toml`, with `[features] memories = true` and `memories.disable_on_external_context = false`, leaving every other key as it is.
+- [ ] Make the orchestrator instance's appended system prompt the T3 edition of poteto-mode, the `pstack-t3` adapter, and R1's standing rules. Every other skill loads on demand.
+
+**You see.**
+
+- [ ] The orchestrator runs poteto-mode on T3, starts every child through the registry, loads pstack skills on demand, and keeps its rules after a compaction, and `pstack-t3` can take new pstack releases with `sync-upstream`.
+
+**Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] `install-skills.test.mjs` runs the script against a temporary home. The first run installs the plugin and links the Codex skills, the second run changes nothing and reports each skip, and a link that points elsewhere is reported and left alone, each checked against a literal expected file list. Run `node --test apps/board/scripts/install-skills.test.mjs`.
+
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe.
+
+- [ ] Lane 1. Regression lane against trunk. Trunk's orchestrator has R1's rules only. Ask it at head which poteto-mode playbook fits a new feature. Save `b12-playbook.txt`. Pass when it names the Feature playbook and copies its steps.
+- [ ] Lane 2. Give a goal that needs a review. Save `b12-review.txt`. Pass when the reviewer starts through `delegate_task` with its registry role and the orchestrator calls no OMP tool such as `task`, `hub`, or `agent://`.
+- [ ] Lane 3. Ask for `$how` on a repo question. Save `b12-skill.txt`. Pass when the ported skill loads and its sections shape the answer.
+- [ ] Lane 4. Run a long session, `/compact`, then ask which principle governs a test assertion. Save `b12-compact.txt`. Pass when it answers from poteto-mode without reading old session files.
+- [ ] Lane 5. Run `scripts/sync-upstream` in `pstack-t3`. Save `b12-sync.txt`. Pass when it lists the upstream changes since the seed commit.
+- [ ] Lane 6. Read the Codex instance's skills from the server config. Save `b12-codex-skills.txt`. Pass when the ported skills are listed.
+- [ ] Lane 7. Run the install script twice on a scratch home. Save `b12-install.txt`. Pass when the second run changes nothing.
+- [ ] Lane 8. Rerun the end-to-end goal from the orchestrator end-to-end run with the port and with R1's rules only, on the same ten checks. Save `b12-eval.md`. Pass when both scores are recorded with evidence and the port scores no lower on any check.
+- [ ] Lane 9. Run two T3 Codex threads in the same project, where the first states a project fact. Save `b12-codex-memory.txt`. Pass when `~/.codex/memories_v2/` holds that fact after the first thread goes idle, or record the gap if Codex never writes it.
+- [ ] Lane 10. Run the boundary check and the standards check at head. Save `b12-checks.txt`. Pass when both exit 0.
+
+**Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] Metric. Time from sending a message to the orchestrator's first streamed token with the larger system prompt.
+- [ ] Probe. Send the same short message ten times with R1's rules and ten with the port.
+- [ ] Baseline. Record the R1 times.
+- [ ] Rule. The port's median stays within 1 s of R1's, recorded for O1.
 
 **Review gate.** None. B12 is not review-gated.
 
@@ -1286,7 +1658,7 @@ These stay unproven until B3 runs.
 
 ## Appendix C. Risks
 
-- `packages/client-runtime` has no stable API. An upstream merge can break the board build. Every owner runs `vp run --filter @agent-board/app typecheck` after merging upstream, and the fix always lands in `apps/board`.
+- `packages/client-runtime` and `packages/shared` have no stable API. An upstream merge can break the board build. Every owner runs `vp run --filter @agent-board/app typecheck` after merging upstream, and the fix always lands in `apps/board`.
 - Electron lanes run on the Windows PC and depend on WSL's mirrored networking, which `.wslconfig` sets today. If it changes to NAT, the app can't reach the WSL engine or Vite server on 127.0.0.1, and the lanes fail until it is set back.
 - If T3 desktop is installed later, it refuses to start on the `~/.t3` the service holds. Its fix is T3's own, documented in `docs/user/remote-access.md:540-544`. Turn the desktop's **Local environment** off, and it uses the service on the same home.
 - B4's update lanes need systemd user services in WSL. If they are missing, B4 records the gap and proves the update path on a machine that has them.

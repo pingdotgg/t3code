@@ -6,6 +6,7 @@ import { engineSettingsAtom } from "../state/server";
 import { CleanupPage } from "./CleanupPage";
 import { Select } from "./controls/Select";
 import { pageTitle, SettingsNav, type SettingsPage } from "./SettingsNav";
+import { UpdatesPage } from "./UpdatesPage";
 import { type SaveStatus, useSettingsWrite } from "./useSettingsWrite";
 import { WorktreesPage } from "./WorktreesPage";
 
@@ -24,21 +25,33 @@ function statusText(status: SaveStatus): string {
   }
 }
 
-// Two frames: the first commits the page, the second runs after it has been painted. A stable
-// function, so a re-render does not run it again.
-function markPainted(node: HTMLElement | null) {
+// Two frames: the first commits the page, the second runs after it has been painted. Each marker
+// is a stable function, so a re-render does not run it again.
+const paintedMarker = (name: string) => (node: HTMLElement | null) => {
   if (node === null) return;
-  const frame = requestAnimationFrame(() =>
-    requestAnimationFrame(() => performance.mark("board:settings-painted")),
-  );
+  const frame = requestAnimationFrame(() => requestAnimationFrame(() => performance.mark(name)));
   return () => cancelAnimationFrame(frame);
-}
+};
 
-export function SettingsScreen({ onBack }: { onBack: () => void }) {
+const markPainted = paintedMarker("board:settings-painted");
+const PAGE_PAINTED = {
+  worktrees: paintedMarker("board:worktrees-painted"),
+  cleanup: paintedMarker("board:cleanup-painted"),
+  updates: paintedMarker("board:updates-painted"),
+} satisfies Record<SettingsPage, ReturnType<typeof paintedMarker>>;
+
+export function SettingsScreen({
+  page,
+  onPage,
+  onBack,
+}: {
+  page: SettingsPage;
+  onPage: (page: SettingsPage) => void;
+  onBack: () => void;
+}) {
   const settings = useAtomValue(engineSettingsAtom);
   const environmentId = useAtomValue(engineEnvironmentIdAtom);
   const allProjects = useAtomValue(environmentProjects.projectsAtom);
-  const [page, setPage] = useState<SettingsPage>("worktrees");
   const [scope, setScope] = useState(ENVIRONMENT);
   const { status, save } = useSettingsWrite();
   const projects = allProjects.filter((entry) => entry.archivedAt == null);
@@ -50,8 +63,18 @@ export function SettingsScreen({ onBack }: { onBack: () => void }) {
 
   return (
     <div ref={markPainted} className="grid min-h-0 grid-cols-[240px_minmax(0,1fr)]">
-      <SettingsNav page={page} onPage={setPage} onBack={onBack} />
-      <main className="min-h-0 min-w-0 overflow-y-auto scrollbar-gutter-both">
+      <SettingsNav
+        page={page}
+        onPage={(next) => {
+          performance.mark(`board:${next}-open`);
+          onPage(next);
+        }}
+        onBack={onBack}
+      />
+      <main
+        ref={PAGE_PAINTED[page]}
+        className="min-h-0 min-w-0 overflow-y-auto scrollbar-gutter-both"
+      >
         <div className="mx-auto flex max-w-[720px] flex-col gap-6 px-8 py-6">
           <header className="flex items-center justify-between gap-4">
             <h1 className="text-lg font-semibold tracking-tight">{pageTitle(page)}</h1>
@@ -62,12 +85,14 @@ export function SettingsScreen({ onBack }: { onBack: () => void }) {
               >
                 {statusText(status)}
               </span>
-              <Select
-                label="Settings for"
-                value={project?.id ?? ENVIRONMENT}
-                options={scopes}
-                onChange={setScope}
-              />
+              {page !== "updates" && (
+                <Select
+                  label="Settings for"
+                  value={project?.id ?? ENVIRONMENT}
+                  options={scopes}
+                  onChange={setScope}
+                />
+              )}
             </div>
           </header>
           {settings === null || environmentId === null ? (
@@ -78,6 +103,8 @@ export function SettingsScreen({ onBack }: { onBack: () => void }) {
               project={project}
               save={(input) => void save(input)}
             />
+          ) : page === "updates" ? (
+            <UpdatesPage settings={settings} save={(input) => void save(input)} />
           ) : (
             <CleanupPage
               settings={settings}

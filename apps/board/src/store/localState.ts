@@ -11,10 +11,29 @@ const LocalState = Schema.Struct({
     Schema.String,
     Schema.Record(Schema.String, Schema.Array(Schema.String)),
   ).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
+  /** Whether the app installs engine and provider updates itself. Both start off. */
+  autoUpdate: Schema.Struct({ engine: Schema.Boolean, providers: Schema.Boolean }).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed({ engine: false, providers: false })),
+  ),
+  /** The release each item announced last, so a later launch does not announce it again. */
+  announcedUpdates: Schema.Record(Schema.String, Schema.String).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed({})),
+  ),
+  /** The latest automatic update of each item, by key. */
+  automaticUpdates: Schema.Record(
+    Schema.String,
+    Schema.Struct({ version: Schema.String, at: Schema.String }),
+  ).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
 });
 export type LocalState = typeof LocalState.Type;
 
-export const EMPTY_LOCAL_STATE: LocalState = { lastOpenedBoard: null, frameOrder: {} };
+export const EMPTY_LOCAL_STATE: LocalState = {
+  lastOpenedBoard: null,
+  frameOrder: {},
+  autoUpdate: { engine: false, providers: false },
+  announcedUpdates: {},
+  automaticUpdates: {},
+};
 
 const decode = Schema.decodeUnknownOption(Schema.fromJsonString(LocalState));
 
