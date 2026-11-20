@@ -1567,6 +1567,7 @@ export function PullRequestDetailPanel({
       >
         <PullRequestDetailCrumbs
           detail={detail}
+          threadRef={threadRef}
           toneClassName={statePresentation?.toneClassName ?? null}
           condensed={condensed}
           repositoryUrl={repositoryUrl}
@@ -1631,6 +1632,7 @@ export function PullRequestDetailPanel({
                 pullRequestKey={pullRequestKey}
                 detail={detail}
                 terminology={terminology}
+                threadRef={threadRef}
                 linkThreadRef={
                   threadRef ??
                   (typeof composerDraftTarget === "object" ? composerDraftTarget : null)
@@ -1705,6 +1707,7 @@ export function PullRequestDetailPanel({
                 : "translate-y-1 opacity-0 duration-100",
             )}
             inert={!condensed}
+            data-workspace-scroll-swap
           >
             {detail ? (
               <div className="col-span-2 min-w-0 px-4 pb-2 pt-1">
@@ -1794,6 +1797,7 @@ export function PullRequestDetailPanel({
                 : "translate-y-0 opacity-100 delay-50",
             )}
             inert={condensed}
+            data-workspace-scroll-swap
           >
             {detail ? (
               <PullRequestDetailHeaderBody
