@@ -3,6 +3,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeNet from "node:net";
+import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -144,6 +145,69 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
         "--config",
         "/h.json",
       ]);
+      // agent-device runs in the launcher's directory, so relative paths resolve against the caller's.
+      expect(
+        yield* Effect.promise(() =>
+          launch(bound, ["install", "com.example.app", "b/App.app", "--out=o.png"]),
+        ),
+      ).toEqual([
+        "install",
+        "com.example.app",
+        path.resolve("b/App.app"),
+        `--out=${path.resolve("o.png")}`,
+        ...target,
+      ]);
+      expect(
+        yield* Effect.promise(() =>
+          launch(bound, [
+            "test",
+            "sample.ad",
+            "--env",
+            "APP_ID=a",
+            "-e",
+            "B=b",
+            "--reporter",
+            "./reporter.mjs",
+            "--reporter=junit:out/j.xml",
+            "--reporter",
+            "default",
+          ]),
+        ),
+      ).toEqual([
+        "test",
+        path.resolve("sample.ad"),
+        "--env",
+        "APP_ID=a",
+        "-e",
+        "B=b",
+        "--reporter",
+        NodeURL.pathToFileURL(path.resolve("reporter.mjs")).href,
+        `--reporter=junit:${path.resolve("out/j.xml")}`,
+        "--reporter",
+        "default",
+        ...target,
+      ]);
+      expect(
+        yield* Effect.promise(() => launch(bound, ["push", "com.example.app", '{"a":1}'])),
+      ).toEqual(["push", "com.example.app", '{"a":1}', ...target]);
+      expect(
+        yield* Effect.promise(() =>
+          launch(bound, ["replay", "export", "--out", "/o.yaml", "--", "flow.ad"]),
+        ),
+      ).toEqual(["replay", "export", "--out", "/o.yaml", ...target, "--", path.resolve("flow.ad")]);
+      expect(
+        yield* Effect.promise(() =>
+          launch(bound, ["metro", "prepare", "--public-base-url", "https://h:8081"]),
+        ),
+      ).toEqual([
+        "metro",
+        "prepare",
+        "--public-base-url",
+        "https://h:8081",
+        ...target,
+        "--project-root",
+        path.resolve("."),
+      ]);
       // After `--` everything is text: no help, no overrides, and bound flags go before it.
       for (const text of [["--help"], ["literal text", "--session", "mine"]]) {
         expect(yield* Effect.promise(() => launch(bound, ["fill", "@e5", "--", ...text]))).toEqual([
@@ -156,9 +220,9 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
       }
       expect(
         yield* Effect.promise(() =>
-          launch(shared, ["snapshot", "--config=/h.json", "--session=t3-a"]),
+          launch(shared, ["snapshot", "--config=/h.json", "--session=t3-unbound"]),
         ),
-      ).toEqual(["snapshot", "--config=/h.json", "--session=t3-a"]);
+      ).toEqual(["snapshot", "--config=/h.json", "--session=t3-unbound"]);
       yield* Effect.promise(() =>
         expect(
           launch(shared, ["fill", "@e5", "--", "--config", "/h.json", "--session", "t3-a"]),
@@ -253,6 +317,94 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
       Effect.provideService(HostProcess.ExecutablePath, process.execPath),
       Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     ),
+  );
+
+  // agent-device records a device claim's workspace from its own cwd (the nearest `.git` above it)
+  // and refuses install/uninstall/push from a different workspace, even for the same session.
+  it.effect(
+    "gives agent-device one workspace for its session whatever shell directory runs it",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-cwd-" });
+        const entryPath = path.join(dir, "cli.mjs");
+        yield* fs.writeFileString(entryPath, "console.log(process.cwd());");
+        const command = yield* bindAgentDeviceLauncher({
+          entryPath,
+          stateDir: dir,
+          session: "t3-a",
+          targetArgs: [
+            "--platform",
+            "ios",
+            "--udid",
+            "UDID-1",
+            "--config",
+            "/h.json",
+            "--session",
+            "t3-a",
+          ],
+        });
+        const launchFrom = Effect.fn(function* (
+          repo: string,
+          args: ReadonlyArray<string>,
+          launcher = command,
+        ) {
+          const cwd = path.join(dir, repo);
+          yield* fs.makeDirectory(path.join(cwd, ".git"), { recursive: true });
+          const { stdout } = yield* Effect.promise(() =>
+            exec(
+              process.execPath,
+              [path.join(path.dirname(launcher), "agent-device-launcher.mjs"), ...args],
+              {
+                cwd,
+              },
+            ),
+          );
+          return stdout.trim();
+        });
+        const opened = yield* launchFrom("mobile-app", ["open", "com.example.app"]);
+        const installed = yield* launchFrom("coordinator", [
+          "install",
+          "com.example.app",
+          "/b/App.app",
+        ]);
+        expect(installed).toBe(opened);
+        const shared = yield* ensureAgentDeviceShim({ entryPath, stateDir: dir });
+        expect(
+          yield* launchFrom(
+            "other",
+            [
+              "install",
+              "com.example.app",
+              "/b/App.app",
+              "--config",
+              "/h.json",
+              "--session",
+              "t3-a",
+            ],
+            path.join(shared, "agent-device"),
+          ),
+        ).toBe(opened);
+        // A Simlock lease opened its claim from the thread's workspace, so its launcher runs there.
+        const workspace = path.join(dir, "workspace");
+        yield* fs.makeDirectory(workspace);
+        const leased = yield* bindAgentDeviceLauncher({
+          entryPath,
+          stateDir: dir,
+          session: "t3-lease",
+          targetArgs: ["--config", "/h.json", "--session", "t3-lease"],
+          cwd: workspace,
+        });
+        expect(
+          yield* launchFrom("coordinator", ["install", "com.example.app", "/b/App.app"], leased),
+        ).toBe(workspace);
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(HostProcess.IsExecutable, false),
+        Effect.provideService(HostProcess.ExecutablePath, process.execPath),
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
   );
 
   it("tells a released session from a close that failed or timed out", () => {
