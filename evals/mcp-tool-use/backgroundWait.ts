@@ -120,7 +120,7 @@ export const makeBackgroundWait = Effect.fn("evaluateMcpToolUse.makeBackgroundWa
     requestNamespace: "mcp-tool-use-eval",
     thread: { threadId, providerSessionId: "mcp-tool-use-eval", providerInstanceId },
     client: undefined,
-    capabilities: new Set<McpInvocationContext.McpCapability>(["orchestration"]),
+    capabilities: new Set<McpInvocationContext.McpCapability>(["orchestration", "background-wait"]),
     issuedAt: 0,
   };
   const request = McpSchema.McpRequestContext.of({
