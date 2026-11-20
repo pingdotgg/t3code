@@ -168,6 +168,7 @@ interface AntigravityProviderOptions {
     EffectAcpErrors.AcpError | ProviderSetupError
   >;
   readonly supportsTextGeneration: Effect.Effect<boolean>;
+  readonly readAccountEmail?: Effect.Effect<string | undefined>;
   readonly probeUsage?: Effect.Effect<ServerProviderUsageLimits>;
   readonly clearUsage?: Effect.Effect<void>;
   readonly maintenanceCapabilities?: ProviderMaintenanceCapabilities;
@@ -175,6 +176,26 @@ interface AntigravityProviderOptions {
   /** Modes the last session advertised, saved because initialize alone does not report them. */
   readonly rememberedRuntimeModes?: ReadonlyArray<RuntimeMode>;
   readonly rememberRuntimeModes?: (modes: ReadonlyArray<RuntimeMode>) => Effect.Effect<void>;
+}
+
+function withAuthEmail(
+  auth: ServerProviderDraft["auth"],
+  email: string | undefined,
+): ServerProviderDraft["auth"] {
+  const trimmed = email?.trim();
+  if (trimmed) return { ...auth, email: trimmed };
+  const { email: _previous, ...rest } = auth;
+  return rest;
+}
+
+function isDifferentEmail(previous: string | undefined, next: string | undefined): boolean {
+  const previousNormalized = previous?.trim().toLowerCase();
+  const nextNormalized = next?.trim().toLowerCase();
+  return (
+    previousNormalized !== undefined &&
+    nextNormalized !== undefined &&
+    previousNormalized !== nextNormalized
+  );
 }
 
 const RUNTIME_MODES_WITHOUT_AUTO = [
@@ -268,20 +289,25 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   const scope = yield* Effect.scope;
   const refreshUsage = Effect.fn("AntigravityProvider.refreshUsage")(function* () {
     if (!options.probeUsage || (yield* PublishingUsage)) return;
+    const startedEmail = (yield* SubscriptionRef.get(metadata)).draft.auth.email;
     yield* FiberHandle.run(
       usageRead,
       options.probeUsage.pipe(
         Effect.flatMap((probed) =>
-          SubscriptionRef.update(metadata, (state) => ({
-            ...state,
-            draft: {
-              ...state.draft,
-              usageLimits: resolveUsageLimitsAfterProbe({
-                published: state.draft.usageLimits,
-                probed,
-              }),
-            },
-          })),
+          SubscriptionRef.update(metadata, (state) =>
+            isDifferentEmail(startedEmail, state.draft.auth.email)
+              ? state
+              : {
+                  ...state,
+                  draft: {
+                    ...state.draft,
+                    usageLimits: resolveUsageLimitsAfterProbe({
+                      published: state.draft.usageLimits,
+                      probed,
+                    }),
+                  },
+                },
+          ),
         ),
         // Enrichment cannot change published limits; a health check publishes them.
         Effect.andThen(
@@ -328,28 +354,40 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
               : `Antigravity did not respond to its local health check within ${timeoutMs / 1_000} seconds.`;
     const supportsTextGeneration =
       initialized !== undefined ? yield* options.supportsTextGeneration : false;
+    const accountEmail =
+      initialized !== undefined && options.readAccountEmail
+        ? yield* options.readAccountEmail
+        : undefined;
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
     const applyCheck = (state: AntigravityProviderState) => {
       if (state.authRevision !== before.authRevision) return state;
       const { message: _previousMessage, ...draft } = state.draft;
-      const authenticated = draft.auth.status === "authenticated";
+      const auth =
+        initialized !== undefined &&
+        options.readAccountEmail !== undefined &&
+        draft.auth.status !== "unauthenticated"
+          ? withAuthEmail(draft.auth, accountEmail ?? draft.auth.email)
+          : draft.auth;
+      const switchedAccount = isDifferentEmail(draft.auth.email, auth.email);
+      const authenticated = auth.status === "authenticated";
       const message =
         errorMessage ??
         (authenticated
           ? undefined
-          : draft.auth.status === "unauthenticated"
+          : auth.status === "unauthenticated"
             ? signInMessage
             : authUncheckedMessage);
       return {
         ...state,
         draft: {
           ...draft,
+          auth,
           installed: !missingInstallation,
           // Lightweight custom-launcher probes lack versions; preserve the real handshake's version.
           version: version === "unknown" ? draft.version : version || draft.version,
           status: errorMessage ? "error" : authenticated ? "ready" : "warning",
           checkedAt: updatedAt,
-          usageLimits: missingInstallation ? undefined : draft.usageLimits,
+          usageLimits: missingInstallation || switchedAccount ? undefined : draft.usageLimits,
           ...(missingInstallation
             ? {
                 models: [],
@@ -361,8 +399,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
             : {}),
           ...(initialized !== undefined
             ? {
-                supportsTextGeneration:
-                  supportsTextGeneration && draft.auth.status !== "unauthenticated",
+                supportsTextGeneration: supportsTextGeneration && auth.status !== "unauthenticated",
               }
             : {}),
           ...(message ? { message } : {}),
@@ -371,11 +408,19 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     };
     // This state is published as it changes, so a failure the managed provider discards stays out.
     const deferFailure = errorMessage !== undefined && (yield* DeferringFailedCheck);
-    const next = yield* SubscriptionRef.modifySome(metadata, (state) => {
-      const checked = applyCheck(state);
-      const stored = deferFailure && state.draft.status === "ready" ? state : checked;
-      return [checked, stored === state ? Option.none() : Option.some(stored)];
-    });
+    const { checked: next, switchedAccount } = yield* SubscriptionRef.modifySome(
+      metadata,
+      (state) => {
+        const checked = applyCheck(state);
+        const switchedAccount = isDifferentEmail(state.draft.auth.email, checked.draft.auth.email);
+        const stored = deferFailure && state.draft.status === "ready" ? state : checked;
+        return [
+          { checked, switchedAccount },
+          stored === state ? Option.none() : Option.some(stored),
+        ];
+      },
+    );
+    if (switchedAccount) yield* resetUsage;
     if (initialized !== undefined) yield* refreshUsage();
     return yield* options.stampIdentity(next.draft);
   });
@@ -410,53 +455,87 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     observeThinkingLevels(started.sessionSetupResult.configOptions);
     const before = yield* SubscriptionRef.get(metadata);
     const supportsTextGeneration = yield* options.supportsTextGeneration;
+    const accountEmail = options.readAccountEmail ? yield* options.readAccountEmail : undefined;
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
     const supportedRuntimeModes = antigravityRuntimeModes(started.sessionSetupResult);
-    const previousModes = yield* SubscriptionRef.modify(metadata, (state) => {
-      if (
-        state.authRevision !== before.authRevision &&
-        state.draft.auth.status === "unauthenticated"
-      ) {
-        return [supportedRuntimeModes, state] as const;
-      }
-      const { message: _previousMessage, ...draft } = state.draft;
-      const workspaces = draft.workspaceSnapshots ?? [];
-      const workspace = cwd ? workspaces.find((entry) => entry.cwd === cwd) : undefined;
-      const next = {
-        authRevision: state.authRevision + 1,
-        draft: {
-          ...draft,
-          installed: true,
-          status: "ready",
-          version: started.initializeResult.agentInfo?.version || draft.version,
-          auth: {
-            status: "authenticated",
-            type: options.auth?.type ?? "oauth-personal",
-            label: options.auth?.label ?? "Google account",
+    const { previousModes, shouldRefreshUsage, switchedAccount } = yield* SubscriptionRef.modify(
+      metadata,
+      (state) => {
+        if (
+          state.authRevision !== before.authRevision &&
+          state.draft.auth.status === "unauthenticated"
+        ) {
+          return [
+            {
+              previousModes: supportedRuntimeModes,
+              shouldRefreshUsage: false,
+              switchedAccount: false,
+            },
+            state,
+          ] as const;
+        }
+        const { message: _previousMessage, ...draft } = state.draft;
+        const email =
+          state.authRevision === before.authRevision
+            ? (accountEmail ?? state.draft.auth.email)
+            : state.draft.auth.email;
+        const switchedAccount = isDifferentEmail(draft.auth.email, email);
+        const workspaces = draft.workspaceSnapshots ?? [];
+        const workspace = cwd ? workspaces.find((entry) => entry.cwd === cwd) : undefined;
+        const nextUsageLimits = switchedAccount ? undefined : draft.usageLimits;
+        return [
+          {
+            previousModes: draft.supportedRuntimeModes,
+            shouldRefreshUsage: !nextUsageLimits || Boolean(nextUsageLimits.unavailable),
+            switchedAccount,
           },
-          checkedAt: updatedAt,
-          models: buildAntigravityModelsFromSession(started.sessionSetupResult, thinkingLevels),
-          supportedRuntimeModes,
-          supportsTextGeneration,
-          ...(cwd
-            ? {
-                workspaceSnapshots: [
-                  ...workspaces.filter((entry) => entry.cwd !== cwd),
-                  {
-                    cwd,
-                    checkedAt: updatedAt,
-                    slashCommands: workspace?.slashCommands ?? draft.slashCommands,
-                    skills: workspace?.skills ?? discoveredSkills.get(cwd) ?? [],
-                  },
-                ].slice(-MAX_WORKSPACE_SNAPSHOTS),
-              }
-            : {}),
-        },
-      } satisfies AntigravityProviderState;
-      return [draft.supportedRuntimeModes, next] as const;
-    });
+          {
+            authRevision: state.authRevision + 1,
+            draft: {
+              ...draft,
+              installed: true,
+              status: "ready",
+              version: started.initializeResult.agentInfo?.version || draft.version,
+              auth: withAuthEmail(
+                {
+                  status: "authenticated",
+                  type: options.auth?.type ?? "oauth-personal",
+                  label: options.auth?.label ?? "Google account",
+                },
+                email,
+              ),
+              usageLimits: nextUsageLimits,
+              checkedAt: updatedAt,
+              models: buildAntigravityModelsFromSession(started.sessionSetupResult, thinkingLevels),
+              supportedRuntimeModes,
+              supportsTextGeneration,
+              ...(cwd
+                ? {
+                    workspaceSnapshots: [
+                      ...workspaces.filter((entry) => entry.cwd !== cwd),
+                      {
+                        cwd,
+                        checkedAt: updatedAt,
+                        slashCommands: workspace?.slashCommands ?? draft.slashCommands,
+                        skills: workspace?.skills ?? discoveredSkills.get(cwd) ?? [],
+                      },
+                    ].slice(-MAX_WORKSPACE_SNAPSHOTS),
+                  }
+                : {}),
+            },
+          } satisfies AntigravityProviderState,
+        ] as const;
+      },
+    );
     yield* rememberRuntimeModes(previousModes, supportedRuntimeModes);
-    if (!before.draft.usageLimits || before.draft.usageLimits.unavailable) yield* refreshUsage();
+    if (switchedAccount) {
+      yield* resetUsage;
+      yield* Deferred.await(republish).pipe(
+        Effect.flatten,
+        Effect.provideService(PublishingUsage, true),
+      );
+    }
+    if (shouldRefreshUsage) yield* refreshUsage();
   });
 
   const onConfigOptionsUpdated = Effect.fn("AntigravityProvider.onConfigOptionsUpdated")(function* (
@@ -576,7 +655,10 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       Effect.andThen(
         SubscriptionRef.update(metadata, (state) => {
           const { usageLimits: _previousAccount, ...draft } = state.draft;
-          return { ...state, draft };
+          return {
+            authRevision: state.authRevision + 1,
+            draft: { ...draft, auth: withAuthEmail(draft.auth, undefined) },
+          };
         }),
       ),
       Effect.andThen(

@@ -138,6 +138,7 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
     readonly auth?: { readonly type: string; readonly label: string };
     readonly enabled?: boolean;
     readonly safe?: boolean;
+    readonly readAccountEmail?: Effect.Effect<string | undefined>;
     readonly probeUsage?: Effect.Effect<ServerProviderUsageLimits>;
     readonly rememberedRuntimeModes?: ReadonlyArray<RuntimeMode>;
   } = {},
@@ -155,6 +156,7 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
     {
       stampIdentity: (snapshot) => Effect.succeed({ ...snapshot, instanceId, driver }),
       ...(options.auth ? { auth: options.auth } : {}),
+      ...(options.readAccountEmail ? { readAccountEmail: options.readAccountEmail } : {}),
       ...(options.probeUsage ? { probeUsage: options.probeUsage } : {}),
       ...(options.rememberedRuntimeModes
         ? { rememberedRuntimeModes: options.rememberedRuntimeModes }
@@ -884,6 +886,170 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
       expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
       yield* harness.provider.onSessionStarted(started);
       expect((yield* republished)?.usageLimits).toEqual(failed);
+    }),
+  );
+
+  it.effect(
+    "reports the stored Google email on startup and session start, and clears limits and email on account switch or sign-out",
+    () =>
+      Effect.gen(function* () {
+        const emailRef = yield* Ref.make<string | undefined>("  alice@example.com  ");
+        const firstLimits: ServerProviderUsageLimits = {
+          checkedAt: "2026-10-09T12:00:00.000Z",
+          windows: [
+            { id: "gemini-5h", kind: "session", label: "Gemini · 5-hour", usedPercent: 25 },
+          ],
+        };
+        const failedLimits: ServerProviderUsageLimits = {
+          checkedAt: "2026-10-09T12:05:00.000Z",
+          windows: [],
+          unavailable: { reason: "probeFailed" },
+        };
+        const thirdLimits: ServerProviderUsageLimits = {
+          checkedAt: "2026-10-09T12:10:00.000Z",
+          windows: [{ id: "gemini-5h", kind: "session", label: "Gemini · 5-hour", usedPercent: 5 }],
+        };
+        const secondReadStarted = yield* Deferred.make<void>();
+        const usage = yield* Ref.make<Effect.Effect<ServerProviderUsageLimits>>(
+          Effect.succeed(firstLimits),
+        );
+        const harness = yield* makeHarness({
+          auth: { type: "oauth-personal", label: "Google account" },
+          readAccountEmail: Ref.get(emailRef),
+          probeUsage: Ref.get(usage).pipe(Effect.flatten),
+        });
+        const firstPublished = yield* harness.nextPublish((snapshot) => !!snapshot.usageLimits);
+        yield* harness.initialize;
+
+        // Startup populates the email without marking the provider authenticated before a session.
+        expect(yield* firstPublished).toMatchObject({
+          status: "warning",
+          auth: { status: "unknown", type: "oauth-personal", email: "alice@example.com" },
+          usageLimits: firstLimits,
+        });
+
+        yield* harness.provider.onSessionStarted(started);
+        expect(yield* harness.provider.snapshot.getSnapshot).toMatchObject({
+          status: "ready",
+          auth: {
+            status: "authenticated",
+            type: "oauth-personal",
+            label: "Google account",
+            email: "alice@example.com",
+          },
+          usageLimits: firstLimits,
+        });
+
+        // A transient missing read preserves the last known email so a later switch is still detected.
+        yield* Ref.set(emailRef, undefined);
+        yield* Ref.set(harness.probe, Effect.succeed(initializeResult));
+        yield* harness.provider.snapshot.refresh;
+        expect((yield* harness.provider.snapshot.getSnapshot).auth.email).toBe("alice@example.com");
+
+        // Switching accounts at session start clears published limits even if the new quota read fails.
+        yield* Ref.set(emailRef, "bob@example.com");
+        yield* Ref.set(
+          usage,
+          Deferred.succeed(secondReadStarted, undefined).pipe(Effect.as(failedLimits)),
+        );
+        const switchedPublished = yield* harness.nextPublish(
+          (snapshot) =>
+            snapshot.auth.email === "bob@example.com" &&
+            snapshot.usageLimits?.unavailable?.reason === "probeFailed",
+        );
+        yield* harness.provider.onSessionStarted(started);
+        yield* Deferred.await(secondReadStarted);
+        expect(yield* switchedPublished).toMatchObject({
+          auth: { status: "authenticated", email: "bob@example.com" },
+          usageLimits: failedLimits,
+        });
+
+        // Switching accounts detected by checkProvider cancels an in-flight read and clears old limits.
+        const staleReadStarted = yield* Deferred.make<void>();
+        const staleReadResult = yield* Deferred.make<ServerProviderUsageLimits>();
+        yield* Ref.set(
+          usage,
+          Deferred.succeed(staleReadStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(staleReadResult)),
+          ),
+        );
+        yield* harness.provider.snapshot.refresh;
+        yield* Deferred.await(staleReadStarted);
+        yield* Ref.set(emailRef, "carol@example.com");
+        yield* Ref.set(usage, Effect.succeed(thirdLimits));
+        const checkSwitchPublished = yield* harness.nextPublish(
+          (snapshot) =>
+            snapshot.auth.email === "carol@example.com" &&
+            snapshot.usageLimits?.windows[0]?.usedPercent === 5,
+        );
+        yield* harness.provider.snapshot.refresh;
+        yield* Deferred.succeed(staleReadResult, firstLimits);
+        expect(yield* checkSwitchPublished).toMatchObject({
+          auth: { status: "authenticated", email: "carol@example.com" },
+          usageLimits: thirdLimits,
+        });
+
+        // onSignedIn clears the previous account's email even when the follow-up probe fails.
+        yield* Ref.set(
+          harness.probe,
+          Effect.fail(EffectAcpErrors.AcpRequestError.internalError("probe failed")),
+        );
+        yield* harness.provider.onSignedIn;
+        expect((yield* harness.provider.snapshot.getSnapshot).auth.email).toBeUndefined();
+
+        // onSignedOut clears email and health checks do not restore it while unauthenticated.
+        yield* Ref.set(harness.probe, Effect.succeed(initializeResult));
+        yield* harness.provider.onSessionStarted(started);
+        yield* harness.provider.onSignedOut;
+        expect((yield* harness.provider.snapshot.getSnapshot).auth).toMatchObject({
+          status: "unauthenticated",
+        });
+        expect((yield* harness.provider.snapshot.getSnapshot).auth.email).toBeUndefined();
+        yield* harness.provider.snapshot.refresh;
+        expect((yield* harness.provider.snapshot.getSnapshot).auth.email).toBeUndefined();
+      }),
+  );
+
+  it.effect("cancels an in-flight quota read when a session starts under a different email", () =>
+    Effect.gen(function* () {
+      const emailRef = yield* Ref.make<string | undefined>("alice@example.com");
+      const aliceReadStarted = yield* Deferred.make<void>();
+      const aliceReadResult = yield* Deferred.make<ServerProviderUsageLimits>();
+      const aliceLimits: ServerProviderUsageLimits = {
+        checkedAt: "2026-10-09T12:00:00.000Z",
+        windows: [{ id: "gemini-5h", kind: "session", label: "Gemini · 5-hour", usedPercent: 80 }],
+      };
+      const bobLimits: ServerProviderUsageLimits = {
+        checkedAt: "2026-10-09T12:01:00.000Z",
+        windows: [{ id: "gemini-5h", kind: "session", label: "Gemini · 5-hour", usedPercent: 10 }],
+      };
+      const usage = yield* Ref.make<Effect.Effect<ServerProviderUsageLimits>>(
+        Deferred.succeed(aliceReadStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(aliceReadResult)),
+        ),
+      );
+      const harness = yield* makeHarness({
+        auth: { type: "oauth-personal", label: "Google account" },
+        readAccountEmail: Ref.get(emailRef),
+        probeUsage: Ref.get(usage).pipe(Effect.flatten),
+      });
+      yield* harness.initialize;
+      yield* Deferred.await(aliceReadStarted);
+
+      yield* Ref.set(emailRef, "bob@example.com");
+      yield* Ref.set(usage, Effect.succeed(bobLimits));
+      const bobPublished = yield* harness.nextPublish(
+        (snapshot) =>
+          snapshot.auth.email === "bob@example.com" &&
+          snapshot.usageLimits?.windows[0]?.usedPercent === 10,
+      );
+      yield* harness.provider.onSessionStarted(started);
+      yield* Deferred.succeed(aliceReadResult, aliceLimits);
+      expect(yield* bobPublished).toMatchObject({
+        auth: { status: "authenticated", email: "bob@example.com" },
+        usageLimits: bobLimits,
+      });
+      expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toEqual(bobLimits);
     }),
   );
 });

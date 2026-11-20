@@ -158,8 +158,9 @@ Open **Usage > Limits** to see the remaining Gemini and shared Claude/GPT allowa
 for Google sign-ins. Each group has separate five-hour and weekly limits and reset
 times. Limits refresh with provider status and include usage outside T3 Code.
 
-A server restart keeps your Google sign-in. The provider shows the saved account
-until a session, a refresh, or a sign-out reports something new.
+A server restart keeps your Google sign-in. The provider checks sign-in and loads
+models on the next session or model refresh. For personal Google sign-ins, Usage > Limits
+shows the signed-in email right away.
 
 To check access and reload models, use **Refresh provider status** in web or desktop
 provider settings, or **Refresh models** in mobile thread settings. If asked to
