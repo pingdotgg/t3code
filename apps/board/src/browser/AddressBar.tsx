@@ -4,11 +4,11 @@ import { type FormEvent, useContext, useState } from "react";
 
 import { Tooltip } from "../ui/Tooltip";
 import { browserHost } from "./host";
-import { dispatchTabs, openTab } from "./panel";
+import { dispatchTabs, openTab, showAgents } from "./browserTabs";
 import { iconButton } from "./styles";
 import { normalizeUrl, type Tab } from "./tabs";
 
-/** Back, forward, reload, and the address of the active tab. Enter on a typed address opens it, in a new tab when none is open. */
+/** Back, forward, reload, and the address of the active tab. Enter on a typed address opens it, in a new tab when none is open, and Agents lists the tabs the board's agents hold. */
 export function AddressBar({ tab }: { tab: Tab | null }) {
   const registry = useContext(RegistryContext);
   const [draft, setDraft] = useState<string | null>(null);
@@ -81,6 +81,13 @@ export function AddressBar({ tab }: { tab: Tab | null }) {
           className={`w-full rounded-md border bg-bg px-2 py-1 text-[12px] text-fg outline-none placeholder:text-faint focus:border-focus ${invalid ? "border-red-400" : "border-line"}`}
         />
       </form>
+      <button
+        type="button"
+        onClick={() => showAgents(registry)}
+        className="rounded-md px-2 py-1 text-[12px] text-muted hover:bg-hover hover:text-fg"
+      >
+        Agents
+      </button>
     </div>
   );
 }

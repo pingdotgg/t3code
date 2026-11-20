@@ -78,7 +78,10 @@ export function FileTree({
     unsafeCSS: TREE_CSS,
     onSelectionChange: (selected) => {
       const path = selected.at(-1)?.replace(/\/$/, "");
-      if (path !== undefined && kinds.current.get(path) === "file") selectionHandler.current(path);
+      if (path === undefined || kinds.current.get(path) !== "file") return;
+      selectionHandler.current(path);
+      // A kept selection reports no change, so the same file would not open again once its tab closed.
+      model.getItem(path)?.deselect();
     },
   });
 

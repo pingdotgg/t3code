@@ -5,8 +5,8 @@ import { PANEL_MIN_WIDTH, panelAtom, setPanelWidth } from "./panel";
 import { pausePage } from "./pageBounds";
 
 const KEY_STEP_PX = 24;
-/** What the window keeps beside the panel: the sidebar, the orchestrator's chat, and a canvas that still pans. */
-const RESERVED_PX = 240 + 420 + 200;
+/** What the window keeps beside the panel: the sidebar and a canvas that still pans. */
+const RESERVED_PX = 240 + 200;
 
 const maxWidth = () => Math.max(PANEL_MIN_WIDTH, window.innerWidth - RESERVED_PX);
 const clampWidth = (width: number) =>

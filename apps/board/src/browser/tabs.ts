@@ -61,6 +61,10 @@ export function tabsReducer(state: TabsState, action: TabsAction): TabsState {
   }
 }
 
+/** The tab already showing this URL, if any. */
+export const tabForUrl = (state: TabsState, url: string): Tab | null =>
+  state.tabs.find((tab) => tab.url === url) ?? null;
+
 /** Whether a link names a web page, which a relative path in a document does not. */
 export const isWebLink = (href: string): boolean => /^https?:\/\//i.test(href);
 

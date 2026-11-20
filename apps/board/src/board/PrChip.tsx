@@ -1,7 +1,7 @@
 import { Check, CircleDashed, TriangleAlert, X } from "lucide-react";
 import { useCallback, useRef } from "react";
 
-import { openInPanel } from "../browser/panel";
+import { openInBrowser } from "../browser/browserTabs";
 import { isStuck, type PrLive, rollupChecks } from "../domain/readiness";
 import type { TicketView } from "../state/boardModel";
 import { useTicketPr } from "../state/prStatus";
@@ -91,7 +91,7 @@ export function PrChip({ view }: { view: TicketView }) {
       onClick={(event) => {
         if (live.url === null) return;
         event.preventDefault();
-        openInPanel(live.url);
+        openInBrowser(live.url);
       }}
     >
       <span className="text-fg">PR {label}</span>

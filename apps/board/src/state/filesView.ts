@@ -6,19 +6,25 @@ export interface FileRef {
   readonly path: string;
 }
 
-/** The explorer's root, the files open as tabs beside the board, and which one the main view shows. */
+/** Which browser tab the main view shows: a page, or the agents' tabs. */
+export type Surface = "page" | "agents";
+
+/** The explorer's root, the files open as tabs beside the board, and which tab the main view shows. */
 export interface FilesViewState {
   /** The root the explorer browses, or null for the project. */
   readonly root: string | null;
   readonly tabs: ReadonlyArray<FileRef>;
-  /** The tab shown in place of the board's canvas, or null while the canvas shows. */
+  /** The file tab shown in place of the board's canvas, or null while the canvas or a browser tab shows. */
   readonly active: FileRef | null;
+  /** The browser tab shown in place of the canvas, or null while the canvas or a file shows. */
+  readonly surface: Surface | null;
 }
 
 export const filesViewAtom = Atom.make<FilesViewState>({
   root: null,
   tabs: [],
   active: null,
+  surface: null,
 }).pipe(Atom.keepAlive, Atom.withLabel("files-view"));
 
 export const sameFile = (a: FileRef, b: FileRef) => a.cwd === b.cwd && a.path === b.path;
@@ -38,15 +44,19 @@ export function openFile(registry: AtomRegistry.AtomRegistry, file: FileRef) {
     ...state,
     tabs: state.tabs.some((tab) => sameFile(tab, file)) ? state.tabs : [...state.tabs, file],
     active: file,
+    surface: null,
   }));
 }
 
-/** Shows the board's canvas again, and leaves the files open as tabs. */
+/** Shows the board's canvas again, and leaves the files and browser tabs open. */
 export const showBoard = (registry: AtomRegistry.AtomRegistry) =>
-  change(registry, (state) => ({ ...state, active: null }));
+  change(registry, (state) => ({ ...state, active: null, surface: null }));
 
 export const showFile = (registry: AtomRegistry.AtomRegistry, file: FileRef) =>
-  change(registry, (state) => ({ ...state, active: file }));
+  change(registry, (state) => ({ ...state, active: file, surface: null }));
+
+export const showSurface = (registry: AtomRegistry.AtomRegistry, surface: Surface) =>
+  change(registry, (state) => ({ ...state, active: null, surface }));
 
 /** Closes a tab. Closing the one shown moves to the tab before it, or back to the canvas. */
 export const closeFile = (registry: AtomRegistry.AtomRegistry, file: FileRef) =>

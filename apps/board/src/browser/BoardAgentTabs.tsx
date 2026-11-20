@@ -6,7 +6,7 @@ import { Notice } from "../artifacts/Notice";
 import { projectBoardsAtom } from "../state/boards";
 import { useThreadFamily } from "../state/family";
 import { AgentStream } from "./AgentStream";
-import { panelAtom, selectAgentTab } from "./panel";
+import { browserAtom, selectAgentTab } from "./browserTabs";
 import { ThreadTabs } from "./ThreadTabs";
 
 /** The browser tabs held by the board's orchestrator and every agent under it, and the picked tab's live view. */
@@ -20,7 +20,7 @@ export function BoardAgentTabs({
   folder: string;
 }) {
   const registry = useContext(RegistryContext);
-  const selected = useAtomValue(panelAtom).agentTab;
+  const selected = useAtomValue(browserAtom).agentTab;
   const boards = useAtomValue(projectBoardsAtom(projectId));
   const listed =
     boards.status === "ready"

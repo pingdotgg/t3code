@@ -1,14 +1,19 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
-import { Files, Globe, type LucideIcon } from "lucide-react";
+import { Files, type LucideIcon, MessageSquare } from "lucide-react";
 import { useContext } from "react";
 
 import { Tooltip } from "../ui/Tooltip";
 import { type PanelTab, panelAtom, setPanelTab } from "./panel";
 
 const TABS = [
-  { id: "explorer", label: "Explorer", icon: Files },
-  { id: "browser", label: "Browser", icon: Globe },
-] as const satisfies ReadonlyArray<{ id: PanelTab; label: string; icon: LucideIcon }>;
+  { id: "chat", label: "Orchestrator", hint: "Orchestrator", icon: MessageSquare },
+  { id: "explorer", label: "Explorer", hint: "Explorer (Ctrl+⇧+E)", icon: Files },
+] as const satisfies ReadonlyArray<{
+  id: PanelTab;
+  label: string;
+  hint: string;
+  icon: LucideIcon;
+}>;
 
 /**
  * The panel's tabs as Orca's right sidebar draws them: icons only, 36px apart, with a short
@@ -23,8 +28,8 @@ export function PanelTabs() {
       aria-label="Panel tabs"
       className="flex shrink-0 items-center border-b border-line px-1.5"
     >
-      {TABS.map(({ id, label, icon: Icon }) => (
-        <Tooltip key={id} text={label} side="bottom">
+      {TABS.map(({ id, label, hint, icon: Icon }) => (
+        <Tooltip key={id} text={hint} side="bottom" align="center">
           <button
             type="button"
             role="tab"

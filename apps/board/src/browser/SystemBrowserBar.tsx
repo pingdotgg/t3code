@@ -1,7 +1,7 @@
 import { ExternalLink } from "lucide-react";
 import { useState } from "react";
 
-import { openInPanel } from "./panel";
+import { openInBrowser } from "./browserTabs";
 import { normalizeUrl } from "./tabs";
 
 /** Web dev mode has no native tabs, so a typed address goes to the system browser. */
@@ -11,7 +11,7 @@ export function SystemBrowserBar() {
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        openInPanel(draft);
+        openInBrowser(draft);
       }}
       className="flex flex-col gap-1.5 border-t border-line p-2"
     >
