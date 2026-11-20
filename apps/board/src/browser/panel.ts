@@ -5,6 +5,11 @@ import { appAtomRegistry } from "../state/registry";
 import { browserHost } from "./host";
 import { EMPTY_TABS, normalizeUrl, tabsReducer, type TabsAction, type TabsState } from "./tabs";
 
+/** The panel's tabs. Later tabs join this list and the strip, and this one does not move. */
+export const PANEL_TABS = ["files", "browser"] as const;
+export type PanelTab = (typeof PANEL_TABS)[number];
+
+/** What the browser tab shows: the user's native tabs, or the engine's agent tabs. */
 export type PanelView = "tabs" | "agents";
 
 export interface AgentTabRef {
@@ -14,6 +19,7 @@ export interface AgentTabRef {
 
 export interface PanelState {
   readonly open: boolean;
+  readonly tab: PanelTab;
   readonly view: PanelView;
   readonly width: number;
   readonly tabs: TabsState;
@@ -25,6 +31,7 @@ export const PANEL_DEFAULT_WIDTH = 420;
 
 export const panelAtom = Atom.make<PanelState>({
   open: false,
+  tab: "browser",
   view: browserHost === null ? "agents" : "tabs",
   width: PANEL_DEFAULT_WIDTH,
   tabs: EMPTY_TABS,
@@ -57,8 +64,15 @@ export function setPanelView(registry: AtomRegistry.AtomRegistry, view: PanelVie
   change(registry, (state) => ({ ...state, view }));
 }
 
-export function togglePanel(registry: AtomRegistry.AtomRegistry): void {
-  change(registry, (state) => ({ ...state, open: !state.open }));
+export function setPanelTab(registry: AtomRegistry.AtomRegistry, tab: PanelTab): void {
+  change(registry, (state) => ({ ...state, tab }));
+}
+
+/** Shows a tab, or closes the panel when that tab is the one already showing. */
+export function togglePanelTab(registry: AtomRegistry.AtomRegistry, tab: PanelTab): void {
+  change(registry, (state) =>
+    state.open && state.tab === tab ? { ...state, open: false } : { ...state, open: true, tab },
+  );
 }
 
 export function closePanel(registry: AtomRegistry.AtomRegistry): void {
@@ -82,7 +96,7 @@ export function openInPanel(url: string, registry: AtomRegistry.AtomRegistry = a
     return;
   }
   openTab(registry, target);
-  change(registry, (state) => ({ ...state, open: true, view: "tabs" }));
+  change(registry, (state) => ({ ...state, open: true, tab: "browser", view: "tabs" }));
 }
 
 browserHost?.onTabState(({ id, ...patch }) =>

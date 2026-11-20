@@ -32,7 +32,7 @@ export function ResizeHandle() {
     <div
       role="separator"
       aria-orientation="vertical"
-      aria-label="Resize the browser panel"
+      aria-label="Resize the panel"
       aria-valuenow={width}
       aria-valuemin={PANEL_MIN_WIDTH}
       aria-valuemax={maxWidth()}

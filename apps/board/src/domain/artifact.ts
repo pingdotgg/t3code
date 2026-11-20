@@ -1,3 +1,5 @@
+import { BOARDS_DIR } from "./board";
+
 export const ARTIFACT_KINDS = [
   "screenshot",
   "proof",
@@ -115,6 +117,48 @@ export function classifyArtifact(path: string): ArtifactRef | null {
       : (own(BY_NAME, name) ?? folder?.kind ?? byExtension ?? "proof");
   const ticketKey = folder?.keyed === true && segments.length > 2 ? (segments[1] ?? null) : null;
   return { path, name, kind, ticketKey };
+}
+
+/**
+ * Where an agent leaves its evidence inside its own worktree. The folder holds one folder per
+ * ticket key, as the store's `artifacts/` does.
+ */
+export const WORKTREE_ARTIFACTS = ".omp/artifacts";
+
+/** The kinds review and merge readiness rely on, so a person never rewrites them. */
+const EVIDENCE_KINDS: ReadonlySet<ArtifactKind> = new Set([
+  "screenshot",
+  "proof",
+  "script",
+  "diff",
+  "decisions",
+]);
+
+export type EditAccess =
+  | { readonly editable: true }
+  | { readonly editable: false; readonly reason: string };
+
+const EVIDENCE: EditAccess = { editable: false, reason: "Evidence stays read-only." };
+const ORCHESTRATOR: EditAccess = { editable: false, reason: "The orchestrator owns this file." };
+
+const accessOf = (ref: ArtifactRef | null): EditAccess =>
+  ref !== null && EVIDENCE_KINDS.has(ref.kind) ? EVIDENCE : { editable: true };
+
+/**
+ * Whether the app opens a file for edit. The path is relative to the root it was listed under, the
+ * project or a ticket worktree, with `/` separators. A board store holds the orchestrator's own
+ * files beside the artifacts, so only the store's artifacts that are not evidence are editable.
+ */
+export function editAccess(path: string): EditAccess {
+  if (path.startsWith(`${BOARDS_DIR}/`)) {
+    const inStore = path.split("/").slice(2).join("/");
+    const ref = inStore === "" ? null : classifyArtifact(inStore);
+    return ref === null ? ORCHESTRATOR : accessOf(ref);
+  }
+  if (path.startsWith(`${WORKTREE_ARTIFACTS}/`)) {
+    return accessOf(classifyArtifact(`artifacts/${path.slice(WORKTREE_ARTIFACTS.length + 1)}`));
+  }
+  return { editable: true };
 }
 
 export interface ArtifactGroups<A extends ArtifactRef> {

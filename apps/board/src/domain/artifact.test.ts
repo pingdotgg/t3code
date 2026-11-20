@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { classifyArtifact, groupArtifacts, parseReadme } from "./artifact";
+import { classifyArtifact, editAccess, groupArtifacts, parseReadme } from "./artifact";
 
 describe("classifyArtifact", () => {
   // Every path is from a real run's evidence layout, under the store folder.
@@ -111,5 +111,38 @@ describe("parseReadme", () => {
 
   it("Given a file with no description, when it is parsed, then it is listed with an empty one", () => {
     expect(parseReadme("notes.txt\n")).toEqual([{ file: "notes.txt", proves: "" }]);
+  });
+});
+
+describe("editAccess", () => {
+  const READ_ONLY = {
+    evidence: { editable: false, reason: "Evidence stays read-only." },
+    orchestrator: { editable: false, reason: "The orchestrator owns this file." },
+  } as const;
+
+  it.each([
+    [".agentboard/demo/artifacts/KEY-1/shot.png", READ_ONLY.evidence],
+    [".agentboard/demo/artifacts/KEY-1/proof.txt", READ_ONLY.evidence],
+    [".agentboard/demo/artifacts/KEY-1/run.sh", READ_ONLY.evidence],
+    [".agentboard/demo/artifacts/KEY-1/changes.patch", READ_ONLY.evidence],
+    [".agentboard/demo/decisions.tsv", READ_ONLY.evidence],
+    [".omp/artifacts/KEY-1/worktree-proof.txt", READ_ONLY.evidence],
+    [".agentboard/demo/tickets.json", READ_ONLY.orchestrator],
+    [".agentboard/demo/roles/builder.md", READ_ONLY.orchestrator],
+    [".agentboard/.gitignore", READ_ONLY.orchestrator],
+  ] as const)("Given %s, when access is decided, then it is read-only", (path, expected) => {
+    expect(editAccess(path)).toEqual(expected);
+  });
+
+  it.each([
+    ".agentboard/demo/plan.md",
+    ".agentboard/demo/design.md",
+    ".agentboard/demo/inbox/handoff.md",
+    ".agentboard/demo/artifacts/KEY-1/report.md",
+    ".omp/artifacts/KEY-1/notes.md",
+    "src/index.ts",
+    "README.md",
+  ])("Given %s, when access is decided, then it is editable", (path) => {
+    expect(editAccess(path)).toEqual({ editable: true });
   });
 });

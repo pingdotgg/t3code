@@ -3,6 +3,7 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import { useCallback, useMemo, useState } from "react";
 
 import { groupArtifacts } from "../domain/artifact";
+import { boardRoots, type FilesBoard } from "../files/target";
 import { boardArtifactsAtom, boardArtifactsKey, NO_ARTIFACTS } from "../state/artifacts";
 import type { BoardModel } from "../state/boardModel";
 import type { Artifact } from "../store/artifacts";
@@ -68,12 +69,19 @@ export function useBoardArtifacts(
     [expanded, groups],
   );
   const closeViewer = useCallback(() => setViewing(null), []);
-  return {
-    value: {
+  const files = useMemo<FilesBoard>(
+    () => ({
       environmentId: project.environmentId,
-      cwd: project.workspaceRoot,
       // The engine serves an absolute path whichever thread names it, and a board has a thread of its own to name.
       mediaThreadId: board.orchestratorThreadId ?? board.id,
+      orchestratorThreadId: board.orchestratorThreadId,
+      roots: boardRoots(project, tickets),
+    }),
+    [project, board.id, board.orchestratorThreadId, tickets],
+  );
+  return {
+    value: {
+      files,
       all,
       groups,
       expanded,

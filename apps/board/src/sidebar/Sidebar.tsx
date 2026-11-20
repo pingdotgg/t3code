@@ -6,6 +6,7 @@ import { updateNoticeAtom } from "../state/updatesAtoms";
 import { Tooltip } from "../ui/Tooltip";
 import { AddProject } from "./AddProject";
 import { BrowserRow } from "./BrowserRow";
+import { FilesRow } from "./FilesRow";
 import { ForYouRow } from "./ForYouRow";
 import { ForYouToasts } from "./ForYouToasts";
 import { ProjectList } from "./ProjectList";
@@ -36,6 +37,7 @@ export function Sidebar({
         Agent Board
       </div>
       <ForYouRow />
+      <FilesRow />
       <BrowserRow />
       <ForYouToasts />
       <Section

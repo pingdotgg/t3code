@@ -129,13 +129,15 @@ export async function readArtifact(
 }
 
 /**
- * The signed URL of an image on the engine's host. The engine serves an absolute path whatever
- * thread names it, so `threadId` only has to be one the schema accepts.
+ * The signed URL of a file on the engine's host. The engine serves an absolute path whatever
+ * thread names it, so `threadId` only has to be one the schema accepts. Without `download` it
+ * serves only what a browser shows, such as images and PDFs.
  */
-export function useArtifactImageUrl(
+export function useMediaFileUrl(
   environmentId: EnvironmentId,
   threadId: string,
   absolutePath: string | null,
+  download = false,
 ): AssetUrlState {
   const result = useAtomValue(
     absolutePath === null
@@ -143,7 +145,12 @@ export function useArtifactImageUrl(
       : assetEnvironment.createUrl({
           environmentId,
           input: {
-            resource: { _tag: "media-file", threadId: ThreadId.make(threadId), path: absolutePath },
+            resource: {
+              _tag: "media-file",
+              threadId: ThreadId.make(threadId),
+              path: absolutePath,
+              ...(download ? { disposition: "attachment" } : {}),
+            },
           },
         }),
   );
