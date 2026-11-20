@@ -445,6 +445,19 @@ type ChatViewProps =
 
 const DismissedFallbackWindowSchema = Schema.NullOr(Schema.String);
 
+function focusMessageArea(event: ReactMouseEvent<HTMLDivElement>) {
+  const target = event.target;
+  if (
+    !(target instanceof Element) ||
+    target.closest(
+      'a, button, input, textarea, select, [contenteditable], [role="button"], [role="textbox"], [tabindex]',
+    ) !== event.currentTarget ||
+    !window.getSelection()?.isCollapsed
+  )
+    return;
+  event.currentTarget.focus({ preventScroll: true });
+}
+
 const ignoreComposerFocus = () => {};
 
 export default function ChatView(props: ChatViewProps) {
@@ -2190,6 +2203,8 @@ export default function ChatView(props: ChatViewProps) {
     timelineAnchorMessageId,
     setTimelineAnchor,
   });
+  const onScrollToEnd = () => scrollToEnd(true);
+  const onScrollToEndStable = useStableCallback(onScrollToEnd);
 
   useFocusComposerOnThreadOpen(
     activeThreadRef,
@@ -2762,10 +2777,16 @@ export default function ChatView(props: ChatViewProps) {
     setTerminalUiLaunchContext(null);
   }
 
+  const messageAreaRef = useRef<HTMLDivElement | null>(null);
   const getShortcutContext = (eventTarget: EventTarget | null = document.activeElement) => ({
+    messageAreaFocus:
+      document.activeElement === messageAreaRef.current ||
+      ((document.activeElement?.hasAttribute("data-workspace-focus-default") === true ||
+        document.activeElement?.hasAttribute("data-assistant-citation-source") === true) &&
+        messageAreaRef.current?.contains(document.activeElement) === true),
     terminalFocus: getTerminalFocusOwner() !== null,
     terminalOpen: Boolean(terminalUiState.terminalOpen),
-    previewFocus: isPreviewFocused(),
+    previewFocus: !embedded && isPreviewFocused(),
     previewOpen: previewPanelOpen,
     rightPanelOpen,
     editableFocus: isEditableFocused(eventTarget),
@@ -2795,6 +2816,7 @@ export default function ChatView(props: ChatViewProps) {
     enabled: activeThreadId !== null && !backgroundThread,
     embedded,
     composerElement: composerOverlayElement,
+    messageAreaRef,
     keybindings,
     scriptKeybindings,
     getShortcutContext,
@@ -2812,6 +2834,7 @@ export default function ChatView(props: ChatViewProps) {
       "thread.copyReference": ({ event }) => {
         if (!event.repeat) copyActiveThreadReference();
       },
+      "chat.scrollToEnd": onScrollToEndStable,
       "chat.find": () => {
         if (!isServerThread || serverConfig?.threadFind !== true || activeThreadKey === null)
           return false;
@@ -3497,6 +3520,10 @@ export default function ChatView(props: ChatViewProps) {
             />
             <div
               {...conversationArea}
+              ref={messageAreaRef}
+              tabIndex={0}
+              aria-label={gt("Conversation messages")}
+              onClick={focusMessageArea}
               className="relative flex min-h-0 flex-1 flex-col bg-background"
             >
               <WorkspaceMutationIdContext value={workspaceMutationId}>
@@ -3610,7 +3637,7 @@ export default function ChatView(props: ChatViewProps) {
                 <ScrollToEndButton
                   bottom={scrollToEndClearance + 4}
                   summary={scrollToEndSummary}
-                  onScrollToEnd={() => scrollToEnd(true)}
+                  onScrollToEnd={onScrollToEndStable}
                 />
               )}
             </div>

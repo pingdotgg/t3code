@@ -11,7 +11,10 @@ import { isInSideChatPane } from "../../lib/sideChatPane";
 import { getTerminalFocusOwner, type TerminalFocusOwner } from "../../lib/terminalFocus";
 import type { ComposerHandleRef } from "../../composerHandleContext";
 import type { BranchToolbarHandle } from "../BranchToolbar";
-import { shouldTypeToFocusComposer } from "./composerFocusRedirect";
+import {
+  TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR,
+  shouldTypeToFocusComposer,
+} from "./composerFocusRedirect";
 import { composerShortcutCommands } from "./composerShortcuts";
 
 /** Returning false lets the key event through untouched. */
@@ -33,10 +36,11 @@ interface ChatShortcutsInput {
   readonly enabled: boolean;
   /**
    * A side chat inside another chat leaves the window to the outer chat. It runs only
-   * composer chords, for keys pressed inside `composerElement`.
+   * composer chords and scroll-to-end, scoped to its composer and message area.
    */
   readonly embedded?: boolean;
   readonly composerElement?: HTMLElement | null;
+  readonly messageAreaRef?: { readonly current: HTMLElement | null };
   readonly keybindings: ResolvedKeybindingsConfig;
   readonly scriptKeybindings: ResolvedKeybindingsConfig;
   readonly getShortcutContext: (target: EventTarget | null) => ShortcutMatchContext & {
@@ -52,6 +56,16 @@ interface ChatShortcutsInput {
   readonly fallback: (command: KeybindingCommand) => ChatShortcutHandler | undefined;
 }
 
+function canScrollToEnd(context: ShortcutMatchContext) {
+  return (
+    (context.messageAreaFocus || context.composerFocus) &&
+    !context.terminalFocus &&
+    !context.previewFocus &&
+    !context.modelPickerOpen &&
+    document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR) === null
+  );
+}
+
 /**
  * The chat's window keyboard shortcuts, plus Escape closing thread find.
  * Listeners attach once; the effect events read the latest input, so handlers
@@ -59,7 +73,6 @@ interface ChatShortcutsInput {
  */
 export function useChatShortcuts(input: ChatShortcutsInput) {
   const embedded = input.embedded === true;
-  const composerElement = embedded ? (input.composerElement ?? null) : null;
   const handleShortcut = useEffectEvent((event: KeyboardEvent) => {
     const { keybindings } = input;
     if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
@@ -76,8 +89,13 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     const terminalFocusOwner = getTerminalFocusOwner();
     if (event.defaultPrevented && terminalFocusOwner === null) return;
     const shortcutContext = input.getShortcutContext(event.target);
+    const command = resolveChatShortcutCommand(event, keybindings, input.scriptKeybindings, {
+      context: shortcutContext,
+    });
+    const scrollToEndAvailable = command === "chat.scrollToEnd" && canScrollToEnd(shortcutContext);
 
     if (
+      !scrollToEndAvailable &&
       !inSideChatPane &&
       !shortcutContext.terminalFocus &&
       !shortcutContext.modelPickerOpen &&
@@ -89,10 +107,8 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       return;
     }
 
-    const command = resolveChatShortcutCommand(event, keybindings, input.scriptKeybindings, {
-      context: shortcutContext,
-    });
     if (!command || (inSideChatPane && !SIDE_CHAT_PANE_COMMANDS.has(command))) return;
+    if (command === "chat.scrollToEnd" && !scrollToEndAvailable) return;
     const run =
       input.commands[command] ??
       composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command] ??
@@ -117,25 +133,33 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     event.preventDefault();
     input.closeThreadFind();
   });
-  const handleComposerShortcut = useEffectEvent((event: KeyboardEvent) => {
+  const handleEmbeddedShortcut = useEffectEvent((event: KeyboardEvent) => {
+    const context = input.getShortcutContext(event.target);
+    const composerTarget =
+      event.target instanceof Node && input.composerElement?.contains(event.target);
+    if (!context.messageAreaFocus && !composerTarget) return;
     if (event.defaultPrevented || isCommandPaletteOpen()) return;
     const command = resolveChatShortcutCommand(event, input.keybindings, input.scriptKeybindings, {
       context: input.getShortcutContext(event.target),
     });
-    const run = command
-      ? composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command]
-      : undefined;
+    const run =
+      command === "chat.scrollToEnd"
+        ? canScrollToEnd(context)
+          ? input.commands[command]
+          : undefined
+        : command && composerTarget
+          ? composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command]
+          : undefined;
     if (!run || run({ event, terminalFocusOwner: null }) === false) return;
     event.preventDefault();
     event.stopPropagation();
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches keydown listeners for chat shortcuts and find dismissal: on the window, or on an embedded chat's composer
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches keydown listeners for chat shortcuts and find dismissal: on the window, scoped to the active chat
   useEffect(() => {
     if (embedded) {
-      if (composerElement === null) return;
-      const onComposerKeyDown = (event: KeyboardEvent) => handleComposerShortcut(event);
-      composerElement.addEventListener("keydown", onComposerKeyDown, true);
-      return () => composerElement.removeEventListener("keydown", onComposerKeyDown, true);
+      const onEmbeddedKeyDown = (event: KeyboardEvent) => handleEmbeddedShortcut(event);
+      window.addEventListener("keydown", onEmbeddedKeyDown, true);
+      return () => window.removeEventListener("keydown", onEmbeddedKeyDown, true);
     }
     const onKeyDownCapture = (event: KeyboardEvent) => handleShortcut(event);
     const onKeyDown = (event: KeyboardEvent) => dismissFind(event);
@@ -145,5 +169,5 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       window.removeEventListener("keydown", onKeyDownCapture, true);
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [composerElement, embedded]);
+  }, [embedded]);
 }
