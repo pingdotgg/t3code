@@ -38,7 +38,7 @@ import {
   aggregateIssueActions,
   automationFingerprint,
   changedIssueStatuses,
-  ISSUE_AUTOMATION_WAITS_FOR_IDLE,
+  ISSUE_AUTOMATION_STALE,
 } from "./issueAutomation.ts";
 
 export class IssueThreadAutomationService extends Context.Service<
@@ -148,7 +148,8 @@ const make = Effect.gen(function* () {
 
   const save = Effect.fn("IssueThreadAutomationService.save")(
     function* (input: IssueAutomationSaveInput) {
-      let rule = input.rule;
+      const rule = input.rule;
+      let disableStored = false;
       if (rule !== null) {
         if (rule.id !== input.id)
           return yield* new IssueAutomationError({
@@ -176,15 +177,21 @@ const make = Effect.gen(function* () {
                   operation: "save",
                   detail: "The connected account is in another workspace.",
                 });
-          rule = { ...existing, enabled: false };
+          disableStored = true;
         }
       }
-      const saved = rule === null ? null : { ...rule, generation: yield* newCommandId };
+      const generation = yield* newCommandId;
       return yield* saveLock.withPermit(
         Effect.gen(function* () {
-          const rules = (yield* settings.getSettings).issueThreadAutomationRules.filter(
-            (candidate) => candidate.id !== input.id,
-          );
+          const stored = (yield* settings.getSettings).issueThreadAutomationRules;
+          const rules = stored.filter((candidate) => candidate.id !== input.id);
+          // Switching off disables the rule as stored now; one removed meanwhile stays removed.
+          const base = disableStored ? stored.find((candidate) => candidate.id === input.id) : rule;
+          if (base === undefined) return yield* overview;
+          const saved =
+            base === null
+              ? null
+              : { ...base, ...(disableStored ? { enabled: false } : {}), generation };
           if (saved !== null) {
             if (
               rules.some(
@@ -375,12 +382,13 @@ const make = Effect.gen(function* () {
             return false;
           return yield* orchestrator.dispatch(command).pipe(
             Effect.as(false),
-            // A busy thread keeps the action for the next sweep; any other refusal drops it.
+            // Only a stale decision is dropped; a busy thread or a failed attempt tries again.
             Effect.catch((error) =>
               Effect.succeed(
-                error._tag === "OrchestratorCommandPreviouslyRejectedError" ||
-                  (error._tag === "OrchestratorDispatchError" &&
-                    error.cause === ISSUE_AUTOMATION_WAITS_FOR_IDLE),
+                !(
+                  error._tag === "OrchestratorDispatchError" &&
+                  error.cause === ISSUE_AUTOMATION_STALE
+                ),
               ),
             ),
           );

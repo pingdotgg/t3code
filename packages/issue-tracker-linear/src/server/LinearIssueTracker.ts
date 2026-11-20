@@ -433,7 +433,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
 
       // Team ids are unique across workspaces, so another workspace's credential finds none.
       automation: {
-        listContainers: () =>
+        listContainers: Effect.fn("LinearIssueTracker.listContainers")(() =>
           linear.viewer().pipe(
             Effect.map((data) => ({
               workspace: data.workspace,
@@ -443,13 +443,15 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
               })),
             })),
           ),
-        listStates: ({ containerId }) =>
+        ),
+        listStates: Effect.fn("LinearIssueTracker.listStates")(({ containerId }) =>
           linear
             .getTeamStates(containerId)
             .pipe(
               Effect.map((states) => inWorkflowOrder(states).map(({ id, name }) => ({ id, name }))),
             ),
-        readStatuses: ({ containerId, keys }) => {
+        ),
+        readStatuses: Effect.fn("LinearIssueTracker.readStatuses")(({ containerId, keys }) => {
           const numbers = [
             ...new Set(
               keys.flatMap((key) => {
@@ -469,7 +471,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
               pages.flat().map((issue) => ({ key: issue.identifier, stateId: issue.stateId })),
             ),
           );
-        },
+        }),
       },
 
       // The id, not the display name: it is what the involvement filters compare against.

@@ -109,8 +109,9 @@ function setup(
     reads: [] as ReadonlyArray<string>[],
     fail: false,
     busy: false,
-    previouslyRejected: false,
+    refuseOnce: null as "previously rejected" | "projection error" | null,
     beforeRead: Effect.void as Effect.Effect<void>,
+    beforeCatalog: Effect.void as Effect.Effect<void>,
   };
   const tracker: StandaloneIssueTrackerApi = {
     kind: LINEAR,
@@ -147,10 +148,12 @@ function setup(
     getComments: () => Effect.die("unused"),
     automation: {
       listContainers: () =>
-        Effect.succeed({
-          workspace: "acme",
-          containers: rules.map((item) => ({ id: item.containerId, name: item.containerName })),
-        }),
+        state.beforeCatalog.pipe(
+          Effect.as({
+            workspace: "acme",
+            containers: rules.map((item) => ({ id: item.containerId, name: item.containerName })),
+          }),
+        ),
       listStates: () =>
         Effect.succeed([
           { id: "open", name: "Open" },
@@ -183,14 +186,16 @@ function setup(
       dispatch: (command) =>
         Effect.gen(function* () {
           state.attempts.push(command);
-          if (state.previouslyRejected) {
-            state.previouslyRejected = false;
+          const refusal = state.refuseOnce;
+          state.refuseOnce = null;
+          if (refusal === "previously rejected")
             return yield* new Orchestrator.OrchestratorCommandPreviouslyRejectedError({
               commandId: command.commandId,
               commandType: command.type,
               detail: "busy before restart",
             });
-          }
+          if (refusal === "projection error")
+            return yield* new Orchestrator.OrchestratorProjectionError({ threadId });
           if (state.busy)
             return yield* new Orchestrator.OrchestratorDispatchError({
               commandId: command.commandId,
@@ -328,15 +333,20 @@ describe("IssueThreadAutomationService", () => {
   it.effect("ignores the same issue key in another workspace", () => {
     const { state, layer } = setup(
       [rule()],
-      [link("ENG-1"), link("ENG-1", { url: "https://linear.app/another/issue/ENG-1" })],
+      [link("ENG-1", { url: "https://linear.app/another/issue/ENG-1" })],
     );
+    const local = ThreadId.make("thread:local");
     return Effect.gen(function* () {
       const automation = yield* Automation.IssueThreadAutomationService;
+      yield* automation.sweep;
+      expect(state.reads).toEqual([]);
+      state.threads.push({ ...thread([link("ENG-1")]), id: local });
       yield* automation.sweep;
       state.statuses.set("team-a", [{ key: "ENG-1", stateId: "done" }]);
       yield* automation.sweep;
       expect(state.reads).toEqual([["ENG-1"], ["ENG-1"]]);
-      expect(actions(state.commands)).toEqual(["settle"]);
+      expect(state.commands).toHaveLength(1);
+      expect(state.commands).toMatchObject([{ threadId: local, action: "settle" }]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -360,23 +370,26 @@ describe("IssueThreadAutomationService", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("retries a refused command id with a new one at the same revision", () => {
-    const { state, layer } = setup();
-    return Effect.gen(function* () {
-      const automation = yield* Automation.IssueThreadAutomationService;
-      const store = yield* Observations.IssueThreadAutomation;
-      yield* automation.sweep;
-      state.statuses.set("team-a", [{ key: "ENG-1", stateId: "done" }]);
-      state.previouslyRejected = true;
-      yield* automation.sweep;
-      const pending = (yield* store.list).get(threadId)?.pending;
-      expect(pending?.revision).toBe(1);
-      expect(pending?.commandId).not.toBe(state.attempts[0]?.commandId);
-      yield* automation.sweep;
-      expect(actions(state.commands)).toEqual(["settle"]);
-      expect((yield* store.list).get(threadId)?.pending).toBeNull();
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect.each(["previously rejected", "projection error"] as const)(
+    "retries a %s command with a new id at the same revision",
+    (refusal) => {
+      const { state, layer } = setup();
+      return Effect.gen(function* () {
+        const automation = yield* Automation.IssueThreadAutomationService;
+        const store = yield* Observations.IssueThreadAutomation;
+        yield* automation.sweep;
+        state.statuses.set("team-a", [{ key: "ENG-1", stateId: "done" }]);
+        state.refuseOnce = refusal;
+        yield* automation.sweep;
+        const pending = (yield* store.list).get(threadId)?.pending;
+        expect(pending?.revision).toBe(1);
+        expect(pending?.commandId).not.toBe(state.attempts[0]?.commandId);
+        yield* automation.sweep;
+        expect(actions(state.commands)).toEqual(["settle"]);
+        expect((yield* store.list).get(threadId)?.pending).toBeNull();
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("keeps the last status through a failed read and acts once the read recovers", () => {
     const { state, layer } = setup();
@@ -397,7 +410,7 @@ describe("IssueThreadAutomationService", () => {
   });
 
   it.effect("saves a rule only for a reachable team, once per team, and in its workspace", () => {
-    const { layer } = setup();
+    const { state, layer } = setup();
     return Effect.gen(function* () {
       const automation = yield* Automation.IssueThreadAutomationService;
       expect(
@@ -422,6 +435,19 @@ describe("IssueThreadAutomationService", () => {
         rule: rule("team-a", { enabled: false, workspace: "another" }),
       });
       expect(disabled.rules).toMatchObject([{ enabled: false, workspace: "acme" }]);
+      // A rule removed while switching it off waited on the tracker stays removed.
+      const started = yield* Deferred.make<void>();
+      const finish = yield* Deferred.make<void>();
+      state.beforeCatalog = Deferred.succeed(started, undefined).pipe(
+        Effect.andThen(Deferred.await(finish)),
+      );
+      const switchingOff = yield* automation
+        .save({ id: "team-a", rule: rule("team-a", { enabled: false, workspace: "another" }) })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* automation.save({ id: "team-a", rule: null });
+      yield* Deferred.succeed(finish, undefined);
+      expect((yield* Fiber.join(switchingOff)).rules).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
