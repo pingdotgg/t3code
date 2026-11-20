@@ -304,7 +304,11 @@ export function backgroundWorkNowItem(
 
 /** The thread's project folder is gone from disk, so its next turn would fail. */
 export function missingProjectFolderBannerItem(
-  input: { readonly workspaceRoot: string; readonly onChoose: () => void },
+  input: {
+    readonly workspaceRoot: string;
+    /** Absent on a connection that cannot change the project. */
+    readonly onChoose?: () => void;
+  },
   resolve: MessageResolver = m,
 ): ComposerBannerStackItem {
   return {
@@ -313,11 +317,15 @@ export function missingProjectFolderBannerItem(
     icon: <FolderXIcon />,
     title: resolve(msg("Project folder not found")),
     description: input.workspaceRoot,
-    actions: (
-      <Button size="xs" variant="ghost" onClick={input.onChoose}>
-        <T>Choose new folder</T>
-      </Button>
-    ),
+    ...(input.onChoose
+      ? {
+          actions: (
+            <Button size="xs" variant="ghost" onClick={input.onChoose}>
+              <T>Choose new folder</T>
+            </Button>
+          ),
+        }
+      : {}),
   };
 }
 

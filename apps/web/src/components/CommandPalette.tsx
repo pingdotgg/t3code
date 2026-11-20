@@ -319,7 +319,10 @@ function openIntentView(
         groups: [{ value: "themes", label: resolve(msg("Change theme")), items: [] }],
       };
     case "change-project-folder":
-      return changeProjectFolderView(readProject(intent.projectRef)?.workspaceRoot ?? "~/");
+      return changeProjectFolderView(
+        intent.projectRef,
+        readProject(intent.projectRef)?.workspaceRoot ?? "~/",
+      );
     case "search":
     case undefined:
       return null;
@@ -327,11 +330,15 @@ function openIntentView(
 }
 
 // Starts beside the old folder, where a renamed folder usually is.
-function changeProjectFolderView(workspaceRoot: string): CommandPaletteView {
+function changeProjectFolderView(
+  projectRef: ScopedProjectRef,
+  workspaceRoot: string,
+): CommandPaletteView {
   return {
     addonIcon: <FolderOpenIcon className={ADDON_ICON_CLASS} />,
     groups: [],
     initialQuery: getBrowseParentPath(workspaceRoot) ?? ensureBrowseDirectoryPath(workspaceRoot),
+    changeFolderProjectRef: projectRef,
   };
 }
 
@@ -567,14 +574,12 @@ function OpenCommandPaletteDialog(props: {
   const threadSearchQuery = currentView === null && !isActionsOnly ? deferredQuery : "";
   const [browseGeneration, setBrowseGeneration] = useState(0);
   const [browseNavigation] = useState(createBrowseNavigationCoordinator);
-  const [changeFolderProjectRef, setChangeFolderProjectRef] = useState<ScopedProjectRef | null>(
-    () => (props.openIntent?.kind === "change-project-folder" ? props.openIntent.projectRef : null),
-  );
-  // While set, the folder browser repoints this project instead of adding one.
+  // The view owns the target, so an add flow pushed on top adds, and Back repoints again.
+  const changeFolderProjectRef = currentView?.changeFolderProjectRef ?? null;
   const changeFolderProjectEntity = useProject(changeFolderProjectRef);
   const changeFolderProject = changeFolderProjectRef === null ? null : changeFolderProjectEntity;
   const [addProjectEnvironmentId, setAddProjectEnvironmentId] = useState<EnvironmentId | null>(
-    changeFolderProjectRef?.environmentId ?? null,
+    null,
   );
   const [isPickingProjectFolder, setIsPickingProjectFolder] = useState(false);
   const [addProjectCloneFlow, setAddProjectCloneFlow] = useState<AddProjectCloneFlow | null>(null);
@@ -675,7 +680,10 @@ function OpenCommandPaletteDialog(props: {
         ? desktopLocalBackendId(environment.entry.target)?.startsWith("wsl:") === true
         : false;
     }) ?? null;
-  const browseEnvironmentId = addProjectEnvironmentId ?? defaultAddProjectEnvironmentId;
+  const browseEnvironmentId =
+    changeFolderProjectRef?.environmentId ??
+    addProjectEnvironmentId ??
+    defaultAddProjectEnvironmentId;
   const canCreateProject = useEnvironmentScope(browseEnvironmentId, AuthOrchestrationOperateScope);
   const browseEnvironment =
     environments.find((environment) => environment.environmentId === browseEnvironmentId) ?? null;
@@ -768,6 +776,10 @@ function OpenCommandPaletteDialog(props: {
     currentProjectId,
   );
   const currentProjectCwd = currentProject?.workspaceRoot ?? null;
+  const canChangeCurrentProjectFolder = useEnvironmentScope(
+    currentProject?.environmentId ?? null,
+    AuthOrchestrationOperateScope,
+  );
   const currentProjectCwdForBrowse =
     changeFolderProject?.workspaceRoot ??
     (browseEnvironmentId && currentProjectEnvironmentId === browseEnvironmentId
@@ -1004,7 +1016,6 @@ function OpenCommandPaletteDialog(props: {
     browseNavigation.invalidate();
     setAddProjectCloneFlow(null);
     setNewProjectFlow(null);
-    setChangeFolderProjectRef(null);
     if (viewStack.length <= 1) {
       setAddProjectEnvironmentId(null);
     } else if (newProjectFlow?.sourcesEnvironmentId) {
@@ -1039,7 +1050,6 @@ function OpenCommandPaletteDialog(props: {
   }
 
   const startAddProjectBrowse = async (environmentId: EnvironmentId): Promise<void> => {
-    setChangeFolderProjectRef(null);
     const initialQuery = getAddProjectInitialQueryForEnvironment(environmentId);
     const initialBrowsePath = getBrowseDirectoryPath(initialQuery);
     const browseCwd = getBrowseCwdForEnvironment(environmentId);
@@ -1290,7 +1300,6 @@ function OpenCommandPaletteDialog(props: {
   );
 
   const openAddProjectFlow = () => {
-    setChangeFolderProjectRef(null);
     switch (addProjectEntry.kind) {
       case "connect-environment":
         openConnectionSettings();
@@ -1858,6 +1867,7 @@ function OpenCommandPaletteDialog(props: {
   }
   if (
     currentProject &&
+    canChangeCurrentProjectFolder &&
     !isScratchProject(currentProject, scratchWorkspaceRootFor(currentProject.environmentId))
   ) {
     const project = currentProject;
@@ -1870,10 +1880,13 @@ function OpenCommandPaletteDialog(props: {
       icon: <FolderOpenIcon className={ITEM_ICON_CLASS} />,
       keepOpen: true,
       run: async () => {
-        setChangeFolderProjectRef(scopeProjectRef(project.environmentId, project.id));
-        setAddProjectEnvironmentId(project.environmentId);
         setAddProjectCloneFlow(null);
-        pushPaletteView(changeProjectFolderView(project.workspaceRoot));
+        pushPaletteView(
+          changeProjectFolderView(
+            scopeProjectRef(project.environmentId, project.id),
+            project.workspaceRoot,
+          ),
+        );
       },
     });
   }
@@ -2143,7 +2156,8 @@ function OpenCommandPaletteDialog(props: {
   const handleAddProject = async (rawCwd: string) => {
     if (!browseEnvironmentId) return;
     if (changeFolderProjectRef !== null) {
-      if (await changeProjectFolder(changeFolderProject, rawCwd)) setOpen(false);
+      // Read when the pick lands: the project can be removed while a picker is open.
+      if (await changeProjectFolder(readProject(changeFolderProjectRef), rawCwd)) setOpen(false);
       return;
     }
     await handleAddProjectForEnvironment({
@@ -3011,7 +3025,9 @@ function OpenCommandPaletteDialog(props: {
       }
       if (changeFolderProjectRef !== null) {
         if (selection.environmentId === changeFolderProjectRef.environmentId) {
-          if (await changeProjectFolder(changeFolderProject, selection.linuxPath)) setOpen(false);
+          if (await changeProjectFolder(readProject(changeFolderProjectRef), selection.linuxPath)) {
+            setOpen(false);
+          }
         } else {
           toastManager.add(
             stackedThreadToast({

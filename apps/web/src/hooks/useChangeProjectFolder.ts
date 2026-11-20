@@ -1,9 +1,11 @@
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import {
   findProjectByPath,
+  isExplicitRelativeProjectPath,
   isUnsupportedWindowsProjectPath,
   resolveProjectPathForDispatch,
 } from "@t3tools/client-runtime/state/projects";
+import { isHostPath } from "@t3tools/shared/path";
 import { useGT } from "gt-react";
 
 import { getEnvironmentBrowsePlatform } from "../components/CommandPalette.logic";
@@ -40,7 +42,14 @@ export function useChangeProjectFolder() {
       fail(gt("Windows-style paths are only supported on Windows."));
       return false;
     }
-    const cwd = resolveProjectPathForDispatch(rawCwd, project.workspaceRoot);
+    const typed = rawCwd.trim();
+    // A bare name would otherwise resolve against the server's own working directory.
+    const cwd = resolveProjectPathForDispatch(
+      typed.length === 0 || isHostPath(typed) || isExplicitRelativeProjectPath(typed)
+        ? typed
+        : `./${typed}`,
+      project.workspaceRoot,
+    );
     if (cwd.length === 0) return false;
     if (findProjectByPath([project], cwd)) return true;
     const owner = findProjectByPath(

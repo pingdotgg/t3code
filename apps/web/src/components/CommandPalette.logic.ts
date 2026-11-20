@@ -251,6 +251,8 @@ export interface CommandPaletteView {
   readonly addonIcon: ReactNode;
   readonly groups: ReadonlyArray<CommandPaletteGroup>;
   readonly initialQuery?: string;
+  /** Set on the view whose folder browser repoints this project instead of adding one. */
+  readonly changeFolderProjectRef?: ScopedProjectRef;
 }
 
 // Child search unmounts the palette; retain search data without its view closures.

@@ -2703,11 +2703,18 @@ export default function ChatView(props: ChatViewProps) {
             missingProjectFolderBannerItem(
               {
                 workspaceRoot: activeProject.workspaceRoot,
-                onChoose: () =>
-                  openCommandPalette({
-                    open: "change-project-folder",
-                    projectRef: scopeProjectRef(activeProject.environmentId, activeProject.id),
-                  }),
+                ...(canOperateThread
+                  ? {
+                      onChoose: () =>
+                        openCommandPalette({
+                          open: "change-project-folder",
+                          projectRef: scopeProjectRef(
+                            activeProject.environmentId,
+                            activeProject.id,
+                          ),
+                        }),
+                    }
+                  : {}),
               },
               messages,
             ),
@@ -3492,13 +3499,14 @@ export default function ChatView(props: ChatViewProps) {
               }
               missingFolderProjectId={
                 // A worktree's folder is not fixed this way, and an older error names a folder
-                // the project has since left.
+                // the project has since left. The server's message ends the path with ". ".
+                canOperateThread &&
                 threadErrorIsServerRuntimeError &&
                 serverRuntime?.lastErrorCode === ORCHESTRATION_V2_WORKSPACE_MISSING_FAILURE_CODE &&
                 activeProject !== null &&
                 !activeProjectIsScratch &&
                 activeThread.worktreePath === null &&
-                timelineThreadError?.includes(activeProject.workspaceRoot) === true
+                timelineThreadError?.includes(`: ${activeProject.workspaceRoot}. `) === true
                   ? activeProject.id
                   : null
               }
