@@ -357,9 +357,11 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     let accessToken: string;
     let account: string;
     let projectId: string | undefined;
-    if (!(yield* fs.exists(tokenPath))) {
+    // The CLI never updates acp_token.json, so a leftover one must not outrank its sign-in.
+    const hasCliToken = yield* fs.exists(cliTokenPath);
+    if (hasCliToken || !(yield* fs.exists(tokenPath))) {
       cached = undefined;
-      const stored = (yield* fs.exists(cliTokenPath))
+      const stored = hasCliToken
         ? yield* fs.readFileString(cliTokenPath)
         : yield* readKeyringSecret;
       if (stored === undefined) {
