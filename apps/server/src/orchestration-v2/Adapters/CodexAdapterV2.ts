@@ -4705,6 +4705,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           readonly requestKind: ProviderRequestKind;
           readonly prompt?: string | null;
           readonly appName?: string;
+          readonly elicitationUrl?: string;
           readonly options?: ReadonlyArray<ProviderApprovalOption>;
         }) {
           const createdAt = yield* DateTime.now;
@@ -4788,6 +4789,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ? {}
               : { prompt: input.prompt }),
             ...(input.appName === undefined ? {} : { appName: input.appName }),
+            ...(input.elicitationUrl === undefined ? {} : { elicitationUrl: input.elicitationUrl }),
             ...(input.options === undefined ? {} : { options: input.options }),
           };
           return { node, request, turnItem };
@@ -6151,7 +6153,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               } satisfies CodexSchema.McpServerElicitationRequestResponse;
             }
 
-            if (context.input.runtimePolicy.runtimeMode === "full-access") {
+            if (
+              payload.mode !== "url" &&
+              context.input.runtimePolicy.runtimeMode === "full-access"
+            ) {
               return acceptance;
             }
 
@@ -6167,6 +6172,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               requestKind: "mcp-elicitation",
               prompt: payload.message,
               appName: described.appName,
+              ...(payload.mode === "url" ? { elicitationUrl: payload.url } : {}),
               options: described.options,
             });
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();

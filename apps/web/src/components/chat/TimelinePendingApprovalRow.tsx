@@ -8,6 +8,7 @@ import { memo, use } from "react";
 import { type PendingApproval } from "../../session-logic";
 import { InlineButton } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { McpElicitationLink } from "./McpElicitationLink";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { ToolActivityIconView, type WorkEntryIconName } from "./TimelineToolActivityIcon";
 import { TimelineRowCtx } from "./timelineRowContext";
@@ -77,6 +78,14 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
       <div className="ms-7.5 flex min-w-0 flex-col gap-1 pb-1 text-xs">
         {approval.appName ? (
           <span className="text-muted-foreground wrap-anywhere">{approval.appName}</span>
+        ) : null}
+        {approval.elicitationUrl && canRespond ? (
+          <McpElicitationLink
+            url={approval.elicitationUrl}
+            disabled={
+              !canRespond || !canOperateThread || respondingRequestIds.includes(approval.requestId)
+            }
+          />
         ) : null}
         {approval.reason ? (
           <span className="text-muted-foreground select-text wrap-anywhere">{approval.reason}</span>

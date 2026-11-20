@@ -789,6 +789,7 @@
   "9aba95a61cc1b6e3": "Feedback sent to OpenAI.\n\nThread ID: `{feedbackId}`",
   "de62133b5898fab1": "Could not send feedback to OpenAI.\n\n{errorMessage}",
   "0bed322f6071f4da": "An error occurred.",
+  "17c2c3f06943156e": "Complete the steps in your browser, then choose Continue.",
   "e94aa66471dae6aa": "Why am I being asked this?",
   "228a325b5708e675": "Full access skips approvals, but an ask rule in the agent's own settings matches this action, so it still asks. Remove or narrow that rule to stop these prompts.",
   "3f9101f696c738a8": "Full access skips approvals, but the agent still stops for a few safety checks of its own that no setting can skip, such as a delete whose path it can't verify. T3 Code can't turn these off, so check the request and approve it if it's what you expect.",
@@ -3661,6 +3662,8 @@
     },
     " app"
   ],
+  "802a10810a7f044e": "Open {host}",
+  "b477f81121abcb00": "Could not open the link. Copy it into your browser to continue.",
   "9cc6288e83305ca3": "The diagram could not be rendered.",
   "74d986aed0381cb0": "The diagram renderer failed to load.",
   "d694484d6fea351e": "Expand diagram",

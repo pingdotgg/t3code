@@ -1697,9 +1697,9 @@ describe("ClaudeAdapterV2 MCP elicitation acceptance", () => {
     );
   });
 
-  it("has no answer for URL mode or a form asking for a value", () => {
+  it("has no answer for unsafe URLs or a form asking for a value", () => {
     for (const request of [
-      { serverName: "deploys", message: "Sign in", mode: "url", url: "https://example.com" },
+      { serverName: "deploys", message: "Sign in", mode: "url", url: "javascript:alert(1)" },
       form({ reason: { type: "string" } }, ["reason"]),
       form({ grant: { type: "string", enum: ["always", "session"] } }, ["grant"]),
       form({ grant: { type: "string", enum: ["deny", "always"], default: "always" } }, ["grant"]),
@@ -7619,6 +7619,46 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
     );
 
+    it.effect.each(["accept", "decline", "cancel", "acceptAlways", "acceptForSession"] as const)(
+      "shows a URL card and responds to %s without form content",
+      (decision) =>
+        Effect.gen(function* () {
+          const { harness, elicit, awaitCard } = yield* startElicitationTurn();
+          const url = "https://example.com/authorize?transfer=one-time";
+          const answer = yield* elicit({ ...approvalOnly, mode: "url", url });
+          const request = yield* awaitCard(1);
+          const card = harness.events.findLast(
+            (event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "approval_request",
+          );
+          assert.deepInclude(card?.type === "turn_item.updated" ? card.turnItem : undefined, {
+            elicitationUrl: url,
+            appName: "deploys",
+            options: [
+              { decision: "cancel", label: "Cancel" },
+              { decision: "decline", label: "Decline" },
+              { decision: "accept", label: "Continue" },
+            ],
+          });
+          const itemIndex = harness.events.findIndex(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "approval_request" &&
+              event.turnItem.requestId === request.id,
+          );
+          const requestIndex = harness.events.findIndex(
+            (event) =>
+              event.type === "runtime_request.updated" && event.runtimeRequest.id === request.id,
+          );
+          assert.isBelow(itemIndex, requestIndex);
+          assert.isUndefined(answer.pollUnsafe());
+          yield* harness.runtime.respondToRuntimeRequest({ requestId: request.id, decision });
+          assert.deepEqual(yield* Fiber.join(answer), {
+            action: decision === "accept" || decision === "decline" ? decision : "cancel",
+          });
+        }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+
     it.effect.each(["decline", "cancel"] as const)("answers %s with that action", (decision) =>
       Effect.gen(function* () {
         const { harness, elicit, awaitCard } = yield* startElicitationTurn();
@@ -7657,20 +7697,33 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.deepEqual(yield* Fiber.join(yield* elicit(approvalOnly)), granted);
         assert.equal(runtimeRequests().length, 1);
 
+        const urlAnswer = yield* elicit({
+          ...approvalOnly,
+          mode: "url",
+          url: "https://example.com/authorize",
+        });
+        const urlRequest = yield* awaitCard(2);
+        assert.isUndefined(urlAnswer.pollUnsafe());
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: urlRequest.id,
+          decision: "accept",
+        });
+        assert.deepEqual(yield* Fiber.join(urlAnswer), { action: "accept" });
+
         const otherMessage = yield* elicit({ ...approvalOnly, message: "Deploy api?" });
-        yield* awaitCard(2);
-        const otherServer = yield* elicit({ ...approvalOnly, serverName: "builds" });
         yield* awaitCard(3);
+        const otherServer = yield* elicit({ ...approvalOnly, serverName: "builds" });
+        yield* awaitCard(4);
         assert.isUndefined(otherMessage.pollUnsafe());
         assert.isUndefined(otherServer.pollUnsafe());
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
     );
 
-    it.effect("cancels URL and value forms without a card", () =>
+    it.effect("cancels unsafe URL and value forms without a card", () =>
       Effect.gen(function* () {
         const { elicit, runtimeRequests } = yield* startElicitationTurn();
         for (const request of [
-          { ...approvalOnly, mode: "url", url: "https://example.com/auth" },
+          { ...approvalOnly, mode: "url", url: "file:///tmp/auth" },
           {
             ...approvalOnly,
             requestedSchema: {

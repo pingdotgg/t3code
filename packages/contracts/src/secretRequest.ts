@@ -3,17 +3,6 @@ import * as Schema from "effect/Schema";
 import { ThreadId, TrimmedNonEmptyString, TurnItemId } from "./baseSchemas.ts";
 import { SecretReference } from "./secretReference.ts";
 
-/** The http(s) page a secret card may open, or null for anything else. */
-export function secretRequestPageUrl(value: string): URL | null {
-  // React Native's URL has no `canParse`.
-  try {
-    const url = new URL(value);
-    return (url.protocol === "https:" || url.protocol === "http:") && url.host !== "" ? url : null;
-  } catch {
-    return null;
-  }
-}
-
 /** Server stores the value under a one-use SecretRef; the thread learns only status. */
 export const SecretRequestAnswerInput = Schema.Struct({
   threadId: ThreadId,

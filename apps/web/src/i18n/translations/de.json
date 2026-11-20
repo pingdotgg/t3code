@@ -789,6 +789,7 @@
   "9aba95a61cc1b6e3": "Feedback an OpenAI gesendet.\n\nThread-ID: `{feedbackId}`",
   "de62133b5898fab1": "Feedback konnte nicht an OpenAI gesendet werden.\n\n{errorMessage}",
   "0bed322f6071f4da": "Ein Fehler ist aufgetreten.",
+  "17c2c3f06943156e": "Führe die Schritte im Browser aus und wähle dann Weiter.",
   "e94aa66471dae6aa": "Warum werde ich das gefragt?",
   "228a325b5708e675": "Vollzugriff überspringt Genehmigungen, aber eine Nachfrageregel in den Einstellungen des Agenten trifft auf diese Aktion zu, daher fragt er trotzdem. Entferne diese Regel oder schränke sie ein, um diese Nachfragen zu beenden.",
   "3f9101f696c738a8": "Vollzugriff überspringt Genehmigungen, aber der Agent hält trotzdem für einige eigene Sicherheitsprüfungen an, die keine Einstellung überspringen kann, etwa beim Löschen eines Pfads, den er nicht prüfen kann. T3 Code kann diese nicht abschalten. Prüfe also die Anfrage und genehmige sie, wenn sie deinen Erwartungen entspricht.",
@@ -3662,6 +3663,8 @@
     },
     " kann nicht geladen werden"
   ],
+  "802a10810a7f044e": "{host} öffnen",
+  "b477f81121abcb00": "Der Link konnte nicht geöffnet werden. Kopiere ihn in deinen Browser, um fortzufahren.",
   "9cc6288e83305ca3": "Das Diagramm konnte nicht gerendert werden.",
   "74d986aed0381cb0": "Der Diagramm-Renderer konnte nicht geladen werden.",
   "d694484d6fea351e": "Diagramm vergrößern",
