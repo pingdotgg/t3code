@@ -81,11 +81,12 @@ jobs:
       version: ${{ steps.config.outputs.version }}
       mac: ${{ steps.config.outputs.mac }}
     env:
-      # Standalone builds refuse T3 Code's scheme and name, so the fork sets its own in repository variables.
+      # Standalone builds refuse T3 Code's scheme, name and bundle id, so the fork sets its own in repository variables.
       T3CODE_APP_SCHEME: ${{ vars.T3CODE_APP_SCHEME }}
       T3CODE_APP_NAME: ${{ vars.T3CODE_APP_NAME }}
+      T3CODE_MOBILE_BUNDLE_ID: ${{ vars.T3CODE_MOBILE_BUNDLE_ID }}
     steps:
-      - name: Require the fork's app scheme and name
+      - name: Require the fork's app scheme, name and bundle id
         run: |
           [ -n "$T3CODE_APP_SCHEME" ] || {
             echo "::error::Set the repository variable T3CODE_APP_SCHEME to this fork's deep-link scheme: gh variable set T3CODE_APP_SCHEME --body <scheme>"
@@ -93,6 +94,10 @@ jobs:
           }
           [ -n "$T3CODE_APP_NAME" ] || {
             echo "::error::Set the repository variable T3CODE_APP_NAME to this fork's product name: gh variable set T3CODE_APP_NAME --body '<name>'"
+            exit 1
+          }
+          [ -n "$T3CODE_MOBILE_BUNDLE_ID" ] || {
+            echo "::error::Set the repository variable T3CODE_MOBILE_BUNDLE_ID to this fork's desktop and mobile bundle id: gh variable set T3CODE_MOBILE_BUNDLE_ID --body <com.example.code>"
             exit 1
           }
 

@@ -67,6 +67,8 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
 const DESKTOP_APP_ID = "com.t3tools.t3code";
+// Matches apps/mobile/app.config.ts: a fork shares one identifier between desktop and mobile.
+const STANDALONE_BUNDLE_ID_PATTERN = /^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/u;
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
@@ -1296,7 +1298,7 @@ export function resolveMacPasskeySigningConfiguration(
   }
 
   return {
-    appId: DESKTOP_APP_ID,
+    appId: resolveDesktopAppId(env),
     teamId,
     rpDomains: uniqueRpDomains,
     provisioningProfilePath,
@@ -2848,6 +2850,25 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
   return `${trimmed.slice(0, versionSeparator)}/${trimmed.slice(versionSeparator + 1)}`;
 }
 
+/** The bundle id the app is signed under: T3's, or the fork's `T3CODE_MOBILE_BUNDLE_ID`. */
+export function resolveDesktopAppId(env: Readonly<Record<string, string | undefined>>): string {
+  if (!isStandaloneBuild(env)) return DESKTOP_APP_ID;
+  const bundleId = env.T3CODE_MOBILE_BUNDLE_ID?.trim() ?? "";
+  if (!STANDALONE_BUNDLE_ID_PATTERN.test(bundleId)) {
+    throw new Error(
+      "T3CODE_STANDALONE=1 needs T3CODE_MOBILE_BUNDLE_ID set to the fork's reverse-DNS bundle id, such as com.example.code.",
+    );
+  }
+  return bundleId;
+}
+
+/** File names' product prefix, such as `T3-Code` or a standalone build's `EasyDev-Code`. */
+export function resolveDesktopArtifactPrefix(
+  env: Readonly<Record<string, string | undefined>>,
+): string {
+  return (rebrandName(env) ?? "T3 Code").replace(/[^\p{L}\p{N}.]+/gu, "-");
+}
+
 /** A standalone build's packaging names its own product, matching its bundles. */
 function brand<T>(value: T): T {
   const name = rebrandName(loadRepoEnv());
@@ -2879,11 +2900,13 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   arch?: typeof BuildArch.Type,
   linuxMetainfoPath?: string,
 ) {
+  const repoEnv = loadRepoEnv();
+  const artifactPrefix = resolveDesktopArtifactPrefix(repoEnv);
   const buildConfig: Record<string, unknown> = {
     afterPack: (yield* Path.Path).join(yield* RepoRoot, "scripts/prepare-server-compile-cache.cjs"),
-    appId: DESKTOP_APP_ID,
+    appId: resolveDesktopAppId(repoEnv),
     productName: resolveDesktopProductName(version),
-    artifactName: "T3-Code-${version}-${arch}.${ext}",
+    artifactName: `${artifactPrefix}-\${version}-\${arch}.\${ext}`,
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     files: [
       ...DESKTOP_FILE_EXCLUSIONS,
@@ -3027,7 +3050,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     if (buildConfig.publish) {
       buildConfig.appImage = {
         artifactName:
-          updateChannel === "nightly" ? "T3-Code-Nightly-${arch}.${ext}" : "T3-Code-${arch}.${ext}",
+          updateChannel === "nightly"
+            ? `${artifactPrefix}-Nightly-\${arch}.\${ext}`
+            : `${artifactPrefix}-\${arch}.\${ext}`,
       };
     }
     buildConfig.deb = {
