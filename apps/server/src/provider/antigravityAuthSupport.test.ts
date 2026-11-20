@@ -681,6 +681,39 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
       }),
   );
 
+  it.effect.skipIf(!symlinksSupported)(
+    "links the user's global rule files and never replaces the profile's own",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const temporaryDirectory = yield* fs.makeTempDirectoryScoped();
+        const userHome = path.join(temporaryDirectory, "home");
+        const profileDirectory = path.join(temporaryDirectory, "profile");
+        const userGemini = path.join(userHome, ".gemini");
+        yield* fs.makeDirectory(userGemini, { recursive: true });
+        yield* fs.writeFileString(path.join(userGemini, "AGENTS.md"), "global agents rule");
+        yield* fs.writeFileString(path.join(userGemini, "GEMINI.md"), "global gemini rule");
+
+        yield* prepareAntigravityProfile({ profileDirectory, userHome });
+        expect(yield* fs.readLink(path.join(profileDirectory, "AGENTS.md"))).toBe(
+          path.join(userGemini, "AGENTS.md"),
+        );
+        expect(yield* fs.readLink(path.join(profileDirectory, "GEMINI.md"))).toBe(
+          path.join(userGemini, "GEMINI.md"),
+        );
+
+        yield* fs.remove(path.join(userGemini, "AGENTS.md"));
+        yield* fs.remove(path.join(profileDirectory, "GEMINI.md"));
+        yield* fs.writeFileString(path.join(profileDirectory, "GEMINI.md"), "profile's own rule");
+        yield* prepareAntigravityProfile({ profileDirectory, userHome });
+        expect(yield* fs.exists(path.join(profileDirectory, "AGENTS.md"))).toBe(false);
+        expect(yield* fs.readFileString(path.join(profileDirectory, "GEMINI.md"))).toBe(
+          "profile's own rule",
+        );
+      }),
+  );
+
   it.effect("rewrites the GCP block on every launch and never stores the API key", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
