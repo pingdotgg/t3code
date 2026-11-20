@@ -1463,7 +1463,7 @@ export default function FilePreviewPanel({
       );
     const path = row?.getAttribute("data-item-path");
     if (!path || path.endsWith("/")) return;
-    requestWorkspaceFocus({ area: "panel", selector: "[data-file-content-focus]" });
+    requestWorkspaceFocus({ area: "panel", selectors: ["[data-file-content-focus]"] });
   };
   const rendered = isMermaid
     ? renderMermaid

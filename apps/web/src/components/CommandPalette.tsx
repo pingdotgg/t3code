@@ -105,6 +105,7 @@ import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstra
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { copyThreadReference } from "../lib/copyThreadReference";
+import { dispatchMenuAction } from "../shortcuts/dispatcher";
 import {
   queueWorkspaceFocusFromPalette,
   restoreWorkspaceFocusFromPalette,
@@ -1776,6 +1777,25 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
+
+  actionItems.push({
+    kind: "action",
+    value: "action:sidebar-focus-threads",
+    title: gt("Focus Thread List"),
+    searchTerms: [
+      gt("Focus Thread List"),
+      "Focus Thread List",
+      "sidebar",
+      "threads",
+      "focus",
+      "accessibility",
+    ],
+    icon: <MonitorIcon className={ITEM_ICON_CLASS} />,
+    shortcutCommand: "sidebar.focusThreads",
+    run: async () => {
+      dispatchMenuAction("sidebar.focusThreads");
+    },
+  });
 
   actionItems.push({
     kind: "action",
