@@ -265,6 +265,10 @@ export const ScopedProjectRef = Schema.Struct({
 });
 export type ScopedProjectRef = typeof ScopedProjectRef.Type;
 
+export function scopeProjectKey(ref: ScopedProjectRef): string {
+  return `${ref.environmentId}:${ref.projectId}`;
+}
+
 export const ScopedThreadRef = Schema.Struct({
   environmentId: EnvironmentId,
   threadId: ThreadId,
