@@ -1466,7 +1466,7 @@ function PullRequestCodeTab({
             </DropdownMenuContent>
           </DropdownMenu>
         ) : null}
-        <PullRequestMetaLine className="shrink-0">
+        <PullRequestMetaLine>
           <span className="shrink-0 tabular-nums">
             {gt("{count, plural, one {{count} file} other {{count} files}}", {
               count: files.length,
