@@ -12,6 +12,7 @@ import {
   fleetEnvironmentNodeId,
   FLEET_FOLD_ENVIRONMENTS_OVER,
   FLEET_LANE_PITCH,
+  FLEET_ROUTE_PITCH,
   FLEET_STACK_SHOWN_MAX,
   fleetFocusRects,
   fleetLinkAction,
@@ -805,10 +806,67 @@ describe("layoutFleetGraph", () => {
     expect(layoutFleetGraph(graph, open)).toEqual(opened);
   });
 
-  it("keeps every link into a card a full lane apart, and grows the card to hold them", () => {
+  it("sizes a card by its name alone, whatever routes and links attach to it", () => {
+    const routes = (count: number) =>
+      Array.from({ length: count }, (_, index) => ({ id: `r${index}`, kind: "tailnet" as const }));
+    const names = ["a", "b", "c", "d", "e"];
+    const mesh = build(
+      names.map((name, index) =>
+        environment(
+          name,
+          names.filter((other) => other !== name).map((other) => link(other)),
+          { routes: routes(index * 2 + 1) },
+        ),
+      ),
+    );
+    const layout = layoutFleetGraph(mesh);
+    expectNoOverlap(layout, new Map());
+    const plain = layoutFleetGraph(build([environment("a")])).nodes.get(node("a"))!;
+    const cards = names.map((name) => layout.nodes.get(node(name))!);
+    // Nine routes and eight links leave a card the size of one with a single route.
+    expect(cards.map((card) => card.height)).toEqual(names.map(() => plain.height));
+    expect(plain.height).toBeLessThanOrEqual(64);
+    const long = layoutFleetGraph(build([environment("Julius's MacBook Pro")]));
+    const wrapped = long.nodes.get(node("Julius's MacBook Pro"))!.height;
+    expect(wrapped).toBeGreaterThan(plain.height);
+    expect(wrapped).toBeLessThanOrEqual(72);
+    for (const [index, name] of names.entries()) {
+      const card = cards[index]!;
+      const pills = mesh.edges
+        .filter(isRouteEdge)
+        .filter((edge) => edge.to === node(name))
+        .map((edge) => layout.routes.get(edge.id)!);
+      const centers = pills.map(({ pill }) => pill.y + pill.height / 2);
+      // The route names keep their own pitch, centred on the card, and may reach past it.
+      expect((centers[0]! + centers.at(-1)!) / 2).toBeCloseTo(card.y + card.height / 2, 5);
+      for (const [at, center] of centers.entries()) {
+        if (at > 0) expect(center - centers[at - 1]!).toBe(FLEET_ROUTE_PITCH);
+      }
+      // Their wires close up and enter the card as one bundle, each at its own height.
+      const entries = pills.map(({ d }) => samplePath(d).at(-1)!.y);
+      expect(new Set(entries).size).toBe(entries.length);
+      expect(Math.max(...entries) - Math.min(...entries)).toBeLessThanOrEqual(10);
+      for (const entry of entries) {
+        expect(entry).toBeGreaterThan(card.y);
+        expect(entry).toBeLessThan(card.y + card.height);
+      }
+    }
+    // The gap between two cards grows only by what the taller column of route names needs.
+    const gap = (upper: number) => cards[upper + 1]!.y - cards[upper]!.y - cards[upper]!.height;
+    const two = layoutFleetGraph(build([environment("a"), environment("b")]));
+    expect(gap(0)).toBe(two.nodes.get(node("b"))!.y - plain.y - plain.height);
+    expect(gap(3)).toBeGreaterThan(gap(0));
+  });
+
+  it("gives every link into a card its own arrowhead on the edge the card already has", () => {
     const fan = build([
       ...["a", "b", "c", "d"].map((name) => environment(name, [link("e")])),
       environment("e"),
+    ]);
+    const pair = build([
+      environment("a", [link("b"), link("c")]),
+      environment("b"),
+      environment("c", [link("b")]),
     ]);
     const names = ["a", "b", "c", "d", "e"];
     const mesh = build(
@@ -819,28 +877,35 @@ describe("layoutFleetGraph", () => {
         ),
       ),
     );
-    for (const graph of [fan, mesh]) {
+    for (const [graph, roomy] of [
+      [pair, true],
+      [fan, false],
+      [mesh, false],
+    ] as const) {
       const layout = layoutFleetGraph(graph);
       expectNoOverlap(layout, new Map());
-      const ports = new Map<string, number[]>();
+      const arrivals = new Map<string, number[]>();
       for (const edge of graph.edges) {
         const geometry = edge.kind === "link" ? layout.links.get(edge.id) : undefined;
         if (edge.kind !== "link" || geometry === undefined) continue;
-        const points = samplePath(geometry.d);
-        ports.set(edge.from, [...(ports.get(edge.from) ?? []), points[0]!.y]);
-        ports.set(edge.to, [...(ports.get(edge.to) ?? []), geometry.arrow.y]);
+        const from = layout.nodes.get(edge.from)!;
+        const leaves = samplePath(geometry.d)[0]!.y;
+        expect(leaves).toBeGreaterThan(from.y);
+        expect(leaves).toBeLessThan(from.y + from.height);
+        arrivals.set(edge.to, [...(arrivals.get(edge.to) ?? []), geometry.arrow.y]);
       }
-      for (const [id, heights] of ports) {
+      for (const [id, heights] of arrivals) {
         const card = layout.nodes.get(id)!;
         const sorted = heights.toSorted((left, right) => left - right);
         expect(sorted[0]!).toBeGreaterThan(card.y);
         expect(sorted.at(-1)!).toBeLessThan(card.y + card.height);
         for (const [index, height] of sorted.entries()) {
-          if (index > 0) {
-            expect(height - sorted[index - 1]!, `at ${id}`).toBeGreaterThanOrEqual(
-              FLEET_LANE_PITCH,
-            );
-          }
+          if (index === 0) continue;
+          // With room they are a full lane apart; a crowded edge closes them up, never onto
+          // one another.
+          expect(height - sorted[index - 1]!, `at ${id}`).toBeGreaterThanOrEqual(
+            roomy ? FLEET_LANE_PITCH : 3,
+          );
         }
       }
     }
@@ -926,21 +991,23 @@ describe("layoutFleetGraph", () => {
       );
       // Only the columns move: every height, and so every lane and entry, is the regular one.
       expect(layout.height).toBe(regular.height);
-      // Each line keeps the last stretch into its machine to itself.
-      const arrivals = new Map<string, number[]>();
-      const arrive = (into: string, y: number) =>
-        arrivals.set(into, [...(arrivals.get(into) ?? []), y]);
+      // Each route enters its machine at its own height, and a link's arrowhead stands clear
+      // of all of them.
+      const arrivals = new Map<string, { routes: number[]; links: number[] }>();
+      const into = (id: string) =>
+        arrivals.get(id) ?? arrivals.set(id, { routes: [], links: [] }).get(id)!;
       for (const edge of graph.edges) {
         if (edge.kind === "route") {
-          const { pill } = layout.routes.get(edge.id)!;
-          arrive(edge.to, pill.y + pill.height / 2);
-        } else if (layout.links.has(edge.id)) arrive(edge.to, layout.links.get(edge.id)!.arrow.y);
+          into(edge.to).routes.push(samplePath(layout.routes.get(edge.id)!.d).at(-1)!.y);
+        } else if (layout.links.has(edge.id)) {
+          into(edge.to).links.push(layout.links.get(edge.id)!.arrow.y);
+        }
       }
-      for (const [into, heights] of arrivals) {
-        const sorted = heights.toSorted((left, right) => left - right);
-        for (const [index, y] of sorted.entries()) {
-          if (index > 0) {
-            expect(y - sorted[index - 1]!, `into ${into}`).toBeGreaterThanOrEqual(FLEET_LANE_PITCH);
+      for (const [id, { routes: entries, links: arrows }] of arrivals) {
+        expect(new Set(entries).size, `into ${id}`).toBe(entries.length);
+        for (const arrow of arrows) {
+          for (const entry of entries) {
+            expect(Math.abs(arrow - entry), `into ${id}`).toBeGreaterThanOrEqual(8);
           }
         }
       }

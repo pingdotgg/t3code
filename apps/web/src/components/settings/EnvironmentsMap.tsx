@@ -1864,7 +1864,7 @@ const FleetScene = memo(function FleetScene({
               )}
               className={cn(
                 nodeClass(node.id),
-                "gap-2.5 rounded-xl border border-dashed border-foreground/30 bg-card/60 px-3 hover:border-foreground/55",
+                "gap-2 rounded-lg border border-dashed border-foreground/30 bg-card/60 px-2.5 hover:border-foreground/55",
               )}
             >
               <CloudIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
@@ -1915,30 +1915,30 @@ const FleetScene = memo(function FleetScene({
               )}
               className={cn(
                 nodeClass(node.id),
-                "gap-2.5 rounded-xl border bg-card px-3 text-card-foreground shadow-sm/5 hover:border-foreground/45",
+                "gap-2 rounded-lg border bg-card px-2.5 text-card-foreground shadow-sm/5 hover:border-foreground/45",
                 dimmed ? "border-dashed border-foreground/25" : "border-foreground/20",
                 over && "border-primary",
               )}
             >
               <span
                 className={cn(
-                  "relative flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground/80 forced-colors:border",
+                  "relative flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-foreground/80 forced-colors:border",
                   dimmed && "opacity-60",
                 )}
               >
-                <EnvironmentMachineIcon kind={node.machine ?? "server"} className="size-4" />
+                <EnvironmentMachineIcon kind={node.machine ?? "server"} className="size-3.5" />
                 <span
                   aria-hidden
                   className={cn(
-                    "absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full border-2 border-card",
+                    "absolute -right-1 -bottom-1 size-2.5 rounded-full border-2 border-card",
                     node.enabled
                       ? connectionPhaseDotClassName(node.phase)
                       : "bg-muted-foreground/40",
                   )}
                 />
               </span>
-              <span className={cn("min-w-0 flex-1", dimmed && "opacity-70")}>
-                <span className="line-clamp-2 text-sm leading-4.5 font-semibold [overflow-wrap:anywhere]">
+              <span className={cn("min-w-0 flex-1 pr-1.5", dimmed && "opacity-70")}>
+                <span className="line-clamp-2 text-xs leading-4 font-semibold [overflow-wrap:anywhere]">
                   {node.label}
                 </span>
                 <span
@@ -1992,7 +1992,7 @@ const FleetScene = memo(function FleetScene({
               width: rect.width + 6,
               height: rect.height + 6,
             }}
-            className="pointer-events-none absolute rounded-2xl border-2 border-primary bg-primary/6"
+            className="pointer-events-none absolute rounded-xl border-2 border-primary bg-primary/6"
           >
             <span className="absolute -top-2 -left-2 flex size-4 items-center justify-center rounded-full bg-primary text-primary-foreground forced-colors:border">
               <CheckIcon className="size-2.5" strokeWidth={3} />

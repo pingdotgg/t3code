@@ -302,7 +302,10 @@ export const linkNeedsAttention = (health: PeerLinkHealth) =>
   health.kind !== "reachable" || health.expiresInDays !== null;
 
 const ACCESS_ORDER = AuthMcpClientAccess.literals;
-/** The least distance between two lines entering one card: an arrowhead plus the heaviest line. */
+/**
+ * How far apart two links enter one card while it has the room: an arrowhead plus the heaviest
+ * line. A card with more links than that fits keeps its size and they close up.
+ */
 export const FLEET_LANE_PITCH = 12;
 const labelOrder = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
 
@@ -656,8 +659,14 @@ export interface FleetLayout {
 const HEADER = 28;
 const CLIENT = { height: 44 };
 const PILL = { height: 18 };
-const PORT_PITCH = 22;
-const CARD = { height: 60 };
+/** How far apart route names sit in their column beside a card. */
+export const FLEET_ROUTE_PITCH = 22;
+/** How far that column may reach into the gap above and below its card's place. */
+const PILL_OVERHANG = 9;
+/** `nameLine` is the most characters of a name the narrowest card sets on one line. */
+const CARD = { height: 56, twoLines: 68, nameLine: 13 };
+/** Routes enter a card as one bundle: this far apart, and never wider than `spread`. */
+const ROUTE_ENTRY = { pitch: 4, spread: 10 };
 const OFFER = { height: 44 };
 const TARGET = { height: 44 };
 /** `partial` is the room a closed stack adds to say how many of its machines answer. */
@@ -673,6 +682,7 @@ interface FleetMetrics {
   /** The run from it to the route names. */
   readonly wire: number;
   readonly pill: number;
+  /** The run in which a machine's routes close up from their names to its card. */
   readonly pillGap: number;
   readonly card: number;
   readonly target: number;
@@ -687,39 +697,39 @@ const REGULAR: FleetMetrics = {
   app: 136,
   wire: 72,
   pill: 82,
-  pillGap: 10,
-  card: 204,
+  pillGap: 20,
+  card: 164,
   target: 188,
   linkRun: 92,
   laneFirst: 24,
   betweenFirst: 16,
-  betweenLast: 10,
+  betweenLast: 6,
 };
 /** The least each measure can be with its text still whole: a narrow settings column. */
 const COMPACT: FleetMetrics = {
   app: 124,
   wire: 28,
   pill: 72,
-  pillGap: 6,
-  card: 166,
+  pillGap: 14,
+  card: 148,
   target: 146,
   linkRun: 36,
   laneFirst: 18,
   betweenFirst: 14,
-  betweenLast: 6,
+  betweenLast: 4,
 };
 /** Past this the map is enlarged instead: longer wires would only pull the columns apart. */
 const ROOMY: FleetMetrics = {
   app: 148,
   wire: 112,
   pill: 88,
-  pillGap: 12,
-  card: 244,
+  pillGap: 26,
+  card: 180,
   target: 220,
   linkRun: 132,
   laneFirst: 24,
   betweenFirst: 16,
-  betweenLast: 10,
+  betweenLast: 6,
 };
 
 const mixMetrics = (from: FleetMetrics, to: FleetMetrics, t: number): FleetMetrics => {
@@ -753,10 +763,10 @@ const ENTRY_PITCH = 14;
 /** The channel left of the cards that links between environments keep to themselves. */
 const BETWEEN = { step: 14 };
 /**
- * Where those links meet a card's left edge: past its routes, the outermost lane innermost.
- * The pitch clears an arrowhead and the heaviest line; a card grows to hold its ports.
+ * Where those links meet a card's left edge: past its routes, the outermost lane innermost,
+ * `margin` short of the corner. The card never grows for them: the pitch gives way instead.
  */
-const LINK_PORT = { first: 6, pitch: FLEET_LANE_PITCH, margin: 8 };
+const LINK_PORT = { first: 10, pitch: FLEET_LANE_PITCH, margin: 4 };
 const CORNER = 8;
 const BADGE = { width: 120, height: 20, overhang: 5, gap: 4 };
 
@@ -998,45 +1008,50 @@ function layoutFleetGraphAt(
     betweenLane.set(link.id, index);
     (betweenLanes[index] ??= []).push(link);
   }
-  // Each end of such a link has its own port on the card's left edge, above the routes when the
-  // other machine is above and below them when it is below. The outer lane's port is nearer the
-  // middle, so two links turning at one card never cross.
-  const portsOf = new Map<string, FleetLinkEdge[]>();
+  // Such links meet a card's left edge above its routes when the other machine is above, and
+  // below them when it is below. Each link in has its own port, the outer lane's nearer the
+  // middle so two turning at one card never cross. The links out on a side share one port, as
+  // they share the handle on the right, so a card pays for its arrowheads only.
+  const leaves = new Set<string>();
+  const arrivalsOf = new Map<string, FleetLinkEdge[]>();
   for (const link of between) {
     const down = Math.sign(indexOf(link.to) - indexOf(link.from));
-    pushTo(portsOf, `${link.from}:${down}`, link);
-    pushTo(portsOf, `${link.to}:${-down}`, link);
+    leaves.add(`${link.from}:${down}`);
+    pushTo(arrivalsOf, `${link.to}:${-down}`, link);
   }
-  for (const ports of portsOf.values()) {
+  for (const ports of arrivalsOf.values()) {
     ports.sort((left, right) => betweenLane.get(right.id)! - betweenLane.get(left.id)!);
   }
   const routesInto = (hostId: string) => routesOf.get(hostId)?.length ?? 0;
+  // A card's size follows its name alone, so what attaches to it never stretches it. The name
+  // is measured in characters against the narrowest card, so no height changes with the width.
+  const cardHeight = (host: FleetNode) =>
+    host.kind === "connect"
+      ? OFFER.height
+      : host.label.length > CARD.nameLine
+        ? CARD.twoLines
+        : CARD.height;
+  const routeEntryPitch = (hostId: string) =>
+    routesInto(hostId) < 2
+      ? 0
+      : Math.min(ROUTE_ENTRY.pitch, ROUTE_ENTRY.spread / (routesInto(hostId) - 1));
   const routesExtent = (hostId: string) =>
-    ((Math.max(1, routesInto(hostId)) - 1) * PORT_PITCH + PILL.height) / 2;
-  // A card is as tall above and below its routes as the ports on that side need, so one with
-  // many links from one direction does not grow an empty half on the other.
-  const cardExtent = (host: FleetNode, side: 1 | -1) => {
-    const ports = portsOf.get(`${host.id}:${side}`)?.length ?? 0;
-    const plain =
-      host.kind === "connect"
-        ? OFFER.height / 2
-        : Math.max(CARD.height, (routesInto(host.id) - 1) * PORT_PITCH + PILL.height + 20) / 2;
-    return ports === 0
-      ? plain
-      : Math.max(
-          plain,
-          routesExtent(host.id) +
-            LINK_PORT.first +
-            (ports - 1) * LINK_PORT.pitch +
-            LINK_PORT.margin,
-        );
+    (Math.max(1, routesInto(hostId)) - 1) * routeEntryPitch(hostId) * 0.5;
+  const linkPortPitch = (host: FleetNode, side: number) => {
+    const key = `${host.id}:${side}`;
+    const ports = Number(leaves.has(key)) + (arrivalsOf.get(key)?.length ?? 0);
+    const room = cardHeight(host) / 2 - LINK_PORT.margin - routesExtent(host.id) - LINK_PORT.first;
+    return ports < 2 ? 0 : Math.min(LINK_PORT.pitch, room / (ports - 1));
   };
+  const pillsHeight = (hostId: string) =>
+    (Math.max(1, routesInto(hostId)) - 1) * FLEET_ROUTE_PITCH + PILL.height;
   const hostWidth = folds.some((stack) => stack.expanded)
     ? FRAME_PAD * 2 + FOLD_COLUMNS * (CHIP.width + CHIP_GAP) - CHIP_GAP
     : metrics.card;
   const entryHeight = (entry: ColumnEntry) =>
     entry.kind === "host"
-      ? cardExtent(entry.host, -1) + cardExtent(entry.host, 1)
+      ? // The place a card takes in the column: its own height, or what its route names need.
+        Math.max(cardHeight(entry.host), pillsHeight(entry.id) - PILL_OVERHANG * 2)
       : entry.stack.expanded
         ? frameHeight(entry.stack, FOLD_COLUMNS, FRAME_HEADER)
         : STACK.height + STACK.lift;
@@ -1083,8 +1098,9 @@ function layoutFleetGraphAt(
   const cardX =
     pillX +
     metrics.pill +
+    metrics.pillGap +
     (betweenLanes.length === 0
-      ? metrics.pillGap
+      ? 0
       : metrics.betweenLast + (betweenLanes.length - 1) * BETWEEN.step + metrics.betweenFirst);
   const cardRight = cardX + hostWidth;
 
@@ -1095,7 +1111,7 @@ function layoutFleetGraphAt(
     readonly size: { readonly width: number; readonly height: number };
   }> = [];
   const column: Array<{ readonly entry: ColumnEntry; readonly center: number }> = [];
-  /** Where a card's routes arrive and its links leave: its middle, unless one side grew. */
+  /** Where a card's routes arrive and its links leave: its middle. */
   const anchors = new Map<string, number>();
   let y = HEADER;
   for (const row of rows) {
@@ -1108,8 +1124,9 @@ function layoutFleetGraphAt(
     row.entries.forEach((entry, index) => {
       const height = heights[index]!;
       if (entry.kind === "host") {
-        const anchor = cardY + cardExtent(entry.host, -1);
-        nodes.set(entry.id, { x: cardX, y: cardY, width: hostWidth, height });
+        const anchor = cardY + height / 2;
+        const own = cardHeight(entry.host);
+        nodes.set(entry.id, { x: cardX, y: anchor - own / 2, width: hostWidth, height: own });
         anchors.set(entry.id, anchor);
         if (entry.host.kind === "environment") handles.set(entry.id, { x: cardRight, y: anchor });
         column.push({ entry, center: anchor });
@@ -1153,7 +1170,7 @@ function layoutFleetGraphAt(
     });
     y += rowHeight + GROUP_GAP;
   }
-  const height = Math.max(HEADER + CLIENT.height, y - GROUP_GAP);
+  let height = Math.max(HEADER + CLIENT.height, y - GROUP_GAP);
 
   const centerOf = (id: string) => anchors.get(id)!;
 
@@ -1177,9 +1194,13 @@ function layoutFleetGraphAt(
   }
   const portY = (link: FleetLinkEdge, hostId: string) => {
     const side = Math.sign(indexOf(link.from === hostId ? link.to : link.from) - indexOf(hostId));
-    const port = portsOf.get(`${hostId}:${side}`)!.indexOf(link);
+    const key = `${hostId}:${side}`;
+    const port =
+      link.from === hostId ? 0 : Number(leaves.has(key)) + arrivalsOf.get(key)!.indexOf(link);
     return (
-      centerOf(hostId) + side * (routesExtent(hostId) + LINK_PORT.first + port * LINK_PORT.pitch)
+      centerOf(hostId) +
+      side *
+        (routesExtent(hostId) + LINK_PORT.first + port * linkPortPitch(byId.get(hostId)!, side))
     );
   };
 
@@ -1303,25 +1324,42 @@ function layoutFleetGraphAt(
 
   // Wires leave the client a little apart, in the order they arrive, so they never cross. A
   // folded group of environments gets one wire, whatever its machines' routes are.
+  // Each route is named in a column beside its card, then closes up into the card's edge.
   const wires = column.flatMap(
     ({
       entry,
       center,
-    }): Array<{ entry: ColumnEntry; edge: FleetRouteEdge | null; portY: number }> => {
-      if (entry.kind === "fold") return [{ entry, edge: null, portY: center }];
+    }): Array<{
+      entry: ColumnEntry;
+      edge: FleetRouteEdge | null;
+      portY: number;
+      entryY: number;
+    }> => {
+      if (entry.kind === "fold") return [{ entry, edge: null, portY: center, entryY: center }];
       const hostRoutes = routesOf.get(entry.id) ?? [];
-      return hostRoutes.map((edge, index) => ({
-        entry,
-        edge,
-        portY: center + (index - (hostRoutes.length - 1) / 2) * PORT_PITCH,
-      }));
+      return hostRoutes.map((edge, index) => {
+        const offset = index - (hostRoutes.length - 1) / 2;
+        return {
+          entry,
+          edge,
+          portY: center + offset * FLEET_ROUTE_PITCH,
+          entryY: center + offset * routeEntryPitch(entry.id),
+        };
+      });
     },
   );
+  const pillRight = pillX + metrics.pill;
+  const closeX = pillRight + metrics.pillGap;
+  const pillColumns: FleetRect[] = [];
   const fan = Math.min(CLIENT.height - 20, (wires.length - 1) * 4);
   wires.forEach((wire, index) => {
     const startY =
       clientCenterY + (wires.length < 2 ? 0 : (index / (wires.length - 1) - 0.5) * fan);
-    const d = `${sCurve(metrics.app, startY, pillX, wire.portY)}H${cardX}`;
+    const close =
+      wire.entryY === wire.portY
+        ? ""
+        : `H${pillRight}C${pillRight + metrics.pillGap / 2} ${wire.portY} ${closeX - metrics.pillGap / 2} ${wire.entryY} ${closeX} ${wire.entryY}`;
+    const d = `${sCurve(metrics.app, startY, pillX, wire.portY)}${close}H${cardX}`;
     if (wire.edge === null) {
       const geometry = stackGeometry.get(wire.entry.id)!;
       stackGeometry.set(wire.entry.id, {
@@ -1330,10 +1368,10 @@ function layoutFleetGraphAt(
       });
       return;
     }
-    routes.set(wire.edge.id, {
-      d,
-      pill: { x: pillX, y: wire.portY - PILL.height / 2, ...PILL_SIZE },
-    });
+    const pill = { x: pillX, y: wire.portY - PILL.height / 2, ...PILL_SIZE };
+    routes.set(wire.edge.id, { d, pill });
+    pillColumns.push(pill);
+    height = Math.max(height, pill.y + pill.height);
   });
 
   // A link between environments names its access on its own lane, in a gap between two cards:
@@ -1382,8 +1420,19 @@ function layoutFleetGraphAt(
           other.y < badge.y + badge.height + BADGE.gap &&
           badge.y < other.y + other.height + BADGE.gap,
       );
+    // Route names reach past their card into the gaps a name would take on that side.
+    const clearOfRoutes = (badge: FleetLinkBadge) =>
+      !pillColumns.some(
+        (pill) =>
+          pill.x < badge.x + badge.width &&
+          badge.x < pill.x + pill.width &&
+          pill.y < badge.y + badge.height &&
+          badge.y < pill.y + pill.height,
+      );
     const options = gaps.flatMap((at) => [place(at, 1), place(at, -1)]);
-    const clear = options.find((option) => clearOfNames(option) && clearOfLanes(option));
+    const clear = options.find(
+      (option) => clearOfNames(option) && clearOfLanes(option) && clearOfRoutes(option),
+    );
     if (clear !== undefined) badges.push(clear);
     linkGeometry.set(link.id, {
       d: elbowPath(cardX, run.from, x, cardX - ARROW_LENGTH, run.to),
