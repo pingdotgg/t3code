@@ -9146,7 +9146,7 @@
   "af059d908bee1496": "Argomenti CLI aggiuntivi passati a pi --mode rpc all'avvio della sessione.",
   "3770de9ed9b3c704": "Limitato a un repository, progetto o spazio di lavoro. Crealo nelle impostazioni Bitbucket di quell'elemento.",
   "70752f3aba4894ff": "Con un token API invece di un token di accesso.",
-  "417f9edb887598bd": "Raggiunge ogni repository a cui il tuo account Atlassian ha accesso. Concedigli accesso in lettura e scrittura a repository e pull request, più read:user:bitbucket e read:spazio di lavoro:bitbucket.",
+  "417f9edb887598bd": "Raggiunge ogni repository a cui il tuo account Atlassian ha accesso. Concedigli accesso in lettura e scrittura a repository e pull request, più read:user:bitbucket e read:workspace:bitbucket.",
   "3516b19bb6089d21": "Un token git.cafe, usato prima di CAFE_TOKEN e del login cafe, così GitCafe funziona anche senza la CLI connessa.",
   "bc63ccd46ca25a3a": "es. --chrome",
   "5cd396217a43a9b3": "es. 300000",
