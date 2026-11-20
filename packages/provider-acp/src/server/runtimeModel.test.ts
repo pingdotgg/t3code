@@ -1381,6 +1381,24 @@ describe("extractMcpToolCallIdentity", () => {
     });
   });
 
+  // regression: #39473 agy 1.5.12 names a non-T3 MCP call only in rawInput.
+  it("recovers server, tool and arguments from Antigravity's MCP execute calls", () => {
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "call_10063436069659393051",
+      kind: "execute",
+      title: "MCP Tool lookup_color",
+      status: "pending",
+      rawInput: { ServerName: "colors", ToolName: "lookup_color", Arguments: { name: "navy" } },
+    });
+
+    expect(extractMcpToolCallIdentity(toolCall)).toEqual({
+      server: "colors",
+      tool: "lookup_color",
+      input: { name: "navy" },
+    });
+  });
+
   it("recovers T3 identity from acp-mcp-call fallback commands", () => {
     const toolCall = toolCallFromUpdate({
       sessionUpdate: "tool_call",
