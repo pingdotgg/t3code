@@ -2090,6 +2090,21 @@ code {
   background-size: 4px 2px;
 }
 
+.chat-markdown:where(.user-message-markdown)
+  a:not(
+    .chat-markdown-file-link,
+    :has([data-slot="context-chip-label"]),
+    [data-markdown-image-link]
+  ) {
+  color: var(--contrast-message-foreground);
+  text-decoration-line: underline;
+
+  &:is(:hover, :focus-visible) {
+    background-image: none;
+    text-decoration-style: dotted;
+  }
+}
+
 :is(.chat-markdown, .composer-tiptap) blockquote {
   border-inline-start: 2px solid color-mix(in srgb, currentcolor 35%, transparent);
   padding-inline-start: 0.8rem;
