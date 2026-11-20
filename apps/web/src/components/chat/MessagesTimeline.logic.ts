@@ -20,6 +20,8 @@ import {
   commandProgramName,
 } from "@t3tools/client-runtime/work-log/command-label";
 import {
+  commandlessCommandLabel,
+  genericCommandStatusLabel,
   liveActivityToolStatus,
   normalizeCompactToolLabel,
   resolveWorkEntryToolPresentation,
@@ -251,39 +253,6 @@ export function workEntryReadOutput(
     return paths.join("\n");
   }
   return null;
-}
-
-function genericCommandStatusLabel(
-  status: ReturnType<typeof liveActivityToolStatus>,
-  resolve: MessageResolver,
-) {
-  return resolve(
-    status === "inProgress"
-      ? msg("Running command")
-      : status === "failed"
-        ? msg("Failed command")
-        : status === "declined"
-          ? msg("Declined command")
-          : status === "stopped"
-            ? msg("Stopped command")
-            : msg("Ran command"),
-  );
-}
-
-function commandlessCommandLabel(
-  entry: WorkLogEntry,
-  status: ReturnType<typeof liveActivityToolStatus>,
-  resolve: MessageResolver,
-): string | null {
-  if (entry.itemType !== "command_execution" || entry.command?.trim()) return null;
-  const heading = normalizeCompactToolLabel(entry.toolTitle || entry.label);
-  const generic =
-    heading === "Ran command" ||
-    heading === "Run command" ||
-    heading === "Command" ||
-    heading === resolve(msg("Ran command")) ||
-    heading === resolve(msg("Command", { $context: "noun, a shell command tool" }));
-  return generic ? genericCommandStatusLabel(status, resolve) : null;
 }
 
 /** Components pass `useMessages()` so the label follows a language switch. */
