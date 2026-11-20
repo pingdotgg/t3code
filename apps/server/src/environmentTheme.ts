@@ -1,5 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - guarded reads need open flags and
-// parent watches need native filename filtering that FileSystem doesn't expose.
+// @effect-diagnostics nodeBuiltinImport:off - guarded reads need native open flags.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -13,7 +12,6 @@ import {
   THEME_CSS_MAX_LENGTH,
 } from "@t3tools/contracts";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
-import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
 import { themeCssLoadsRemoteFiles } from "@t3tools/shared/themeCss";
 import {
   MOBILE_DEFAULT_THEME_ID,
@@ -31,10 +29,7 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
-import * as PlatformError from "effect/PlatformError";
 import * as PubSub from "effect/PubSub";
-import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -43,7 +38,7 @@ import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "./config.ts";
 import * as ServerSettings from "./serverSettings.ts";
-import { watchDirectoryReplacements } from "./watchDirectoryReplacements.ts";
+import { watchDirectoryPath } from "./watchDirectoryReplacements.ts";
 
 const decodeEnvironmentThemeFileJsonExit = Schema.decodeUnknownExit(
   Schema.fromJsonString(EnvironmentThemeFile),
@@ -286,44 +281,9 @@ export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
   return themes;
 });
 
-const watchThemeDirectoryEntry = (path: string, ready: Deferred.Deferred<void>) => {
-  const directory = NodePath.dirname(path);
-  const name = NodePath.basename(path);
-  const watchError = (cause: unknown) =>
-    PlatformError.systemError({
-      _tag: "Unknown",
-      module: "FileSystem",
-      method: "watch",
-      pathOrDescriptor: directory,
-      cause,
-    });
-  // Filter in the native callback to avoid queueing and statting unrelated state files.
-  return Stream.callback<void, PlatformError.PlatformError>(
-    (events) =>
-      Effect.acquireRelease(
-        Effect.try({
-          try: () => {
-            const watcher = NodeFS.watch(directory, (_, filename) => {
-              if (filename === name || filename === null) Queue.offerUnsafe(events, undefined);
-            });
-            watcher.on("error", (error) =>
-              Queue.failCauseUnsafe(events, Cause.fail(watchError(error))),
-            );
-            watcher.on("close", () => Queue.endUnsafe(events));
-            return watcher;
-          },
-          catch: watchError,
-        }),
-        (watcher) => Effect.sync(() => watcher.close()),
-      ).pipe(Effect.tap(() => Deferred.succeed(ready, undefined))),
-    { bufferSize: 1, strategy: "sliding" },
-  );
-};
-
 const make = Effect.gen(function* () {
   const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
   const settings = yield* ServerSettings.ServerSettingsService;
   // Sequence numbers let subscribers drop queued events older than their initial snapshot.
   const changes = yield* PubSub.sliding<PublishedThemes>(1);
@@ -374,24 +334,9 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const configuredPath = path.resolve(environmentThemesDir);
-  const watchEvents = watchDirectoryReplacements(
-    (ready) => watchThemeDirectoryEntry(configuredPath, ready),
-    Stream.unwrap(
-      resolveSymlinkTarget(configuredPath).pipe(
-        Effect.provideService(FileSystem.FileSystem, fs),
-        Effect.provideService(Path.Path, path),
-        Effect.orElseSucceed(() => configuredPath),
-        Effect.map((target) =>
-          target === configuredPath
-            ? watchDirectory(configuredPath)
-            : watchDirectoryReplacements(
-                (ready) => watchThemeDirectoryEntry(target, ready),
-                watchDirectory(target),
-              ),
-        ),
-      ),
-    ),
+  const watchEvents = watchDirectoryPath(
+    environmentThemesDir,
+    watchDirectory(environmentThemesDir),
   ).pipe(
     // A save emits several events, and fs.watch can fire before content is flushed.
     Stream.debounce(Duration.millis(100)),

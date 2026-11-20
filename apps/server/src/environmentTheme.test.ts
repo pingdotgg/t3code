@@ -5,6 +5,7 @@ import {
   THEME_CSS_MAX_LENGTH,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -209,10 +210,20 @@ describe("environment theme", () => {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const outside = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-linked-themes-" });
-          const target = path.join(outside, "active");
+          const targetParent = path.join(outside, "active-parent");
+          const target = path.join(targetParent, "active");
           const restored = path.join(outside, "restored");
-          yield* fs.makeDirectory(target);
+          yield* fs.makeDirectory(target, { recursive: true });
           yield* fs.makeDirectory(restored);
+          let linkTarget = target;
+          if ((yield* HostProcess.Platform) !== "win32") {
+            const userdata = path.dirname(environmentThemesDir);
+            const anchor = path.join(targetParent, "anchor");
+            yield* fs.makeDirectory(anchor);
+            yield* fs.makeDirectory(path.join(userdata, "active"));
+            yield* fs.symlink(anchor, path.join(userdata, "alias"));
+            linkTarget = "alias/../active";
+          }
           yield* fs.writeFileString(
             path.join(target, "shared-light.json"),
             encodeThemeFile(SHARED_THEME),
@@ -229,7 +240,7 @@ describe("environment theme", () => {
           assert.deepEqual(yield* Queue.take(snapshots), ["Nightfall"]);
 
           yield* fs.rename(environmentThemesDir, path.join(outside, "original"));
-          yield* fs.symlink(target, environmentThemesDir);
+          yield* fs.symlink(linkTarget, environmentThemesDir);
           assert.deepEqual(
             yield* Stream.fromQueue(snapshots).pipe(
               Stream.filter((names) => names.length > 0),
@@ -239,6 +250,12 @@ describe("environment theme", () => {
             ["Shared Light"],
           );
 
+          yield* fs.writeFileString(
+            path.join(target, "nightfall.json"),
+            encodeThemeFile(NIGHTFALL_THEME),
+          );
+          assert.deepEqual(yield* Queue.take(snapshots), ["Nightfall", "Shared Light"]);
+
           yield* fs.rename(target, path.join(outside, "previous"));
           assert.deepEqual(yield* Queue.take(snapshots), []);
           yield* fs.rename(restored, target);
@@ -247,6 +264,26 @@ describe("environment theme", () => {
           yield* fs.writeFileString(
             path.join(target, "shared-light.json"),
             encodeThemeFile(SHARED_THEME),
+          );
+          assert.deepEqual(yield* Queue.take(snapshots), ["Nightfall", "Shared Light"]);
+
+          const restoredParent = path.join(outside, "restored-parent");
+          const restoredTarget = path.join(restoredParent, "active");
+          yield* fs.makeDirectory(restoredTarget, { recursive: true });
+          yield* fs.makeDirectory(path.join(restoredParent, "anchor"));
+          yield* fs.writeFileString(
+            path.join(restoredTarget, "shared-light.json"),
+            encodeThemeFile(SHARED_THEME),
+          );
+
+          yield* fs.rename(targetParent, path.join(outside, "previous-parent"));
+          assert.deepEqual(yield* Queue.take(snapshots), []);
+          yield* fs.rename(restoredParent, targetParent);
+          assert.deepEqual(yield* Queue.take(snapshots), ["Shared Light"]);
+
+          yield* fs.writeFileString(
+            path.join(target, "nightfall.json"),
+            encodeThemeFile(NIGHTFALL_THEME),
           );
           assert.deepEqual(yield* Queue.take(snapshots), ["Nightfall", "Shared Light"]);
         }),
