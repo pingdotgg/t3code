@@ -334,47 +334,50 @@ describe("EnvironmentLinker", () => {
     );
   });
 
-  it.effect("finishes a failed unlink teardown before a new link takes the tunnel", () => {
-    const touched: Array<string> = [];
-    let tornDown = false;
-    return Effect.gen(function* () {
-      const linker = yield* EnvironmentLinker.EnvironmentLinker;
-      const link = Effect.gen(function* () {
-        const { request } = yield* makeRequest;
-        return yield* linker.link({
-          userId: "user_123",
-          request: { ...request, managedTunnelsEnabled: true },
+  it.effect.each([{ managedTunnelsEnabled: true }, { managedTunnelsEnabled: false }])(
+    "finishes a failed unlink teardown before a new link: %o",
+    ({ managedTunnelsEnabled }) => {
+      const touched: Array<string> = [];
+      let tornDown = false;
+      return Effect.gen(function* () {
+        const linker = yield* EnvironmentLinker.EnvironmentLinker;
+        const link = Effect.gen(function* () {
+          const { request } = yield* makeRequest;
+          return yield* linker.link({
+            userId: "user_123",
+            request: { ...request, managedTunnelsEnabled },
+          });
         });
-      });
-      expect((yield* link.pipe(Effect.flip))._tag).toBe("ManagedEndpointDeprovisioningFailed");
-      expect(touched).toEqual(["deprovision"]);
+        expect((yield* link.pipe(Effect.flip))._tag).toBe("ManagedEndpointDeprovisioningFailed");
+        expect(touched).toEqual(["deprovision"]);
 
-      tornDown = true;
-      yield* link;
-      expect(touched).toEqual(["deprovision", "deprovision", "upsert"]);
-    }).pipe(
-      Effect.provide(
-        layerTest({
-          prepareDeprovision: () =>
-            Effect.succeed({
-              userId: "user_123",
-              environmentId: "env-link-test",
-              hostname: "managed.example.test",
-              tunnelId: "left-behind-tunnel",
-              tunnelName: "left-behind",
-              dnsRecordId: null,
-              readyAt: null,
-              origin: null,
-              updatedAt: "2026-01-01T00:00:00.000Z",
-              generation: 1,
-              tunnelReleasedAt: null,
-            }),
-          deprovision: () => Effect.sync(() => touched.push("deprovision") > 0 && tornDown),
-          upsert: () => Effect.sync(() => void touched.push("upsert")),
-        }),
-      ),
-    );
-  });
+        tornDown = true;
+        yield* link;
+        expect(touched).toEqual(["deprovision", "deprovision", "upsert"]);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            prepareDeprovision: () =>
+              Effect.succeed({
+                userId: "user_123",
+                environmentId: "env-link-test",
+                hostname: "managed.example.test",
+                tunnelId: "left-behind-tunnel",
+                tunnelName: "left-behind",
+                dnsRecordId: null,
+                readyAt: null,
+                origin: null,
+                updatedAt: "2026-01-01T00:00:00.000Z",
+                generation: 1,
+                tunnelReleasedAt: null,
+              }),
+            deprovision: () => Effect.sync(() => touched.push("deprovision") > 0 && tornDown),
+            upsert: () => Effect.sync(() => void touched.push("upsert")),
+          }),
+        ),
+      );
+    },
+  );
 
   it.effect("rejects replayed JWT ids", () =>
     Effect.gen(function* () {

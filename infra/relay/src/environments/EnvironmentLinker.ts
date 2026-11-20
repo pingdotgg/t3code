@@ -309,14 +309,12 @@ const make = Effect.gen(function* () {
         });
       }
       // An unlink whose teardown failed leaves its tunnel behind, and provisioning would reuse it by
-      // name. Finish the teardown first so a new link never inherits the old link's tunnel.
-      if (existing === null && input.request.managedTunnelsEnabled) {
+      // name. Finish the teardown before any new link, publish-only too: once that link is active
+      // it could turn tunnels on and inherit the old one.
+      if (existing === null) {
         const key = { userId: input.userId, environmentId: verified.environmentId };
         const leftover = yield* managedEndpointProvider.prepareDeprovision(key);
-        if (
-          leftover !== null &&
-          !(yield* managedEndpointProvider.deprovision({ ...key, target: leftover }))
-        ) {
+        if (!(yield* managedEndpointProvider.deprovision({ ...key, target: leftover }))) {
           return yield* new ManagedEndpointProvider.ManagedEndpointDeprovisioningFailed({
             ...key,
             stage: "claim-deprovision",
@@ -324,8 +322,8 @@ const make = Effect.gen(function* () {
           });
         }
       }
-      // Non-tunnel links must release provisioned tunnel/DNS resources; best-effort deprovision is idempotent.
-      if (!input.request.managedTunnelsEnabled) {
+      // An active link going publish-only releases its own tunnel/DNS; best-effort deprovision is idempotent.
+      if (existing !== null && !input.request.managedTunnelsEnabled) {
         yield* managedEndpointProvider
           .deprovision({
             userId: input.userId,
