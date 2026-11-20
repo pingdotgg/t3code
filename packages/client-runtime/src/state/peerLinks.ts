@@ -124,6 +124,11 @@ export function createPeerLinkEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input.environmentId]),
       },
     }),
+    /** Asks for a pairing code from a linked environment, to link another one there. Never cached. */
+    pairLink: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:peer-links:pair-link",
+      tag: WS_METHODS.peerLinksPairLink,
+    }),
     // An agent's link card. One answer per card at a time.
     answerRequest: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:peer-links:answer-request",
