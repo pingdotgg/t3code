@@ -136,7 +136,13 @@ const boxThreads = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) => {
       })),
     waitForThread: (input) =>
       Ref.update(seen, (current) => ({ ...current, waits: [...current.waits, input] })).pipe(
-        Effect.as({ threadId: input.threadId, run: run("completed"), timedOut: false }),
+        Effect.as({
+          threadId: input.threadId,
+          run: run("completed"),
+          timedOut: false,
+          hasPendingQuestion: false,
+          pendingApproval: null,
+        }),
       ),
   });
 };
@@ -473,6 +479,8 @@ it.effect("keeps a forwarded wait short and its retries scoped to the caller", (
         runId: boxRun,
         status: "completed",
         timedOut: false,
+        hasPendingQuestion: false,
+        pendingApproval: null,
       });
       // One capped piece, so the caller's MCP request returns before its client times out.
       expect((yield* Ref.get(seen)).waits.map(({ timeoutMs }) => timeoutMs)).toEqual([45_000]);

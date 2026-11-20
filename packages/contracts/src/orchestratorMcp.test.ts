@@ -12,6 +12,23 @@ const decodeDelegateTaskResult = Schema.decodeUnknownSync(OrchestratorMcpDelegat
 const decodeThreadWaitResult = Schema.decodeUnknownSync(OrchestratorMcpThreadWaitResult);
 
 describe("orchestrator MCP contracts", () => {
+  it("decodes older peer waits while preserving explicit pending input", () => {
+    const decode = Schema.decodeUnknownSync(OrchestratorMcpThreadWaitResult);
+    const legacy = {
+      threadId: "thread-peer",
+      runId: "run-peer",
+      status: "running",
+      timedOut: true,
+    };
+    expect(decode(legacy)).toEqual({ ...legacy, hasPendingQuestion: false, pendingApproval: null });
+    const pending = {
+      ...legacy,
+      timedOut: false,
+      hasPendingQuestion: true,
+      pendingApproval: { requestId: "request-peer", kind: "command", runId: "run-peer" },
+    };
+    expect(decode(pending)).toEqual(pending);
+  });
   it("decodes cross-provider delegated task requests and durable results", () => {
     const request = decodeDelegateTaskInput({
       task: "Inspect the workspace and report the result.",

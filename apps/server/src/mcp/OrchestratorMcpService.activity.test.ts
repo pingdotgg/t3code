@@ -721,6 +721,7 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
     visibleTurnItems: [],
     providerTurns: [],
     runtimeRequests: [],
+    turnItems: [],
     messages: [],
     contextTransfers: [
       {
