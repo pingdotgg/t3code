@@ -1,5 +1,5 @@
 // Run with: node packages/source-control-github/scripts/measure-pr-preview.ts owner/repo 123 456 [--repeats=N]
-// With repeats, `elapsedMs` is the lower median and `minMs` the fastest sample; request counts and
+// With repeats, `elapsedMs` is the median and `minMs` the fastest sample; request counts and
 // `points` are totals across all samples.
 
 // Real GitHub reads share repository-permission caches, excluding browser and service caches.
