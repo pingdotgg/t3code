@@ -53,6 +53,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     spawnFails: false,
     cleanup: Effect.void,
     cameraHelp: "",
+    cameraProbes: 0,
     spawnedEnvironments: [] as Array<NodeJS.ProcessEnv | undefined>,
   };
   const daemonStopRequested = yield* Deferred.make<ReadonlyArray<string>>();
@@ -131,7 +132,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
                 input.args.includes("-list-avds")
                   ? avdOutput
                   : input.args[0]?.startsWith("-help-camera-")
-                    ? processOutput(0, hub.cameraHelp)
+                    ? (hub.cameraProbes++, processOutput(0, hub.cameraHelp))
                     : processOutput(0),
               );
       },
@@ -265,7 +266,13 @@ describe("AgentDevice startup", () => {
           "-camera-front emulated -camera-back emulated",
         );
 
+        // A live hub with an unchanged emulator answers without probing it.
+        const probes = hub.cameraProbes;
+        yield* host.ensureReady(() => Effect.void);
+        expect(hub.cameraProbes).toBe(probes);
+
         // The SDK's emulator is updated to one that renders image files while the hub keeps running.
+        yield* fs.writeFileString(`${sdk}/emulator/emulator`, "updated");
         hub.cameraHelp = "emulated imagefile:<filename> none";
         yield* host.ensureReady(() => Effect.void);
         expect(hub.spawnedEnvironments.at(-1)?.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS).toBeUndefined();
