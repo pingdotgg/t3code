@@ -34,6 +34,7 @@ import {
   type ValidBoard,
 } from "../store/boardFiles";
 import { createLocalState, type LocalState } from "../store/localState";
+import { showBoard } from "./filesView";
 import { failureText } from "../settings/failureText";
 import {
   engineConnectionAtom,
@@ -290,5 +291,6 @@ export function openBoard(
   opened: NonNullable<LocalState["lastOpenedBoard"]>,
 ) {
   registry.set(lastOpenedBoardAtom, opened);
+  showBoard(registry);
   return localState.update((state) => ({ ...state, lastOpenedBoard: opened }));
 }

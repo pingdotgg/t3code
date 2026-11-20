@@ -6,7 +6,7 @@ import { browserHost } from "./host";
 import { EMPTY_TABS, normalizeUrl, tabsReducer, type TabsAction, type TabsState } from "./tabs";
 
 /** The panel's tabs. Later tabs join this list and the strip, and this one does not move. */
-export const PANEL_TABS = ["files", "browser"] as const;
+export const PANEL_TABS = ["explorer", "browser"] as const;
 export type PanelTab = (typeof PANEL_TABS)[number];
 
 /** What the browser tab shows: the user's native tabs, or the engine's agent tabs. */
@@ -31,7 +31,7 @@ export const PANEL_DEFAULT_WIDTH = 420;
 
 export const panelAtom = Atom.make<PanelState>({
   open: false,
-  tab: "browser",
+  tab: "explorer",
   view: browserHost === null ? "agents" : "tabs",
   width: PANEL_DEFAULT_WIDTH,
   tabs: EMPTY_TABS,
@@ -66,6 +66,10 @@ export function setPanelView(registry: AtomRegistry.AtomRegistry, view: PanelVie
 
 export function setPanelTab(registry: AtomRegistry.AtomRegistry, tab: PanelTab): void {
   change(registry, (state) => ({ ...state, tab }));
+}
+
+export function togglePanel(registry: AtomRegistry.AtomRegistry): void {
+  change(registry, (state) => ({ ...state, open: !state.open }));
 }
 
 /** Shows a tab, or closes the panel when that tab is the one already showing. */

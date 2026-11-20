@@ -1,4 +1,4 @@
-import { type ArtifactRef, classifyArtifact, WORKTREE_ARTIFACTS } from "../domain/artifact";
+import { type ArtifactRef, classifyArtifact } from "../domain/artifact";
 import { BOARDS_DIR } from "../domain/board";
 import type { ProjectFiles } from "./boardFiles";
 
@@ -21,6 +21,12 @@ export type ArtifactContents =
 
 /** The file read the viewer goes through, which takes an absolute path. */
 export type ReadArtifact = (cwd: string, absolutePath: string) => Promise<ArtifactContents>;
+
+/**
+ * Where an agent leaves its evidence inside its own worktree. The folder holds one folder per
+ * ticket key, as the store's `artifacts/` does.
+ */
+export const WORKTREE_ARTIFACTS = ".omp/artifacts";
 
 /** The store folders that hold artifacts, which keeps the listing out of `roles/` and the like. */
 const ARTIFACT_FOLDERS: ReadonlyArray<string> = ["artifacts", "review", "inbox"];

@@ -108,9 +108,21 @@ Agents leave evidence files, and the board shows each as a card. A ticket frame 
 
 `store/artifacts.ts` lists the board folder one directory at a time with `projects.listEntries`, always with a path relative to its `cwd`, and again every second while the board is open, so a file an agent writes shows within a few seconds. It also lists `.omp/artifacts/` in each ticket's `worktreePath`, with the worktree as the `cwd`, because the engine refuses an absolute `directoryPath`.
 
-Opening a card shows the file in the viewer over the canvas. An image loads from an `assets.createUrl` `media-file` URL, which the engine signs for an absolute path and serves without the app's credentials. The page's `img-src` allows `http://127.0.0.1:*` for that. Text and markdown come from `projects.readFile` with the absolute path, which the engine reads up to 1 MB of: past that the viewer says how much of the file it shows. A file the engine calls binary shows a placeholder. A ticket's `README.txt` shows as its files, each beside what it proves.
+Opening a card, or a file link in the orchestrator's chat, shows the file in the main view's preview, which the next section describes.
 
 Each listing marks `board:artifacts-listed` with the file count and the milliseconds it took in `detail`.
+
+## Files
+
+The right sidebar's **Explorer** tab, the first tab of the panel the top bar's button toggles, lists the open board's project and each ticket's worktree as roots, taken from `tickets.json`, and draws the chosen root's tree. Choosing a file, a file link in the orchestrator's chat, or an artifact card opens the file as a tab beside **Board** in a strip over the canvas, the way Orca opens a file in its main area. The active file covers the canvas, which stays mounted and sized, so it keeps its pan and zoom. Closing the tab, or choosing **Board**, shows the canvas again. `src/state/filesView.ts` holds the explorer's root, the open tabs, and the active one. The board never edits a file.
+
+`src/files/FileTree.tsx` draws the root with `@pierre/trees`, as T3's file browser does, and lists a folder with `projects.listEntries` only when it opens. Every listing is relative to the root's `cwd`, because the engine lists only inside the `cwd` it is given, so a worktree is listed with the worktree as the `cwd`. Open folders are remembered per root in `localStorage["board.files.expanded"]`.
+
+`FilePreview.tsx` shows a text file as C2's colored code, markdown rendered, `.tsv` and `.csv` as a table through `@t3tools/shared/delimitedPreview`, an image from a signed `assets.createUrl` `media-file` URL, a PDF as pages through `pdfjs-dist`, and any other binary as a placeholder. Text comes from `projects.readFile`, which the engine reads up to 1 MB of, and past that the preview says how much it shows. Each file has **Copy** and **Download**. For a file with no text, **Copy** puts its path on the clipboard, and **Download** fetches the engine's attachment URL. A ticket's `README.txt` shows as its files, each beside what it proves.
+
+The three-dot button in the preview's header opens a menu shaped like Orca's, with one **Open in <editor>** item per editor in the server config's `availableEditors`. Choosing one calls T3's `shell.openInEditor` with the file's absolute path as `cwd`, an empty `position`, and the root as `projectRoot`, so the editor opens on the engine's host. `src/files/editorChoice.ts` lists the editor opened last first, which `localState` keeps in `lastEditor`, and keeps the server's order for an editor the server no longer offers. The button is hidden when the list is empty, and a launch T3 refuses shows T3's reason in the header.
+
+Expanding a folder marks `board:tree-expand` and, two frames after its rows are given to the tree, `board:tree-painted`. Choosing a file marks `board:preview-open`, and its preview marks `board:preview-painted` after its first paint.
 
 ## Pull requests and merge readiness
 
@@ -139,25 +151,13 @@ The chip marks `board:pr-event` when a pull request's live state changes and `bo
 
 ## Browser panel
 
-The sidebar's **Browser** row shows the browser tab of the side panel beside the board. `src/browser/PanelHost.tsx` is the app's one right-side host, which `App.tsx` lays out as the grid's last column. Its tab strip, `PanelTabs.tsx`, draws icon tabs with an underline under the active one, the way Orca's right sidebar does, and a later tab joins `PANEL_TABS` in `panel.ts` and the strip without moving the others. A drag handle or the arrow keys on the panel's left edge set its width, which every tab shares.
+The sidebar's **Browser** row shows the browser tab of the side panel beside the board, and the top bar's button shows or hides the panel. `src/browser/PanelHost.tsx` is the app's one right-side host, which `App.tsx` lays out as the grid's last column. Its tab strip, `PanelTabs.tsx`, draws icon tabs with an underline under the active one, the way Orca's right sidebar does: **Explorer**, then **Browser**. A drag handle or the arrow keys on the panel's left edge set its width, which every tab shares.
 
 Inside Electron the panel holds the user's tabs. `electron/browserView.ts` gives each tab its own `WebContentsView` in a persistent `persist:agent-board-browser` session, shows only the active one, and places it over the rectangle the renderer reports with `board:browser-bounds`. Every message is decoded with a schema before it is used, a page can only navigate to http(s) URLs, and the session denies every permission request. `src/browser/tabs.ts` keeps the tab list in a reducer, and `openInPanel(url)` in `src/browser/panel.ts` is the one entry point that opens a link in a new tab. A ticket's pull request chip, the links an orchestrator names as evidence on a merge approval card, and a link in a markdown document, such as an artifact or a local preview URL, all go through it. Without Electron, as in `dev:web`, it opens the system browser instead.
 
 The **Agents** button lists the browser tabs the open board's orchestrator and agents hold in the engine. It reads `preview.list` for each thread of the board's family, reads it again when `subscribePreviewEvents` reports a change, and shows the tab you pick through the engine's `/api/preview-stream/ws` stream, authorized by a media ticket from `resolveDeviceHubAccess`. The view is watch-only. The engine keeps an agent's tabs whether or not the board is open, so they are there when the panel first opens.
 
 Pressing **Browser** marks `board:browser-click`, and the panel marks `board:browser-painted` after its first paint.
-
-## Files panel
-
-The sidebar's **Files** row shows the Files tab of the side panel, beside **Browser**. Its root picker lists the open board's project and each ticket's worktree once, taken from `tickets.json`. `src/files/FileTree.tsx` draws the chosen root with `@pierre/trees`, as T3's file browser does, and lists a folder with `projects.listEntries` only when it opens. Every listing is relative to the root's `cwd`, because the engine lists only inside the `cwd` it is given, so a worktree is listed with the worktree as the `cwd`. Open folders are remembered per root in `localStorage["board.files.expanded"]`. The tab stays mounted behind the Browser tab, so an open file and its edits survive a tab switch.
-
-`FilePreview.tsx` shows a text file as C2's colored code, markdown rendered, `.tsv` and `.csv` as a table through `@t3tools/shared/delimitedPreview`, an image from a signed media URL, a PDF as pages through `pdfjs-dist`, and any other binary as a placeholder. Each has **Copy** and **Download**. For a file with no text, **Copy** puts its path on the clipboard, and **Download** fetches the engine's attachment URL.
-
-**Edit** turns a text file of up to the engine's 1 MiB read limit into a textarea, and **Save** writes it with `projects.writeFile`. `saveSession.ts` keeps the contents at open, the edits, and the disk contents read at save. A disk that no longer holds the contents the editor opened shows the conflict with **Keep mine**, **Take theirs**, and both sides, and neither side is overwritten until one is chosen. The engine has no compare-and-write, so a write that lands between the read and the write is not caught. A connection without the `filesystem:write` scope disables **Edit** with the reason, and a write the engine refuses shows its message. After a save under the board's store or a ticket worktree, **Tell the orchestrator** sends "I edited <path>. Re-read it." to that board's orchestrator.
-
-The artifact viewer opens a file in the same preview and editor. `editAccess` in `src/domain/artifact.ts` decides whether a path may be edited: screenshots, proofs, scripts, diffs, and `decisions.tsv` stay read-only, because review and merge readiness rely on them, and so does every file in a board store that is not an artifact, which is the orchestrator's own.
-
-Expanding a folder marks `board:tree-expand` and, two frames after its rows are given to the tree, `board:tree-painted`. Pressing **Edit** marks `board:editor-open`, and the editor marks `board:editor-painted` after its first paint.
 
 ## Engine probe
 

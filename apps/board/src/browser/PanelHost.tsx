@@ -7,8 +7,8 @@ import { PanelTabs } from "./PanelTabs";
 import { ResizeHandle } from "./ResizeHandle";
 
 /**
- * The panel beside the board. Its tabs share one width, and the files tab stays mounted behind
- * the others so an open file and its edits survive a tab switch.
+ * The panel beside the board. Its tabs share one width, and the explorer stays mounted behind
+ * the others so its open folders survive a tab switch.
  */
 export function PanelHost() {
   const { tab, width } = useAtomValue(panelAtom);
@@ -22,10 +22,10 @@ export function PanelHost() {
       <ResizeHandle />
       <PanelTabs />
       <div
-        id="panel-files"
+        id="panel-explorer"
         role="tabpanel"
-        aria-labelledby="panel-tab-files"
-        className={tab === "files" ? "flex min-h-0 flex-1 flex-col" : "hidden"}
+        aria-labelledby="panel-tab-explorer"
+        className={tab === "explorer" ? "flex min-h-0 flex-1 flex-col" : "hidden"}
       >
         <FilesPanel />
       </div>

@@ -2,7 +2,7 @@ import type { ProjectEntry } from "@t3tools/contracts";
 import { FileTree as PierreTree, useFileTree } from "@pierre/trees/react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { RefreshCw } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
 
 import { Tooltip } from "../ui/Tooltip";
 import { coalesceReentrantCalls, readExpanded, writeExpanded } from "./treeExpansion";
@@ -44,10 +44,13 @@ const afterPaint = (done: () => void) => requestAnimationFrame(() => requestAnim
 export function FileTree({
   environmentId,
   cwd,
+  title,
   onOpenFile,
 }: {
   environmentId: EnvironmentId;
   cwd: string;
+  /** What heads the tree, beside its refresh button. */
+  title: ReactNode;
   onOpenFile: (path: string) => void;
 }) {
   const { entries, attach, load, refresh, ready, loading, error } = useDirectoryEntries(
@@ -151,8 +154,9 @@ export function FileTree({
 
   return (
     <div ref={mount} className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center justify-between gap-2 px-3 py-1 text-[11px] text-muted">
-        <span role="status">
+      <div className="flex shrink-0 items-center gap-2 border-b border-line px-2 py-1.5 text-[11px] text-muted">
+        <div className="min-w-0 flex-1">{title}</div>
+        <span role="status" className="shrink-0">
           {!ready && error === null ? "Loading files" : loading.size > 0 ? "Loading" : ""}
         </span>
         <Tooltip text="Refresh the files" side="bottom" align="end">

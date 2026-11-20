@@ -1,10 +1,10 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 
-import { BOARDS_DIR } from "../domain/board";
+import type { FileRef } from "../state/filesView";
 
-/** A place the Files panel browses: the project, or a ticket's worktree. */
+/** A place the file view browses: the project, or a ticket's worktree. */
 export interface FilesRoot {
-  /** The folder the engine lists and writes inside, which is the `cwd` of every call. */
+  /** The folder the engine lists inside, which is the `cwd` of every call. */
   readonly cwd: string;
   readonly label: string;
 }
@@ -26,11 +26,10 @@ export function boardRoots(
 
 const trimSlashes = (path: string) => path.replace(/\/+$/, "");
 
-/** What the Files panel needs to know about the board it browses. */
+/** What the file view needs to know about the board it browses. */
 export interface FilesBoard {
   readonly environmentId: EnvironmentId;
   readonly mediaThreadId: string;
-  readonly orchestratorThreadId: string | null;
   /** The project first, then the ticket worktrees. */
   readonly roots: ReadonlyArray<FilesRoot>;
 }
@@ -42,9 +41,6 @@ export interface FileTarget {
   readonly path: string;
   /** The thread a media URL is minted under. */
   readonly mediaThreadId: string;
-  readonly orchestratorThreadId: string | null;
-  /** Whether the orchestrator may need to read this file again after a save. */
-  readonly tellable: boolean;
 }
 
 export const absolutePathOf = (target: Pick<FileTarget, "cwd" | "path">) =>
@@ -72,15 +68,9 @@ export function locate(
   return best === null ? null : { root: best, path: absolutePath.slice(best.cwd.length + 1) };
 }
 
-/** The target of a file under a root, where a save under the board's store or a worktree is one the orchestrator reads. */
-export function fileTarget(board: FilesBoard, root: FilesRoot, path: string): FileTarget {
-  const isProject = root.cwd === board.roots[0]?.cwd;
-  return {
-    environmentId: board.environmentId,
-    cwd: root.cwd,
-    path,
-    mediaThreadId: board.mediaThreadId,
-    orchestratorThreadId: board.orchestratorThreadId,
-    tellable: !isProject || path.startsWith(`${BOARDS_DIR}/`),
-  };
-}
+export const fileTarget = (board: FilesBoard, { cwd, path }: FileRef): FileTarget => ({
+  environmentId: board.environmentId,
+  cwd,
+  path,
+  mediaThreadId: board.mediaThreadId,
+});

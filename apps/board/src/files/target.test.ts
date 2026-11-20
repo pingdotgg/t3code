@@ -1,7 +1,6 @@
-import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { boardRoots, fileTarget, locate } from "./target";
+import { boardRoots, locate } from "./target";
 
 const project = { title: "demo", workspaceRoot: "/work/demo/" };
 const roots = boardRoots(project, [
@@ -32,22 +31,5 @@ describe("locate", () => {
 
   it("Given a path outside every root, when it is located, then it is null", () => {
     expect(locate(roots, "/elsewhere/a.md")).toBeNull();
-  });
-});
-
-describe("fileTarget", () => {
-  const board = {
-    environmentId: EnvironmentId.make("env"),
-    mediaThreadId: "thread",
-    orchestratorThreadId: "thread",
-    roots,
-  };
-
-  it.each([
-    [roots[0]!, ".agentboard/demo/plan.md", true],
-    [roots[0]!, "src/index.ts", false],
-    [roots[1]!, "src/index.ts", true],
-  ])("Given %o and %s, when its target is made, then tellable is %s", (root, path, tellable) => {
-    expect(fileTarget(board, root, path)).toMatchObject({ cwd: root.cwd, path, tellable });
   });
 });

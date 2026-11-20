@@ -4,9 +4,9 @@ import { TriangleAlert } from "lucide-react";
 import { useContext, useMemo } from "react";
 
 import { ArtifactsProvider } from "../artifacts/ArtifactsContext";
-import { ArtifactViewer } from "../artifacts/ArtifactViewer";
 import { useBoardArtifacts } from "../artifacts/useBoardArtifacts";
 import { OrchestratorPanel } from "../chat/OrchestratorPanel";
+import { MainTabs } from "../files/MainTabs";
 import { mergeTicketKey } from "../domain/readiness";
 import { frameOrderAtom, peekAtom } from "../state/boardUi";
 import { useThreadFamily } from "../state/family";
@@ -23,7 +23,7 @@ import { Viewport } from "./Viewport";
 
 const NO_ORDER = {};
 
-/** A board's orchestrator card and lanes on the canvas, the peek drawer over it, and the orchestrator's panel beside it. */
+/** A board's orchestrator card and lanes on the canvas, the peek drawer over it, and the orchestrator's panel beside it. Open files are tabs over the canvas. */
 export function BoardScreen({
   project,
   listed,
@@ -71,7 +71,7 @@ export function BoardScreen({
     <ArtifactsProvider value={artifacts.value}>
       <PrProvider value={prContext}>
         <div className="flex h-full min-h-0">
-          <div className="relative min-w-0 flex-1">
+          <MainTabs>
             <Viewport content={layout.content}>
               <OrchestratorCard
                 project={project}
@@ -141,10 +141,7 @@ export function BoardScreen({
               peek={peek}
               onClose={() => registry.set(peekAtom, null)}
             />
-            {artifacts.viewing !== null && (
-              <ArtifactViewer artifact={artifacts.viewing} onClose={artifacts.closeViewer} />
-            )}
-          </div>
+          </MainTabs>
           <OrchestratorPanel project={project} listed={listed} />
         </div>
       </PrProvider>

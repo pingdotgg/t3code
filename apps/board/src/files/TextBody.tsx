@@ -7,7 +7,6 @@ import { Notice } from "../artifacts/Notice";
 import { CodeBody } from "../chat/CodeBody";
 import { plainCode } from "../chat/HighlightedCode";
 import { ChatMarkdown } from "../chat/Markdown";
-import type { EditAccess } from "../domain/artifact";
 import { artifactContentsAtom, artifactContentsKey } from "../state/artifacts";
 import { BinaryPlaceholder } from "./BinaryPlaceholder";
 import { DelimitedTable } from "./DelimitedTable";
@@ -34,15 +33,21 @@ const HIGHLIGHT_LIMIT = 200_000;
 
 const MARKDOWN = /\.(?:md|mdx|markdown|mdown|mkd)$/i;
 
+// Two frames: the first commits the body, the second runs after it has been painted. A stable
+// function, so a re-render does not run it again.
+function markPainted(node: HTMLElement | null) {
+  if (node === null) return;
+  const frame = requestAnimationFrame(() =>
+    requestAnimationFrame(() => performance.mark("board:preview-painted")),
+  );
+  return () => cancelAnimationFrame(frame);
+}
+
 export function TextBody({
   target,
-  access,
-  onEdit,
   textBody,
 }: {
   target: FileTarget;
-  access: EditAccess;
-  onEdit: (text: string) => void;
   textBody: ((text: string) => ReactNode | undefined) | undefined;
 }) {
   const name = nameOf(target.path);
@@ -55,7 +60,7 @@ export function TextBody({
   if (contents.kind === "missing") return <Notice>This file is gone.</Notice>;
   if (contents.kind === "binary") {
     return (
-      <PathOnly target={target} access={access}>
+      <PathOnly target={target}>
         <BinaryPlaceholder name={name} />
       </PathOnly>
     );
@@ -64,19 +69,10 @@ export function TextBody({
   const delimiter = filePreviewDelimiter({ name });
   const custom = textBody?.(text);
   return (
-    <>
+    <div ref={markPainted} className="flex min-h-0 flex-1 flex-col">
       <FileToolbar
         target={target}
-        access={access}
         copy={{ label: "Copy file", read: () => text }}
-        onEdit={
-          contents.truncated
-            ? null
-            : () => {
-                performance.mark("board:editor-open", { detail: { path: target.path } });
-                onEdit(text);
-              }
-        }
         text={contents.truncated ? null : text}
       />
       {contents.truncated && (
@@ -86,7 +82,7 @@ export function TextBody({
           className="border-b border-amber-400/40 bg-amber-500/10 px-4 py-2 text-[12px] text-amber-300"
         >
           Showing the first {formatBytes(encoder.encode(text).length)} of{" "}
-          {formatBytes(contents.byteLength)}. Too large to edit.
+          {formatBytes(contents.byteLength)}.
         </p>
       )}
       {delimiter !== null && custom === undefined ? (
@@ -106,6 +102,6 @@ export function TextBody({
           )}
         </div>
       )}
-    </>
+    </div>
   );
 }

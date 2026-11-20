@@ -5,7 +5,7 @@ import type { ValidBoard } from "../store/boardFiles";
 import { BoardFiles } from "./BoardFiles";
 import { EmptyFiles } from "./EmptyFiles";
 
-/** The files tab: the open board's project and ticket worktrees, a tree of the chosen root, and the file picked from it. */
+/** The explorer tab: the open board's project and ticket worktrees as roots, and a tree of the chosen one. */
 export function FilesPanel() {
   const opened = useAtomValue(lastOpenedBoardAtom);
   const project = useAtomValue(environmentProjects.projectsAtom).find(

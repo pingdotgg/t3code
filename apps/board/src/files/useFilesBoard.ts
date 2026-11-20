@@ -8,7 +8,7 @@ import { boardStoreAtom } from "../state/orchestrator";
 import type { ValidBoard } from "../store/boardFiles";
 import { boardRoots, type FilesBoard } from "./target";
 
-/** The roots of a board and the threads its files are served and reported under. */
+/** The roots of a board and the thread its files are served under. */
 export function useFilesBoard(project: EnvironmentProject, listed: ValidBoard): FilesBoard {
   const tickets = useAtomValue(boardStoreAtom(`${project.id}/${listed.folder}`))?.tickets ?? null;
   const { board } = listed;
@@ -18,7 +18,6 @@ export function useFilesBoard(project: EnvironmentProject, listed: ValidBoard): 
       environmentId: project.environmentId,
       // The engine serves an absolute path whichever thread names it, and a board has a thread of its own to name.
       mediaThreadId: board.orchestratorThreadId ?? board.id,
-      orchestratorThreadId: board.orchestratorThreadId,
       roots: boardRoots(project, parsed !== null && Result.isSuccess(parsed) ? parsed.success : []),
     };
   }, [project, board.id, board.orchestratorThreadId, tickets]);
