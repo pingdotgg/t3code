@@ -87,6 +87,18 @@ export function deriveBlockedOnThreadWait(input: {
   return hasWait;
 }
 
+/** A provider instance's background subagent outlives its run and still calls tools. */
+export function hasPendingBackgroundSubagent(
+  tasks: ReadonlyArray<PendingBackgroundWorkTask> | undefined,
+  providerInstanceId: OrchestrationV2ProviderThread["providerInstanceId"] | undefined,
+): boolean {
+  return (
+    tasks?.some(
+      (task) => task.kind === "subagent" && task.providerInstanceId === providerInstanceId,
+    ) ?? false
+  );
+}
+
 export function backgroundWorkHoldsCompletion(
   tasks: ReadonlyArray<Pick<PendingBackgroundWorkTask, "kind" | "awaited">>,
 ): boolean {
@@ -314,10 +326,7 @@ function pullRequestWatchTasks(
   pullRequests: ReadonlyArray<PendingBackgroundWorkPullRequest> | undefined,
 ): Array<PendingBackgroundWorkTask> {
   return (pullRequests ?? []).flatMap((link) =>
-    // The watch reactor ends a merged PR's watch without waking the agent, so it holds nothing.
-    link.watch === undefined ||
-    link.source === "stack-dismissed" ||
-    link.snapshot?.state === "merged"
+    link.watch === undefined || link.source === "stack-dismissed"
       ? []
       : [
           {
@@ -326,8 +335,14 @@ function pullRequestWatchTasks(
             taskId: `${PULL_REQUEST_WATCH_TASK_ID}${link.host.toLowerCase()}/${link.repository.toLowerCase()}#${link.number}`,
             description: `Watching pull request #${link.number}`,
             kind: "monitor" as const,
-            // Once every check finished, a person moves the PR next: the watch stays on but holds nothing.
-            ...(link.watch.checksPending === false ? {} : { awaited: true as const }),
+            // Once every check finished, a person moves the PR next: the watch stays on but holds
+            // nothing, unless the agent said it acts on the PR itself. A merged PR's watch holds
+            // until its read wakes the agent, so settling on merge waits.
+            ...(link.watch.checksPending === false &&
+            link.watch.until !== "merged" &&
+            link.snapshot?.state !== "merged"
+              ? {}
+              : { awaited: true as const }),
           },
         ],
   );

@@ -72,7 +72,6 @@ const removedEnvironmentKeys = new Set([
   "AGY_ACP_ENABLE_OAUTH",
   "GEMINI_HOME",
   "AGY_ACP_FORCE_FILE_STORAGE",
-  "ANTIGRAVITY_HARNESS_PATH",
   "BROWSER",
   "PYTHONUNBUFFERED",
   "ELECTRON_RUN_AS_NODE",
@@ -163,9 +162,14 @@ function authSupportError(detail: string) {
   return new AcpErrors.AcpTransportError({ detail, cause: undefined });
 }
 
+// The 1.5 CLI answers `authenticate` with this internal error when it has no sign-in and no display.
+const NATIVE_CLI_NO_BROWSER_PREFIX = "No browser is available here";
+
 export function isAntigravitySignInRequiredError(error: unknown): boolean {
   return (
-    (isAcpRequestError(error) && error.code === -32000) ||
+    (isAcpRequestError(error) &&
+      (error.code === -32000 ||
+        (error.code === -32603 && error.errorMessage.startsWith(NATIVE_CLI_NO_BROWSER_PREFIX)))) ||
     (isAcpTransportError(error) && error.detail === ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE)
   );
 }
@@ -452,10 +456,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
 });
 
 export function buildAntigravityAcpSpawnInput(input: {
-  readonly installation: {
-    readonly executablePath: string;
-    readonly harnessPath: string | null;
-  };
+  readonly installation: { readonly executablePath: string };
   readonly profile: AntigravityProfile;
   readonly cwd: string;
   readonly baseEnv?: NodeJS.ProcessEnv;
@@ -464,39 +465,32 @@ export function buildAntigravityAcpSpawnInput(input: {
 }): AcpSessionRuntime.AcpSpawnInput {
   return {
     command: input.installation.executablePath,
-    // The agy CLI has no harness sibling and serves ACP through its `acp` subcommand.
-    args:
-      input.installation.harnessPath === null
-        ? [
-            "acp",
-            "--gemini-dir",
-            input.profile.geminiHome,
-            "--app-data-dir",
-            // The CLI joins this beneath gemini-dir, including when the value is absolute.
-            "antigravity-acp",
-          ]
-        : input.profile.platform === "linux"
-          ? ["--uid="]
-          : [],
+    args: [
+      "acp",
+      "--gemini-dir",
+      input.profile.geminiHome,
+      "--app-data-dir",
+      // The CLI joins this beneath gemini-dir, including when the value is absolute.
+      "antigravity-acp",
+    ],
     cwd: input.cwd,
-    env: {
-      ...antigravityEnvironment(
-        input.profile,
-        input.baseEnv ?? process.env,
-        input.auth ?? ANTIGRAVITY_PERSONAL_AUTH,
-        input.runtimeTempDirectory,
-      ),
-      ...(input.installation.harnessPath === null
-        ? {}
-        : { ANTIGRAVITY_HARNESS_PATH: input.installation.harnessPath }),
-    },
+    env: antigravityEnvironment(
+      input.profile,
+      input.baseEnv ?? process.env,
+      input.auth ?? ANTIGRAVITY_PERSONAL_AUTH,
+      input.runtimeTempDirectory,
+    ),
     extendEnv: false,
   };
 }
 
+/** Where `agy acp --login` sends Google; the page shows a code the user pastes back. */
+const ANTIGRAVITY_CODE_REDIRECT_URI = "https://antigravity.google/oauth-callback";
+
 export const parseAntigravityAuthorizationUrl = Effect.fn("parseAntigravityAuthorizationUrl")(
   function* (
     authorizationUrl: string,
+    kind: "loopback" | "code" = "loopback",
   ): Effect.fn.Return<AntigravityAuthorizationUrl, AcpErrors.AcpError> {
     const invalidUrl = () =>
       authSupportError("Antigravity returned an invalid Google sign-in URL.");
@@ -508,7 +502,7 @@ export const parseAntigravityAuthorizationUrl = Effect.fn("parseAntigravityAutho
     const redirectUri = url.searchParams.get("redirect_uri");
     if (
       url.origin !== "https://accounts.google.com" ||
-      url.pathname !== "/o/oauth2/v2/auth" ||
+      url.pathname !== (kind === "loopback" ? "/o/oauth2/v2/auth" : "/o/oauth2/auth") ||
       url.username !== "" ||
       url.password !== "" ||
       url.hash !== "" ||
@@ -521,15 +515,45 @@ export const parseAntigravityAuthorizationUrl = Effect.fn("parseAntigravityAutho
       state.length > 512 ||
       /\s/.test(state) ||
       redirectUri === null ||
-      !/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}\/$/.test(redirectUri)
+      (kind === "loopback"
+        ? !/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}\/$/.test(redirectUri)
+        : redirectUri !== ANTIGRAVITY_CODE_REDIRECT_URI)
     ) {
       return yield* invalidUrl();
     }
+    if (kind === "code") return { authorizationUrl, redirectUri, state };
     const redirect = yield* decodeUrl(redirectUri).pipe(Effect.mapError(invalidUrl));
     if (Number(redirect.port) < 1_024) return yield* invalidUrl();
     return { authorizationUrl, redirectUri, state };
   },
 );
+
+/**
+ * What `agy acp --login` reads after its link: the code the Antigravity page shows, or that page's
+ * URL, which must answer this sign-in. Undefined for anything else, including any line break.
+ */
+export function antigravityLoginResponse(
+  pending: AntigravityAuthorizationUrl,
+  response: string,
+): string | undefined {
+  const value = response.trim();
+  if (/^[\w./~-]{1,2048}$/.test(value)) return value;
+  if (value.length > maxAuthorizationUrlLength || /\s/.test(value)) return undefined;
+  const url = URL.parse(value);
+  if (
+    url === null ||
+    `${url.origin}${url.pathname}` !== pending.redirectUri ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.searchParams.getAll("state").length !== 1 ||
+    url.searchParams.get("state") !== pending.state ||
+    url.searchParams.getAll("code").length !== 1 ||
+    !url.searchParams.get("code")
+  ) {
+    return undefined;
+  }
+  return value;
+}
 
 export function makeAntigravityStdoutTransform(
   input: {
@@ -605,18 +629,17 @@ export function makeAntigravityStderrHandler(
   } = {},
 ) {
   let pending = "";
-  const handleLine = (line: string) => {
+  // Untraced: this runs for every stderr line.
+  const handleLine = Effect.fnUntraced(function* (line: string) {
     const message = line.endsWith("\r") ? line.slice(0, -1) : line;
-    if (message.length > maxBrowserHelperLineLength) {
-      return Effect.void;
-    }
+    if (message.length > maxBrowserHelperLineLength) return;
     const url = message.startsWith(ANTIGRAVITY_AUTH_STDOUT_PREFIX)
       ? Effect.succeed(message.slice(ANTIGRAVITY_AUTH_STDOUT_PREFIX.length))
       : message.startsWith(ANTIGRAVITY_AUTH_BROWSER_MARKER)
         ? decodeBrowserHelperUrl(message.slice(ANTIGRAVITY_AUTH_BROWSER_MARKER.length))
         : undefined;
-    if (url === undefined) return Effect.void;
-    return url.pipe(
+    if (url === undefined) return;
+    yield* url.pipe(
       Effect.flatMap(parseAntigravityAuthorizationUrl),
       Effect.matchEffect({
         onFailure: () => Effect.void,
@@ -626,7 +649,7 @@ export function makeAntigravityStderrHandler(
             : Effect.fail(authSupportError(ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE)),
       }),
     );
-  };
+  });
 
   return Effect.fn("antigravityAuthSupport.handleStderr")(function* (text: string) {
     const lines = `${pending}${text}`.split("\n");
