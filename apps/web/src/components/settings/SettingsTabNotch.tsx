@@ -13,6 +13,7 @@ import {
   showLayoutTabMenu,
   useLayoutPaneSiblingTabs,
 } from "../../layout/PaneTabs";
+import { beginLayoutTabDrag } from "../../layout/layoutDrag";
 import { useLayoutPane } from "../../layout/layoutPaneContext";
 import { cn } from "../../lib/utils";
 import { primaryServerKeybindingsAtom } from "../../state/server";
@@ -45,6 +46,7 @@ export function SettingsTabNotch({
             className={cn(PANE_TAB_CLASS, "max-w-none")}
             data-layout-pane-tab={tabId ?? undefined}
             data-layout-settings-tab=""
+            onPointerDown={tabId === null ? undefined : (event) => beginLayoutTabDrag(event, tabId)}
             onContextMenu={(event) => {
               if (tabId === null) return;
               event.preventDefault();

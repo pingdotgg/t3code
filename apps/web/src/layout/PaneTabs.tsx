@@ -112,6 +112,12 @@ const EMPTY_TABS: readonly LayoutTab[] = [];
 interface PaneStrip {
   readonly strip: HTMLDivElement;
   readonly join: HTMLSpanElement;
+  /** The landed tab's foot, painted beside the strip with the bar (index.css, [data-pane-join-foot]). */
+  readonly foot: HTMLElement;
+  /** The strip's left in its notch, where the foot is placed. */
+  footOffset: number | null;
+  /** The notch whose bar draws the foot now. */
+  footNotch: HTMLElement | null;
   /** Where the joined shape sits or is heading, in the strip's scrolled content. */
   shown: { tabId: string | null; x: number; w: number } | null;
   /** The tab whose label reads as joined: the shape's, once it has landed there. */
@@ -153,6 +159,8 @@ function schedulePlacement(strip: HTMLElement, motionMs: number): void {
 const PANE_JOIN_RADIUS_PX = 10;
 const PANE_JOIN_EAR_PX = 10;
 const PANE_JOIN_TAIL_PX = 36;
+/** The middle's unscaled width (index.css). Scaling a 1px layer at a fractional zoom multiplied its rounding by the tab's width. */
+const PANE_JOIN_MIDDLE_PX = 256;
 /** The strip's edge fade (index.css), which the revealed tab's ears stay clear of. */
 const PANE_STRIP_FADE_PX = 24;
 
@@ -189,9 +197,15 @@ function createPaneStrip(role?: "panel"): PaneStrip {
   body.append(joinCap("l"), joinPiece("data-jm"), joinCap("r"));
   join.append(body);
   strip.append(join);
+  const foot = document.createElement("i");
+  foot.dataset.paneJoinFoot = "";
+  foot.setAttribute("aria-hidden", "true");
   const entry: PaneStrip = {
     strip,
     join,
+    foot,
+    footOffset: null,
+    footNotch: null,
     shown: null,
     joinedId: null,
     slide: null,
@@ -313,6 +327,12 @@ function stripAtPaneEdge(strip: HTMLElement, row: HTMLElement | null): boolean {
 }
 
 function measurePaneLit(entry: PaneStrip): void {
+  const notch = entry.strip.closest<HTMLElement>('[data-pane-notch=""]');
+  entry.footOffset =
+    notch && notch.offsetWidth > 0
+      ? (entry.strip.getBoundingClientRect().left - notch.getBoundingClientRect().left) /
+        (notch.getBoundingClientRect().width / notch.offsetWidth)
+      : null;
   const host = entry.strip.closest<HTMLElement>("[data-layout-pane-id]");
   if (entry.lit && entry.lit.host !== host) {
     clearPaneLit(entry);
@@ -329,7 +349,37 @@ function measurePaneLit(entry: PaneStrip): void {
   };
 }
 
+/**
+ * The landed tab's foot is drawn with the bar (index.css, data-pane-join-footed)
+ * while the whole tab is clear of the strip's edge fades. A sliding or faded
+ * tab draws its own foot.
+ */
+function markJoinFoot(entry: PaneStrip, scrollLeft: number): void {
+  const { shown, strip, footOffset } = entry;
+  const notch = strip.closest<HTMLElement>('[data-pane-notch=""]');
+  const left = shown ? shown.x - scrollLeft - PANE_JOIN_EAR_PX : 0;
+  const right = shown ? left + shown.w + 2 * PANE_JOIN_EAR_PX : 0;
+  const overflowEnd = strip.scrollWidth - strip.clientWidth - scrollLeft;
+  const footed =
+    notch !== null &&
+    shown !== null &&
+    footOffset !== null &&
+    entry.slide === null &&
+    !entry.join.hidden &&
+    left >= (scrollLeft > 0.5 ? PANE_JOIN_EAR_PX + PANE_STRIP_FADE_PX : 0) &&
+    right <= entry.width - (overflowEnd > 0.5 ? PANE_JOIN_TAIL_PX + PANE_STRIP_FADE_PX : 0);
+  if (entry.footNotch && entry.footNotch !== (footed ? notch : null)) {
+    entry.footNotch.removeAttribute("data-pane-join-footed");
+  }
+  entry.footNotch = footed ? notch : null;
+  if (!footed) return;
+  notch.style.setProperty("--pane-join-foot-x", `${footOffset + left}px`);
+  notch.style.setProperty("--pane-join-foot-w", `${right - left}px`);
+  notch.setAttribute("data-pane-join-footed", "");
+}
+
 function markPaneLit(entry: PaneStrip, scrollLeft: number): void {
+  markJoinFoot(entry, scrollLeft);
   const { lit, shown } = entry;
   if (!lit) return;
   const start = shown ? Math.max(0, shown.x - scrollLeft - PANE_JOIN_EAR_PX) : 0;
@@ -376,6 +426,7 @@ function holdPaneStrip(
 function attachPaneStrip(entry: PaneStrip, slot: HTMLElement): void {
   if (!entry.strip.isConnected) entry.restoreScroll = true;
   if (entry.strip.parentNode !== slot) moveInto(slot, entry.strip);
+  if (entry.foot.parentNode !== slot) moveInto(slot, entry.foot);
 }
 
 function restorePaneStripScroll(entry: PaneStrip): void {
@@ -460,7 +511,8 @@ function moveJoin(
   measurePaneLit(entry);
   entry.shown = to;
   join.hidden = false;
-  const middle = (width: number) => Math.max(0, width - 2 * PANE_JOIN_RADIUS_PX);
+  const middle = (width: number) =>
+    Math.max(0, width - 2 * PANE_JOIN_RADIUS_PX) / PANE_JOIN_MIDDLE_PX;
   join.style.setProperty("--jx", `${to.x}px`);
   join.style.setProperty("--jw", `${to.w}px`);
   join.style.setProperty("--jm", String(middle(to.w)));
@@ -512,6 +564,7 @@ function moveJoin(
     return;
   }
   entry.slide = slide;
+  markJoinFoot(entry, entry.strip.scrollLeft);
   void slide.finished.then(
     () => {
       if (entry.slide === slide) land();
@@ -532,6 +585,7 @@ function placePaneJoin(entry: PaneStrip, tabId: string | null, motionMs: number)
     markJoinedLabel(entry);
     markJoinAtStart(entry);
     clearPaneLit(entry);
+    markJoinFoot(entry, strip.scrollLeft);
     return;
   }
   const box = stripBoxOf(strip, active);

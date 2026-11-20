@@ -794,6 +794,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --color-input: var(--contrast-input);
   --color-border: var(--contrast-border);
   --color-destructive: var(--destructive);
+  /* Text only; named themes set --destructive-text and --primary-text. */
+  --text-color-destructive: var(--destructive-text, var(--destructive));
   --color-destructive-fill-foreground: var(--destructive-fill-foreground);
   --color-accent-foreground: var(--contrast-accent-foreground);
   --color-accent: var(--accent);
@@ -816,6 +818,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --color-secondary: var(--secondary);
   --color-primary-foreground: var(--primary-foreground);
   --color-primary: var(--primary);
+  --text-color-primary: var(--primary-text, var(--primary));
   --color-popover-foreground: var(--contrast-popover-foreground);
   --color-popover: var(--popover);
   --color-card: var(--card);
@@ -2985,21 +2988,13 @@ html[data-theme-id]:not([data-theme-id=""]) {
     var(--foreground) 45%,
     var(--appearance-contrast-target)
   );
-  --dim-foreground: color-mix(in oklab, var(--muted-foreground) 72%, var(--background));
+  /* Light palettes' muted text sits closer to the canvas than the default's;
+     84% keeps dim text at the default's contrast. */
+  --dim-mix: 84%;
+  --dim-foreground: color-mix(in oklab, var(--muted-foreground) var(--dim-mix), var(--background));
   --well-shade: 2.5%;
   --well-switch-shade: 16%;
-  --raised-fill: linear-gradient(
-    color-mix(in srgb, var(--popover) 94%, white),
-    color-mix(in srgb, var(--popover) 94%, white)
-  );
-  --raised-hover-fill: linear-gradient(
-    color-mix(in srgb, var(--popover) 90%, white),
-    color-mix(in srgb, var(--popover) 90%, white)
-  );
-  --danger-hover-fill: linear-gradient(
-    color-mix(in srgb, var(--popover) 92%, var(--destructive)),
-    color-mix(in srgb, var(--popover) 92%, var(--destructive))
-  );
+  --raised-base: var(--popover);
   --lit-fill: linear-gradient(var(--primary), var(--primary));
   --lit-rim: linear-gradient(
     180deg,
@@ -3039,11 +3034,6 @@ html[data-theme-id]:not([data-theme-id=""]) {
   --tray-fill: linear-gradient(var(--card), var(--card));
   --composer-fill: linear-gradient(var(--surface-raised), var(--surface-raised));
   --bubble-fill: linear-gradient(var(--message-surface), var(--message-surface));
-  --kbd-fill: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--popover), white 12%),
-    color-mix(in srgb, var(--popover), white 6%)
-  );
   --kbd-popover-fill: linear-gradient(
     180deg,
     color-mix(in srgb, var(--popover), white 8%),
@@ -3084,7 +3074,8 @@ html[data-theme-id]:not([data-theme-id=""]) {
   --provider-mark: var(--muted-foreground);
   --code-gutter: var(--dim-foreground);
   --search-line-number: var(--dim-foreground);
-  --kbd-lit-foreground: color-mix(in oklab, var(--primary-foreground) 55%, var(--primary));
+  /* A theme's action fill leaves no room to dim the hint below its label. */
+  --kbd-lit-foreground: var(--primary-foreground);
   --sidebar-settled-title: color-mix(in oklab, var(--sidebar-muted-foreground) 85%, var(--sidebar));
   --sidebar-settled-label: color-mix(in oklab, var(--sidebar-muted-foreground) 75%, var(--sidebar));
   --sidebar-settled-meta: color-mix(in oklab, var(--sidebar-muted-foreground) 65%, var(--sidebar));
@@ -3124,6 +3115,7 @@ html[data-theme-id]:not([data-theme-id=""]) {
   );
 
   @variant dark {
+    --dim-mix: 72%;
     --well-shade: 16%;
     --well-switch-shade: 30%;
     --gloss-off-thumb-fill: linear-gradient(
@@ -3132,6 +3124,101 @@ html[data-theme-id]:not([data-theme-id=""]) {
     );
     --app-scrollbar-thumb: color-mix(in srgb, var(--foreground) 36%, transparent);
     --app-scrollbar-thumb-hover: color-mix(in srgb, var(--foreground) 45%, transparent);
+    /* Some dark palettes paint the overlay role well above the canvas. Controls on
+       the page step up from the surface role instead, as the default's do. */
+    --raised-base: var(--card);
+    /* How far the overlay sits above the raised base, as an oklch lightness:
+       (popover + (1 - base)) / 2, doubled, minus one. Zero when they match. */
+    --overlay-lift: oklch(
+      from color-mix(in oklab, var(--popover), oklch(from var(--raised-base) calc(1 - l) 0 0))
+        calc(l * 2 - 1) 0 0
+    );
+  }
+
+  /* The default light primary is near-black, so its keycap shows no box. */
+  @variant light {
+    --kbd-lit-fill: transparent;
+  }
+}
+
+/* Raised controls sit one step above the surface they are on: the page's surface
+   role (dark, above), or the overlay inside menus, popovers and dialogs (below). */
+html[data-theme-id]:not([data-theme-id=""]),
+html[data-theme-id]:not([data-theme-id=""])[data-surface-style="gradient-rim"]
+  :is(.surface-popover, .surface-palette, .surface-dialog, .surface-tooltip) {
+  --raised-fill: linear-gradient(
+    color-mix(in srgb, var(--raised-base) 94%, white),
+    color-mix(in srgb, var(--raised-base) 94%, white)
+  );
+  --raised-hover-fill: linear-gradient(
+    color-mix(in srgb, var(--raised-base) 90%, white),
+    color-mix(in srgb, var(--raised-base) 90%, white)
+  );
+  --danger-hover-fill: linear-gradient(
+    color-mix(in srgb, var(--raised-base) 92%, var(--destructive)),
+    color-mix(in srgb, var(--raised-base) 92%, var(--destructive))
+  );
+  --kbd-fill: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--raised-base), white 12%),
+    color-mix(in srgb, var(--raised-base), white 6%)
+  );
+}
+
+/* Secondary text was tuned for the canvas. On an overlay lifted above it, each
+   tier moves up by the same lightness so it keeps its distance from its ground.
+   Other surface styles repaint overlays from the canvas and keep their own tiers. */
+html[data-theme-id]:not([data-theme-id=""]) {
+  @variant dark {
+    --overlay-muted-foreground: oklab(
+      from color-mix(in oklab, var(--contrast-muted-foreground), var(--overlay-lift)) calc(l * 2)
+        calc(a * 2) calc(b * 2)
+    );
+    --overlay-dim-foreground: oklab(
+      from color-mix(in oklab, var(--contrast-dim-foreground), var(--overlay-lift)) calc(l * 2)
+        calc(a * 2) calc(b * 2)
+    );
+    --overlay-placeholder: oklab(
+      from color-mix(in oklab, var(--contrast-placeholder), var(--overlay-lift)) calc(l * 2)
+        calc(a * 2) calc(b * 2)
+    );
+    --overlay-secondary-label: oklab(
+      from color-mix(in oklab, var(--contrast-secondary-label), var(--overlay-lift)) calc(l * 2)
+        calc(a * 2) calc(b * 2)
+    );
+    --overlay-icon-muted: oklab(
+      from color-mix(in oklab, var(--contrast-icon-muted), var(--overlay-lift)) calc(l * 2)
+        calc(a * 2) calc(b * 2)
+    );
+  }
+}
+
+html[data-theme-id]:not([data-theme-id=""])[data-surface-style="gradient-rim"]
+  :is(.surface-popover, .surface-palette, .surface-dialog, .surface-tooltip) {
+  @variant dark {
+    --raised-base: var(--popover);
+    --contrast-muted-foreground: var(--overlay-muted-foreground);
+    --contrast-dim-foreground: var(--overlay-dim-foreground);
+    --contrast-placeholder: var(--overlay-placeholder);
+    --contrast-secondary-label: var(--overlay-secondary-label);
+    --contrast-icon-muted: var(--overlay-icon-muted);
+  }
+}
+
+/* --primary and --destructive are fills in named themes; their text keeps the
+   hue at a readable lightness. Re-resolved where a subtree redefines --primary. */
+html[data-theme-id]:not([data-theme-id=""]) {
+  &,
+  & [data-chrome-scope],
+  & [data-app-sidebar] {
+    @variant light {
+      --primary-text: oklch(from var(--primary) min(l, 0.55) c h);
+      --destructive-text: oklch(from var(--destructive) min(l, 0.55) c h);
+    }
+    @variant dark {
+      --primary-text: oklch(from var(--primary) max(l, 0.76) c h);
+      --destructive-text: oklch(from var(--destructive) max(l, 0.76) c h);
+    }
   }
 }
 
@@ -3333,16 +3420,55 @@ html[data-theme-id] [data-app-sidebar] {
     var(--foreground) 45%,
     var(--appearance-contrast-target)
   );
-  --dim-foreground: color-mix(in oklab, var(--muted-foreground) 72%, var(--background));
+  --dim-mix: 84%;
+  --dim-foreground: color-mix(in oklab, var(--muted-foreground) var(--dim-mix), var(--background));
   border-color: color-mix(in srgb, var(--contrast-sidebar-foreground) 10%, transparent);
 
   @variant dark {
+    --dim-mix: 72%;
     border-color: color-mix(in srgb, var(--contrast-sidebar-foreground) 8%, transparent);
   }
 }
 
 html[data-theme-id] [data-mobile="true"] [data-app-sidebar] {
   --dim-foreground: var(--sidebar-muted-foreground);
+}
+
+/* Theme row fills are mid-tone accents, so meta on the active or selected row
+   leans toward the sidebar text to keep the default's contrast. */
+html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome)
+  [data-app-sidebar]
+  :is(.bg-sidebar-row-active, .surface-sidebar-row-selected) {
+  --secondary-label: color-mix(
+    in oklab,
+    var(--app-theme-secondary-label) 40%,
+    var(--sidebar-foreground)
+  );
+  --muted-foreground: color-mix(
+    in oklab,
+    var(--app-theme-muted-foreground) 50%,
+    var(--sidebar-foreground)
+  );
+  --dim-foreground: color-mix(
+    in oklab,
+    var(--sidebar-muted-foreground) 65%,
+    var(--sidebar-foreground)
+  );
+  --contrast-muted-foreground: color-mix(
+    in oklab,
+    color-mix(in oklab, var(--muted-foreground) var(--appearance-contrast-base), var(--background)),
+    var(--appearance-contrast-target) var(--appearance-contrast-boost)
+  );
+  --contrast-secondary-label: color-mix(
+    in oklab,
+    color-mix(in oklab, var(--secondary-label) var(--appearance-contrast-base), var(--background)),
+    var(--appearance-contrast-target) var(--appearance-contrast-boost)
+  );
+  --contrast-dim-foreground: color-mix(
+    in oklab,
+    color-mix(in oklab, var(--dim-foreground) var(--appearance-contrast-base), var(--background)),
+    var(--appearance-contrast-target) var(--appearance-contrast-boost)
+  );
 }
 
 /* T3 Chat's panel divider is deliberately pink, and its resize affordance
@@ -3391,6 +3517,7 @@ html:root[data-theme-id="t3-code-classic"] {
        Without those borders they need the default theme's spacing between steps. */
     --card: color-mix(in srgb, var(--background) 97.5%, white);
     --popover: color-mix(in srgb, var(--background) 97%, white);
+    --raised-base: var(--popover);
     --surface-raised: color-mix(in srgb, var(--background) 94%, white);
     --info-foreground: var(--color-blue-400);
     --success-foreground: var(--color-emerald-400);
@@ -6478,6 +6605,7 @@ body {
 }
 
 [data-pane-join],
+[data-pane-join-foot],
 [data-pane-bar-corner] {
   display: none;
 }
@@ -6819,8 +6947,9 @@ body {
         mask: linear-gradient(to right, transparent, #000);
       }
 
+      /* PANE_JOIN_MIDDLE_PX wide, scaled to the tab's middle (PaneTabs.tsx). */
       & [data-jm] {
-        width: 1px;
+        width: 256px;
         height: 100%;
         transform-origin: 0 0;
         translate: calc(var(--jx) + var(--r)) 0;
@@ -6838,6 +6967,62 @@ body {
       & :is([data-jr], [data-jer], [data-jt]),
       & [data-jm]::after {
         transition: opacity var(--panel-animation-duration, 150ms) ease-out;
+      }
+    }
+
+    /* A resting tab's foot is pane fill in the bar's own box over a notch cut
+       from the bar, so it ends on the bar's edge: the tab's layers raster
+       apart from the bar, and at a fractional zoom showed its last row or
+       covered a row of content (PaneTabs.tsx, markJoinFoot). */
+    & [data-pane-notch=""][data-pane-join-footed] {
+      --e: var(--pane-join-ear);
+      --pane-join-foot-l: calc(100vw + var(--pane-join-foot-x) + var(--e));
+      --pane-join-foot-r: calc(
+        100vw + var(--pane-join-foot-x) + var(--pane-join-foot-w) - var(--e)
+      );
+
+      &::before {
+        clip-path: polygon(
+          0 -10px,
+          100% -10px,
+          100% calc(100% + 10px),
+          calc(var(--pane-join-foot-r) + 5.5px) calc(100% + 10px),
+          calc(var(--pane-join-foot-r) + 5.5px) 100%,
+          calc(var(--pane-join-foot-r) + 3.5px) calc(100% - 1px),
+          calc(var(--pane-join-foot-r) + 2.5px) calc(100% - 2px),
+          var(--pane-join-foot-r) calc(100% - 3px),
+          var(--pane-join-foot-l) calc(100% - 3px),
+          calc(var(--pane-join-foot-l) - 2.5px) calc(100% - 2px),
+          calc(var(--pane-join-foot-l) - 3.5px) calc(100% - 1px),
+          calc(var(--pane-join-foot-l) - 5.5px) 100%,
+          calc(var(--pane-join-foot-l) - 5.5px) calc(100% + 10px),
+          0 calc(100% + 10px)
+        );
+      }
+
+      & > [data-layout-tab-strip-slot] > [data-pane-join-foot] {
+        /* Inside the ear fill's edge, which still draws it. */
+        --ear-in: transparent calc(var(--e) + 0.5px), var(--pane-join-fill) calc(var(--e) + 1.5px);
+        display: block;
+        position: absolute;
+        z-index: -1;
+        inset-block-start: calc(var(--pane-join-shift) * -1);
+        inset-inline-start: var(--pane-join-foot-x);
+        width: var(--pane-join-foot-w);
+        height: var(--pane-notch-height);
+        background:
+          radial-gradient(circle var(--e) at 0 0, var(--ear-in)) 0 100% / var(--e) var(--e)
+            no-repeat,
+          radial-gradient(circle var(--e) at 100% 0, var(--ear-in)) 100% 100% / var(--e) var(--e)
+            no-repeat,
+          linear-gradient(var(--pane-join-fill), var(--pane-join-fill)) var(--e) 100% /
+            calc(100% - 2 * var(--e)) 4px no-repeat;
+        pointer-events: none;
+      }
+
+      /* The body's own fill ends inside the foot. */
+      & [data-pane-join] :is([data-jf], [data-jm]) {
+        height: calc(100% - 2px);
       }
     }
 

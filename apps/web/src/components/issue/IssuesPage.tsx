@@ -234,7 +234,7 @@ export function IssuesPage() {
   // Refreshing a list still loading would cancel it and start over, losing the scopes already read.
   useLiveRefresh(
     () => {
-      if (!list.isPending) list.refresh();
+      if (!list.isPending) list.reload();
     },
     { key: JSON.stringify(targets) },
   );
@@ -838,6 +838,7 @@ export function IssuesPage() {
             pane
             open={rightPanelState.isOpen}
             maximized={rightPanelMaximized}
+            holdsPaneTabs={rightPanelMaximized}
             keybindings={keybindings}
             widthStorageKey="t3code:issue-panel-width"
             defaultWidth={

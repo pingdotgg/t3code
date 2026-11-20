@@ -1714,6 +1714,7 @@ export function PullRequestsPage() {
             pane
             open={rightPanelState.isOpen}
             maximized={rightPanelMaximized}
+            holdsPaneTabs={rightPanelMaximized}
             keybindings={keybindings}
             widthStorageKey="t3code:pull-request-panel-width"
             // The pen's split (bETcv) gives the review 549 of 1280px, which

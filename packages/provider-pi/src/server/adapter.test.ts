@@ -2078,6 +2078,30 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("counts a running Pi for port discovery until its session closes", () =>
+    Effect.gen(function* () {
+      const host = yield* ProviderHost.ProviderHost;
+      let running = 0;
+      yield* Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        yield* openRuntime(fake);
+        assert.equal(running, 1);
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(ProviderHost.ProviderHost, {
+          ...host,
+          trackAgent: () => {
+            running += 1;
+            return () => {
+              running -= 1;
+            };
+          },
+        }),
+      );
+      assert.equal(running, 0);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("gives notify and extension-error items distinct ids in each thread", () =>
     Effect.gen(function* () {
       const itemIds = new Set<string>();

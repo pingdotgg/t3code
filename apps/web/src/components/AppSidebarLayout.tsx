@@ -24,6 +24,7 @@ import {
 import { getLocalStorageItem, removeLocalStorageItem } from "../hooks/useLocalStorage";
 import {
   isRichTextBoldShortcut,
+  isSidebarToggleShortcut,
   resolveShortcutCommand,
   shortcutLabelForCommand,
 } from "../keybindings";
@@ -392,15 +393,17 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
         // with just a caret, and everywhere else, it toggles the sidebar.
         return;
       }
-      const command = resolveShortcutCommand(event, keybindings, {
-        context: {
-          terminalFocus: isTerminalFocused(),
-          previewFocus: isPreviewFocused(),
-          ...readRoutePanelsOpen(router),
-          usagePageOpen,
-        },
-      });
-      if (command !== "sidebar.toggle") return;
+      if (
+        !isSidebarToggleShortcut(event, keybindings, {
+          context: {
+            terminalFocus: isTerminalFocused(),
+            previewFocus: isPreviewFocused(),
+            ...readRoutePanelsOpen(router),
+            usagePageOpen,
+          },
+        })
+      )
+        return;
 
       event.preventDefault();
       event.stopPropagation();

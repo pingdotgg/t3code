@@ -141,11 +141,12 @@ function TelemetryExportForm() {
   const changedSignals = SIGNALS.filter(({ key }) => values[key].trim() !== saved[key]);
   const changed = changedSignals.length > 0;
 
-  const sendCheck = async (key: SignalKey, signal: OtlpSignal, url: string) => {
+  const sendCheck = async (key: SignalKey, signal: OtlpSignal, attempt: EndpointCheck) => {
     if (!environmentId) return;
+    const { url } = attempt;
     const response = await checkOtlpEndpoint({ environmentId, input: { signal, url } });
     setChecks((previous) => {
-      if (previous[key]?.url !== url || previous[key].result !== null) return previous;
+      if (previous[key] !== attempt) return previous;
       const next = { ...previous };
       if (response._tag === "Success") next[key] = { url, result: response.value };
       else delete next[key];
@@ -155,14 +156,15 @@ function TelemetryExportForm() {
 
   const checkEndpoint = (key: SignalKey, signal: OtlpSignal, url: string) => {
     if (!isHttpUrl(url)) return;
-    setChecks((previous) => ({ ...previous, [key]: { url, result: null } }));
-    void sendCheck(key, signal, url);
+    const attempt = { url, result: null };
+    setChecks((previous) => ({ ...previous, [key]: attempt }));
+    void sendCheck(key, signal, attempt);
   };
 
   const sendPendingChecks = useEffectEvent(() => {
     for (const { key, signal } of SIGNALS) {
       const check = checks[key];
-      if (check?.result === null) void sendCheck(key, signal, check.url);
+      if (check?.result === null) void sendCheck(key, signal, check);
     }
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- sends pending endpoint check requests once the environment can run them
@@ -264,7 +266,9 @@ function TelemetryExportForm() {
                     type="button"
                     size="sm"
                     variant="secondary"
-                    disabled={!isHttpUrl(url) || checks[key]?.result === null}
+                    disabled={
+                      !isHttpUrl(url) || (checks[key]?.url === url && checks[key].result === null)
+                    }
                     onClick={() => void checkEndpoint(key, signal, url)}
                   >
                     <T>Test</T>

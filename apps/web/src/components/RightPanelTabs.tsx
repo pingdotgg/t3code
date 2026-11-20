@@ -120,6 +120,8 @@ export interface RightPanelTabsProps {
    * pull requests page's review, pen bETcv).
    */
   pane?: boolean;
+  /** The page's list is maximized away, so this pane's notch carries the layout pane's own tabs. */
+  holdsPaneTabs?: boolean;
   inlineSize?: PreviewPanelInlineSize;
   layoutControls?: ReactNode;
   surfaces: readonly RightPanelSurface[];
@@ -713,6 +715,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const { tabId: layoutPaneTabId, leadingEdge } = useLayoutPane();
   const layoutTabId = props.mode === "embedded" ? layoutPaneTabId : null;
   const siblingTabs = useLayoutPaneSiblingTabs();
+  const pageTab = useLayoutStore((state) =>
+    props.mode === "embedded" || !props.holdsPaneTabs || layoutPaneTabId === null
+      ? null
+      : (findLayoutTab(state.layout, (tab) => tab.id === layoutPaneTabId)?.tab ?? null),
+  );
+  const paneTabsId = layoutTabId ?? pageTab?.id ?? null;
   const isMobile = useMediaQuery("max-md");
   const pinnedChatTab =
     isMobile && layoutTabId !== null
@@ -996,8 +1004,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   };
 
   const addSurfaceMenu =
-    layoutTabId !== null ? (
-      <LayoutNewTabButton tabId={layoutTabId} />
+    paneTabsId !== null ? (
+      <LayoutNewTabButton tabId={paneTabsId} />
     ) : // A notch keeps it while empty too: an empty notch reads as a broken corner.
     props.open !== false || props.surfaces.length > 0 || notched ? (
       <Menu open={addSurfaceMenuOpen} onOpenChange={setAddSurfaceMenuOpen}>
@@ -1086,7 +1094,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       >
         <PanelTabsNotch
           notched={notched}
-          secondStrip={props.mode !== "embedded"}
+          secondStrip={paneTabsId === null}
           addButton={addSurfaceMenu}
           pinnedTab={
             pinnedChatTab ? (
@@ -1096,8 +1104,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             ) : null
           }
         >
-          {layoutTabId !== null
-            ? siblingTabs.before
+          {paneTabsId !== null
+            ? [...siblingTabs.before, ...(pageTab ? [pageTab] : [])]
                 .filter((tab) => tab.id !== pinnedChatTab?.id)
                 .map((tab) => <LayoutPaneTab key={tab.id} tab={tab} />)
             : null}
@@ -1162,7 +1170,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             </SortableTabList>
             {notched ? null : addSurfaceMenu}
           </PanelTabStrip>
-          {layoutTabId !== null
+          {paneTabsId !== null
             ? siblingTabs.after
                 .filter((tab) => tab.id !== pinnedChatTab?.id)
                 .map((tab) => <LayoutPaneTab key={tab.id} tab={tab} />)
