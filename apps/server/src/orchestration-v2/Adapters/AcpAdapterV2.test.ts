@@ -1,3 +1,4 @@
+import { extractAntigravityCommand } from "../../provider/acp/AntigravityProtocol.ts";
 import {
   extractCopilotSubagentUpdate,
   makeCopilotSubagentRouting,
@@ -6517,6 +6518,20 @@ describe("AcpAdapterV2", () => {
 
   it.effect.each([
     {
+      label: "shows Antigravity's CommandLine in an ID-only approval",
+      kind: "execute",
+      granted: true,
+      commandField: "CommandLine",
+      fullRequest: false,
+    },
+    {
+      label: "shows a long Antigravity CommandLine untruncated in a full approval",
+      kind: "execute",
+      granted: true,
+      commandField: "CommandLine",
+      fullRequest: true,
+    },
+    {
       label: "grants an ID-only execute approval its tracked command",
       kind: "execute",
       granted: true,
@@ -6546,6 +6561,11 @@ describe("AcpAdapterV2", () => {
     },
   ] as const)("$label", ({ kind, granted, ...testCase }) =>
     Effect.gen(function* () {
+      const commandField = "commandField" in testCase ? testCase.commandField : "command";
+      const command =
+        "commandField" in testCase
+          ? `echo start\n${"# padding\n".repeat(1000)}echo end`
+          : "git status";
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* bundledMockAgentPath;
@@ -6556,7 +6576,11 @@ describe("AcpAdapterV2", () => {
       const makeRuntime = makeMockRuntime({
         childProcessSpawner,
         mockAgentPath,
-        environment: { T3_ACP_EMIT_TRACKED_TOOL_CALL_KIND_THEN_HANG: kind },
+        environment: {
+          T3_ACP_EMIT_TRACKED_TOOL_CALL_KIND_THEN_HANG: kind,
+          T3_ACP_TRACKED_COMMAND_FIELD: commandField,
+          T3_ACP_TRACKED_COMMAND: command,
+        },
         wrapRuntime: (runtime) => ({
           ...runtime,
           handleRequestPermission: (handler) =>
@@ -6576,6 +6600,7 @@ describe("AcpAdapterV2", () => {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
           interruptPromptOnCancel: true,
+          ...("commandField" in testCase ? { approvalPrompt: extractAntigravityCommand } : {}),
           makeRuntime: (input) =>
             Effect.sync(() => {
               runtimeInput = input;
@@ -6630,6 +6655,9 @@ describe("AcpAdapterV2", () => {
           sessionId: "mock-session-1",
           toolCall: {
             toolCallId: "tracked-tool-call",
+            ...("fullRequest" in testCase && testCase.fullRequest
+              ? { kind, title: command, rawInput: { [commandField]: command } }
+              : {}),
             ...("requestKind" in testCase ? { kind: testCase.requestKind } : {}),
           },
           options: [{ optionId: "allow-once", name: "Allow once", kind: "allow_once" }],
@@ -6678,7 +6706,7 @@ describe("AcpAdapterV2", () => {
           requestKind: approval.requestKind,
           terminalCreated: Exit.isSuccess(terminalExit),
         },
-        { prompt: "git status", requestKind: "command", terminalCreated: granted },
+        { prompt: command, requestKind: "command", terminalCreated: granted },
       );
 
       yield* runtime.interruptTurn({ providerThread, providerTurnId });
