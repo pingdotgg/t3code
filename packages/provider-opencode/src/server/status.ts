@@ -2,6 +2,7 @@ import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/sna
 import {
   ProviderDriverKind,
   type ModelCapabilities,
+  type SelectProviderOptionDescriptor,
   type ServerProviderModel,
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
@@ -210,8 +211,24 @@ function inferDefaultVariant(
   return undefined;
 }
 
-function inferDefaultAgent(agents: ReadonlyArray<Agent>): string | undefined {
-  return agents.find((agent) => agent.name === "build")?.name ?? agents[0]?.name ?? undefined;
+export function openCodeAgentOptionDescriptor(
+  agents: ReadonlyArray<Pick<Agent, "name" | "mode" | "hidden">>,
+): SelectProviderOptionDescriptor {
+  const visible = agents.filter(
+    (agent) => !agent.hidden && (agent.mode === "primary" || agent.mode === "all"),
+  );
+  const defaultAgent = visible.find((agent) => agent.name === "build")?.name ?? visible[0]?.name;
+  return {
+    id: "agent",
+    label: "Agent",
+    type: "select",
+    options: visible.map((agent) => ({
+      id: agent.name,
+      label: titleCaseSlug(agent.name),
+      ...(agent.name === defaultAgent ? { isDefault: true } : {}),
+    })),
+    ...(defaultAgent ? { currentValue: defaultAgent } : {}),
+  };
 }
 
 const DEFAULT_OPENCODE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
@@ -253,15 +270,7 @@ function openCodeCapabilitiesForModel(input: {
     label: reasoningVariantLabel(id),
     ...(id === defaultVariant ? { isDefault: true as const } : {}),
   }));
-  const primaryAgents = input.agents.filter(
-    (agent) => !agent.hidden && (agent.mode === "primary" || agent.mode === "all"),
-  );
-  const defaultAgent = inferDefaultAgent(primaryAgents);
-  const agentOptions = primaryAgents.map((agent) =>
-    defaultAgent === agent.name
-      ? { id: agent.name, label: titleCaseSlug(agent.name), isDefault: true as const }
-      : { id: agent.name, label: titleCaseSlug(agent.name) },
-  );
+  const agentDescriptor = openCodeAgentOptionDescriptor(input.agents);
   return createModelCapabilities({
     optionDescriptors: [
       ...(variantOptions.length > 0
@@ -275,17 +284,7 @@ function openCodeCapabilitiesForModel(input: {
             },
           ]
         : []),
-      ...(agentOptions.length > 0
-        ? [
-            {
-              id: "agent",
-              label: "Agent",
-              type: "select" as const,
-              options: agentOptions,
-              ...(defaultAgent ? { currentValue: defaultAgent } : {}),
-            },
-          ]
-        : []),
+      ...(agentDescriptor.options.length > 0 ? [agentDescriptor] : []),
     ],
   });
 }
