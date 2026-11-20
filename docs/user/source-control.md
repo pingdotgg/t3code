@@ -379,7 +379,8 @@ To list a Linear team's issues beside a project's, connect Linear with an API ke
 Settings → Source control & issues, then choose the team for that project there. The team sets
 what the Issues page lists for the project, and where agents in its threads look up an issue by its
 key alone or file a new one. An issue linked by its full URL needs no team: once Linear is
-connected, a Linear issue linked to any thread, No project threads included, opens beside it.
+connected, an issue from that Linear workspace linked to any thread, No project threads included,
+opens beside it.
 While no project has a team, you can also change it as far as your Linear account allows.
 
 Select an issue to open it beside the list: description, comments, state changes, linked pull
@@ -394,7 +395,8 @@ undoes it. A Linear link in the conversation opens beside the thread only when a
 environment is bound to a Linear team; otherwise it opens in the browser. Click the issue badge in
 the thread sidebar to see its issues and pull requests in **Linked items**. Select an issue there
 to open it beside the thread. Agents link the issues they work on with the `link_issue` tool, which
-takes any Linear issue's URL once Linear is connected, bound or not.
+takes the URL of any issue in the connected Linear workspace, bound or not. A URL from another Linear
+workspace is refused.
 
 Writing to a tracker over a remote connection requires the `source-control:write` scope.
 
