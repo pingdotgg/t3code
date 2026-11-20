@@ -22,10 +22,11 @@ export function ScopedSwitch({
     <Switch
       {...props}
       mixed={mixed}
-      checked={mixed ? picked : checked}
+      checked={mixed ? false : checked}
       onCheckedChange={(next, details) => {
-        setPicked(next);
-        onCheckedChange?.(next, details);
+        const value = mixed ? !picked : next;
+        setPicked(value);
+        onCheckedChange?.(value, details);
       }}
     />
   );

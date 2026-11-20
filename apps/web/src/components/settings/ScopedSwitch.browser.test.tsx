@@ -35,6 +35,7 @@ it("turns a mixed setting on, then off when an older environment drops it", asyn
   // The older environment dropped the unknown key, so the row is still mixed.
   await screen.rerender(row());
   await expect.element(toggle).toHaveAttribute("aria-checked", "mixed");
+  await expect.element(toggle).toHaveAttribute("data-unchecked");
 
   await userEvent.click(toggle);
   environments.mixed = false;
