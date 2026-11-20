@@ -58,7 +58,7 @@ const formatNumber = (value: number) => String(Number(value.toFixed(3)));
 
 /** The fragment a model file link carries so opening it restores this camera. */
 export function formatModelViewHash(view: ModelCameraView): string {
-  return VIEW_HASH_PREFIX + [...view.position, ...view.target].map(formatNumber).join(",");
+  return VIEW_HASH_PREFIX + [...view.position, ...view.target].join(",");
 }
 
 /** Reads a camera from a supported model file link. */
@@ -158,7 +158,35 @@ const STALE_NOTE_PLACE =
 const EARLIER_SCREENSHOT_LINE = "The screenshot shows the model before it last changed.";
 const EARLIER_SCREENSHOT_DETAIL =
   "The original screenshot shows one saved revision. Pins added on other revisions may be absent, and removed pins may still appear.";
+const EARLIER_SCREENSHOT_FOOTER = `\n${EARLIER_SCREENSHOT_LINE}\n${EARLIER_SCREENSHOT_DETAIL}`;
 const NOTE_LINE = /^(\d+)\. (.*) \((surface point [-\d., e+]+|[^()]*earlier version[^()]*)\)$/;
+
+function formatModelNote(note: ModelNote, where: string): string {
+  const text = note.text
+    .split(/[\r\n\v\f\u0085\u2028\u2029]+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" ");
+  return `${note.number}. ${text} (${where})`;
+}
+
+function modelNoteLocation(note: ModelNote): string {
+  return note.stale ? STALE_NOTE_PLACE : `surface point ${note.point.map(formatNumber).join(", ")}`;
+}
+
+/** Reserves room for the notes and earlier screenshot even if the model changes. */
+export function modelNotesFitAnnotation(notes: ReadonlyArray<ModelNote>): boolean {
+  let length = EARLIER_SCREENSHOT_FOOTER.length + Math.max(0, notes.length - 1);
+  for (const note of notes) {
+    const where = modelNoteLocation(note);
+    length += formatModelNote(
+      note,
+      where.length > STALE_NOTE_PLACE.length ? where : STALE_NOTE_PLACE,
+    ).length;
+    if (length > COMPOSER_CONTEXT_PREVIEW_COMMENT_MAX_CHARS) return false;
+  }
+  return true;
+}
 
 /**
  * The numbered notes a model annotation's comment holds, as `modelAnnotationPayload` wrote them,
@@ -208,27 +236,12 @@ export function modelAnnotationPayload(input: {
   readonly createdAt: string;
 }): PreviewAnnotationPayload {
   const { dataUrl, width, height, earlier } = input.screenshot;
-  const footer = earlier ? `\n${EARLIER_SCREENSHOT_LINE}\n${EARLIER_SCREENSHOT_DETAIL}` : "";
-  let remaining = COMPOSER_CONTEXT_PREVIEW_COMMENT_MAX_CHARS - footer.length;
-  const lines: Array<{ prefix: string; text: string; suffix: string }> = [];
-  for (const [index, note] of input.notes.entries()) {
-    const prefix = `${note.number}. `;
-    const where = note.stale
-      ? STALE_NOTE_PLACE
-      : `surface point ${note.point.map(formatNumber).join(", ")}`;
-    const suffix = ` (${where})`;
-    const overhead = prefix.length + suffix.length + Number(index > 0) + 1;
-    if (overhead > remaining) break;
-    remaining -= overhead;
-    lines.push({ prefix, text: note.text.trim().replace(/\s*[\r\n]+\s*/g, " "), suffix });
+  const comment =
+    input.notes.map((note) => formatModelNote(note, modelNoteLocation(note))).join("\n") +
+    (earlier ? EARLIER_SCREENSHOT_FOOTER : "");
+  if (comment.length > COMPOSER_CONTEXT_PREVIEW_COMMENT_MAX_CHARS) {
+    throw new RangeError("Model notes exceed the annotation comment limit.");
   }
-  const notes = lines.map(({ prefix, text, suffix }, index) => {
-    const limit = 1 + Math.floor(remaining / (lines.length - index));
-    const bounded =
-      text.length <= limit ? text : `${text.slice(0, limit - 1).replace(/[\uD800-\uDBFF]$/, "")}…`;
-    remaining += 1 - bounded.length;
-    return prefix + bounded + suffix;
-  });
   const path = input.linkPath;
   const explicitPath =
     path !== null && isRelativeFilePath(path) && !/^(?:\.{1,2}|~)\//.test(path)
@@ -241,7 +254,7 @@ export function modelAnnotationPayload(input: {
         ? ATTACHMENT_URL_PREFIX + input.name
         : encodeMarkdownLinkDestination(explicitPath) + formatModelViewHash(input.view),
     pageTitle: input.name,
-    comment: notes.join("\n") + footer,
+    comment,
     elements: [],
     regions: [],
     strokes: [],

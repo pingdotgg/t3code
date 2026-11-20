@@ -60,11 +60,12 @@ describe("model notes staged in a mobile draft", () => {
   });
 
   it("keeps a long note readable on a draft card with a saved view", () => {
-    const content = modelAnnotationComposerContent(annotation("x".repeat(9_000)), () => "s1");
+    const noteText = "x".repeat(7_650);
+    const content = modelAnnotationComposerContent(annotation(noteText), () => "s1");
     expect(() => decodeContext(content!.context)).not.toThrow();
     expect(modelAnnotationDrafts(content!.context, content!.attachments)).toEqual([
       expect.objectContaining({
-        notes: [{ number: 1, text: expect.stringMatching(/^x+…$/), stale: false }],
+        notes: [{ number: 1, text: noteText, stale: false }],
         target: { path: "out/hinge.stl", view: { position: [1, 2, 3], target: [0, 0, 0] } },
         screenshotId: "s1",
       }),

@@ -1,5 +1,6 @@
 import { MAX_MODEL_BYTES, type ModelNote } from "@t3tools/client-runtime/model-preview/annotations";
 import { isModelPreviewError } from "@t3tools/client-runtime/model-preview/error";
+import { isZipError } from "@t3tools/client-runtime/zip/error";
 import { ModelScene } from "@t3tools/client-runtime/model-preview/scene";
 
 import {
@@ -40,6 +41,7 @@ export function start() {
   let requestedView: Extract<ModelViewerCommand, { type: "view" }>["view"] | null = null;
   let loading: { id: number; controller: AbortController } | null = null;
   let sink: { id: number; sink: ReturnType<typeof createModelByteSink> } | null = null;
+  let wireframe = false;
   let annotating = false;
   let notes: ReadonlyArray<ModelNote> = [];
   let activeId: string | null = null;
@@ -182,7 +184,7 @@ export function start() {
       disposeScene();
       scene = loaded;
       sceneId = command.id;
-      loaded.setWireframe(command.wireframe);
+      loaded.setWireframe(wireframe);
       if (view) loaded.setView(view);
       loaded.setFrameListener(placePins);
       post({ type: "loaded", id: command.id, summary: loaded.summary, view: loaded.view });
@@ -191,7 +193,7 @@ export function start() {
       post({
         type: "failed",
         id: command.id,
-        code: isModelPreviewError(cause) ? cause.code : "model-invalid",
+        code: isModelPreviewError(cause) || isZipError(cause) ? cause.code : "model-invalid",
       });
     } finally {
       if (loading?.controller === controller) loading = null;
@@ -247,6 +249,7 @@ export function start() {
         post({ type: "view", view: scene.view, moved: false });
         return;
       case "wireframe":
+        wireframe = input.on;
         scene?.setWireframe(input.on);
         return;
       case "annotate":

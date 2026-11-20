@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { modelViewerEvent } from "./model-viewer-document";
 import {
@@ -78,12 +78,15 @@ describe("viewer page messages", () => {
 });
 
 it("settles outstanding work when a page is replaced and ignores its late replies", async () => {
+  vi.useFakeTimers();
+  using _timers = { [Symbol.dispose]: () => vi.useRealTimers() };
   const first = createModelViewerRequests(1, () => true);
   const ack = first.sendChunk("YQ==");
   const capture = first.capture([]);
   first.close();
   await expect(ack).rejects.toMatchObject({ name: "AbortError" });
   await expect(capture).resolves.toBeNull();
+  expect(vi.getTimerCount()).toBe(0);
 
   const second = createModelViewerRequests(2, () => true);
   const nextAck = second.sendChunk("Yg==");
@@ -98,4 +101,30 @@ it("settles outstanding work when a page is replaced and ignores its late replie
   second.receive({ type: "captured", id: 2, requestId: 1, result: null });
   await expect(nextAck).resolves.toBeUndefined();
   await expect(nextCapture).resolves.toBeNull();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("settles lost replies and accepts a new capture after the deadline", async () => {
+  vi.useFakeTimers();
+  using _timers = { [Symbol.dispose]: () => vi.useRealTimers() };
+  const viewer = createModelViewerRequests(1, () => true);
+  const outcomes: { ack?: unknown; capture?: unknown } = {};
+  void viewer.sendChunk("YQ==").catch((cause: unknown) => (outcomes.ack = cause));
+  void viewer.capture([]).then((result) => (outcomes.capture = result));
+  await vi.runOnlyPendingTimersAsync();
+  expect(outcomes).toEqual({
+    ack: expect.objectContaining({ message: expect.stringMatching(/timed out/i) }),
+    capture: null,
+  });
+  await expect(viewer.sendChunk("Yg==")).rejects.toThrow(/timed out/i);
+
+  const nextCapture = viewer.capture([]);
+  const result = {
+    screenshot: { dataUrl: "data:image/png;base64,AA==", width: 5, height: 6 },
+    view: { position: [1, 2, 3], target: [0, 0, 0] },
+  } as const;
+  viewer.receive({ type: "captured", id: 1, requestId: 1, result: null });
+  viewer.receive({ type: "captured", id: 1, requestId: 2, result });
+  await expect(nextCapture).resolves.toEqual(result);
+  expect(vi.getTimerCount()).toBe(0);
 });

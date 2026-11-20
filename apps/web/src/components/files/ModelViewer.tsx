@@ -1,6 +1,7 @@
 import {
   formatModelSize,
   modelAnnotationPayload,
+  modelNotesFitAnnotation,
   restoreModelPins,
   type ModelNote,
   type ModelPinCapture,
@@ -251,13 +252,26 @@ export default function ModelViewer(props: {
     if (!draft) return;
     const text = draft.text.trim();
     if (!text) return;
-    if (draft.id === null && draft.hit) {
+    const isNew = draft.id === null && draft.hit !== null;
+    let next: ReadonlyArray<ModelNote>;
+    if (isNew) {
       const { point, normal } = draft.hit;
-      const number = ++lastPinNumber.current;
-      const next = [...notes, { id: randomUUID(), number, text, point, normal, stale: false }];
+      const number = lastPinNumber.current + 1;
+      next = [...notes, { id: randomUUID(), number, text, point, normal, stale: false }];
+    } else {
+      next = notes.map((note) => (note.id === draft.id ? { ...note, text } : note));
+    }
+    if (!modelNotesFitAnnotation(next)) {
+      toastManager.add({
+        type: "error",
+        title: gt("Shorten this note or send your saved notes to chat first."),
+      });
+      return;
+    }
+    if (isNew) {
+      lastPinNumber.current++;
       updatePins(next);
     } else {
-      const next = notes.map((note) => (note.id === draft.id ? { ...note, text } : note));
       notesRef.current = next;
       setNotes(next);
     }

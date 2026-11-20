@@ -152,6 +152,7 @@ const MODEL_MIME_ALIASES = new Map<string, ModelPreviewKind>([
   ["model/x.stl-binary", "stl"],
   ["application/sla", "stl"],
   ["application/vnd.ms-pki.stl", "stl"],
+  ["application/vnd.ms-3mfdocument", "3mf"],
   ["application/vnd.ms-package.3dmanufacturing-3dmodel+xml", "3mf"],
 ]);
 

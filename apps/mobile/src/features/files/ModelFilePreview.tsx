@@ -4,6 +4,7 @@ import {
   formatModelViewHash,
   MAX_MODEL_BYTES,
   modelAnnotationPayload,
+  modelNotesFitAnnotation,
   modelViewFromHash,
   rememberModelPreview,
   restoreModelPins,
@@ -12,12 +13,12 @@ import {
   type ModelPinCapture,
   type ModelPreviewMemory,
 } from "@t3tools/client-runtime/model-preview/annotations";
-import type { ModelPreviewErrorCode } from "@t3tools/client-runtime/model-preview/error";
 import type { ModelViewPreset } from "@t3tools/client-runtime/model-preview/scene";
+import { zipErrorText } from "@t3tools/client-runtime/zip/error-messages";
 import type { ModelPreviewKind } from "@t3tools/shared/filePreview";
 import { fetch } from "expo/fetch";
 import { File } from "expo-file-system";
-import { useGT } from "gt-react-native";
+import { useGT, useMessages } from "gt-react-native";
 import {
   useCallback,
   useEffect,
@@ -77,7 +78,11 @@ interface DraftPin {
   readonly text: string;
 }
 
-type Failure = "too-large" | "unavailable" | "crashed" | ModelPreviewErrorCode;
+type Failure =
+  | "too-large"
+  | "unavailable"
+  | "crashed"
+  | Extract<ModelViewerEvent, { type: "failed" }>["code"];
 
 type ViewerRequests = ReturnType<typeof createModelViewerRequests>;
 
@@ -189,6 +194,7 @@ export function ModelFilePreview({
   readonly onRetry: () => void;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const headerInset = useContentTopInset();
@@ -271,7 +277,7 @@ export function ModelFilePreview({
       signal.throwIfAborted();
       await streamModelChunks(reader, signal, requests.sendChunk);
       signal.throwIfAborted();
-      if (!post({ type: "end", id, format, view: startView(), wireframe: wireframeRef.current })) {
+      if (!post({ type: "end", id, format, view: startView() })) {
         throw new Error("The model viewer is unavailable.");
       }
     })()
@@ -497,16 +503,22 @@ export function ModelFilePreview({
     if (!draft || !availableRequests()) return;
     const text = draft.text.trim();
     if (!text) return;
-    if (draft.id === null && draft.hit) {
+    const isNew = draft.id === null && draft.hit !== null;
+    let next: ReadonlyArray<ModelNote>;
+    if (isNew) {
       const { number, point, normal } = draft.hit;
-      void savePins([
-        ...notesRef.current,
-        { id: uuidv4(), number, text, point, normal, stale: false },
-      ]);
+      next = [...notesRef.current, { id: uuidv4(), number, text, point, normal, stale: false }];
     } else {
-      updateNotes(
-        notesRef.current.map((note) => (note.id === draft.id ? { ...note, text } : note)),
-      );
+      next = notesRef.current.map((note) => (note.id === draft.id ? { ...note, text } : note));
+    }
+    if (!modelNotesFitAnnotation(next)) {
+      Dialog.alert(gt("Shorten this note or send your saved notes to chat first."));
+      return;
+    }
+    if (isNew) {
+      void savePins(next);
+    } else {
+      updateNotes(next);
     }
   };
 
@@ -557,7 +569,9 @@ export function ModelFilePreview({
           ? gt("3D previews need WebGL, which is unavailable.")
           : failure === "crashed"
             ? gt("The 3D viewer stopped.")
-            : gt("Could not load this 3D model. Check the connection and try again.");
+            : failure === null || failure === "unavailable"
+              ? gt("Could not load this 3D model. Check the connection and try again.")
+              : zipErrorText(failure, messages);
   const sizeLabel = summary
     ? summary.format === "stl"
       ? gt("{size} (mm assumed, STL has no units)", { size: formatModelSize(summary.size) })

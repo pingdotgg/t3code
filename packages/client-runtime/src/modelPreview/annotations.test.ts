@@ -6,6 +6,7 @@ import {
   modelAnnotationNotes,
   modelAnnotationPayload,
   modelCameraStatus,
+  modelNotesFitAnnotation,
   modelViewFromHash,
   modelViewFromHref,
   reconcileModelNotes,
@@ -33,6 +34,11 @@ describe("model camera links", () => {
     expect(modelViewFromHref("out/bracket.stl#view=120%2C80.5%2C-40%2C0%2C0.25%2C0")).toEqual(view);
     // A native route carries the fragment alone.
     expect(modelViewFromHash(formatModelViewHash(view))).toEqual(view);
+    const closeUp = {
+      position: [0.1234567890123456, 3e-12, 1.2e21],
+      target: [0.123456789012344, 0, 1.2e21],
+    } as const;
+    expect(modelViewFromHref(`out/bracket.stl${formatModelViewHash(closeUp)}`)).toEqual(closeUp);
   });
 
   it.each([
@@ -215,19 +221,40 @@ describe("model notes as a chat annotation", () => {
     expect(
       modelAnnotationNotes(
         payload({
-          notes: [note(1, "Fillet (2 mm) here"), note(3, "Countersink", true)],
+          notes: [note(1, "Fillet (2 mm)\u2028here"), note(3, "Counter\u2029sink\u0085this", true)],
           screenshot: { ...screenshot, earlier: true },
         }).comment,
       ),
     ).toEqual({
       notes: [
         { number: 1, text: "Fillet (2 mm) here", stale: false },
-        { number: 3, text: "Countersink", stale: true },
+        { number: 3, text: "Counter sink this", stale: true },
       ],
       earlier: true,
     });
     expect(modelAnnotationNotes("Make the header bigger")).toBeNull();
     expect(modelAnnotationNotes("")).toBeNull();
+  });
+
+  it("refuses to stage a batch that cannot carry every note", () => {
+    const notes = Array.from({ length: 100 }, (_, index) => note(index + 1, "Widen", true));
+    expect(modelNotesFitAnnotation(notes)).toBe(false);
+    expect(() => payload({ notes })).toThrow(RangeError);
+  });
+
+  it("keeps every saved note whole after the geometry changes", () => {
+    const notes = Array.from({ length: 12 }, (_, index) => note(index + 1, "🧩".repeat(280)));
+    expect(modelNotesFitAnnotation(notes)).toBe(true);
+    expect(modelNotesFitAnnotation([...notes, note(13, "x".repeat(250))])).toBe(false);
+    const changed = reconcileModelNotes({ fingerprint: "before", notes }, "after");
+    const comment = payload({
+      notes: changed,
+      screenshot: { ...screenshot, earlier: true },
+    }).comment;
+    expect(modelAnnotationNotes(comment)).toEqual({
+      earlier: true,
+      notes: notes.map(({ number, text }) => ({ number, text, stale: true })),
+    });
   });
 
   it.each([

@@ -1,3 +1,5 @@
+import { ModelPreviewError } from "@t3tools/client-runtime/model-preview/error";
+import { ZipError } from "@t3tools/client-runtime/zip/error";
 import * as Schema from "effect/Schema";
 
 import type { ModelViewerCommand, ModelViewerEvent } from "./model-viewer-protocol";
@@ -22,7 +24,7 @@ const ModelViewerEventSchema = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("failed"),
     id: Schema.Number,
-    code: Schema.Literals(["model-invalid", "model-webgl-unavailable"]),
+    code: Schema.Union([ModelPreviewError.fields.code, ZipError.fields.code]),
   }),
   Schema.Struct({ type: Schema.Literal("view"), view: View, moved: Schema.Boolean }),
   Schema.Struct({

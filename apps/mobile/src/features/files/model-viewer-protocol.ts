@@ -7,6 +7,7 @@ import type {
 } from "@t3tools/client-runtime/model-preview/annotations";
 import type { ModelPreviewErrorCode } from "@t3tools/client-runtime/model-preview/error";
 import type { ModelViewPreset } from "@t3tools/client-runtime/model-preview/scene";
+import type { ZipErrorCode } from "@t3tools/client-runtime/zip/error";
 import type { ModelPreviewKind } from "@t3tools/shared/filePreview";
 
 // Shared by the native screen and the WebView page script.
@@ -37,7 +38,6 @@ export type ModelViewerCommand =
       readonly id: number;
       readonly format: ModelPreviewKind;
       readonly view: ModelCameraView | null;
-      readonly wireframe: boolean;
     }
   | { readonly type: "cancel"; readonly id: number }
   | { readonly type: "preset"; readonly preset: ModelViewPreset | "fit" }
@@ -69,7 +69,11 @@ export type ModelViewerEvent =
       readonly summary: ModelSummary;
       readonly view: ModelCameraView;
     }
-  | { readonly type: "failed"; readonly id: number; readonly code: ModelPreviewErrorCode }
+  | {
+      readonly type: "failed";
+      readonly id: number;
+      readonly code: ModelPreviewErrorCode | ZipErrorCode;
+    }
   /** The camera after a gesture (`moved`) or after a preset or restored view. */
   | { readonly type: "view"; readonly view: ModelCameraView; readonly moved: boolean }
   | {
@@ -84,17 +88,20 @@ export type ModelViewerEvent =
       readonly result: ModelPinCapture | null;
     };
 
-/** One load owns its replies. Closing it cancels byte transfer and settles any pending capture. */
+const MODEL_VIEWER_REPLY_TIMEOUT_MS = 15_000;
+
+/** One load owns its replies. Closing it cancels transfer and settles any pending capture. */
 export function createModelViewerRequests(
   id: number,
   post: (input: ModelViewerCommand) => boolean,
 ) {
   const controller = new AbortController();
-  let ack: { resolve: () => void; reject: (reason: unknown) => void } | null = null;
+  let settleChunk: ((error?: unknown) => void) | null = null;
+  let chunkError: Error | null = null;
   let nextCaptureId = 0;
   let pendingCapture: {
     requestId: number;
-    resolve: (result: ModelPinCapture | null) => void;
+    settle: (result: ModelPinCapture | null) => void;
   } | null = null;
   return {
     id,
@@ -102,11 +109,23 @@ export function createModelViewerRequests(
     sendChunk(data: string) {
       return new Promise<void>((resolve, reject) => {
         controller.signal.throwIfAborted();
-        if (ack) throw new Error("The model viewer has not acknowledged the previous chunk.");
-        ack = { resolve, reject };
-        if (post({ type: "chunk", id, data })) return;
-        ack = null;
-        reject(new Error("The model viewer is unavailable."));
+        if (chunkError) throw chunkError;
+        if (settleChunk)
+          throw new Error("The model viewer has not acknowledged the previous chunk.");
+        const timeout = setTimeout(() => {
+          // An ack only carries the load ID, so no further chunks can use this load.
+          chunkError = new Error("The model viewer timed out receiving a chunk.");
+          settleChunk?.(chunkError);
+        }, MODEL_VIEWER_REPLY_TIMEOUT_MS);
+        settleChunk = (error) => {
+          clearTimeout(timeout);
+          settleChunk = null;
+          if (error === undefined) resolve();
+          else reject(error);
+        };
+        if (!post({ type: "chunk", id, data })) {
+          settleChunk?.(new Error("The model viewer is unavailable."));
+        }
       });
     },
     capture(notes: ReadonlyArray<ModelNote>) {
@@ -116,28 +135,28 @@ export function createModelViewerRequests(
           return;
         }
         const requestId = ++nextCaptureId;
-        pendingCapture = { requestId, resolve };
-        if (post({ type: "capture", id, requestId, notes })) return;
-        pendingCapture = null;
-        resolve(null);
+        const settle = (result: ModelPinCapture | null) => {
+          clearTimeout(timeout);
+          pendingCapture = null;
+          resolve(result);
+        };
+        const timeout = setTimeout(() => settle(null), MODEL_VIEWER_REPLY_TIMEOUT_MS);
+        pendingCapture = { requestId, settle };
+        if (!post({ type: "capture", id, requestId, notes })) pendingCapture?.settle(null);
       });
     },
     receive(event: Extract<ModelViewerEvent, { type: "ack" | "captured" }>) {
       if (event.id !== id) return;
       if (event.type === "ack") {
-        ack?.resolve();
-        ack = null;
+        settleChunk?.();
       } else if (pendingCapture?.requestId === event.requestId) {
-        pendingCapture.resolve(event.result);
-        pendingCapture = null;
+        pendingCapture.settle(event.result);
       }
     },
     close() {
       controller.abort();
-      ack?.reject(controller.signal.reason);
-      ack = null;
-      pendingCapture?.resolve(null);
-      pendingCapture = null;
+      settleChunk?.(controller.signal.reason);
+      pendingCapture?.settle(null);
     },
   };
 }

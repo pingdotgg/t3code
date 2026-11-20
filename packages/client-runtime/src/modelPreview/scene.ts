@@ -9,6 +9,7 @@ import {
   GridHelper,
   Group,
   HemisphereLight,
+  InstancedMesh,
   LoadingManager,
   Material,
   Matrix3,
@@ -27,6 +28,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
 import { decodeDataUrl } from "../dataUrl.ts";
 import { disposeThreeObject } from "../three/disposeObject.ts";
+import { isZipError } from "../zip/zipError.ts";
 import {
   modelCameraStatus,
   type ModelCameraView,
@@ -282,7 +284,7 @@ export class ModelScene {
 
   /**
    * Parses and mounts a model's bytes; aborting before it finishes frees what it made.
-   * Rejects with `ModelPreviewError` for a file it cannot show, or the signal's reason.
+   * Rejects with a preview or archive error, or the signal's reason.
    */
   static async load(input: {
     readonly container: HTMLElement;
@@ -306,8 +308,9 @@ export class ModelScene {
         input.signal,
         input.unpackArchive ?? unpackModelArchive,
       );
-    } catch {
+    } catch (cause) {
       input.signal.throwIfAborted();
+      if (isZipError(cause)) throw cause;
       throw new ModelPreviewError({ code: "model-invalid" });
     }
     if (input.signal.aborted || countTriangles(content) === 0) {
@@ -414,6 +417,11 @@ export class ModelScene {
     if (!hit?.face) return null;
     const toContent = new Matrix4().copy(this.content.matrixWorld).invert();
     const meshToContent = new Matrix4().multiplyMatrices(toContent, hit.object.matrixWorld);
+    if (hit.instanceId !== undefined && hit.object instanceof InstancedMesh) {
+      const instanceToMesh = new Matrix4();
+      hit.object.getMatrixAt(hit.instanceId, instanceToMesh);
+      meshToContent.multiply(instanceToMesh);
+    }
     const normal = hit.face.normal
       .clone()
       .applyNormalMatrix(new Matrix3().getNormalMatrix(meshToContent));

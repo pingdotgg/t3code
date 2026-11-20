@@ -133,6 +133,23 @@ it("loads a compressed 3MF through the bounded archive reader", async () => {
   expect(scene.summary.triangles).toBe(1);
 });
 
+it("reports a 3MF archive limit through the preview worker", async () => {
+  const { default: JSZip } = await import("jszip");
+  const archive = new JSZip();
+  for (let index = 0; index <= 2048; index++) archive.file(`part-${index}`, "");
+  const src = URL.createObjectURL(await archive.generateAsync({ type: "blob" }));
+  using resources = new DisposableStack();
+  resources.defer(() => URL.revokeObjectURL(src));
+  await expect(
+    loadModelScene({
+      src,
+      format: "3mf",
+      container: document.createElement("div"),
+      signal: new AbortController().signal,
+    }),
+  ).rejects.toMatchObject({ _tag: "ZipError", code: "archive-too-many-entries" });
+});
+
 it.each([
   { name: "captures a 3MF's embedded texture as soon as the scene is ready", cancel: false },
   { name: "cancels a 3MF preview while its embedded texture is loading", cancel: true },
@@ -185,16 +202,32 @@ it.each([
 
 it("previews embedded GLB data and refuses a reference to a separate file", async () => {
   const vertices = new Float32Array([0, 0, 0, 1, 0, 1, 0, 1, 0]);
-  function modelBytes(uri?: string) {
+  function modelBytes(uri?: string, instanceDepth?: number) {
+    const instances = instanceDepth === undefined ? null : new Float32Array([1, 1, instanceDepth]);
+    const byteLength = vertices.byteLength + (instances?.byteLength ?? 0);
     const json = new TextEncoder().encode(
       JSON.stringify({
         asset: { version: "2.0" },
+        extensionsUsed: instances ? ["EXT_mesh_gpu_instancing"] : undefined,
         scene: 0,
         scenes: [{ nodes: [0] }],
-        nodes: [{ mesh: 0, scale: [2, 1, 1] }],
+        nodes: [
+          {
+            mesh: 0,
+            scale: [2, 1, 1],
+            extensions: instances
+              ? { EXT_mesh_gpu_instancing: { attributes: { SCALE: 1 } } }
+              : undefined,
+          },
+        ],
         meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }],
-        buffers: [{ byteLength: vertices.byteLength, uri }],
-        bufferViews: [{ buffer: 0, byteLength: vertices.byteLength }],
+        buffers: [{ byteLength, uri }],
+        bufferViews: [
+          { buffer: 0, byteLength: vertices.byteLength },
+          ...(instances
+            ? [{ buffer: 0, byteOffset: vertices.byteLength, byteLength: instances.byteLength }]
+            : []),
+        ],
         accessors: [
           {
             bufferView: 0,
@@ -204,12 +237,13 @@ it("previews embedded GLB data and refuses a reference to a separate file", asyn
             min: [0, 0, 0],
             max: [1, 1, 1],
           },
+          ...(instances ? [{ bufferView: 1, componentType: 5126, count: 1, type: "VEC3" }] : []),
         ],
       }),
     );
     const jsonLength = Math.ceil(json.byteLength / 4) * 4;
     const binaryOffset = 20 + jsonLength;
-    const bytes = new Uint8Array(binaryOffset + 8 + vertices.byteLength);
+    const bytes = new Uint8Array(binaryOffset + 8 + byteLength);
     const header = new DataView(bytes.buffer);
     header.setUint32(0, 0x46546c67, true);
     header.setUint32(4, 2, true);
@@ -218,9 +252,11 @@ it("previews embedded GLB data and refuses a reference to a separate file", asyn
     header.setUint32(16, 0x4e4f534a, true);
     bytes.fill(0x20, 20, binaryOffset);
     bytes.set(json, 20);
-    header.setUint32(binaryOffset, vertices.byteLength, true);
+    header.setUint32(binaryOffset, byteLength, true);
     header.setUint32(binaryOffset + 4, 0x004e4942, true);
     bytes.set(new Uint8Array(vertices.buffer), binaryOffset + 8);
+    if (instances)
+      bytes.set(new Uint8Array(instances.buffer), binaryOffset + 8 + vertices.byteLength);
     return bytes;
   }
 
@@ -229,21 +265,26 @@ it("previews embedded GLB data and refuses a reference to a separate file", asyn
   container.style.cssText = "width: 320px; height: 320px";
   document.body.append(container);
   resources.defer(() => container.remove());
-  const load = (uri?: string, signal = new AbortController().signal) => {
-    const src = URL.createObjectURL(new Blob([modelBytes(uri)]));
+  const load = (uri?: string, signal = new AbortController().signal, instanceDepth?: number) => {
+    const src = URL.createObjectURL(new Blob([modelBytes(uri, instanceDepth)]));
     resources.defer(() => URL.revokeObjectURL(src));
     return loadModelScene({ container, src, format: "glb", signal });
   };
-  const scene = await load();
-  resources.defer(() => scene.dispose());
-  expect(scene.summary.triangles).toBe(1);
-  scene.setPreset("front");
-  const [center] = scene.project([{ point: [2 / 3, 1 / 3, 1 / 3], normal: [0, 0, 1] }]);
   const rect = container.getBoundingClientRect();
-  const normal = scene.pick(rect.left + center!.x, rect.top + center!.y)?.normal;
-  // The scaled face rises one unit over two, so its normal tilts half as far as its depth.
-  expect(normal?.[0]).toBeCloseTo(-1 / Math.sqrt(5));
-  expect(normal?.[2]).toBeCloseTo(2 / Math.sqrt(5));
+  // The node scale makes the face rise one unit over two. The instance triples the rise.
+  for (const [instanceDepth, rise] of [
+    [undefined, 1],
+    [3, 3],
+  ] as const) {
+    const scene = await load(undefined, undefined, instanceDepth);
+    using _scene = { [Symbol.dispose]: () => scene.dispose() };
+    expect(scene.summary.triangles).toBe(1);
+    scene.setPreset("front");
+    const [center] = scene.project([{ point: [2 / 3, 1 / 3, rise / 3], normal: [0, 0, 1] }]);
+    const normal = scene.pick(rect.left + center!.x, rect.top + center!.y)?.normal;
+    expect(normal?.[0]).toBeCloseTo(-rise / Math.hypot(rise, 2));
+    expect(normal?.[2]).toBeCloseTo(2 / Math.hypot(rise, 2));
+  }
   const fetchResource = globalThis.fetch;
   const waitingForBuffer = Promise.withResolvers<Request>();
   let holdBuffer = false;

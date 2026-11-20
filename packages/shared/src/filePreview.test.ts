@@ -212,6 +212,7 @@ describe("attachment preview classification", () => {
     ["download", "application/vnd.ms-pki.stl", "model"],
     ["download", "model/x.stl-ascii", "model"],
     ["download", "application/vnd.ms-package.3dmanufacturing-3dmodel+xml", "model"],
+    ["download", " Application/Vnd.Ms-3mfdocument ; charset=binary", "model"],
   ])("classifies %s (%s) as %s", (name, mimeType, expected) => {
     expect(filePreviewKind({ name, mimeType })).toBe(expected);
   });

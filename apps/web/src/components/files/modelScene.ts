@@ -1,6 +1,7 @@
 import { ModelPreviewError } from "@t3tools/client-runtime/model-preview/error";
 import { MAX_MODEL_BYTES } from "@t3tools/client-runtime/model-preview/annotations";
 import { ModelScene } from "@t3tools/client-runtime/model-preview/scene";
+import { ZipError, type ZipErrorCode } from "@t3tools/client-runtime/zip/error";
 import type { ModelPreviewKind } from "@t3tools/shared/filePreview";
 
 import { readBoundedDocument } from "./readBoundedDocument";
@@ -18,8 +19,9 @@ async function unpackInWorker(bytes: ArrayBuffer, signal: AbortSignal) {
       worker.addEventListener("error", reject, options);
       worker.addEventListener(
         "message",
-        (event: MessageEvent<ArrayBuffer | null>) => {
-          if (event.data) resolve(event.data);
+        (event: MessageEvent<ArrayBuffer | ZipErrorCode | null>) => {
+          if (event.data instanceof ArrayBuffer) resolve(event.data);
+          else if (event.data !== null) reject(new ZipError({ code: event.data }));
           else reject(new ModelPreviewError({ code: "model-invalid" }));
         },
         options,
