@@ -303,6 +303,9 @@ export function layerWithRegistry<Error>(
     readonly wrapProviderEventIngestor?: (
       ingestor: ProviderEventIngestor.ProviderEventIngestorV2Shape,
     ) => ProviderEventIngestor.ProviderEventIngestorV2Shape;
+    readonly wrapEffectOutbox?: (
+      outbox: EffectOutbox.EffectOutboxV2Shape,
+    ) => EffectOutbox.EffectOutboxV2Shape;
     readonly managedPolicy?: ManagedPolicyDocument;
     /** The instances the ingestor reads snapshots from, such as an endpoint behind a hub. */
     readonly providerInstances?: Partial<
@@ -368,7 +371,17 @@ export function layerWithRegistry<Error>(
       ),
     ),
   ).pipe(Layer.orDie);
-  const layerEffectOutboxProvided = EffectOutbox.layer.pipe(Layer.provide(layerDatabase));
+  const wrapEffectOutbox = options.wrapEffectOutbox;
+  const layerEffectOutboxProvided = (
+    wrapEffectOutbox === undefined
+      ? EffectOutbox.layer
+      : Layer.effect(
+          EffectOutbox.EffectOutboxV2,
+          Effect.gen(function* () {
+            return wrapEffectOutbox(yield* EffectOutbox.EffectOutboxV2);
+          }),
+        ).pipe(Layer.provide(EffectOutbox.layer))
+  ).pipe(Layer.provide(layerDatabase));
   const wrapProjectionStore = options.wrapProjectionStore;
   const layerProjectionStore =
     wrapProjectionStore === undefined

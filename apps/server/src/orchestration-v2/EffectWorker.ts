@@ -329,7 +329,24 @@ export const layerExecutor: Layer.Layer<
                 ),
               );
           }
-          case "provider-turn.steer":
+          case "provider-turn.steer": {
+            const acceptDelivery = Effect.gen(function* () {
+              if (effect.request.type !== "provider-turn.steer") return;
+              const { messageId } = effect.request;
+              const projection = yield* threads.getThreadRecords(
+                effect.threadId,
+                ["messages", "runs"],
+                { messageIds: [messageId] },
+              );
+              const message = projection.messages.find((row) => row.id === messageId);
+              if (message?.delegatedCompletion === undefined) return;
+              yield* threads.dispatch({
+                type: "notification.delivery.accept",
+                commandId: CommandId.make(`command:mailbox-accepted:${effect.id}`),
+                threadId: effect.threadId,
+                messageId,
+              });
+            });
             return providerTurnControl
               .steer({
                 threadId: effect.threadId,
@@ -342,25 +359,7 @@ export const layerExecutor: Layer.Layer<
                   : { modelSelection: effect.request.modelSelection }),
               })
               .pipe(
-                Effect.tap(() =>
-                  Effect.gen(function* () {
-                    if (effect.request.type !== "provider-turn.steer") return;
-                    const messageId = effect.request.messageId;
-                    const projection = yield* threads.getThreadRecords(
-                      effect.threadId,
-                      ["messages", "runs"],
-                      { messageIds: [effect.request.messageId] },
-                    );
-                    const message = projection.messages.find((row) => row.id === messageId);
-                    if (message?.delegatedCompletion === undefined) return;
-                    yield* threads.dispatch({
-                      type: "notification.delivery.accept",
-                      commandId: CommandId.make(`command:mailbox-accepted:${effect.id}`),
-                      threadId: effect.threadId,
-                      messageId: message.id,
-                    });
-                  }),
-                ),
+                Effect.tap(() => acceptDelivery),
                 Effect.catch((error) =>
                   Effect.gen(function* () {
                     if (
@@ -375,7 +374,7 @@ export const layerExecutor: Layer.Layer<
                       persisted?.request.type === "provider-turn.steer" &&
                       persisted.request.runtimeAccepted === true
                     )
-                      return;
+                      return yield* acceptDelivery;
                     const projection = yield* threads.getThreadRecords(
                       effect.threadId,
                       ["messages", "runs"],
@@ -463,6 +462,7 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
+          }
           case "provider-turn.restart":
             return providerTurnControl
               .interruptAndAwaitTerminal({

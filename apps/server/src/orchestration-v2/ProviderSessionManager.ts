@@ -39,6 +39,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as SqlError from "effect/sql/SqlError";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -2806,6 +2807,12 @@ export const layerWithOptions = (
             }
             if (effect !== undefined && effect.request.type === "provider-turn.steer")
               yield* effectOutbox.markSteerAccepted(effect.id).pipe(
+                Effect.retry({
+                  schedule: Schedule.spaced("100 millis"),
+                  while: (error) =>
+                    SqlError.isSqlError(error.cause) &&
+                    error.cause.reason._tag === "LockTimeoutError",
+                }),
                 Effect.mapError(
                   (cause) =>
                     new ProviderAdapter.ProviderAdapterEventStreamError({

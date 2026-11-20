@@ -229,6 +229,12 @@ const isMessageQuestionAnswer = Schema.is(
   Schema.Union([TrimmedNonEmptyString, Schema.NonEmptyArray(TrimmedNonEmptyString)]),
 );
 
+class SteerSettlementPending extends Schema.TaggedError<SteerSettlementPending>()(
+  "SteerSettlementPending",
+  { effectId: Schema.String },
+) {}
+const isSteerSettlementPending = Schema.is(SteerSettlementPending);
+
 export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDispatchError>()(
   "OrchestratorDispatchError",
   {
@@ -3568,7 +3574,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       )
         continue;
       const effect = Option.getOrUndefined(
-        yield* effectOutbox.firstSteer(threadId, item.messageId),
+        yield* item.providerTurnId === null
+          ? effectOutbox.firstSteer(threadId, item.messageId)
+          : effectOutbox.steerForProviderTurn({
+              threadId,
+              messageId: item.messageId,
+              providerTurnId: item.providerTurnId,
+            }),
       );
       if (
         effect?.request.type === "provider-turn.steer" &&
@@ -3578,6 +3590,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     }
   });
+
+  // Apply outside the dispatch lock: steer fallback needs that lock to settle its effect.
+  const retryAfterSteerSettlement = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.retry({
+        while: (error) => {
+          const pending = isOrchestratorDispatchError(error) ? error.cause : error;
+          return isSteerSettlementPending(pending)
+            ? effectOutbox.awaitSettled(pending.effectId).pipe(Effect.as(true), Effect.orDie)
+            : Effect.succeed(false);
+        },
+      }),
+    );
 
   // A steer still pending after its run ended was never read: the provider marks one it read
   // completed, and one Stop dropped cancelled. It runs next, in its place among waiting messages.
@@ -3646,16 +3671,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const firstSteer = Option.getOrUndefined(
         yield* effectOutbox.firstSteer(threadId, message.id),
       )?.request;
-      const acceptedSteer =
+      const deliveryEffect =
         item.providerTurnId === null
-          ? firstSteer
+          ? Option.getOrUndefined(yield* effectOutbox.firstSteer(threadId, message.id))
           : Option.getOrUndefined(
               yield* effectOutbox.steerForProviderTurn({
                 threadId,
                 messageId: message.id,
                 providerTurnId: item.providerTurnId,
               }),
-            )?.request;
+            );
+      if (deliveryEffect?.status === "pending" || deliveryEffect?.status === "running")
+        return yield* new SteerSettlementPending({ effectId: deliveryEffect.id });
+      const acceptedSteer = deliveryEffect?.request;
       if (acceptedSteer?.type === "provider-turn.steer" && acceptedSteer.runtimeAccepted === true) {
         const now = yield* DateTime.now;
         yield* writeSystemEvents([
@@ -17041,6 +17069,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         awaitSettlingSteerEffects(message.threadId, undefined, message.messageId).pipe(
           mapDispatchError(command),
           Effect.andThen(dispatchMessage),
+          retryAfterSteerSettlement,
         ),
       );
     }
@@ -17144,13 +17173,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               ? releaseUnattendedHolds(threadId, run.id)
               : Effect.void
             ).pipe(
-              Effect.andThen(
-                requeueUnreadSteers(threadId, [run.id]).pipe(
-                  Effect.catchCause((cause) =>
-                    Effect.logWarning("Failed to read unread steers", { threadId, cause }),
-                  ),
-                ),
-              ),
+              Effect.andThen(requeueUnreadSteers(threadId, [run.id])),
               Effect.andThen(
                 startNextQueuedRun(threadId, {
                   endedRunId: run.id,
@@ -17160,6 +17183,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ),
           )
           .pipe(
+            retryAfterSteerSettlement,
             Effect.catchCause((cause) =>
               Effect.logWarning("Failed to start the next queued V2 run", { threadId, cause }),
             ),
@@ -17405,6 +17429,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadIds,
           (threadId) =>
             threadDispatch.withLock(threadId, requeueUnreadSteers(threadId)).pipe(
+              retryAfterSteerSettlement,
               Effect.catchCause((cause) =>
                 Effect.logWarning("Failed to requeue an unread steer during recovery", {
                   threadId,
