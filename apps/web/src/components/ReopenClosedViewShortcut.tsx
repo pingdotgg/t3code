@@ -54,6 +54,8 @@ const PREVIEW_FORWARDED_COMMANDS = [
   "sidebar.toggle",
   "rightPanel.toggle",
   "rightPanel.toggleMaximized",
+  "rightPanel.new",
+  "rightPanel.close",
   "preview.focusUrl",
   "preview.zoomIn",
   "preview.zoomOut",
@@ -210,6 +212,7 @@ export function ReopenClosedViewShortcut() {
       context: {
         previewFocus: true,
         previewOpen: true,
+        rightPanelOpen: true,
         terminalFocus: false,
         terminalOpen,
         editableFocus: false,

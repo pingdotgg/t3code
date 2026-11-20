@@ -2,6 +2,7 @@ import type { ListRunsOptions } from "@cursor/sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -397,6 +398,83 @@ describe("CursorAgentSdkRunner", () => {
           },
         ],
       );
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("keeps an agent's background shells and reports each start and end in order", () =>
+    Effect.gen(function* () {
+      const start = (conversationId: string, id: number) => {
+        let complete: (completion: object) => void = () => {};
+        const abort = vi.fn();
+        const kept: unknown = (
+          Reflect.get(globalThis, Symbol.for("@cursor/sdk.backgroundShell")) as Function
+        )({
+          conversationId,
+          command: "sleep 60",
+          shell: {
+            id,
+            pid: id + 1,
+            abort,
+            onComplete: (listener: typeof complete) => (complete = listener),
+          },
+        });
+        return { kept, abort, complete: (completion: object) => complete(completion) };
+      };
+      const events: Array<object> = [];
+      const stops: Array<() => void> = [];
+      const reported = yield* Deferred.make<void>();
+      const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
+      const session = yield* runner.open({
+        operation: "create",
+        options: {},
+        threadId: ThreadId.make("thread-cursor-agent-sdk-background"),
+        providerSessionId: ProviderSessionId.make("provider-session-cursor-agent-sdk-background"),
+      });
+      const run = yield* session.send({
+        message: "watch it",
+        onBackgroundShell: (event) =>
+          Effect.gen(function* () {
+            if (event.type === "started") {
+              const { stop, ...started } = event;
+              stops.push(stop);
+              events.push(started);
+              return;
+            }
+            events.push(event);
+            if (!event.stopped) yield* Deferred.succeed(reported, undefined);
+          }),
+      });
+      yield* run.wait;
+
+      const killed = start("agent-cursor-agent-sdk-test", 10);
+      const finished = start("agent-cursor-agent-sdk-test", 20);
+      const foreign = start("agent-someone-else", 30);
+      killed.complete({ code: null, aborted: true });
+      finished.complete({ code: 3, aborted: false, outputPath: "/terminals/20.txt" });
+      yield* Deferred.await(reported);
+      stops[0]!();
+
+      assert.deepStrictEqual([killed.kept, finished.kept, foreign.kept], [true, true, false]);
+      assert.strictEqual(killed.abort.mock.calls.length, 1);
+      const shell = (id: string, pid: number) => ({ id, pid, command: "sleep 60" });
+      assert.deepStrictEqual(events, [
+        { ...shell("10", 11), type: "started" },
+        { ...shell("20", 21), type: "started" },
+        {
+          ...shell("10", 11),
+          type: "ended",
+          stopped: true,
+          exitCode: undefined,
+          outputPath: undefined,
+        },
+        {
+          ...shell("20", 21),
+          type: "ended",
+          stopped: false,
+          exitCode: 3,
+          outputPath: "/terminals/20.txt",
+        },
+      ]);
     }).pipe(Effect.provide(layerTest)),
   );
 

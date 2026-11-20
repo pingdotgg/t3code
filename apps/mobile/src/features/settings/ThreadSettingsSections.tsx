@@ -9,7 +9,7 @@ import {
 import { useEnvironmentsWithScope } from "../../state/session";
 import { AutoSettleDaysField } from "./components/AutoSettleDaysField";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import type { ComponentProps } from "react";
 import { View } from "react-native";
@@ -19,7 +19,7 @@ import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useEnvironments } from "../../state/environments";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
@@ -214,7 +214,7 @@ export function AutoSettleSettingsRows(props: {
 
 export function WorkingSectionSettings() {
   const gt = useGT();
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   const preferences = useAtomValue(mobilePreferencesAtom);
   const workingShelfEnabled =
     AsyncResult.isSuccess(preferences) && preferences.value.workingShelfEnabled !== false;
@@ -226,7 +226,9 @@ export function WorkingSectionSettings() {
           icon="bolt.circle"
           label={gt("Working section")}
           value={workingShelfEnabled}
-          onValueChange={(value) => savePreferences({ workingShelfEnabled: value })}
+          onValueChange={(value) => {
+            void savePreferences({ workingShelfEnabled: value });
+          }}
         />
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
@@ -242,7 +244,7 @@ export function WorkingSectionSettings() {
 
 export function NewThreadSettingsSection() {
   const gt = useGT();
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   const preferences = useAtomValue(mobilePreferencesAtom);
   const useLastProject =
     AsyncResult.isSuccess(preferences) && preferences.value.useLastProjectForNewThreads !== false;
@@ -254,7 +256,9 @@ export function NewThreadSettingsSection() {
         label={gt("Use last project")}
         subtitle={gt("Start new threads in the last project you used on this device.")}
         value={useLastProject}
-        onValueChange={(value) => savePreferences({ useLastProjectForNewThreads: value })}
+        onValueChange={(value) => {
+          void savePreferences({ useLastProjectForNewThreads: value });
+        }}
       />
     </SettingsSection>
   );
