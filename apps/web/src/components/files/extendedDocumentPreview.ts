@@ -485,8 +485,8 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
           if (html.trim() && htmlImagesFit(html)) return { kind: "html" as const, text: html };
           return {
             kind: "text" as const,
-            text: notebookText(
-              output.text ?? data["text/plain"] ?? tracebackLines(output.traceback),
+            text: terminalOutputPlainText(
+              notebookText(output.text ?? data["text/plain"] ?? tracebackLines(output.traceback)),
             ),
           };
         })
