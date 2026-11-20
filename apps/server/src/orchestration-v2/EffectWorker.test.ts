@@ -174,6 +174,7 @@ function layerExecutorFor(input: {
     Layer.provide(
       Layer.mergeAll(
         layerDependencies,
+        Layer.mock(EffectOutbox.EffectOutboxV2)({ get: () => Effect.succeedNone }),
         Layer.mock(ThreadManagementService.ThreadManagementService)(input.threads ?? {}),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
         ServerSettings.layerTest(

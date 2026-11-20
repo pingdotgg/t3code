@@ -1414,7 +1414,7 @@ it.effect("preserves message order while waiting for an accepted steer to settle
   }),
 );
 
-it.effect("retries synthetic steer completion without redelivering accepted input", () => {
+it.effect.each([false, true])("retries accepted steer completion after turn end: %s", (ended) => {
   return Effect.gen(function* () {
     let failCompletionOnce = true;
     const { started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
@@ -1470,11 +1470,55 @@ it.effect("retries synthetic steer completion without redelivering accepted inpu
         true,
       );
 
+      if (ended) {
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        const turn = projection.providerTurns[0]!;
+        const run = projection.runs.find((run) => run.id === started[0]!.runId)!;
+        const now = yield* DateTime.now;
+        yield* (yield* EventSink.EventSinkV2).write({
+          events: [
+            {
+              id: EventId.make("accepted-steer-turn-ended"),
+              type: "provider-turn.updated",
+              threadId,
+              runId: run.id,
+              providerInstanceId: run.providerInstanceId,
+              occurredAt: now,
+              payload: { ...turn, status: "completed", completedAt: now },
+            },
+            {
+              id: EventId.make("accepted-steer-run-ended"),
+              type: "run.updated",
+              threadId,
+              runId: run.id,
+              providerInstanceId: run.providerInstanceId,
+              occurredAt: now,
+              payload: { ...run, status: "completed", completedAt: now },
+            },
+          ],
+        });
+      }
+
+      const completed = yield* orchestrator.streamDomainEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "turn-item.updated" &&
+            event.payload.type === "user_message" &&
+            event.payload.messageId === messageId &&
+            event.payload.status === "completed",
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
       yield* TestClock.adjust("100 millis");
       assert.isTrue(yield* worker.runOnce());
+      yield* Fiber.join(completed);
       assert.deepEqual(steered, ["steer"]);
       const retriedEffect = Option.getOrUndefined(yield* outbox.firstSteer(threadId, messageId))!;
       assert.equal(retriedEffect.status, "succeeded");
+      const final = yield* orchestrator.getThreadProjection(threadId);
+      assert.lengthOf(final.runs, 1);
     }).pipe(Effect.provide(layer));
   });
 });
