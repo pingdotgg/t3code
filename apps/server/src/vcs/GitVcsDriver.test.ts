@@ -2204,6 +2204,9 @@ it.effect("returns after the submodule budget without a ref in uncaptured submod
     yield* git(root, ["-c", "protocol.file.allow=always", "submodule", "add", library, "library"]);
     yield* git(root, ["commit", "-m", "add library"]);
     const submodule = path.join(root, "library");
+    yield* git(submodule, ["config", "user.email", "test@test.com"]);
+    yield* git(submodule, ["config", "user.name", "Test"]);
+    yield* git(submodule, ["commit", "--allow-empty", "-m", "moved"]);
     const submoduleStarted = yield* Deferred.make<void>();
     const stalledDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
       Effect.provideService(VcsProcess.VcsProcess, {
@@ -2222,7 +2225,11 @@ it.effect("returns after the submodule budget without a ref in uncaptured submod
     yield* TestClock.adjust("5 seconds");
     yield* Fiber.join(capture);
 
-    assert.notStrictEqual((yield* git(root, ["for-each-ref", checkpointRef])).stdout, "");
+    // The root tree records the submodule's moved HEAD even though its own capture never ran.
+    assert.strictEqual(
+      (yield* git(root, ["rev-parse", `${checkpointRef}:library`])).stdout,
+      (yield* git(submodule, ["rev-parse", "HEAD"])).stdout,
+    );
     assert.strictEqual((yield* git(submodule, ["for-each-ref", "refs/t3"])).stdout, "");
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );

@@ -483,6 +483,8 @@ const FLAGGED_INDEX_ENTRIES_MAX_BYTES = 1024 * 1024;
 const CHECKPOINT_RECOVERY_MAX_CANDIDATES = 64;
 const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
 const SUBMODULE_CAPTURE_BUDGET = "5 seconds";
+// Windows limits a command line to 32767 characters.
+const GITLINK_PATHSPEC_MAX_CHARS = 16_384;
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 // Reflog subjects that only point a ref at an existing commit. Anything else counts as creating
 // one, so an unknown subject keeps its commit attributed.
@@ -1032,6 +1034,42 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       .map((entry) => path.join(cwd, entry));
   });
 
+  // Gitlinks under cwd in the index that env selects, relative to cwd. Only paths .gitmodules
+  // declares are checked, so any other gitlink is left to git add, as is a list too long for argv.
+  const listGitlinks = Effect.fn("GitVcsDriver.listGitlinks")(function* (
+    cwd: string,
+    topLevel: string,
+    env: NodeJS.ProcessEnv,
+  ) {
+    const declared = yield* execute({
+      operation: VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
+      cwd: topLevel,
+      args: ["config", "-z", "--file", ".gitmodules", "--get-regexp", "^submodule\\..*\\.path$"],
+      allowNonZeroExit: true,
+    });
+    if (declared.exitCode !== 0) return [];
+    // Records are "submodule.<name>.path\n<path>".
+    const pathspecs = declared.stdout.split("\0").flatMap((record) => {
+      const newline = record.indexOf("\n");
+      return newline === -1 ? [] : [`:(top,literal)${record.slice(newline + 1)}`];
+    });
+    if (pathspecs.length === 0 || pathspecs.join(" ").length > GITLINK_PATHSPEC_MAX_CHARS)
+      return [];
+    const staged = yield* execute({
+      operation: VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
+      cwd,
+      args: ["ls-files", "--stage", "-z", "--", ...pathspecs],
+      env,
+    });
+    return staged.stdout.split("\0").flatMap((entry) => {
+      const tab = entry.indexOf("\t");
+      const entryPath = entry.slice(tab + 1);
+      return tab !== -1 && entry.startsWith("160000 ") && !entryPath.startsWith("../")
+        ? [entryPath]
+        : [];
+    });
+  });
+
   // Git defaults and macOS writeout-only can leave empty refs after crashes; flush before publication.
   // Set fsync first: Git 2.36 ignores unknown batch without resetting the method.
   // Batch fully flushes refs and equals fsync on macOS HFS+/APFS and Windows NTFS/ReFS.
@@ -1187,6 +1225,12 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         { discard: true },
       );
 
+      // The tree records only each submodule's HEAD, so submodules keep their own ref.
+      const hasSubmodules =
+        topLevel === undefined ||
+        (yield* fileSystem
+          .exists(path.join(topLevel, ".gitmodules"))
+          .pipe(Effect.orElseSucceed(() => true)));
       const captureRoot = Effect.gen(function* () {
         const sparseConfig = yield* execute({
           operation,
@@ -1464,8 +1508,15 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               () => Effect.void,
             ),
           );
+        // add -A runs git status in every unchanged submodule, one at a time. The tree records only
+        // each submodule's HEAD, so stage gitlinks with update-index, which reads HEAD in-process.
+        const gitlinks =
+          topLevel === undefined || !hasSubmodules || sparseCheckout
+            ? []
+            : yield* listGitlinks(input.cwd, topLevel, commitEnv);
+        const gitlinkExclusions = gitlinks.map((entry) => `:(exclude,literal)${entry}`);
         const stagingAt = yield* Clock.currentTimeMillis;
-        yield* stageFiles([]).pipe(
+        yield* stageFiles(gitlinkExclusions).pipe(
           Effect.catchTags({
             VcsProcessExitError: (error) =>
               Effect.gen(function* () {
@@ -1512,7 +1563,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                     exclusions.push(`:(exclude,literal)${entry}`);
                   }
                 }
-                return yield* stageFiles(exclusions, true);
+                return yield* stageFiles([...gitlinkExclusions, ...exclusions], true);
               }).pipe(
                 Effect.timeoutOrElse({
                   duration: CHECKPOINT_RECOVERY_TIMEOUT,
@@ -1522,6 +1573,24 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           }),
         );
 
+        if (gitlinks.length > 0) {
+          yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: [
+              ...indexConfig,
+              ...durableWrite,
+              ...longPaths,
+              "update-index",
+              "--add",
+              "--remove",
+              "-z",
+              "--stdin",
+            ],
+            stdin: gitlinks.join("\0") + "\0",
+            env: commitEnv,
+          });
+        }
         const stagingMs = (yield* Clock.currentTimeMillis) - stagingAt;
 
         const writeTreeResult = yield* execute({
@@ -1801,12 +1870,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         }
       }).pipe(Effect.ensuring(cleanupTempIndex));
 
-      // The tree records only each submodule's HEAD, so submodules keep their own ref.
-      const hasSubmodules =
-        topLevel === undefined ||
-        (yield* fileSystem
-          .exists(path.join(topLevel, ".gitmodules"))
-          .pipe(Effect.orElseSucceed(() => true)));
       if (!hasSubmodules) return yield* captureRoot;
       // A submodule that cannot be captured drops its ref, so restore leaves it alone.
       const captureSubmodules = listSubmodules(input.cwd).pipe(
