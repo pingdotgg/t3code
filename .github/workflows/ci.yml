@@ -321,7 +321,8 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.test != 'false' }}
     runs-on: ${{ github.repository == 'pingdotgg/t3code' && 'blacksmith-8vcpu-ubuntu-2404' || 'ubuntu-24.04' }}
-    timeout-minutes: 10
+    # The fork's smaller runner needs longer than upstream's 8-vCPU one; 10 minutes cancels it under load.
+    timeout-minutes: ${{ github.repository == 'pingdotgg/t3code' && 10 || 25 }}
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -636,8 +637,8 @@ jobs:
     name: Mobile Native Static Analysis
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.mobile_native != 'false' }}
-    runs-on: ${{ github.repository == 'pingdotgg/t3code' && 'blacksmith-6vcpu-macos-27' || 'macos-26' }}
-    timeout-minutes: 10
+    runs-on: ${{ github.repository == 'pingdotgg/t3code' && 'blacksmith-6vcpu-macos-27' || 'macos-latest' }}
+    timeout-minutes: ${{ github.repository == 'pingdotgg/t3code' && 10 || 25 }}
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
