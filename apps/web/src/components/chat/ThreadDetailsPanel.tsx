@@ -70,6 +70,9 @@ interface ThreadDetailsPanelProps extends Pick<
   gitCwd: string | null;
   workspaceMutationId: string | null;
   isGitRepo: boolean;
+  /** Whether the panel's git control listens for the commit and push shortcut; see onGitShortcutHostChange. */
+  gitShortcutListening?: boolean;
+  onGitShortcutHostChange?: (hosting: boolean) => void;
   envLocked: boolean;
   availableEnvironments: readonly EnvironmentOption[];
   autoEnvironmentLabel?: string | undefined;
@@ -281,6 +284,10 @@ export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
                             showChanges={visible.changes}
                             gitCwd={props.gitCwd}
                             workspaceMutationId={props.workspaceMutationId}
+                            listenForShortcuts={props.gitShortcutListening ?? false}
+                            {...(props.onGitShortcutHostChange
+                              ? { onShortcutHostChange: props.onGitShortcutHostChange }
+                              : {})}
                             activeThreadRef={activeThreadRef}
                             {...(props.draftId ? { draftId: props.draftId } : {})}
                             {...(props.onOpenChanges ? { onOpenChanges: props.onOpenChanges } : {})}

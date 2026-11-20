@@ -143,6 +143,11 @@ interface GitActionsControlProps {
   draftId?: DraftId;
   compact?: boolean;
   listenForShortcuts?: boolean;
+  /**
+   * The panel's control reports while it can take the commit and push shortcut, so the chat
+   * does not keep a "shortcut" copy mounted beside it.
+   */
+  onShortcutHostChange?: (hosting: boolean) => void;
   showActions?: boolean;
   showChanges?: boolean;
   onOpenChanges?: () => void;
@@ -157,6 +162,7 @@ interface PendingDefaultBranchAction {
   commitMessage?: string;
   onConfirmed?: () => void;
   filePaths?: string[];
+  fromShortcut?: boolean;
 }
 
 type GitActionToastId = ReturnType<typeof toastManager.add>;
@@ -169,6 +175,8 @@ interface RunGitActionWithToastInput {
   statusOverride?: VcsStatusResult | null;
   featureBranch?: boolean;
   filePaths?: string[];
+  /** A shortcut press reports its result in a toast, as the "shortcut" control does. */
+  fromShortcut?: boolean;
 }
 
 interface InlineGitActionSuccess {
@@ -356,12 +364,21 @@ function GitActionSuccessButtonContent({ success }: { success: InlineGitActionSu
 
 export default memo(function GitActionsControl(props: GitActionsControlProps) {
   const checkoutKey = JSON.stringify([props.activeThreadRef?.environmentId ?? null, props.gitCwd]);
+  // Reported here, above the checkout key, so a project change does not hand the shortcut back and forth.
+  const { onShortcutHostChange, showActions = true } = props;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the chat this mounted panel control (with its publish dialog) takes the shortcut
+  useEffect(() => {
+    if (!onShortcutHostChange || !showActions) return;
+    onShortcutHostChange(true);
+    return () => onShortcutHostChange(false);
+  }, [onShortcutHostChange, showActions]);
   return <CheckoutGitActionsControl key={checkoutKey} {...props} />;
 });
 
 function CheckoutGitActionsControl({
   presentation,
   listenForShortcuts = true,
+  onShortcutHostChange,
   displayMode,
   gitCwd,
   activeThreadRef,
@@ -666,6 +683,7 @@ function CheckoutGitActionsControl({
     statusOverride,
     featureBranch = false,
     filePaths,
+    fromShortcut = false,
   }: RunGitActionWithToastInput) {
     if (
       activeEnvironmentId === null ||
@@ -703,6 +721,7 @@ function CheckoutGitActionsControl({
         ...(commitMessage ? { commitMessage } : {}),
         ...(onConfirmed ? { onConfirmed } : {}),
         ...(filePaths ? { filePaths } : {}),
+        fromShortcut,
       });
       return false;
     }
@@ -745,7 +764,7 @@ function CheckoutGitActionsControl({
 
     const actionResult = result.value;
     syncThreadBranchAfterGitAction(actionResult);
-    if (isPanel) {
+    if (isPanel && !fromShortcut) {
       const createdPullRequest = actionResult.pr.status === "created";
       setInlineSuccess({
         title: createdPullRequest
@@ -817,13 +836,15 @@ function CheckoutGitActionsControl({
     if (!pendingDefaultBranchAction || !canWriteSourceControl) return;
     if (featureBranch && (!canChangeThreadBranch || featureBranchUnavailableReason !== null))
       return;
-    const { action, commitMessage, onConfirmed, filePaths } = pendingDefaultBranchAction;
+    const { action, commitMessage, onConfirmed, filePaths, fromShortcut } =
+      pendingDefaultBranchAction;
     setPendingDefaultBranchAction(null);
     void runGitActionWithToast({
       action,
       ...(commitMessage ? { commitMessage } : {}),
       ...(onConfirmed ? { onConfirmed } : {}),
       ...(filePaths ? { filePaths } : {}),
+      ...(fromShortcut ? { fromShortcut } : {}),
       featureBranch,
       skipDefaultBranchPrompt: true,
     });
@@ -894,9 +915,12 @@ function CheckoutGitActionsControl({
     }
   };
 
-  const runCommitPush = () => {
+  const runCommitPush = (fromShortcut?: true) => {
     if (!syncMenuItems.commitPush || syncMenuItems.commitPush.disabled) return;
-    void runGitActionWithToast({ action: "commit_push" });
+    void runGitActionWithToast({
+      action: "commit_push",
+      ...(fromShortcut ? { fromShortcut } : {}),
+    });
   };
 
   // Sync ref pulls what upstream has, then pushes what the branch still has ahead.
@@ -909,8 +933,9 @@ function CheckoutGitActionsControl({
     void runGitActionWithToast({ action: "push" });
   };
 
-  const runCommitPushFromShortcut = useEffectEvent(runCommitPush);
-  const handlesCommitPushShortcut = presentation !== undefined && isRepo;
+  const runCommitPushFromShortcut = useEffectEvent(() => runCommitPush(true));
+  const handlesCommitPushShortcut =
+    (presentation !== undefined || onShortcutHostChange !== undefined) && isRepo;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to window keydown for the mounted git control's commit and push shortcuts
   useEffect(() => {
     if (!listenForShortcuts || !handlesCommitPushShortcut) return;
@@ -1108,7 +1133,7 @@ function CheckoutGitActionsControl({
               ...(commitPushShortcutLabel
                 ? { trailing: <MenuShortcut>{commitPushShortcutLabel}</MenuShortcut> }
                 : {}),
-              onClick: runCommitPush,
+              onClick: () => runCommitPush(),
             })
           : null}
         {pushItem ? renderActionMenuItem(pushItem) : null}

@@ -1746,6 +1746,9 @@ export default function ChatView(props: ChatViewProps) {
   });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const backgroundThread = use(BackgroundThreadContext);
+  // The details panel's git control takes the commit and push shortcut while it shows, so the
+  // hidden "shortcut" control (a second copy of its queries and dialogs) mounts only without it.
+  const [panelGitHostsShortcut, setPanelGitHostsShortcut] = useState(false);
   const scriptKeybindings =
     useAtomValue(serverEnvironment.configValueAtom(environmentId))?.keybindings ??
     DEFAULT_RESOLVED_KEYBINDINGS;
@@ -4158,6 +4161,8 @@ export default function ChatView(props: ChatViewProps) {
                   gitCwd={gitCwd}
                   workspaceMutationId={workspaceMutationId}
                   isGitRepo={isGitRepo}
+                  gitShortcutListening={panelGitHostsShortcut && !backgroundThread}
+                  onGitShortcutHostChange={setPanelGitHostsShortcut}
                   envLocked={envLocked}
                   availableEnvironments={logicalProjectEnvironments}
                   autoEnvironmentLabel={autoEnvironmentLabel}
@@ -4225,7 +4230,7 @@ export default function ChatView(props: ChatViewProps) {
       {embedded ? null : <LinkPullRequestDialogHost hostThreadRef={routeThreadRef} />}
       <ThreadVisitWatermark threadRef={routeThreadRef} />
       <ExpandedImageDialogHost threadKey={routeThreadKey} />
-      {gitCwd && isGitRepo ? (
+      {gitCwd && isGitRepo && !panelGitHostsShortcut ? (
         <GitActionsControl
           presentation="shortcut"
           listenForShortcuts={!embedded && !backgroundThread}
