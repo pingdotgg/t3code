@@ -262,6 +262,8 @@ export function encodeMarkdownLinkDestination(path: string): string {
     .replaceAll(")", "%29")
     .replaceAll("#", "%23")
     .replaceAll("?", "%3F")
+    .replaceAll("&", "%26")
+    .replaceAll(",", "%2C")
     .replaceAll("\\", "%5C");
 }
 
@@ -430,13 +432,15 @@ export function parseMarkdownFileLink(href: string): FilePathPosition | null {
   // Escaped delimiters are literal filename characters. Check their path shape
   // without treating them as raw query or fragment syntax.
   const shape = stripSlashPrefixedWindowsDrive(
-    safeDecodeURIComponent(source.path.trim().replace(/%(?:23|3f|25|3c|3e)/gi, "_")),
+    safeDecodeURIComponent(source.path.trim().replace(/%(?:23|25|26|2c|3c|3e|3f)/gi, "_")),
   );
   const position = parseFilePathLink(path, hash, shape);
   // `src\a.ts` is Windows-relative. A link that already parses keeps its spelling, since POSIX
   // names may contain `\`; a rooted `\\host` or `\foo` would change root if rewritten.
   if (position || /^[\\/]/.test(path) || isWindowsAbsolutePath(path)) return position;
-  return path.includes("\\") ? parseFilePathLink(path.replaceAll("\\", "/"), hash) : null;
+  return path.includes("\\")
+    ? parseFilePathLink(path.replaceAll("\\", "/"), hash, shape.replaceAll("\\", "/"))
+    : null;
 }
 
 function parseFilePathLink(path: string, hash: string, shape = path): FilePathPosition | null {
