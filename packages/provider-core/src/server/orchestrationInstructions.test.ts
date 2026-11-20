@@ -41,7 +41,7 @@ describe("T3 device instructions", () => {
 
   it("reach OpenCode and Cursor only when the session holds device access", () => {
     assert.include(t3OrchestrationSystemPrompt(true, true), T3_CODE_DEVICE_TOOL_INSTRUCTIONS);
-    assert.notInclude(t3OrchestrationSystemPrompt(true, false), "## T3 Code devices");
+    assert.notInclude(t3OrchestrationSystemPrompt(true, false), "## PseudoCode devices");
     assert.isUndefined(t3OrchestrationSystemPrompt(false, true));
 
     const firstRun = (hasDeviceTools: boolean) =>
@@ -53,7 +53,7 @@ describe("T3 device instructions", () => {
         deviceInstructionsDelivered: false,
       });
     assert.include(firstRun(true), T3_CODE_DEVICE_TOOL_INSTRUCTIONS);
-    assert.notInclude(firstRun(false), "## T3 Code devices");
+    assert.notInclude(firstRun(false), "## PseudoCode devices");
 
     const laterRun = (deviceInstructionsDelivered: boolean) =>
       t3OrchestrationPrompt({
@@ -66,6 +66,21 @@ describe("T3 device instructions", () => {
     assert.include(laterRun(false), T3_CODE_DEVICE_TOOL_INSTRUCTIONS);
     assert.notInclude(laterRun(false), T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim());
     assert.equal(laterRun(true), "Check the login screen.");
+
+    // A provider's own guidance reaches a conversation that already had the rest.
+    const providerRun = (providerInstructionsDelivered: boolean) =>
+      t3OrchestrationPrompt({
+        prompt: "Check the login screen.",
+        hasT3Mcp: true,
+        hasDeviceTools: false,
+        orchestrationDelivered: true,
+        deviceInstructionsDelivered: false,
+        providerInstructions: "Mark awaited shells.",
+        providerInstructionsDelivered,
+      });
+    assert.include(providerRun(false), "Mark awaited shells.");
+    assert.notInclude(providerRun(false), T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim());
+    assert.equal(providerRun(true), "Check the login screen.");
   });
 
   it("reach ACP agents again when device access changes mid-thread", () => {
@@ -80,6 +95,9 @@ describe("T3 device instructions", () => {
       t3AcpPromptWithInstructions({ prompt: "Again.", state, previousState: state }),
       "Again.",
     );
-    assert.notInclude(t3AcpPromptWithInstructions({ prompt: "Hi.", state }), "## T3 Code devices");
+    assert.notInclude(
+      t3AcpPromptWithInstructions({ prompt: "Hi.", state }),
+      "## PseudoCode devices",
+    );
   });
 });

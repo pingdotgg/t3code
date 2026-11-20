@@ -262,21 +262,24 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
 
     // `claude -p` accepts images only as content blocks of a stream-json user message.
     const imageBlocks = yield* readImageBlocks(attachments);
-    const streamJson = imageBlocks.length > 0;
-    const stdin = streamJson
-      ? `${yield* encodeJsonForOperation(
-          operation,
-          {
-            type: "user",
-            message: { role: "user", content: [{ type: "text", text: prompt }, ...imageBlocks] },
-          },
-          "Failed to encode Claude CLI input.",
-        )}\n`
-      : prompt;
+    const imageStdin =
+      imageBlocks.length > 0
+        ? `${yield* encodeJsonForOperation(
+            operation,
+            {
+              type: "user",
+              message: { role: "user", content: [{ type: "text", text: prompt }, ...imageBlocks] },
+            },
+            "Failed to encode Claude CLI input.",
+          )}\n`
+        : undefined;
 
     const runClaudeCommand = Effect.fn("runClaudeJson.runClaudeCommand")(function* (
       noSessionPersistence: boolean,
+      withImages: boolean,
     ) {
+      const streamJson = withImages && imageStdin !== undefined;
+      const stdin = streamJson ? imageStdin : prompt;
       const managedMcpConfig = yield* hasClaudeManagedMcpConfig();
       const spawnCommand = yield* resolveSpawnCommand(
         claudeSettings.binaryPath || "claude",
@@ -351,11 +354,20 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       };
     });
 
-    const rawStdout = yield* runClaudeCommand(true).pipe(
+    const runClaudeAttempt = (withImages: boolean) =>
+      runClaudeCommand(true, withImages).pipe(
+        Effect.filterOrElse(
+          (result) =>
+            result.exitCode === 0 || !result.stderr.includes(NO_SESSION_PERSISTENCE_REJECTED),
+          () => runClaudeCommand(false, withImages),
+        ),
+      );
+
+    const rawStdout = yield* runClaudeAttempt(true).pipe(
+      // Text-only models (custom models behind Anthropic-compatible endpoints) reject image blocks.
       Effect.filterOrElse(
-        (result) =>
-          result.exitCode === 0 || !result.stderr.includes(NO_SESSION_PERSISTENCE_REJECTED),
-        () => runClaudeCommand(false),
+        (result) => result.exitCode === 0 || imageStdin === undefined,
+        () => runClaudeAttempt(false),
       ),
       Effect.flatMap(({ stdout, stderr, exitCode }) => {
         if (exitCode === 0) return Effect.succeed(stdout);

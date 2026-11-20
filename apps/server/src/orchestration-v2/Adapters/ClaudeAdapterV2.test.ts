@@ -898,7 +898,7 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
     assert.equal(systemPrompt.preset, "claude_code");
     assert.include(systemPrompt.append ?? "", "Use `delegate_task`");
     assert.include(systemPrompt.append ?? "", "call `t3_background_wait`");
-    assert.notInclude(systemPrompt.append ?? "", "## T3 Code devices");
+    assert.notInclude(systemPrompt.append ?? "", "## PseudoCode devices");
     const logged = ClaudeAdapterV2.loggedClaudeQueryOptions(options);
     assert.equal(logged.hasMcpServers, true);
     assert.notInclude(JSON.stringify(logged), "secret-claude-token");
@@ -944,8 +944,8 @@ describe("ClaudeAdapterV2 device instructions", () => {
   });
 
   it("leaves the device block out without device access or without T3 tools", () => {
-    assert.notInclude(append({ mcp: true, deviceToolsAvailable: false }), "## T3 Code devices");
-    assert.notInclude(append({ mcp: false, deviceToolsAvailable: true }), "## T3 Code devices");
+    assert.notInclude(append({ mcp: true, deviceToolsAvailable: false }), "## PseudoCode devices");
+    assert.notInclude(append({ mcp: false, deviceToolsAvailable: true }), "## PseudoCode devices");
   });
 
   it("gives native subagents the device block only in a session with device access", async () => {
@@ -9838,6 +9838,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       result:
         "API Error: Request rejected (429) · All credentials for model claude-opus-5-5 are cooling down (reset after 1m) (last error: All credentials for model upstream are cooling down (reset after 1h))",
     },
+    {
+      status: 429,
+      cooldown: "untyped rejection",
+      seconds: 8777,
+      proxy: true,
+      sdkResetSeconds: null,
+      sdkLimitType: null,
+      result:
+        "API Error: Server is temporarily limiting requests (not your usage limit) · All credentials for model claude-opus-5-5 are cooling down (last error: rate_limit_error: This request would exceed your account's rate limit. Please try again later.) (reset after 2h26m17s)",
+    },
   ])("recovers wrapped gateway limits with status $status and cooldown $cooldown", (input) =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
@@ -9859,7 +9869,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 type: "rate_limit_event",
                 rate_limit_info: {
                   status: "rejected",
-                  rateLimitType: "five_hour",
+                  ...(input.sdkLimitType === null
+                    ? { isUsingOverage: false }
+                    : { rateLimitType: "five_hour" }),
                   ...(input.sdkResetSeconds === null
                     ? {}
                     : {

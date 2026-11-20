@@ -120,17 +120,22 @@ export function t3OrchestrationPrompt(input: {
   readonly hasDeviceTools: boolean;
   readonly orchestrationDelivered: boolean;
   readonly deviceInstructionsDelivered: boolean;
+  /** Guidance for this provider's own tools, sent until `providerInstructionsDelivered`. */
+  readonly providerInstructions?: string;
+  readonly providerInstructionsDelivered?: boolean;
 }): string {
   if (!input.hasT3Mcp) return input.prompt;
-  if (!input.orchestrationDelivered) {
-    return prependT3OrchestrationInstructions(
-      input.prompt,
-      orchestrationInstructions(input.hasDeviceTools),
-    );
-  }
-  return input.hasDeviceTools && !input.deviceInstructionsDelivered
-    ? prependT3OrchestrationInstructions(input.prompt, T3_CODE_DEVICE_TOOL_INSTRUCTIONS)
-    : input.prompt;
+  const instructions = [
+    !input.orchestrationDelivered
+      ? orchestrationInstructions(input.hasDeviceTools)
+      : input.hasDeviceTools && !input.deviceInstructionsDelivered
+        ? T3_CODE_DEVICE_TOOL_INSTRUCTIONS
+        : undefined,
+    input.providerInstructionsDelivered === true ? undefined : input.providerInstructions,
+  ].flatMap((part) => (part === undefined ? [] : [part.trim()]));
+  return instructions.length === 0
+    ? input.prompt
+    : prependT3OrchestrationInstructions(input.prompt, instructions.join("\n\n"));
 }
 
 export function t3OrchestrationSystemPrompt(
