@@ -119,6 +119,8 @@ export class ServiceLauncherClient extends Context.Service<
     readonly prepareTrial: (input: {
       readonly baseDir: string;
     }) => Effect.Effect<ServerSelfUpdateOutcome | undefined, ServiceLauncherClientError>;
+    /** The finished update the launcher started this runtime after, until the next one begins. */
+    readonly lastOutcome: ServerSelfUpdateOutcome | undefined;
   }
 >()("t3/cloud/serviceLauncherClient") {}
 
@@ -362,6 +364,7 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
     protocol: context?.protocol,
     requestUpdate,
     prepareTrial,
+    lastOutcome: outcome,
   });
 });
 
