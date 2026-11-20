@@ -850,12 +850,15 @@ const make = Effect.fn("Blender.make")(function* (options: {
       entry: JobEntry,
       cancelledBy: NonNullable<BlenderJob["cancelledBy"]>,
     ) {
-      if (entry.finishing || isBlenderJobTerminal(entry.job))
-        return yield* Deferred.await(entry.done);
+      if (entry.finishing || isBlenderJobTerminal(entry.job)) {
+        yield* Deferred.await(entry.done);
+        return entry.job;
+      }
       yield* publishJob(entry, { status: "cancelled", cancelledBy, finishedAt: yield* now });
       // Interrupting the job's fiber ends its Blender process tree before this returns.
       if (entry.fiber !== undefined) yield* Fiber.interrupt(entry.fiber);
-      return yield* Deferred.await(entry.done);
+      yield* Deferred.await(entry.done);
+      return entry.job;
     });
 
     const cancelThread = Effect.fn("Blender.cancelThread")(function* (stop: BlenderThreadStop) {
@@ -911,7 +914,9 @@ const make = Effect.fn("Blender.make")(function* (options: {
         return yield* cancelEntry(yield* findJob(ref), "request");
       }),
       awaitJob: Effect.fn("Blender.awaitJob")(function* (ref) {
-        return yield* Deferred.await((yield* findJob(ref)).done);
+        const entry = yield* findJob(ref);
+        yield* Deferred.await(entry.done);
+        return entry.job;
       }),
       streamThreadJobs,
       outputFile: Effect.fn("Blender.outputFile")(function* (ref) {

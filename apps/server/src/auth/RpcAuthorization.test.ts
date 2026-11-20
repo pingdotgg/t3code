@@ -621,7 +621,9 @@ it.effect("requires host execution and thread operation to start a Blender job",
           }),
         ),
         Effect.map((job) => job.status),
-        Effect.catch((error) => Effect.succeed(error.requiredPermission)),
+        Effect.catchTags({
+          EnvironmentAuthorizationError: (error) => Effect.succeed(error.requiredPermission),
+        }),
       );
     expect(
       yield* Effect.all([

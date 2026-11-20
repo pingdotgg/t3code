@@ -516,6 +516,19 @@ function OpenCommandPaletteDialog(props: {
   const activeThreadServerConfig = useServerConfigs().get(
     activeThread?.environmentId ?? ("" as EnvironmentId),
   );
+  const blenderTarget =
+    activeThread && activeThreadServerConfig?.settings.blender.enabled
+      ? { environmentId: activeThread.environmentId, input: { threadId: activeThread.id } }
+      : null;
+  const canActivateBlender = useAtomValue(
+    serverEnvironment.blenderSetWorkflow.permissionAtom(blenderTarget?.environmentId ?? null),
+  );
+  const blenderWorkflow = useEnvironmentQuery(
+    blenderTarget && canActivateBlender ? serverEnvironment.blenderWorkflow(blenderTarget) : null,
+  );
+  const setBlenderWorkflow = useAtomCommand(serverEnvironment.blenderSetWorkflow, {
+    reportFailure: false,
+  });
   const canShareActiveThreadWithGuest = useAtomValue(
     canShareWithGuestAtom(activeThread?.environmentId ?? ("" as EnvironmentId)),
   );
@@ -1544,6 +1557,24 @@ function OpenCommandPaletteDialog(props: {
       icon: <UserPlusIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
         openGuestShareDialog(threadRef);
+      },
+    });
+  }
+
+  if (blenderTarget && blenderWorkflow.isSuccess) {
+    actionItems.push({
+      kind: "action",
+      value: "action:blender-workflow",
+      searchTerms: ["blender", "model", "3d", "scene"],
+      title: blenderWorkflow.data ? gt("Disable Blender tools") : gt("Enable Blender tools"),
+      icon: <FileSearchIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        const result = await setBlenderWorkflow({
+          environmentId: blenderTarget.environmentId,
+          input: { ...blenderTarget.input, active: blenderWorkflow.data !== true },
+        });
+        if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+        blenderWorkflow.refresh();
       },
     });
   }

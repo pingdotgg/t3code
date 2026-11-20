@@ -644,6 +644,13 @@ describe("Blender jobs", () => {
       const olderDone = yield* blender.awaitJob({ threadId: THREAD, jobId: older.id });
       assert.deepStrictEqual(newerDone.result?.preview?.current, true);
       assert.deepStrictEqual(olderDone.result?.preview?.current, false);
+
+      const latest = yield* blender.startJob(request);
+      yield* Queue.take(fake.started);
+      yield* Deferred.succeed(fake.gates[2]!, undefined);
+      yield* blender.awaitJob({ threadId: THREAD, jobId: latest.id });
+      const replaced = yield* blender.awaitJob({ threadId: THREAD, jobId: newer.id });
+      assert.strictEqual(replaced.result?.preview?.current, false);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
