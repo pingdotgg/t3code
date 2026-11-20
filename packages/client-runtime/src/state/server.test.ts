@@ -72,6 +72,7 @@ import {
   waitForDesktopUpdateTarget,
   runDesktopCommitWithReconnectObserver,
 } from "./server.ts";
+import { runAtomCommand } from "./runtime.ts";
 import { applyServerConfigProjection } from "./serverConfigProjection.ts";
 
 const CONFIG = {
@@ -350,10 +351,14 @@ describe("accepted server update recovery", () => {
       const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (value) =>
         Effect.sync(() => value.dispose()),
       );
-      const pending = atoms.updateServer.run(registry, {
-        environmentId: TARGET.environmentId,
-        input: { targetVersion: "0.0.31" },
-      });
+      // The registry drops an unmounted atom's value while the update is still running.
+      yield* AtomRegistry.mount(registry, serverUpdateStateAtom(TARGET.environmentId));
+      const pending = runAtomCommand(
+        registry,
+        atoms.updateServer,
+        { environmentId: TARGET.environmentId, input: { targetVersion: "0.0.31" } },
+        { reportFailure: false, reportDefect: false },
+      );
       if (loss === "cancel") {
         yield* Fiber.interrupt(yield* Deferred.await(cancelFiber));
         const cancelled = yield* Effect.promise(() => pending);
@@ -1286,6 +1291,16 @@ describe("server state projection", () => {
       ).providers[0]?.workspaceSnapshots,
     ).toBeUndefined();
 
+    // A server rescan that changed the skills retires the snapshot fetched before it.
+    expect(
+      withFetchedWorkspaceSnapshots(
+        configWith(true, [
+          { ...provider(claude), workspaceRescannedAt: "2026-10-25T00:09:00.000Z" },
+        ] as unknown as ServerConfig["providers"]),
+        fetched,
+      ).providers[0]?.workspaceSnapshots,
+    ).toBeUndefined();
+
     // A catalog digest stands for the lists: loading them keeps the snapshot, a new digest retires it.
     const digested = (catalogDigest: string, slashCommands: ReadonlyArray<{ name: string }> = []) =>
       ({ ...provider(claude, undefined, slashCommands), catalogDigest }) as ReturnType<
@@ -1574,11 +1589,13 @@ describe("launcher update resume", () => {
     const updateStateAtom = serverUpdateStateAtom(TARGET.environmentId);
     yield* AtomRegistry.mount(registry, updateStateAtom);
 
-    yield* Effect.promise(() =>
-      atoms.updateServer.run(registry, {
-        environmentId: TARGET.environmentId,
-        input: { targetVersion: "0.0.31" },
-      }),
+    yield* Effect.promise((signal) =>
+      runAtomCommand(
+        registry,
+        atoms.updateServer,
+        { environmentId: TARGET.environmentId, input: { targetVersion: "0.0.31" } },
+        { reportFailure: false, reportDefect: false, signal },
+      ),
     ).pipe(Effect.forkScoped);
     return {
       // The host saw its first call: the update request or a lifecycle subscription.
@@ -1733,25 +1750,28 @@ describe("provider setup commands", () => {
         Effect.sync(() => registry.dispose()),
       );
       const install = (instanceId: string) =>
-        atoms.startProviderInstall.run(registry, {
-          environmentId: TARGET.environmentId,
-          input: { instanceId: ProviderInstanceId.make(instanceId) },
-        });
+        Effect.forkChild(
+          Effect.exit(
+            atoms.startProviderInstall.run(registry, {
+              environmentId: TARGET.environmentId,
+              input: { instanceId: ProviderInstanceId.make(instanceId) },
+            }),
+          ),
+          { startImmediately: true },
+        );
 
-      const codex = install("codex");
+      const codex = yield* install("codex");
       expect(yield* Queue.take(requested)).toBe("codex");
-      const duplicateCodex = install("codex");
-      const antigravity = install("antigravity");
+      const duplicateCodex = yield* install("codex");
+      const antigravity = yield* install("antigravity");
       yield* Deferred.succeed(release, undefined);
 
-      expect(yield* Effect.promise(() => codex)).toMatchObject({
+      expect(yield* Fiber.join(codex)).toMatchObject({
         _tag: "Success",
         value: { driver: "codex" },
       });
-      expect(yield* Effect.promise(() => duplicateCodex)).toEqual(
-        yield* Effect.promise(() => codex),
-      );
-      expect(yield* Effect.promise(() => antigravity)).toMatchObject({
+      expect(yield* Fiber.join(duplicateCodex)).toEqual(yield* Fiber.join(codex));
+      expect(yield* Fiber.join(antigravity)).toMatchObject({
         _tag: "Success",
         value: { driver: "antigravity" },
       });
@@ -1801,22 +1821,28 @@ describe("provider setup commands", () => {
         Effect.sync(() => registry.dispose()),
       );
 
-      void atoms.updateProvider.run(registry, {
-        environmentId: TARGET.environmentId,
-        input: { provider: ProviderDriverKind.make("opencode") },
-      });
+      yield* Effect.forkChild(
+        atoms.updateProvider.run(registry, {
+          environmentId: TARGET.environmentId,
+          input: { provider: ProviderDriverKind.make("opencode") },
+        }),
+        { startImmediately: true },
+      );
       yield* Deferred.await(updateStarted);
-      void atoms.mutateProviderInstance.run(registry, {
-        environmentId: TARGET.environmentId,
-        input: {
-          patch: {},
-          providerInstanceMutation: {
-            operation: "upsert",
-            instanceId: ProviderInstanceId.make("codex"),
-            instance: { driver: ProviderDriverKind.make("codex"), enabled: false },
+      yield* Effect.forkChild(
+        atoms.mutateProviderInstance.run(registry, {
+          environmentId: TARGET.environmentId,
+          input: {
+            patch: {},
+            providerInstanceMutation: {
+              operation: "upsert",
+              instanceId: ProviderInstanceId.make("codex"),
+              instance: { driver: ProviderDriverKind.make("codex"), enabled: false },
+            },
           },
-        },
-      });
+        }),
+        { startImmediately: true },
+      );
 
       const saved = yield* Deferred.await(settingsSaved).pipe(
         Effect.as(true),

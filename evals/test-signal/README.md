@@ -12,7 +12,7 @@ pnpm test-signal --out runs/baseline
 pnpm test-signal --out runs/cut --prompt /path/to/variant.md --case new-table-row
 ```
 
-- Models go through the `vibeproxy` CLIProxyAPI provider in `~/.codex/config.toml`. Default models: `gpt-6.1-terra` and `gpt-6-luna`. Pass `--model` once per model to change them.
+- Models go through a CLIProxyAPI server, set up as the Codex model provider: `model_provider` in `$CODEX_HOME/config.toml` (default `~/.codex/config.toml`) when it names a `[model_providers.<name>]` table, otherwise `[model_providers.vibeproxy]`. That table needs `base_url` (the proxy's OpenAI-compatible URL, such as `http://localhost:8317/v1`) and a key in `experimental_bearer_token` or the variable named by `env_key`. Default models: `gpt-6.1-terra` and `gpt-6-luna`. Pass `--model` once per model to change them.
 - Flags: `--prompt <file>` (a variant of the check, default the real one), `--case <id>` (repeatable), `--samples <n>` (default 2, and a 3rd when the first 2 disagree), `--concurrency <n>` (default 6), `--reasoning <level>` (default `low`, as the check runs).
 - A bad case passes when a comment lands inside a target test. A guard case passes when the check posts nothing and replies exactly `All clear`.
 - `summary.md` gives the prompt hash and word count, then per model: bad cases caught, guards clean, errors, and tokens.

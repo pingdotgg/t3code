@@ -154,6 +154,15 @@ it.effect.each([
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+interface UntrackedBlobChange {
+  readonly git: Effect.Success<ReturnType<typeof makeCheckpointFixture>>["git"];
+  readonly write: (
+    relativePath: string,
+    contents: string,
+  ) => Effect.Effect<void, PlatformError.PlatformError>;
+  readonly checkpointRef: CheckpointRef;
+}
+
 const makeCheckpointFixture = Effect.fn("makeCheckpointFixture")(function* (
   driver: Effect.Success<ReturnType<typeof GitVcsDriver.makeVcsDriverShape>>,
   cwd: string,
@@ -529,6 +538,133 @@ it.effect("checkpoint capture ignores an inherited object directory", () =>
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+it.effect.each([
+  { name: "nothing changed", reuses: true, change: () => Effect.void },
+  {
+    name: "its conversion attributes changed while it was being captured",
+    reuses: false,
+    change: () => Effect.void,
+    during: ({ write }: UntrackedBlobChange) =>
+      Effect.orDie(write(".gitattributes", "*.txt text eol=lf\n")),
+  },
+  {
+    name: "its conversion config changed while it was being captured",
+    reuses: false,
+    change: () => Effect.void,
+    during: ({ git }: UntrackedBlobChange) =>
+      Effect.orDie(Effect.asVoid(git(["config", "core.autocrlf", "true"]))),
+  },
+  {
+    name: "its conversion attributes changed",
+    reuses: false,
+    change: ({ write }: UntrackedBlobChange) => write(".gitattributes", "*.txt text eol=lf\n"),
+  },
+  {
+    name: "a clean filter named like an unset attribute now applies to it",
+    reuses: false,
+    change: ({ git, write }: UntrackedBlobChange) =>
+      write(".git/info/attributes", "*.txt filter=unspecified\n").pipe(
+        Effect.andThen(git(["config", "filter.unspecified.clean", "tr a-z A-Z"])),
+      ),
+  },
+  {
+    name: "its conversion config changed",
+    reuses: false,
+    change: ({ git }: UntrackedBlobChange) => git(["config", "core.autocrlf", "true"]),
+  },
+  {
+    name: "it was rewritten at the same size",
+    reuses: false,
+    change: ({ write }: UntrackedBlobChange) =>
+      write("nested/large.txt", "LINE\r\n".repeat(3 * 1024 * 1024)),
+  },
+  {
+    name: "it became ignored",
+    reuses: false,
+    change: ({ write }: UntrackedBlobChange) => write(".gitignore", "nested/\n"),
+  },
+  {
+    name: "HEAD now tracks it",
+    reuses: false,
+    change: ({ git }: UntrackedBlobChange) =>
+      git(["add", "nested/large.txt"]).pipe(Effect.andThen(git(["commit", "-m", "track"]))),
+  },
+  {
+    name: "its directory became a repository",
+    reuses: false,
+    change: ({ git }: UntrackedBlobChange) =>
+      git(["init", "nested"]).pipe(
+        Effect.andThen(
+          git(
+            ["-C", "nested", "-c", "user.name=Test", "-c", "user.email=test@test.com"].concat([
+              "commit",
+              "--allow-empty",
+              "-m",
+              "nested",
+            ]),
+          ),
+        ),
+      ),
+  },
+  {
+    name: "its blob was pruned",
+    reuses: false,
+    change: ({ git, checkpointRef }: UntrackedBlobChange) =>
+      git(["update-ref", "-d", checkpointRef]).pipe(Effect.andThen(git(["prune", "--expire=now"]))),
+  },
+])(
+  "checkpoint capture skips hashing an untracked file only while a fresh hash would match: $name",
+  ({ reuses, change, during }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const liveProcess = yield* VcsProcess.VcsProcess;
+      let reused = 0;
+      let afterPublish: Effect.Effect<void> = Effect.void;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+        Effect.provideService(VcsProcess.VcsProcess, {
+          run: (input) => {
+            if (input.args.includes("core.ignorestat=true")) reused++;
+            // Only a capture whose staging took real time looks for files to remember.
+            if (input.args.includes("add"))
+              return liveProcess.run(input).pipe(Effect.tap(() => TestClock.adjust("1 second")));
+            // The files are hashed and published by now, but not yet remembered.
+            return input.args.includes("update-ref")
+              ? liveProcess.run(input).pipe(Effect.tap(() => afterPublish))
+              : liveProcess.run(input);
+          },
+        }),
+      );
+      // A driver that has never captured this workspace hashes every file, as a first capture does.
+      const fresh = yield* GitVcsDriver.makeVcsDriverShape();
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-untracked-blobs-" });
+      const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+      const write = (relativePath: string, contents: string) =>
+        fs.writeFileString(path.join(cwd, relativePath), contents);
+      yield* fs.makeDirectory(path.join(cwd, "nested"));
+      yield* write("nested/large.txt", "line\r\n".repeat(3 * 1024 * 1024));
+      // Only files left alone for a few seconds before a capture are remembered.
+      yield* TestClock.adjust("36500 days");
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+      // A file is remembered by the first capture that read its conversion rules before hashing it.
+      if (during !== undefined) afterPublish = during({ git, write, checkpointRef });
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+      afterPublish = Effect.void;
+
+      yield* change({ git, write, checkpointRef });
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+      const freshRef = CheckpointRef.make("refs/t3/checkpoints/fresh");
+      yield* fresh.checkpoints.captureCheckpoint({ cwd, checkpointRef: freshRef });
+
+      assert.strictEqual(reused, reuses ? 1 : 0);
+      assert.strictEqual(
+        (yield* git(["rev-parse", `${checkpointRef}^{tree}`])).stdout,
+        (yield* git(["rev-parse", `${freshRef}^{tree}`])).stdout,
+      );
+      yield* git(["fsck", "--connectivity-only"]);
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 it.effect.each(["sha1", "sha256"] as const)(
   "checkpoint object isolation supports linked worktrees with $0 objects",
   (format) =>
@@ -606,6 +742,48 @@ it.effect("checkpoint capture skips untracked nested repositories without a comm
       "nested\n",
     );
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+// Root reads mode-000 files, so the permission failure only exists for other users.
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32" || process.getuid?.() === 0)(
+  "checkpoint capture keeps the indexed version of files it cannot read",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-checkpoint-unreadable-",
+      });
+      const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+      yield* fileSystem.writeFileString(path.join(cwd, "locked.txt"), "committed\n");
+      yield* git(["add", "locked.txt"]);
+      yield* git(["commit", "-m", "locked"]);
+      yield* fileSystem.writeFileString(path.join(cwd, "locked.txt"), "changed\n");
+      yield* fileSystem.writeFileString(path.join(cwd, "secret.txt"), "untracked\n");
+      yield* fileSystem.writeFileString(path.join(cwd, "untracked.txt"), "new\n");
+      yield* Effect.acquireRelease(
+        Effect.all([
+          fileSystem.chmod(path.join(cwd, "locked.txt"), 0),
+          fileSystem.chmod(path.join(cwd, "secret.txt"), 0),
+        ]),
+        () =>
+          Effect.all([
+            fileSystem.chmod(path.join(cwd, "locked.txt"), 0o644),
+            fileSystem.chmod(path.join(cwd, "secret.txt"), 0o644),
+          ]).pipe(Effect.orDie),
+      );
+
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+      assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "unstaged\n");
+      assert.strictEqual((yield* git(["show", `${checkpointRef}:untracked.txt`])).stdout, "new\n");
+      assert.strictEqual(
+        (yield* git(["show", `${checkpointRef}:locked.txt`])).stdout,
+        "committed\n",
+      );
+      assert.strictEqual((yield* git(["ls-tree", checkpointRef, "--", "secret.txt"])).stdout, "");
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
 it.effect.skipIf(!symlinksSupported)(
@@ -1247,6 +1425,137 @@ it.effect.each([1_700_000_000, 1_700_000_000.9999])(
       assert.deepEqual(yield* fileSystem.readFile(indexPath), originalIndex);
       assert.deepEqual((yield* fileSystem.stat(indexPath)).mtime, originalIndexMtime);
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect.each(["local", "mixed", "exit"] as const)(
+  "checkpoint authorship uses local evidence or full fallback ($0)",
+  (mode) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const liveProcess = yield* VcsProcess.VcsProcess;
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-authorship-" });
+      const { git } = yield* makeCheckpointFixture(driver, cwd);
+      yield* git(["commit", "-am", "baseline"]);
+      const fromCheckpointRef = CheckpointRef.make("refs/t3/checkpoints/authorship/from");
+      const toCheckpointRef = CheckpointRef.make("refs/t3/checkpoints/authorship/to");
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef: fromCheckpointRef });
+      if (mode === "mixed") {
+        yield* fs.writeFileString(path.join(cwd, "imported.txt"), "upstream\n");
+        yield* git(["add", "."]);
+        const tree = (yield* git(["write-tree"])).stdout.trim();
+        const imported = (yield* git([
+          "commit-tree",
+          tree,
+          "-p",
+          "HEAD",
+          "-m",
+          "upstream",
+        ])).stdout.trim();
+        yield* git([
+          "update-ref",
+          "--create-reflog",
+          "-m",
+          "fetch origin: fast-forward",
+          "refs/remotes/origin/main",
+          imported,
+        ]);
+        yield* git(["reset", "--hard", imported]);
+      }
+      yield* fs.writeFileString(path.join(cwd, "local.txt"), "local\n");
+      yield* git(["add", "."]);
+      yield* git(["commit", "-m", "local"]);
+      yield* driver.checkpoints.captureCheckpoint({
+        cwd,
+        checkpointRef: toCheckpointRef,
+        previousCheckpointRef: fromCheckpointRef,
+      });
+
+      const reflogScopes: string[] = [];
+      const queryDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+        Effect.provideService(VcsProcess.VcsProcess, {
+          run: (input) => {
+            if (!input.args.includes("--walk-reflogs")) return liveProcess.run(input);
+            const scope = input.args.includes("--all") ? "--all" : "HEAD";
+            reflogScopes.push(scope);
+            if (scope === "--all" || mode !== "exit") return liveProcess.run(input);
+            return Effect.fail(
+              new VcsProcessExitError({
+                operation: input.operation,
+                command: input.command,
+                cwd: input.cwd,
+                exitCode: 1,
+                detail: "HEAD reflog unavailable.",
+              }),
+            );
+          },
+        }),
+      );
+      assert.deepEqual(
+        yield* queryDriver.checkpoints.listAuthoredPaths({
+          cwd,
+          fromCheckpointRef,
+          toCheckpointRef,
+        }),
+        new Set(["local.txt"]),
+      );
+      assert.deepEqual(reflogScopes, mode === "local" ? ["HEAD"] : ["HEAD", "--all"]);
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect("checkpoint authorship works with git that rejects --diff-merges=remerge", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const liveProcess = yield* VcsProcess.VcsProcess;
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-old-git-" });
+    const { git } = yield* makeCheckpointFixture(driver, cwd);
+    yield* git(["commit", "-am", "baseline"]);
+    const fromCheckpointRef = CheckpointRef.make("refs/t3/checkpoints/old-git/from");
+    const toCheckpointRef = CheckpointRef.make("refs/t3/checkpoints/old-git/to");
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef: fromCheckpointRef });
+    yield* fs.writeFileString(path.join(cwd, "local.txt"), "local\n");
+    yield* git(["add", "."]);
+    yield* git(["commit", "-m", "local"]);
+    yield* driver.checkpoints.captureCheckpoint({
+      cwd,
+      checkpointRef: toCheckpointRef,
+      previousCheckpointRef: fromCheckpointRef,
+    });
+
+    // Git before 2.36 (Ubuntu 22.04 ships 2.34.1) has no remerge diff mode.
+    const oldGitDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(VcsProcess.VcsProcess, {
+        run: (input) => {
+          if (input.args.at(-1) === "version" && input.args.length <= 3) {
+            return liveProcess
+              .run(input)
+              .pipe(Effect.map((result) => ({ ...result, stdout: "git version 2.34.1\n" })));
+          }
+          if (!input.args.includes("--diff-merges=remerge")) return liveProcess.run(input);
+          return Effect.fail(
+            new VcsProcessExitError({
+              operation: input.operation,
+              command: input.command,
+              cwd: input.cwd,
+              exitCode: 128,
+              detail: "fatal: unknown value for --diff-merges: remerge",
+            }),
+          );
+        },
+      }),
+    );
+    assert.deepEqual(
+      yield* oldGitDriver.checkpoints.listAuthoredPaths({
+        cwd,
+        fromCheckpointRef,
+        toCheckpointRef,
+      }),
+      new Set(["local.txt"]),
+    );
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
 it.effect("a branch switch landing after the snapshot belongs to the next checkpoint", () =>

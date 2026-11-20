@@ -223,6 +223,7 @@ export class AzureDevOpsCli extends Context.Service<
       readonly maxOutputBytes?: number;
       /** The remote T3 selected; without one, the checkout's primary remote scopes the command. */
       readonly remoteUrl?: string;
+      readonly stdin?: string;
     }) => Effect.Effect<SourceControlHost.SourceControlProcessOutput, AzureDevOpsCliError>;
 
     readonly listPullRequests: (input: {
@@ -507,6 +508,15 @@ export const azureCliInvocation = Effect.fn("AzureDevOpsCli.invocation")(functio
       } satisfies AzureCliInvocation);
 });
 
+/**
+ * `--option=value` for free text. az replaces a value starting with `@` by that file's
+ * contents; `@-` reads it from stdin instead, which reaches az wherever it runs (WSL included).
+ */
+export const textOption = (option: string, value: string) =>
+  value.startsWith("@")
+    ? { arg: `${option}=@-`, stdin: value }
+    : { arg: `${option}=${value}`, stdin: undefined };
+
 /** @public */
 export const make = Effect.gen(function* () {
   const { process } = yield* SourceControlHost.SourceControlHost;
@@ -554,6 +564,7 @@ export const make = Effect.gen(function* () {
           args: [...invocation.args, ...args],
           cwd: input.cwd,
           ...(invocation.env === undefined ? {} : { env: invocation.env }),
+          ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
           classifyFailure: classifyAzFailure,
           notFoundDetail: "Pull request not found.",
           timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
@@ -717,6 +728,9 @@ export const make = Effect.gen(function* () {
       );
     }),
     createPullRequest: Effect.fn("AzureDevOpsCli.createPullRequest")(function (input) {
+      // A full ref keeps a branch named `@...` from reading as a file; az accepts either form.
+      const branch = (name: string) => (name.startsWith("@") ? `refs/heads/${name}` : name);
+      const title = textOption("--title", input.title);
       return execute({
         cwd: input.cwd,
         ...remoteOf(input),
@@ -727,15 +741,13 @@ export const make = Effect.gen(function* () {
           "--only-show-errors",
           "--detect",
           "true",
-          "--target-branch",
-          input.target?.refName ?? input.baseBranch,
-          "--source-branch",
-          SourceControlProvider.sourceBranch(input),
-          "--title",
-          input.title,
-          "--description",
-          `@${input.bodyFile}`,
+          `--target-branch=${branch(input.target?.refName ?? input.baseBranch)}`,
+          `--source-branch=${branch(SourceControlProvider.sourceBranch(input))}`,
+          title.arg,
+          // Joined: az expands a separate `@file` value again, so a body of `@path` read that file.
+          `--description=@${input.bodyFile}`,
         ],
+        ...(title.stdin === undefined ? {} : { stdin: title.stdin }),
       }).pipe(Effect.asVoid);
     }),
     getDefaultBranch: Effect.fn("AzureDevOpsCli.getDefaultBranch")(function (input) {
