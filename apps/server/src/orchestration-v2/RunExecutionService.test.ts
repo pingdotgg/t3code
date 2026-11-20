@@ -4115,11 +4115,14 @@ function captureRootRunTermination(input: {
         if (event.type === "turn_item.updated")
           stored.turnItems.set(event.turnItem.id, event.turnItem);
       });
-    const loadUnsettledWork = (threadId: ThreadId) =>
+    const loadUnsettledWork = (threadId: ThreadId, nodeIds: ReadonlyArray<NodeId>) =>
       Effect.sync(() => {
+        const requested = new Set(nodeIds);
         const work = {
           subagents: [...stored.subagents.values()].filter((row) => row.threadId === threadId),
-          nodes: [...stored.nodes.values()].filter((row) => row.threadId === threadId),
+          nodes: [...stored.nodes.values()].filter(
+            (row) => row.threadId === threadId && requested.has(row.id),
+          ),
           turnItems: [...stored.turnItems.values()].filter((row) => row.threadId === threadId),
         };
         return input.settleStored?.(work) ?? work;
