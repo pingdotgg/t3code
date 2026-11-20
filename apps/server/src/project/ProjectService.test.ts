@@ -732,8 +732,12 @@ it.effect("uses candidate file when selected by text generation", () => {
     `;
     assert.deepEqual(rows, [{ favicon_path: "public/favicon.svg" }]);
   }).pipe(
-    Effect.provide(layerTestFor(layerMetadata, layerTextGeneration(generateProjectIcon))),
-    Effect.provide(NodeServices.layer),
+    Effect.provide(
+      Layer.merge(
+        layerTestFor(layerMetadata, layerTextGeneration(generateProjectIcon)),
+        NodeServices.layer,
+      ),
+    ),
   );
 });
 
