@@ -263,6 +263,8 @@ function ListRow(props: {
     <Pressable
       disabled={props.disabled}
       onPress={props.onPress}
+      accessibilityRole={props.selected !== undefined ? "radio" : "button"}
+      accessibilityState={props.selected !== undefined ? { checked: props.selected } : undefined}
       className={cn(
         "bg-grouped-card px-3.5 py-2.5 active:opacity-70",
         !props.isFirst && "border-t border-border-subtle",

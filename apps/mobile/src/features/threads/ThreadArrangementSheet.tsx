@@ -542,6 +542,7 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
                         ) : item.more ? (
                           <Pressable
                             disabled={olderSettledShelf.loading}
+                            accessibilityRole="button"
                             className="flex-1 justify-center self-stretch"
                             onPress={() => {
                               olderSettledShelf.retry();
