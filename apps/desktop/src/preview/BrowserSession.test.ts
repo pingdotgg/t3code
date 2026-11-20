@@ -287,7 +287,6 @@ describe("BrowserSession", () => {
 
       for (const permission of [
         "clipboard-sanitized-write",
-        "geolocation",
         "fullscreen",
         "pointerLock",
         "loopback-network",
@@ -350,7 +349,13 @@ describe("BrowserSession", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("asks once per origin before a page reads the clipboard", () =>
+  it.effect.each([
+    {
+      permission: "clipboard-read",
+      description: "see text and images copied to the clipboard",
+    },
+    { permission: "geolocation", description: "know your location" },
+  ])("asks once per origin before granting $permission", ({ permission, description }) =>
     Effect.gen(function* () {
       const browserSessions = yield* BrowserSession.BrowserSession;
       const partition = yield* browserSessions.getPartition("scope-a");
@@ -362,39 +367,37 @@ describe("BrowserSession", () => {
       assert.isFunction(requestHandler);
       assert.isFunction(checkHandler);
 
-      const readClipboard = (requestingUrl: string) =>
+      const requestPermission = (requestingUrl: string) =>
         Effect.callback<boolean>((resume) => {
-          requestHandler(
-            null,
-            "clipboard-read",
-            (granted: boolean) => resume(Effect.succeed(granted)),
-            { requestingUrl, isMainFrame: true },
-          );
+          requestHandler(null, permission, (granted: boolean) => resume(Effect.succeed(granted)), {
+            requestingUrl,
+            isMainFrame: true,
+          });
         });
-      const checkClipboard = (origin: string): boolean =>
-        checkHandler(null, "clipboard-read", origin, {}) as boolean;
+      const checkPermission = (origin: string): boolean =>
+        checkHandler(null, permission, origin, {}) as boolean;
 
       showMessageBox.mockReset();
       showMessageBox.mockReturnValueOnce(0).mockReturnValueOnce(1);
 
-      assert.isFalse(checkClipboard("https://allowed.test"));
-      assert.isTrue(yield* readClipboard("https://allowed.test/page"));
+      assert.isFalse(checkPermission("https://allowed.test"));
+      assert.isTrue(yield* requestPermission("https://allowed.test/page"));
       assert.strictEqual(showMessageBox.mock.calls.length, 1);
       assert.strictEqual(
         showMessageBox.mock.calls[0]?.[0].message,
-        "https://allowed.test wants to see text and images copied to the clipboard",
+        `https://allowed.test wants to ${description}`,
       );
       assert.deepStrictEqual(showMessageBox.mock.calls[0]?.[0].buttons, ["Allow", "Block"]);
       // Enter must not accept a prompt the page raised while the user was typing.
       assert.strictEqual(showMessageBox.mock.calls[0]?.[0].defaultId, 1);
 
-      assert.isTrue(yield* readClipboard("https://allowed.test/other"));
-      assert.isTrue(checkClipboard("https://allowed.test"));
+      assert.isTrue(yield* requestPermission("https://allowed.test/other"));
+      assert.isTrue(checkPermission("https://allowed.test"));
 
-      assert.isFalse(yield* readClipboard("https://blocked.test/"));
-      assert.isFalse(yield* readClipboard("https://blocked.test/again"));
-      assert.isFalse(checkClipboard("https://blocked.test"));
-      assert.isTrue(checkClipboard("https://allowed.test"));
+      assert.isFalse(yield* requestPermission("https://blocked.test/"));
+      assert.isFalse(yield* requestPermission("https://blocked.test/again"));
+      assert.isFalse(checkPermission("https://blocked.test"));
+      assert.isTrue(checkPermission("https://allowed.test"));
       assert.strictEqual(showMessageBox.mock.calls.length, 2);
     }).pipe(Effect.provide(layer)),
   );
