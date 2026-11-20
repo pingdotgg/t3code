@@ -512,10 +512,13 @@ export default function DiffPanel({
       ? activeCheckpointDiff.error
       : branchDiffPreview.error;
   const hasResolvedPatch = typeof selectedPatch === "string";
+  const isPartialGitFileList =
+    isGitSelection && selectedGitSource?.patchesDeferred === true && selectedGitSource.truncated;
   const hasNoNetChanges =
     hasResolvedPatch &&
     selectedPatch.trim().length === 0 &&
     !preview?.incomplete &&
+    !isPartialGitFileList &&
     (!selectedGitSource?.patchesDeferred || selectedGitSource.files?.length === 0);
   const lazySource =
     isGitSelection &&
@@ -1394,9 +1397,12 @@ export default function DiffPanel({
                   : gt("Showing tracked changes. Checking untracked files...")}
               </p>
             )}
-            {isSelectedPatchTruncated && !lazySource && (
+            {isSelectedPatchTruncated && (!lazySource || isPartialGitFileList) && (
               <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-2xs text-muted-foreground">
-                {isGitSelection && selectedGitSource?.files && !preview?.incomplete
+                {isGitSelection &&
+                selectedGitSource?.files &&
+                !preview?.incomplete &&
+                !isPartialGitFileList
                   ? gt(
                       "This preview exceeds the size limit. Changes shown are incomplete. Totals include all changes.",
                     )

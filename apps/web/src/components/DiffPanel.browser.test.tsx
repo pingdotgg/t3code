@@ -277,15 +277,20 @@ it("opens a repository-relative file from a nested project without a remote", as
   ).toMatchObject({ activeSurfaceId: "file:back\\slash.txt" });
 });
 
-it.each([false, true])(
-  "expands an unloaded file on the first click with default collapse %s",
-  async (collapsed) => {
+it.each([
+  { collapsed: false, truncated: false },
+  { collapsed: true, truncated: false },
+  { collapsed: true, truncated: true },
+])(
+  "expands an unloaded file with collapse $collapsed and a partial list $truncated",
+  async ({ collapsed, truncated }) => {
     using context = setup("origin/orphan");
     state.diffFilesCollapsed = collapsed;
-    const path = `pending-${collapsed}.txt`;
+    const path = `pending-${collapsed}-${truncated}.txt`;
     const metadata = preview();
     const source = {
       ...metadata.sources[0]!,
+      truncated,
       files: [{ path, previousPath: null, additions: 1, deletions: 1 }],
     };
     state.previews.set("main", Atom.make(AsyncResult.success({ ...metadata, sources: [source] })));
@@ -299,12 +304,21 @@ it.each([false, true])(
     );
     const toggle = screen.getByRole("button", { name: `Expand ${path}`, exact: true });
     await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
+    if (truncated) {
+      await expect
+        .element(
+          screen.getByText("This preview exceeds the size limit. Changes shown are incomplete."),
+        )
+        .toBeVisible();
+    }
     await userEvent.click(toggle);
     await act(() =>
       context.registry.set(
         context.patch,
         AsyncResult.success({
           ...source,
+          truncated: false,
+          patchesDeferred: false,
           diff: `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-before\n+after\n`,
         }),
       ),

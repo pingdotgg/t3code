@@ -379,12 +379,22 @@ describe("resolveChangesTotals", () => {
         },
       },
     );
-    assert.deepEqual(resolveChangesTotals(dirty, source), {
+    const statusTotals = {
       insertions: 20,
       deletions: 3,
       baseRef: "main",
       breakdown: null,
-    });
+    };
+    assert.deepEqual(resolveChangesTotals(dirty, source), statusTotals);
+    assert.deepEqual(
+      resolveChangesTotals(dirty, {
+        ...source,
+        files: [{ path: "a.ts", previousPath: null, additions: 4, deletions: 1 }],
+        patchesDeferred: true,
+        truncated: true,
+      }),
+      statusTotals,
+    );
   });
 
   it("falls back to the working tree when branchChanges is omitted", () => {
