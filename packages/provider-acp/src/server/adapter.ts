@@ -4801,8 +4801,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 turnItem = {
                   ...base,
                   type: "command_execution",
-                  // Keep input strictly to an actual command; falling back to the display title
-                  // ("Ran command") makes UI labels parse "Ran" as a binary ("Running Ran").
                   input: toolCall.command ?? monitorCommand ?? "",
                   ...(textFromUnknown(rawOutput) === undefined
                     ? {}

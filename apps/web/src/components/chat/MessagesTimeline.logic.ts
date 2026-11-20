@@ -265,7 +265,6 @@ function genericCommandStatusLabel(
 }
 
 function isGenericCommandHeading(heading: string, resolve: MessageResolver): boolean {
-  if (!heading) return true;
   return (
     heading === "Ran command" ||
     heading === "Command" ||
