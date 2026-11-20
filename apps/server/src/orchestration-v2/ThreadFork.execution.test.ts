@@ -997,6 +997,100 @@ it.effect("a fresh send in a fork that has not run yet starts without the fork's
   }).pipe(Effect.provide(forkCases[0]!.layer)),
 );
 
+it.effect.each([
+  {
+    name: "a fresh send queued behind a side chat's failed first run gives later sends no note",
+    scheduled: false,
+  },
+  {
+    name: "a scheduled fresh run queued behind a side chat's failed first run keeps the fork",
+    scheduled: true,
+  },
+] as const)("$name", ({ scheduled }) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const key = scheduled ? "queued-scheduled-side-chat" : "queued-fresh-side-chat";
+    const parentId = ThreadId.make(`${key}-parent`);
+    const sideChatId = ThreadId.make(`${key}-child`);
+    yield* createParent(parentId);
+    yield* writeParentRun({
+      threadId: parentId,
+      runId: RunId.make(`${key}-parent-run`),
+      ordinal: 1,
+      status: "completed",
+      text: "Work",
+      stable: true,
+    });
+    yield* forkSideChat(`${key}-fork`, parentId, sideChatId);
+    const send = (name: string, freshContext = false) =>
+      orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`${key}-${name}`),
+        threadId: sideChatId,
+        messageId: MessageId.make(`${key}-${name}`),
+        text: name,
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "user",
+        creationSource: "web",
+        ...(freshContext ? { freshContext } : {}),
+        ...(freshContext && scheduled
+          ? { scheduledTaskId: ScheduledTaskId.make(`${key}-task`) }
+          : {}),
+      });
+    const settle = (name: string, status: "failed" | "completed") =>
+      Effect.gen(function* () {
+        const run = (yield* orchestrator.getThreadProjection(sideChatId)).runs.find(
+          (candidate) => candidate.userMessageId === MessageId.make(`${key}-${name}`),
+        )!;
+        const now = yield* DateTime.now;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${key}-${name}-${status}`),
+              type: "run.updated",
+              threadId: sideChatId,
+              runId: run.id,
+              occurredAt: now,
+              payload: { ...run, status, completedAt: now },
+            },
+          ],
+        });
+      });
+    yield* send("first");
+    yield* send("fresh", true);
+    // The first run fails before its provider forks the parent's session.
+    yield* settle("first", "failed");
+    yield* orchestrator.dispatch({
+      type: "queue.resume",
+      commandId: CommandId.make(`${key}-resume`),
+      threadId: sideChatId,
+    });
+    assert.equal(
+      (yield* orchestrator.getThreadProjection(sideChatId)).runs.find(
+        (run) => run.userMessageId === MessageId.make(`${key}-fresh`),
+      )?.status,
+      "starting",
+    );
+    yield* settle("fresh", "completed");
+    yield* send("next");
+
+    const sideChat = yield* orchestrator.getThreadProjection(sideChatId);
+    assert.deepEqual(
+      sideChat.contextTransfers.filter((transfer) => transfer.type === "fork").map((t) => t.status),
+      [scheduled ? "pending" : "superseded"],
+    );
+    if (scheduled) return;
+    const next = sideChat.runs.find((run) => run.userMessageId === MessageId.make(`${key}-next`));
+    // A fork still pending would give the next send a new note, with a digest of the main thread.
+    assert.deepEqual(
+      sideChat.contextHandoffs.filter((handoff) => handoff.targetRunId === next?.id),
+      [],
+    );
+  }).pipe(Effect.provide(forkCases[0]!.layer)),
+);
+
 it.effect("a side chat of a busy parent points history recovery at the parent", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;

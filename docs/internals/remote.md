@@ -181,6 +181,9 @@ undo by accident:
   up in `/proc/net/tcp` and refuses other users. macOS and Windows have no such check yet. The
   mobile app's device preview has the same listener while it is open: iOS suspends other apps, but
   Android lets any app reach it, and apps cannot see another app's socket owner there.
+- **Off stays routed.** `allowsPreviewTunnel` (setting plus policy) gates the route and, from
+  server config, the clients, which then stream. The partition keeps its tunnel proxy anyway, so a
+  desktop tab left open fails instead of loading the reviewer's own localhost.
 - **System browser links** have no tunnel. They keep the private-network rewrite in
   [`browserTargetResolver.ts`](../../apps/web/src/browser/browserTargetResolver.ts).
 

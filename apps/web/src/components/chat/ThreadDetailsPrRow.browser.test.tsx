@@ -8,6 +8,7 @@ import {
   ThreadId,
   type PullRequestCheck,
   type ScopedThreadRef,
+  type ThreadIssueLink,
 } from "@t3tools/contracts";
 import { DraftId } from "~/composerDraftStore";
 import { AsyncResult } from "effect/reactivity";
@@ -387,29 +388,34 @@ it("names a linked pull request row by its kind, number and title, not its URL",
   expect(exposedNumbers).toHaveLength(0);
 });
 
-it("names a linked issue row by its kind, number and title, not its URL", async () => {
+it("names the first linked issue and reveals more issues on demand", async () => {
   await using screen = await setup();
+  const issue: ThreadIssueLink = {
+    tracker: IssueTrackerKind.make("github"),
+    host: "github.com",
+    scope: "owner/repo",
+    key: "123",
+    projectId: ProjectId.make("repository"),
+    url: "https://github.com/owner/repo/issues/123",
+    source: "manual",
+    linkedAt: "2026-10-30T00:00:00.000Z",
+    displayKey: "#123",
+    title: "Sidebar flickers on resize",
+  };
   await act(async () => {
     await screen.rerender(
       <ThreadDetailsIssueRows
         links={[
+          issue,
           {
-            tracker: IssueTrackerKind.make("github"),
-            host: "github.com",
-            scope: "owner/repo",
-            key: "123",
-            projectId: ProjectId.make("repository"),
-            url: "https://github.com/owner/repo/issues/123",
-            source: "manual",
-            linkedAt: "2026-10-30T00:00:00.000Z",
-            displayKey: "#123",
-            title: "Sidebar flickers on resize",
+            ...issue,
+            key: "124",
+            displayKey: "#124",
+            url: "https://github.com/owner/repo/issues/124",
+            title: "Tab list jumps",
           },
         ]}
-        threadRef={{
-          environmentId: EnvironmentId.make("environment"),
-          threadId: ThreadId.make("thread"),
-        }}
+        threadRef={threadRef}
       />,
     );
   });
@@ -433,6 +439,12 @@ it("names a linked issue row by its kind, number and title, not its URL", async 
     row.dispatchEvent(externalClick);
   });
   expect(externalClick.defaultPrevented).toBe(false);
+  const extra = screen.getByRole("link", { name: "Issue #124: Tab list jumps" });
+  await expect.element(extra).not.toBeInTheDocument();
+  await screen.getByRole("button", { name: "Show 1 more" }).click();
+  await expect.element(extra).toBeVisible();
+  await screen.getByRole("button", { name: "Show less" }).click();
+  await expect.element(extra).not.toBeInTheDocument();
 });
 
 it("keeps Ready pending when refreshed detail becomes mergeable before the action settles", async () => {
