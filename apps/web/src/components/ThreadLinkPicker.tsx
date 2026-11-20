@@ -10,6 +10,15 @@ import { Command, CommandInput, CommandItem, CommandList } from "./ui/command";
 
 type ThreadShell = ReturnType<typeof useVisibleThreadShells>[number];
 
+function foldThreadLinkSearchText(text: string): string {
+  // Keep marks that distinguish letters in other scripts, such as kana voicing.
+  return text
+    .toLocaleLowerCase()
+    .normalize("NFD")
+    .replace(/(\p{Script=Latin})\p{M}+/gu, "$1")
+    .normalize("NFC");
+}
+
 /** Search over an environment's unarchived threads, to link one to a pull request or an issue. */
 export function ThreadLinkPicker({
   environmentId,
@@ -33,15 +42,15 @@ export function ThreadLinkPicker({
       .filter((project) => project.environmentId === environmentId)
       .map((project) => [project.id, project.title]),
   );
-  const search = query.trim().toLocaleLowerCase();
+  const search = foldThreadLinkSearchText(query.trim());
   const candidates = threads
     .filter(
       (thread) =>
         thread.environmentId === environmentId &&
         thread.archivedAt === null &&
-        `${thread.title} ${projectNames.get(thread.projectId) ?? ""}`
-          .toLocaleLowerCase()
-          .includes(search),
+        foldThreadLinkSearchText(
+          `${thread.title} ${projectNames.get(thread.projectId) ?? ""}`,
+        ).includes(search),
     )
     .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   return (
