@@ -397,6 +397,20 @@ const advertisedModel = (provider: ServerProvider, model: string) =>
     candidate.aliases?.some((alias) => alias.toLowerCase() === model.toLowerCase()),
   );
 
+/** A folder's own provider config can add models that only its workspace snapshot lists. */
+export const withWorkspaceModels = (
+  providers: ReadonlyArray<ServerProvider>,
+  cwd: string | undefined,
+): ReadonlyArray<ServerProvider> =>
+  cwd === undefined
+    ? providers
+    : providers.map((provider) => {
+        const models = provider.workspaceSnapshots?.find(
+          (snapshot) => snapshot.cwd === cwd,
+        )?.models;
+        return models === undefined ? provider : { ...provider, models };
+      });
+
 const withV = (version: string) => (version.startsWith("v") ? version : `v${version}`);
 
 /** A provider that lists no models accepts any slug. */
@@ -1525,6 +1539,26 @@ const make = Effect.gen(function* () {
 
   const loadProviders = providerRegistry.getProviders;
 
+  /** The folder the composer's model picker scans for this thread. */
+  const parentWorkspaceCwd = (parent: Pick<OrchestrationV2ThreadProjection, "thread">) =>
+    parent.thread.worktreePath
+      ? Effect.succeed(parent.thread.worktreePath)
+      : projects.getById(parent.thread.projectId).pipe(
+          Effect.map((project) =>
+            Option.getOrUndefined(Option.map(project, ({ workspaceRoot }) => workspaceRoot)),
+          ),
+          Effect.orElseSucceed(() => undefined),
+        );
+
+  const scanWorkspace = (instanceId: ServerProvider["instanceId"], cwd: string) =>
+    projects
+      .workspaceScanDirectory(cwd)
+      .pipe(
+        Effect.flatMap((scanCwd) =>
+          providerRegistry.refreshWorkspaceSnapshot({ instanceId, cwd, scanCwd }),
+        ),
+      );
+
   const loadOrchestrationCapableInstanceIds = () =>
     providerAdapters.list().pipe(Effect.map((instanceIds) => new Set(instanceIds)));
 
@@ -1542,21 +1576,33 @@ const make = Effect.gen(function* () {
       })
       .pipe(Effect.mapError(threadManagementFailure));
 
-  const resolveTargetRechecking = (input: Parameters<typeof resolveTarget>[0]) => {
+  const resolveTargetRechecking = (
+    input: Parameters<typeof resolveTarget>[0] & { readonly cwd: string | undefined },
+  ) => {
     const instanceId =
       input.target?.providerInstanceId ??
       (input.target?.driverKind === undefined
         ? input.parent.thread.modelSelection.instanceId
         : undefined);
-    const resolved = resolveTarget(input);
+    const resolved = resolveTarget({
+      ...input,
+      providers: withWorkspaceModels(input.providers, input.cwd),
+    });
     if (instanceId === undefined) return resolved;
     return resolved.pipe(
       Effect.catchIf(
         (error) => error.code === "provider_unavailable" || error.code === "model_unavailable",
         () =>
-          providerRegistry
-            .refreshInstance(instanceId)
-            .pipe(Effect.flatMap((providers) => resolveTarget({ ...input, providers }))),
+          (input.cwd === undefined
+            ? providerRegistry.refreshInstance(instanceId)
+            : providerRegistry
+                .refreshInstance(instanceId)
+                .pipe(Effect.andThen(scanWorkspace(instanceId, input.cwd)))
+          ).pipe(
+            Effect.flatMap((providers) =>
+              resolveTarget({ ...input, providers: withWorkspaceModels(providers, input.cwd) }),
+            ),
+          ),
       ),
     );
   };
@@ -2473,7 +2519,7 @@ const make = Effect.gen(function* () {
       }
       const runId = run.id;
       const nodeId = run.rootNodeId;
-      const key = yield* requestKey(input.clientRequestId);
+      const key = `${runId}:${yield* requestKey(input.clientRequestId)}`;
       const turnItemId = TurnItemId.make(
         `turn-item:secret-request:${stablePart(threadId)}:${stablePart(key)}`,
       );
@@ -2542,6 +2588,13 @@ const make = Effect.gen(function* () {
             yield* record("cancelled");
             return "cancelled" as const;
           }
+          // A steering restart replaced the run's root, so this request belonged to
+          // the superseded attempt: its card can never be answered into that attempt,
+          // and the call must stop blocking the agent's turn.
+          if (current.rootNodeId !== nodeId) {
+            yield* record("cancelled");
+            return "cancelled" as const;
+          }
           yield* Effect.sleep(Duration.millis(SECRET_REQUEST_POLL_INTERVAL_MS));
         }
       }).pipe(
@@ -2594,7 +2647,26 @@ const make = Effect.gen(function* () {
 
     capabilities: Effect.fn("OrchestratorMcpService.capabilities")(function* (scope, input = {}) {
       const { parent, limits } = yield* loadCaller(scope, []);
-      const providers = yield* loadProviders;
+      const cwd = parent === undefined ? undefined : yield* parentWorkspaceCwd(parent);
+      const machineProviders = yield* loadProviders;
+      const unscanned =
+        cwd === undefined
+          ? []
+          : machineProviders.filter(
+              (provider) =>
+                provider.enabled &&
+                !provider.workspaceSnapshots?.some((snapshot) => snapshot.cwd === cwd),
+            );
+      if (cwd !== undefined && unscanned.length > 0) {
+        yield* Effect.forEach(unscanned, (provider) => scanWorkspace(provider.instanceId, cwd), {
+          concurrency: "unbounded",
+          discard: true,
+        });
+      }
+      const providers = withWorkspaceModels(
+        unscanned.length > 0 ? yield* loadProviders : machineProviders,
+        cwd,
+      );
       const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
       const settings = yield* serverSettings.getSettings.pipe(
         Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
@@ -2728,6 +2800,7 @@ const make = Effect.gen(function* () {
         parent,
         target: input.target,
         providers,
+        cwd: yield* parentWorkspaceCwd(parent),
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
       });
       const runtimeMode = yield* resolveRuntimeMode(
@@ -3069,6 +3142,7 @@ const make = Effect.gen(function* () {
         }
         const parentNodeId = parentRun.rootNodeId;
         const providers = yield* loadProviders;
+        const cwd = yield* parentWorkspaceCwd(parent);
         const key = yield* requestKey(input.clientRequestId);
         const created = yield* Effect.forEach(
           input.threads,
@@ -3101,6 +3175,7 @@ const make = Effect.gen(function* () {
                         providerInstanceId: committedThread.modelSelection.instanceId,
                       },
                 providers,
+                cwd,
                 skipProjectEnablementFilter: isRetryOfAcceptedCreation,
               });
               const runtimeMode = yield* resolveRuntimeMode(
