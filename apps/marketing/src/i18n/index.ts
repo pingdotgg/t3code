@@ -1,3 +1,4 @@
+import { bg } from "./bg";
 import { de } from "./de";
 import { en, type Messages } from "./en";
 import { es } from "./es";
@@ -11,6 +12,7 @@ import { zh } from "./zh";
 
 const MESSAGES: Record<Locale, Messages> = {
   en,
+  bg,
   es,
   "zh-Hans": zh,
   "pt-BR": ptBR,

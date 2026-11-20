@@ -3,6 +3,7 @@ export const SYSTEM_LANGUAGE = "system";
 // Shown in their own language so a user can find theirs from any UI language.
 const NATIVE_LANGUAGE_NAMES: Readonly<Record<string, string>> = {
   en: "English",
+  bg: "Български",
   de: "Deutsch",
   es: "Español",
   fr: "Français",

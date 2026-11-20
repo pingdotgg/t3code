@@ -3,6 +3,7 @@
 // kept so a future pt-PT can sit beside it. zh is Simplified Chinese.
 export const LOCALES = [
   { code: "en", path: "", name: "English" },
+  { code: "bg", path: "bg", name: "Български" },
   { code: "es", path: "es", name: "Español" },
   { code: "zh-Hans", path: "zh", name: "简体中文" },
   { code: "pt-BR", path: "pt-br", name: "Português (Brasil)" },
