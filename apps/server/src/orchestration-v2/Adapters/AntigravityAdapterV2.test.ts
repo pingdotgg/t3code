@@ -1468,6 +1468,16 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       assert.equal(opened.cancels(), 0, "a steer must not cancel the agent's work");
       assert.lengthOf(opened.prompts, 2);
       assert.deepEqual(opened.prompts[1]!.prompt, [{ type: "text", text: "Skip the build" }]);
+
+      yield* send({ sessionUpdate: "tool_call_update", ...followUp, status: "completed" });
+      yield* TestClock.adjust("16 minutes");
+      const silent = yield* until((event) => event.type === "turn.terminal");
+      const terminal = silent.at(-1);
+      assert.equal(
+        terminal?.type === "turn.terminal" && terminal.status,
+        "failed",
+        "a silent steer prompt must still hit the inactivity timeout",
+      );
     }).pipe(Effect.provide(layerSession)),
   );
 
