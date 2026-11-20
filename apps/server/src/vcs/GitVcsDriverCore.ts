@@ -5039,17 +5039,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   );
   // Readers only ask for the current epoch and Cache expires entries lazily, so a superseded
   // snapshot (megabytes in a repository with many remote branches) would stay until evicted.
-  const advanceListRefsEpoch = (gitCommonDir: string) =>
-    Effect.suspend(() => {
-      const previous = listRefsEpochByCommonDir.get(gitCommonDir);
-      const epoch = bumpListRefsEpoch(gitCommonDir);
-      return previous === undefined
-        ? Effect.succeed(epoch)
-        : Cache.invalidate(
-            listRefsSnapshotCache,
-            new GitRefsSnapshotCacheKey({ gitCommonDir, epoch: previous }),
-          ).pipe(Effect.as(epoch));
-    });
+  const advanceListRefsEpoch = Effect.fn("GitVcsDriver.advanceListRefsEpoch")(function* (
+    gitCommonDir: string,
+  ) {
+    const previous = listRefsEpochByCommonDir.get(gitCommonDir);
+    const epoch = bumpListRefsEpoch(gitCommonDir);
+    if (previous !== undefined) {
+      yield* Cache.invalidate(
+        listRefsSnapshotCache,
+        new GitRefsSnapshotCacheKey({ gitCommonDir, epoch: previous }),
+      );
+    }
+    return epoch;
+  });
   const listRefsRefreshSnapshotCache = yield* Cache.makeWith(
     (cacheKey: GitRefsRefreshCacheKey) =>
       advanceListRefsEpoch(cacheKey.gitCommonDir).pipe(
