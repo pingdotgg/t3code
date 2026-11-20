@@ -636,9 +636,10 @@ export const layer = Layer.effect(
     const saveTask = (
       task: ScheduledTask,
       requireExisting: boolean,
-      detachFromThreadId: ThreadId | null,
       /** The schedule this save read, when it left the schedule unchanged. */
       keptSchedule: ScheduledTask["schedule"] | null,
+      /** The thread this save unbinds; any other stored thread is kept. */
+      unboundThreadId: ThreadId | null,
       webhook: {
         readonly token: string | null;
         readonly secret: string | null;
@@ -704,12 +705,12 @@ export const layer = Layer.effect(
           enabled = excluded.enabled,
           schedule_json = excluded.schedule_json,
           project_id = excluded.project_id,
-          -- A first run can bind a thread during a save. Detach only the observed binding.
+          -- A first run may bind the thread while this save is in flight, so a save
+          -- without a thread keeps any thread but the one it unbinds.
           thread_id = CASE
             WHEN excluded.thread_mode = 'new_thread' THEN NULL
             WHEN excluded.project_id != scheduled_tasks.project_id THEN excluded.thread_id
-            WHEN ${detachFromThreadId} IS NOT NULL THEN NULLIF(scheduled_tasks.thread_id, ${detachFromThreadId})
-            ELSE COALESCE(excluded.thread_id, scheduled_tasks.thread_id)
+            ELSE COALESCE(excluded.thread_id, NULLIF(scheduled_tasks.thread_id, ${unboundThreadId}))
           END,
           thread_mode = excluded.thread_mode,
           workspace_strategy_json = excluded.workspace_strategy_json,
@@ -1479,18 +1480,14 @@ export const layer = Layer.effect(
       // of silently resetting an existing row.
       const existingTask = yield* findTask(id);
       const threadMode = resolveThreadMode(input, existingTask);
-      const keptThreadId = input.threadId ?? existingTask?.threadId ?? null;
+      const keptThreadId =
+        input.threadId ?? (input.unbindThread === true ? null : (existingTask?.threadId ?? null));
       // A bound thread belongs to its project, so moving the task leaves it for a new one.
       const movedOffThread =
         existingTask !== null &&
         existingTask.projectId !== input.projectId &&
         keptThreadId === existingTask.threadId;
-      const detachFromThreadId =
-        input.threadId === null ? (input.detachFromThreadId ?? null) : null;
-      const threadId =
-        threadMode === "new_thread" || movedOffThread || keptThreadId === detachFromThreadId
-          ? null
-          : keptThreadId;
+      const threadId = threadMode === "new_thread" || movedOffThread ? null : keptThreadId;
       // An unchanged destination is not rechecked, so a task on an archived thread stays editable.
       if (threadId !== null && threadId !== existingTask?.threadId) {
         yield* requireDestinationThread(threadId, input.projectId, id);
@@ -1615,8 +1612,8 @@ export const layer = Layer.effect(
       yield* saveTask(
         task,
         input.requireExisting === true,
-        detachFromThreadId,
         scheduleUnchanged ? existingTask.schedule : null,
+        threadId === null && input.unbindThread === true ? (existingTask?.threadId ?? null) : null,
         webhook,
       );
       yield* notifyChanged;

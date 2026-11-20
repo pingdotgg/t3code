@@ -2476,7 +2476,7 @@ const make = Effect.gen(function* () {
           projectId: existing.projectId,
           threadId,
           ...(input.bindToCurrentThread === false && existing.threadId !== null
-            ? { detachFromThreadId: existing.threadId }
+            ? { unbindThread: true }
             : {}),
           threadMode:
             input.freshSession === undefined && input.bindToCurrentThread === undefined

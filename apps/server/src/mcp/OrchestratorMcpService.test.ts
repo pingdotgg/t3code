@@ -4320,7 +4320,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         });
         const [input] = yield* Ref.get(inputs);
         assert.equal(input?.threadId, null);
-        assert.equal(input?.detachFromThreadId, threadId);
+        assert.equal(input?.unbindThread, true);
         assert.equal(input?.threadMode, "fresh_session");
       }),
     );
