@@ -8,5 +8,185 @@
     "file": "apps/server/src/provider/Drivers/ClaudeSkills.test.ts",
     "test": "gives a synced namespace to an installed plugin, then the first synced row",
     "reason": "macOS: the case-insensitive file system cannot hold both pstack and PSTACK"
+  },
+  {
+    "file": "apps/desktop/src/app/DesktopLinuxUrlHandler.test.ts",
+    "test": "installs both app id spellings without creating an icon cache",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "apps/desktop/src/app/DesktopLinuxUrlHandler.test.ts",
+    "test": "replaces same-length stale icons and refreshes an existing cache once",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "apps/web/src/components/ChatMarkdown.permissions.browser.test.tsx",
+    "test": "tells the native menu for [Docs](https://example.com/docs) whether the keyboard opened it",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "apps/web/src/components/ChatMarkdown.permissions.browser.test.tsx",
+    "test": "tells the native menu for [Readme](docs/readme.md) whether the keyboard opened it",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "packages/provider-fx/src/server/skills.test.ts",
+    "test": "lists nothing from a linked ~/.fx/skills",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "packages/provider-fx/src/server/skills.test.ts",
+    "test": "offers the skill fx loads for each name",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "packages/shared/src/shell.test.ts",
+    "test": "captures values when the profile replaces PATH and a DEBUG trap echoes commands",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "packages/ssh/src/tunnel.test.ts",
+    "test": "a newer client still replaces an older managed server",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "packages/ssh/src/tunnel.test.ts",
+    "test": "a reconnect from an older client keeps a newer managed server running",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "packages/ssh/src/tunnel.test.ts",
+    "test": "names missing gzip after verifying with sha256sum",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "packages/ssh/src/tunnel.test.ts",
+    "test": "names missing gzip after verifying with shasum",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "scripts/build-npm-launcher.test.ts",
+    "test": "publishes a launcher that downloads, verifies, caches, and runs the release executable",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "apps/server/src/cli/invocation.test.ts",
+    "test": "proves the downloaded executable was started by a global npm launcher",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "apps/server/src/cli/invocation.test.ts",
+    "test": "requires the npm prefix's bin to point to the running package",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "apps/server/src/cli/triage.test.ts",
+    "test": "launches agy with the triage prompt (agent=antigravity, model=test-model)",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "apps/server/src/cli/triage.test.ts",
+    "test": "launches agy with the triage prompt (agent=undefined, model=undefined)",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "apps/server/src/cli/triage.test.ts",
+    "test": "launches claude with the triage prompt (agent=claude, model=undefined)",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "apps/server/src/cli/triage.test.ts",
+    "test": "launches codex with the triage prompt (agent=codex, model=test-model)",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "apps/server/src/cloud/pinnedRuntime.test.ts",
+    "test": "removes a runtime only its own entry names when its real directory in a symlinked home …",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "apps/server/src/environment/ServerEnvironment.test.ts",
+    "test": "publishes proven install ownership only for manually updated servers",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "apps/server/src/preview/PortScanner.test.ts",
+    "test": "stops an agent's server through its job's group, and only a listed server",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "apps/server/src/process/SpawnWorker.test.ts",
+    "test": "preserves stdin, large output, env, cwd, literal args and additional descriptors",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "apps/server/src/project/AgentSessionScanner.test.ts",
+    "test": "excludes sandboxes reached through a symlink into the worktrees dir",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "apps/server/src/project/ManagedProjectFolders.test.ts",
+    "test": "still knows No project when its folder is the target of a symlinked Scratch",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "apps/server/src/project/ProjectSetupScriptRunner.test.ts",
+    "test": "reports a nonzero completion for a syntax error",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "apps/server/src/usage/UsageService.test.ts",
+    "test": "discovers Pi history in its default home and directory overrides",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "apps/server/src/usage/UsageService.test.ts",
+    "test": "retains Codex reconciliation and partial coverage through persisted restart, append and repair",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "apps/server/src/usage/UsageService.test.ts",
+    "test": "returns other providers' usage while Muse home discovery is still pending",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "apps/server/src/vcs/GitVcsDriver.test.ts",
+    "test": "checkpoint bulk staging cleans operation-owned packs after interrupt and can retry",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "apps/server/src/vcs/GitVcsDriver.test.ts",
+    "test": "checkpoint bulk staging cleans operation-owned packs after success and can retry",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "apps/server/src/vcs/GitVcsDriver.test.ts",
+    "test": "checkpoint bulk staging cleans operation-owned packs after timeout and can retry",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "apps/server/src/vcs/GitVcsDriverCore.test.ts",
+    "test": "keeps generated worktree folders short without changing long branch names",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "apps/server/src/keybindings.test.ts",
+    "test": "upserts missing default keybindings on startup without overriding existing command rules",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "apps/web/src/keybindings.test.ts",
+    "test": "toggles the thread panel by default without taking terminal keystrokes",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "apps/web/test/appScenarios.renders.tsx",
+    "test": "warm up",
+    "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "apps/web/test/appScenarios.renders.tsx",
+    "test": "app-toggle-diff-panel",
+    "reason": "fails on upstream v0.1.11 too"
   }
 ]

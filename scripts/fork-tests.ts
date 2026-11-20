@@ -7,6 +7,7 @@
 //   node scripts/fork-tests.ts --recheck       run only the known failures, to drop fixed ones
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 export interface KnownFailure {
@@ -59,7 +60,17 @@ function runVitest(args: ReadonlyArray<string>): Promise<number> {
     const child = NodeChildProcess.spawn(
       NodePath.join(root, "node_modules/.bin/vp"),
       ["test", "run", "--reporter=verbose", "--testTimeout=30000", ...args],
-      { cwd: root, detached: true, stdio: ["ignore", "pipe", "pipe"] },
+      {
+        cwd: root,
+        detached: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          T3CODE_RENDER_REPORT_DIR: NodeFS.mkdtempSync(
+            NodePath.join(NodeOS.tmpdir(), "t3-renders-"),
+          ),
+        },
+      },
     );
     let lastOutput = Date.now();
     child.stdout.on("data", (chunk) => {
