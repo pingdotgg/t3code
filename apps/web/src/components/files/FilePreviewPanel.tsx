@@ -1439,9 +1439,13 @@ export default function FilePreviewPanel({
       ? file.data.contents
       : null;
   const { copyToClipboard, isCopied } = useCopyToClipboard({
-    target: previewPath ?? "file",
+    target: namedClipboardTarget(previewPath ?? ""),
     onError: (error) =>
-      toastManager.add({ type: "error", title: "Could not copy file", description: error.message }),
+      toastManager.add({
+        type: "error",
+        title: gt("Could not copy file"),
+        description: error.message,
+      }),
   });
   const contentFocusRef = useRef<HTMLDivElement>(null);
   const fileEditorRef = useRef<FileEditor | null>(null);
@@ -1669,7 +1673,7 @@ export default function FilePreviewPanel({
           ) : null}
           {copyableContents !== null ? (
             <FileSurfaceAction
-              label={isCopied ? "Copied" : "Copy contents"}
+              label={isCopied ? gt("Copied") : gt("Copy contents")}
               onPress={() => copyToClipboard(copyableContents, undefined)}
             >
               {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
