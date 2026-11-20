@@ -347,6 +347,39 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
     }),
   );
 
+  it.effect("offers Auto only while the session advertises agy's own Auto", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.initialize;
+      const supportedModes = harness.provider.snapshot.getSnapshot.pipe(
+        Effect.map((snapshot) => snapshot.supportedRuntimeModes),
+      );
+      const withoutAuto = ["approval-required", "auto-accept-edits", "full-access"];
+      expect(yield* supportedModes).toEqual(withoutAuto);
+      yield* harness.provider.onSessionStarted({
+        ...started,
+        sessionSetupResult: {
+          ...sessionSetupResult,
+          modes: {
+            currentModeId: "default",
+            availableModes: [
+              { id: "default", name: "Default" },
+              { id: "auto", name: "Auto" },
+            ],
+          },
+        },
+      });
+      expect(yield* supportedModes).toEqual([
+        "approval-required",
+        "auto-accept-edits",
+        "auto",
+        "full-access",
+      ]);
+      yield* harness.provider.onSessionStarted(started);
+      expect(yield* supportedModes).toEqual(withoutAuto);
+    }),
+  );
+
   it.effect("publishes session metadata and native commands without another health probe", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
