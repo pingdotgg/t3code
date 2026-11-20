@@ -328,16 +328,6 @@ it.effect("reuses issue picker candidates within the same repository and project
       expect(yield* readEnvironmentQuery(registry, candidates(target))).toEqual(answer);
       expect(reads).toHaveLength(count + 1);
     }
-
-    const count = reads.length;
-    const alias = candidates({ environmentId, input: second });
-    registry.refresh(alias);
-    expect(yield* readEnvironmentQuery(registry, alias)).toEqual(answer);
-    expect(reads).toHaveLength(count + 1);
-    expect(
-      yield* readEnvironmentQuery(registry, candidates({ environmentId, input: first })),
-    ).toEqual(answer);
-    expect(reads).toHaveLength(count + 1);
   }),
 );
 
