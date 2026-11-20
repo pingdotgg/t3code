@@ -32,6 +32,7 @@ import { isConfirmDialogActive, requestConfirmDialog } from "~/confirmDialog";
 import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { Button } from "~/components/ui/button";
+import { toastManager } from "~/components/ui/toast";
 import { isElectron } from "~/env";
 import { m } from "~/i18n/messages";
 import { useOpenIssueLink } from "~/lib/openIssueLink";
@@ -86,6 +87,9 @@ function saveBlob(blob: Blob, name: string) {
   // Browsers may start downloading after the click's task; defer revocation.
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
+
+/** Read fresh each time: an awaited read can outlast the click's activation. */
+const hasTransientActivation = () => navigator.userActivation?.isActive === true;
 
 export function McpAppFrame(props: {
   readonly environmentId: EnvironmentId;
@@ -363,7 +367,24 @@ export function McpAppFrame(props: {
           setDisplayMode("inline");
           return;
         }
-        window.open(url, "_blank", "noopener,noreferrer");
+        const openExternally = () => window.open(url, "_blank", "noopener,noreferrer");
+        if (hasTransientActivation()) {
+          openExternally();
+          return;
+        }
+        // The tracker read outlasted the click's activation, so the browser would block the tab;
+        // the toast's button is a fresh click.
+        const id = toastManager.add({
+          title: url,
+          timeout: 15_000,
+          actionProps: {
+            children: m(msg("Open link")),
+            onClick: () => {
+              openExternally();
+              toastManager.close(id);
+            },
+          },
+        });
       },
       sendMessage: async (text) => {
         const send = readLive().props.onSendMessage;
