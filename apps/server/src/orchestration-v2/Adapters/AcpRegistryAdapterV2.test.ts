@@ -1400,6 +1400,14 @@ describe("AcpRegistryAdapterV2", () => {
         ),
         "1",
       );
+      // A local install can be named after the registry package id too.
+      assert.equal(
+        yield* launchSwitch(
+          { source: "local", commandPath: "/opt/bin/claude-acp" },
+          { PATH: "/opt/bin" },
+        ),
+        "1",
+      );
       assert.equal(
         yield* launchSwitch({ agentId: "claude-acp" }, { CLAUDE_AGENT_ACP_EXPERIMENTAL_V2: "0" }),
         "0",
@@ -1470,6 +1478,13 @@ describe("AcpRegistryAdapterV2", () => {
       assert.deepEqual(yield* steering({ agentId: "github-copilot-cli" }), copilot);
       assert.deepEqual(
         yield* steering({ source: "local", commandPath: "C:\\tools\\copilot.cmd" }),
+        copilot,
+      );
+      assert.deepEqual(
+        yield* steering({
+          source: "local",
+          commandPath: "C:\\tools\\github-copilot-cli.exe",
+        }),
         copilot,
       );
       assert.deepEqual(yield* steering({ agentId: "gemini" }), {
