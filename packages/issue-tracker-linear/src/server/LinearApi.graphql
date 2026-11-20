@@ -301,3 +301,24 @@ query T3CommentReactions($id: String!) {
     }
   }
 }
+
+query T3TeamStates($id: String!) {
+  team(id: $id) {
+    states(first: 250) {
+      nodes {
+        ...LinearWorkflowState
+      }
+    }
+  }
+}
+
+query T3IssueStates($teamId: ID!, $numbers: [Float!]!) {
+  issues(first: 250, filter: { team: { id: { eq: $teamId } }, number: { in: $numbers } }) {
+    nodes {
+      identifier
+      state {
+        id
+      }
+    }
+  }
+}

@@ -5,6 +5,7 @@
 import * as Schema from "effect/Schema";
 import type * as Effect from "effect/Effect";
 import type {
+  IssueAutomationOption,
   IssueState,
   IssueCandidates,
   IssueCapabilities,
@@ -221,6 +222,35 @@ export interface StandaloneIssueTrackerApi extends IssueTrackerApi {
     },
     IssueTrackerError
   >;
+  /**
+   * What issue status rules read, present when `standalone.automationContainer` is. A container
+   * is the team or board a rule watches; its id must be unique across the tracker's workspaces,
+   * or the tracker must refuse a workspace other than the credential's.
+   */
+  readonly automation?: {
+    readonly listContainers: () => Effect.Effect<
+      {
+        /** The credential's workspace, as `parseIssueUrl` names it. */
+        readonly workspace: string;
+        readonly containers: ReadonlyArray<IssueAutomationOption>;
+      },
+      IssueTrackerError
+    >;
+    /** Every status an issue in the container can be in, in workflow order. */
+    readonly listStates: (input: {
+      readonly workspace: string;
+      readonly containerId: string;
+    }) => Effect.Effect<ReadonlyArray<IssueAutomationOption>, IssueTrackerError>;
+    /** The status id of each issue key found in the container; keys outside it are left out. */
+    readonly readStatuses: (input: {
+      readonly workspace: string;
+      readonly containerId: string;
+      readonly keys: ReadonlyArray<string>;
+    }) => Effect.Effect<
+      ReadonlyArray<{ readonly key: string; readonly stateId: string }>,
+      IssueTrackerError
+    >;
+  };
 }
 
 export function isStandaloneIssueTracker(api: IssueTrackerApi): api is StandaloneIssueTrackerApi {

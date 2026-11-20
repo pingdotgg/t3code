@@ -2585,6 +2585,42 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
   );
 });
 
+it.effect("issue automation revisions count organizing events and user-authored messages", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:automation-revision");
+    let version = 0;
+    const append = (
+      type: string,
+      payload: Readonly<Record<string, string>> = {},
+      target: string = threadId,
+    ) =>
+      sql<{ readonly sequence: number }>`
+        INSERT INTO orchestration_events (
+          event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,
+          actor_kind, payload_json, metadata_json, application_event_version
+        ) VALUES (
+          ${`event:revision:${++version}`}, 'thread', ${target}, ${version}, ${type},
+          '2026-11-17T00:00:00.000Z', 'server', ${JSON.stringify(payload)}, '{}', 2
+        ) RETURNING sequence
+      `.pipe(Effect.map((rows) => rows[0]!.sequence));
+    assert.equal(yield* store.getIssueAutomationRevision(threadId), 0);
+    yield* append("thread.unsettled");
+    const repeated = yield* append("thread.unsettled");
+    assert.equal(yield* store.getIssueAutomationRevision(threadId), repeated);
+    yield* append("message.updated", { role: "user", createdBy: "agent" });
+    yield* append("message.updated", { role: "assistant", createdBy: "user" });
+    yield* append("thread.metadata-updated");
+    yield* append("thread.settled", {}, "thread:other");
+    assert.equal(yield* store.getIssueAutomationRevision(threadId), repeated);
+    const message = yield* append("message.updated", { role: "user", createdBy: "user" });
+    assert.equal(yield* store.getIssueAutomationRevision(threadId), message);
+    const relinked = yield* append("thread.issue-synced");
+    assert.equal(yield* store.getIssueAutomationRevision(threadId), relinked);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 const backgroundThreadUpdatesKeepTimestamp = Effect.gen(function* () {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const createdAt = DateTime.makeUnsafe("2026-10-06T14:00:00.000Z");
@@ -8910,6 +8946,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             pendingRuntimeRequest: null,
             limitRecovery: sqlShell.limitRecovery,
             snoozedUntil: sqlShell.snoozedUntil,
+            snoozedAt: sqlShell.snoozedAt,
           });
         } else assert.isUndefined(candidate);
         assert.isUndefined(candidates.find((row) => row.id === otherThreadId));

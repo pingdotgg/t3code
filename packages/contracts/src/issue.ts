@@ -569,6 +569,8 @@ export const StandaloneIssueTrackerDescriptor = Schema.Struct({
     /** Where to mint one, or null when the tracker has no stable page for it. */
     helpUrl: Schema.NullOr(TrimmedNonEmptyString),
   }),
+  /** What issue status rules watch, when the tracker supports them: a Linear team, a Jira board. */
+  automationContainer: Schema.optional(Schema.Literals(["team", "board"])),
 });
 export type StandaloneIssueTrackerDescriptor = typeof StandaloneIssueTrackerDescriptor.Type;
 
@@ -660,5 +662,82 @@ export class IssueTrackerConnectionError extends Schema.TaggedError<IssueTracker
 
   override get message(): string {
     return `${this.tracker} connection failed: ${this.detail}`;
+  }
+}
+
+/** What a thread does when a linked issue moves into a status. */
+export const IssueAutomationAction = Schema.Literals(["wake", "snooze", "settle"]);
+export type IssueAutomationAction = typeof IssueAutomationAction.Type;
+
+/** A team or board a rule can watch, or one of its workflow statuses, by the tracker's own id. */
+export const IssueAutomationOption = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+});
+export type IssueAutomationOption = typeof IssueAutomationOption.Type;
+
+/**
+ * Wake, snooze, or settle the threads linked to a container's issues when their status changes.
+ * It applies across projects, to every thread linked to one of the container's issues.
+ */
+export const IssueAutomationRule = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  /** Replaced on every save, so a saved rule records statuses again before it acts. */
+  generation: Schema.optional(TrimmedNonEmptyString),
+  enabled: Schema.Boolean,
+  tracker: IssueTrackerKind,
+  /** The tracker workspace the container is in, as its issue URLs name it. */
+  workspace: TrimmedNonEmptyString,
+  containerId: TrimmedNonEmptyString,
+  containerName: TrimmedNonEmptyString,
+  /** Native status id to action; a status left out leaves threads as they are. */
+  mappings: Schema.Record(TrimmedNonEmptyString, IssueAutomationAction),
+});
+export type IssueAutomationRule = typeof IssueAutomationRule.Type;
+
+/** The containers the connected account reaches, and with `containerId` that one's statuses. */
+export const IssueAutomationCatalogInput = Schema.Struct({
+  tracker: IssueTrackerKind,
+  containerId: Schema.optional(TrimmedNonEmptyString),
+});
+export type IssueAutomationCatalogInput = typeof IssueAutomationCatalogInput.Type;
+
+export const IssueAutomationCatalog = Schema.Struct({
+  workspace: TrimmedNonEmptyString,
+  containers: Schema.Array(IssueAutomationOption),
+  states: Schema.Array(IssueAutomationOption),
+});
+export type IssueAutomationCatalog = typeof IssueAutomationCatalog.Type;
+
+export const IssueAutomationOverview = Schema.Struct({
+  rules: Schema.Array(IssueAutomationRule),
+  /** The last status read of each rule since the server started. */
+  status: Schema.Array(
+    Schema.Struct({
+      ruleId: TrimmedNonEmptyString,
+      checkedAt: Schema.NullOr(IsoDateTime),
+      error: Schema.NullOr(Schema.String),
+    }),
+  ),
+});
+export type IssueAutomationOverview = typeof IssueAutomationOverview.Type;
+
+/** A null rule removes the rule with that id. */
+export const IssueAutomationSaveInput = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  rule: Schema.NullOr(IssueAutomationRule),
+});
+export type IssueAutomationSaveInput = typeof IssueAutomationSaveInput.Type;
+
+export class IssueAutomationError extends Schema.TaggedError<IssueAutomationError>()(
+  "IssueAutomationError",
+  {
+    operation: Schema.String,
+    detail: Schema.optional(TrimmedNonEmptyString),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return this.detail ?? "Issue status automation could not complete this operation.";
   }
 }
