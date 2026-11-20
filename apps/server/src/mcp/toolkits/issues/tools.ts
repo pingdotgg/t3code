@@ -1,5 +1,6 @@
 import {
   IssueCapabilities,
+  IssueCommentAudience,
   IssueListState,
   IssueOperationError,
   IssueState,
@@ -172,6 +173,8 @@ export const ReadIssueResult = Schema.Struct({
   writable: Schema.Boolean,
   capabilities: IssueCapabilities,
   states: Schema.Array(IssueState),
+  /** A comment must say whether it is an internal note or a reply to the customer. */
+  commentAudiences: Schema.optional(Schema.Boolean),
   author: Schema.NullOr(Schema.String),
   assignees: Schema.Array(Schema.String),
   labels: Schema.Array(Schema.String),
@@ -185,6 +188,8 @@ export const ReadIssueResult = Schema.Struct({
       author: Schema.NullOr(Schema.String),
       body: Schema.String,
       createdAt: Schema.String,
+      /** Hidden from the customer. */
+      internal: Schema.optional(Schema.Boolean),
     }),
   ),
   /** Older comments exist beyond the page returned. */
@@ -305,10 +310,16 @@ const CreateIssueTool = Tool.make("create_issue", {
   .annotate(Tool.OpenWorld, true);
 
 const CommentOnIssueTool = Tool.make("comment_on_issue", {
-  description: "Post a comment on an issue.",
+  description:
+    "Post a comment on an issue. Where read_issue reports commentAudiences, pass audience, and ask the user if they did not say whether it is an internal note or a reply to the customer. Never resend a refused internal note as public.",
   parameters: Schema.Struct({
     ...IssueTargetInput.fields,
     body: Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(65_536)),
+    audience: Schema.optional(
+      IssueCommentAudience.annotate({
+        description: "internal: only agents see it. public: the customer sees it.",
+      }),
+    ),
   }),
   success: IssueWriteResult,
   failure: IssueToolError,

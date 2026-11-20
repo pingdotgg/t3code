@@ -1,3 +1,4 @@
+import type { IssueCommentAudience } from "@t3tools/contracts";
 import { useGT } from "gt-react-native";
 import { useRef, useState } from "react";
 import { Platform, View } from "react-native";
@@ -16,8 +17,13 @@ import {
   useComposerChrome,
   useComposerTextStyle,
 } from "../../components/ComposerSurface";
-import { ComposerActionButton, ComposerToolbarRow } from "../../components/ComposerToolbar";
+import {
+  ComposerActionButton,
+  ComposerInlineControl,
+  ComposerToolbarRow,
+} from "../../components/ComposerToolbar";
 import { AppText as Text } from "../../components/ui/AppText";
+import { Menu } from "../../components/ui/Menu";
 import { useComposerTextRole } from "../settings/appearance/useScaledTextRole";
 import {
   ComposerDictationCancelAction,
@@ -44,14 +50,18 @@ export function IssueCommentComposer(props: {
   readonly label: string;
   readonly blocked: string | null;
   readonly posting: boolean;
+  /** Each comment is an internal note or a reply to the customer, chosen before sending. */
+  readonly audiences: boolean;
   readonly bottomInset: number;
   readonly contentMaxWidth?: number;
   /** Resolves true once the comment is posted, which clears the draft. */
-  readonly onSubmit: (body: string) => Promise<boolean>;
+  readonly onSubmit: (body: string, audience?: IssueCommentAudience) => Promise<boolean>;
   readonly onHeightChange: (height: number) => void;
   readonly onFocusChange: (focused: boolean) => void;
 }) {
   const gt = useGT();
+  const [chosenAudience, setAudience] = useState<IssueCommentAudience | null>(null);
+  const audience = props.audiences ? chosenAudience : null;
   const editorRef = useRef<ComposerEditorHandle>(null);
   const [draft, setDraft] = useState("");
   // Read by dictation and by send after an await, when the render's `draft` may be stale.
@@ -83,14 +93,19 @@ export function IssueCommentComposer(props: {
   );
   const dictating = voicePresentation.statusKind === "active";
   const locked = props.posting || voiceInput.blocksSubmission;
-  const canSend = props.blocked === null && !locked && draft.trim().length > 0;
+  const canSend =
+    props.blocked === null &&
+    !locked &&
+    draft.trim().length > 0 &&
+    (!props.audiences || audience !== null);
 
   const sending = useRef(false);
   const flushAndSubmit = async () => {
     await editorRef.current?.flushPendingInput();
     const submitted = latestDraft.current;
     if (submitted.trim().length === 0) return;
-    if ((await props.onSubmit(submitted)) && latestDraft.current === submitted) changeDraft("");
+    const sent = await props.onSubmit(submitted, audience ?? undefined);
+    if (sent && latestDraft.current === submitted) changeDraft("");
   };
   const send = () => {
     if (!canSend || sending.current) return Promise.resolve();
@@ -128,6 +143,7 @@ export function IssueCommentComposer(props: {
       <View className="w-full self-center" style={{ maxWidth: props.contentMaxWidth }}>
         <ComposerSurface
           animateLayout={false}
+          tone={audience === "internal" ? "warning" : undefined}
           style={{
             borderRadius: chrome.borderRadius,
             borderCurve: "circular",
@@ -208,6 +224,45 @@ export function IssueCommentComposer(props: {
                       compactEditor.isExpanded ? { flex: 1, justifyContent: "flex-end" } : undefined
                     }
                   >
+                    {props.audiences ? (
+                      <Menu
+                        title={gt("Comment audience")}
+                        style={{ flexShrink: 1, minWidth: 0 }}
+                        actions={[
+                          {
+                            id: "internal",
+                            title: gt("Internal note"),
+                            state: audience === "internal" ? "on" : "off",
+                            attributes: { disabled: locked },
+                          },
+                          {
+                            id: "public",
+                            title: gt("Reply to customer"),
+                            state: audience === "public" ? "on" : "off",
+                            attributes: { disabled: locked },
+                          },
+                        ]}
+                        onPressAction={({ nativeEvent }) => {
+                          if (nativeEvent.event === "internal" || nativeEvent.event === "public") {
+                            setAudience(nativeEvent.event);
+                          }
+                        }}
+                      >
+                        <View pointerEvents="none">
+                          <ComposerInlineControl
+                            size={chrome.controlSize}
+                            label={
+                              audience === "internal"
+                                ? gt("Internal note")
+                                : audience === "public"
+                                  ? gt("Reply to customer")
+                                  : gt("Choose audience")
+                            }
+                            selected={audience !== null}
+                          />
+                        </View>
+                      </Menu>
+                    ) : null}
                     <ComposerDictationStartAction
                       size={chrome.controlSize}
                       state={voiceInput.state}

@@ -139,8 +139,14 @@ export const IssueComment = Schema.Struct({
   url: Schema.NullOr(Schema.String),
   /** Absent from a tracker with no reactions, which differs from none on this comment. */
   reactions: Schema.optional(Schema.Array(IssueReaction)),
+  /** Hidden from the customer: a Jira Service Management internal note. */
+  internal: Schema.optional(Schema.Boolean),
 });
 export type IssueComment = typeof IssueComment.Type;
+
+/** Who a new comment is for where the issue has a customer: agents only, or the customer too. */
+export const IssueCommentAudience = Schema.Literals(["internal", "public"]);
+export type IssueCommentAudience = typeof IssueCommentAudience.Type;
 
 /**
  * Something that happened to an issue that nobody wrote words for: it was closed, labelled,
@@ -214,6 +220,8 @@ export const IssueCapabilities = Schema.Struct({
   events: Schema.Boolean,
   /** The tracker narrows a listing by free text itself. */
   search: Schema.Boolean,
+  /** Some issues keep internal notes apart from customer replies; see `commentAudiences`. */
+  internalComments: Schema.optional(Schema.Boolean),
 });
 export type IssueCapabilities = typeof IssueCapabilities.Type;
 
@@ -249,6 +257,8 @@ export const IssueDetail = Schema.Struct({
   body: Schema.String,
   reactions: Schema.optional(Schema.Array(IssueReaction)),
   comments: Schema.Array(IssueComment),
+  /** A new comment here must name its audience, since one without it reaches the customer. */
+  commentAudiences: Schema.optional(Schema.Boolean),
   /** Where older comments carry on; null once the conversation is whole. */
   commentsCursor: Schema.NullOr(TrimmedNonEmptyString),
   events: Schema.Array(IssueEvent),
@@ -378,6 +388,8 @@ export type IssueCreateResult = typeof IssueCreateResult.Type;
 export const IssueCommentInput = Schema.Struct({
   ...IssueRef.fields,
   body: CommentBody,
+  /** Required where the detail has `commentAudiences`, refused everywhere else. */
+  audience: Schema.optional(IssueCommentAudience),
 });
 export type IssueCommentInput = typeof IssueCommentInput.Type;
 

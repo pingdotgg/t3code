@@ -9,6 +9,7 @@ import type {
   IssueCandidates,
   IssueCapabilities,
   IssueComment,
+  IssueCommentAudience,
   IssueCommentsPage,
   IssueCreateResult,
   IssueEvent,
@@ -89,6 +90,7 @@ export interface TrackerIssueDetail extends TrackerIssueSummary {
   readonly states: ReadonlyArray<IssueState>;
   readonly reactions?: ReadonlyArray<IssueReaction>;
   readonly comments: ReadonlyArray<IssueComment>;
+  readonly commentAudiences?: boolean;
   /** Where older comments carry on; null once the conversation is whole. */
   readonly commentsCursor: string | null;
   readonly events: ReadonlyArray<IssueEvent>;
@@ -155,9 +157,12 @@ export interface IssueTrackerApi {
     },
   ) => Effect.Effect<IssueCreateResult, IssueTrackerError>;
 
-  /** Only called when `capabilities.comment` is true. */
+  /** Only called when `capabilities.comment` is true; an audience only with `internalComments`. */
   readonly comment?: (
-    input: IssueTarget & { readonly body: string },
+    input: IssueTarget & {
+      readonly body: string;
+      readonly audience?: IssueCommentAudience | undefined;
+    },
   ) => Effect.Effect<void, IssueTrackerError>;
 
   /**

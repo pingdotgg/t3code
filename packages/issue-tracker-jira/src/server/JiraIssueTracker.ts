@@ -63,6 +63,7 @@ const CAPABILITIES: IssueCapabilities = {
   linkedPullRequests: false,
   events: true,
   search: true,
+  internalComments: true,
 };
 
 const EVERYTHING: IssueViewerPermissions = {
@@ -155,8 +156,13 @@ function toComment(comment: JiraApi.JiraComment, issueUrl: string): IssueComment
     body: adfToMarkdown(comment.body),
     createdAt: iso(comment.created),
     url: `${issueUrl}?focusedCommentId=${comment.id}`,
+    ...(comment.jsdPublic === false ? { internal: true } : {}),
   };
 }
+
+/** A Service Management project, where a comment is an internal note or a customer reply. */
+const takesAudience = (issue: JiraApi.JiraIssue) =>
+  issue.fields.project?.projectTypeKey === "service_desk";
 
 const words = (value: string | null | undefined) =>
   (value ?? "").split(/\s+/u).filter((word) => word.length > 0);
@@ -415,6 +421,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
                 },
           states: toStates(issue),
           comments: page.comments.map((comment) => toComment(comment, summary.url)),
+          ...(takesAudience(issue) ? { commentAudiences: true } : {}),
           commentsCursor: page.total > page.comments.length ? String(page.comments.length) : null,
           events: toEvents(issue.changelog?.histories ?? []),
           linkedPullRequests: [],
@@ -471,7 +478,27 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
 
       comment: Effect.fn("JiraIssueTracker.comment")(function* (input) {
         const key = yield* requireProjectKey("comment", input);
-        yield* jira.addComment(key, markdownToAdf(input.body));
+        // Without an audience, Service Management shows the comment to the customer.
+        const audiences = takesAudience(yield* jira.getIssue(key));
+        if (audiences && input.audience === undefined) {
+          return yield* JiraApi.fail(
+            "comment",
+            "failed",
+            "Choose whether this is an internal note or a reply to the customer.",
+          );
+        }
+        if (!audiences && input.audience !== undefined) {
+          return yield* JiraApi.fail(
+            "comment",
+            "failed",
+            `${key} is not in a Service Management project, so it has no internal notes.`,
+          );
+        }
+        yield* jira.addComment(
+          key,
+          markdownToAdf(input.body),
+          input.audience === undefined ? undefined : input.audience === "internal",
+        );
       }),
 
       update: Effect.fn("JiraIssueTracker.update")(function* (input) {

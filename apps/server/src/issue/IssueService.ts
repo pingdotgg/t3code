@@ -701,6 +701,9 @@ const make = Effect.gen(function* () {
             new IssueOperationError({ operation: "comment", detail: "A comment needs some text." }),
           );
         }
+        if (input.audience !== undefined && project.api.capabilities.internalComments !== true) {
+          return Effect.fail(unsupported("comment", "internal notes"));
+        }
         return project.api.comment === undefined || !project.api.capabilities.comment
           ? Effect.fail(unsupported("comment", "comments"))
           : project.api
@@ -710,6 +713,7 @@ const make = Effect.gen(function* () {
                 scope: project.scope,
                 key: input.key,
                 body: input.body,
+                audience: input.audience,
               })
               .pipe(
                 Effect.mapError(toIssueError("comment")),
