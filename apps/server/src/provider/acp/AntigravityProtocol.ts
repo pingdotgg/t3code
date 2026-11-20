@@ -45,11 +45,15 @@ const decodeSingleAnswer = Schema.decodeUnknownOption(
 );
 const decodeToolCallContent = Schema.decodeUnknownOption(AcpWireSchema.ToolCallContent);
 
+// agy keeps its own `schedule` call in progress until the wake fires, then replies by itself.
+const ANTIGRAVITY_SCHEDULE_TITLES = new Set(["Run schedule", "Running schedule"]);
+
 /**
- * The agent goes on running a command after its prompt ends, and replies by itself when the
- * command finishes. A daemon may never finish.
+ * The agent goes on running a command or a scheduled wake after its prompt ends, and replies by
+ * itself when it finishes. A daemon may never finish.
  */
-export function antigravityCommandOutlivesPrompt(toolCall: AcpToolCallState): boolean {
+export function antigravityToolOutlivesPrompt(toolCall: AcpToolCallState): boolean {
+  if (toolCall.title !== undefined && ANTIGRAVITY_SCHEDULE_TITLES.has(toolCall.title)) return true;
   const input = toolCall.data.rawInput;
   return toolCall.kind === "execute" && !(Predicate.isObject(input) && input.IsDaemon === true);
 }
