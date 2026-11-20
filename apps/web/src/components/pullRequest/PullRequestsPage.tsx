@@ -170,14 +170,32 @@ const heldRowReaders = new WeakMap<
   Map<string, ReturnType<typeof heldPullRequestListEntriesAtom<EnvironmentPullRequestEntry>>>
 >();
 
-function usePendingListEntries(
+type PendingListEntriesAtom = Atom.Atom<ReadonlyArray<EnvironmentPullRequestEntry>>;
+const NO_PENDING_LIST_ENTRIES: PendingListEntriesAtom = Atom.make(
+  (): ReadonlyArray<EnvironmentPullRequestEntry> => [],
+);
+// One atom per list and query. An atom made during render was a new registry node every
+// render, whose value read again on subscribe was a new array, so the page rendered again.
+const pendingListAtoms = new WeakMap<
+  ReadonlyArray<EnvironmentPullRequestEntry>,
+  Map<string, PendingListEntriesAtom>
+>();
+
+function pendingListEntriesAtom(
   input: PullRequestListInput,
   entries: ReadonlyArray<EnvironmentPullRequestEntry> | undefined,
-) {
+): PendingListEntriesAtom {
+  if (entries === undefined || entries.length === 0) return NO_PENDING_LIST_ENTRIES;
   const key = JSON.stringify(input);
-  return useAtomValue(
-    Atom.make((get) =>
-      (entries ?? []).flatMap((entry) => {
+  let byInput = pendingListAtoms.get(entries);
+  if (byInput === undefined) {
+    byInput = new Map();
+    pendingListAtoms.set(entries, byInput);
+  }
+  let atom = byInput.get(key);
+  if (atom === undefined) {
+    atom = Atom.make((get) =>
+      entries.flatMap((entry) => {
         let readers = heldRowReaders.get(entry);
         if (readers === undefined) {
           readers = new Map();
@@ -190,8 +208,17 @@ function usePendingListEntries(
         }
         return AsyncResult.getOrElse(get(reader), () => []);
       }),
-    ),
-  );
+    );
+    byInput.set(key, atom);
+  }
+  return atom;
+}
+
+function usePendingListEntries(
+  input: PullRequestListInput,
+  entries: ReadonlyArray<EnvironmentPullRequestEntry> | undefined,
+) {
+  return useAtomValue(pendingListEntriesAtom(input, entries));
 }
 
 export function PullRequestsPage() {
