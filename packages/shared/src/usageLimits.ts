@@ -260,6 +260,23 @@ function accountKeyResolver(reports: Iterable<AccountReport>) {
 
 const hubAccountName = (account: { readonly id: string }) => account.id.replace(/\.json$/i, "");
 
+export function hubUsageSources(
+  sources: UsageLimitSourceSnapshots,
+  driver: ServerProvider["driver"],
+  endpoint: string | undefined,
+  endpointPath: string | undefined,
+): UsageLimitSourceSnapshots {
+  if (!endpoint) return [];
+  const path = endpointPath?.replace(/\/+$/, "");
+  // Codex includes the OpenAI API's /v1 prefix in its base URL.
+  const base = driver === "codex" ? path?.replace(/\/v1$/, "") : path;
+  return sources.filter(
+    (source) =>
+      source.origin === endpoint &&
+      (base === undefined || (source.endpoint ?? source.origin) === `${endpoint}${base}`),
+  );
+}
+
 // Source ids are environment-local, so only a remote endpoint names the same hub across environments.
 function hubIdentity(environmentId: EnvironmentId, source: UsageLimitSourceSnapshot): string {
   // The server supplies canonical endpoints; native URL polyfills can misparse IPv6 hosts.
@@ -678,7 +695,7 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
       columns: accounts.map(
         (account) => memberByAccount.get(account.key) ?? { account, window: null },
       ),
-      usedPercent: Math.round(usedPercent),
+      usedPercent,
       remainingPercent: Math.round(100 - usedPercent),
       pace: meanElapsed === null ? null : paceOfShares(timedUsed, meanElapsed),
       resets,
@@ -978,26 +995,27 @@ export function instanceUsageLimits(
 ): ServerProviderUsageLimits | undefined {
   const selected = providers.find((provider) => provider.instanceId === instanceId);
   if (!selected) return undefined;
-  const { endpoint } = selected.auth;
-  // Hubs on one origin under different base paths all serve requests sent to that origin.
-  const hubs = endpoint ? sources.filter((source) => source.origin === endpoint) : [];
+  const { endpoint, endpointPath } = selected.auth;
+  const hubs = hubUsageSources(sources, selected.driver, endpoint, endpointPath);
+  const reports = hubs.flatMap((source) =>
+    source.accounts
+      .filter((account) => account.driver === selected.driver)
+      .map((account) => ({ source, account })),
+  );
+  const resolveKey = accountKeyResolver(reports.map(({ account }) => account));
   const hubAccounts = new Map<string, UsageLimitSourceSnapshot["accounts"][number]>();
-  for (const source of hubs) {
-    for (const account of source.accounts) {
-      if (account.driver !== selected.driver) continue;
-      const key =
-        accountKey(account.driver, account.email, account.usageLimits) ??
-        `${source.id}:${account.id}`;
-      const previous = hubAccounts.get(key);
-      if (
-        !previous ||
-        Date.parse(account.usageLimits.checkedAt) > Date.parse(previous.usageLimits.checkedAt)
-      ) {
-        hubAccounts.set(key, account);
-      }
+  for (const { source, account } of reports) {
+    if (limitsNotice(account.usageLimits) !== null) continue;
+    const key = resolveKey(account) ?? `${source.id}:${account.id}:${account.workspaceId ?? ""}`;
+    const previous = hubAccounts.get(key);
+    if (
+      !previous ||
+      Date.parse(account.usageLimits.checkedAt) > Date.parse(previous.usageLimits.checkedAt)
+    ) {
+      hubAccounts.set(key, account);
     }
   }
-  const readable = [...hubAccounts].filter(([, account]) => !limitsNotice(account.usageLimits));
+  const readable = [...hubAccounts];
   const [pool] = collectLimitPools(
     readable.map(([key, account]) => ({
       key,
@@ -1025,13 +1043,18 @@ export function instanceUsageLimits(
     };
   }
   const hubError = hubs.find((source) => source.error)?.error;
-  if (hubAccounts.size > 0 || hubError) {
+  const failed = reports.find(
+    ({ account }) => account.usageLimits.unavailable?.reason === "probeFailed",
+  );
+  if (hubError || failed) {
     return {
       checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
       windows: [],
       unavailable: { reason: "probeFailed", ...(hubError ? { message: hubError } : {}) },
     };
   }
+  const empty = reports.find(({ account }) => !account.usageLimits.unavailable) ?? reports[0];
+  if (empty) return empty.account.usageLimits;
   // The report keeps one instance per login, and any other entry may be a different login or
   // workspace, so fall back to the instance's own snapshot.
   return (

@@ -368,7 +368,18 @@ it.each([
 it.effect("the reset fallback refreshes its hub, and a stalled hub cannot hold the failure", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(NOW);
-    const roomLeft = { ...hub([{ windows: [spent("five_hour", 2)] }]), origin: "http://hub.test" };
+    const origin = "http://hub.test";
+    const roomLeft = {
+      ...hub([{ windows: [spent("five_hour", 2)] }]),
+      origin,
+      endpoint: `${origin}/team`,
+    };
+    const otherRoute = {
+      ...hub([{ windows: [] }]),
+      id: UsageLimitSourceId.make("other"),
+      origin,
+      endpoint: `${origin}/other`,
+    };
     const cached = {
       ...roomLeft,
       accounts: roomLeft.accounts.map((account) => ({
@@ -381,11 +392,11 @@ it.effect("the reset fallback refreshes its hub, and a stalled hub cannot hold t
     };
     let current: ReadonlyArray<UsageLimitSourceSnapshot> = [cached];
     let refresh: Effect.Effect<void> = Effect.sync(() => {
-      current = [roomLeft];
+      current = [roomLeft, otherRoute];
     });
     const lookup = UsageLimitSources.UsageLimitResetFallback.pipe(
       Effect.flatMap((fallback) =>
-        fallback.resetAt(ProviderDriverKind.make("claudeAgent"), "http://hub.test", null),
+        fallback.resetAt(ProviderDriverKind.make("claudeAgent"), origin, null, "/team"),
       ),
       Effect.provide(
         UsageLimitSources.layerResetFallback.pipe(

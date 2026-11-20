@@ -23,6 +23,7 @@ import {
   instanceUsageLimits,
   paceOf,
   paceRemainingPercent,
+  remainingPercent,
   usesChatGptSharing,
   resolveNewThreadModelSelection,
 } from "./usageLimits.ts";
@@ -1807,6 +1808,64 @@ describe("instance usage limits", () => {
     const limits = limitsOf(routed, sources);
     expect(limits?.unavailable).toBeUndefined();
     expect(limits?.windows.map((entry) => entry.usedPercent)).toEqual(usedPercents);
+  });
+
+  it.each([
+    ["root", "/v1", hubOrigin],
+    ["a reverse proxy path", "/second/v1/", `${hubOrigin}/second`],
+  ])(
+    "selects the hub for %s even when another hub shares its origin",
+    (_, endpointPath, endpoint) => {
+      const selected = { ...routed, auth: { ...routed.auth, endpointPath } };
+      const limits = limitsOf(selected, [
+        hub([hubAccount("a", endpoint === hubOrigin ? 100 : 0)]),
+        hub([hubAccount("b", endpoint === hubOrigin ? 0 : 100)], {
+          id: UsageLimitSourceId.make("hub-2"),
+          endpoint: `${hubOrigin}/second`,
+        }),
+      ]);
+      expect(limits?.windows[0]?.usedPercent).toBe(100);
+    },
+  );
+
+  it("pools separate workspaces for the same Codex email", () => {
+    const email = "same@example.com";
+    const limits = limitsOf(routed, [
+      hub([
+        hubAccount("personal.json", 100, { email, workspaceId: "personal" }),
+        hubAccount("team.json", 0, { email, workspaceId: "team" }),
+      ]),
+    ]);
+    expect(limits?.windows[0]?.usedPercent).toBe(50);
+  });
+
+  it("keeps a readable snapshot when a newer duplicate failed", () => {
+    const limits = limitsOf(routed, [
+      hub([hubAccount("a", 30)]),
+      hub(
+        [
+          hubAccount("a", 0, {
+            usageLimits: {
+              checkedAt: "2026-09-03T11:30:00.000Z",
+              windows: [],
+              unavailable: { reason: "probeFailed" },
+            },
+          }),
+        ],
+        { id: UsageLimitSourceId.make("hub-2") },
+      ),
+    ]);
+    expect(limits?.windows[0]?.usedPercent).toBe(30);
+  });
+
+  it("rounds remaining quota for a pool of accounts the same way as Usage", () => {
+    const limits = limitsOf(routed, [hub([hubAccount("a", 99), hubAccount("b", 100)])]);
+    expect(limits?.windows.map(remainingPercent)).toEqual([1, 90]);
+  });
+
+  it("preserves a successful snapshot with no windows", () => {
+    const empty = { checkedAt, windows: [] };
+    expect(limitsOf(routed, [hub([hubAccount("a", 0, { usageLimits: empty })])])).toEqual(empty);
   });
 
   it("keeps a lone hub account's reset clock", () => {
