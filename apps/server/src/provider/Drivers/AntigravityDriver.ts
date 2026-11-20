@@ -333,7 +333,7 @@ export const AntigravityDriver: ProviderDriver<
     });
 
     const makeDisposableRuntime = Effect.fn("AntigravityDriver.makeDisposableRuntime")(function* (
-      input: Pick<AntigravityAcpRuntimeInput, "onAuthorizationUrl">,
+      input: Pick<AntigravityAcpRuntimeInput, "onAuthorizationUrl" | "requestLogger">,
     ) {
       const cwd = yield* fileSystem
         .makeTempDirectoryScoped({ prefix: "t3-antigravity-setup-" })
@@ -362,6 +362,7 @@ export const AntigravityDriver: ProviderDriver<
         cwd,
         mcpServers: [],
         ...(input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {}),
+        ...(input.requestLogger ? { requestLogger: input.requestLogger } : {}),
       });
       return {
         ...runtime,

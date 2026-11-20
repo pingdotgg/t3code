@@ -105,6 +105,8 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
             Effect.gen(function* () {
               yield* initialize;
               events.push("authenticate");
+              const authenticate = { method: "authenticate", payload: { methodId: "test" } };
+              yield* input.requestLogger?.({ ...authenticate, status: "started" }) ?? Effect.void;
               yield* Deferred.succeed(authenticateCalled, undefined);
               if (options.interactive !== false && input.onAuthorizationUrl) {
                 for (const url of options.authorizationUrls ?? [authorizationUrl]) {
@@ -112,6 +114,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
                 }
               }
               yield* Deferred.await(authenticated);
+              yield* input.requestLogger?.({ ...authenticate, status: "succeeded" }) ?? Effect.void;
               events.push("session-new");
               yield* Deferred.await(discovered);
               return started;
