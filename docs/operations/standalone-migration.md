@@ -69,14 +69,16 @@ direct route before cutover.
 Do not run the official server and the fork against the same T3 home. In particular, never start
 a development server against a live `~/.t3/userdata`. The database can migrate forward when a
 newer server starts, so a version rollback must use a backup made before that start.
+If the destination already runs T3 Code, keep its database intact: there is no supported way to
+merge threads from two environments. Start the copied installation with another T3 home and port.
 
 ## Prepare an isolated replacement
 
-1. Pin a fork commit and build with the Node version required by its root `package.json`. Follow
-   [development setup](./development.md#first-checkout) and the
-   [source build example](../user/install.md#intel-macs). Keep a local copy of the build and its
-   commit SHA. A source build can run the server with `node apps/server/dist/bin.mjs`; it does not
-   use the official `t3` launcher or its update path.
+1. Pin a fork commit or published release. For a source build, use the Node version required by
+   the root `package.json`, follow [development setup](./development.md#first-checkout), and keep
+   its commit SHA. A source build can run the server with `node apps/server/dist/bin.mjs`; it does
+   not use the installed launcher or its update path. Use a published fork release for the service
+   that will receive automatic updates.
 2. Give the replacement its own T3 home. If there is official state to preserve, make a copy of
    that data. A staging copy made while the official server is running must use a consistent
    SQLite snapshot; the dev database migration tool intentionally drops tasks and links, so it is
@@ -85,6 +87,12 @@ newer server starts, so a version rollback must use a backup made before that st
    userdata directory, secrets, settings, and any needed `service.env` into the new home. Review
    copied configuration for T3 Connect and update endpoints before the fork starts. Keep the
    original home and an offline backup unchanged.
+   Moving from another OS also means moving each project's files and Git metadata. Project and
+   thread worktree paths are absolute; a fresh clone omits the `refs/t3/**` checkpoint refs that
+   old thread diffs and restores use. Keep the original paths where possible, and verify old
+   threads before accepting the copy. Provider CLI sessions and OS credential stores may need a
+   fresh login on the destination. A copied environment retains its identity, so do not leave
+   both copies online together.
 3. Run the forked environment with product telemetry disabled:
 
    ```dotenv
@@ -115,6 +123,47 @@ newer server starts, so a version rollback must use a backup made before that st
    listing, a provider turn, reconnect after restart, and the permissions of each paired client.
    Keep the first test on isolated data, then repeat after the final offline copy.
 
+## Publish and update a forked Linux service
+
+Configure the fork's `T3CODE_APP_SCHEME` build value before tagging; use the same scheme for the
+server and client builds. After reviewing and merging a tested commit, push a `vX.Y.Z` tag on that
+commit. The fork's `fork-release.yml` builds Linux x64 and arm64 CLI archives, smoke-tests them,
+and attaches them with `SHA256SUMS` to a **draft** GitHub Release. Verify the workflow, archive
+names, checksums, and tested commit before publishing the draft. Drafts are invisible to installed
+clients; publishing makes the version available. Do not use the official npm package for this
+service.
+
+```sh
+git tag vX.Y.Z <tested-commit>
+git push origin vX.Y.Z
+```
+
+Install the published archive under a dedicated OS user with its own T3 home. The fork's
+`scripts/install.sh` accepts `T3CODE_RELEASE_REPOSITORY=owner/repo` and an exact
+`T3CODE_VERSION`; set both when installing. Run `t3 --version`, then `t3 service install` as that
+user and confirm `t3 service status` reports the expected version and route. Keep an existing T3
+installation under its original user and home during validation.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/main/scripts/install.sh \
+  | T3CODE_RELEASE_REPOSITORY=<owner>/<repo> T3CODE_VERSION=X.Y.Z sh
+t3 --version
+t3 service install
+t3 service status
+```
+
+After the first fork release and backup have been verified, put `T3CODE_AUTO_UPDATE=1` in the new
+service's `service.env` and restart it. The service checks published releases on its selected stable
+or nightly channel after five minutes and then hourly. It waits while agents are running, verifies
+the archive checksum and database preflight, and tests the new service before keeping it. A failed
+start restores the previous version and database backup; the same failed version is not retried
+automatically. Check the service log and `t3 service status` after publishing the next release.
+To pause automatic updates, remove the setting and restart the service. A foreground `serve`
+process does not use this scheduler.
+The automatic rollback covers startup failure, not a defect discovered after a healthy start.
+An update also closes open terminals; finish terminal work before publishing a release that the
+service will install.
+
 ## Replace the client distributions
 
 The repository's `.env.example` contains the production T3 relay URL. Do not copy it into a fork
@@ -122,7 +171,9 @@ build. Set `T3CODE_STANDALONE=1` for each client build and set
 `GITHUB_REPOSITORY` or `T3CODE_DESKTOP_UPDATE_REPOSITORY` to your `owner/repo`. The build rejects
 T3-operated relay, diagnostics, hosted-app, and mobile legal-site URLs, T3's Expo project ID, and
 an upstream release repository. Use the same switch for server builds. A build made without the
-switch retains the official defaults.
+switch retains the official defaults. Set `T3CODE_APP_SCHEME` to a lower-case scheme owned by the
+fork; a standalone build rejects the official `t3code` scheme. Changing it gives the desktop a new
+browser-storage origin, so keep drafts and saved connections in mind before replacing an older build.
 
 - **Web:** host the fork's static app at an HTTPS origin you control. Set
   `T3CODE_HOSTED_APP_URL` (also read as `VITE_HOSTED_APP_URL`) in the build and server only when
@@ -139,14 +190,22 @@ switch retains the official defaults.
   these update and installation paths until fork archives and checksums are published and tested;
   `npx t3` still launches the official npm package.
 - **Mobile:** build and distribute forked iOS/Android apps with your signing and identifiers.
-  On revisions with standalone mobile identity support, set `T3CODE_MOBILE_BUNDLE_ID` to your
-  app identifier; the build rejects an unset value. Set `T3CODE_IOS_TEAM_ID` to your Apple team
-  when signing for iOS. The release check then uses your configured fork repository.
+  Set `T3CODE_MOBILE_BUNDLE_ID` to your app identifier and `T3CODE_IOS_TEAM_ID` to your Apple
+  team when signing for iOS. The release check uses your configured fork repository.
   Set `T3CODE_EAS_PROJECT_ID` and `T3CODE_EAS_OWNER` only for an Expo project you operate;
   without them, standalone builds disable OTA updates. Set `EXPO_PUBLIC_MARKETING_SITE_URL`
   only for your legal site. Leave `T3CODE_RELAY_URL`, Clerk, and OTLP tracing values unset for
   direct-only use. Re-pair the new app to each environment and verify which local client state
   transfers before removing the official app.
+
+  For a first iPhone pilot, the existing EAS `preview` profile can build on EAS Cloud after the
+  device is registered with `eas device:create`. Start the build from Linux, set the fork's Expo
+  owner/project, bundle ID, Apple team and app scheme, and leave OTA updates disabled. Install the
+  resulting ad hoc build on the registered device, join the same private network as the server,
+  and pair directly. Test again over cellular data. TestFlight distribution needs the fork's own
+  App Store Connect app ID in the submit configuration; the existing ID belongs to T3.
+  The server's automatic updater does not update the iPhone app. JavaScript-only mobile updates
+  can use the fork's Expo project after OTA is enabled; native changes need a new signed build.
 
 The [release runbook](./release.md) describes the upstream signing, archive, and update-feed
 formats. Reusing its workflow in a fork requires replacing upstream credentials, domains,
@@ -161,12 +220,12 @@ These paths need configuration, implementation, or an egress test before declari
   compatibility information is not fetched.
 - **Updates and installers:** publish and verify fork-owned release archives, checksums, and
   desktop feeds before enabling updates. The `t3` npm launcher belongs to the official package;
-  the Intel Mac install hint still points to T3. On older mobile revisions, the maintenance
-  release lookup also points upstream.
+  standalone builds use the fork repository for release links and mobile maintenance checks.
 - **Links and fallbacks:** a standalone client build removes the ordinary hosted-app,
-  download/legal, issue, prompt/thread, and crash-recovery links to T3. Audit less common routes
-  such as T3 Connect account pages, the `t3.json` schema URL, MCP approval redirects, and
-  provider sign-in return origins before using them.
+  download/legal, issue, prompt/thread, and crash-recovery links to T3. With a local project
+  configuration, run `t3 project schema > t3.schema.json` beside `t3.json` and set its `$schema` to
+  `./t3.schema.json` so the editor does not fetch the official schema URL. Do not configure T3
+  Connect in a direct-only build; verify any configured hosted-app, OAuth return and help links.
 - **Telemetry and diagnostics:** verify that the server, desktop, web, and mobile builds have no
   T3 ingest, relay tracing, or mobile Observe endpoint. Server opt-out alone does not control
   separate browser or mobile clients. If sending product analytics to your own PostHog host,
