@@ -1022,7 +1022,7 @@ const INPUT_TARGET_ACTIONS: Readonly<Record<string, ReadonlySet<string>>> = {
 
 /** Tool actions that hand work over and name the receiving thread in their result. */
 const RESULT_TARGET_ACTIONS: Readonly<Record<string, ReadonlySet<string>>> = {
-  t3_thread_transfer: new Set(["fork", "merge_back"]),
+  t3_thread_transfer: new Set(["fork", "merge_back", "continue"]),
 };
 
 const hasAction = (
@@ -1061,6 +1061,13 @@ const handoffTargetIds = (
   const threadId = (args as { readonly threadId?: unknown } | null | undefined)?.threadId;
   return typeof threadId === "string" ? [threadId] : [];
 };
+
+export const isResultTargetHandoff = (
+  tool: string,
+  args: unknown,
+  result: McpSchema.CallToolResult | undefined,
+) =>
+  hasAction(RESULT_TARGET_ACTIONS, tool, args) && handoffTargetIds(tool, args, result).length > 0;
 
 /** Tool analytics must never include IDs, prompts or free text. */
 const withToolAnalytics =
@@ -1120,7 +1127,7 @@ const withToolAnalytics =
           const handoff =
             HANDOFF_TOOLS.has(tool) ||
             isInputTargetHandoff(tool, args) ||
-            hasAction(RESULT_TARGET_ACTIONS, tool, args);
+            isResultTargetHandoff(tool, args, result);
           const outcome = toolOutcome(result);
           // Agents call status, read, and preview tools in tight loops, so an
           // event per successful call floods analytics. Only failures count there.

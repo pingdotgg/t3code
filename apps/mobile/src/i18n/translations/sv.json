@@ -3740,6 +3740,8 @@
   "20e3a8aab5f9426a": "Snooza tills gränserna återställs",
   "0769f91ca46e3003": "Snooza trådar tills deras användningsgränser återställs. Aktivera automatisk återupptagning för att fortsätta agenten efter återställningen.",
   "7c27e91e75cce7a3": "Markera som klar automatiskt",
+  "39cc7e89d3ec184a": "Fortsätt trådar med mycket kontext",
+  "40244e4472847ca1": "Låt agenter med T3-verktyg fortsätta långa uppgifter i en ny tråd med en överlämning. Väntar tills det aktiva arbetet är klart. Avstängt som standard.",
   "e89c6d8932de7863": "Markera mergade trådar som klara automatiskt",
   "f760219456ce86fc": "Markera inaktiva trådar som klara automatiskt",
   "6dfcc5e39925612b": "Mellan miljöer",

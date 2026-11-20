@@ -145,7 +145,7 @@ const PreviewSetAppearanceTool = safeBrowserTool(
 export const PreviewSnapshotTool = safeBrowserTool(
   Tool.make("preview_snapshot", {
     description:
-      "Use it only when the current request asks for browser work, including checking an edit in the browser. Never use it unasked to verify your own edit, or to repeat a snapshot from an earlier turn. Works on a tab the user is driving. Returns page state, elements, diagnostics, and screenshot size. Target one element with `locator='aria-ref=<ref>'` from `accessibilityTree`, even in frames. Refs die on navigation, a new snapshot, or handoff. Text caps near 20 KB; on your own or an unclaimed tab, `preview_evaluate` reads more. To show a screenshot when asked: `save=true`, then embed ![alt](screenshotPath).",
+      "Only for browser work requested this turn (incl. edit checks). Never repeat prior-turn snapshots. User-driven tabs OK. State, elements, diagnostics and screenshot size. `locator='aria-ref=<ref>'` from `accessibilityTree` targets one element, even in frames. Refs expire on navigation, resnapshot or handoff. Text cap ~20 KB. `preview_evaluate` reads more on own/unclaimed tabs. Show requested screenshots with `save=true`, then embed ![alt](screenshotPath).",
     parameters: Schema.Struct({
       ...PreviewAutomationTabTargetInput.fields,
       includeImage: Schema.optional(

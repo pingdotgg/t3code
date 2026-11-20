@@ -81,7 +81,9 @@ function setup() {
     },
     runs: [{ id: "run", ordinal: 1, status: "completed" }],
     subagents: [],
-    contextTransfers: [],
+    contextTransfers: [
+      { type: "fork", sourceThreadId: ThreadId.make("source"), targetThreadId: threadId },
+    ],
     providerThreads: [],
     providerSessions: [{ id: "session", status: "ready" }],
   };
@@ -362,6 +364,26 @@ it("explains why Merge back is unavailable before the fork completes a run", asy
   state.commandSucceeds = true;
   await mergeBack.click({ force: true });
   expect(screen.router?.state.location.pathname).toBe("/environment/fork");
+});
+
+it("does not offer Merge back for a continuation without a fork transfer", async () => {
+  setup();
+  state.projection = {
+    ...(state.projection as Record<string, unknown>),
+    contextTransfers: [],
+  };
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={threadId}
+      showLineage
+      showSideChats={false}
+    />,
+  );
+
+  await expect
+    .element(screen.getByRole("button", { name: "Merge back to source conversation" }))
+    .not.toBeInTheDocument();
 });
 
 it("shows a delegated-from thread's full title in its tooltip even when its environment is unavailable", async () => {

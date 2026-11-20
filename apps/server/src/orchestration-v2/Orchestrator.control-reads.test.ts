@@ -3,6 +3,7 @@ import * as NodeSqlite from "node:sqlite";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  EnvironmentId,
   MessageId,
   EventId,
   NodeId,
@@ -42,6 +43,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
+import { DispatchModeLimit } from "./DispatchModeLimit.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -2133,9 +2135,9 @@ it.effect("starts, finishes and follows up a task without reading the parent's h
       [parentRun.id, providerTurnId],
     );
 
-    // Start, finish and follow-up read the task's own records and the run it binds to, so their VM
-    // steps, which are deterministic, must stay flat on a copy with a long parent history. Left out:
-    // the counts that number the task and its wake, which walk one index.
+    // Start, finish and follow-up read the task's own records and the run it binds to, so returned
+    // rows must stay flat on a copy with a long parent history. Left out: counts that number the
+    // task and its wake, which walk one index.
     const copyPath = "file:/delegated-task-reads?vfs=memdb";
     using copy = new NodeSqlite.DatabaseSync(copyPath);
     yield* sql`VACUUM INTO ${copyPath}`;
@@ -2297,26 +2299,28 @@ it.effect("records a secret and a link card without reading the thread's history
       ],
     );
 
-    // A card reads its own run, so the rows and VM steps of its reads, which are deterministic,
-    // must stay flat on a copy where the thread has thousands of older runs.
+    // A card reads its own run, so the rows returned by its reads must stay flat on a copy where
+    // the thread has thousands of older runs.
     const copyPath = "file:/card-reads?vfs=memdb";
     using copy = new NodeSqlite.DatabaseSync(copyPath);
     yield* sql`VACUUM INTO ${copyPath}`;
-    const replay = () =>
+    const replayReads = () =>
       statements
         .filter(([query]) => /^\s*(SELECT|WITH)\b/.test(query))
         .reduce(
-          (total, [query, params]) => {
+          (result, [query, params]) => {
             const statement = copy.prepare(query);
-            const rows = statement.all(...(params as ReadonlyArray<NodeSqlite.SQLInputValue>));
-            return {
-              rows: total.rows + rows.length,
-              steps: total.steps + statement.stat("vmStep"),
-            };
+            result.rows += statement.all(
+              ...(params as ReadonlyArray<NodeSqlite.SQLInputValue>),
+            ).length;
+            result.steps += statement.stat("vmStep");
+            return result;
           },
           { rows: 0, steps: 0 },
         );
-    const short = replay();
+    const shortReads = replayReads();
+    const shortSteps = shortReads.steps;
+    assert.isAbove(shortSteps, 0);
     const history: ReadonlyArray<readonly [string, string, ReadonlyArray<string>]> = [
       ["runs", "run_id", []],
       ["run_attempts", "attempt_id", ["run_id"]],
@@ -2340,9 +2344,9 @@ it.effect("records a secret and a link card without reading the thread's history
         INSERT INTO ${name} (${columns.join(", ")})
         SELECT ${values.join(", ")} FROM ${name}, history WHERE thread_id = '${threadId}'`);
     }
-    const long = replay();
-    assert.equal(long.rows, short.rows);
-    assert.isAtMost(long.steps, short.steps * 1.1);
+    const longReads = replayReads();
+    assert.equal(longReads.rows, shortReads.rows);
+    assert.isAtMost(longReads.steps, shortSteps * 1.1);
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -3183,4 +3187,294 @@ it.effect(
       }
       assert.equal(yield* captureReads, quietParent);
     }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each([
+  "success",
+  "changed-run",
+  "stopped",
+  "active-task",
+  "active-remote-task",
+  "pending-delivery",
+  "acknowledged-delivery",
+  "new-message",
+  "watch",
+  "background",
+  "unread-steer",
+  "consumed-steer",
+  "provider-disabled",
+  "permission",
+  "client",
+] as const)("continuation durably commits its handoff and source settlement: %s", (scenario) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const outbox = yield* EffectOutbox.EffectOutboxV2;
+    const sourceThreadId = ThreadId.make("thread:continuation-source");
+    const targetThreadId = ThreadId.make("thread:continuation-target");
+    const projectId = ProjectId.make("project:continuation");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("continuation:create"),
+      threadId: sourceThreadId,
+      projectId,
+      title: "Long task",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+      initialMessage: {
+        messageId: MessageId.make("continuation:initial"),
+        text: "Implement auth.",
+        attachments: [],
+      },
+    });
+    const initial = yield* projections.getThreadProjection(sourceThreadId);
+    const run = initial.runs[0]!;
+    const now = yield* DateTime.now;
+    yield* projections.apply({
+      id: EventId.make("continuation:completed"),
+      type: "run.updated",
+      threadId: sourceThreadId,
+      occurredAt: now,
+      payload: { ...run, status: "completed", completedAt: now },
+    });
+    if (scenario === "stopped") {
+      yield* projections.apply({
+        id: EventId.make("continuation:stop-reached"),
+        type: "turn-item.updated",
+        threadId: sourceThreadId,
+        runId: run.id,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make("continuation:stop-reached"),
+          threadId: sourceThreadId,
+          runId: run.id,
+          nodeId: run.rootNodeId ?? NodeId.make("continuation:root"),
+          providerThreadId:
+            run.providerThreadId ?? ProviderThreadId.make("continuation:provider-thread"),
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1_000,
+          status: "completed",
+          title: "Interrupt requested",
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "run_interrupt_request",
+          message: "Stop",
+        },
+      });
+    }
+    if (
+      scenario === "active-task" ||
+      scenario === "active-remote-task" ||
+      scenario === "pending-delivery" ||
+      scenario === "acknowledged-delivery"
+    ) {
+      const active = scenario === "active-task" || scenario === "active-remote-task";
+      const remote = scenario === "active-remote-task";
+      const taskId = NodeId.make(`continuation:${scenario}:task`);
+      yield* projections.apply({
+        id: EventId.make(`continuation:${scenario}`),
+        type: "subagent.updated",
+        threadId: sourceThreadId,
+        runId: run.id,
+        nodeId: taskId,
+        providerInstanceId: instanceId,
+        occurredAt: now,
+        payload: {
+          id: taskId,
+          threadId: sourceThreadId,
+          runId: run.id,
+          parentNodeId: run.rootNodeId ?? NodeId.make("continuation:root"),
+          origin: "app_owned",
+          createdBy: "agent",
+          driver: ProviderDriverKind.make("codex"),
+          providerInstanceId: instanceId,
+          providerThreadId: null,
+          childThreadId: remote ? null : ThreadId.make(`continuation:${scenario}:child`),
+          ...(remote
+            ? {
+                remoteChild: {
+                  environmentId: EnvironmentId.make(`continuation:${scenario}:environment`),
+                  threadId: ThreadId.make(`continuation:${scenario}:remote-child`),
+                  label: "remote",
+                },
+              }
+            : {}),
+          nativeTaskRef: null,
+          prompt: "Continue delegated work",
+          title: null,
+          model: null,
+          status: active ? "running" : "completed",
+          completionDelivery: active
+            ? undefined
+            : {
+                state: scenario === "acknowledged-delivery" ? "acknowledged" : "pending",
+                observedByRunId: null,
+              },
+          result: active ? null : "done",
+          startedAt: now,
+          completedAt: active ? null : now,
+          updatedAt: now,
+        },
+      });
+    }
+    if (scenario === "unread-steer" || scenario === "consumed-steer") {
+      const original = initial.turnItems.find((item) => item.type === "user_message");
+      assert.isDefined(original);
+      yield* projections.apply({
+        id: EventId.make("continuation:unread-steer"),
+        type: "turn-item.updated",
+        threadId: sourceThreadId,
+        runId: run.id,
+        occurredAt: now,
+        payload: {
+          ...original,
+          id: TurnItemId.make("continuation:unread-steer-item"),
+          messageId: MessageId.make("continuation:unread-steer-message"),
+          inputIntent: "steer",
+          status: scenario === "unread-steer" ? "pending" : "completed",
+          text: "Finish this before continuing.",
+        },
+      });
+    }
+    const source = yield* projections.getThreadProjection(sourceThreadId);
+    if (scenario === "watch")
+      yield* projections.apply({
+        id: EventId.make("continuation:watch"),
+        type: "thread.metadata-updated",
+        threadId: sourceThreadId,
+        occurredAt: now,
+        payload: {
+          ...source.thread,
+          pullRequests: [
+            {
+              host: "github.com",
+              repository: "acme/app",
+              number: 1,
+              url: "https://github.com/acme/app/pull/1",
+              source: "agent",
+              linkedAt: DateTime.formatIso(now),
+              snapshot: null,
+              stack: null,
+              watch: {
+                startedAt: DateTime.formatIso(now),
+                headSha: null,
+                failedChecks: [],
+                passed: false,
+                passedChecks: [],
+                remarksThrough: DateTime.formatIso(now),
+                remarkIds: [],
+                conflicting: false,
+                wakes: 0,
+              },
+            },
+          ],
+        },
+      });
+    if (scenario === "background") {
+      const thread = source.providerThreads[0];
+      assert.isDefined(thread);
+      yield* projections.apply({
+        id: EventId.make("continuation:background"),
+        type: "provider-thread.updated",
+        threadId: sourceThreadId,
+        occurredAt: now,
+        payload: {
+          ...thread,
+          pendingBackgroundTasks: [{ taskId: "still-running", kind: "command" }],
+        },
+      });
+    }
+    const commandId = CommandId.make("continuation:fork");
+    const result = yield* orchestrator
+      .dispatch({
+        type: "thread.fork",
+        commandId,
+        sourceThreadId,
+        targetThreadId,
+        sourcePoint: { type: "run", runId: run.id },
+        continuationAfterRunId: scenario === "changed-run" ? RunId.make("wrong") : run.id,
+        continuationMessageCount: scenario === "new-message" ? 0 : 1,
+        continuationHandoff: "Auth validator is implemented. Continue with session persistence.",
+        createdBy: scenario === "client" ? "user" : "agent",
+        creationSource: scenario === "client" ? "web" : "server",
+      })
+      .pipe(
+        Effect.provideService(
+          DispatchModeLimit,
+          scenario === "permission"
+            ? { runtimeMode: "approval-required", interactionMode: "default" }
+            : undefined,
+        ),
+        Effect.result,
+      );
+    const finalSource = yield* projections.getThreadProjection(sourceThreadId);
+    if (
+      scenario !== "success" &&
+      scenario !== "acknowledged-delivery" &&
+      scenario !== "consumed-steer"
+    ) {
+      assert.isTrue(Result.isFailure(result));
+      assert.notEqual(finalSource.thread.settledOverride, "settled");
+      assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
+      if (scenario === "provider-disabled") {
+        assert.isTrue(
+          Result.isFailure(
+            yield* orchestrator.getThreadRecords(targetThreadId, []).pipe(Effect.result),
+          ),
+        );
+      }
+      return;
+    }
+    assert.isTrue(Result.isSuccess(result), JSON.stringify(result));
+    assert.equal(finalSource.thread.settledOverride, "settled");
+    const target = yield* projections.getThreadProjection(targetThreadId);
+    assert.equal(target.thread.lineage.parentThreadId, sourceThreadId);
+    assert.equal(target.runs[0]?.freshContext, true);
+    assert.include(target.messages[0]?.text ?? "", "session persistence");
+    assert.isAbove((yield* outbox.listByCommandId(commandId)).length, 0);
+    yield* orchestrator.dispatch({
+      type: "thread.fork",
+      commandId,
+      sourceThreadId,
+      targetThreadId,
+      sourcePoint: { type: "run", runId: run.id },
+      continuationAfterRunId: run.id,
+      continuationMessageCount: 1,
+      continuationHandoff: "Auth handoff.",
+      createdBy: "agent",
+      creationSource: "server",
+    });
+    assert.lengthOf((yield* projections.getThreadProjection(targetThreadId)).runs, 1);
+  }).pipe(
+    Effect.provide(
+      scenario === "provider-disabled"
+        ? Layer.provideMerge(
+            ProviderReplayHarness.layerWithRegistry(
+              { name: "control-reads" },
+              ProviderAdapterRegistry.layerFromAdapters([adapter]),
+              {
+                databaseLayer: layerDatabase,
+                runEffectWorker: false,
+                serverSettingsOverrides: {
+                  projectSettingsOverrides: {
+                    [ProjectId.make("project:continuation")]: {
+                      providerInstances: { [instanceId]: { enabled: false } },
+                    },
+                  },
+                },
+              },
+            ),
+            ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+          )
+        : layerTest,
+    ),
+  ),
 );

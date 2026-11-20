@@ -94,23 +94,27 @@ const layerReceiptsTest = CommandReceiptStore.layer.pipe(
 );
 
 const layerDispatchChokepointTest =
-  (settingsLayer: ReturnType<typeof ServerSettings.layerTest>) => (dispatched: Array<string>) =>
+  (settingsLayer: ReturnType<typeof ServerSettings.layerTest>, reads: Array<string> = []) =>
+  (dispatched: Array<string>) =>
     ThreadManagementService.layer.pipe(
       Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
       Layer.provide(
         Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadRecords: () =>
-            Effect.succeed({
-              thread: {
-                id: ThreadId.make("thread:thread-management:chokepoint"),
-                projectId: ProjectId.make("project:thread-management:chokepoint"),
-                deletedAt: null,
-                modelSelection: {
-                  instanceId: ProviderInstanceId.make("codex_work"),
-                  model: "test",
+            Effect.sync(() => {
+              reads.push("getThreadRecords");
+              return {
+                thread: {
+                  id: ThreadId.make("thread:thread-management:chokepoint"),
+                  projectId: ProjectId.make("project:thread-management:chokepoint"),
+                  deletedAt: null,
+                  modelSelection: {
+                    instanceId: ProviderInstanceId.make("codex_work"),
+                    model: "test",
+                  },
                 },
-              },
-            } as unknown as OrchestrationV2ThreadProjection),
+              } as unknown as OrchestrationV2ThreadProjection;
+            }),
           dispatch: (command) =>
             Effect.sync(() => {
               dispatched.push(command.type);
@@ -122,9 +126,9 @@ const layerDispatchChokepointTest =
       Layer.provideMerge(layerReceiptsTest),
     );
 
-it.effect(
-  "the dispatch chokepoint refuses a continuation message.dispatch on a project-disabled instance before reaching the orchestrator",
-  () => {
+it.effect.each(["message.dispatch", "thread.fork"] as const)(
+  "the dispatch chokepoint refuses %s on a project-disabled instance",
+  (type) => {
     const projectId = ProjectId.make("project:thread-management:chokepoint");
     const threadId = ThreadId.make("thread:thread-management:chokepoint");
     const instanceId = ProviderInstanceId.make("codex_work");
@@ -142,17 +146,32 @@ it.effect(
     return Effect.gen(function* () {
       const threads = yield* ThreadManagementService.ThreadManagementService;
       const error = yield* Effect.flip(
-        threads.dispatch({
-          type: "message.dispatch",
-          commandId,
-          threadId,
-          messageId: MessageId.make("message:thread-management:chokepoint-disabled"),
-          text: "Background task completed.",
-          attachments: [],
-          dispatchMode: { type: "queue_after_active" },
-          createdBy: "agent",
-          creationSource: "server",
-        }),
+        threads.dispatch(
+          type === "thread.fork"
+            ? {
+                type,
+                commandId,
+                sourceThreadId: threadId,
+                targetThreadId: ThreadId.make("continuation:target"),
+                continuationAfterRunId: RunId.make("continuation:run"),
+                continuationMessageCount: 1,
+                continuationHandoff: "Continue",
+                sourcePoint: { type: "latest_stable" },
+                createdBy: "agent",
+                creationSource: "server",
+              }
+            : {
+                type: "message.dispatch",
+                commandId,
+                threadId,
+                messageId: MessageId.make("message:thread-management:chokepoint-disabled"),
+                text: "Background task completed.",
+                attachments: [],
+                dispatchMode: { type: "queue_after_active" },
+                createdBy: "agent",
+                creationSource: "server",
+              },
+        ),
       );
 
       expect(error).toBeInstanceOf(
@@ -1081,3 +1100,181 @@ it.effect(
       }).pipe(Effect.provide(layerTest));
     }),
 );
+
+it.effect("automatic continuation is disabled by default without reading or dispatching", () => {
+  const reads: Array<string> = [];
+  const dispatched: Array<string> = [];
+  return Effect.gen(function* () {
+    const service = yield* ThreadManagementService.ThreadManagementService;
+    expect(
+      yield* service.requestContinuation({
+        threadId: ThreadId.make("continuation:disabled"),
+        handoff: "Continue the task.",
+      }),
+    ).toEqual({ enabled: false });
+    expect(reads).toEqual([]);
+    expect(dispatched).toEqual([]);
+  }).pipe(
+    Effect.provide(layerDispatchChokepointTest(ServerSettings.layerTest(), reads)(dispatched)),
+  );
+});
+
+it.effect("refuses continuation when its provider is disabled for the project", () => {
+  const threadId = ThreadId.make("continuation:provider-disabled");
+  const projectId = ProjectId.make("continuation:provider-disabled");
+  const instanceId = ProviderInstanceId.make("codex_work");
+  const source = {
+    thread: {
+      id: threadId,
+      projectId,
+      deletedAt: null,
+      lineage: { parentThreadId: null, rootThreadId: threadId, relationshipToParent: null },
+      modelSelection: { instanceId, model: "test" },
+    },
+    messages: [],
+    runs: [
+      { id: RunId.make("run:1"), ordinal: 1, status: "completed" },
+      { id: RunId.make("run:2"), ordinal: 2, status: "completed" },
+      { id: RunId.make("run:3"), ordinal: 3, status: "running" },
+    ],
+  } as unknown as OrchestrationV2ThreadProjection;
+  return Effect.gen(function* () {
+    const service = yield* ThreadManagementService.ThreadManagementService;
+    const error = yield* Effect.flip(
+      service.requestContinuation({ threadId, handoff: "Continue." }),
+    );
+    expect(error).toBeInstanceOf(
+      ThreadManagementService.ThreadManagementProviderInstanceDisabledError,
+    );
+    expect(error).toMatchObject({ projectId, instanceId });
+  }).pipe(
+    Effect.provide(
+      ThreadManagementService.layer.pipe(
+        Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+        Layer.provide(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            getThreadRecords: () => Effect.succeed(source),
+          }),
+        ),
+        Layer.provide(
+          ServerSettings.layerTest({
+            autoContinueHeavyThreads: true,
+            providerInstances: { [instanceId]: { driver: "codex", enabled: true } },
+            projectSettingsOverrides: {
+              [projectId]: { providerInstances: { [instanceId]: { enabled: false } } },
+            },
+          }),
+        ),
+        Layer.provide(layerReceiptsTest),
+      ),
+    ),
+  );
+});
+
+it.effect.each(["too-short", "queued", "child", "side-chat", "watch"] as const)(
+  "refuses unsafe automatic continuation: %s",
+  (reason) => {
+    const threadId = ThreadId.make("continuation:guard");
+    const source = {
+      thread: {
+        id: threadId,
+        projectId: ProjectId.make("continuation:project"),
+        deletedAt: null,
+        lineage: {
+          parentThreadId: null,
+          rootThreadId: threadId,
+          relationshipToParent: reason === "child" ? "subagent" : null,
+          ...(reason === "side-chat" ? { sideChat: true } : {}),
+        },
+        ...(reason === "watch" ? { pullRequests: [{ watch: {} }] } : {}),
+      },
+      messages: [],
+      runs: [
+        { id: RunId.make("run:1"), ordinal: 1, status: "completed" },
+        ...(reason === "too-short"
+          ? []
+          : [{ id: RunId.make("run:2"), ordinal: 2, status: "completed" }]),
+        { id: RunId.make("run:3"), ordinal: 3, status: reason === "queued" ? "queued" : "running" },
+      ],
+    } as unknown as OrchestrationV2ThreadProjection;
+    return Effect.gen(function* () {
+      const service = yield* ThreadManagementService.ThreadManagementService;
+      const result = yield* Effect.flip(
+        service.requestContinuation({ threadId, handoff: "Continue." }),
+      );
+      expect(result._tag).toBe("OrchestratorDispatchError");
+    }).pipe(
+      Effect.provide(
+        ThreadManagementService.layer.pipe(
+          Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+          Layer.provide(
+            Layer.mock(Orchestrator.OrchestratorV2)({
+              getThreadRecords: () => Effect.succeed(source),
+            }),
+          ),
+          Layer.provide(ServerSettings.layerTest({ autoContinueHeavyThreads: true })),
+          Layer.provide(layerReceiptsTest),
+        ),
+      ),
+    );
+  },
+);
+
+it.effect("deduplicates continuation requests only within the same run", () => {
+  const threadId = ThreadId.make("continuation:pending");
+  const projectId = ProjectId.make("continuation:project");
+  const instanceId = ProviderInstanceId.make("codex_work");
+  const runs = [
+    { id: RunId.make("run:1"), ordinal: 1, status: "completed" },
+    { id: RunId.make("run:2"), ordinal: 2, status: "completed" },
+    { id: RunId.make("run:3"), ordinal: 3, status: "running" },
+  ];
+  const source = {
+    thread: {
+      id: threadId,
+      projectId,
+      deletedAt: null,
+      lineage: { parentThreadId: null, rootThreadId: threadId, relationshipToParent: null },
+      modelSelection: { instanceId, model: "test" },
+    },
+    messages: [],
+    runs,
+  } as unknown as OrchestrationV2ThreadProjection;
+  return Effect.gen(function* () {
+    const service = yield* ThreadManagementService.ThreadManagementService;
+    const first = yield* service.requestContinuation({ threadId, handoff: "Continue task one." });
+    expect(first.targetThreadId).toBeDefined();
+    expect(yield* service.requestContinuation({ threadId, handoff: "Continue task one." })).toEqual(
+      first,
+    );
+    runs[2]!.status = "completed";
+    expect(yield* service.requestContinuation({ threadId, handoff: "Continue task one." })).toEqual(
+      first,
+    );
+    runs.push({ id: RunId.make("run:4"), ordinal: 4, status: "running" });
+    const error = yield* Effect.flip(
+      service.requestContinuation({ threadId, handoff: "Continue task two." }),
+    );
+    expect(error._tag).toBe("OrchestratorDispatchError");
+  }).pipe(
+    Effect.provide(
+      ThreadManagementService.layer.pipe(
+        Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+        Layer.provide(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            getThreadRecords: () => Effect.succeed(source),
+            getThreadEventSequence: () => Effect.succeed(0),
+            streamStoredEventsFrom: () => Stream.never,
+          }),
+        ),
+        Layer.provide(
+          ServerSettings.layerTest({
+            autoContinueHeavyThreads: true,
+            providerInstances: { [instanceId]: { driver: "codex", enabled: true } },
+          }),
+        ),
+        Layer.provide(layerReceiptsTest),
+      ),
+    ),
+  );
+});

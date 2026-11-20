@@ -74,7 +74,10 @@ describe("thread relationships", () => {
           lineage: { rootThreadId: parent, parentThreadId: parent, relationshipToParent },
         },
         subagents: [],
-        contextTransfers: [],
+        contextTransfers:
+          relationshipToParent === "fork"
+            ? [{ type: "fork", sourceThreadId: parent, targetThreadId: child }]
+            : [],
       } as never;
       const graph = deriveThreadRelationshipGraph({ threads: [], projection });
       expect(immediateThreadRelationships(graph, child)).toEqual([
@@ -271,6 +274,7 @@ describe("thread relationships", () => {
             relationshipToParent: "fork",
           },
         },
+        contextTransfers: [{ type: "fork", sourceThreadId: source, targetThreadId: fork }],
       } as never),
     ).toBe(source);
     expect(
@@ -284,6 +288,7 @@ describe("thread relationships", () => {
             relationshipToParent: "fork",
           },
         },
+        contextTransfers: [{ type: "fork", sourceThreadId: fallbackParent, targetThreadId: fork }],
       } as never),
     ).toBe(fallbackParent);
     expect(
@@ -297,6 +302,20 @@ describe("thread relationships", () => {
             relationshipToParent: "subagent",
           },
         },
+      } as never),
+    ).toBeNull();
+    expect(
+      resolveMergeBackTargetThreadId({
+        thread: {
+          id: fork,
+          forkedFrom: { type: "run", threadId: source, runId: "run-source" },
+          lineage: {
+            rootThreadId: source,
+            parentThreadId: fallbackParent,
+            relationshipToParent: "fork",
+          },
+        },
+        contextTransfers: [],
       } as never),
     ).toBeNull();
   });

@@ -680,6 +680,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("test voice speech model transcription recognition")],
   },
   {
+    id: "auto-continue-heavy-threads",
+    title: msg("Continue context-heavy threads"),
+    to: "/settings/threads",
+    searchTerms: [msg("context rollover handoff automatic continuation expensive")],
+    scope: "environment-defaults",
+    environmentOnly: true,
+  },
+  {
     id: "auto-settle-inactive-threads",
     title: msg("Auto-settle inactive threads"),
     to: "/settings/threads",

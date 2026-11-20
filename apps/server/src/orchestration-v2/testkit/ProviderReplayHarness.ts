@@ -284,10 +284,14 @@ export function layerWithRegistry<Error>(
     readonly runContinuationWorker?: boolean;
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
+    readonly serverSettingsOverrides?: Parameters<typeof ServerSettings.layerTest>[0];
     /** Lets a test hold a projection read open to order concurrent dispatches. */
     readonly wrapProjectionStore?: (
       store: ProjectionStore.ProjectionStoreV2Shape,
     ) => ProjectionStore.ProjectionStoreV2Shape;
+    readonly wrapProviderEventIngestor?: (
+      ingestor: ProviderEventIngestor.ProviderEventIngestorV2Shape,
+    ) => ProviderEventIngestor.ProviderEventIngestorV2Shape;
     readonly managedPolicy?: ManagedPolicyDocument;
   } = {},
 ): Layer.Layer<
@@ -321,6 +325,7 @@ export function layerWithRegistry<Error>(
     Effect.map(ManagedPolicy.fromDocument("/test/policy.json", options.managedPolicy), (policy) =>
       ServerSettings.layerTest(
         {
+          ...options.serverSettingsOverrides,
           responseStreamingMode: "turn",
           ...(options.continueThreadsAfterServerUpdate === undefined
             ? {}
@@ -358,7 +363,7 @@ export function layerWithRegistry<Error>(
   const layerCommandReceiptStoreProvided = CommandReceiptStore.layer.pipe(
     Layer.provide(layerDatabase),
   );
-  const layerProviderEventIngestorProvided = ProviderEventIngestor.layer.pipe(
+  const layerProviderEventIngestorBase = ProviderEventIngestor.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
@@ -375,6 +380,16 @@ export function layerWithRegistry<Error>(
       ),
     ),
   );
+  const layerProviderEventIngestorProvided =
+    options.wrapProviderEventIngestor === undefined
+      ? layerProviderEventIngestorBase
+      : Layer.effect(
+          ProviderEventIngestor.ProviderEventIngestorV2,
+          Effect.map(
+            ProviderEventIngestor.ProviderEventIngestorV2,
+            options.wrapProviderEventIngestor,
+          ),
+        ).pipe(Layer.provide(layerProviderEventIngestorBase));
   const layerVcsDriverRegistry = VcsDriverRegistry.layer.pipe(
     Layer.provide(VcsProcess.layer),
     Layer.provide(layerServerConfig),

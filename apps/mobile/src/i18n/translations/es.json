@@ -3734,6 +3734,8 @@
   "20e3a8aab5f9426a": "Posponer hasta que se restablezcan los límites",
   "0769f91ca46e3003": "Pospone los hilos hasta que se restablezcan sus límites de uso. Activa la reanudación automática para que el agente continúe tras el restablecimiento.",
   "7c27e91e75cce7a3": "Resolver automáticamente",
+  "39cc7e89d3ec184a": "Continuar hilos con mucho contexto",
+  "40244e4472847ca1": "Permite que agentes con herramientas de T3 continúen tareas largas en un hilo nuevo con un traspaso. Espera a que termine el trabajo activo. Desactivado de forma predeterminada.",
   "e89c6d8932de7863": "Resolver automáticamente los hilos fusionados",
   "f760219456ce86fc": "Resolver automáticamente los hilos inactivos",
   "6dfcc5e39925612b": "Entre entornos",
