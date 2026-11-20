@@ -42,6 +42,7 @@ import { useEnvironments } from "../state/environments";
 import { projectEnvironment } from "../state/projects";
 import { useDebouncedValue } from "../state/queries";
 import { useEnvironmentQuery } from "../state/query";
+import { sourceControlEnvironment } from "../state/sourceControl";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
@@ -107,13 +108,27 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
   const [targetId, setTargetId] = useState(request.targetEnvironmentId);
   const target = targets.find((t) => t.environmentId === targetId) ?? targets[0] ?? null;
   const source = environments.find((env) => env.environmentId === request.projectRef.environmentId);
-  const sourceUrl =
-    project?.repositoryIdentity?.origin?.remoteUrl ??
-    project?.repositoryIdentity?.locator.remoteUrl ??
-    "";
+  const identity = project?.repositoryIdentity;
+  const sourceUrl = identity?.origin?.remoteUrl ?? identity?.locator.remoteUrl ?? "";
   const [protocol, setProtocol] = useState<CloneProtocol | null>(() => cloneUrlProtocol(sourceUrl));
-  const sshUrl = cloneUrlForProtocol(sourceUrl, "ssh");
-  const httpsUrl = cloneUrlForProtocol(sourceUrl, "https");
+  // Asked on the source machine, which already reaches this forge.
+  const forgeRepositoryName = identity?.origin
+    ? identity.origin.displayName
+    : identity?.displayName;
+  const forgeRepository = useEnvironmentQuery(
+    project && identity?.provider && forgeRepositoryName
+      ? sourceControlEnvironment.repository({
+          environmentId: project.environmentId,
+          input: {
+            provider: identity.provider,
+            repository: forgeRepositoryName,
+            cwd: project.workspaceRoot,
+          },
+        })
+      : null,
+  ).data;
+  const sshUrl = cloneUrlForProtocol(sourceUrl, "ssh", forgeRepository);
+  const httpsUrl = cloneUrlForProtocol(sourceUrl, "https", forgeRepository);
   const remoteUrl =
     (protocol === "ssh" ? sshUrl : protocol === "https" ? httpsUrl : null) ?? sourceUrl;
 

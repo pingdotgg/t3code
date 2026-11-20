@@ -181,6 +181,23 @@ describe("cloneUrlForProtocol", () => {
     expect(cloneUrlForProtocol("/srv/git/repo.git", "https")).toBeNull();
     expect(cloneUrlProtocol("file:///srv/git/repo.git")).toBeNull();
   });
+
+  it("prefers the forge's clone URLs for the same repository over a guess", () => {
+    const forge = {
+      url: "http://gitlab.internal:9999/group/project.git",
+      sshUrl: "ssh://git@gitlab.internal:2222/group/project.git",
+    };
+    expect(cloneUrlForProtocol("git@gitlab.internal:group/project.git", "https", forge)).toBe(
+      forge.url,
+    );
+    expect(cloneUrlForProtocol(forge.url, "ssh", forge)).toBe(forge.sshUrl);
+    expect(cloneUrlForProtocol("git@gitlab.internal:group/project.git", "ssh", forge)).toBe(
+      "git@gitlab.internal:group/project.git",
+    );
+    expect(cloneUrlForProtocol("git@gitlab.internal:group/other.git", "https", forge)).toBe(
+      "https://gitlab.internal/group/other.git",
+    );
+  });
 });
 
 describe("cloneUrlRepositoryPath", () => {

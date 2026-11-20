@@ -38,13 +38,28 @@ export function cloneUrlProtocol(url: string): CloneProtocol | null {
 
 /**
  * Rewrites a clone URL to the other protocol, because the target machine may
- * only have SSH keys or only an HTTPS credential helper. Returns null when the
- * URL cannot be rewritten safely, such as a custom port.
+ * only have SSH keys or only an HTTPS credential helper. The forge's URLs for the
+ * same repository win: a host's HTTP scheme or port cannot be guessed.
  */
-export function cloneUrlForProtocol(url: string, protocol: CloneProtocol): string | null {
+export function cloneUrlForProtocol(
+  url: string,
+  protocol: CloneProtocol,
+  forge?: { readonly url: string; readonly sshUrl: string } | null,
+): string | null {
   const parsed = parseCloneUrl(url);
   if (!parsed) return null;
   if (parsed.protocol === protocol) return url.trim();
+  if (forge) {
+    const repositoryPath = cloneUrlRepositoryPath(url);
+    const forgeUrl = protocol === "ssh" ? forge.sshUrl : forge.url;
+    if (
+      repositoryPath !== null &&
+      cloneUrlProtocol(forgeUrl) === protocol &&
+      (cloneUrlRepositoryPath(forge.url) === repositoryPath ||
+        cloneUrlRepositoryPath(forge.sshUrl) === repositoryPath)
+    )
+      return forgeUrl.trim();
+  }
   if (parsed.customPort) return null;
   // Azure's transports use different hosts and put the repository marker in
   // different positions; changing only the scheme produces an invalid clone URL.
