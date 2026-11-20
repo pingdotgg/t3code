@@ -2481,13 +2481,13 @@ it("opens adjacent subagent previews without repeating the hover delay", async (
   await screen.getByRole("button", { name: /Worked for/ }).click();
   await screen.getByRole("button", { name: "2 subagents", exact: true }).click();
   using _timers = fakeTimers();
-  const popup = () => document.querySelector('[data-slot="tooltip-popup"][data-open]');
+  const popup = () => document.querySelector<HTMLElement>('[data-slot="tooltip-popup"][data-open]');
   await userEvent.hover(screen.getByRole("button", { name: "Open Review implementation" }));
   await act(() => vi.advanceTimersByTime(199));
-  expect(popup()).toBeNull();
+  await expect.element(popup()).not.toBeInTheDocument();
   await act(() => vi.advanceTimersByTime(1));
-  expect(popup()?.textContent).toContain("Review implementation");
+  await expect.element(popup()).toMatchTextContent("Review implementation");
   await userEvent.hover(screen.getByRole("button", { name: "Open Check edge cases" }));
   await act(() => vi.advanceTimersByTime(1));
-  expect(popup()?.textContent).toContain("Check edge cases");
+  await expect.element(popup()).toMatchTextContent("Check edge cases");
 });

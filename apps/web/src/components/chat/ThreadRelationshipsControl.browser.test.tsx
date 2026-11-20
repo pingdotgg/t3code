@@ -454,13 +454,13 @@ it("shares the hover delay between adjacent lineage rows", async () => {
     />,
   );
   using _timers = fakeTimers();
-  const popup = () => document.querySelector('[data-slot="tooltip-popup"][data-open]');
+  const popup = () => document.querySelector<HTMLElement>('[data-slot="tooltip-popup"][data-open]');
   await userEvent.hover(screen.getByText("First agent", { exact: true }));
   await act(() => vi.advanceTimersByTime(200));
-  expect(popup()?.textContent).toContain("First agent");
+  await expect.element(popup()).toMatchTextContent("First agent");
   await userEvent.hover(screen.getByText("Second agent", { exact: true }));
   await act(() => vi.advanceTimersByTime(1));
-  expect(popup()?.textContent).toContain("Second agent");
+  await expect.element(popup()).toMatchTextContent("Second agent");
 });
 
 it.each([1, 18])("continues scrolling the panel past a list of %i subagents", async (count) => {
