@@ -544,6 +544,24 @@ describe("resolveAutoModelSelection", () => {
         { id: "auto", value: "medium" },
       ],
     });
+    // The server refuses every session on a runtime the manifest rates broken (agy 1.4.5).
+    const broken = {
+      ...antigravity,
+      version: "1.4.5",
+      compatibilityAdvisory: {
+        status: "broken",
+        message: "This provider version is known to be incompatible with this T3 Code release.",
+        recommendedVersion: null,
+        recommendedRange: ">=1.5.12 <2",
+      },
+    } as unknown as ServerProvider;
+    expect(
+      resolveAutoModelSelection({
+        selection: auto(),
+        providers: [claude("claudeAuto", 100), claude("claudeAutoB", 100), broken],
+        now,
+      }),
+    ).toBeNull();
   });
 
   it("after every Claude subscription, uses ChatGPT, then Grok, then Gemini", () => {
