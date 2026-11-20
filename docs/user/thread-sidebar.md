@@ -135,8 +135,8 @@ open.
 
 Threads that are working or waiting on work they will resume from move into a collapsed
 **Working** section below the active list.
-That includes subagents, watched pull requests with checks still running, and background commands or monitors the agent
-says it is waiting on. A dev server or other process an agent leaves running does not keep a thread
+That includes subagents, watched pull requests with checks still running, Claude monitors,
+and background commands or other monitors the agent says it is waiting on. A dev server or other process an agent leaves running does not keep a thread
 there. A thread returns to the top of the active list when it finishes, fails, or needs an approval or
 answer. The Working section lists the thread you last sent work to first. Pinned threads stay in
 the pinned section.
@@ -250,8 +250,8 @@ thread** from its long-press menu on mobile.
 keeps the provider's explanation. Retry after the limit resets, or switch to
 another provider instance.
 Press **Resume** in an empty composer to continue a limited or interrupted turn
-manually. Do this when the provider reports no reset time, because nothing
-continues the turn on its own.
+manually when the provider supports native continuation, or send a message to continue.
+Do this when the provider reports no reset time, because nothing continues the turn on its own.
 Queued messages stay saved while the limit blocks the thread. They run after
 the continuation finishes. If the queue was held by a restart, resume it then.
 
@@ -312,12 +312,17 @@ model, and reasoning level shown in the thread's composer, including for its fir
 reply. Change them for an individual side chat in its composer. Later changes to the
 parent do not change existing side chats.
 
-To use what you learned, choose **Bring back**. The thread gets the side chat with
-your next message there. Bring back is available while the thread is idle.
+To use what you learned, choose **Add to chat** at the top of the side chat, or type
+`@` and a word from its title in the thread's composer. The thread's message gets a
+link to the side chat, and the agent reads as much of it as it needs. This works
+while the thread is busy, once you have sent a message in the side chat. An agent on
+an external OpenCode server cannot read the link, so put the details in your message
+instead.
 
 Closing a side chat you never sent a message in deletes it. To delete one you used,
 choose **Delete** at the top of the side chat. Deleting a thread also deletes its
-side chats.
+side chats. Archiving a thread also archives its side chats and stops their work, and
+unarchiving the thread brings them back.
 
 On mobile, a thread lists its side chats above the composer. Tap one to open it and
 answer its questions.

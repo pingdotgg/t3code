@@ -5,7 +5,7 @@ import { ProjectReadFileError } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { remapFileCommentAnnotations } from "./fileCommentAnnotations";
+import { promptFileCommentEntries, remapFileCommentAnnotations } from "./fileCommentAnnotations";
 import {
   filePreviewReadErrorMessage,
   isMarkdownPreviewFile,
@@ -62,6 +62,22 @@ describe("file comment annotations", () => {
         },
       },
     ]);
+  });
+
+  it("shows only drafts and comments still in the prompt", () => {
+    const entry = (id: string, kind: "draft" | "comment") => ({
+      id,
+      kind,
+      startLine: 3,
+      endLine: 3,
+      text: "",
+    });
+    expect(
+      promptFileCommentEntries(
+        [entry("sent", "comment"), entry("new", "draft"), entry("kept", "comment")],
+        new Set(["kept"]),
+      ),
+    ).toEqual([entry("new", "draft"), entry("kept", "comment")]);
   });
 });
 
@@ -134,6 +150,20 @@ describe("workspaceAssetResource", () => {
 describe("document preview contents", () => {
   const bytes = (text: string) => new TextEncoder().encode(text).buffer;
 
+  it.each([
+    ["control symbols", String.raw`{\rtf1 Jean\_Luc\-X\~Y}`, "Jean\u2011Luc\u00adX\u00a0Y"],
+    [
+      "named spaces, joiners and direction marks",
+      String.raw`{\rtf1 A\tab B\emspace C\enspace D\qmspace E\zwj F\zwnj G\zwbo H\ltrmark I\rtlmark J}`,
+      "A\tB\u2003C\u2002D\u2005E\u200dF\u200cG\u200bH\u200eI\u200fJ",
+    ],
+    ["a Unicode fallback", String.raw`{\rtf1 Jean\u8209\_Luc}`, "Jean\u2011Luc"],
+  ])("keeps the text of %s", (_name, source, expected) => {
+    const result = openRtf(bytes(source));
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html.replaceAll(/<[^>]*>/g, "")).toBe(expected);
+  });
+
   it.each(["?", String.raw`\'3f`, String.raw`\\`])(
     "consumes skipped rich text Unicode fallback %s",
     (fallback) => {
@@ -156,13 +186,13 @@ describe("document preview contents", () => {
           "</spine></package>",
       )
       .file("chapter.xhtml", "<html><body>" + "<figcaption/>".repeat(30_000) + "</body></html>");
-    await expect(openEpub(archive)).rejects.toThrow("too large");
+    await expect(openEpub(archive)).rejects.toMatchObject({ code: "rendered-too-large" });
   });
 
   it("decodes rich text formatting and Unicode without showing hidden destinations", () => {
     const result = openRtf(
       bytes(
-        String.raw`{\rtf1\ansi{\fonttbl{\f0 Hidden font;}}Hello \b bold\b0\par Unicode: \u945?{\*\unknown hidden}{\field{\*\fldinst HYPERLINK "https://example.com"}{\fldrslt visible}}}`,
+        String.raw`{\rtf1\ansi{\fonttbl{\f0 Hidden font;}}Hello \b bold\b0\par Unicode: \u945?{\*\unknown hidden\_\emspace\zwj}{\field{\*\fldinst HYPERLINK "https://example.com"}{\fldrslt visible}}}`,
       ),
     );
     expect(result.type).toBe("document");
@@ -203,7 +233,7 @@ Third}`;
       "<p>Third</p>",
     ]);
     expect(() => openRtf(bytes(String.raw`{\rtf1 ` + String.raw`\page`.repeat(501) + "}"))).toThrow(
-      "500 pages",
+      expect.objectContaining({ code: "rtf-too-many-pages" }),
     );
   });
 
@@ -215,18 +245,20 @@ Third}`;
     const result = openRtf(input.buffer);
     if (result.type !== "document") throw new Error("Expected document");
     expect(result.pages[0]!.html).toBe("<p>А А<br>あ</p>");
-    expect(() => openRtf(bytes(String.raw`{\rtf1\ansicpg99999 text}`))).toThrow("code page");
+    expect(() => openRtf(bytes(String.raw`{\rtf1\ansicpg99999 text}`))).toThrow(
+      expect.objectContaining({ code: "rtf-code-page" }),
+    );
   });
 
   it("resolves scoped ODF namespaces and explicit spreadsheet whitespace", async () => {
     const archive = new JSZip().file(
       "content.xml",
-      '<o:document-content xmlns:o="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:t="urn:oasis:names:tc:opendocument:xmlns:table:1.0"><o:body><o:spreadsheet><t:table t:name="Accounts &amp; names"><t:table-row><t:table-cell><p xmlns="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:x="urn:oasis:names:tc:opendocument:xmlns:text:1.0">Account<s/>Name<s x:c="3"/>A<tab/>B<line-break/>C</p></t:table-cell></t:table-row></t:table></o:spreadsheet></o:body></o:document-content>',
+      '<o:document-content xmlns:o="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:t="urn:oasis:names:tc:opendocument:xmlns:table:1.0"><o:body><o:spreadsheet><t:table t:name="Accounts &amp; names"><t:table-row><t:table-cell><p xmlns="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:x="urn:oasis:names:tc:opendocument:xmlns:text:1.0">Account<s/>Name<s x:c="3"/>A<tab/>B<line-break/>C &amp; <![CDATA[&amp;]]></p></t:table-cell></t:table-row></t:table></o:spreadsheet></o:body></o:document-content>',
     );
     const result = await openDocument(archive, "ods");
     if (result.type !== "ods") throw new Error("Expected workbook");
     expect(result.sheets[0]!.name).toBe("Accounts & names");
-    expect(result.sheets[0]!.rows[0]).toEqual(["Account Name   A\tB\nC"]);
+    expect(result.sheets[0]!.rows[0]).toEqual(["Account Name   A\tB\nC & &amp;"]);
   });
 
   it("stops repeated slide images before encoding beyond the output budget", async () => {
@@ -247,7 +279,9 @@ Third}`;
       .file("picture.png", pixels);
     const image = archive.file("picture.png")!;
     const read = vi.spyOn(image, "async");
-    await expect(openDocument(archive, "odp")).rejects.toThrow("too large");
+    await expect(openDocument(archive, "odp")).rejects.toMatchObject({
+      code: "rendered-too-large",
+    });
     expect(read.mock.calls.filter(([type]) => type === "base64")).toHaveLength(2);
     expect(read).toHaveBeenCalledTimes(5);
   });
@@ -268,9 +302,9 @@ Third}`;
                 { output_type: "display_data", data: {} },
                 { data: { "text/html": [""] } },
                 { data: { "text/html": [], "text/plain": "array fallback" } },
-                { data: { "text/html": "", "text/plain": "string fallback" } },
+                { data: { "text/html": "", "text/plain": "\u001b[1mstring fallback\u001b[0m" } },
                 { data: { "text/html": "  ", "text/plain": "space fallback" } },
-                { output_type: "stream", text: ["42\n"] },
+                { output_type: "stream", text: ["\u001b[", "32m42\u001b[0m\n"] },
                 { data: { "text/html": ["<b>Results</b>"], "text/plain": ["Results"] } },
               ],
             },
@@ -296,12 +330,72 @@ Third}`;
         },
       ],
     });
-    expect(() => openNotebook(bytes('{"nbformat":3,"cells":[]}'))).toThrow("version 4");
+    // IPython traceback frames can omit trailing newlines or place ANSI resets after them.
+    const failed = openNotebook(
+      bytes(
+        JSON.stringify({
+          nbformat: 4,
+          cells: [
+            {
+              cell_type: "code",
+              source: "fail()",
+              outputs: [
+                {
+                  output_type: "error",
+                  traceback: [
+                    "-----",
+                    "ValueError    Traceback (most recent call last)",
+                    "Cell In[1], line 4\n----> 4 fail()\n",
+                    "Cell In[1], line 2, in fail()\n----> 2     raise ValueError()\n",
+                    "ValueError: preview proof",
+                  ],
+                },
+                {
+                  output_type: "error",
+                  traceback: [
+                    "Traceback (most recent call last):\n",
+                    "  Cell In[2], line 5\n    fail()\n",
+                    "ValueError: preview proof\n",
+                  ],
+                },
+                {
+                  output_type: "error",
+                  traceback: [
+                    "\u001b[31mTraceback (most recent call last):\n\u001b[0m",
+                    "\u001b[38:2::255:0:0mCell In[3], line 1\n----> 1 fail()\n\u001b[0m\u001b[39m",
+                    "\u001b[31mValueError: preview proof\u001b[0m",
+                    "final entry",
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+    );
+    if (failed.type !== "notebook") throw new Error("Expected notebook");
+    expect(failed.cells[0]!.outputs).toEqual([
+      {
+        kind: "text",
+        text: "-----\nValueError    Traceback (most recent call last)\nCell In[1], line 4\n----> 4 fail()\nCell In[1], line 2, in fail()\n----> 2     raise ValueError()\nValueError: preview proof",
+      },
+      {
+        kind: "text",
+        text: "Traceback (most recent call last):\n  Cell In[2], line 5\n    fail()\nValueError: preview proof\n",
+      },
+      {
+        kind: "text",
+        text: "Traceback (most recent call last):\nCell In[3], line 1\n----> 1 fail()\nValueError: preview proof\nfinal entry",
+      },
+    ]);
+    expect(() => openNotebook(bytes('{"nbformat":3,"cells":[]}'))).toThrow(
+      expect.objectContaining({ code: "notebook-unsupported" }),
+    );
     expect(() =>
       openNotebook(
         bytes(JSON.stringify({ nbformat: 4, cells: Array.from({ length: 501 }, () => ({})) })),
       ),
-    ).toThrow("500 cells");
+    ).toThrow(expect.objectContaining({ code: "notebook-unsupported" }));
   });
 
   it("bounds repeated OpenDocument spreadsheet cells and keeps sheet names and values", async () => {
@@ -317,6 +411,16 @@ Third}`;
     expect(result.sheets[0]!.rows).toHaveLength(500);
     expect(result.sheets[0]!.rows[0]).toHaveLength(50);
     expect(result.sheets[0]!.rows[0]![0]).toBe("Research & design");
+  });
+
+  it("reads an ODS time cell that has no display paragraph", async () => {
+    const archive = new JSZip().file(
+      "content.xml",
+      `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"><office:body><office:spreadsheet><table:table table:name="Values"><table:table-row><table:table-cell office:value-type="time" office:time-value="PT03H30M00S"></table:table-cell></table:table-row></table:table></office:spreadsheet></office:body></office:document-content>`,
+    );
+    const result = await openDocument(archive, "ods");
+    if (result.type !== "ods") throw new Error("Expected workbook");
+    expect(result.sheets[0]!.rows).toEqual([["PT03H30M00S"]]);
   });
 
   it.each([1, 500])("ignores styled ODS filler after %s populated rows", async (count) => {
@@ -349,20 +453,52 @@ Third}`;
     },
   );
 
-  it.each(["odt", "odp"] as const)("reads %s text and rejects XML entities", async (kind) => {
+  const approved = "<text:p>Approved <text:span>now</text:span></text:p>";
+  const approvedRow = `<tr>${"<td><p>Approved <span>now</span></p></td>".repeat(2)}</tr>`;
+  it.each([
+    [
+      "expands",
+      `<table:table-row>${`<table:table-cell>${approved}</table:table-cell>`.repeat(2)}</table:table-row><table:table-row table:number-rows-repeated="2"><table:table-cell table:number-columns-repeated="2">${approved}</table:table-cell></table:table-row>`,
+      approvedRow.repeat(3),
+    ],
+    [
+      "bounds",
+      '<table:table-row table:number-rows-repeated="999999999"><table:table-cell table:number-columns-repeated="999999999"><text:p>x</text:p></table:table-cell></table:table-row>',
+      `<tr>${"<td><p>x</p></td>".repeat(50)}</tr>`.repeat(500),
+    ],
+  ])("%s repeated ODT table rows and cells", async (_, rows, html) => {
     const archive = new JSZip().file(
       "content.xml",
-      `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"><office:body>${kind === "odt" ? "<office:text><text:p>Field notes</text:p></office:text>" : '<draw:page draw:name="Overview"><text:h>Launch plan</text:h></draw:page>'}</office:body></office:document-content>`,
+      `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text><table:table><table:table-column table:number-columns-repeated="2"/>${rows}</table:table></office:text></office:body></office:document-content>`,
+    );
+    const result = await openDocument(archive, "odt");
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe(`<table>${html}</table>`);
+  });
+
+  it.each(["odt", "odp"] as const)("reads %s text and rejects unsupported XML", async (kind) => {
+    const archive = new JSZip().file(
+      "content.xml",
+      `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0"><office:body>${kind === "odt" ? "<office:text><text:p>Field notes</text:p></office:text>" : '<draw:page draw:name="Overview"><text:h>Launch plan</text:h><presentation:notes><draw:frame><draw:text-box><text:p>Speaker only</text:p></draw:text-box></draw:frame></presentation:notes></draw:page>'}</office:body></office:document-content>`,
     );
     const result = await openDocument(archive, kind);
     expect(result.type).toBe("document");
     if (result.type !== "document") throw new Error("Expected document");
     expect(result.pages[0]!.html).toContain(kind === "odt" ? "Field notes" : "Launch plan");
-    archive.file(
-      "content.xml",
+    expect(result.pages[0]!.html).not.toContain("Speaker only");
+    for (const source of [
       '<!DOCTYPE x [<!ENTITY external SYSTEM "file:///etc/passwd">]><x>&external;</x>',
-    );
-    await expect(openDocument(archive, kind)).rejects.toThrow("unsupported XML");
+      '<html><body><p title="<!--">x</p><!DOCTYPE x [<!ENTITY e "boom">]><b title="-->">&e;</b></body></html>',
+      '<html><body><p title="<![CDATA[">x</p><!DOCTYPE x [<!ENTITY e "boom">]><b title="]]>">&e;</b></body></html>',
+      '<!DOC<!DOCTYPE a>TYPE x [<!EN<!DOCTYPE a>TITY e "boom">]><x>&e;</x>',
+      '<?test <![CDATA[ ?><!DOCTYPE html [<!ENTITY e "boom">]><html><body><pre><![CDATA[x]]></pre></body></html>',
+      '<?test <!-- ?><!DOCTYPE html [<!ENTITY e "boom">]><html><body><!-- x --></body></html>',
+      "<html><body>" + "<!--".repeat(80_000) + "</body></html>",
+      "<html><body>" + "<![CDATA[".repeat(80_000) + "</body></html>",
+    ]) {
+      archive.file("content.xml", source);
+      await expect(openDocument(archive, kind)).rejects.toMatchObject({ code: "xml-invalid" });
+    }
   });
 
   it("reads EPUB chapters in spine order and removes active and remote content", async () => {
@@ -381,7 +517,7 @@ Third}`;
       )
       .file(
         "Book/two&&&.xhtml",
-        '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><head><title>Second</title></head><body><h1>Second chapter</h1><p>A&nbsp;B &copy; &mdash; &NotEqualTilde; &amp;lt;</p><img src="cover.png" alt="&copy; &NotEqualTilde;"/></body></html>',
+        '<?xml-stylesheet href="a<b.css"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><head><title>Second</title></head><body><h1>Second chapter</h1><p>A&nbsp;B &copy; &mdash; &NotEqualTilde; &amp;lt;</p><pre><![CDATA[Use &amp; and &lt; literally]]></pre><pre><![CDATA[<!DOCTYPE html><!ENTITY author "Ada">]]></pre><!-- <!ENTITY note "x"> --><img src="cover.png" alt="&lt; &copy; &NotEqualTilde;"/></body></html>',
       )
       .file(
         "Book/cover.png",
@@ -395,7 +531,11 @@ Third}`;
     if (result.type !== "document") throw new Error("Expected document");
     expect(result.pages.map((page) => page.title)).toEqual(["Second", "First"]);
     expect(result.pages[0]!.html).toContain("A\u00a0B © — ≂̸ &amp;lt;");
-    expect(result.pages[0]!.html).toContain('alt="© ≂̸"');
+    expect(result.pages[0]!.html).toContain("<pre>Use &amp;amp; and &amp;lt; literally</pre>");
+    expect(result.pages[0]!.html).toContain(
+      "<pre>&lt;!DOCTYPE html&gt;&lt;!ENTITY author &quot;Ada&quot;&gt;</pre>",
+    );
+    expect(result.pages[0]!.html).toContain('alt="&lt; © ≂̸"');
     expect(result.pages[1]!.html).toContain('src="data:image/png;base64,');
     expect(result.pages[1]!.html).not.toMatch(/https:|script|alert/);
   });
