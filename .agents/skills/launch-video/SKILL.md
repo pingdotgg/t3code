@@ -1,48 +1,88 @@
 ---
 name: launch-video
-description: Make a short launch video (1920x1080 MP4 plus an outro PNG) that demos a T3 Code feature in a mock of the app, for an X/Twitter announcement or release thread. Use when asked for a launch video, demo video, feature teaser or announcement clip, or to add a video to a release tweet.
+description: Make a short launch video (1920x1080 MP4 plus an outro PNG) that demos a T3 Code feature, built from the real app with added motion, for an X/Twitter announcement or release thread. Use when asked for a launch video, demo video, feature teaser or announcement clip, or to add a video to a release tweet.
 ---
 
 # Launch videos
 
-A launch video is a 20–30 second mock of T3 Code: a cursor drives the app through one
-story, the camera zooms on each beat, a caption names it, and an outro card closes.
-It is pure HTML/CSS rendered frame by frame in headless Chromium, so it is
-deterministic and every pixel is under your control. `template/story.html` is a
-finished one (browser tunnels and port forwarding, 0.1.11); start from it.
+A launch video is 20–30 seconds: the app goes through one story in two or three beats,
+the camera punches in on each, a caption names it, and an outro card closes. Frames are
+rendered one by one in headless Chromium, so the result is deterministic.
 
-## Workflow
+There are two ways to build one:
 
-1. **Learn the feature.** Read the PRs and the components it touches. Write down the
-   one thing a user can now do that they couldn't before, in the user's words.
-2. **Write the story** before any code: who the user is, what they want, and two or
-   three beats that get them there. Show it to the maintainer if the angle is a guess.
-3. **Create a working directory outside the repo:**
-   `.agents/skills/launch-video/scripts/new.sh ~/launch-videos/<slug>`
-4. **Build `story.html`** by editing the template (see Anatomy).
-5. **Probe** with contact sheets at every beat, fix, repeat:
+- **Real app (default).** A staging script runs the real server and web client with fictional
+  data and the free replay agent, drives the flow in a browser, and freezes the page at each
+  beat into `beats/<name>.html`. The story stacks those frozen pages and adds the motion: the
+  camera, cursor, pops, glows, typing and captions. The UI is whatever the app draws today, so
+  re-staging on main updates the video. `stagings/linked-environments/` is a finished example.
+- **Mock.** `template/story.html` is a hand-built HTML copy of the app (the 0.1.11 tunnels
+  video). Use it only for what a staging can't produce, such as another app on the desktop or
+  a desktop-only screen. It drifts as the app changes.
+
+## Workflow (real app)
+
+1. **Learn the feature.** Read the PRs and the components it touches. Write down the one
+   thing a user can now do that they couldn't before, in the user's words.
+2. **Write the story** before any code: who the user is, what they want, and two or three
+   beats that get them there. Show it to the maintainer if the angle is a guess.
+3. **Stage it.** Copy `stagings/linked-environments/` to `stagings/<slug>/`.
+   - `serve.mjs` builds fresh homes under `.t3/launch/<slug>/` with `scripts/stage-env.mjs`.
+     Each home gets a fictional machine label, the replay agent, and no paid provider.
+     It starts the servers, creates projects, writes `<out>/stage.json` and keeps running.
+     Run it in the background.
+   - `drive.mjs` opens the web client with `openBrowser()` (1440×720, dark, release
+     branding) and walks the flow. It calls `beat(name)` at each moment the video needs.
+     Re-run it as often as you like against the same servers.
+   - Agent turns come from recordings in `apps/server/scripts/dev-replay/`, one `SCENARIOS`
+     entry each in `dev-replay-agent.ts`. A `t3/mcp_call` frame makes the agent call a real
+     T3 tool (e.g. `delegate_task`). `<var:name>` in a frame is filled from the JSON file at
+     `T3_DEV_REPLAY_VARS`, for ids that change every run.
+4. **Create the story:** `scripts/new.sh ~/launch-videos/<slug>`, then copy the beats in, or
+   pass that directory as the staging's `<out>`. Add one `<iframe data-beat>` per beat and
+   write `setup()` and `placeCursor()` (see Anatomy).
+5. **Find targets** in a beat: `scripts/find.mjs <dir>/beats/<name>.html "<text>"` prints
+   selectors and boxes for the elements containing that text and their ancestors.
+6. **Probe** with contact sheets at every beat, fix, repeat:
    `scripts/sheet.sh ~/launch-videos/<slug> 1,4.5,8,12,16,21,26` then Read `sheet.png`.
-   The times are video seconds (after `Kit.timeline`), not the animation seconds the CSS
-   uses. Read the full-size frames in `probe/` to check small text. A probe takes about
-   2 s a frame.
-6. **Render:** `scripts/render.sh ~/launch-videos/<slug> t3code-<slug>` gives
-   `t3code-<slug>.mp4` and `outro.png`. A 30 s video takes about 3 minutes.
-7. **Hand back** with the video and outro embedded (`![...](/abs/path.mp4)`), the
-   caption copy, and anything in the story you assumed rather than verified.
+   The times are video seconds (after `Kit.timeline`), not animation seconds. Read the
+   full-size frames in `probe/` to check small text. A probe takes about 2 s a frame.
+7. **Render:** `scripts/render.sh ~/launch-videos/<slug> t3code-<slug>` gives
+   `t3code-<slug>.mp4` and `outro.png`. A 30 s video takes 3–6 minutes.
+8. **Hand back** with the video and outro embedded (`![...](/abs/path.mp4)`), the caption
+   copy, any `Kit.text` edits, and anything you assumed rather than verified.
 
-The scripts need this repo's `node_modules` (`vp i`) for `playwright-core`, any
-Chromium in the Playwright cache (or `CHROME=/path`), and `ffmpeg` on PATH.
+The scripts need this repo's `node_modules` (`vp i`) for `playwright-core`, any Chromium in
+the Playwright cache (or `CHROME=/path`), and `ffmpeg` on PATH. Stop `serve.mjs` with your
+harness's task stop; it ends its servers' process groups.
+
+### Staging traps
+
+- **Labels.** The server names its machine from `hostnamectl --pretty` / `scutil`, and it
+  puts the login shell's PATH ahead of its own. `stage-env.mjs` sets a fake `SHELL` that
+  keeps the home's PATH, so its label shims win. A process you start yourself against a
+  staging home needs `cli()` from `stage-env.mjs` for the same reason; the CLI names the
+  machine too, e.g. when it links two environments.
+- **Linked environments** refuse loopback addresses ("this machine"), and plain http works
+  only on tailnet names. `serve.mjs` links to this machine's tailnet DNS name.
+- **Leaks.** Grep the beats for the real hostname, username and tailnet name before
+  rendering. `snapshot.mjs` drops hidden inputs' values (they hold local paths).
+- **Timing.** A replayed turn streams in real time (each frame delay caps at 2 s). Make a
+  recording long enough for the drive to catch the state you need, and freeze beats on a
+  timer when the UI summarises (a running command shows only "Running pnpm").
+- **Agent wake-ups.** When a delegated child finishes, the parent agent gets a new turn. Give
+  its recording a second turn, or the first replays and delegates again.
 
 ## What the maintainers asked for
 
 These came from review of the 0.1.11 videos. Each one was a real correction.
 
-- **It must look like the real app.** Rebuild screens from the real components in
-  `apps/web/src/components`: their English strings, layout, spacing and lucide icons.
-  Strings live in `apps/web/src/i18n/translations/en.json` under hashed keys, so grep by
-  the text, or read the literal in the component. A screen the template doesn't have needs a reference
-  first: read the component, and capture it running (`test-t3-app`) when layout matters.
-  "Quite far off how it actually looks" was the first round's verdict.
+- **It must look like the real app.** "Quite far off how it actually looks" was the first
+  round's verdict on a mock. Stage the real app; mock only what can't be staged, rebuilt from
+  the real component (strings live in `apps/web/src/i18n/translations/en.json` under hashed
+  keys, so grep by the text).
+- **Punchier than the app.** Extra motion is welcome (pops, glows, punch-ins, typing), as
+  long as every pixel it moves is the real UI.
 - **Readable on a phone.** Captions are 40px; zoom the camera 1.5–1.9× onto whatever the
   beat is about. If text is under ~14px after zoom, zoom further or cut it.
 - **Slow enough to follow.** Slow the key interactions to 0.6–0.8× and hold 0.8–1.5 s after
@@ -76,45 +116,48 @@ From `apps/web/src/index.css`, dark theme:
 - Orange `#f07a4a` only for the agent ✳ next to a Claude model and provider marks.
 - Fonts: Inter (UI) and JetBrains Mono as `JB` (code, ports, versions, URLs).
 
-## Anatomy of story.html
+## Anatomy of a real-app story
 
-Everything runs on one clock in **animation seconds**. Every animation uses
-`animation-delay` for its start time and `both` fill, so seeking to any time renders
-that moment exactly. No JS timers, no transitions, no `infinite`.
+Everything runs on one clock in **animation seconds**. capture.mjs serves the directory over
+HTTP, loads the beats, calls `setup()`, seeks to `layoutTime`, calls `placeCursor()`, then
+seeks every animation (in the story and inside each beat) to each frame's time.
 
-- **Canvas** 1600×900 CSS px, rendered at device scale 1.2 to 1920×1080.
-- **`.win` / `.stage`**: the app window. The stage is 2000×1000 scaled .76 so the app
-  renders at a realistic density. Reuse its sidebar, header, composer, details popover
-  and browser panel; delete the parts the story doesn't need (the database window, the
-  browser page) along with their CSS and timeline rules. The template's chat column is
-  laid out for an open right panel; with the panel closed, centre it in the stage.
-- **`.cam`**: the camera. One `@keyframes camera` of `translate() scale()` holds, one per
-  beat. Percentages are of the `.cam` animation's duration. With `transform-origin: 0 0`,
-  canvas point (x, y) lands on screen at (tx + s·x, ty + s·y). To centre a point at
-  scale s: tx = 800 − s·x, ty = 450 − s·y (aim a little higher, since captions cover
-  y ≥ 806 and the shade starts near 710). A stage point (x, y) is canvas
-  (40 + .76·x, 26 + .76·y).
-- **Typing**: a `clip-path` reveal with `steps(<characters>)`.
-- **Cursor**: `Kit.cursor("#cur", steps)` in `window.placeCursor`. Steps are
-  `{ t, at, dx, dy, click, hidden }` in animation seconds; `at` is a selector (or
-  `[x, y]`) measured at `window.layoutTime` with the camera at rest. Set `layoutTime`
-  to a moment when every cursor target is laid out at its final position. Targets are
-  measured only once, so animate a target's entrance with opacity, not a transform. When
-  a beat moves content (a panel opens and the chat column shifts), pick a `layoutTime`
-  where the target sits where the cursor meets it, or give that step `[x, y]`.
-- **Captions** `.cap`: bottom of the canvas, a numbered chip, a bold lead phrase and a
-  muted rest. Short enough to read in two seconds.
+- **Canvas** 1600×900 CSS px, rendered at device scale 1.2 to 1920×1080. Beats were frozen at
+  1440×720 and `.app` scales them 1.0556× into the 1520×760 window, so beat point (x, y) is
+  canvas (40 + 1.0556·x, 26 + 1.0556·y).
+- **Targets** are `"<beat> >> <css>"` (or `"* >> <css>"` for every beat). Prefer the app's
+  `data-*` and `aria-label` attributes; `find.mjs` prints them.
+- **`setup()`**: `Kit.beats([[name, at, fade?], ...])` gives each beat one visibility window.
+  Then the motion, all at absolute times:
+  `Kit.pop / rise / slide / stagger / type / press / punch / fadeIn` animate elements inside
+  a beat; `Kit.glow(target, at)` draws a ring on the story layer, so app overflow can't
+  clip it; `Kit.anim` takes raw keyframes; `Kit.text` makes a static edit (say so at
+  handback).
+- **`placeCursor()`**: wrap in `Kit.measure` and call `Kit.camera(steps)` and
+  `Kit.cursor("#cur", steps)` there. Both take `{ t, on|at: target, ... }` steps measured at
+  `layoutTime` with the camera at rest. Pick a `layoutTime` after every entrance has
+  finished. Camera steps centre `on` at screen height `y` (default 420, clear of the captions)
+  at scale `s`; repeat a step to hold. Cursor clicks draw a ripple.
+- **Captions** `.cap`: a numbered chip, a bold lead phrase and a muted rest. Short enough to
+  read in two seconds.
 - **Pacing**: `Kit.timeline([[realSeconds, animFrom, animTo], ...])` maps video time to
   animation time; `animFrom == animTo` holds a frame. It also sets the video length.
 - **Outro** `.outro`: logo, a two-line headline, "Available now in **T3 Code** `<version>`",
   `t3.codes`. Change the headline and version, keep the rest. Hold it about 3 s.
 
-When a beat moves, retime it in the CSS delays, the cursor steps and the camera
-keyframes together, then re-probe.
+Two animations on one property of one element fight (the later one wins for its whole
+fill). Give an element one animation per property, as `Kit.beats` does for visibility.
+
+### Mock stories
+
+`template/story.html` uses the same kit (cursor, timeline) but draws the app in HTML on a
+2000×1000 `.stage` scaled .76 (stage point (x, y) is canvas (40 + .76·x, 26 + .76·y)), with CSS
+`@keyframes` and delays for motion and one `@keyframes camera` for the camera. Rebuild any
+screen it lacks from the real component's strings, layout and lucide icons.
 
 ## Delivery checklist
 
 - [ ] 1920×1080, 30 fps, 20–30 s (`render.sh` prints it).
 - [ ] Every beat checked in a contact sheet and at full size.
-- [ ] No unannounced feature, real person or real thread on screen.
+- [ ] No unannounced feature, real person, real machine name or real thread on screen.
 - [ ] `outro.png` exported and embedded in the reply with the video.
