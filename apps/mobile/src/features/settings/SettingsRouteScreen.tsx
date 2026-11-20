@@ -314,7 +314,9 @@ function useSettingsIndexSections(): SettingsListSection[] {
         page(
           "SettingsAbout",
           "info.circle",
-          `${gt("About")} ${resolveMobileBrandName(Constants.expoConfig?.extra?.appBrand)}`,
+          gt("About {appName}", {
+            appName: resolveMobileBrandName(Constants.expoConfig?.extra?.appBrand),
+          }),
         ),
         page("SettingsArchive", "archivebox", gt("Archive")),
       ],
