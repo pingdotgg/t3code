@@ -26,16 +26,14 @@ export function resolveChatListAnchoredEndSpace<Item, AnchorId>(
     }
 
     const itemAnchorId = getAnchorId(item);
-    if (itemAnchorId === null) {
+    if (itemAnchorId === null || itemAnchorId !== anchorId) {
       continue;
     }
 
-    return itemAnchorId === anchorId
-      ? {
-          anchorIndex: index,
-          anchorOffset: options.anchorOffset ?? CHAT_LIST_ANCHOR_OFFSET,
-        }
-      : undefined;
+    return {
+      anchorIndex: index,
+      anchorOffset: options.anchorOffset ?? CHAT_LIST_ANCHOR_OFFSET,
+    };
   }
 
   return undefined;
