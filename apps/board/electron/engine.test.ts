@@ -152,7 +152,11 @@ describe("engine discovery", () => {
 
     await engine.start();
 
-    expect(engine.state()).toEqual({ phase: "ready", origin: "http://127.0.0.1:4100" });
+    expect(engine.state()).toEqual({
+      phase: "ready",
+      origin: "http://127.0.0.1:4100",
+      source: "url",
+    });
     expect(wsl.commands).toEqual([]);
   });
 
@@ -162,7 +166,7 @@ describe("engine discovery", () => {
 
     await engine.start();
 
-    expect(engine.state()).toEqual({ phase: "ready", origin });
+    expect(engine.state()).toEqual({ phase: "ready", origin, source: "service" });
     expect(wsl.serviceInstalls).toBe(0);
     expect(wsl.kills).toEqual([]);
   });
@@ -174,7 +178,11 @@ describe("engine discovery", () => {
     await engine.start();
 
     expect(wsl.serviceInstalls).toBe(1);
-    expect(engine.state()).toEqual({ phase: "ready", origin: wsl.serviceEngine.origin });
+    expect(engine.state()).toEqual({
+      phase: "ready",
+      origin: wsl.serviceEngine.origin,
+      source: "service",
+    });
     expect(wsl.kills).toEqual([]);
   });
 

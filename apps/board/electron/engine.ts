@@ -90,10 +90,10 @@ export function createEngine(deps: EngineDeps): Engine {
     log(`engine offline: ${reason}`);
     setState({ phase: "offline", reason });
   };
-  const ready = (readyOrigin: string) => {
+  const ready = (readyOrigin: string, source: "service" | "url" = "service") => {
     origin = readyOrigin;
     log(`engine ready at ${readyOrigin}`);
-    setState({ phase: "ready", origin: readyOrigin });
+    setState({ phase: "ready", origin: readyOrigin, source });
   };
 
   // The script prelude names the T3 home once, so every command agrees on where state lives.
@@ -298,7 +298,7 @@ export function createEngine(deps: EngineDeps): Engine {
           const url = new URL(config.engineUrl).origin;
           tokenKey = `url:${url}`;
           return (await describe(url)) !== null
-            ? ready(url)
+            ? ready(url, "url")
             : offline(`AGENT_BOARD_ENGINE_URL ${url} does not answer.`);
         }
         tokenKey = `${config.distro ?? "default"}:home:${config.t3Home ?? "~/.t3"}`;
