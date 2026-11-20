@@ -8,7 +8,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { resolveIssueLinkTarget } from "./issueLinks.ts";
 
-const project = (id: string, repository: string) =>
+const project = (id: string, repository: string, origin?: string) =>
   ({
     id: ProjectId.make(id),
     environmentId: EnvironmentId.make("env"),
@@ -18,6 +18,7 @@ const project = (id: string, repository: string) =>
       displayName: repository,
       owner: repository.split("/")[0],
       name: repository.split("/")[1],
+      ...(origin ? { origin: { canonicalKey: `github.com/${origin}`, displayName: origin } } : {}),
     },
   }) as never;
 
@@ -38,6 +39,14 @@ describe("resolveIssueLinkTarget", () => {
   ])("$name", ({ url, expected }) => {
     const target = resolveIssueLinkTarget({ url, projects });
     expect(target?.ref).toMatchObject({ tracker: "github", host: "github.com", ...expected });
+  });
+
+  it("reads a fork's own issue through the fork, not as a borrowed repository", () => {
+    const target = resolveIssueLinkTarget({
+      url: "https://github.com/me/web/issues/3",
+      projects: [project("p1", "acme/api"), project("fork", "acme/web", "me/web")],
+    });
+    expect(target?.ref).toMatchObject({ projectId: "fork", scope: "me/web", key: "3" });
   });
 
   it("prefers the project bound to the link's own port over one on the bare hostname", () => {
