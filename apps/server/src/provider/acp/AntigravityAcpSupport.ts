@@ -486,11 +486,17 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
     } else if (audio) {
       blocks.push({ type: "audio", data: Buffer.from(bytes).toString("base64"), mimeType });
     } else {
+      const encoding =
+        bytes[0] === 0xff && bytes[1] === 0xfe
+          ? "UTF-16LE"
+          : bytes[0] === 0xfe && bytes[1] === 0xff
+            ? "UTF-16BE"
+            : "UTF-8";
       const decoded = yield* Effect.try({
-        try: () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+        try: () => new TextDecoder(encoding, { fatal: true }).decode(bytes),
         catch: () =>
           EffectAcpErrors.AcpRequestError.invalidParams(
-            `Attachment '${attachment.name}' is not a UTF-8 text file.`,
+            `Attachment '${attachment.name}' is not a ${encoding} text file.`,
           ),
       });
       if (decoded.includes("\0")) {
