@@ -47,7 +47,7 @@ const mocks = vi.hoisted(() => ({
   statusModelId: "test-model",
   models: [] as EnvironmentSpeechModel[],
   catalogOffline: false,
-  download: vi.fn<(modelId: string) => Promise<void>>(),
+  download: vi.fn<(modelId: string) => Promise<boolean | void>>(),
   selected: [] as string[],
   selectionFails: false,
   platforms: [] as string[],
@@ -142,8 +142,8 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
     }),
   downloadEnvironmentSpeechModel: (_prepared: PreparedConnection, modelId: string) =>
     Effect.promise(async () => {
-      await mocks.download(modelId);
-      return { models: mocks.models };
+      const cancelled = await mocks.download(modelId);
+      return { models: mocks.models, cancelled: cancelled ?? false };
     }),
   selectEnvironmentSpeechModel: (_prepared: PreparedConnection, modelId: string) =>
     Effect.sync(() => {
@@ -644,30 +644,62 @@ it.each([true, false])(
 );
 
 it.each([
-  ["selects the offered model once its download installed it", "installed", ["german"], null],
+  [
+    "selects the offered model once its download installed it",
+    "installed",
+    ["german"],
+    null,
+    false,
+    "english",
+  ],
+  [
+    "selects the downloaded model after another client changed the selection",
+    "installed",
+    ["german"],
+    null,
+    false,
+    "german",
+  ],
   [
     "does not advance a cancelled download when another model is ready",
     "downloadable",
     [],
     "The model is not ready. Try downloading it again.",
+    true,
+    "english",
+  ],
+  [
+    "keeps setup open when an external cancellation leaves the weights installed",
+    "installed",
+    [],
+    "The model is not ready. Try downloading it again.",
+    true,
+    "english",
   ],
   [
     "reports a failed selection apart from the download",
     "installed",
     ["german"],
     "The model downloaded, but this environment could not select it. Try again.",
+    false,
+    "english",
   ],
-] as const)("%s", async (_, landedState, selected, error) => {
+] as const)("%s", async (_, landedState, selected, error, cancelled, initialModelId) => {
   setup({ destination: "env-a" });
   using _languages = vi.spyOn(navigator, "languages", "get").mockReturnValue(["de-DE"]);
-  mocks.selectionFails = error !== null && landedState === "installed";
+  mocks.selectionFails = error !== null && !cancelled;
   mocks.modelState = "missing-model";
-  mocks.statusModelId = "english";
+  mocks.statusModelId = initialModelId;
   mocks.models = [catalogModel("english", ["en"], true), catalogModel("german", ["de"], true)];
   mocks.download.mockImplementation(async () => {
-    mocks.models = [mocks.models[0]!, { ...mocks.models[1]!, state: landedState }];
+    mocks.models = [
+      { ...mocks.models[0]!, state: "installed", active: true },
+      { ...mocks.models[1]!, state: landedState, active: false },
+    ];
+    mocks.statusModelId = "english";
     mocks.modelState = "ready";
     mocks.statusTier = "accelerated";
+    return cancelled;
   });
   await using _screen = await render(<Probe />);
   await act(() => mocks.voice.start());
