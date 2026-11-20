@@ -27,14 +27,11 @@ export function pullRequestSyncWakesSnooze(input: {
   readonly snoozedAtMs: number;
 }): boolean {
   const { previous, next } = input;
-  const updatedAtMs = next.updatedAt === null ? Number.NaN : Date.parse(next.updatedAt);
-  if (updatedAtMs > input.snoozedAtMs) return true;
-  // A first read cannot tell an old conflict from a new one.
-  return (
-    previous !== null &&
-    next.mergeability === "conflicting" &&
-    previous.mergeability !== "conflicting"
-  );
+  // Some hosts leave the update time at creation, but still stamp a merge or close.
+  const changedAt = [next.updatedAt, next.mergedAt, next.closedAt];
+  if (changedAt.some((at) => at != null && Date.parse(at) > input.snoozedAtMs)) return true;
+  // Only a conflict after a clean read is new; an unknown or first read may hide an old one.
+  return previous?.mergeability === "mergeable" && next.mergeability === "conflicting";
 }
 
 export function threadPullRequestUpdatedAtMs(link: ThreadPullRequestLink): number {

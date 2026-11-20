@@ -4390,6 +4390,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* sync({ updatedAt: at(1) });
       assert.equal(yield* snoozedUntilNow, at(0));
 
+      // A close from before the snooze leaves nothing to wait on, so it wakes all the same.
+      yield* snooze(true);
+      yield* sync({ state: "closed", closedAt: at(-30) });
+      assert.equal(yield* snoozedUntilNow, at(0));
+      yield* sync({});
+
       // A plain snooze keeps its timer through the same news.
       yield* snooze(false);
       yield* sync({ updatedAt: at(2), state: "merged" });

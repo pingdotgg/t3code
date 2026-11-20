@@ -403,6 +403,13 @@ describe("resolveAutoSettlementAt", () => {
     expect(
       ThreadSettlementService.resolveAutoSettlementAt({
         ...input,
+        thread: { ...shell({ snoozeWakesOnPullRequest: true }), lastSnoozeWakeAt: at(0) },
+        pullRequest: closed,
+      }),
+    ).toBeNull();
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        ...input,
         thread: { ...shell(), lastSnoozeWakeAt: at(0) },
         pullRequest: closed,
       }),

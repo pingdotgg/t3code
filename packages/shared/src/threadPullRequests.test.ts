@@ -52,6 +52,18 @@ describe("pullRequestSyncWakesSnooze", () => {
       snapshot({ state: "closed", updatedAt: "2026-10-02T12:05:00Z" }),
       true,
     ],
+    [
+      "a close stamped after the snooze on a host that keeps the creation time",
+      snapshot(),
+      snapshot({ state: "closed", closedAt: "2026-10-02T12:05:00Z" }),
+      true,
+    ],
+    [
+      "a conflict found after an unknown read",
+      snapshot({ mergeability: "unknown" }),
+      snapshot({ mergeability: "conflicting" }),
+      false,
+    ],
   ] as const)("%s", (_name, previous, next, wakes) => {
     expect(pullRequestSyncWakesSnooze({ previous, next, snoozedAtMs: Date.parse(snoozedAt) })).toBe(
       wakes,

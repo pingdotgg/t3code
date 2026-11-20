@@ -882,7 +882,14 @@ function hasLiveRun(projection: Pick<OrchestrationV2ThreadProjection, "runs">): 
   return projection.runs.some(isLiveRun);
 }
 
-/** A PR snooze that lost its last open pull request has nothing to wake it early, so it wakes now. */
+/** Whether sync may still bring news on a thread: a visible link is open or not read yet. */
+function awaitsPullRequest(thread: OrchestrationV2AppThread): boolean {
+  return visibleThreadPullRequests(threadPullRequestsOf(thread)).some(
+    (link) => link.snapshot === null || link.snapshot.state === "open",
+  );
+}
+
+/** A PR snooze left with no pull request to wait on has nothing to wake it early, so it wakes now. */
 function wakeOrphanedPullRequestSnooze(
   before: OrchestrationV2AppThread,
   after: OrchestrationV2AppThread,
@@ -891,8 +898,8 @@ function wakeOrphanedPullRequestSnooze(
   return after.snoozeWakesOnPullRequest === true &&
     after.snoozedUntil != null &&
     DateTime.isGreaterThan(after.snoozedUntil, now) &&
-    hasOpenThreadPullRequest(threadPullRequestsOf(before)) &&
-    !hasOpenThreadPullRequest(threadPullRequestsOf(after))
+    awaitsPullRequest(before) &&
+    !awaitsPullRequest(after)
     ? { ...after, snoozedUntil: now }
     : after;
 }
@@ -5524,7 +5531,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         thread.snoozedAt != null &&
         thread.snoozedUntil != null &&
         DateTime.isGreaterThan(thread.snoozedUntil, now) &&
-        (!hasOpenThreadPullRequest(threadPullRequestsOf(updatedThread)) ||
+        (!awaitsPullRequest(updatedThread) ||
           pullRequestSyncWakesSnooze({
             previous: previous?.snapshot ?? null,
             next: command.snapshot,
