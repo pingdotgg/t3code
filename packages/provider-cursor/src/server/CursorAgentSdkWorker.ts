@@ -83,6 +83,8 @@ export async function runCursorSdkWorker(
   let activeSendStarts = 0;
   // One worker hosts every Cursor session; each session is keyed by its open request id.
   const sessions = new Map<number, CursorAgentSdk.CursorAgentSdkSession>();
+  // Other sessions keep the worker alive, so an abandoned generation must be interrupted here.
+  const textGenerations = new Map<number, AbortController>();
   const activeRuns = new Map<number, CursorAgentSdk.CursorAgentSdkRun>();
   let shuttingDown = false;
   let exitCode = 0;
@@ -389,7 +391,11 @@ export async function runCursorSdkWorker(
       }
 
       case "textGenerate": {
-        const exit = await runtime.runPromiseExit(runCursorTextGenerationInProcess(req));
+        const abort = new AbortController();
+        textGenerations.set(req.id, abort);
+        const exit = await runtime
+          .runPromiseExit(runCursorTextGenerationInProcess(req), { signal: abort.signal })
+          .finally(() => textGenerations.delete(req.id));
         if (Exit.isFailure(exit)) {
           writeMessage({
             type: "response",
@@ -405,6 +411,12 @@ export async function runCursorSdkWorker(
           ok: true,
           result: serializeRunResult(exit.value),
         });
+        return;
+      }
+
+      case "cancelTextGenerate": {
+        textGenerations.get(req.textGenerateId)?.abort();
+        writeMessage({ type: "response", id: req.id, ok: true, result: null });
         return;
       }
 

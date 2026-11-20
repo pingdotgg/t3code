@@ -875,21 +875,32 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
       }),
       textGenerate: Effect.fn("CursorAgentSdkProcessRunner.textGenerate")(function* (input) {
         const lease = yield* acquireWorker;
-        return yield* lease.worker
-          .request(
-            (id) => ({
-              id,
+        const { worker } = lease;
+        const textGenerateId = worker.nextId();
+        return yield* worker
+          .requestWithId(
+            textGenerateId,
+            {
+              id: textGenerateId,
               type: "textGenerate",
               prompt: input.prompt,
               apiKey: input.apiKey,
               model: input.model,
               cwd: input.cwd,
               stateRoot: input.stateRoot,
-            }),
+            },
             "textGenerate",
           )
           .pipe(
             Effect.map((result) => deserializeRunResult(result as SerializedRunResult)),
+            Effect.onInterrupt(() =>
+              worker
+                .request(
+                  (id) => ({ id, type: "cancelTextGenerate", textGenerateId }),
+                  "textGenerate",
+                )
+                .pipe(Effect.timeoutOption(WORKER_CLOSE_TIMEOUT), Effect.ignore),
+            ),
             Effect.ensuring(releaseWorker(lease)),
           );
       }),

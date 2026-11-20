@@ -125,6 +125,15 @@ rl.on("line", (line) => {
     send({ type: "response", id: req.id, ok: true, result: null });
     return;
   }
+  if (req.type === "textGenerate" && mode === "hang-text") {
+    send({ type: "protocolLog", providerSessionId: "provider-session-worker-test", event: { direction: "incoming", stage: "decoded", payload: { type: "run.started", runId: "text", agentId: "text" } } });
+    return;
+  }
+  if (req.type === "cancelTextGenerate") {
+    send({ type: "protocolLog", providerSessionId: "provider-session-worker-test", event: { direction: "incoming", stage: "decoded", payload: { type: "run.cancel", runId: "text" } } });
+    send({ type: "response", id: req.id, ok: true, result: null });
+    return;
+  }
   if (req.type === "textGenerate") {
     if (mode === "rate-limit-text") {
       send({
@@ -506,6 +515,46 @@ describe("CursorAgentSdkProcessRunner", () => {
           yield* session.close;
         }),
       ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("cancels an interrupted text generation in a worker that other sessions keep alive", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scriptPath = yield* writeFakeWorker;
+        const executable = yield* HostProcess.ExecutablePath;
+        const received = yield* Deferred.make<void>();
+        const cancelled = yield* Deferred.make<void>();
+
+        const runner = yield* CursorAgentSdkProcessRunner.makeCursorAgentSdkProcessRunner({
+          resolveLaunch: Effect.succeed({
+            command: executable,
+            args: [scriptPath],
+            env: { FAKE_WORKER_MODE: "hang-text" },
+          }),
+          protocolLoggerFor: () => (event) =>
+            event.payload.type === "run.started"
+              ? Deferred.succeed(received, undefined).pipe(Effect.asVoid)
+              : event.payload.type === "run.cancel"
+                ? Deferred.succeed(cancelled, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+        });
+        const session = yield* runner.open(openInput);
+        const generating = yield* Effect.forkChild(
+          runner.textGenerate!({
+            prompt: "title",
+            apiKey: "key",
+            model: { id: "default" },
+            cwd: "/tmp",
+            stateRoot: "/tmp",
+          }),
+        );
+        yield* Deferred.await(received);
+        yield* Fiber.interrupt(generating);
+        yield* Deferred.await(cancelled);
+        assert.isTrue(session.isAlive?.());
+        yield* session.close;
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("forwards cancel and runs textGenerate in a disposable child process", () =>

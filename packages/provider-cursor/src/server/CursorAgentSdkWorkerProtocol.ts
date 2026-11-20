@@ -95,6 +95,11 @@ export type CursorWorkerRequest =
       readonly sessionId: number;
     }
   | {
+      readonly id: number;
+      readonly type: "cancelTextGenerate";
+      readonly textGenerateId: number;
+    }
+  | {
       /** Closes every session and exits the worker. */
       readonly id: number;
       readonly type: "close";
