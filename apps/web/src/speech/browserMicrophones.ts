@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { useStableCallback } from "../hooks/useStableCallback";
 import {
   getClientSettings,
@@ -41,38 +41,29 @@ export function useMicrophoneRefresh({
   onStart?: () => void;
   onResult: (devices: BrowserMicrophone[] | null) => void;
 }) {
+  // null while the view is closed; otherwise the scan whose result may still be delivered.
   const latest = useRef<symbol | null>(null);
-  const reportResult = useStableCallback((devices: BrowserMicrophone[] | null) => {
-    if (enabled) onResult(devices);
-  });
   const refresh = useStableCallback(async () => {
-    if (!enabled || latest.current === null || !navigator.mediaDevices?.enumerateDevices) return;
+    if (latest.current === null || !navigator.mediaDevices?.enumerateDevices) return;
     const scan = Symbol();
     latest.current = scan;
     onStart?.();
     const devices = await listAudioInputs().catch(() => null);
-    if (latest.current === scan) reportResult(devices);
+    if (latest.current === scan) onResult(devices);
   });
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- invalidates pending scans at commit before passive cleanup can run
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes browser device changes; layout cleanup drops pending scans in the commit that closes the view
   useLayoutEffect(() => {
     if (!enabled) return;
-    return () => {
-      latest.current = null;
-    };
-  }, [enabled]);
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes browser device changes
-  useEffect(() => {
-    if (!enabled) return;
-    const initial = Symbol();
-    latest.current = initial;
+    const opened = Symbol();
+    latest.current = opened;
     queueMicrotask(() => {
-      if (latest.current === initial) void refresh();
+      if (latest.current === opened) void refresh();
     });
     const devices = navigator.mediaDevices;
     devices?.addEventListener?.("devicechange", refresh);
     return () => {
+      latest.current = null;
       devices?.removeEventListener?.("devicechange", refresh);
     };
   }, [enabled, refresh]);

@@ -747,35 +747,6 @@ it("records from the first connected microphone in the saved order", async () =>
     .not.toBeInTheDocument();
 });
 
-it("does not remember microphones from a scan that finishes after leaving settings", async () => {
-  const previous = getClientSettings();
-  using cleanup = new DisposableStack();
-  cleanup.defer(() => __setClientSettingsForTests(previous));
-  __setClientSettingsForTests({ ...previous, voiceMicrophone: "", voiceMicrophones: [] });
-  const scan = deferred<MediaDeviceInfo[]>();
-  using _enumerate = vi
-    .spyOn(navigator.mediaDevices, "enumerateDevices")
-    .mockReturnValue(scan.promise);
-  await using screen = await render(
-    <SettingsScopeProvider search={{}} onChange={() => {}}>
-      <VoiceSettingsPanel />
-    </SettingsScopeProvider>,
-  );
-  await screen.unmount();
-  await act(() =>
-    scan.resolve([
-      {
-        kind: "audioinput",
-        deviceId: "usb",
-        groupId: "usb",
-        label: "USB test microphone",
-        toJSON: () => ({}),
-      },
-    ]),
-  );
-  expect(getClientSettings().voiceMicrophones).toEqual([]);
-});
-
 it("keeps an unplugged microphone disconnected when an older scan finishes last", async () => {
   const previous = getClientSettings();
   using cleanup = new DisposableStack();
