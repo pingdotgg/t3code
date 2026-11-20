@@ -381,12 +381,16 @@ describe("CursorAgentSdkProcessRunner", () => {
       Effect.gen(function* () {
         const scriptPath = yield* writeFakeWorker;
         const executable = yield* HostProcess.ExecutablePath;
+        const unregistered = yield* Deferred.make<void>();
 
         const runner = yield* CursorAgentSdkProcessRunner.makeCursorAgentSdkProcessRunner({
           resolveLaunch: Effect.succeed({
             command: executable,
             args: [scriptPath],
             env: { FAKE_WORKER_MODE: "crash-mid-run" },
+            registerProcess: () => () => {
+              Deferred.doneUnsafe(unregistered, Exit.void);
+            },
           }),
           protocolLoggerFor: () => undefined,
         });
@@ -401,6 +405,9 @@ describe("CursorAgentSdkProcessRunner", () => {
         assert.isTrue(
           diagnostic instanceof Error && diagnostic.message.includes("fatal worker boom"),
         );
+        // Dead worker scope tears down immediately instead of waiting for sessions to close.
+        yield* Deferred.await(unregistered);
+        assert.isFalse(session.isAlive?.());
         yield* session.close;
       }),
     ).pipe(Effect.provide(NodeServices.layer)),

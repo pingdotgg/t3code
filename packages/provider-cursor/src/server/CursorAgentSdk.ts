@@ -18,6 +18,7 @@ import {
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -454,6 +455,60 @@ function subscribeShellStreamOutput(listener: (output: CursorShellStreamOutput) 
   };
 }
 
+type CursorLocalStore = NonNullable<NonNullable<AgentOptions["local"]>["store"]>;
+
+interface DisposableCursorLocalStore extends CursorLocalStore {
+  readonly dispose: () => Promise<void>;
+}
+
+function isDisposableCursorLocalStore(value: unknown): value is DisposableCursorLocalStore {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "agents" in value &&
+    "runs" in value &&
+    "checkpoints" in value &&
+    "runEvents" in value &&
+    "dispose" in value &&
+    typeof value.dispose === "function"
+  );
+}
+
+// T3 persists its own event log and never tails SDK run_events; skipping per-delta SQLite
+// run_events writes avoids synchronous BEGIN IMMEDIATE write locks and multi-GB index.db bloat.
+export function withNoopCursorRunEvents(store: CursorLocalStore): CursorLocalStore {
+  if (
+    typeof store !== "object" ||
+    store === null ||
+    typeof store.runEvents?.append !== "function"
+  ) {
+    return store;
+  }
+  let seq = 0;
+  return {
+    agents: store.agents,
+    runs: store.runs,
+    checkpoints: store.checkpoints,
+    runEvents: {
+      append: async (event) => {
+        seq += 1;
+        return {
+          runId: event.runId,
+          seq,
+          offset: String(seq),
+          eventType: event.eventType,
+          payload: event.payload ?? null,
+          payloadRef: event.payloadRef ?? null,
+          idempotencyKey: event.idempotencyKey ?? null,
+          createdAt: 0,
+        };
+      },
+      list: async () => ({ items: [] }),
+      delete: async () => {},
+    },
+  };
+}
+
 export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(function* (
   protocolLoggerFor: (input: CursorAgentSdkOpenInput) => CursorAgentSdkProtocolLogger | undefined,
 ) {
@@ -513,58 +568,92 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
       });
 
       // Cursor uses cwd for both execution and store lookup; a moved thread keeps its original store.
-      const storeCwd = input.storeCwd;
-      const storePlatform =
-        input.operation === "resume" &&
-        storeCwd !== undefined &&
-        storeCwd !== input.options.local?.cwd
-          ? yield* Effect.tryPromise({
-              try: () =>
-                createAgentPlatform({
-                  workspaceRef: storeCwd,
-                  ...(input.options.local?.store === undefined
-                    ? {}
-                    : { localStore: input.options.local.store }),
-                }),
-              catch: (cause) => runnerError(cause, "agent.resume"),
-            })
-          : undefined;
-      const agent = yield* Effect.tryPromise({
-        try: () =>
-          input.operation === "create"
-            ? Agent.create(input.options)
-            : storePlatform === undefined
-              ? Agent.resume(input.agentId!, input.options)
-              : storePlatform.resumeAgent(input.agentId!, input.options),
-        catch: (cause) => runnerError(cause, `agent.${input.operation}`),
-      });
-
-      yield* log({
-        direction: "incoming",
-        stage: "decoded",
-        payload: {
-          type: "agent.opened",
-          agentId: agent.agentId,
-        },
-      });
-
       const cwd =
         typeof input.options.local?.cwd === "string"
           ? input.options.local.cwd
           : input.options.local?.cwd?.[0];
+      const storeCwd = input.storeCwd;
+      const storeWorkspace =
+        input.operation === "resume" && storeCwd !== undefined ? storeCwd : cwd;
+      // Passing a per-session SqliteLocalAgentStore bypasses the SDK's unbounded module-level
+      // platform/store Maps so close() actually frees SQLite handles, page caches, and FDs.
+      const ownedStore =
+        input.options.local?.store === undefined && storeWorkspace !== undefined
+          ? yield* Effect.tryPromise({
+              try: async () => {
+                const candidate = await sdk
+                  .loadSqlite()
+                  .SqliteLocalAgentStore.open({ workspaceRef: storeWorkspace });
+                return isDisposableCursorLocalStore(candidate) ? candidate : undefined;
+              },
+              catch: (cause) => runnerError(cause, `agent.${input.operation}`),
+            })
+          : undefined;
+      const disposeOwnedStore =
+        ownedStore === undefined
+          ? Effect.void
+          : Effect.tryPromise({
+              try: () => ownedStore.dispose(),
+              catch: () => undefined,
+            }).pipe(Effect.ignore);
+      const effectiveStore =
+        ownedStore === undefined ? input.options.local?.store : withNoopCursorRunEvents(ownedStore);
+      const effectiveOptions: AgentOptions =
+        effectiveStore === undefined || effectiveStore === input.options.local?.store
+          ? input.options
+          : {
+              ...input.options,
+              local: {
+                ...input.options.local,
+                store: effectiveStore,
+              },
+            };
+
+      const { storePlatform, agent } = yield* Effect.gen(function* () {
+        const resolvedStorePlatform =
+          input.operation === "resume" &&
+          storeCwd !== undefined &&
+          storeCwd !== input.options.local?.cwd
+            ? yield* Effect.tryPromise({
+                try: () =>
+                  createAgentPlatform({
+                    workspaceRef: storeCwd,
+                    ...(effectiveStore === undefined ? {} : { localStore: effectiveStore }),
+                  }),
+                catch: (cause) => runnerError(cause, "agent.resume"),
+              })
+            : undefined;
+        const openedAgent = yield* Effect.tryPromise({
+          try: () =>
+            input.operation === "create"
+              ? Agent.create(effectiveOptions)
+              : resolvedStorePlatform === undefined
+                ? Agent.resume(input.agentId!, effectiveOptions)
+                : resolvedStorePlatform.resumeAgent(input.agentId!, effectiveOptions),
+          catch: (cause) => runnerError(cause, `agent.${input.operation}`),
+        });
+        yield* log({
+          direction: "incoming",
+          stage: "decoded",
+          payload: {
+            type: "agent.opened",
+            agentId: openedAgent.agentId,
+          },
+        });
+        return { storePlatform: resolvedStorePlatform, agent: openedAgent };
+      }).pipe(Effect.onExit((exit) => (Exit.isFailure(exit) ? disposeOwnedStore : Effect.void)));
+
       const runOptions = {
         runtime: "local" as const,
         ...(cwd === undefined ? {} : { cwd }),
-        ...(input.options.local?.store === undefined ? {} : { store: input.options.local.store }),
+        ...(effectiveStore === undefined ? {} : { store: effectiveStore }),
       };
       let abandonedRunRecoveryAvailable = input.operation === "resume";
       const storeView = async () =>
         storePlatform ??
         (await createAgentPlatform({
           ...(cwd === undefined ? {} : { workspaceRef: cwd }),
-          ...(input.options.local?.store === undefined
-            ? {}
-            : { localStore: input.options.local.store }),
+          ...(effectiveStore === undefined ? {} : { localStore: effectiveStore }),
         }));
 
       return {
@@ -807,9 +896,7 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
                   ? Agent.messages.list(agent.agentId, {
                       runtime: "local",
                       ...(cwd === undefined ? {} : { cwd }),
-                      ...(input.options.local?.store === undefined
-                        ? {}
-                        : { store: input.options.local.store }),
+                      ...(effectiveStore === undefined ? {} : { store: effectiveStore }),
                     })
                   : storePlatform.getAgentMessages(agent.agentId),
               catch: (cause) => runnerError(cause, "agent.messages.list"),
@@ -932,6 +1019,7 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
               catch: (cause) => runnerError(cause, "agent.close"),
             }),
           ),
+          Effect.ensuring(disposeOwnedStore),
         ),
       } satisfies CursorAgentSdkSession;
     }),

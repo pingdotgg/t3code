@@ -152,6 +152,7 @@ export type CursorWorkerMessage =
   | {
       readonly type: "protocolLog";
       readonly providerSessionId: OrchestrationV2ProviderSession["id"];
+      readonly sessionId?: number;
       readonly event: CursorAgentSdkProtocolLogEvent;
     };
 

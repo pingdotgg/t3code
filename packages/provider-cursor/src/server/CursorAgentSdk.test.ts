@@ -59,7 +59,7 @@ const cursorSdkMock = vi.hoisted(() => {
       };
     },
   );
-  const create = vi.fn(async () => ({
+  const create = vi.fn(async (_options?: unknown) => ({
     agentId: "agent-cursor-agent-sdk-test",
     send,
     close: agentClose,
@@ -86,6 +86,8 @@ const cursorSdkMock = vi.hoisted(() => {
     );
   });
 
+  const sqliteOpen = vi.fn<() => Promise<unknown>>(async () => undefined);
+
   return {
     agentClose,
     cancelRun,
@@ -98,6 +100,7 @@ const cursorSdkMock = vi.hoisted(() => {
     runSteer,
     runWait,
     send,
+    sqliteOpen,
     setAgentCloseFailure: (failure: unknown) => {
       agentCloseFailure = failure;
     },
@@ -120,7 +123,7 @@ vi.mock("./sdk.ts", () => ({
     },
     createAgentPlatform: vi.fn(),
   }),
-  loadCursorSqlite: () => ({ SqliteLocalAgentStore: { open: vi.fn() } }),
+  loadCursorSqlite: () => ({ SqliteLocalAgentStore: { open: cursorSdkMock.sqliteOpen } }),
 }));
 
 const layerTest = CursorAgentSdk.layer.pipe(
@@ -429,6 +432,85 @@ describe("CursorAgentSdkRunner", () => {
       }));
       const plain = yield* session.send({ message: "plain" });
       assert.equal(yield* plain.steer!("later"), "revert_to_followup");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("uses a disposable SqliteLocalAgentStore with no-op runEvents per session", () =>
+    Effect.gen(function* () {
+      const dispose = vi.fn(async () => {});
+      const underlyingAppend = vi.fn(async () => {
+        throw new Error("runEvents.append must not hit SQLite");
+      });
+      const fakeStore = {
+        agents: { get: vi.fn() },
+        runs: { list: vi.fn() },
+        checkpoints: { save: vi.fn() },
+        runEvents: { append: underlyingAppend, list: vi.fn(), delete: vi.fn() },
+        dispose,
+      };
+      cursorSdkMock.sqliteOpen.mockResolvedValueOnce(fakeStore);
+      cursorSdkMock.create.mockClear();
+
+      const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
+      const session = yield* runner.open({
+        operation: "create",
+        options: { local: { cwd: "/workspace/cursor-store-test" } },
+        threadId: ThreadId.make("thread-cursor-agent-sdk-store"),
+        providerSessionId: ProviderSessionId.make("provider-session-cursor-agent-sdk-store"),
+      });
+
+      assert.deepStrictEqual(cursorSdkMock.sqliteOpen.mock.calls.at(-1), [
+        { workspaceRef: "/workspace/cursor-store-test" },
+      ]);
+      const passedOptions = cursorSdkMock.create.mock.calls[0]?.[0] as
+        | {
+            readonly local?: {
+              readonly store?: {
+                readonly agents: unknown;
+                readonly checkpoints: unknown;
+                readonly runEvents: {
+                  readonly append: (event: {
+                    readonly runId: string;
+                    readonly eventType: string;
+                    readonly payload?: unknown;
+                  }) => Promise<{ readonly seq: number }>;
+                };
+              };
+            };
+          }
+        | undefined;
+      const passedStore = passedOptions?.local?.store;
+      assert.isDefined(passedStore);
+      assert.strictEqual(passedStore?.agents, fakeStore.agents);
+      assert.strictEqual(passedStore?.checkpoints, fakeStore.checkpoints);
+      const appended = yield* Effect.promise(() =>
+        passedStore!.runEvents.append({
+          runId: "run-1",
+          eventType: "text-delta",
+          payload: { text: "hi" },
+        }),
+      );
+      assert.equal(appended.seq, 1);
+      assert.equal(underlyingAppend.mock.calls.length, 0);
+      assert.equal(dispose.mock.calls.length, 0);
+
+      yield* session.close;
+      assert.equal(dispose.mock.calls.length, 1);
+
+      // Failed open disposes the newly opened store instead of leaking SQLite FDs.
+      const failingDispose = vi.fn(async () => {});
+      cursorSdkMock.sqliteOpen.mockResolvedValueOnce({ ...fakeStore, dispose: failingDispose });
+      cursorSdkMock.create.mockRejectedValueOnce(new Error("boom"));
+      const failed = yield* runner
+        .open({
+          operation: "create",
+          options: { local: { cwd: "/workspace/cursor-store-fail" } },
+          threadId: ThreadId.make("thread-cursor-agent-sdk-store-fail"),
+          providerSessionId: ProviderSessionId.make("provider-session-cursor-agent-sdk-store-fail"),
+        })
+        .pipe(Effect.exit);
+      assert(Exit.isFailure(failed));
+      assert.equal(failingDispose.mock.calls.length, 1);
     }).pipe(Effect.provide(layerTest)),
   );
 });

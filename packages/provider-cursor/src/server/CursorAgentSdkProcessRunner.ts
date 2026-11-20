@@ -88,6 +88,7 @@ interface SpawnedCursorWorker {
   readonly scope: Scope.Scope;
   /** Routes worker-side protocol logs to the session that produced them. */
   readonly protocolLoggers: Map<string, CursorAgentSdk.CursorAgentSdkProtocolLogger>;
+  readonly sessionProtocolLoggers: Map<number, CursorAgentSdk.CursorAgentSdkProtocolLogger>;
   readonly nextId: () => number;
   readonly requestWithId: (
     id: number,
@@ -103,7 +104,7 @@ interface SpawnedCursorWorker {
     method: string,
   ) => Effect.Effect<CursorWorkerResponsePayload, CursorAgentSdk.CursorAgentSdkRunnerError>;
   readonly registerRun: (sessionId: number, sendId: number) => Effect.Effect<ActiveWorkerRun>;
-  readonly unregisterRun: (sendId: number) => void;
+  readonly unregisterRun: (sendId: number) => Effect.Effect<void>;
   readonly failSessionRuns: (sessionId: number) => Effect.Effect<void>;
   readonly isAlive: () => boolean;
   readonly close: (graceful: boolean) => Effect.Effect<void>;
@@ -206,6 +207,10 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
         const writeMutex = yield* Semaphore.make(1);
         const closed = yield* Ref.make(false);
         const protocolLoggers = new Map<string, CursorAgentSdk.CursorAgentSdkProtocolLogger>();
+        const sessionProtocolLoggers = new Map<
+          number,
+          CursorAgentSdk.CursorAgentSdkProtocolLogger
+        >();
         const closedDone = yield* Deferred.make<void>();
         const stdoutDone = yield* Deferred.make<void>();
         const stderrDone = yield* Deferred.make<void>();
@@ -213,6 +218,7 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
         let stderrTail = "";
         let closing = false;
         let terminated: { readonly exitCode: number | undefined } | undefined;
+        let deadTeardownScheduled = false;
 
         const pendingRequests = new Map<
           number,
@@ -226,6 +232,13 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
           }
         >();
         const activeRuns = new Map<number, ActiveWorkerRun>();
+
+        const hasDrainingRuns = () => {
+          for (const run of activeRuns.values()) {
+            if (run.doneEnqueued) return true;
+          }
+          return false;
+        };
 
         // Untraced: internal shutdown helper already covered by the enclosing operation span.
         const failAllPending = Effect.fnUntraced(function* (
@@ -261,6 +274,11 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
               try: () => notify(exitCode),
               catch: () => undefined,
             }).pipe(Effect.ignore);
+          }
+          if (!forceActiveRuns && !deadTeardownScheduled && !hasDrainingRuns()) {
+            deadTeardownScheduled = true;
+            // Reap the dead worker's scope immediately instead of waiting for old sessions to idle out.
+            yield* Effect.forkDetach(close(false).pipe(Effect.ignore));
           }
         });
 
@@ -306,7 +324,11 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
               return Effect.void;
             }
             case "protocolLog": {
-              const logger = protocolLoggers.get(parsed.providerSessionId);
+              const logger =
+                (parsed.sessionId === undefined
+                  ? undefined
+                  : sessionProtocolLoggers.get(parsed.sessionId)) ??
+                protocolLoggers.get(parsed.providerSessionId);
               return logger === undefined ? Effect.void : logger(parsed.event).pipe(Effect.ignore);
             }
           }
@@ -440,7 +462,9 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
           });
 
         // Untraced: called from close/finalizer boundaries that already hold a span.
-        const close = Effect.fnUntraced(function* (graceful: boolean) {
+        const close: (graceful: boolean) => Effect.Effect<void> = Effect.fnUntraced(function* (
+          graceful: boolean,
+        ) {
           closing = true;
           if (yield* Ref.getAndSet(closed, true)) {
             return yield* Deferred.await(closedDone);
@@ -501,13 +525,20 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
         return {
           scope: workerScope,
           protocolLoggers,
+          sessionProtocolLoggers,
           nextId,
           requestWithId,
           request,
           registerRun,
-          unregisterRun: (sendId) => {
-            activeRuns.delete(sendId);
-          },
+          unregisterRun: (sendId) =>
+            Effect.suspend(() => {
+              activeRuns.delete(sendId);
+              if (terminated !== undefined && !deadTeardownScheduled && !hasDrainingRuns()) {
+                deadTeardownScheduled = true;
+                return Effect.forkDetach(close(false).pipe(Effect.ignore)).pipe(Effect.asVoid);
+              }
+              return Effect.void;
+            }),
           failSessionRuns,
           isAlive: () => terminated === undefined && !closing,
           close,
@@ -571,16 +602,18 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
 
         const lease = yield* acquireWorker;
         const { worker } = lease;
+        const sessionId = worker.nextId();
         if (protocolLogger !== undefined) {
           worker.protocolLoggers.set(input.providerSessionId, protocolLogger);
+          worker.sessionProtocolLoggers.set(sessionId, protocolLogger);
         }
-        const sessionId = worker.nextId();
         let openTransmitted = false;
         let openRejected = false;
         let opened = false;
         let sessionClosed = false;
         let handedOff = false;
         const forgetLogger = Effect.sync(() => {
+          worker.sessionProtocolLoggers.delete(sessionId);
           if (worker.protocolLoggers.get(input.providerSessionId) === protocolLogger) {
             worker.protocolLoggers.delete(input.providerSessionId);
           }
@@ -755,10 +788,7 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
                     yield* Deferred.succeed(runState.waitDeferred, item.result);
                     return;
                   }
-                }).pipe(
-                  Effect.ensuring(Effect.sync(() => worker.unregisterRun(sendId))),
-                  Effect.forkIn(worker.scope),
-                );
+                }).pipe(Effect.ensuring(worker.unregisterRun(sendId)), Effect.forkIn(worker.scope));
 
                 const run = {
                   runId,
@@ -834,9 +864,7 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
                         ? // A send interrupted after hitting stdin may still start in the worker.
                           closeWorkerSession
                         : Effect.void;
-                    return stopRun.pipe(
-                      Effect.ensuring(Effect.sync(() => worker.unregisterRun(sendId))),
-                    );
+                    return stopRun.pipe(Effect.ensuring(worker.unregisterRun(sendId)));
                   }),
                 ),
               );

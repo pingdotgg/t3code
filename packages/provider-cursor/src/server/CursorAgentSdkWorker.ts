@@ -93,22 +93,25 @@ export async function runCursorSdkWorker(
   >();
   const startingSendIds = new Set<number>();
   const pendingCancelledSendIds = new Set<number>();
+  const sessionIdByOptions = new WeakMap<object, number>();
   let shuttingDown = false;
   let exitCode = 0;
 
   const runner = await runtime.runPromise(
-    CursorAgentSdk.makeCursorAgentSdkRunner(
-      (input) => (event) =>
+    CursorAgentSdk.makeCursorAgentSdkRunner((input) => {
+      const boundSessionId = sessionIdByOptions.get(input.options);
+      return (event) =>
         Effect.sync(() => {
           if (activeSendStarts > 0 && event.payload.type === "run.cancel") {
             writeMessage({
               type: "protocolLog",
               providerSessionId: input.providerSessionId,
+              ...(boundSessionId === undefined ? {} : { sessionId: boundSessionId }),
               event,
             });
           }
-        }),
-    ),
+        });
+    }),
   );
 
   const closeSession = async (
@@ -177,6 +180,7 @@ export async function runCursorSdkWorker(
     switch (req.type) {
       case "open": {
         openingSessionIds.add(req.id);
+        sessionIdByOptions.set(req.options, req.id);
         let exit: Exit.Exit<
           CursorAgentSdk.CursorAgentSdkSession,
           CursorAgentSdk.CursorAgentSdkRunnerError
