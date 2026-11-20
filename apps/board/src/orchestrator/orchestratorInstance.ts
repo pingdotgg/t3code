@@ -12,11 +12,19 @@ import adapter from "../../pstack/pstack-t3.md?raw";
 import potetoMode from "../../pstack/poteto-mode.md?raw";
 
 const PREFIX = "board-orchestrator-";
+const AGENTS_PREFIX = "board-agents-";
 
 /** The engine's provider instance that carries the standing rules for orchestrators on `baseId`'s account. */
 export const orchestratorInstanceId = (baseId: string) => `${PREFIX}${baseId}`;
 
+/** The engine's provider instance the children of those orchestrators run on. */
+export const agentsInstanceId = (baseId: string) => `${AGENTS_PREFIX}${baseId}`;
+
 export const isOrchestratorInstance = (instanceId: string) => instanceId.startsWith(PREFIX);
+
+/** An instance the board made and the user never picks. */
+export const isBoardInstance = (instanceId: string) =>
+  isOrchestratorInstance(instanceId) || instanceId.startsWith(AGENTS_PREFIX);
 
 /** The instance an orchestrator instance copies, which is the one the user picks. */
 export const baseInstanceId = (instanceId: string) =>
@@ -75,45 +83,109 @@ const configOf = (instance: ProviderInstanceConfig | undefined) =>
     () => new Error("The instance's config could not be read, so it cannot be copied."),
   );
 
+const PLUGIN_DIRS = "CLAUDE_CODE_PLUGIN_DIRS";
+
+// An environment value is plain text or a reference to a secret.
+const isPlainText = Schema.is(Schema.String);
+
 /**
- * Copies the picked instance's binary, home, environment, and own launch arguments into one
- * orchestrator instance, and adds the standing instructions. A change to them updates that
- * instance, so the engine never holds a second one. Every other instance is left as it is. The
- * write is an upsert, so two boards that start together cannot fail on each other's create.
+ * Claude Code loads a plugin folder named in CLAUDE_CODE_PLUGIN_DIRS for that session only, so
+ * pstack-t3 reaches the board's instances and no other Claude Code session. A folder the picked
+ * instance already lists stays, and a duplicate is not added.
  */
-export function planOrchestratorInstance(input: {
+function withPluginDir(
+  environment: ProviderInstanceConfig["environment"],
+  pluginDir: string,
+): NonNullable<ProviderInstanceConfig["environment"]> {
+  const own = (environment ?? []).find((entry) => entry.name === PLUGIN_DIRS);
+  const dirs = (isPlainText(own?.value) ? own.value : "").split(":").filter((dir) => dir !== "");
+  const value = (dirs.includes(pluginDir) ? dirs : [...dirs, pluginDir]).join(":");
+  return [
+    ...(environment ?? []).filter((entry) => entry.name !== PLUGIN_DIRS),
+    { name: PLUGIN_DIRS, value, sensitive: false },
+  ];
+}
+
+/**
+ * Copies the picked instance's binary, home, environment, and launch arguments into one board
+ * instance, with `extraArgs` after them. A Claude copy also loads the pstack-t3 folder. The write
+ * is an upsert, so two boards that start together cannot fail on each other's create.
+ */
+function planCopy(input: {
   readonly providerInstances: ServerSettings["providerInstances"];
   readonly base: { readonly instanceId: string; readonly driver: string };
-  readonly rules: string;
+  readonly instanceId: string;
+  readonly label: string;
+  readonly extraArgs: string | null;
+  readonly pluginDir: string;
 }): OrchestratorInstancePlan {
-  const { providerInstances, base, rules } = input;
-  const instanceId = orchestratorInstanceId(base.instanceId);
-  const args = standingArgs(base.driver, standingInstructions(rules));
-  if (args === null) {
-    throw new Error(`The board has no orchestrator rules for ${base.driver}.`);
-  }
+  const { providerInstances, base, instanceId } = input;
   const source = instanceAt(providerInstances, base.instanceId);
   const sourceConfig = configOf(source);
   const own = sourceConfig.launchArgs?.trim() ?? "";
-  const launchArgs = own === "" ? args : `${own} ${args}`;
+  const launchArgs = [own, input.extraArgs ?? ""].filter((part) => part !== "").join(" ");
+  const environment =
+    base.driver === "claudeAgent"
+      ? withPluginDir(source?.environment, input.pluginDir)
+      : source?.environment;
 
   const existing = instanceAt(providerInstances, instanceId);
-  if (existing?.enabled !== false && configOf(existing).launchArgs === launchArgs) {
+  if (
+    existing?.enabled !== false &&
+    (configOf(existing).launchArgs ?? "") === launchArgs &&
+    JSON.stringify(existing?.environment ?? []) === JSON.stringify(environment ?? [])
+  ) {
     return { instanceId, mutation: null };
   }
   const instance: ProviderInstanceConfig = {
     ...source,
     driver: ProviderDriverKind.make(base.driver),
-    displayName: `${source?.displayName ?? base.instanceId} (board orchestrator)`,
+    displayName: `${source?.displayName ?? base.instanceId} (${input.label})`,
     enabled: true,
-    config: { ...sourceConfig, launchArgs },
+    config: { ...sourceConfig, ...(launchArgs === "" ? {} : { launchArgs }) },
+    ...(environment === undefined ? {} : { environment }),
   };
   return {
     instanceId,
-    mutation: {
-      operation: "upsert",
-      instanceId: ProviderInstanceId.make(instanceId),
-      instance,
-    },
+    mutation: { operation: "upsert", instanceId: ProviderInstanceId.make(instanceId), instance },
   };
+}
+
+/** The orchestrator's instance: the picked one plus the standing instructions. */
+export function planOrchestratorInstance(input: {
+  readonly providerInstances: ServerSettings["providerInstances"];
+  readonly base: { readonly instanceId: string; readonly driver: string };
+  readonly rules: string;
+  readonly pluginDir: string;
+}): OrchestratorInstancePlan {
+  const args = standingArgs(input.base.driver, standingInstructions(input.rules));
+  if (args === null) {
+    throw new Error(`The board has no orchestrator rules for ${input.base.driver}.`);
+  }
+  return planCopy({
+    ...input,
+    instanceId: orchestratorInstanceId(input.base.instanceId),
+    label: "board orchestrator",
+    extraArgs: args,
+  });
+}
+
+/**
+ * The instance every child runs on. A Claude child gets the pstack-t3 skills but never the
+ * orchestrator's rules. A Codex child runs on the picked instance as it is.
+ */
+export function planAgentsInstance(input: {
+  readonly providerInstances: ServerSettings["providerInstances"];
+  readonly base: { readonly instanceId: string; readonly driver: string };
+  readonly pluginDir: string;
+}): OrchestratorInstancePlan {
+  if (input.base.driver !== "claudeAgent") {
+    return { instanceId: input.base.instanceId, mutation: null };
+  }
+  return planCopy({
+    ...input,
+    instanceId: agentsInstanceId(input.base.instanceId),
+    label: "board agents",
+    extraArgs: null,
+  });
 }

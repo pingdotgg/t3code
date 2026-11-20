@@ -6,10 +6,14 @@ import {
   baseInstanceId,
   isOrchestratorInstance,
   orchestratorInstanceId,
+  agentsInstanceId,
+  isBoardInstance,
+  planAgentsInstance,
   planOrchestratorInstance,
   standingInstructions,
 } from "./orchestratorInstance";
 
+const PLUGINS = "/home/me/.agent-board/pstack-t3";
 const RULES = 'Rule one.\nUse "quotes", $HOME, `ticks`, and a \\ backslash.\n';
 
 const claude = { instanceId: "claudeAgent", driver: "claudeAgent" };
@@ -35,6 +39,7 @@ const launchArgsOf = (instance: { readonly config?: unknown }) =>
 describe("the orchestrator instance", () => {
   it("Given fixed rules and no instance yet, when it is planned, then the launch arguments carry poteto-mode, the adapter, and the rules in that order, then the disallowed tools", () => {
     const plan = planOrchestratorInstance({
+      pluginDir: PLUGINS,
       providerInstances: instances({}),
       base: claude,
       rules: RULES,
@@ -72,6 +77,7 @@ describe("the orchestrator instance", () => {
 
   it("Given a Codex instance, when it is planned, then the rules ride in developer_instructions as a TOML string", () => {
     const plan = planOrchestratorInstance({
+      pluginDir: PLUGINS,
       providerInstances: instances({}),
       base: { instanceId: "codex", driver: "codex" },
       rules: 'Say "hi".\nBye.',
@@ -85,6 +91,7 @@ describe("the orchestrator instance", () => {
 
   it("Given an orchestrator instance that already holds these rules, when it is planned, then nothing is written", () => {
     const first = planOrchestratorInstance({
+      pluginDir: PLUGINS,
       providerInstances: instances({}),
       base: claude,
       rules: RULES,
@@ -93,12 +100,18 @@ describe("the orchestrator instance", () => {
       "board-orchestrator-claudeAgent": written(first),
     });
     expect(
-      planOrchestratorInstance({ providerInstances: settings, base: claude, rules: RULES }),
+      planOrchestratorInstance({
+        pluginDir: PLUGINS,
+        providerInstances: settings,
+        base: claude,
+        rules: RULES,
+      }),
     ).toEqual({ instanceId: "board-orchestrator-claudeAgent", mutation: null });
   });
 
   it("Given changed rules, when it is planned, then the same instance id is updated and no second one is added", () => {
     const first = planOrchestratorInstance({
+      pluginDir: PLUGINS,
       providerInstances: instances({}),
       base: claude,
       rules: RULES,
@@ -107,6 +120,7 @@ describe("the orchestrator instance", () => {
       "board-orchestrator-claudeAgent": written(first),
     });
     const next = planOrchestratorInstance({
+      pluginDir: PLUGINS,
       providerInstances: settings,
       base: claude,
       rules: "New rules.",
@@ -130,6 +144,7 @@ describe("the orchestrator instance", () => {
     });
     const before = structuredClone(providerInstances);
     const plan = planOrchestratorInstance({
+      pluginDir: PLUGINS,
       providerInstances,
       base: { instanceId: claudeAlt, driver: "claudeAgent" },
       rules: "R",
@@ -139,7 +154,10 @@ describe("the orchestrator instance", () => {
       instanceId: "board-orchestrator-claude_alt",
       instance: {
         displayName: "Work (board orchestrator)",
-        environment: [{ name: "A", value: "1", sensitive: false }],
+        environment: [
+          { name: "A", value: "1", sensitive: false },
+          { name: "CLAUDE_CODE_PLUGIN_DIRS", value: PLUGINS, sensitive: false },
+        ],
         config: { homePath: "/home/me/.claude-work" },
       },
     });
@@ -152,6 +170,7 @@ describe("the orchestrator instance", () => {
   it("Given a driver with no standing instructions, when it is planned, then it throws", () => {
     expect(() =>
       planOrchestratorInstance({
+        pluginDir: PLUGINS,
         providerInstances: instances({}),
         base: { instanceId: "cursor", driver: "cursor" },
         rules: RULES,
@@ -164,5 +183,80 @@ describe("the orchestrator instance", () => {
     expect(isOrchestratorInstance("claudeAgent")).toBe(false);
     expect(baseInstanceId(orchestratorInstanceId("claude_alt"))).toBe("claude_alt");
     expect(baseInstanceId("claudeAgent")).toBe("claudeAgent");
+  });
+  it("Given a Claude instance, when the orchestrator and agents instances are planned, then each loads the pstack-t3 folder and only the orchestrator carries the rules", () => {
+    const providerInstances = instances({
+      claudeAgent: {
+        driver: claudeDriver,
+        environment: [
+          { name: "A", value: "1", sensitive: false },
+          { name: "CLAUDE_CODE_PLUGIN_DIRS", value: "/mine", sensitive: false },
+        ],
+      },
+    });
+    const orchestrator = written(
+      planOrchestratorInstance({ providerInstances, base: claude, rules: "R", pluginDir: PLUGINS }),
+    );
+    const agentsPlan = planAgentsInstance({ providerInstances, base: claude, pluginDir: PLUGINS });
+    const agents = written(agentsPlan);
+
+    const env = [
+      { name: "A", value: "1", sensitive: false },
+      { name: "CLAUDE_CODE_PLUGIN_DIRS", value: `/mine:${PLUGINS}`, sensitive: false },
+    ];
+    expect(orchestrator.environment).toEqual(env);
+    expect(agents.environment).toEqual(env);
+    expect(agentsPlan.instanceId).toBe("board-agents-claudeAgent");
+    expect(agentsInstanceId("claudeAgent")).toBe("board-agents-claudeAgent");
+    expect(agents.config).toEqual({});
+    expect(launchArgsOf(orchestrator)).toContain("--append-system-prompt");
+    expect(isBoardInstance("board-agents-claudeAgent")).toBe(true);
+    expect(isBoardInstance("board-orchestrator-claudeAgent")).toBe(true);
+    expect(isBoardInstance("claudeAgent")).toBe(false);
+  });
+
+  it("Given instances that already load the folder, when they are planned again, then nothing is written", () => {
+    const first = planAgentsInstance({
+      providerInstances: instances({}),
+      base: claude,
+      pluginDir: PLUGINS,
+    });
+    const orch = planOrchestratorInstance({
+      providerInstances: instances({}),
+      base: claude,
+      rules: "R",
+      pluginDir: PLUGINS,
+    });
+    const settings = instances({
+      "board-agents-claudeAgent": written(first),
+      "board-orchestrator-claudeAgent": written(orch),
+    });
+
+    expect(
+      planAgentsInstance({ providerInstances: settings, base: claude, pluginDir: PLUGINS })
+        .mutation,
+    ).toBeNull();
+    expect(
+      planOrchestratorInstance({
+        providerInstances: settings,
+        base: claude,
+        rules: "R",
+        pluginDir: PLUGINS,
+      }).mutation,
+    ).toBeNull();
+    expect(
+      planAgentsInstance({ providerInstances: settings, base: claude, pluginDir: "/moved" })
+        .mutation,
+    ).not.toBeNull();
+  });
+
+  it("Given a Codex instance, when the agents instance is planned, then children keep the picked instance and nothing is written", () => {
+    expect(
+      planAgentsInstance({
+        providerInstances: instances({}),
+        base: { instanceId: "codex", driver: "codex" },
+        pluginDir: PLUGINS,
+      }),
+    ).toEqual({ instanceId: "codex", mutation: null });
   });
 });

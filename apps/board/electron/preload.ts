@@ -17,6 +17,7 @@ const bridge: BoardBridge = {
   resolveFolder: (text) => ipcRenderer.invoke("board:resolve-folder", text),
   readLocalState: () => ipcRenderer.invoke("board:local-state-read"),
   writeLocalState: (text) => ipcRenderer.invoke("board:local-state-write", text),
+  ensurePstack: () => ipcRenderer.invoke("board:ensure-pstack"),
   browser: {
     open: (id, url) => ipcRenderer.send("board:browser-open", id, url),
     close: (id) => ipcRenderer.send("board:browser-close", id),

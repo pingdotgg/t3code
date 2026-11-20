@@ -130,9 +130,11 @@ Do not choose a model in a brief. The registry's `target` for each role sets it.
 
 ## Internal references
 
-Skills reach you in two ways. You load a skill with Claude Code's Skill tool or by reading its file, and a message to a child expands one with `$name`.
+Agent Board loads this plugin from a checkout of `13kparkin/pstack-t3` through `CLAUDE_CODE_PLUGIN_DIRS` on the instance that runs you and on the instance that runs your children. No other Claude Code session loads it.
 
-- The pstack skills sit in one folder. On Claude it is `skills/` inside the `pstack-t3` plugin, under `plugins/` in the instance's Claude config folder. On Codex it is `~/.codex/skills/`. A plugin loaded from a development folder is in neither place. Call the Skill tool with `pstack-t3:pstack-t3` then, because it reports this skill's folder and every other pstack skill is a sibling folder of it.
-- A playbook or reference is a file inside its skill, such as `poteto-mode/playbooks/feature.md`. Find the folder once, for example with `find -L ~/.claude/plugins ~/.codex/skills -maxdepth 8 -name playbooks -path '*poteto-mode*'`, then read the file from there. The `-L` is needed because Codex's skill folders are links. Use the instance's own Claude config folder in place of `~/.claude` when the instance has a separate home.
-- `$poteto-mode` and this adapter are in your standing instructions. Every other skill loads on demand, so read a skill's SKILL.md in full before you apply it.
-- Relative paths remain valid for files inside the same installed skill. This plugin's `agents/` files are role definitions. Agent Board copies each one into the board's `roles/` folder, and a child reads its role file there. Cursor plugin metadata and Cursor-only automation registration are not loaded.
+- The checkout folder is the entry of `printenv CLAUDE_CODE_PLUGIN_DIRS` that holds `skills/pstack-t3/SKILL.md`. Every pstack skill is a folder under its `skills/`, and `agents/` holds the role files. Resolve the folder once and read files from it. Never search the disk or `~/.claude` for a skill.
+- To load a skill, read `<checkout>/skills/<name>/SKILL.md` in full before you apply it. Claude Code's Skill tool refuses most pstack skills because they are marked for the user to start, so do not call it for them.
+- A playbook or reference is a file inside its skill, such as `<checkout>/skills/poteto-mode/playbooks/feature.md`.
+- A message to a child expands a skill only as `$pstack-t3:<name>`, which is how Claude Code names this plugin's skills. The skill files themselves say `$name`.
+- `$poteto-mode` and this adapter are in your standing instructions. Every other skill loads on demand.
+- Relative paths remain valid for files inside the same skill. The `agents/` files are role definitions. Agent Board copies each one into the board's `roles/` folder, and a child reads its role file there. Cursor plugin metadata and Cursor-only automation registration are not loaded.

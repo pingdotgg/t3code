@@ -42,6 +42,50 @@ The plugin loads in place from this checkout, so install from a checkout that st
 
 ## pstack skills
 
+The private repo `13kparkin/pstack-t3` holds Lauren Tan's pstack skills ported to T3, with an `upstream` branch that tracks cursor/plugins. The board loads it only on its own Claude instances. When it starts an orchestrator, the Electron main process clones the repo into `~/.agent-board/pstack-t3` in WSL, or fetches `main` into the existing clone and keeps the old checkout if the fetch fails. The app then sets `CLAUDE_CODE_PLUGIN_DIRS` to that folder on `board-orchestrator-<instance>` and on `board-agents-<instance>`, the instance every role's `target` names. Nothing is installed at user scope, so Claude Code sessions outside the board stay as they are. Codex threads do not load the skills. The repo is private, so git in WSL needs your credentials (`gh auth setup-git`). `AGENT_BOARD_PSTACK_DIR` points the app at a checkout of your own instead.
+
+Every orchestrator starts with poteto-mode and the `pstack-t3` adapter ahead of its rules in the instance's appended system prompt. `pstack/poteto-mode.md` and `pstack/pstack-t3.md` are copies of those two skills without their front matter. After a change in `pstack-t3`, run `node apps/board/scripts/vendor-pstack.mjs <pstack-t3 checkout>` and `vp fmt apps/board/pstack`, and commit the result. Every other skill the orchestrator reads on demand from the checkout.
+
+## The engine stays upstream
+
+This fork tracks `pingdotgg/t3code`. Board code lives only in `apps/board/`, `.github/workflows/agent-board.yml`, and `pnpm-lock.yaml`, so merging upstream never conflicts. The check below enforces that and runs in CI on every pull request.
+
+```sh
+git remote add upstream https://github.com/pingdotgg/t3code.git  # once
+git fetch upstream main
+node apps/board/scripts/check-engine-untouched.mjs
+```
+
+It exits 0 when nothing outside those paths changed since the merge base with `upstream/main`, 1 with the offending paths otherwise, and 2 when the `upstream` remote is missing.
+
+## Run
+
+```sh
+vp run --filter @agent-board/app dev      # Electron window on the Vite dev server
+vp run --filter @agent-board/app dev:web  # the renderer alone, in a browser, at http://127.0.0.1:5190
+vp run --filter @agent-board/app build    # renderer to dist/, Electron main to dist-electron/
+vp run --filter @agent-board/app start    # production build, loaded from agentboard://app
+```
+
+On a Windows machine, run the same commands from WSL with `dev:windows` and `start:windows` (after `build`) to get Windows' own window frame. They download Electron for `win32-x64` once into `%LOCALAPPDATA%\agent-board\` and copy the bundle there, so Electron never runs from a `\\wsl.localhost` path. This needs WSL mirrored networking, so the Windows app can reach the dev server on `127.0.0.1`.
+
+`PORT` moves the dev server. `AGENT_BOARD_CDP_PORT` turns on Electron's remote debugging port. Electron prints `board:first-paint <ms>` once the renderer has painted, measured from the main process start.
+
+## omp rules for Claude Code
+
+The `omp-kit` plugin in `plugins/` gives every Claude Code session the rules in `~/.omp/agent/rules`, the sticky `~/.omp/agent/RULES.md`, a TypeScript language server for the `LSP` tool, and `vp` on the Bash path. Rules are read at hook time, so editing a rule file takes effect in the next session. `OMP_KIT_RULES_DIR` points the engine at another rules folder, and `RULES.md` is read from that folder's parent.
+
+```sh
+node apps/board/scripts/install-omp-kit.mjs                      # user scope, ~/.claude
+node apps/board/scripts/install-omp-kit.mjs --config-dir /tmp/x  # an isolated Claude config
+```
+
+A rule with `approval: ask` in its frontmatter makes the plugin answer a matching MCP tool call with Claude Code's `ask` decision, so the operator approves in place with the rule's text, on every call. omp ignores the field. MCP calls match by tool name only, never by their arguments, and a scope token may spell the tool the omp way (`tool:mcp__linear_save_issue`) or the Claude way (`tool:mcp__t3-code__set_issue_state`). Other tools, Bash included, keep the draft-first deny.
+
+The plugin loads in place from this checkout, so install from a checkout that stays. The language server needs `typescript` installed in the project it opens.
+
+## pstack skills
+
 The private repo `13kparkin/pstack-t3` holds Lauren Tan's pstack skills ported to T3, with an `upstream` branch that tracks cursor/plugins. `scripts/install-skills.mjs` adds it as a Claude Code marketplace, installs `pstack-t3@pstack-t3` at user scope, links each skill folder into the Codex skills folder, and turns on Codex memories (`[features] memories = true` and `[memories] disable_on_external_context = false`) without touching any other key. A step that is already done is skipped, and a Codex skill link that points elsewhere is reported and left alone.
 
 ```sh

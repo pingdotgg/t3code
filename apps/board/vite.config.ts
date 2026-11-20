@@ -14,7 +14,7 @@ const electronBundle = {
 export default defineConfig({
   plugins: [tailwindcss()],
   // `dev:web` has no main process, so the lane scripts hand it the engine through these.
-  envPrefix: ["VITE_", "AGENT_BOARD_ENGINE_URL", "AGENT_BOARD_TOKEN"],
+  envPrefix: ["VITE_", "AGENT_BOARD_ENGINE_URL", "AGENT_BOARD_TOKEN", "AGENT_BOARD_PSTACK_DIR"],
   server: {
     host: "127.0.0.1",
     port: Number(process.env["PORT"] ?? 5190),

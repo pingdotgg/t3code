@@ -10,6 +10,7 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import { Atom, type AtomRegistry } from "effect/reactivity";
 import * as Option from "effect/Option";
 
+import { engineBridge } from "../connection/bridge";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { BOARDS_DIR } from "../domain/board";
 import { renderRules, type StoreFiles } from "../orchestrator/brief";
@@ -18,7 +19,7 @@ import {
   type LaunchPorts,
   type OrchestratorSelection,
 } from "../orchestrator/launch";
-import { planOrchestratorInstance } from "../orchestrator/orchestratorInstance";
+import { planAgentsInstance, planOrchestratorInstance } from "../orchestrator/orchestratorInstance";
 import { resolveRoles, ROLES } from "../orchestrator/roles";
 import type { ValidBoard } from "../store/boardFiles";
 import { boardEngine, newId, projectBoardsAtom } from "./boards";
@@ -37,8 +38,9 @@ const threadProjection = createEnvironmentRpcCommand(connectionAtomRuntime, {
 type BoardProject = Pick<EnvironmentProject, "id" | "environmentId" | "workspaceRoot" | "title">;
 
 /**
- * The orchestrator instance for the picked instance, with the standing rules in its launch
- * arguments. The engine's settings are written only when the instance is missing or its rules differ.
+ * The orchestrator instance for the picked instance, with the standing instructions in its launch
+ * arguments, and the instance its children run on. Both load the pstack-t3 checkout. The engine's
+ * settings are written only for an instance that is missing or differs.
  */
 export async function ensureOrchestratorInstance(
   registry: AtomRegistry.AtomRegistry,
@@ -47,12 +49,22 @@ export async function ensureOrchestratorInstance(
 ): Promise<string> {
   const settings = registry.get(engineSettingsAtom);
   if (settings === null) throw new Error("The engine's settings have not loaded yet.");
-  const { instanceId, mutation } = planOrchestratorInstance({
+  const pstack = await engineBridge.ensurePstack();
+  if (!pstack.ok) throw new Error(pstack.reason);
+  const base = { instanceId: selection.instanceId, driver: selection.driver };
+  const agents = planAgentsInstance({
     providerInstances: settings.providerInstances,
-    base: { instanceId: selection.instanceId, driver: selection.driver },
-    rules: renderRules(resolveRoles(ROLES, selection)),
+    base,
+    pluginDir: pstack.dir,
   });
-  if (mutation !== null) {
+  const orchestrator = planOrchestratorInstance({
+    providerInstances: settings.providerInstances,
+    base,
+    rules: renderRules(resolveRoles(ROLES, { ...selection, instanceId: agents.instanceId })),
+    pluginDir: pstack.dir,
+  });
+  for (const { mutation } of [agents, orchestrator]) {
+    if (mutation === null) continue;
     await boardEngine(registry, environmentId).run(
       runAtomCommand(
         registry,
@@ -62,7 +74,7 @@ export async function ensureOrchestratorInstance(
       ),
     );
   }
-  return instanceId;
+  return orchestrator.instanceId;
 }
 
 /** Starts the board's orchestrator on the chosen instance and model, and saves its thread in `board.json`. */

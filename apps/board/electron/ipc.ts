@@ -10,6 +10,7 @@ import { runtimeSupportsClient } from "./runtimeCompatibility";
 import { createEngine, type EngineConfig, type TokenStore } from "./engine";
 import { createLocalStateFile } from "./localState";
 import { pickFolder, resolveFolder } from "./pickFolder";
+import { ensurePstack } from "./pstack";
 import {
   createLinuxHost,
   type LinuxHost,
@@ -164,6 +165,11 @@ export function registerEngineIpc(options: {
     const contents = Option.getOrUndefined(decodeText(text));
     if (contents !== undefined) localState.write(contents);
   });
+  ipcMain.handle("board:ensure-pstack", () =>
+    env["AGENT_BOARD_PSTACK_DIR"]
+      ? { ok: true, dir: env["AGENT_BOARD_PSTACK_DIR"] }
+      : ensurePstack(host),
+  );
   ipcMain.on("board:engine-connected", (_event, epochMs) => {
     if (isEpochMs(epochMs)) console.log(`board:engine-connected ${sinceStart(epochMs)} ms`);
   });
