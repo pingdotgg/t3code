@@ -335,12 +335,11 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const parentDirectory = NodePath.dirname(environmentThemesDir);
-  const themesPath = NodePath.resolve(environmentThemesDir);
+  const themesName = NodePath.basename(environmentThemesDir);
   // Watch the parent for replacements and rescan only after the new watch can buffer edits.
   const watchEvents = watchDirectory(
-    parentDirectory,
-    (path) => NodePath.resolve(parentDirectory, path) === themesPath,
+    NodePath.dirname(environmentThemesDir),
+    (path) => path === themesName,
   ).pipe(
     Stream.switchMap(() => watchDirectory(environmentThemesDir)),
     // A save emits several events, and fs.watch can fire before content is flushed.
