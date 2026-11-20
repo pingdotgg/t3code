@@ -152,12 +152,14 @@ jobs:
         env:
           APP_NAME: ${{ vars.T3CODE_APP_NAME }}
           APP_SCHEME: ${{ vars.T3CODE_APP_SCHEME }}
+          BUNDLE_ID: ${{ vars.T3CODE_MOBILE_BUNDLE_ID }}
           UPDATE_REPOSITORY: ${{ github.repository }}
         run: |
           {
             echo "T3CODE_STANDALONE=1"
             echo "T3CODE_APP_NAME=$APP_NAME"
             echo "T3CODE_APP_SCHEME=$APP_SCHEME"
+            echo "T3CODE_MOBILE_BUNDLE_ID=$BUNDLE_ID"
             echo "T3CODE_DESKTOP_UPDATE_REPOSITORY=$UPDATE_REPOSITORY"
           } >> "$GITHUB_ENV"
 

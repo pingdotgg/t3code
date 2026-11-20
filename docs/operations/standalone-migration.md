@@ -125,7 +125,7 @@ merge threads from two environments. Start the copied installation with another 
 
 ## Publish and update a forked Linux service
 
-Configure the fork's `T3CODE_APP_SCHEME` and `T3CODE_APP_NAME` build values before tagging; use the
+Configure the fork's `T3CODE_APP_SCHEME`, `T3CODE_APP_NAME` and `T3CODE_MOBILE_BUNDLE_ID` build values before tagging; use the
 same values for the server and client builds. After reviewing and merging a tested commit, push a `vX.Y.Z` tag on that
 commit. The fork's `fork-release.yml` builds Linux x64 and arm64 CLI archives, smoke-tests them,
 and attaches them with `SHA256SUMS` to a **draft** GitHub Release, together with the desktop Linux
@@ -186,7 +186,9 @@ Connect, T3 Chat, and the license text keep their names.
   `T3CODE_HOSTED_APP_URL` (also read as `VITE_HOSTED_APP_URL`) in the build and server only when
   you host it. With no hosted app, clients use direct pairing and native thread links. Leave
   relay, Clerk, and browser tracing values unset for direct-only use.
-- **Desktop:** build and sign the fork's app under an identity you control. Set the fork release
+- **Desktop:** build and sign the fork's app under an identity you control. The app takes its
+  bundle id from `T3CODE_MOBILE_BUNDLE_ID`, shared with mobile, and names its files after
+  `T3CODE_APP_NAME`; sign it with a Developer ID profile for that id. Set the fork release
   repository at build time; the app then follows that repository's published GitHub releases.
   `T3CODE_DISABLE_AUTO_UPDATE=true` turns the desktop updater off until your feed is ready, or
   point the managed `updates.feedUrl` at your feed. It does not affect the background service. The bundled

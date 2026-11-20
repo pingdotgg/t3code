@@ -44,6 +44,8 @@ import {
   resolveMacPasskeySigningConfiguration,
   resolveMergedStageDependencies,
   resolveBuildOptions,
+  resolveDesktopAppId,
+  resolveDesktopArtifactPrefix,
   resolveDesktopPublisher,
   standaloneLinuxMetainfo,
   stageWslRuntimeArchive,
@@ -673,6 +675,20 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
       const stable = yield* appImageName("0.0.37");
       const nightly = yield* appImageName("0.0.38-nightly.20261026.3740");
+      const config = yield* createBuildConfig(
+        "linux",
+        "AppImage",
+        "0.0.37",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      assert.strictEqual(stable, "T3-Code-${arch}.${ext}");
+      assert.strictEqual(nightly, "T3-Code-Nightly-${arch}.${ext}");
+      assert.strictEqual(config.artifactName, "T3-Code-${version}-${arch}.${ext}");
+      assert.strictEqual(config.appId, "com.t3tools.t3code");
 
       assert.notInclude(stable, "${version}");
       assert.notInclude(nightly, "${version}");
@@ -1663,6 +1679,37 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       rpDomains: ["example.clerk.accounts.dev"],
       provisioningProfilePath: "/tmp/t3code.provisionprofile",
     });
+  });
+
+  it("signs and names standalone desktop builds under the fork's identity", () => {
+    const fork = {
+      T3CODE_STANDALONE: "1",
+      T3CODE_APP_NAME: "EasyDev Code",
+      T3CODE_MOBILE_BUNDLE_ID: "br.com.easydevsolucoes.easydevcode",
+    };
+
+    assert.strictEqual(resolveDesktopAppId({}), "com.t3tools.t3code");
+    assert.strictEqual(
+      resolveDesktopArtifactPrefix({ T3CODE_APP_NAME: "EasyDev Code" }),
+      "T3-Code",
+    );
+    assert.strictEqual(resolveDesktopAppId(fork), "br.com.easydevsolucoes.easydevcode");
+    assert.strictEqual(resolveDesktopArtifactPrefix(fork), "EasyDev-Code");
+    assert.strictEqual(
+      resolveMacPasskeySigningConfiguration({
+        ...fork,
+        T3CODE_APPLE_TEAM_ID: "7ZW8Q7FVB2",
+        T3CODE_MACOS_PROVISIONING_PROFILE: "/tmp/easydev.provisionprofile",
+        T3CODE_CLERK_PASSKEY_RP_DOMAINS: "example.clerk.accounts.dev",
+      }).appId,
+      "br.com.easydevsolucoes.easydevcode",
+    );
+    for (const bundleId of [undefined, " ", "easydevcode"]) {
+      assert.throws(
+        () => resolveDesktopAppId({ ...fork, T3CODE_MOBILE_BUNDLE_ID: bundleId }),
+        /T3CODE_MOBILE_BUNDLE_ID/u,
+      );
+    }
   });
 
   it("normalizes explicit macOS passkey RP domains and renders required entitlements", () => {
