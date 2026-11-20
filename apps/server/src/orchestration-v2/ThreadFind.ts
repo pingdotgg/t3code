@@ -102,8 +102,9 @@ function parseItem(
   item: OrchestrationV2TurnItem,
   cwd: string | undefined,
   skills: NonNullable<OrchestrationV2SearchThreadInput["skills"]>,
+  theme: OrchestrationV2SearchThreadInput["theme"],
 ): readonly string[] {
-  if (item.type === "proposed_plan") return searchablePlanSegments(item.markdown, cwd);
+  if (item.type === "proposed_plan") return searchablePlanSegments(item.markdown, cwd, theme);
   if (item.type !== "user_message" && item.type !== "assistant_message") return [];
   return (
     searchableMessageSegments(
@@ -118,6 +119,7 @@ function parseItem(
       },
       cwd,
       skills,
+      theme,
     ) ?? []
   );
 }
@@ -221,6 +223,7 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
         threadId: ThreadId,
         cwd: Schema.optional(Schema.String),
         skills: OrchestrationV2SearchThreadInput.fields.skills,
+        theme: OrchestrationV2SearchThreadInput.fields.theme,
       }),
     ),
   );
@@ -342,7 +345,7 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
 
   const snapshot = Effect.fn("ThreadFind.snapshot")(
     function* (input: OrchestrationV2SearchThreadInput) {
-      const { threadId } = input;
+      const { threadId, theme } = input;
       const active = yield* sql<{ cwd: string | null }>`
       SELECT COALESCE(json_extract(t.payload_json, '$.worktreePath'), p.workspace_root) AS cwd
       FROM orchestration_v2_projection_threads t JOIN projection_projects p ON p.project_id = t.project_id
@@ -351,7 +354,12 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
       if (!active[0]) return yield* new ProjectionStoreThreadNotFoundError({ threadId });
       const cwd = active[0].cwd ?? undefined;
       const skills = input.skills ?? [];
-      const corpusKey = yield* encodeCorpusKey({ threadId, cwd, skills });
+      const corpusKey = yield* encodeCorpusKey({
+        threadId,
+        cwd,
+        skills,
+        ...(theme === undefined ? {} : { theme }),
+      });
       const scanKey = `${corpusKey}\u0000${input.query}`;
       const scan = scans.get(scanKey);
       if (scan && scan.sequence === (yield* readRevision(scan.sourceThreadIds))) {
@@ -470,7 +478,7 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
               (cause) => new ProjectionStoreReadError({ threadId: input.threadId, cause }),
             ),
           );
-          const segments = parseItem(item, cwd, skills);
+          const segments = parseItem(item, cwd, skills, input.theme);
           const next: ItemFacts = {
             type: row.type,
             entryId: row.entryId,

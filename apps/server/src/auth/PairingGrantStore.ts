@@ -243,6 +243,8 @@ export class PairingGrantStore extends Context.Service<
     >;
     readonly streamChanges: Stream.Stream<BootstrapCredentialChange>;
     readonly revoke: (id: string) => Effect.Effect<boolean, BootstrapCredentialInternalError>;
+    /** Revokes every pairing code not yet spent. */
+    readonly revokeUnspent: () => Effect.Effect<void, BootstrapCredentialInternalError>;
     readonly consume: (
       credential: string,
       input?: {
@@ -399,6 +401,16 @@ const make = Effect.gen(function* () {
       return revoked;
     },
   );
+
+  const revokeUnspent: PairingGrantStore["Service"]["revokeUnspent"] = Effect.fn(
+    "PairingGrantStore.revokeUnspent",
+  )(function* () {
+    const revokedAt = yield* DateTime.now;
+    const ids = yield* pairingLinks
+      .revokeUnspent({ revokedAt })
+      .pipe(Effect.mapError((cause) => new PairingLinkRevokeError({ pairingLinkId: "*", cause })));
+    yield* Effect.forEach(ids, emitRemoved, { discard: true });
+  });
 
   const issueOneTimeToken: PairingGrantStore["Service"]["issueOneTimeToken"] = Effect.fn(
     "PairingGrantStore.issueOneTimeToken",
@@ -662,6 +674,7 @@ const make = Effect.gen(function* () {
       return Stream.fromPubSub(changesPubSub);
     },
     revoke,
+    revokeUnspent,
     consume,
   });
 });

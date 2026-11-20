@@ -8,4 +8,5 @@ description: Open and merge pull requests on the Ada fork (jayleaton/ada).
 - Merge when required checks are green: `gh pr merge <n> -R jayleaton/ada --merge --match-head-commit <sha>`. Nightlies are not releases; only store or TestFlight submissions and stable tags need the maintainer.
 - Failed "Agent context budget" on intended growth: add the `agent-context-increase` label.
 - Rerun a failed job once; a second failure is real.
+- Upstream syncs: follow [docs/operations/upstream-sync.md](../../../docs/operations/upstream-sync.md) for what stays removed and how to check.
 - After merging, remove the PR's clean worktree and branch.

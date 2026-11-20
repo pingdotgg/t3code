@@ -1,4 +1,4 @@
-import { createRuntimeCommand } from "@t3tools/client-runtime/state/runtime";
+import { createRuntimeCommand, runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { useNavigate } from "@tanstack/react-router";
 import * as Effect from "effect/Effect";
 import { useEffect } from "react";
@@ -19,7 +19,7 @@ export function ConnectOnlyNoticeCoordinator() {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads and clears a one-time notice from the stored catalog after mount
   useEffect(() => {
     let cancelled = false;
-    void takeConnectOnlyEnvironments.run(appAtomRegistry, undefined).then((result) => {
+    void runAtomCommand(appAtomRegistry, takeConnectOnlyEnvironments, undefined).then((result) => {
       if (cancelled || result._tag !== "Success" || result.value.length === 0) return;
       const labels = result.value.map((environment) => environment.label).join(", ");
       toastManager.add({

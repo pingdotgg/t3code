@@ -302,18 +302,10 @@ export function createNetworkMemberAtoms<R, E, EO>(
       hosts: atomRegistry.get(openingHostsAtom),
       reachable,
       mint: (via, target) =>
-        Effect.promise(() =>
-          options.tailnetDevices.openDevice.run(atomRegistry, {
-            environmentId: via,
-            input: { environmentId: target },
-          }),
-        ).pipe(
-          Effect.flatMap((result) =>
-            AsyncResult.isSuccess(result)
-              ? Effect.succeed(result.value)
-              : Effect.failCause(result.cause),
-          ),
-        ),
+        options.tailnetDevices.openDevice.run(atomRegistry, {
+          environmentId: via,
+          input: { environmentId: target },
+        }),
       register: onboarding.openDevice,
     });
   });

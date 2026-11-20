@@ -7,8 +7,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
 import { connectedEnvironmentIdsAtom } from "../../state/presentation";
+import { useAtomCommand } from "../../state/use-atom-command";
 import {
   notificationPermissionAtom,
   requestNotificationPermission,
@@ -71,7 +72,7 @@ export function SettingsNotificationsRouteScreen() {
   const permission = useAtomValue(notificationPermissionAtom);
   const connectedIds = useAtomValue(connectedEnvironmentIdsAtom);
   const preferences = useAtomValue(mobilePreferencesAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   const ios = Platform.OS === "ios";
   const off = new Set(
     AsyncResult.isSuccess(preferences)

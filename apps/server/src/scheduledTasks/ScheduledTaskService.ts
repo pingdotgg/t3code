@@ -699,6 +699,8 @@ export const layer = Layer.effect(
       requireExisting: boolean,
       /** The schedule this save read, when it left the schedule unchanged. */
       keptSchedule: ScheduledTask["schedule"] | null,
+      /** The thread this save unbinds; any other stored thread is kept. */
+      unboundThreadId: ThreadId | null,
       webhook: {
         readonly token: string | null;
         readonly secret: string | null;
@@ -766,13 +768,14 @@ export const layer = Layer.effect(
           enabled = excluded.enabled,
           schedule_json = excluded.schedule_json,
           project_id = excluded.project_id,
-          -- A first run may bind the thread while this save is in flight; only a
-          -- switch to new threads, another project, or another profile unbinds.
+          -- A first run may bind the thread while this save is in flight, so a save
+          -- without a thread keeps any thread but the one it unbinds. A switch to new
+          -- threads, another project, or another profile unbinds.
           thread_id = CASE
             WHEN excluded.thread_mode = 'new_thread' THEN NULL
             WHEN excluded.project_id != scheduled_tasks.project_id THEN excluded.thread_id
             WHEN excluded.profile_id IS NOT scheduled_tasks.profile_id THEN excluded.thread_id
-            ELSE COALESCE(excluded.thread_id, scheduled_tasks.thread_id)
+            ELSE COALESCE(excluded.thread_id, NULLIF(scheduled_tasks.thread_id, ${unboundThreadId}))
           END,
           thread_mode = excluded.thread_mode,
           profile_id = excluded.profile_id,
@@ -1672,7 +1675,8 @@ export const layer = Layer.effect(
         existingTask?.profileId !== undefined;
       const keptThreadId = leftAgentUnbound
         ? null
-        : (input.threadId ?? existingTask?.threadId ?? null);
+        : (input.threadId ??
+          (input.unbindThread === true ? null : (existingTask?.threadId ?? null)));
       // A bound thread belongs to its project, so moving the task leaves it for a new one.
       const movedOffThread =
         existingTask !== null &&
@@ -1819,6 +1823,7 @@ export const layer = Layer.effect(
         task,
         input.requireExisting === true,
         scheduleUnchanged ? existingTask.schedule : null,
+        threadId === null && input.unbindThread === true ? (existingTask?.threadId ?? null) : null,
         webhook,
       );
       yield* notifyChanged;

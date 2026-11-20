@@ -1,6 +1,6 @@
 import * as FileSystem from "effect/FileSystem";
 
-import type { AgentOptions, RunResult } from "@cursor/sdk";
+import type { AgentOptions, RunResult, SDKModel } from "@cursor/sdk";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -56,6 +56,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
   resolveApiKey?: Effect.Effect<string, ProviderSetupError>,
   withAccess?: CursorAuth["withAccess"],
   getModels?: () => ReadonlyArray<ServerProviderModel>,
+  getSdkModels?: () => ReadonlyArray<SDKModel>,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const sdk = yield* CursorSdk.CursorSdk;
@@ -122,7 +123,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       const agentOptions = {
         apiKey,
         mode: "plan",
-        model: cursorSdkModelSelection(modelSelection, getModels?.() ?? []),
+        model: cursorSdkModelSelection(modelSelection, getModels?.() ?? [], getSdkModels?.() ?? []),
         local: {
           cwd,
           store,
