@@ -1437,6 +1437,55 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     );
   });
 
+  // Makes Git write new objects to `privateObjects` and read the repository's. Lists every object
+  // directory Git resolved (`count-objects -v` output) flat, since nesting the repository's objects
+  // one level deeper can pass Git's depth limit.
+  const privateObjectDirectoryEnv = (
+    privateObjects: string,
+    repositoryObjects: string,
+    countObjects: string,
+  ) => {
+    // Git prints an entry C-quoted when it needs quoting; quote the rest the same way, so a
+    // path holding the list separator stays one entry (Git 2.11.1+).
+    const quoted = (entry: string) =>
+      entry.startsWith('"') ? entry : `"${entry.replace(/[\\"]/g, "\\$&")}"`;
+    const alternates = [
+      repositoryObjects,
+      ...countObjects
+        .split("\n")
+        .flatMap((line) =>
+          line.startsWith("alternate: ") ? [line.slice("alternate: ".length)] : [],
+        ),
+    ];
+    return {
+      GIT_OBJECT_DIRECTORY: privateObjects,
+      GIT_ALTERNATE_OBJECT_DIRECTORIES: alternates
+        .map(quoted)
+        .join(hostPlatform === "win32" ? ";" : ":"),
+    } satisfies NodeJS.ProcessEnv;
+  };
+
+  // Moves finished packs and loose objects into the repository, as Git's own quarantine does. A
+  // pack's index goes last: Git reads a pack as soon as it sees the index.
+  const adoptPrivateObjects = Effect.fn("GitVcsDriver.adoptPrivateObjects")(function* (
+    privateObjects: string,
+    repositoryObjects: string,
+  ) {
+    for (const directory of yield* fileSystem.readDirectory(privateObjects)) {
+      if (directory !== "pack" && !/^[0-9a-f]{2}$/.test(directory)) continue;
+      const names = (yield* fileSystem.readDirectory(path.join(privateObjects, directory)))
+        .filter((name) => !name.startsWith("tmp_"))
+        .toSorted((a, b) => Number(a.endsWith(".idx")) - Number(b.endsWith(".idx")));
+      if (names.length === 0) continue;
+      yield* fileSystem.makeDirectory(path.join(repositoryObjects, directory), { recursive: true });
+      for (const name of names) {
+        const target = path.join(repositoryObjects, directory, name);
+        if (yield* fileSystem.exists(target)) continue;
+        yield* fileSystem.rename(path.join(privateObjects, directory, name), target);
+      }
+    }
+  });
+
   const fetchRemoteForStatus = Effect.fn("GitVcsDriver.fetchRemoteForStatus.wait")(function* (
     gitCommonDir: string,
     remoteName: string,
@@ -1447,11 +1496,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // this poll from starting `git gc --auto`. When that gc fails, for example on a repository
     // with missing objects, Git retries it on every fetch and leaves a full-size `tmp_pack_*`
     // behind each time, so a background poll could fill the disk.
-    const args = [
+    const fetchArgs = (mode: "--dry-run" | "--quiet") => [
       "--git-dir",
       gitCommonDir,
       "fetch",
-      "--quiet",
+      mode,
       "--no-tags",
       "--no-auto-gc",
       // FETCH_HEAD is written without a lock; overlapping a user's `git pull` makes that pull fail.
@@ -1459,6 +1508,77 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       "--",
       remoteName,
     ];
+    const objectsPath = path.join(gitCommonDir, "objects");
+    const fetchOptions = {
+      fallbackErrorDetail: "Background Git fetch exited with a non-zero status.",
+      timeoutMs: Duration.toMillis(STATUS_UPSTREAM_FETCH_TIMEOUT),
+    };
+    // A failed or killed fetch leaves its partial `tmp_pack_*` behind, and nothing tells it apart
+    // from another Git process's. So the download goes to a directory only this fetch writes to,
+    // named like Git's own quarantine so `git gc` prunes one a crash left. A dry run downloads
+    // without moving refs, which must not point at objects the repository does not hold yet.
+    const isolatedFetch = Effect.acquireUseRelease(
+      fileSystem.makeTempDirectory({ directory: objectsPath, prefix: "tmp_objdir-t3code-" }),
+      Effect.fnUntraced(function* (privateObjects) {
+        const objectDirectories = yield* runGitStdout(
+          "GitVcsDriver.fetchRemoteForStatus.alternates",
+          fetchCwd,
+          ["--git-dir", gitCommonDir, "count-objects", "-v"],
+        );
+        const options = (writableObjects: string) => ({
+          ...fetchOptions,
+          env: {
+            ...STATUS_UPSTREAM_REFRESH_ENV,
+            ...privateObjectDirectoryEnv(writableObjects, objectsPath, objectDirectories),
+          },
+        });
+        const { stderr } = yield* executeGit(
+          "GitVcsDriver.fetchRemoteForStatus.download",
+          fetchCwd,
+          fetchArgs("--dry-run"),
+          options(privateObjects),
+        );
+        yield* adoptPrivateObjects(privateObjects, objectsPath);
+        // A dry run names each ref it would move on stderr and is silent when none would.
+        if (stderr.trim() === "") return;
+        // This fetch may only move refs to objects the repository now holds. If the remote moved
+        // on since the dry run it would download, so it gets an object directory where `pack` is
+        // a file and every transfer is a pack: it then fails, moves nothing, and the next poll
+        // downloads. Git reports the unreadable `pack` on stderr and carries on.
+        const sealedObjects = path.join(privateObjects, "sealed");
+        yield* fileSystem.makeDirectory(sealedObjects);
+        yield* fileSystem.writeFileString(path.join(sealedObjects, "pack"), "");
+        yield* executeGit(
+          "GitVcsDriver.fetchRemoteForStatus",
+          fetchCwd,
+          ["-c", "fetch.unpackLimit=1", ...fetchArgs("--quiet")],
+          options(sealedObjects),
+        );
+      }),
+      (privateObjects) =>
+        fileSystem
+          .remove(privateObjects, { recursive: true, force: true })
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning(
+                "Could not remove a background Git fetch's object directory",
+                cause,
+              ),
+            ),
+          ),
+    ).pipe(
+      Effect.mapError((error) =>
+        error._tag === "GitCommandError"
+          ? error
+          : new GitCommandError({
+              operation: "GitVcsDriver.fetchRemoteForStatus",
+              command: "git fetch",
+              cwd: fetchCwd,
+              detail: "Background Git fetch could not use its object directory.",
+              cause: error,
+            }),
+      ),
+    );
     const key = `${gitCommonDir}\0${remoteName}`;
     const failure = statusRemoteRefreshFailures.get(key);
     if (failure && (yield* Clock.currentTimeMillis) < failure.retryAt) return;
@@ -1472,12 +1592,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         // Frequent poll deadlines and disconnected clients must not interrupt a
         // healthy writer. A separate safety limit prevents a hung transport from
         // occupying its worker slot indefinitely.
-        const fetch = executeGit("GitVcsDriver.fetchRemoteForStatus", fetchCwd, args, {
-          env: STATUS_UPSTREAM_REFRESH_ENV,
-          fallbackErrorDetail: "Background Git fetch exited with a non-zero status.",
-          timeoutMs: Duration.toMillis(STATUS_UPSTREAM_FETCH_TIMEOUT),
-        }).pipe(
-          Effect.asVoid,
+        const fetch = isolatedFetch.pipe(
           Effect.tap(() =>
             Effect.sync(() => {
               statusRemoteRefreshFailures.delete(key);
@@ -2995,33 +3110,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           });
           const tempIndexPath = path.join(directory, "index");
           // Staging writes blobs; put them in the temp directory so a draft leaves nothing behind.
-          // List every object directory Git resolved (nested and environment alternates) flat,
-          // since nesting the repository's objects one level deeper can pass Git's depth limit.
           const objectDirectories = yield* runGitStdout(
             "GitVcsDriver.prepareCommitContext.alternates",
             cwd,
             ["count-objects", "-v"],
           );
-          // Git prints an entry C-quoted when it needs quoting; quote the rest the same way, so a
-          // path holding the list separator stays one entry (Git 2.11.1+).
-          const quoted = (entry: string) =>
-            entry.startsWith('"') ? entry : `"${entry.replace(/[\\"]/g, "\\$&")}"`;
-          const alternates = [
-            path.resolve(physicalCwd, objectsValue.trim()),
-            ...objectDirectories
-              .split("\n")
-              .flatMap((line) =>
-                line.startsWith("alternate: ") ? [line.slice("alternate: ".length)] : [],
-              ),
-          ];
           const tempObjectsPath = path.join(directory, "objects");
           yield* fileSystem.makeDirectory(tempObjectsPath);
           const env = {
             GIT_INDEX_FILE: tempIndexPath,
-            GIT_OBJECT_DIRECTORY: tempObjectsPath,
-            GIT_ALTERNATE_OBJECT_DIRECTORIES: alternates
-              .map(quoted)
-              .join(hostPlatform === "win32" ? ";" : ":"),
+            ...privateObjectDirectoryEnv(
+              tempObjectsPath,
+              path.resolve(physicalCwd, objectsValue.trim()),
+              objectDirectories,
+            ),
           } satisfies NodeJS.ProcessEnv;
           const config = [
             "-c",
@@ -4935,15 +5037,31 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       timeToLive: (exit) => (Exit.isSuccess(exit) ? LIST_REFS_SNAPSHOT_CACHE_TTL : Duration.zero),
     },
   );
+  // Readers only ask for the current epoch and Cache expires entries lazily, so a superseded
+  // snapshot (megabytes in a repository with many remote branches) would stay until evicted.
+  const advanceListRefsEpoch = Effect.fn("GitVcsDriver.advanceListRefsEpoch")(function* (
+    gitCommonDir: string,
+  ) {
+    const previous = listRefsEpochByCommonDir.get(gitCommonDir);
+    const epoch = bumpListRefsEpoch(gitCommonDir);
+    if (previous !== undefined) {
+      yield* Cache.invalidate(
+        listRefsSnapshotCache,
+        new GitRefsSnapshotCacheKey({ gitCommonDir, epoch: previous }),
+      );
+    }
+    return epoch;
+  });
   const listRefsRefreshSnapshotCache = yield* Cache.makeWith(
     (cacheKey: GitRefsRefreshCacheKey) =>
-      Effect.suspend(() => {
-        const epoch = bumpListRefsEpoch(cacheKey.gitCommonDir);
-        return Cache.get(
-          listRefsSnapshotCache,
-          new GitRefsSnapshotCacheKey({ gitCommonDir: cacheKey.gitCommonDir, epoch }),
-        );
-      }),
+      advanceListRefsEpoch(cacheKey.gitCommonDir).pipe(
+        Effect.flatMap((epoch) =>
+          Cache.get(
+            listRefsSnapshotCache,
+            new GitRefsSnapshotCacheKey({ gitCommonDir: cacheKey.gitCommonDir, epoch }),
+          ),
+        ),
+      ),
     {
       capacity: LIST_REFS_SNAPSHOT_CACHE_CAPACITY,
       timeToLive: (exit) =>
@@ -4985,7 +5103,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (commonDir == null) return;
     const previousGeneration = currentListRefsGeneration(commonDir);
     bumpListRefsGeneration(commonDir);
-    bumpListRefsEpoch(commonDir);
+    yield* advanceListRefsEpoch(commonDir);
     yield* Cache.invalidate(
       listRefsRefreshSnapshotCache,
       new GitRefsRefreshCacheKey({
@@ -5916,20 +6034,35 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     Effect.fn("fetchRemoteTrackingBranch")(function* (input) {
       // Storage cleanup runs this every sweep: like the status fetch, a killed fetch strands a
       // `tmp_pack_*` and a failing `gc --auto` repeats each time, so allow time and skip gc.
-      yield* runGit(
+      const args = [
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        "--no-auto-gc",
+        "--",
+        input.remoteName,
+        `+refs/heads/${input.remoteBranch}:refs/remotes/${input.remoteName}/${input.remoteBranch}`,
+      ];
+      const result = yield* executeGitWithStableDiagnostics(
         "GitVcsDriver.fetchRemoteTrackingBranch",
         input.cwd,
-        [
-          "fetch",
-          "--quiet",
-          "--no-tags",
-          "--no-auto-gc",
-          "--",
-          input.remoteName,
-          `+refs/heads/${input.remoteBranch}:refs/remotes/${input.remoteName}/${input.remoteBranch}`,
-        ],
-        { timeoutMs: FETCH_REMOTE_TIMEOUT_MS },
+        args,
+        { timeoutMs: FETCH_REMOTE_TIMEOUT_MS, allowNonZeroExit: true },
       );
+      if (result.exitCode === 0) return;
+      const reason = classifyGitFailure(result.stderr);
+      return yield* new GitCommandError({
+        ...gitCommandContext({
+          operation: "GitVcsDriver.fetchRemoteTrackingBranch",
+          cwd: input.cwd,
+          args,
+        }),
+        ...(reason === null ? {} : { reason }),
+        detail: fetchFailureDetail(result.stderr) ?? gitFailureDetail(reason),
+        ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
+        stdoutLength: result.stdout.length,
+        stderrLength: result.stderr.length,
+      });
     });
 
   const setBranchUpstream: GitVcsDriver.GitVcsDriver["Service"]["setBranchUpstream"] = Effect.fn(

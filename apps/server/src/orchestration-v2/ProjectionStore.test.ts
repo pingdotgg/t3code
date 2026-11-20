@@ -1385,6 +1385,7 @@ it.effect("record reads filter notification sources without dropping matching me
       ["monitor", "user", "monitor"],
       ["system", "user", "system"],
       ["assistant-monitor", "assistant", "monitor"],
+      ["wake", "user", "wake"],
     ] as const) {
       yield* store.apply({
         id: EventId.make(`notification-filter:${id}`),
@@ -1406,13 +1407,21 @@ it.effect("record reads filter notification sources without dropping matching me
           updatedAt: now,
           ...(kind === null
             ? {}
-            : {
-                notification: {
-                  source: { kind },
-                  outcome: "updated",
-                  summary: "Background notification",
-                },
-              }),
+            : kind === "wake"
+              ? {
+                  delegatedCompletion: {
+                    parentRunId: RunId.make("run:wake-parent"),
+                    generation: 1,
+                    taskIds: [],
+                  },
+                }
+              : {
+                  notification: {
+                    source: { kind },
+                    outcome: "updated",
+                    summary: "Background notification",
+                  },
+                }),
         },
       });
     }
@@ -1424,11 +1433,19 @@ it.effect("record reads filter notification sources without dropping matching me
       matching.messages.map((message) => [message.id, message.text]),
       [["monitor", "Complete body for monitor"]],
     );
+    const delegatedTaskMessages = yield* store.getThreadRecords(threadId, ["messages"], {
+      messageRoles: ["user"],
+      delegatedTaskMessagesOnly: true,
+    });
+    assert.deepEqual(
+      delegatedTaskMessages.messages.map((message) => message.id),
+      ["monitor", "wake"],
+    );
     const { statements, tracer } = traceSqlStatements();
     const userMessages = yield* store
       .getThreadRecords(threadId, ["messages"], { messageRoles: ["user"] })
       .pipe(Effect.withTracer(tracer));
-    assert.lengthOf(userMessages.messages, 3);
+    assert.lengthOf(userMessages.messages, 4);
     const ordinalLookup = statements.find((statement) => statement.includes("MIN(ordinal)"));
     // User-only reads must seek the message-ordinal index instead of scanning every turn item.
     yield* assertReadsThroughMessageOrdinalIndex(ordinalLookup, ["thread_id=?", "<expr>=?"]);
@@ -1442,7 +1459,7 @@ it.effect("record reads filter notification sources without dropping matching me
       .pipe(Effect.withTracer(withItems.tracer));
     assert.deepEqual(ordered.messages, userMessages.messages);
     assert.isFalse(withItems.statements.some((statement) => statement.includes("MIN(ordinal)")));
-    assert.lengthOf((yield* store.getThreadRecords(threadId, ["messages"])).messages, 4);
+    assert.lengthOf((yield* store.getThreadRecords(threadId, ["messages"])).messages, 5);
     assert.lengthOf(
       (yield* store.getThreadRecords(threadId, ["messages"], {
         monitorNotificationsOnly: true,
@@ -1453,7 +1470,56 @@ it.effect("record reads filter notification sources without dropping matching me
       (yield* store.getThreadRecords(threadId, ["messages"], {
         monitorNotificationsOnly: false,
       })).messages,
-      4,
+      5,
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("reads a delegated child's recent, unfinished and task runs without its history", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* addRolledBackRecoveryCandidate("delegated-child-runs");
+    const first = (yield* store.getThreadRecords(threadId, ["runs"])).runs[0]!;
+    const at = (minutes: number) => DateTime.add(first.requestedAt, { minutes: minutes + 60 });
+    const id = (ordinal: number) => RunId.make(`run:delegated-child-runs:${ordinal}`);
+    const unstartedCancel = { status: "cancelled", startedAt: null } as const;
+    for (const [ordinal, patch] of [
+      [3, { status: "running", completedAt: null }],
+      // Unstarted cancelled runs are outside the window's index: one ends after the floor.
+      [4, { ...unstartedCancel, completedAt: at(20) }],
+      [5, { ...unstartedCancel, completedAt: at(1) }],
+      ...[2, 6, 7, 8, 9, 10, 11, 12].map((ordinal) => [ordinal, {}] as const),
+    ] as const) {
+      yield* store.apply({
+        id: EventId.make(`event:delegated-child-runs:${ordinal}`),
+        type: "run.created",
+        threadId,
+        runId: id(ordinal),
+        occurredAt: first.requestedAt,
+        payload: {
+          ...first,
+          id: id(ordinal),
+          ordinal,
+          status: "completed",
+          startedAt: at(ordinal),
+          completedAt: at(ordinal),
+          delegatedTaskId: NodeId.make(`node:delegated-child-runs:task:${ordinal}`),
+          ...patch,
+        },
+      });
+    }
+    const taskIds = [NodeId.make("node:delegated-child-runs:task:2")];
+    const bounded = yield* store.getDelegatedChildControls(threadId, { taskIds, windowSize: 3 });
+    assert.equal(bounded.runsFloor?.id, id(11));
+    assert.deepEqual(
+      bounded.runs.map((run) => run.id),
+      [2, 3, 4, 11, 12].map(id),
+    );
+    const whole = yield* store.getDelegatedChildControls(threadId, { taskIds, windowSize: 100 });
+    assert.isUndefined(whole.runsFloor);
+    assert.deepEqual(
+      whole.runs.map((run) => run.id),
+      (yield* store.getThreadRecords(threadId, ["runs"])).runs.map((run) => run.id),
     );
   }).pipe(Effect.provide(layerTest)),
 );
@@ -7112,6 +7178,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           if (/^SEARCH (r|run) /.test(detail)) {
             assert.include(detail, "COVERING INDEX", detail);
           }
+          // A thread's item count reads one count row per hidden run, not one per run it had.
+          if (detail.startsWith("SEARCH counts ")) {
+            assert.include(detail, "run_key=?", detail);
+          }
           if (detail.includes("orchestration_v2_projection_turn_items")) {
             // Only held input is read from the sparse index; transcript history stays unread.
             assert.include(
@@ -7121,6 +7191,18 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           }
         }
       }
+
+      // Without the hint the planner walks every settled command, tool, and subagent item.
+      const pendingQuery = statements.find((statement) =>
+        statement.includes("AS owning_provider_instance_id"),
+      );
+      assert.isDefined(pendingQuery);
+      const pendingPlan = yield* planOf(pendingQuery);
+      assert.include(
+        pendingPlan.find((detail) => detail.startsWith("SEARCH i ")) ?? "",
+        "orchestration_v2_projection_turn_items_shell_pending_idx",
+        pendingPlan.join("\n"),
+      );
     }),
   );
 
@@ -7332,6 +7414,193 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         );
       }
     }),
+  );
+
+  it.effect(
+    "a turn start reads a long thread's deferred commands, routable tasks and fork by index",
+    () =>
+      Effect.gen(function* () {
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = yield* addRolledBackRecoveryCandidate("turn-start-commands");
+        const runId = RunId.make("run:turn-start-commands:rolled-back");
+        const created = yield* DateTime.now;
+        const nowIso = DateTime.formatIso(created);
+        const message = (id: string, role: "user" | "assistant", text: string, minutes: number) =>
+          projectionStore.apply({
+            id: EventId.make(`event:${id}`),
+            type: "message.updated",
+            threadId,
+            occurredAt: created,
+            payload: {
+              id: MessageId.make(id),
+              threadId,
+              runId: null,
+              nodeId: null,
+              role,
+              text,
+              attachments: [],
+              streaming: false,
+              createdBy: "user",
+              creationSource: "web",
+              createdAt: DateTime.add(created, { minutes }),
+              updatedAt: DateTime.add(created, { minutes }),
+            },
+          });
+        yield* message("message:turn-start-commands:rolled-back", "user", "Own prompt", 5);
+        yield* message("message:turn-start-commands:compact", "user", "\u00a0 /Compact\n", 1);
+        yield* message("message:turn-start-commands:goal", "user", "/goal ship it", 2);
+        yield* message("message:turn-start-commands:plain", "user", "Plain prompt", 3);
+        yield* message("message:turn-start-commands:later", "user", "/compact later", 4);
+        yield* message("message:turn-start-commands:assistant", "assistant", "/compact", 6);
+
+        const otherThreadId = ThreadId.make("thread:other");
+        const transfer = (id: string, type: "fork" | "merge_back") =>
+          projectionStore.apply({
+            id: EventId.make(`event:${id}`),
+            type: "context-transfer.created",
+            threadId,
+            occurredAt: created,
+            payload: {
+              id: ContextTransferId.make(id),
+              type,
+              sourceThreadId: otherThreadId,
+              targetThreadId: threadId,
+              sourcePoint: { threadId: otherThreadId },
+              basePoint: null,
+              sourceProviderInstanceId: providerInstanceId,
+              targetProviderInstanceId: providerInstanceId,
+              targetRunId: null,
+              status: "pending",
+              resolution: null,
+              createdBy: "user",
+              error: null,
+              createdAt: created,
+              updatedAt: created,
+              consumedAt: null,
+            },
+          });
+        yield* transfer("transfer:turn-start-commands:fork", "fork");
+        yield* transfer("transfer:turn-start-commands:referenced", "merge_back");
+        yield* projectionStore.apply({
+          id: EventId.make("event:turn-start-commands:handoff"),
+          type: "context-handoff.updated",
+          threadId,
+          occurredAt: created,
+          payload: {
+            id: ContextHandoffId.make("handoff:turn-start-commands"),
+            transferId: ContextTransferId.make("transfer:turn-start-commands:referenced"),
+            threadId,
+            targetRunId: runId,
+            fromProviderThreadIds: [],
+            toProviderThreadId: ProviderThreadId.make("provider-thread:turn-start-commands"),
+            coveredRunOrdinals: { from: 1, to: 1 },
+            strategy: "full_thread_summary",
+            status: "ready",
+            summaryMessageId: null,
+            summaryText: "Summary",
+            createdByProviderInstanceId: providerInstanceId,
+            createdAt: created,
+            updatedAt: created,
+          },
+        });
+        const nativeId = NodeId.make("subagent:turn-start-commands:native");
+        yield* projectionStore.apply({
+          id: EventId.make("event:turn-start-commands:native"),
+          type: "subagent.updated",
+          threadId,
+          runId,
+          nodeId: nativeId,
+          driver,
+          providerInstanceId,
+          occurredAt: created,
+          payload: {
+            id: nativeId,
+            threadId,
+            runId,
+            parentNodeId: NodeId.make("node:turn-start-commands:rolled-back"),
+            status: "completed",
+            startedAt: created,
+            completedAt: created,
+            origin: "provider_native",
+            createdBy: "agent",
+            driver,
+            providerInstanceId,
+            providerThreadId: null,
+            childThreadId: null,
+            nativeTaskRef: null,
+            prompt: "Do the work",
+            title: "native",
+            model: null,
+            completionDelivery: { state: "delivered", observedByRunId: null },
+            result: null,
+            updatedAt: created,
+          },
+        });
+        yield* sql`
+        INSERT INTO orchestration_v2_projection_subagents (
+          subagent_id, thread_id, run_id, parent_node_id, provider, origin, status, updated_at,
+          payload_json
+        ) VALUES
+          ('subagent:turn-start-commands:delegated', ${threadId}, NULL, 'node', 'codex',
+           'app_owned', 'completed', ${nowIso}, '{}'),
+          ('subagent:turn-start-commands:running', ${threadId}, NULL, 'node', 'codex',
+           'provider_native', 'running', ${nowIso}, '{}')
+      `;
+        yield* sql`
+        INSERT INTO orchestration_v2_projection_context_transfers (
+          context_transfer_id, source_thread_id, target_thread_id, type, status, updated_at,
+          payload_json
+        ) VALUES
+          ('transfer:turn-start-commands:result', 'thread:other', ${threadId},
+           'subagent_result', 'consumed', ${nowIso}, '{}'),
+          ('transfer:turn-start-commands:other-fork', ${threadId}, 'thread:other',
+           'fork', 'pending', ${nowIso}, '{}')
+      `;
+
+        const { statements, tracer } = traceSqlStatements();
+        const context = yield* projectionStore
+          .getTurnStartContext(threadId, runId)
+          .pipe(Effect.withTracer(tracer));
+        assert.deepEqual(
+          context.messages.map((item) => item.id),
+          [
+            "message:turn-start-commands:compact",
+            "message:turn-start-commands:goal",
+            "message:turn-start-commands:rolled-back",
+          ],
+        );
+        assert.deepEqual(
+          context.subagents.map((task) => task.id),
+          [nativeId],
+        );
+        assert.deepEqual(
+          context.contextTransfers.map((item) => item.id),
+          ["transfer:turn-start-commands:fork", "transfer:turn-start-commands:referenced"],
+        );
+
+        const planOf = Effect.fn("planOf")(function* (table: string) {
+          const statement = statements.find((query) =>
+            query.includes(`FROM orchestration_v2_projection_${table}`),
+          )!;
+          const params = Array.from({ length: statement.split("?").length - 1 }, () => threadId);
+          return (yield* sql.unsafe<{ readonly detail: string }>(
+            `EXPLAIN QUERY PLAN ${statement}`,
+            params,
+          )).map((row) => row.detail);
+        });
+        for (const [table, index] of [
+          ["messages", "orchestration_v2_projection_messages_deferred_command_idx"],
+          ["subagents", "orchestration_v2_projection_subagents_routable_idx"],
+          ["context_transfers", "orchestration_v2_projection_context_transfers_fork_idx"],
+        ] as const) {
+          const plan = yield* planOf(table);
+          assert.isTrue(
+            plan.some((detail) => detail.includes(index)),
+            `${table}\n${plan.join("\n")}`,
+          );
+        }
+      }),
   );
 
   it.effect(
