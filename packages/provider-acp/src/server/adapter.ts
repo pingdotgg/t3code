@@ -8739,6 +8739,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 context.lastProgressAt = now;
                 return "rearm" as const;
               }
+              if (context.finalized || context.interrupted) return "done" as const;
+              if ((yield* Ref.get(activeTurn)) !== context) return "done" as const;
+              if (yield* Deferred.isDone(context.promptWireSettled)) return "done" as const;
               context.inactivityWatchdog = undefined;
               openAgentRequests.clear();
               yield* quarantineNativeTransportAtGeneration(generation);

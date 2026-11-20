@@ -250,4 +250,50 @@ describe("hasLiveAntigravityScheduleTimer", () => {
         );
       }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.effect(
+    "finds a live schedule timer behind more than 32 newer non-schedule and expired RUNNING rows",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const profileDirectory = yield* fs.makeTempDirectoryScoped();
+        yield* TestClock.setTime(BASE_EPOCH_MS + 15 * 60_000);
+        const rows = [
+          {
+            idx: 1,
+            stepType: GENERIC_STEP_TYPE,
+            status: STATUS_RUNNING,
+            metadata: scheduleMetadata({
+              createdAtMs: BASE_EPOCH_MS,
+              args: { DurationSeconds: 3000, Prompt: "Live timer" },
+            }),
+          },
+          // 40 newer expired schedule rows (exceeds one page of 32)
+          ...Array.from({ length: 40 }, (_, index) => ({
+            idx: 10 + index,
+            stepType: GENERIC_STEP_TYPE,
+            status: STATUS_RUNNING,
+            metadata: scheduleMetadata({
+              createdAtMs: BASE_EPOCH_MS,
+              args: { DurationSeconds: 120, Prompt: `Expired ${index}` },
+            }),
+          })),
+          // 40 newer non-schedule RUNNING GENERIC rows
+          ...Array.from({ length: 40 }, (_, index) => ({
+            idx: 100 + index,
+            stepType: GENERIC_STEP_TYPE,
+            status: STATUS_RUNNING,
+            metadata: scheduleMetadata({
+              createdAtMs: BASE_EPOCH_MS,
+              toolName: "manage_task",
+              args: { Action: "list" },
+            }),
+          })),
+        ];
+        yield* writeSessionDb({ profileDirectory, rows });
+        assert.isTrue(
+          yield* hasLiveAntigravityScheduleTimer({ profileDirectory, sessionId: SESSION_ID }),
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });

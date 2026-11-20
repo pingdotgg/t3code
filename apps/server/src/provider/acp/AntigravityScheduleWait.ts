@@ -24,9 +24,12 @@ const TASK_DETAILS_STARTED_AT = 8;
 
 // Allow wake latency after the scheduled deadline before resuming inactivity detection.
 const SCHEDULE_EXPIRY_GRACE_MILLIS = 60_000;
-const MAX_RUNNING_GENERIC_STEPS = 32;
+const SCHEDULE_PAGE_SIZE = 32;
+const MAX_SCHEDULE_SCAN_ROWS = 512;
 const MAX_METADATA_BYTES = 256 * 1024;
 const MAX_PAYLOAD_BYTES = 256 * 1024;
+const MAX_SCAN_BYTES = 8 * 1024 * 1024;
+const SCHEDULE_MARKER = new TextEncoder().encode("schedule");
 const NATIVE_SESSION_ID = /^[\w-]{1,64}$/;
 const CONVERSATION_SEGMENTS = ["antigravity-acp", "conversations"] as const;
 
@@ -167,33 +170,56 @@ export const hasLiveAntigravityScheduleTimer = Effect.fn("hasLiveAntigravitySche
             .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'steps'")
             .get() !== undefined;
         if (!hasSteps) return false;
-        const rows = database
-          .prepare(
-            `SELECT metadata, task_details AS taskDetails, substr(step_payload, 1, ?) AS payload
-             FROM steps
-             WHERE step_type = ? AND status = ?
-             ORDER BY idx DESC
-             LIMIT ?`,
-          )
-          .all(
+        const page = database.prepare(
+          `SELECT idx, metadata, task_details AS taskDetails, substr(step_payload, 1, ?) AS payload
+           FROM steps
+           WHERE step_type = ? AND status = ? AND (? IS NULL OR idx < ?)
+             AND (instr(metadata, ?) > 0 OR instr(substr(step_payload, 1, ?), ?) > 0)
+           ORDER BY idx DESC
+           LIMIT ?`,
+        );
+        let beforeIdx: number | null = null;
+        let scannedRows = 0;
+        let scannedBytes = 0;
+        while (scannedRows < MAX_SCHEDULE_SCAN_ROWS && scannedBytes < MAX_SCAN_BYTES) {
+          const cursor: number | null = beforeIdx;
+          const rows: ReadonlyArray<Record<string, NodeSqlite.SQLOutputValue>> = page.all(
             MAX_PAYLOAD_BYTES,
             GENERIC_STEP_TYPE,
             RUNNING_STEP_STATUS,
-            MAX_RUNNING_GENERIC_STEPS,
+            cursor,
+            cursor,
+            SCHEDULE_MARKER,
+            MAX_PAYLOAD_BYTES,
+            SCHEDULE_MARKER,
+            SCHEDULE_PAGE_SIZE,
           );
-        for (const row of rows) {
-          const metadata =
-            row.metadata instanceof Uint8Array
-              ? row.metadata.subarray(0, MAX_METADATA_BYTES)
-              : null;
-          const taskDetails =
-            row.taskDetails instanceof Uint8Array
-              ? row.taskDetails.subarray(0, MAX_METADATA_BYTES)
-              : null;
-          const payload = row.payload instanceof Uint8Array ? row.payload : null;
-          if (isUnexpiredScheduleStep({ metadata, taskDetails, payload }, nowMillis)) {
-            return true;
+          if (rows.length === 0) return false;
+          for (const row of rows) {
+            if (typeof row.idx !== "number") return false;
+            beforeIdx = row.idx;
+            scannedRows += 1;
+            const metadata =
+              row.metadata instanceof Uint8Array
+                ? row.metadata.subarray(0, MAX_METADATA_BYTES)
+                : null;
+            const taskDetails =
+              row.taskDetails instanceof Uint8Array
+                ? row.taskDetails.subarray(0, MAX_METADATA_BYTES)
+                : null;
+            const payload = row.payload instanceof Uint8Array ? row.payload : null;
+            scannedBytes +=
+              (metadata?.byteLength ?? 0) +
+              (taskDetails?.byteLength ?? 0) +
+              (payload?.byteLength ?? 0);
+            if (isUnexpiredScheduleStep({ metadata, taskDetails, payload }, nowMillis)) {
+              return true;
+            }
+            if (scannedRows >= MAX_SCHEDULE_SCAN_ROWS || scannedBytes >= MAX_SCAN_BYTES) {
+              return false;
+            }
           }
+          if (rows.length < SCHEDULE_PAGE_SIZE) return false;
         }
         return false;
       } finally {
