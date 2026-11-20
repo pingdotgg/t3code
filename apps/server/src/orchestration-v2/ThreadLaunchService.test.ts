@@ -3500,6 +3500,42 @@ it.effect("refuses a new worktree whose explicit branch already exists", () =>
   ),
 );
 
+it.effect("refuses a multi-repo branch that any member already has", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      hasCommit: () => Effect.succeed(false),
+      multiRepo: { members: () => Effect.succeed(["api", "web"]) },
+      git: {
+        listLocalBranchNames: (cwd: string) =>
+          Effect.succeed(cwd.endsWith("/web") ? ["main", "feature/taken"] : ["main"]),
+      },
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const check = (branch: string) =>
+        launches
+          .checkWorktreeBase({
+            projectId,
+            workspaceStrategy: { type: "worktree", baseRef: "HEAD", branch },
+          })
+          .pipe(
+            Effect.match({
+              onSuccess: () => [branch, "accepted"],
+              onFailure: (error) => [branch, error._tag],
+            }),
+          );
+      assert.deepEqual(
+        yield* Effect.forEach(["feature/taken", "feature/fresh", "main/sub"], check),
+        [
+          ["feature/taken", "ThreadLaunchBranchExistsError"],
+          ["feature/fresh", "accepted"],
+          ["main/sub", "ThreadLaunchBranchConflictError"],
+        ],
+      );
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
 it.effect.each([
   { requested: "werkstatt/baseline", blocking: "werkstatt" },
   { requested: "foo", blocking: "foo/bar" },

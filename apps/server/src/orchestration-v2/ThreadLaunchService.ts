@@ -374,6 +374,31 @@ const make = Effect.gen(function* () {
     }
   });
 
+  const refuseTakenBranch = Effect.fn("ThreadLaunchService.refuseTakenBranch")(function* (
+    project: { readonly id: ProjectId; readonly title: string },
+    branch: string,
+    localBranches: ReadonlyArray<string>,
+  ) {
+    if (localBranches.includes(branch))
+      return yield* new ThreadLaunchBranchExistsError({
+        projectId: project.id,
+        projectTitle: project.title,
+        branch,
+      });
+    // Provisioning flattens temporary names that collide, so only explicit names are refused.
+    if (isTemporaryWorktreeBranch(branch)) return;
+    const conflictingBranch = localBranches.find(
+      (existing) => existing.startsWith(`${branch}/`) || branch.startsWith(`${existing}/`),
+    );
+    if (conflictingBranch !== undefined)
+      return yield* new ThreadLaunchBranchConflictError({
+        projectId: project.id,
+        projectTitle: project.title,
+        branch,
+        conflictingBranch,
+      });
+  });
+
   const checkWorktreeBase: ThreadLaunchService["Service"]["checkWorktreeBase"] = Effect.fn(
     "ThreadLaunchService.checkWorktreeBase",
   )(function* (input) {
@@ -396,8 +421,21 @@ const make = Effect.gen(function* () {
     const project = Option.getOrUndefined(projectOption);
     if (project === undefined) return;
     const cwd = project.workspaceRoot;
-    if ((yield* groupMembers(cwd)) !== null) return;
     const { baseRef, branch } = strategy;
+    const members = yield* groupMembers(cwd);
+    if (members !== null) {
+      // Each member resolves the base itself; the new branch must be free in all of them.
+      if (branch === undefined) return;
+      const memberBranches = yield* Effect.forEach(
+        members,
+        (member) =>
+          git
+            .listLocalBranchNames(`${cwd}/${member}`)
+            .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => [])),
+        { concurrency: "unbounded" },
+      );
+      return yield* refuseTakenBranch(project, branch, memberBranches.flat());
+    }
     // Errors keep their order below: missing repository, then base ref, then branch exists or conflicts.
     const [repositoryRoot, hasBaseCommit, localBranches] = yield* Effect.all(
       [
@@ -447,24 +485,7 @@ const make = Effect.gen(function* () {
         baseRef,
       });
     if (branch === undefined) return;
-    if (localBranches.includes(branch))
-      return yield* new ThreadLaunchBranchExistsError({
-        projectId: project.id,
-        projectTitle: project.title,
-        branch,
-      });
-    // Provisioning flattens temporary names that collide, so only explicit names are refused.
-    if (isTemporaryWorktreeBranch(branch)) return;
-    const conflictingBranch = localBranches.find(
-      (existing) => existing.startsWith(`${branch}/`) || branch.startsWith(`${existing}/`),
-    );
-    if (conflictingBranch !== undefined)
-      return yield* new ThreadLaunchBranchConflictError({
-        projectId: project.id,
-        projectTitle: project.title,
-        branch,
-        conflictingBranch,
-      });
+    return yield* refuseTakenBranch(project, branch, localBranches);
   });
 
   const isNonGitProject: ThreadLaunchService["Service"]["isNonGitProject"] = Effect.fn(
