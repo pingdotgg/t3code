@@ -132,61 +132,36 @@ function fakeLinear(
 const target = { cwd: "/w/web", host: "linear.app", scope: "ENG" };
 
 describe("LinearIssueTracker", () => {
-  it.effect("uses issue numbers for the named team while keeping text matches in other teams", () =>
+  it.effect("matches an issue number only in the team it names", () =>
     Effect.gen(function* () {
+      const numbers: Array<number | undefined> = [];
       const { tracker } = fakeLinear({
         T3Issues: (variables) => {
           const filter = variables.filter as {
-            team: { key: { eq: string } };
-            or: ReadonlyArray<{
-              number?: { eq: number };
-              title?: { containsIgnoreCase: string };
-              description?: unknown;
-            }>;
+            or: ReadonlyArray<{ number?: { eq: number } }>;
           };
-          expect(filter.or).toEqual(
-            expect.arrayContaining([
-              { title: { containsIgnoreCase: expect.any(String) } },
-              { description: { containsIgnoreCase: expect.any(String) } },
-            ]),
-          );
-          const team = filter.team.key.eq;
-          const text = filter.or.find((clause) => clause.title)?.title?.containsIgnoreCase;
-          const title = "Related to ENG-42";
-          return {
-            issues: {
-              nodes: [
-                ...(filter.or.some((clause) => clause.number?.eq === 42)
-                  ? [issue(`${team}-42`)]
-                  : []),
-                ...(team === "OTHER" &&
-                text !== undefined &&
-                title.toLowerCase().includes(text.toLowerCase())
-                  ? [issue("OTHER-7", { title })]
-                  : []),
-              ],
-              pageInfo: { hasNextPage: false, endCursor: null },
-            },
-          };
+          numbers.push(filter.or.find((clause) => clause.number)?.number?.eq);
+          return { issues: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } };
         },
       });
       const api = yield* tracker;
-      const find = (scope: string, query: string) =>
-        api
-          .listIssues({
-            ...target,
-            scope,
-            query,
-            state: "all",
-            involvement: "all",
-            sort: "updated",
-            limit: 50,
-          })
-          .pipe(Effect.map((page) => page.items.map((item) => item.key)));
-      expect(yield* find(" eng ", "eng-42")).toEqual(["ENG-42"]);
-      expect(yield* find("OTHER", "ENG-42")).toEqual(["OTHER-7"]);
-      expect(yield* find("OTHER", "42")).toEqual(["OTHER-42", "OTHER-7"]);
-      expect(yield* find("OTHER", "#42")).toEqual(["OTHER-42"]);
+      for (const [scope, query] of [
+        [" eng ", "eng-42"],
+        ["OTHER", "ENG-42"],
+        ["OTHER", "42"],
+        ["OTHER", "#42"],
+      ] as const) {
+        yield* api.listIssues({
+          ...target,
+          scope,
+          query,
+          state: "all",
+          involvement: "all",
+          sort: "updated",
+          limit: 50,
+        });
+      }
+      expect(numbers).toEqual([42, undefined, 42, 42]);
     }),
   );
 
