@@ -1,14 +1,12 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { msg, T, useGT } from "gt-react";
+import { T, useGT } from "gt-react";
 import { ArrowLeftIcon, ExternalLinkIcon } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 
 import { useOpenLink } from "~/browser/useOpenLink";
-import { m } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
-import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
 
@@ -62,28 +60,19 @@ function BackButton({ onBack, focusable }: { onBack: () => void; focusable: bool
 
 function NumberLink({
   detail,
+  threadRef,
   toneClassName,
   openOnHostText,
   focusable,
-  threadRef = null,
 }: {
   detail: CrumbsPullRequest;
+  threadRef: ScopedThreadRef | null;
   toneClassName: string;
   openOnHostText: string;
   focusable: boolean;
-  threadRef?: ScopedThreadRef | null | undefined;
 }) {
   const gt = useGT();
   const openLink = useOpenLink(threadRef);
-  const handleOpen = (event: ReactMouseEvent<HTMLElement>) => {
-    void openLink(detail.url, { event }).catch((error: unknown) => {
-      console.error(error);
-      toastManager.add({
-        type: "error",
-        title: m(msg("Could not open the link")),
-      });
-    });
-  };
   return (
     <Tooltip>
       <TooltipTrigger
@@ -91,9 +80,9 @@ function NumberLink({
           <button
             type="button"
             {...(focusable ? {} : { tabIndex: -1 })}
-            onClick={(event) => handleOpen(event)}
+            onClick={(event) => void openLink(detail.url, { event }).catch(console.error)}
             onAuxClick={(event) => {
-              if (event.button === 1) handleOpen(event);
+              if (event.button === 1) void openLink(detail.url, { event }).catch(console.error);
             }}
             onContextMenu={(event) => openNumberContextMenu(event, detail)}
             className={cn(
@@ -126,33 +115,23 @@ function NumberLink({
  */
 export function PullRequestDetailCrumbs({
   detail,
+  threadRef,
   toneClassName,
   condensed,
   repositoryUrl,
   openOnHostText,
   onBack,
-  threadRef = null,
 }: {
   detail: CrumbsPullRequest | null;
+  threadRef: ScopedThreadRef | null;
   toneClassName: string | null;
   condensed: boolean;
   repositoryUrl: string | null;
   openOnHostText: string;
   onBack: (() => void) | undefined;
-  threadRef?: ScopedThreadRef | null | undefined;
 }) {
   const gt = useGT();
   const openLink = useOpenLink(threadRef);
-  const handleOpenRepository = (event: ReactMouseEvent<HTMLElement>) => {
-    if (!repositoryUrl) return;
-    void openLink(repositoryUrl, { event }).catch((error: unknown) => {
-      console.error(error);
-      toastManager.add({
-        type: "error",
-        title: m(msg("Could not open the link")),
-      });
-    });
-  };
   const ready = detail !== null && toneClassName !== null;
   return (
     <div className="pl-4 grid h-7 min-w-0 items-center overflow-hidden">
@@ -176,9 +155,12 @@ export function PullRequestDetailCrumbs({
                   repositoryUrl ? (
                     <button
                       type="button"
-                      onClick={(event) => handleOpenRepository(event)}
+                      onClick={(event) =>
+                        void openLink(repositoryUrl, { event }).catch(console.error)
+                      }
                       onAuxClick={(event) => {
-                        if (event.button === 1) handleOpenRepository(event);
+                        if (event.button === 1)
+                          void openLink(repositoryUrl, { event }).catch(console.error);
                       }}
                       className="min-w-0 cursor-pointer truncate text-left font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
                     >
@@ -199,10 +181,10 @@ export function PullRequestDetailCrumbs({
             </Tooltip>
             <NumberLink
               detail={detail}
+              threadRef={threadRef}
               toneClassName={toneClassName}
               openOnHostText={openOnHostText}
               focusable
-              threadRef={threadRef}
             />
           </>
         ) : null}
@@ -223,10 +205,10 @@ export function PullRequestDetailCrumbs({
             {onBack ? <BackButton onBack={onBack} focusable={condensed} /> : null}
             <NumberLink
               detail={detail}
+              threadRef={threadRef}
               toneClassName={toneClassName}
               openOnHostText={openOnHostText}
               focusable={condensed}
-              threadRef={threadRef}
             />
             <Tooltip>
               <TooltipTrigger

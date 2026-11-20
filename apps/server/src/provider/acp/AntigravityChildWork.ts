@@ -405,14 +405,20 @@ async function readChildTranscript(
   try {
     const stat = await handle.stat();
     if (!stat.isFile()) return undefined;
-    const length = Math.min(stat.size, byteCap);
-    const buffer = Buffer.alloc(length);
-    const { bytesRead } = await handle.read(buffer, 0, length, stat.size - length);
-    const truncated = stat.size > length;
-    let contents = buffer.subarray(0, bytesRead).toString("utf8");
-    // A tail read starts mid-line.
-    if (truncated) contents = contents.slice(contents.indexOf("\n") + 1);
-    return { steps: transcriptSteps(contents, prompt), truncated };
+    const tailStart = Math.max(0, stat.size - byteCap);
+    // One extra byte tells whether the retained tail starts on a line boundary.
+    const readStart = Math.max(0, tailStart - 1);
+    const buffer = Buffer.alloc(stat.size - readStart);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, readStart);
+    const bytes = buffer.subarray(0, bytesRead);
+    let lineStart = 0;
+    if (tailStart > 0) {
+      const newline = bytes.indexOf(0x0a);
+      if (newline === -1) return { steps: [], truncated: true };
+      lineStart = newline + 1;
+    }
+    const contents = bytes.toString("utf8", lineStart);
+    return { steps: transcriptSteps(contents, prompt), truncated: tailStart > 0 };
   } finally {
     await handle.close();
   }

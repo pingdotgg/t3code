@@ -3,26 +3,19 @@ import {
   AuthSourceControlWriteScope,
   EnvironmentId,
   ProjectId,
-  type ScopedThreadRef,
   SourceControlProviderKind,
   type PullRequestDetailView,
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { userEvent } from "vite-plus/test/browser";
 import appCss from "~/index.css?inline";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { act, fakeTimers, render } from "../../../test/render";
 
-const { permissions, reads, shown, openLink } = vi.hoisted(() => ({
+const { permissions, reads, shown } = vi.hoisted(() => ({
   permissions: { checkout: true, operate: true },
   reads: { diff: [] as unknown[] },
   shown: { detail: null as PullRequestDetailView | null },
-  openLink: vi.fn<(url: string, options?: unknown) => Promise<void>>(),
-}));
-
-vi.mock(import("~/browser/useOpenLink"), () => ({
-  useOpenLink: (threadRef: unknown) => (url: string, options?: unknown) =>
-    openLink(url, { ...(options as object | undefined), threadRef }),
 }));
 
 vi.mock(import("~/state/session"), async (original) => ({
@@ -137,11 +130,10 @@ const detail: PullRequestDetailView = {
 
 const environmentId = EnvironmentId.make("environment");
 const draftId = DraftId.make("conflicts-draft");
-const panel = (attach = false, reference = detail, threadRef: ScopedThreadRef | null = null) => (
+const panel = (attach = false, reference = detail) => (
   <PullRequestDetailPanel
     environmentId={environmentId}
     reference={reference}
-    threadRef={threadRef}
     context="page"
     shortcutsEnabled={false}
     getShortcutContext={() => ({
@@ -161,7 +153,6 @@ function setup() {
   permissions.operate = true;
   reads.diff = [];
   shown.detail = detail;
-  openLink.mockReset().mockResolvedValue(undefined);
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
 }
 
@@ -246,23 +237,4 @@ it("keeps a screen reader's place when scrolling the description condenses the h
   await act(() => vi.advanceTimersToNextFrame());
   // A programmatic focus() pulls the screen reader's browse cursor back to the header.
   expect(moves).not.toHaveBeenCalled();
-});
-
-it("opens pull request on host using openLink with threadRef when the number link is clicked", async () => {
-  setup();
-  const threadRef = { environmentId, threadId: "thread-1" as never };
-  await using screen = await render(panel(false, detail, threadRef));
-  const openOnHost = screen.getByRole("button", { name: "Open pull request #1 on host" });
-  await openOnHost.click();
-  expect(openLink).toHaveBeenCalledWith(detail.url, expect.objectContaining({ threadRef }));
-});
-
-it("opens pull request on host using openLink with threadRef when Open on GitHub action is clicked", async () => {
-  setup();
-  const threadRef = { environmentId, threadId: "thread-1" as never };
-  await using screen = await render(panel(false, detail, threadRef));
-  await screen.getByRole("button", { name: "More pull request actions" }).click();
-  const openOnHost = page.getByRole("menuitem", { name: "Open on GitHub" });
-  await openOnHost.click();
-  expect(openLink).toHaveBeenCalledWith(detail.url, expect.objectContaining({ threadRef }));
 });
