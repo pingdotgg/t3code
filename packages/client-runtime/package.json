@@ -527,6 +527,10 @@
       "types": "./src/device/frame.ts",
       "default": "./src/device/frame.ts"
     },
+    "./three/dispose-object": {
+      "types": "./src/three/disposeObject.ts",
+      "default": "./src/three/disposeObject.ts"
+    },
     "./device/phone-viewer": {
       "types": "./src/device/phoneViewer.ts",
       "default": "./src/device/phoneViewer.ts"

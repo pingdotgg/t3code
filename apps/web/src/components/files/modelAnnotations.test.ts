@@ -88,6 +88,21 @@ describe("model notes as a chat annotation", () => {
     });
   });
 
+  it.each(["out/bracket#2.stl", "out/bracket?.stl", "bracket%23.glb"])(
+    "reopens a model with the literal filename %s",
+    (linkPath) => {
+      const { pageUrl } = payload({ linkPath });
+      expect(modelAnnotationFileTarget(pageUrl)).toEqual({ path: linkPath, view });
+    },
+  );
+
+  it.each(["out/report.txt", "file:///tmp/report.html"])(
+    "ignores a camera on the non-model file %s",
+    (path) => {
+      expect(modelViewFromHref(path + formatModelViewHash(view))).toBeNull();
+    },
+  );
+
   it("says when notes and the screenshot predate the current geometry", () => {
     expect(
       payload({

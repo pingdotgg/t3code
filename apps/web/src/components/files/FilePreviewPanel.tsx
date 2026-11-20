@@ -520,6 +520,7 @@ function WorkspaceDocumentPreview(props: {
       origin={gt("File", { $context: "label for a file opened from the workspace" })}
       composerDraftTarget={props.composerDraftTarget}
       modelLinkPath={props.linkPath}
+      threadRef={props.threadRef}
     />
   );
 }

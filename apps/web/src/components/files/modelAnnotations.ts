@@ -1,8 +1,16 @@
 import type { PreviewAnnotationPayload, ScopedThreadRef } from "@t3tools/contracts";
-import { parseMarkdownFileLink } from "@t3tools/shared/markdownLinks";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { modelPreviewKind } from "@t3tools/shared/filePreview";
+import {
+  encodeMarkdownLinkDestination,
+  normalizeMarkdownLinkDestination,
+  parseMarkdownFileLink,
+  safeDecodeURIComponent,
+  splitMarkdownLinkSearchAndHash,
+} from "@t3tools/shared/markdownLinks";
 import { create } from "zustand";
 
-import { useRightPanelStore } from "~/rightPanelStore";
+import { rightPanelHostRef, useRightPanelStore } from "~/rightPanelStore";
 
 export type Vec3 = readonly [number, number, number];
 
@@ -38,16 +46,13 @@ export function formatModelViewHash(view: ModelCameraView): string {
   return VIEW_HASH_PREFIX + [...view.position, ...view.target].map(formatNumber).join(",");
 }
 
-/** Reads a camera saved by `formatModelViewHash` from a link, or null when it has none. */
+/** Reads a camera from a supported model file link. */
 export function modelViewFromHref(href: string): ModelCameraView | null {
-  const hashIndex = href.indexOf("#");
-  if (hashIndex < 0) return null;
-  let hash: string;
-  try {
-    hash = decodeURIComponent(href.slice(hashIndex));
-  } catch {
-    return null;
-  }
+  return modelAnnotationFileTarget(href)?.view ?? null;
+}
+
+function parseModelView(hash: string): ModelCameraView | null {
+  hash = safeDecodeURIComponent(hash);
   if (!hash.startsWith(VIEW_HASH_PREFIX)) return null;
   const parts = hash.slice(VIEW_HASH_PREFIX.length).split(",");
   if (parts.length !== 6 || parts.some((part) => part.trim() === "")) return null;
@@ -71,13 +76,6 @@ export function reconcileModelNotes(
   if (saved.fingerprint === fingerprint) return saved.notes;
   return saved.notes.map((note) => (note.stale ? note : { ...note, stale: true }));
 }
-
-/** Escapes characters a link destination would otherwise end or split at. */
-const linkDestination = (path: string) =>
-  path.replace(
-    /[\t ()<>#?%]/g,
-    (character) => `%${character.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`,
-  );
 
 // Attachments have no workspace path to reopen, so their notes name the file under a scheme
 // that never parses as a file link.
@@ -114,7 +112,7 @@ export function modelAnnotationPayload(input: {
     pageUrl:
       input.linkPath === null
         ? ATTACHMENT_URL_PREFIX + input.name
-        : linkDestination(input.linkPath) + formatModelViewHash(input.view),
+        : encodeMarkdownLinkDestination(input.linkPath) + formatModelViewHash(input.view),
     pageTitle: input.name,
     comment: [
       ...notes,
@@ -133,9 +131,12 @@ export function modelAnnotationPayload(input: {
 export function modelAnnotationFileTarget(
   pageUrl: string,
 ): { readonly path: string; readonly view: ModelCameraView } | null {
-  const view = modelViewFromHref(pageUrl);
-  const target = view ? parseMarkdownFileLink(pageUrl) : null;
-  return target && view ? { path: target.path, view } : null;
+  const href = normalizeMarkdownLinkDestination(pageUrl);
+  const view = parseModelView(splitMarkdownLinkSearchAndHash(href).hash);
+  const target = view ? parseMarkdownFileLink(href) : null;
+  return target && view && modelPreviewKind({ name: target.path })
+    ? { path: target.path, view }
+    : null;
 }
 
 /** Opens a file in the thread's right panel, at a saved camera when it is a model. */
@@ -148,7 +149,7 @@ export function openFileAtModelView(
   if (view) {
     useModelPreviewStore
       .getState()
-      .requestView(modelPreviewKey(threadRef.environmentId, path), view);
+      .requestView(modelViewRequestKey(rightPanelHostRef(threadRef), path), view);
   }
   useRightPanelStore.getState().openFile(threadRef, path, line);
 }
@@ -156,9 +157,10 @@ export function openFileAtModelView(
 interface ModelPreviewMemory {
   readonly fingerprint: string;
   readonly notes: ReadonlyArray<ModelNote>;
-  readonly view: ModelCameraView | null;
+  readonly view: ModelCameraView;
+  readonly wireframe: boolean;
   /** The annotated view captured before the geometry changed under stale notes. */
-  readonly earlierScreenshot: ModelCapture | null;
+  readonly capture: { readonly screenshot: ModelCapture; readonly view: ModelCameraView } | null;
 }
 
 interface ModelPreviewStore {
@@ -198,5 +200,6 @@ export const useModelPreviewStore = create<ModelPreviewStore>()((set) => ({
     }),
 }));
 
-/** Identifies one model file in one environment across preview mounts. */
-export const modelPreviewKey = (environmentId: string, path: string) => `${environmentId}:${path}`;
+/** Routes a camera to the file surface in the panel that opened it. */
+export const modelViewRequestKey = (threadRef: ScopedThreadRef, path: string) =>
+  JSON.stringify([scopedThreadKey(threadRef), path]);

@@ -1,3 +1,5 @@
+import { encodeMarkdownLinkDestination } from "./markdownLinks.ts";
+
 export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
 export type ComposerSlashCommand = "model" | "plan" | "default";
 
@@ -17,15 +19,6 @@ function composerFileLinkBasename(path: string): string {
 // which no longer matches the path, so the label shows beside the chip.
 function escapeMarkdownLinkLabel(label: string): string {
   return label.replace(/[\\[\]*_]/g, "\\$&");
-}
-
-function encodeMarkdownLinkDestination(path: string): string {
-  return encodeURI(path)
-    .replaceAll("(", "%28")
-    .replaceAll(")", "%29")
-    .replaceAll("#", "%23")
-    .replaceAll("?", "%3F")
-    .replaceAll("\\", "%5C");
 }
 
 export function serializeComposerFileLink(path: string): string {

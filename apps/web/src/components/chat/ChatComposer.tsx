@@ -3687,6 +3687,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 {previewFile ? (
                   <ComposerFilePreviewDialog
                     file={previewFile}
+                    composerDraftTarget={composerDraftTarget}
                     onRemove={removeComposerFileFromDraft}
                     onPreviewFileIdChange={setPreviewFileId}
                   />

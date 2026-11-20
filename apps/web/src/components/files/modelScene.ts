@@ -1,3 +1,6 @@
+import { sha256 } from "@noble/hashes/sha2";
+import { bytesToHex } from "@noble/hashes/utils";
+import { disposeThreeObject } from "@t3tools/client-runtime/three/dispose-object";
 import type { ModelPreviewKind } from "@t3tools/shared/filePreview";
 import {
   Box3,
@@ -7,6 +10,7 @@ import {
   GridHelper,
   Group,
   HemisphereLight,
+  LoadingManager,
   Material,
   Matrix4,
   Mesh,
@@ -16,7 +20,6 @@ import {
   Raycaster,
   Scene,
   Spherical,
-  Texture,
   Vector2,
   Vector3,
   WebGLRenderer,
@@ -26,6 +29,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { observeResize } from "~/lib/observeResize";
 
 import { PreviewError } from "./previewFailure";
+import { readBoundedDocument } from "./readBoundedDocument";
 import type { ModelCameraView, ModelCapture, ModelNote, Vec3 } from "./modelAnnotations";
 
 /** Larger files are refused before parsing, which runs on the main thread. */
@@ -38,7 +42,7 @@ interface ModelSummary {
   readonly triangles: number;
   /** Bounding box size in the file's own units. */
   readonly size: Vec3;
-  /** Changes whenever the geometry does, so notes can tell they no longer match. */
+  /** Content revision, including geometry, transforms and embedded assets. */
   readonly fingerprint: string;
 }
 
@@ -55,36 +59,38 @@ interface ProjectedPin {
   readonly behind: boolean;
 }
 
-/** Reads a model file with a byte cap; aborting cancels the transfer. */
-async function fetchModelBytes(src: string, signal: AbortSignal): Promise<ArrayBuffer> {
-  const response = await fetch(src, { signal });
-  if (!response.ok || !response.body) throw new PreviewError({ code: "file-unavailable" });
-  const declared = Number(response.headers.get("content-length"));
-  if (declared > MAX_MODEL_BYTES) throw new PreviewError({ code: "document-too-large" });
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > MAX_MODEL_BYTES) {
-      void reader.cancel();
-      throw new PreviewError({ code: "document-too-large" });
-    }
-    chunks.push(value);
+async function prepareModelArchive(bytes: ArrayBuffer, signal: AbortSignal) {
+  signal.throwIfAborted();
+  const worker = new Worker(new URL("./modelArchive.worker.ts", import.meta.url), {
+    type: "module",
+  });
+  const listeners = new AbortController();
+  try {
+    return await new Promise<ArrayBuffer>((resolve, reject) => {
+      const options = { signal: listeners.signal };
+      signal.addEventListener("abort", () => reject(signal.reason), options);
+      worker.addEventListener("error", reject, options);
+      worker.addEventListener(
+        "message",
+        (event: MessageEvent<ArrayBuffer | null>) => {
+          if (event.data) resolve(event.data);
+          else reject(new PreviewError({ code: "model-invalid" }));
+        },
+        options,
+      );
+      worker.postMessage(bytes, [bytes]);
+    });
+  } finally {
+    listeners.abort();
+    worker.terminate();
   }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return bytes.buffer;
 }
 
-// Loaders load with the format that needs them, so opening an STL never pulls in glTF.
-async function parseModel(format: ModelPreviewKind, bytes: ArrayBuffer): Promise<Object3D> {
+async function parseModel(
+  format: ModelPreviewKind,
+  bytes: ArrayBuffer,
+  signal: AbortSignal,
+): Promise<Object3D> {
   switch (format) {
     case "stl": {
       const { STLLoader } = await import("three/examples/jsm/loaders/STLLoader.js");
@@ -101,11 +107,37 @@ async function parseModel(format: ModelPreviewKind, bytes: ArrayBuffer): Promise
     }
     case "3mf": {
       const { ThreeMFLoader } = await import("three/examples/jsm/loaders/3MFLoader.js");
-      return new ThreeMFLoader().parse(bytes);
+      const archive = await prepareModelArchive(bytes, signal);
+      signal.throwIfAborted();
+      return new ThreeMFLoader().parse(archive);
     }
     case "glb": {
       const { GLTFLoader } = await import("three/examples/jsm/loaders/GLTFLoader.js");
-      const gltf = await new GLTFLoader().parseAsync(bytes, "");
+      const manager = new LoadingManager().setURLModifier((url) => {
+        if (/^(?:data|blob):/i.test(url)) return url;
+        throw new PreviewError({ code: "model-invalid" });
+      });
+      const gltf = await new GLTFLoader(manager)
+        .register((parser) => ({
+          name: "self-contained-preview",
+          beforeRoot: () => {
+            const manifest: {
+              buffers?: ReadonlyArray<{ uri?: unknown }>;
+              images?: ReadonlyArray<{ uri?: unknown }>;
+            } = parser.json;
+            // Blob URLs must come from the loader's embedded image handling.
+            for (const part of [...(manifest.buffers ?? []), ...(manifest.images ?? [])]) {
+              if (
+                part.uri !== undefined &&
+                (typeof part.uri !== "string" || !/^data:/i.test(part.uri))
+              ) {
+                throw new PreviewError({ code: "model-invalid" });
+              }
+            }
+            return Promise.resolve();
+          },
+        }))
+        .parseAsync(bytes, "");
       return gltf.scene;
     }
   }
@@ -120,28 +152,6 @@ function countTriangles(root: Object3D): number {
     triangles += Math.floor(count / 3);
   });
   return triangles;
-}
-
-function disposeMaterial(material: Material) {
-  for (const value of Object.values(material)) {
-    if (value instanceof Texture) {
-      const data: unknown = value.source.data;
-      if (typeof ImageBitmap !== "undefined" && data instanceof ImageBitmap) data.close();
-      value.dispose();
-    }
-  }
-  material.dispose();
-}
-
-/** Frees GPU buffers, textures and materials under `root`. */
-function disposeObject(root: Object3D) {
-  root.traverse((object) => {
-    const disposable = object as Partial<Mesh>;
-    disposable.geometry?.dispose();
-    const material = disposable.material;
-    if (Array.isArray(material)) material.forEach(disposeMaterial);
-    else if (material) disposeMaterial(material);
-  });
 }
 
 const toVec3 = (vector: Vector3): Vec3 => [vector.x, vector.y, vector.z];
@@ -167,7 +177,12 @@ export class ModelScene {
   private disposed = false;
   private onFrame: () => void = () => undefined;
 
-  private constructor(container: HTMLElement, format: ModelPreviewKind, content: Object3D) {
+  private constructor(
+    container: HTMLElement,
+    format: ModelPreviewKind,
+    content: Object3D,
+    fingerprint: string,
+  ) {
     this.content = content;
     this.container = container;
     const frame = new Group();
@@ -193,9 +208,7 @@ export class ModelScene {
       format,
       triangles,
       size: toVec3(localSize),
-      fingerprint: [triangles, ...toVec3(localBounds.min), ...toVec3(localBounds.max)]
-        .map((value) => Number(value.toPrecision(6)))
-        .join(":"),
+      fingerprint,
     };
 
     // A translucent neutral grid reads on both light and dark theme backgrounds.
@@ -220,6 +233,7 @@ export class ModelScene {
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = false;
     this.controls.addEventListener("change", this.requestRender);
+    this.resize();
     this.setPreset("iso");
 
     this.stopResizeObserver = observeResize(container, () => this.resize());
@@ -228,7 +242,6 @@ export class ModelScene {
       if (this.visible) this.requestRender();
     });
     this.visibilityObserver.observe(container);
-    this.resize();
   }
 
   /** Fetches, parses and mounts a model; aborting before it finishes frees what it made. */
@@ -237,24 +250,30 @@ export class ModelScene {
     readonly src: string;
     readonly format: ModelPreviewKind;
     readonly signal: AbortSignal;
+    readonly cache?: RequestCache;
   }): Promise<ModelScene> {
-    const bytes = await fetchModelBytes(input.src, input.signal);
+    const bytes = await readBoundedDocument(input.src, input.signal, MAX_MODEL_BYTES, input.cache);
+    input.signal.throwIfAborted();
+    const digest = globalThis.crypto?.subtle
+      ? new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", bytes))
+      : sha256(new Uint8Array(bytes));
     input.signal.throwIfAborted();
     let content: Object3D;
     try {
-      content = await parseModel(input.format, bytes);
+      content = await parseModel(input.format, bytes, input.signal);
     } catch {
+      input.signal.throwIfAborted();
       throw new PreviewError({ code: "model-invalid" });
     }
     if (input.signal.aborted || countTriangles(content) === 0) {
-      disposeObject(content);
+      disposeThreeObject(content);
       input.signal.throwIfAborted();
       throw new PreviewError({ code: "model-invalid" });
     }
     try {
-      return new ModelScene(input.container, input.format, content);
+      return new ModelScene(input.container, input.format, content, bytesToHex(digest));
     } catch {
-      disposeObject(content);
+      disposeThreeObject(content);
       throw new PreviewError({ code: "model-webgl-unavailable" });
     }
   }
@@ -298,7 +317,11 @@ export class ModelScene {
       direction.copy(this.camera.position).sub(this.controls.target);
       if (direction.lengthSq() === 0) direction.set(1, 0.8, 1.2);
     }
-    const distance = this.radius / Math.sin(((this.camera.fov / 2) * Math.PI) / 180);
+    const vertical = (this.camera.fov * Math.PI) / 360;
+    const horizontal = Math.atan(Math.tan(vertical) * this.camera.aspect);
+    const distance = this.radius / Math.sin(Math.min(vertical, horizontal));
+    this.camera.far = Math.max(this.radius * 100, distance * 2);
+    this.camera.updateProjectionMatrix();
     this.controls.target.set(0, 0, 0);
     this.camera.position.copy(direction.normalize().multiplyScalar(distance * 1.05));
     this.controls.update();
@@ -425,7 +448,7 @@ export class ModelScene {
     this.visibilityObserver.disconnect();
     this.controls.removeEventListener("change", this.requestRender);
     this.controls.dispose();
-    disposeObject(this.scene);
+    disposeThreeObject(this.scene);
     this.scene.clear();
     this.renderer.dispose();
     this.renderer.forceContextLoss();

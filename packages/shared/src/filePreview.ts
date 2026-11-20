@@ -163,7 +163,9 @@ export function modelPreviewKind(file: {
   const alias = MODEL_MIME_ALIASES.get(mime);
   if (alias) return alias;
   if (mime && !GENERIC_MIME_TYPES.has(mime) && mime !== "text/plain") return null;
-  const extension = file.name.slice(file.name.lastIndexOf(".") + 1).toLowerCase();
+  const dot = file.name.lastIndexOf(".");
+  if (dot < 0) return null;
+  const extension = file.name.slice(dot + 1).toLowerCase();
   return Object.hasOwn(MODEL_MIME_TYPES, extension) ? (extension as ModelPreviewKind) : null;
 }
 

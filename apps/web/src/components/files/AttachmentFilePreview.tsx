@@ -38,7 +38,7 @@ import type { ComposerThreadTarget } from "~/composerDraftStore";
 import { useClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 
-import { modelPreviewKey } from "./modelAnnotations";
+import { modelViewRequestKey } from "./modelAnnotations";
 import { BinaryFilePreview } from "./BinaryFilePreview";
 import { PreviewImage } from "./PreviewImage";
 import { AudioPreview } from "./AudioPreview";
@@ -107,6 +107,7 @@ export function AttachmentFilePreview(props: {
   mimeType: string;
   sizeBytes: number;
   file?: Blob | null;
+  draftAttachmentId?: string;
   asset?:
     | { environmentId: EnvironmentId; attachmentId: string }
     | {
@@ -351,10 +352,19 @@ export function AttachmentFilePreview(props: {
         src={url}
         name={props.name}
         format={modelKind}
-        memoryKey={modelPreviewKey(
-          props.asset?.environmentId ?? "local",
-          props.modelLinkPath ?? `attachment:${attachmentId ?? props.name}`,
+        memoryKey={JSON.stringify(
+          props.draftAttachmentId
+            ? ["draft-attachment", props.draftAttachmentId]
+            : resource && "path" in resource
+              ? ["workspace", props.asset?.environmentId, resource.path]
+              : ["attachment", props.asset?.environmentId, attachmentId ?? url],
         )}
+        viewRequestKey={
+          props.threadRef && props.modelLinkPath
+            ? modelViewRequestKey(props.threadRef, props.modelLinkPath)
+            : null
+        }
+        onRefreshUrl={props.file ? undefined : () => setRevision((value) => value + 1)}
         linkPath={props.modelLinkPath ?? null}
         composerDraftTarget={props.composerDraftTarget}
         toolbarSlots={{ stats: modelStatsSlot, actions: modelActionsSlot }}

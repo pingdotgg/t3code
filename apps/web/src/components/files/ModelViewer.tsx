@@ -11,13 +11,12 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
-import { readComposerImageBytes } from "~/components/chat/composerAttachmentFiles";
 import { Button } from "~/components/ui/button";
 import { Textarea } from "~/components/ui/textarea";
 import { Toggle } from "~/components/ui/toggle";
 import { toastManager } from "~/components/ui/toast";
-import { type ComposerThreadTarget, useComposerDraftStore } from "~/composerDraftStore";
-import { dataUrlToFile } from "~/lib/imageCompression";
+import type { ComposerThreadTarget } from "~/composerDraftStore";
+import { stagePreviewAnnotation } from "~/lib/previewAnnotation";
 import { m } from "~/i18n/messages";
 import { cn, randomUUID } from "~/lib/utils";
 
@@ -26,6 +25,7 @@ import {
   modelAnnotationPayload,
   reconcileModelNotes,
   useModelPreviewStore,
+  type ModelCameraView,
   type ModelCapture,
   type ModelNote,
   type Vec3,
@@ -72,7 +72,17 @@ function placeOverlays(scene: ModelScene, overlays: Overlays) {
   const editor = overlays.editor.current;
   if (editor && anchor) {
     const [pin] = scene.project([{ ...anchor, id: "", text: "", stale: false }]);
-    if (pin) editor.style.transform = `translate(${pin.x + 16}px, ${pin.y - 12}px)`;
+    if (pin && editor.parentElement) {
+      const x = Math.max(
+        0,
+        Math.min(pin.x + 16, editor.parentElement.clientWidth - editor.offsetWidth),
+      );
+      const y = Math.max(
+        0,
+        Math.min(pin.y - 12, editor.parentElement.clientHeight - editor.offsetHeight),
+      );
+      editor.style.transform = `translate(${x}px, ${y}px)`;
+    }
   }
   const status = overlays.status.current;
   if (status) {
@@ -82,15 +92,16 @@ function placeOverlays(scene: ModelScene, overlays: Overlays) {
 }
 
 /**
- * Interactive STL, 3MF and GLB preview with numbered surface notes. Notes, the camera and
- * pending link views live in `useModelPreviewStore` under `memoryKey`, so a reload of a
- * changed file or a reopened tab picks them up again.
+ * Interactive STL, 3MF and GLB preview with numbered surface notes.
+ * Restores notes by asset identity and applies camera links addressed to this panel.
  */
 export default function ModelViewer(props: {
   readonly src: string;
   readonly name: string;
   readonly format: ModelPreviewKind;
   readonly memoryKey: string;
+  readonly viewRequestKey: string | null;
+  readonly onRefreshUrl: (() => void) | undefined;
   /** Path a chat link can open, or null when the model is an attachment. */
   readonly linkPath: string | null;
   readonly composerDraftTarget: ComposerThreadTarget | undefined;
@@ -110,11 +121,19 @@ export default function ModelViewer(props: {
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [notes, setNotes] = useState<ReadonlyArray<ModelNote>>([]);
-  const [earlierScreenshot, setEarlierScreenshot] = useState<ModelCapture | null>(null);
+  const rememberedCapture = useRef<{ screenshot: ModelCapture; view: ModelCameraView } | null>(
+    null,
+  );
+  const loadController = useRef<AbortController | null>(null);
+  const [sending, setSending] = useState(false);
   const [annotating, setAnnotating] = useState(false);
   const [wireframe, setWireframe] = useState(false);
   const [draft, setDraft] = useState<DraftPin | null>(null);
-  const viewRequest = useModelPreviewStore((store) => store.viewRequests[props.memoryKey]);
+  const viewRequestKey = props.viewRequestKey;
+  const viewRequest = useModelPreviewStore((store) =>
+    viewRequestKey === null ? undefined : store.viewRequests[viewRequestKey],
+  );
+  const readWireframe = useEffectEvent(() => wireframe);
   // Read by the scene's frame listener, which runs outside React renders.
   const notesRef = useRef(notes);
   const draftRef = useRef(draft);
@@ -124,23 +143,37 @@ export default function ModelViewer(props: {
     const container = containerRef.current;
     if (!container) return;
     const controller = new AbortController();
+    loadController.current = controller;
     let mounted: ModelScene | null = null;
     setError(null);
-    ModelScene.load({ container, src: props.src, format: props.format, signal: controller.signal })
+    setDraft(null);
+    setSending(false);
+    ModelScene.load({
+      container,
+      src: props.src,
+      format: props.format,
+      signal: controller.signal,
+      cache: attempt === 0 ? "default" : "reload",
+    })
       .then((loaded) => {
+        if (controller.signal.aborted) {
+          loaded.dispose();
+          return;
+        }
         mounted = loaded;
         const store = useModelPreviewStore.getState();
         const memory = store.memory[props.memoryKey];
+        const restoredWireframe = memory?.wireframe ?? false;
+        loaded.setWireframe(restoredWireframe);
+        setWireframe(restoredWireframe);
         const restored = reconcileModelNotes(memory, loaded.summary.fingerprint);
         notesRef.current = restored;
         setNotes(restored);
-        setEarlierScreenshot(
-          restored.some((note) => note.stale) ? (memory?.earlierScreenshot ?? null) : null,
-        );
-        const request = store.viewRequests[props.memoryKey];
-        if (request) {
+        rememberedCapture.current = memory?.capture ?? null;
+        const request = viewRequestKey === null ? undefined : store.viewRequests[viewRequestKey];
+        if (request && viewRequestKey !== null) {
           loaded.setView(request);
-          store.consumeView(props.memoryKey);
+          store.consumeView(viewRequestKey);
         } else if (memory?.view) {
           loaded.setView(memory.view);
         }
@@ -162,28 +195,24 @@ export default function ModelViewer(props: {
     return () => {
       controller.abort();
       if (!mounted) return;
-      const current = notesRef.current;
-      const live = current.some((note) => !note.stale);
-      const memory = useModelPreviewStore.getState().memory[props.memoryKey];
-      // The file may change before it is opened again; keep a picture of where live notes were.
       useModelPreviewStore.getState().remember(props.memoryKey, {
         fingerprint: mounted.summary.fingerprint,
-        notes: current,
+        notes: notesRef.current,
         view: mounted.view,
-        earlierScreenshot: live ? mounted.capture(current) : (memory?.earlierScreenshot ?? null),
+        wireframe: readWireframe(),
+        capture: rememberedCapture.current,
       });
       mounted.dispose();
       setScene(null);
     };
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Retry must load the file again.
-  }, [props.src, props.format, props.memoryKey, attempt]);
+  }, [props.src, props.format, props.memoryKey, viewRequestKey, attempt]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves the WebGL camera when a clicked chat link asks for a saved view while this model is open
   useEffect(() => {
-    if (!scene || !viewRequest) return;
+    if (!scene || !viewRequest || viewRequestKey === null) return;
     scene.setView(viewRequest);
-    useModelPreviewStore.getState().consumeView(props.memoryKey);
-  }, [scene, viewRequest, props.memoryKey]);
+    useModelPreviewStore.getState().consumeView(viewRequestKey);
+  }, [scene, viewRequest, viewRequestKey]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- notes and the open editor are DOM overlays the scene positions, so it reads them and draws a frame after they change
   useEffect(() => {
@@ -215,28 +244,41 @@ export default function ModelViewer(props: {
     if (hit) setDraft({ id: null, hit, text: "" });
   };
 
+  const rememberPins = (next: ReadonlyArray<ModelNote>) => {
+    if (!scene || !next.some((note) => !note.stale)) return;
+    try {
+      rememberedCapture.current = { screenshot: scene.capture(next), view: scene.view };
+    } catch {
+      rememberedCapture.current = null;
+    }
+  };
+
   const saveDraft = () => {
     if (!draft) return;
     const text = draft.text.trim();
     if (!text) return;
     if (draft.id === null && draft.hit) {
       const { point, normal } = draft.hit;
-      setNotes([...notes, { id: randomUUID(), text, point, normal, stale: false }]);
+      const next = [...notes, { id: randomUUID(), text, point, normal, stale: false }];
+      setNotes(next);
+      rememberPins(next);
     } else {
       setNotes(notes.map((note) => (note.id === draft.id ? { ...note, text } : note)));
     }
     setDraft(null);
   };
   const deleteNote = (id: string) => {
-    const deleted = notes.find((note) => note.id === id);
-    // The earlier screenshot numbers the stale notes; removing one would misnumber it.
-    if (deleted?.stale) setEarlierScreenshot(null);
-    setNotes(notes.filter((note) => note.id !== id));
+    // Removing a note invalidates the numbering in its saved screenshot.
+    const next = notes.filter((note) => note.id !== id);
+    rememberedCapture.current = null;
+    rememberPins(next);
+    setNotes(next);
     setDraft(null);
   };
 
   const sendToChat = async () => {
-    if (!scene || notes.length === 0) return;
+    const signal = loadController.current?.signal;
+    if (!scene || !signal || signal.aborted || sending || notes.length === 0) return;
     const target = props.composerDraftTarget;
     if (!target) {
       toastManager.add({
@@ -246,36 +288,41 @@ export default function ModelViewer(props: {
       });
       return;
     }
-    const allStale = notes.every((note) => note.stale);
-    const useEarlier = allStale && earlierScreenshot !== null;
-    const capture = useEarlier ? earlierScreenshot : scene.capture(notes);
-    const fileName = `${props.name.split("/").at(-1)}-notes.png`;
-    const file = dataUrlToFile(capture.dataUrl, fileName, "image/png");
-    await readComposerImageBytes(file);
-    const annotation = modelAnnotationPayload({
-      id: randomUUID(),
-      name: props.name,
-      linkPath: props.linkPath,
-      view: scene.view,
-      notes,
-      screenshot: { ...capture, earlier: useEarlier },
-      createdAt: new Date().toISOString(),
-    });
-    // Same shape as a browser annotation: the chip in the draft, its screenshot under its id.
-    const store = useComposerDraftStore.getState();
-    store.addPreviewAnnotation(target, annotation);
-    store.addImage(target, {
-      type: "image",
-      id: annotation.id,
-      name: file.name,
-      mimeType: file.type,
-      sizeBytes: file.size,
-      previewUrl: capture.dataUrl,
-      file,
-    });
-    setNotes([]);
-    setEarlierScreenshot(null);
-    setAnnotating(false);
+    setSending(true);
+    try {
+      const earlier = notes.every((note) => note.stale) ? rememberedCapture.current : null;
+      const capture = earlier?.screenshot ?? scene.capture(notes);
+      const annotation = modelAnnotationPayload({
+        id: randomUUID(),
+        name: props.name,
+        linkPath: props.linkPath,
+        view: earlier?.view ?? scene.view,
+        notes,
+        screenshot: { ...capture, earlier: earlier !== null },
+        createdAt: new Date().toISOString(),
+      });
+      const staged = await stagePreviewAnnotation(target, annotation, {
+        requireScreenshot: true,
+        signal,
+      });
+      if (signal.aborted) return;
+      if (!staged) throw new Error("Could not stage the model annotation");
+      const next = notesRef.current.filter((note) => !notes.includes(note));
+      rememberedCapture.current = null;
+      rememberPins(next);
+      setNotes(next);
+      if (next.length === 0) setAnnotating(false);
+    } catch {
+      if (!signal.aborted) {
+        toastManager.add({
+          type: "error",
+          title: gt("Unable to add to chat"),
+          description: gt("Please try again."),
+        });
+      }
+    } finally {
+      if (!signal.aborted) setSending(false);
+    }
   };
 
   const summary = scene?.summary;
@@ -327,18 +374,6 @@ export default function ModelViewer(props: {
         )
       : null;
 
-  if (error) {
-    return (
-      <FileSurfaceFailure
-        message={error}
-        onRetry={() => {
-          setScene(null);
-          setAttempt((value) => value + 1);
-        }}
-      />
-    );
-  }
-
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
       {stats}
@@ -351,7 +386,11 @@ export default function ModelViewer(props: {
           <span className="shrink-0 text-muted-foreground">
             {gt("{count, plural, one {1 note} other {# notes}}", { count: notes.length })}
           </span>
-          <Button size="xs" disabled={notes.length === 0} onClick={() => void sendToChat()}>
+          <Button
+            size="xs"
+            disabled={sending || !scene || notes.length === 0}
+            onClick={() => void sendToChat()}
+          >
             {gt("{count, plural, one {Send 1 to chat} other {Send # to chat}}", {
               count: notes.length,
             })}
@@ -387,7 +426,19 @@ export default function ModelViewer(props: {
         onPointerUp={handlePointerUp}
       >
         <div ref={containerRef} className="absolute inset-0 bg-background" />
-        {scene ? null : <FileSurfaceLoading className="absolute inset-0" />}
+        {error ? (
+          <div className="absolute inset-0 flex">
+            <FileSurfaceFailure
+              message={error}
+              onRetry={() => {
+                if (props.onRefreshUrl) props.onRefreshUrl();
+                else setAttempt((value) => value + 1);
+              }}
+            />
+          </div>
+        ) : scene ? null : (
+          <FileSurfaceLoading className="absolute inset-0" />
+        )}
         {notes.map((note, index) =>
           note.stale ? null : (
             <button
@@ -410,7 +461,7 @@ export default function ModelViewer(props: {
         {draft ? (
           <div
             ref={editorRef}
-            className="absolute top-0 left-0 w-60 rounded-lg border border-border bg-popover p-2 text-xs shadow-lg"
+            className="absolute top-0 left-0 w-60 max-w-full rounded-lg border border-border bg-popover p-2 text-xs shadow-lg"
             onPointerDown={(event) => event.stopPropagation()}
             onPointerUp={(event) => event.stopPropagation()}
           >
