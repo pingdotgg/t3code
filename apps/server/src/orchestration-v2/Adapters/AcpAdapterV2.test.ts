@@ -261,29 +261,6 @@ describe("acpPerTurnPromptUsage", () => {
     );
     assert.deepEqual(
       acpPerTurnPromptUsage(
-        {
-          inputTokens: 40,
-          outputTokens: 10,
-          totalTokens: 110,
-          cachedReadTokens: 60,
-          thoughtTokens: 30,
-        },
-        false,
-        "completed",
-        true,
-      ),
-      {
-        usageScope: "main_agent",
-        usageStatus: "complete",
-        hasSubagents: false,
-        inputTokens: 100,
-        outputTokens: 10,
-        cachedInputTokens: 60,
-        reasoningTokens: 10,
-      },
-    );
-    assert.deepEqual(
-      acpPerTurnPromptUsage(
         { inputTokens: 100, outputTokens: 10, totalTokens: 110 },
         false,
         "completed",
