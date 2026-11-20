@@ -104,6 +104,36 @@ const currentThemes = Effect.gen(function* () {
   return yield* environmentTheme.current;
 });
 
+it.live("publishes restored themes to subscribers that saw the directory disappear", () =>
+  withEnvironmentThemes(
+    { "nightfall.json": encodeThemeFile(NIGHTFALL_THEME) },
+    Effect.gen(function* () {
+      const service = yield* EnvironmentTheme.EnvironmentThemeService;
+      const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const restored = path.join(path.dirname(environmentThemesDir), "themes-restored");
+      yield* fs.makeDirectory(restored);
+      yield* fs.writeFileString(
+        path.join(restored, "shared-light.json"),
+        encodeThemeFile(SHARED_THEME),
+      );
+
+      const snapshots = yield* service.streamChanges.pipe(
+        Stream.map((themes) => themes.map((theme) => theme.name)),
+        Stream.toQueue({ capacity: "unbounded" }),
+      );
+      assert.deepEqual(yield* Queue.take(snapshots), ["Nightfall"]);
+
+      yield* fs.rename(environmentThemesDir, path.join(path.dirname(restored), "themes-previous"));
+      assert.deepEqual(yield* Queue.take(snapshots), []);
+
+      yield* fs.rename(restored, environmentThemesDir);
+      assert.deepEqual(yield* Queue.take(snapshots), ["Shared Light"]);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.layer(NodeServices.layer)("environment theme", (it) => {
   it.effect("follows the directory rather than the set read at start", () =>
     withEnvironmentThemes(
@@ -155,39 +185,6 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
           (yield* Queue.take(seen)).map((theme) => theme.id),
           ["shared-light"],
         );
-      }),
-    ),
-  );
-
-  it.live("publishes restored themes to subscribers that saw the directory disappear", () =>
-    withEnvironmentThemes(
-      { "nightfall.json": encodeThemeFile(NIGHTFALL_THEME) },
-      Effect.gen(function* () {
-        const service = yield* EnvironmentTheme.EnvironmentThemeService;
-        const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const restored = path.join(path.dirname(environmentThemesDir), "themes-restored");
-        yield* fs.makeDirectory(restored);
-        yield* fs.writeFileString(
-          path.join(restored, "shared-light.json"),
-          encodeThemeFile(SHARED_THEME),
-        );
-
-        const snapshots = yield* service.streamChanges.pipe(
-          Stream.map((themes) => themes.map((theme) => theme.name)),
-          Stream.toQueue({ capacity: "unbounded" }),
-        );
-        assert.deepEqual(yield* Queue.take(snapshots), ["Nightfall"]);
-
-        yield* fs.rename(
-          environmentThemesDir,
-          path.join(path.dirname(restored), "themes-previous"),
-        );
-        assert.deepEqual(yield* Queue.take(snapshots), []);
-
-        yield* fs.rename(restored, environmentThemesDir);
-        assert.deepEqual(yield* Queue.take(snapshots), ["Shared Light"]);
       }),
     ),
   );
