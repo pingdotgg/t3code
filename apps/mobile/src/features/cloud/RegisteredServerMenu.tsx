@@ -13,7 +13,7 @@ export type RegisteredServerMenuProps = {
 
 export function RegisteredServerMenu(props: RegisteredServerMenuProps) {
   return (
-    <Menu actions={props.actions} onPressAction={props.onPressAction}>
+    <Menu actions={props.actions} isAnchoredToRight onPressAction={props.onPressAction}>
       <Pressable
         accessibilityLabel={props.accessibilityLabel}
         accessibilityRole="button"

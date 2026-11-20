@@ -15,10 +15,7 @@ export function RegisteredServerMenu(props: RegisteredServerMenuProps) {
 
   // Clerk's Compose host offsets RN window coordinates, so anchor the popup within the button's view.
   return (
-    <View
-      collapsable={false}
-      style={{ width: buttonSize, height: buttonSize, opacity: props.disabled ? 0.5 : 1 }}
-    >
+    <View collapsable={false} style={{ width: buttonSize, height: buttonSize }}>
       <IconButton
         accessibilityLabel={props.accessibilityLabel}
         disabled={props.disabled}
