@@ -1333,6 +1333,15 @@ export function LayoutSurfaceHost({
   );
   const still = (paneId: string | undefined) =>
     staged || (stacked && (paneId === undefined || !focusedWorkspacePaneIds.has(paneId)));
+  // The workspace the window showed when the overview opened: its chats stay
+  // live under it (see LayoutChatSurface), whichever row the overview selects.
+  const [shownWorkspaceId, setShownWorkspaceId] = useState<string | null>(null);
+  if (staged !== (shownWorkspaceId !== null)) setShownWorkspaceId(staged ? workspace.id : null);
+  const shownPaneIds = new Set(
+    shown.workspaces
+      .find((candidate) => candidate.id === shownWorkspaceId)
+      ?.columns.flatMap((column) => column.panes.map((pane) => pane.id)) ?? [],
+  );
 
   // Panes open, close and shift with niri's window motion (motion/paneMotion.ts)
   // on the plain strip; a resize drag, a switch, the overview, filling the
@@ -1576,6 +1585,7 @@ export function LayoutSurfaceHost({
                 split={split}
                 staged={still(slotByTabId.get(tabId)?.slot.paneId)}
                 overview={staged}
+                live={shownPaneIds.has(entry.paneId)}
                 narrow={
                   split &&
                   (slotByTabId.get(tabId)?.slot.rect.width ?? 1) * stripWidth * viewportWidth <
@@ -1739,6 +1749,7 @@ function LayoutChatSurface({
   narrow,
   closing = false,
   active = true,
+  live = false,
 }: {
   tab: LayoutTab;
   paneId: string;
@@ -1764,6 +1775,8 @@ function LayoutChatSurface({
   /** Closed: a ghost sliding away, gone once its animation ends. */
   closing?: boolean;
   active?: boolean;
+  /** Under the overview, a chat of the workspace the window showed. */
+  live?: boolean;
 }) {
   const slot = placed?.slot ?? null;
   // Focus that lands here from the keyboard (alt+cmd arrows, closing a
@@ -1817,9 +1830,12 @@ function LayoutChatSurface({
         visible && !(split || staged) && "bg-background",
       )}
       style={placed?.style ?? paneStyle}
-      // Not inert mid-switch: flipping inert restyles a whole rendered chat,
-      // and the panes leaving go hidden (and inert) as soon as it lands.
-      inert={!visible || overview || closing}
+      // Flipping inert restyles a whole rendered chat, so it never flips
+      // mid-switch or as the overview opens: there the window's chats are
+      // aria-hidden instead (the overview owns the keyboard and the pointer)
+      // and the other workspaces' chats stay inert from when they were hidden.
+      inert={!visible || closing || (overview && !live)}
+      aria-hidden={(overview && live) || undefined}
       onPointerDownCapture={claimFocus}
     >
       <LayoutChatSurfaceBody
@@ -2056,7 +2072,8 @@ function LayoutSurfaceTabSurface({
         (split || staged) && "overflow-clip rounded-pane pane-surface",
       )}
       style={placed.style}
-      inert={staged}
+      inert={staged && !overview}
+      aria-hidden={overview || undefined}
       onPointerDownCapture={() => claimPaneFocus(tabId)}
     >
       <LayoutPaneContext value={paneState}>
@@ -2175,7 +2192,7 @@ function afterPressRelease(run: () => void): (() => void) | undefined {
 /** Preserve focus held outside the strip unless explicitly handed back. An unready pane releases the
  * old keyboard target before it can receive more input. */
 function moveDomFocusInto(pane: HTMLElement, target: HTMLElement | null, handedBack = false): void {
-  if (pane.closest("[inert]")) return;
+  if (pane.closest('[inert], [aria-hidden="true"]')) return;
   const active = document.activeElement;
   if (pane.contains(active)) return;
   if (

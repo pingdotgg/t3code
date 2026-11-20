@@ -151,8 +151,8 @@ export function BrowserSurfaceSlot(props: {
         y: rect.y,
         scale,
         clipPath: resolveClipPath(rect, scale, ancestors),
-        // Under the overview or off the focused workspace mid-switch the pane is inert.
-        interactive: element.closest("[inert]") === null,
+        // Under the overview (aria-hidden) or off the focused workspace mid-switch (inert).
+        interactive: element.closest('[inert], [aria-hidden="true"]') === null,
       };
       const moved =
         placed === null ||
