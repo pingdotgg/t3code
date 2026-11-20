@@ -111,6 +111,11 @@
   "bd29efc163476e72": "Puede que se haya eliminado allí.",
   "f7870ef3a4828ab1": "{label} necesita una actualización",
   "eabbf064657519ee": "{label} no responde a {via}",
+  "8855350e81d45c45": "Ese vínculo se eliminó o caducó. Vuelve a vincular la máquina.",
+  "b3861bc247c3c4bf": "No se pudo cargar la solicitud de vínculo.",
+  "81aa3f047d92ed7a": "Esta solicitud de vínculo ya no existe.",
+  "6f053c4e5b6f372f": "Esta solicitud de vínculo ya fue respondida.",
+  "6d50d5b72fd543f7": "No se pudo actualizar la solicitud de vínculo.",
   "f71597ae3afaef44": "{first} y {second}",
   "4047174839a16714": "{first} y {last}",
   "65ca7867c176afbf": "{first}, {rest}",
@@ -4135,6 +4140,7 @@
     },
     ". El agente puede usar ese vínculo tal cual; cambia su acceso en Ajustes → Entornos."
   ],
+  "dc9a0b68d101e904": "Ya está vinculado. Vincularlo de nuevo lo renueva con el acceso que elijas.",
   "e8235ebb43ad7228": "Crea un enlace en una máquina: Ajustes → Compartir y acceso → Clientes autorizados → Crear enlace, y pega aquí su código.",
   "a974e6c3c613e452": [
     "Crea un enlace en ",

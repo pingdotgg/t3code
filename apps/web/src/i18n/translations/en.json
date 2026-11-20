@@ -111,6 +111,11 @@
   "bd29efc163476e72": "It may have been deleted there.",
   "f7870ef3a4828ab1": "{label} needs an update",
   "eabbf064657519ee": "{label} is not answering {via}",
+  "b3861bc247c3c4bf": "Could not load the link request.",
+  "81aa3f047d92ed7a": "This link request no longer exists.",
+  "6f053c4e5b6f372f": "This link request was already answered.",
+  "8855350e81d45c45": "That link was removed or expired. Link the machine again.",
+  "6d50d5b72fd543f7": "Could not update the link request.",
   "f71597ae3afaef44": "{first} and {second}",
   "4047174839a16714": "{first}, and {last}",
   "65ca7867c176afbf": "{first}, {rest}",
@@ -3605,6 +3610,7 @@
     },
     " that another machine can reach. Enter its https or Tailscale address."
   ],
+  "dc9a0b68d101e904": "Already linked. Linking again renews it with the access you pick.",
   "7ebb23e6bf9b19e8": "Pairing code",
   "e8235ebb43ad7228": "Create a link on a machine: Settings → Sharing & access → Authorized clients → Create link, then paste its code here.",
   "a974e6c3c613e452": [
@@ -8877,7 +8883,6 @@
   "81c9796bf61b306a": "Could not forget the link",
   "130e51beb6cf5aad": "Link an environment",
   "122c3e355699e69d": "Agents here can then launch, message and wait on threads there. It appears under Authorized clients in that environment's Sharing & access, where it can be revoked.",
-  "dc9a0b68d101e904": "Already linked. Linking again renews it with the access you pick.",
   "2fbcbe2d8c56a245": "Prefer",
   "479a7eeae96511fc": "Normal",
   "fd16014a2f23dea9": "Less often",

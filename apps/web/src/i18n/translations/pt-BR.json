@@ -111,6 +111,11 @@
   "bd29efc163476e72": "Talvez tenha sido excluída lá.",
   "f7870ef3a4828ab1": "{label} precisa de uma atualização",
   "eabbf064657519ee": "{label} não está respondendo a {via}",
+  "8855350e81d45c45": "Esse vínculo foi removido ou expirou. Vincule a máquina novamente.",
+  "b3861bc247c3c4bf": "Não foi possível carregar a solicitação de vínculo.",
+  "81aa3f047d92ed7a": "Esta solicitação de vínculo não existe mais.",
+  "6f053c4e5b6f372f": "Esta solicitação de vínculo já foi respondida.",
+  "6d50d5b72fd543f7": "Não foi possível atualizar a solicitação de vínculo.",
   "f71597ae3afaef44": "{first} e {second}",
   "4047174839a16714": "{first} e {last}",
   "65ca7867c176afbf": "{first}, {rest}",
@@ -3605,6 +3610,7 @@
     },
     " que outra máquina consiga acessar. Informe o endereço https ou do Tailscale."
   ],
+  "dc9a0b68d101e904": "Já vinculado. Vincular novamente renova o vínculo com o acesso escolhido.",
   "7ebb23e6bf9b19e8": "Código de pareamento",
   "e8235ebb43ad7228": "Crie um link em uma máquina: Configurações → Compartilhamento e acesso → Clientes autorizados → Criar link e cole o código aqui.",
   "a974e6c3c613e452": [
@@ -8868,7 +8874,6 @@
   "81c9796bf61b306a": "Não foi possível esquecer o vínculo",
   "130e51beb6cf5aad": "Vincular um ambiente",
   "122c3e355699e69d": "Os agentes daqui poderão então iniciar threads lá, enviar mensagens e aguardá-las. Ele aparece em Clientes autorizados em Compartilhamento e acesso daquele ambiente, onde pode ser revogado.",
-  "dc9a0b68d101e904": "Já vinculado. Vincular novamente renova o vínculo com o acesso escolhido.",
   "2fbcbe2d8c56a245": "Preferir",
   "479a7eeae96511fc": "Normal",
   "fd16014a2f23dea9": "Com menos frequência",

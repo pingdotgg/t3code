@@ -37,7 +37,7 @@ export function LinkAddressWarning({ address }: { readonly address: string }) {
 /** Whether a machine is linked already, or how this app knows it when not connected to it. */
 export function LinkMachineBadge({ machine }: { readonly machine: LinkableMachine }) {
   const gt = useGT();
-  if (machine.linked) {
+  if (machine.linkedAccess !== null) {
     return (
       <Badge variant="success" size="sm">
         <T>Linked</T>

@@ -424,7 +424,7 @@ export function LinkEnvironmentDialog({
                 }}
               />
             ) : null}
-            {machine?.linked ? (
+            {machine?.linkedAccess ? (
               <p className="text-xs text-muted-foreground">
                 <T>Already linked. Linking again renews it with the access you pick.</T>
               </p>

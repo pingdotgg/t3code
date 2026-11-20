@@ -111,6 +111,11 @@
   "bd29efc163476e72": "Den kan ha raderats där.",
   "f7870ef3a4828ab1": "{label} behöver uppdateras",
   "eabbf064657519ee": "{label} svarar inte {via}",
+  "8855350e81d45c45": "Länken har tagits bort eller gått ut. Länka maskinen igen.",
+  "b3861bc247c3c4bf": "Det gick inte att läsa in länkförfrågan.",
+  "81aa3f047d92ed7a": "Den här länkförfrågan finns inte längre.",
+  "6f053c4e5b6f372f": "Den här länkförfrågan har redan besvarats.",
+  "6d50d5b72fd543f7": "Det gick inte att uppdatera länkförfrågan.",
   "f71597ae3afaef44": "{first} och {second}",
   "4047174839a16714": "{first} och {last}",
   "65ca7867c176afbf": "{first}, {rest}",
@@ -3605,6 +3610,7 @@
     },
     " som en annan dator kan nå. Ange dess https- eller Tailscale-adress."
   ],
+  "dc9a0b68d101e904": "Redan länkad. Om du länkar igen förnyas den med den åtkomst du väljer.",
   "7ebb23e6bf9b19e8": "Parkopplingskod",
   "e8235ebb43ad7228": "Skapa en länk på en dator: Inställningar → Delning och åtkomst → Auktoriserade klienter → Skapa länk, och klistra sedan in koden här.",
   "a974e6c3c613e452": [
@@ -8875,7 +8881,6 @@
   "81c9796bf61b306a": "Kunde inte glömma länken",
   "130e51beb6cf5aad": "Länka en miljö",
   "122c3e355699e69d": "Agenter här kan sedan starta, skicka meddelanden till och vänta på trådar där. Den visas under Auktoriserade klienter i miljöns Delning och åtkomst, där den kan återkallas.",
-  "dc9a0b68d101e904": "Redan länkad. Om du länkar igen förnyas den med den åtkomst du väljer.",
   "2fbcbe2d8c56a245": "Föredra",
   "479a7eeae96511fc": "Normal",
   "fd16014a2f23dea9": "Mer sällan",
