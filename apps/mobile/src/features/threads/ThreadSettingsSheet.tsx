@@ -58,6 +58,7 @@ import Animated, {
   useReducedMotion,
 } from "react-native-reanimated";
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { withUniwind } from "uniwind";
 
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text, AppTextInput } from "../../components/ui/AppText";
@@ -1067,11 +1068,13 @@ function buildThreadSettingsCatalogItems(
 }
 
 function SettingSegments(props: {
-  readonly label: string;
+  readonly label: string | undefined;
   readonly trailing?: ReactNode;
+  readonly vertical?: boolean;
   readonly choices: ReadonlyArray<{
     readonly value: string | boolean;
     readonly label: string;
+    readonly icon?: AppSymbolName | undefined;
     readonly description?: string | undefined;
   }>;
   readonly selected: string | boolean | undefined;
@@ -1082,56 +1085,105 @@ function SettingSegments(props: {
     ?.description?.trim();
 
   return (
-    <View className="gap-2">
-      <View className="flex-row flex-wrap items-center justify-between gap-2">
-        <Text className="text-sm text-foreground-muted" numberOfLines={1}>
-          {props.label}
-        </Text>
-        {props.trailing}
-      </View>
-      <View className="min-h-11 flex-row gap-1 rounded-xl border border-border-subtle bg-subtle p-1">
+    <View className={props.vertical ? undefined : "gap-2"}>
+      {props.label || props.trailing ? (
+        <View className="flex-row flex-wrap items-center justify-between gap-2">
+          {props.label ? (
+            <Text className="text-sm text-foreground-muted" numberOfLines={1}>
+              {props.label}
+            </Text>
+          ) : null}
+          {props.trailing}
+        </View>
+      ) : null}
+      <View
+        className={
+          props.vertical
+            ? "border-t border-border-subtle"
+            : cn(
+                "min-h-11 flex-row gap-1 rounded-xl border border-border-subtle bg-subtle p-1",
+                !props.label && "min-h-[44px]",
+              )
+        }
+      >
         {props.choices.map((choice) => {
           const selected = choice.value === props.selected;
           return (
             <Pressable
               key={String(choice.value)}
               accessibilityHint={choice.description}
+              accessibilityLabel={choice.label}
               accessibilityRole="radio"
               accessibilityState={{ checked: selected }}
               className={cn(
-                "min-h-9 min-w-10 flex-1 items-center justify-center rounded-lg px-1.5 py-1",
+                "items-center rounded-lg",
+                props.vertical
+                  ? "min-h-[44px] flex-row justify-between gap-2 px-2 py-1"
+                  : "min-h-9 min-w-10 flex-1 flex-row justify-center gap-1 px-1.5 py-1",
                 selected && "bg-grouped-card",
               )}
               onPress={() => props.onChange(choice.value)}
             >
+              {choice.icon ? (
+                <View
+                  className="shrink-0"
+                  accessibilityElementsHidden
+                  importantForAccessibility="no-hide-descendants"
+                >
+                  <SymbolView
+                    name={choice.icon}
+                    size={12}
+                    tintColorClassName={selected ? "accent-foreground" : "accent-foreground-muted"}
+                  />
+                </View>
+              ) : null}
               <Text
                 adjustsFontSizeToFit
                 minimumFontScale={0.8}
                 numberOfLines={1}
                 className={cn(
-                  "text-center text-sm text-foreground-muted",
+                  "text-sm",
+                  props.vertical
+                    ? "min-w-0 flex-1 text-foreground"
+                    : "min-w-0 shrink text-center text-foreground-muted",
                   selected && "font-t3-medium text-foreground",
                 )}
               >
                 {choice.label}
               </Text>
+              {props.vertical && selected ? (
+                <SymbolView name="checkmark" size={14} tintColorClassName="accent-foreground" />
+              ) : null}
             </Pressable>
           );
         })}
       </View>
       {selectedDescription ? (
-        <Text className="text-xs leading-4 text-foreground-muted">{selectedDescription}</Text>
+        <Text className={cn("text-xs leading-4 text-foreground-muted", props.vertical && "pt-2")}>
+          {selectedDescription}
+        </Text>
       ) : null}
     </View>
   );
 }
 
-function ThreadSettingsOptionsItem(props: {
+const PICKER_OPTIONS_COLUMN_WIDTH = 204;
+const FAST_SPEED_ICON = { ios: "bolt.fill", android: "bolt" } satisfies AppSymbolName;
+const PICKER_PROVIDER_RAIL_WIDTH = 56;
+const PICKER_TWO_COLUMN_MIN_WIDTH = PICKER_OPTIONS_COLUMN_WIDTH + PICKER_PROVIDER_RAIL_WIDTH + 300;
+
+function ThreadSettingsPickerLayout(props: {
+  readonly catalog: ReactNode;
+  readonly renderSearch: (withIcon: boolean) => ReactNode;
+  readonly searching: boolean;
   readonly onOpenSubmenu: (submenu: ThreadSettingsSubmenuPage) => void;
 }) {
   const gt = useGT();
   const m = useMessages();
   const session = useThreadSettingsSession();
+  const insets = useSafeAreaInsets();
+  const [hasRoomForColumns, setHasRoomForColumns] = useState(false);
+  const bottomInset = props.searching ? 0 : insets.bottom;
   const configs = useAtomValue(environmentServerConfigsAtom);
   const activeProviderInstanceId =
     session.displayedModelSelection?.instanceId ?? session.providerInstanceId;
@@ -1147,6 +1199,7 @@ function ThreadSettingsOptionsItem(props: {
     speed?.type === "select"
       ? selectableChoices(speed).map((choice) => ({
           value: choice.id,
+          icon: choice.id === "priority" ? FAST_SPEED_ICON : undefined,
           label:
             choice.id === "default"
               ? gt("Standard")
@@ -1156,7 +1209,7 @@ function ThreadSettingsOptionsItem(props: {
         }))
       : [
           { value: false, label: gt("Standard") },
-          { value: true, label: gt("Fast") },
+          { value: true, label: gt("Fast"), icon: FAST_SPEED_ICON },
         ];
   const runtimeLabel = session.runtimeModeChoices.find(
     (choice) => choice.mode === session.runtimeMode,
@@ -1209,24 +1262,28 @@ function ThreadSettingsOptionsItem(props: {
     reasoning.id === session.promptTraits.primarySelectDescriptor?.id &&
     session.promptTraits.ultrathinkPromptControlled;
 
-  return (
-    <View className="gap-3 border-b border-border-subtle px-3 pb-4 pt-3">
-      <ChatGptSharingStatus provider={selectedProvider} />
-      <View className="flex-row items-end gap-2">
-        {speed ? (
-          <View className="w-40 shrink-0">
-            <SettingSegments
-              label={gt("Speed")}
-              choices={speedChoices}
-              selected={currentValue(speed)}
-              onChange={(value) => session.applyOptionChange(speed.id, value)}
-            />
-          </View>
-        ) : null}
-        <View className="min-w-0 flex-1 gap-2">
-          <Text className="text-sm text-foreground-muted" numberOfLines={1}>
-            {gt("Permissions")}
-          </Text>
+  const footerControls = (
+    <View className={cn("flex-row gap-2", hasRoomForColumns ? "items-center" : "items-end")}>
+      {speed && !props.searching ? (
+        <View className="w-40 shrink-0">
+          <SettingSegments
+            label={hasRoomForColumns ? undefined : gt("Speed")}
+            choices={speedChoices}
+            selected={currentValue(speed)}
+            onChange={(value) => session.applyOptionChange(speed.id, value)}
+          />
+        </View>
+      ) : null}
+      {hasRoomForColumns ? (
+        <View className="min-w-0 flex-1">{props.renderSearch(true)}</View>
+      ) : null}
+      {!props.searching ? (
+        <View className={hasRoomForColumns ? "w-[184px] shrink-0" : "min-w-0 flex-1 gap-2"}>
+          {!hasRoomForColumns ? (
+            <Text className="text-sm text-foreground-muted" numberOfLines={1}>
+              {gt("Permissions")}
+            </Text>
+          ) : null}
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={[
@@ -1241,6 +1298,7 @@ function ThreadSettingsOptionsItem(props: {
               .join(", ")}
             className={cn(
               "min-h-11 flex-row items-center gap-2 rounded-xl bg-grouped-card px-3 py-1",
+              hasRoomForColumns && "min-h-[44px]",
               session.runtimeModeBlocked && "border border-warning",
             )}
             onPress={() => props.onOpenSubmenu({ kind: "runtime" })}
@@ -1267,11 +1325,16 @@ function ThreadSettingsOptionsItem(props: {
             />
           </Pressable>
         </View>
-      </View>
+      ) : null}
+    </View>
+  );
+  const modelOptions = (
+    <>
       {reasoning ? (
         <SettingSegments
           label={gt("Reasoning")}
           trailing={ultracodeToggle}
+          vertical={hasRoomForColumns}
           choices={(reasoningUltrathinkControlled
             ? reasoning.options.filter(
                 (choice) =>
@@ -1336,6 +1399,59 @@ function ThreadSettingsOptionsItem(props: {
           )}
         </View>
       ) : null}
+    </>
+  );
+
+  return (
+    <View
+      className="min-h-0 flex-1"
+      onLayout={(event) => {
+        setHasRoomForColumns(event.nativeEvent.layout.width >= PICKER_TWO_COLUMN_MIN_WIDTH);
+      }}
+      style={{ paddingBottom: hasRoomForColumns ? bottomInset : 0 }}
+    >
+      {!hasRoomForColumns && !props.searching ? (
+        <ScrollView
+          bounces={false}
+          className={cn(
+            "grow-0 shrink border-b border-border-subtle",
+            reasoning ? "max-h-[50%]" : "max-h-[45%]",
+          )}
+          contentContainerClassName="gap-3 px-3 pb-4 pt-3"
+          showsVerticalScrollIndicator={false}
+        >
+          <ChatGptSharingStatus provider={selectedProvider} />
+          {footerControls}
+          {modelOptions}
+        </ScrollView>
+      ) : null}
+      <View className="min-h-0 flex-1 flex-row">
+        {props.catalog}
+        {hasRoomForColumns &&
+        !props.searching &&
+        (reasoning || ultracode || extraOptions.length) ? (
+          <ScrollView
+            bounces={false}
+            className="grow-0 shrink-0 border-l border-border-subtle"
+            contentContainerClassName="gap-3 px-3 pb-3 pt-1.5"
+            style={{ width: PICKER_OPTIONS_COLUMN_WIDTH }}
+          >
+            {modelOptions}
+          </ScrollView>
+        ) : null}
+      </View>
+      {hasRoomForColumns ? (
+        <View className="shrink-0 gap-2 border-t border-border-subtle px-3 py-2">
+          {!props.searching ? <ChatGptSharingStatus provider={selectedProvider} /> : null}
+          {footerControls}
+        </View>
+      ) : (
+        <View className="shrink-0" style={{ paddingBottom: bottomInset }}>
+          <View className="border-t border-border-subtle px-3 py-2">
+            {props.renderSearch(false)}
+          </View>
+        </View>
+      )}
     </View>
   );
 }
@@ -1347,7 +1463,6 @@ function ThreadSettingsMainContent(props: {
   const m = useMessages();
   const locale = useLocale();
   const session = useThreadSettingsSession();
-  const insets = useSafeAreaInsets();
   const barOverlap = useBarOverlap();
   const keyboardVisible = useKeyboardState((state) => state.isVisible);
   const [searchFocused, setSearchFocused] = useState(false);
@@ -1448,74 +1563,61 @@ function ThreadSettingsMainContent(props: {
     );
   };
 
-  return (
-    <KeyboardAvoidingView
-      automaticOffset
-      behavior="padding"
-      className="flex-1 bg-sheet"
-      style={{ paddingTop: barOverlap }}
-    >
-      {!searching ? (
-        <ScrollView
-          bounces={false}
-          className="max-h-[45%] grow-0 shrink"
-          showsVerticalScrollIndicator={false}
+  const catalog = (
+    <View className="min-h-0 min-w-0 flex-1 flex-row">
+      <ScrollView
+        className="grow-0 shrink-0 border-r border-border-subtle"
+        contentContainerClassName="items-center gap-1 p-1"
+        keyboardShouldPersistTaps="always"
+        style={{ width: PICKER_PROVIDER_RAIL_WIDTH }}
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={gt("Favorites")}
+          accessibilityState={{ selected: session.providerFilter === FAVORITES_PROVIDER_FILTER }}
+          className={cn(
+            "size-[44px] items-center justify-center rounded-lg",
+            session.providerFilter === FAVORITES_PROVIDER_FILTER && "bg-subtle-strong",
+          )}
+          onPress={() => session.setProviderFilter(FAVORITES_PROVIDER_FILTER)}
         >
-          <ThreadSettingsOptionsItem onOpenSubmenu={props.onOpenSubmenu} />
-        </ScrollView>
-      ) : null}
-      <View className={cn("min-h-0 flex-1 flex-row", !searching && "min-h-24")}>
-        <ScrollView
-          className="w-14 grow-0 border-r border-border-subtle"
-          contentContainerClassName="items-center gap-1 p-1"
-          keyboardShouldPersistTaps="always"
-        >
+          <SymbolView name="star.fill" size={17} tintColorClassName="accent-foreground" />
+        </Pressable>
+        {session.providerGroups.length > 1 ? (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={gt("Favorites")}
-            accessibilityState={{ selected: session.providerFilter === FAVORITES_PROVIDER_FILTER }}
+            accessibilityLabel={gt("All providers")}
+            accessibilityState={{ selected: session.providerFilter === null }}
             className={cn(
-              "size-11 items-center justify-center rounded-lg",
-              session.providerFilter === FAVORITES_PROVIDER_FILTER && "bg-subtle-strong",
+              "size-[44px] items-center justify-center rounded-lg",
+              session.providerFilter === null && "bg-subtle-strong",
             )}
-            onPress={() => session.setProviderFilter(FAVORITES_PROVIDER_FILTER)}
+            onPress={() => session.setProviderFilter(null)}
           >
-            <SymbolView name="star.fill" size={17} tintColorClassName="accent-foreground" />
+            <SymbolView name="square.grid.2x2" size={16} tintColorClassName="accent-foreground" />
           </Pressable>
-          {session.providerGroups.length > 1 ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={gt("All providers")}
-              accessibilityState={{ selected: session.providerFilter === null }}
-              className={cn(
-                "size-11 items-center justify-center rounded-lg",
-                session.providerFilter === null && "bg-subtle-strong",
-              )}
-              onPress={() => session.setProviderFilter(null)}
-            >
-              <SymbolView name="square.grid.2x2" size={16} tintColorClassName="accent-foreground" />
-            </Pressable>
-          ) : null}
-          {session.providerGroups.map((group) => (
-            <Pressable
-              key={group.providerKey}
-              accessibilityRole="button"
-              accessibilityLabel={group.providerLabel}
-              accessibilityState={{ selected: session.providerFilter === group.providerKey }}
-              className={cn(
-                "size-11 items-center justify-center rounded-lg",
-                session.providerFilter === group.providerKey && "bg-subtle-strong",
-              )}
-              onPress={() => session.setProviderFilter(group.providerKey)}
-            >
-              <ProviderIcon
-                provider={group.models[0]?.providerDriver}
-                iconUrl={group.models[0]?.providerIconUrl}
-                size={17}
-              />
-            </Pressable>
-          ))}
-        </ScrollView>
+        ) : null}
+        {session.providerGroups.map((group) => (
+          <Pressable
+            key={group.providerKey}
+            accessibilityRole="button"
+            accessibilityLabel={group.providerLabel}
+            accessibilityState={{ selected: session.providerFilter === group.providerKey }}
+            className={cn(
+              "size-[44px] items-center justify-center rounded-lg",
+              session.providerFilter === group.providerKey && "bg-subtle-strong",
+            )}
+            onPress={() => session.setProviderFilter(group.providerKey)}
+          >
+            <ProviderIcon
+              provider={group.models[0]?.providerDriver}
+              iconUrl={group.models[0]?.providerIconUrl}
+              size={17}
+            />
+          </Pressable>
+        ))}
+      </ScrollView>
+      <View className="min-h-0 min-w-0 flex-1">
         {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- Sheet content is outside workspace columns. */}
         <AnimatedLegendList
           alwaysBounceVertical
@@ -1544,23 +1646,57 @@ function ThreadSettingsMainContent(props: {
           showsVerticalScrollIndicator={false}
         />
       </View>
-      <View
-        className="border-t border-border-subtle px-3 pt-2"
-        style={{ paddingBottom: searching ? 8 : insets.bottom + 8 }}
-      >
-        <AppTextInput
-          accessibilityLabel={gt("Search models")}
-          autoCapitalize="none"
-          autoCorrect={false}
-          className="min-h-11 rounded-lg bg-grouped-card px-3 text-sm text-foreground"
-          onBlur={() => setSearchFocused(false)}
-          onChangeText={session.setSearchQuery}
-          onFocus={() => setSearchFocused(true)}
-          placeholder={gt("Search models")}
-          returnKeyType="search"
-          value={session.searchQuery}
-        />
+    </View>
+  );
+  const renderSearch = (withIcon: boolean) => {
+    const input = (
+      <AppTextInput
+        accessibilityLabel={gt("Search models")}
+        autoCapitalize="none"
+        autoCorrect={false}
+        className={cn(
+          "text-sm text-foreground",
+          withIcon
+            ? "min-h-[44px] min-w-0 flex-1 rounded-none border-0 bg-transparent px-0 py-0 pl-2"
+            : "min-h-11 rounded-lg bg-grouped-card px-3",
+        )}
+        onBlur={() => setSearchFocused(false)}
+        onChangeText={session.setSearchQuery}
+        onFocus={() => setSearchFocused(true)}
+        placeholder={gt("Search models")}
+        returnKeyType="search"
+        value={session.searchQuery}
+      />
+    );
+    return withIcon ? (
+      <View className="flex-row items-center rounded-lg bg-grouped-card px-3">
+        <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+          <SymbolView
+            name="magnifyingglass"
+            size={15}
+            tintColorClassName="accent-foreground-muted"
+          />
+        </View>
+        {input}
       </View>
+    ) : (
+      input
+    );
+  };
+
+  return (
+    <KeyboardAvoidingView
+      automaticOffset
+      behavior="padding"
+      className="flex-1 bg-sheet"
+      style={{ paddingTop: barOverlap }}
+    >
+      <ThreadSettingsPickerLayout
+        catalog={catalog}
+        renderSearch={renderSearch}
+        searching={searching}
+        onOpenSubmenu={props.onOpenSubmenu}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -1668,6 +1804,9 @@ type ThreadSettingsPickerPresentation = {
 };
 
 const ThreadSettingsPickerStack = createNativeStackNavigator<ThreadSettingsPickerStackParams>();
+const PermissionsSheetSurface = withUniwind(SafeAreaView, {
+  style: { fromClassName: "className" },
+});
 const ThreadSettingsPickerPresentationContext =
   createContext<ThreadSettingsPickerPresentation | null>(null);
 
@@ -1789,10 +1928,10 @@ function ThreadSettingsModelsScreen() {
               accessible={false}
               onPress={dismissPermissions}
             />
-            <SafeAreaView
+            <PermissionsSheetSurface
               accessibilityViewIsModal
               edges={["bottom"]}
-              className="max-h-[80%] rounded-t-3xl bg-sheet px-4 pb-3 pt-2"
+              className="max-h-[80%] w-full max-w-[560px] self-center rounded-t-3xl bg-sheet px-4 pb-3 pt-2"
             >
               <View className="flex-row items-center justify-between">
                 <Text
@@ -1862,7 +2001,7 @@ function ThreadSettingsModelsScreen() {
                   );
                 })}
               </ScrollView>
-            </SafeAreaView>
+            </PermissionsSheetSurface>
           </View>
         </SafeAreaProvider>
       </Modal>
