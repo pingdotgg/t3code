@@ -3033,7 +3033,7 @@ describe("AcpRegistryAdapterV2", () => {
         ],
         undefined,
         false,
-        { source: "local", commandPath: "/opt/vibe/bin/vibe" },
+        { source: "local", commandPath: "/opt/vibe/bin/vibe-acp" },
       );
       yield* session.runtime.startTurn(session.turnInput(1));
       const events = yield* session.throughMarker("retry noticed");
