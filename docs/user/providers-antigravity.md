@@ -18,23 +18,12 @@ Antigravity setup.
 
 ### Sign in from a remote device
 
-With the native CLI, Google finishes on an Antigravity page that shows a code. Paste that
-code, or the page's full address, into the code field in the client where you started
-sign-in. This works the same from any device.
+Google finishes on an Antigravity page that shows a code. Paste that code, or the
+page's full address, into the code field in the client where you started sign-in.
+This works the same from any device.
 
-With the older 1.4.5 runtime, Google returns to a `127.0.0.1` address. It can finish directly when your browser is
-on the environment's machine. From another device, the final page will usually
-fail to load because the sign-in listener is on the environment.
-
-Copy the full return address, including everything after `?`, into the return URL
-field in the client where you started sign-in, then choose
-**Continue**. Keep the original address; do not replace it with the server's
-hostname. Only that T3 Code sign-in session can finish the attempt. If it expires,
-retry sign-in and use the new link.
-
-The return URL contains a temporary sign-in code. Paste it only into the setup
-field. A successful callback page alone does not confirm account access; wait for
-T3 Code's confirmation.
+The code is temporary. Paste it only into the setup field. The page alone does not
+confirm account access; wait for T3 Code's confirmation.
 
 ### Other sign-in methods
 

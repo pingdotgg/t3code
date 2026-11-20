@@ -18,7 +18,6 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -399,10 +398,6 @@ export const AntigravityDriver: ProviderDriver<
       readonly onAuthorizationUrl: (url: string) => Effect.Effect<void, AcpErrors.AcpError>;
     }) {
       if (auth.authMethod !== "oauth-personal") return undefined;
-      const resolved = yield* installation
-        .resolve(settings.binaryPath, processEnvironment)
-        .pipe(Effect.option);
-      if (Option.isSome(resolved) && resolved.value.harnessPath !== null) return undefined;
       const cwd = yield* fileSystem
         .makeTempDirectoryScoped({ prefix: "t3-antigravity-login-" })
         .pipe(
@@ -415,8 +410,7 @@ export const AntigravityDriver: ProviderDriver<
               }),
           ),
         );
-      const { executable, spawn } = yield* prepareSpawn(cwd, processEnvironment);
-      if (executable.harnessPath !== null) return undefined;
+      const { spawn } = yield* prepareSpawn(cwd, processEnvironment);
       const failed = (detail: string, cause?: unknown) =>
         new ProviderSetupError({ instanceId, operation: "start", detail, cause });
       // Without a display it prints the link only, instead of opening a browser on this machine.

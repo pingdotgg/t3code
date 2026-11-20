@@ -284,7 +284,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         );
         expect(yield* installation.resolve().pipe(Effect.flip)).toMatchObject({
           operation: "resolve",
-          detail: expect.stringContaining("Update it in Antigravity setup"),
+          detail: expect.stringContaining("Antigravity 1.4.5 predates the Antigravity CLI"),
         });
         yield* installation.start;
         expect(yield* terminalState(installation)).toMatchObject({
