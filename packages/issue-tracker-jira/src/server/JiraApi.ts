@@ -62,7 +62,9 @@ const Issue = Schema.Struct({
   fields: Schema.Struct({
     summary: Schema.String,
     status: Status,
-    project: Schema.optional(Schema.Struct({ key: Schema.String })),
+    project: Schema.optional(
+      Schema.Struct({ key: Schema.String, projectTypeKey: Schema.optional(Schema.String) }),
+    ),
     reporter: Schema.optional(Schema.NullOr(User)),
     assignee: Schema.optional(Schema.NullOr(User)),
     labels: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
@@ -81,6 +83,8 @@ const Comment = Schema.Struct({
   author: Schema.optional(Schema.NullOr(User)),
   body: Schema.optional(Schema.Unknown),
   created: Schema.String,
+  /** False on a Service Management internal note. */
+  jsdPublic: Schema.optional(Schema.NullOr(Schema.Boolean)),
 });
 export type JiraComment = typeof Comment.Type;
 
@@ -213,7 +217,12 @@ export class JiraApi extends Context.Service<
       fields: Record<string, unknown>,
     ) => Effect.Effect<void, IssueTrackerError>;
     readonly transition: (key: string, id: string) => Effect.Effect<void, IssueTrackerError>;
-    readonly addComment: (key: string, body: AdfNode) => Effect.Effect<void, IssueTrackerError>;
+    /** `internal` marks a Service Management comment as a note or a customer reply. */
+    readonly addComment: (
+      key: string,
+      body: AdfNode,
+      internal?: boolean,
+    ) => Effect.Effect<void, IssueTrackerError>;
     readonly labels: Effect.Effect<
       { readonly names: ReadonlyArray<string>; readonly truncated: boolean },
       IssueTrackerError
@@ -461,11 +470,17 @@ export const make = Effect.gen(function* () {
       body: { transition: { id } },
     });
 
-  const addComment: JiraApi["Service"]["addComment"] = (key, body) =>
+  const addComment: JiraApi["Service"]["addComment"] = (key, body, internal) =>
     send("addComment", Schema.Unknown, {
       method: "POST",
       path: `/rest/api/3/issue/${encodeURIComponent(key)}/comment`,
-      body: { body },
+      // Service Management's own comment API takes plain text only; this property keeps the ADF.
+      body: {
+        body,
+        ...(internal === undefined
+          ? {}
+          : { properties: [{ key: "sd.public.comment", value: { internal } }] }),
+      },
     }).pipe(Effect.asVoid);
 
   const labels: JiraApi["Service"]["labels"] = paged((startAt) =>
