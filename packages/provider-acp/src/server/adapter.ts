@@ -9522,17 +9522,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           return yield* runtimeTransitionPermit.withPermit(startTurnUnlocked(turnInput));
         });
 
-        // Client-answered permissions follow a mode switched mid-turn; the native session
-        // mode is reconfigured when the next turn starts.
-        const adoptSteerRuntimePolicy = (
-          context: ActiveAcpTurn,
-          turnInput: ProviderAdapter.ProviderAdapterV2SteerInput,
-        ) => {
-          if (turnInput.runtimePolicy === undefined) return;
-          latestRuntimePolicy = turnInput.runtimePolicy;
-          context.input = { ...context.input, runtimePolicy: turnInput.runtimePolicy };
-        };
-
         const steerWithPrompt = Effect.fn("AcpAdapterV2.steerWithPrompt")(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2SteerInput,
         ) {
@@ -9560,7 +9549,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   detail: `Provider turn ${turnInput.providerTurnId} is not active and cannot be steered.`,
                 });
               }
-              adoptSteerRuntimePolicy(context, turnInput);
               const generation = yield* Ref.get(runtimeCallbackGeneration);
               const checkPromptOutcome =
                 flavor.watchPromptOutcome === undefined
@@ -9904,6 +9892,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 }),
               }
             : {}),
+          // Client-answered requests follow the new policy at once; the native session mode
+          // is reconfigured when the next turn starts.
+          applyRuntimePolicy: Effect.fn("AcpAdapterV2.applyRuntimePolicy")(function* ({
+            providerThread,
+            runtimePolicy,
+          }) {
+            latestRuntimePolicy = runtimePolicy;
+            const context = yield* Ref.get(activeTurn);
+            if (context !== null && context.input.providerThread.id === providerThread.id) {
+              context.input = { ...context.input, runtimePolicy };
+            }
+          }),
           steerTurn: Effect.fn("AcpAdapterV2.steerTurn")(
             function* (turnInput) {
               if (steersWithPrompt) return yield* steerWithPrompt(turnInput);
@@ -9930,7 +9930,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   detail: `Provider turn ${turnInput.providerTurnId} is not active and cannot be steered.`,
                 });
               }
-              adoptSteerRuntimePolicy(context, turnInput);
               // An agent that drops an early cancel drops an early steer too.
               const startHold = flavor.cancelAfterPromptStarts;
               if (startHold !== undefined) {

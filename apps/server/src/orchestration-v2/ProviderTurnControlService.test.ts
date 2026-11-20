@@ -129,7 +129,8 @@ function makeProjection(input: {
 
 function layerProjectionStore(
   getProviderControlContext: ProjectionStore.ProjectionStoreV2["Service"]["getProviderControlContext"],
-  thread?: OrchestrationV2ThreadProjection["thread"],
+  getThreadRecords: ProjectionStore.ProjectionStoreV2["Service"]["getThreadRecords"] = () =>
+    Effect.die("unused record read"),
 ) {
   return Layer.succeed(
     ProjectionStore.ProjectionStoreV2,
@@ -178,12 +179,7 @@ function layerProjectionStore(
       getNextTurnItemOrdinal: () => Effect.die("unused ordinal read"),
       getTurnItem: () => Effect.die("unused turn item read"),
       getMessagesById: () => Effect.die("unused getMessagesById"),
-      getThreadRecords: (() =>
-        thread === undefined
-          ? Effect.die("unused record read")
-          : Effect.succeed({
-              thread,
-            })) as ProjectionStore.ProjectionStoreV2["Service"]["getThreadRecords"],
+      getThreadRecords,
       getRuntimeRequest: () => Effect.die("unused getRuntimeRequest"),
       getRunningTurnContext: () => Effect.die("unused getRunningTurnContext"),
       getThreadProviderContext: () => Effect.die("unused getThreadProviderContext"),
@@ -413,29 +409,27 @@ it.effect("steers a running turn with its sender and the thread's MCP app model 
     const layerControl = ProviderTurnControlService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
-          layerProjectionStore(
-            () =>
-              Effect.succeed({
-                providerThread,
-                providerTurn: projection.providerTurns[0],
-                attempt: projection.attempts[0],
-                message: {
-                  id: MessageId.make("message:steer-app-context"),
-                  text: "What did the app report?",
-                  attachments: [],
-                  createdBy: "agent",
-                  creationSource: "mcp",
-                  senderThreadId: ThreadId.make("thread:steer-sender"),
-                } as unknown as NonNullable<
-                  ProjectionStore.ProjectionProviderControlContext["message"]
-                >,
-                run: {
-                  id: RunId.make("run:steer-app-context"),
-                  status: "running",
-                  activeAttemptId: attemptId,
-                } as OrchestrationV2Run,
-              }),
-            projection.thread,
+          layerProjectionStore(() =>
+            Effect.succeed({
+              providerThread,
+              providerTurn: projection.providerTurns[0],
+              attempt: projection.attempts[0],
+              message: {
+                id: MessageId.make("message:steer-app-context"),
+                text: "What did the app report?",
+                attachments: [],
+                createdBy: "agent",
+                creationSource: "mcp",
+                senderThreadId: ThreadId.make("thread:steer-sender"),
+              } as unknown as NonNullable<
+                ProjectionStore.ProjectionProviderControlContext["message"]
+              >,
+              run: {
+                id: RunId.make("run:steer-app-context"),
+                status: "running",
+                activeAttemptId: attemptId,
+              } as OrchestrationV2Run,
+            }),
           ),
           layerSessions(sessionId, runtime),
           RuntimePolicy.layer,
@@ -474,11 +468,58 @@ it.effect("steers a running turn with its sender and the thread's MCP app model 
     assert.deepEqual("appContext" in steered[0]! ? steered[0].appContext : undefined, [
       { key: "mcp_app_turn-item_call-1", text: "Pressed: blue" },
     ]);
-    // A mode switched mid-turn reaches the running turn with the steer.
-    assert.deepEqual(steered[0]!.runtimePolicy, {
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      cwd: "/workspace",
+  }),
+);
+
+it.effect("applies the thread's current mode to its live session without a message", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:apply-runtime-policy");
+    const sessionId = ProviderSessionId.make("provider-session:apply-runtime-policy");
+    const providerThread = {
+      id: ProviderThreadId.make("provider-thread:apply-runtime-policy"),
+      driver,
+      providerInstanceId,
+      providerSessionId: sessionId,
+    } as OrchestrationV2ProviderThread;
+    const projection = makeProjection({
+      now,
+      threadId,
+      providerThread,
+      providerTurnId: ProviderTurnId.make("provider-turn:apply-runtime-policy"),
+      attemptId: RunAttemptId.make("run-attempt:apply-runtime-policy"),
     });
+    const applied: Array<ProviderAdapter.ProviderAdapterV2RuntimePolicy> = [];
+    const runtime = {
+      instanceId: providerInstanceId,
+      driver,
+      providerSessionId: sessionId,
+      applyRuntimePolicy: (input: {
+        readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+      }) => Effect.sync(() => void applied.push(input.runtimePolicy)),
+    } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime;
+    const layerControl = ProviderTurnControlService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          layerProjectionStore(() => Effect.die("unused control context"), (() =>
+            Effect.succeed(
+              projection,
+            )) as ProjectionStore.ProjectionStoreV2["Service"]["getThreadRecords"]),
+          layerSessions(sessionId, runtime),
+          RuntimePolicy.layer,
+          Layer.mock(EventSink.EventSinkV2)({}),
+          McpAppModelContext.layerEmpty,
+        ),
+      ),
+    );
+
+    yield* Effect.gen(function* () {
+      const control = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
+      yield* control.applyRuntimePolicy({ threadId });
+    }).pipe(Effect.provide(layerControl));
+
+    assert.deepEqual(applied, [
+      { runtimeMode: "full-access", interactionMode: "default", cwd: "/workspace" },
+    ]);
   }),
 );

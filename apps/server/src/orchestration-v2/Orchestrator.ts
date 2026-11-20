@@ -5586,6 +5586,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ]);
     }
 
+    // Sessions that switch modes in place keep running; their turn follows the new mode.
+    if (
+      command.type === "thread.runtime-mode.set" &&
+      updatedThread.runtimeMode !== thread.runtimeMode
+    ) {
+      yield* Ref.update(effects, (existing) => [
+        ...existing,
+        {
+          id: `effect:${command.commandId}:provider-session.apply-runtime-policy`,
+          commandId: command.commandId,
+          threadId: command.threadId,
+          request: { type: "provider-session.apply-runtime-policy" },
+        } satisfies PendingOrchestrationEffectV2,
+      ]);
+    }
+
     if (command.type === "thread.metadata.update" && command.regenerateTitle === true) {
       yield* Ref.update(effects, (existing) => [
         ...existing,

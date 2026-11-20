@@ -1364,6 +1364,30 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
         rawInput: { Role: "Artist", Prompt: "Paint the scooter" },
       });
 
+      // Full access chosen while the turn runs answers its next command itself.
+      yield* session.applyRuntimePolicy!({
+        providerThread,
+        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        }),
+      });
+      assert.deepEqual(
+        yield* opened.requestPermission(
+          {
+            sessionId: "mock-session-1",
+            toolCall: { toolCallId: "call_cat", kind: "execute", title: "cat f1.txt" },
+            options: [
+              { optionId: "allow", name: "Allow", kind: "allow_once" },
+              { optionId: "deny", name: "Deny", kind: "reject_once" },
+            ],
+          },
+          { requestId: "permission-mode-switch", method: "session/request_permission" },
+        ),
+        { outcome: { outcome: "selected", optionId: "allow" } },
+      );
+
       yield* session.steerTurn({
         threadId: ThreadId.make("thread-antigravity-wake"),
         runId: RunId.make("run-antigravity-wake-1"),
@@ -1376,33 +1400,8 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
           createdBy: "user",
           creationSource: "web",
         },
-        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          cwd: process.cwd(),
-        }),
       });
       assert.equal(opened.cancels(), 0, "a steer must not cancel the agent's work");
-      // Full access chosen with the steer answers the turn's next command itself.
-      assert.deepEqual(
-        yield* opened.requestPermission(
-          {
-            sessionId: "mock-session-1",
-            toolCall: {
-              toolCallId: "call_cat",
-              kind: "execute",
-              title: "cat f1.txt",
-              status: "pending",
-            },
-            options: [
-              { optionId: "allow", name: "Allow", kind: "allow_once" },
-              { optionId: "deny", name: "Deny", kind: "reject_once" },
-            ],
-          },
-          { requestId: "permission-steer", method: "session/request_permission" },
-        ),
-        { outcome: { outcome: "selected", optionId: "allow" } },
-      );
       assert.lengthOf(opened.prompts, 2);
       assert.deepEqual(opened.prompts[1]!.prompt, [
         { type: "text", text: "Use opus subagents from now on" },

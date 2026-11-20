@@ -103,6 +103,7 @@ function layerExecutorFor(input: {
         steer: () => Effect.void,
         applyModelSelection: () => Effect.void,
         applyThreadTitle: () => Effect.void,
+        applyRuntimePolicy: () => Effect.void,
         interruptAndAwaitTerminal: (request) =>
           record(
             request.replacementProviderSessionId === undefined

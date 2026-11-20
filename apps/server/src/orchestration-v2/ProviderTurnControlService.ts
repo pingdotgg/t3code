@@ -87,6 +87,15 @@ export interface ProviderTurnControlServiceV2Shape {
     | ProviderSessionManager.ProviderSessionManagerV2Error
     | ProviderAdapter.ProviderAdapterV2Error
   >;
+  /** Best effort: a provider thread that is no longer live picks the policy up when its next turn starts. */
+  readonly applyRuntimePolicy: (input: {
+    readonly threadId: ThreadId;
+  }) => Effect.Effect<
+    void,
+    | ProjectionStore.ProjectionStoreV2Error
+    | ProviderSessionManager.ProviderSessionManagerV2Error
+    | ProviderAdapter.ProviderAdapterV2Error
+  >;
   /** Best effort: a provider thread that is no longer live picks the title up when its next turn starts. */
   readonly applyThreadTitle: (input: {
     readonly threadId: ThreadId;
@@ -278,6 +287,28 @@ export const layer: Layer.Layer<
         if (Option.isNone(session) || session.value.applyThreadTitle === undefined) return;
         yield* session.value.applyThreadTitle({ providerThread, title: input.title });
       }),
+      applyRuntimePolicy: Effect.fn("ProviderTurnControlService.applyRuntimePolicy")(
+        function* (input) {
+          const { thread, providerThreads } = yield* projections.getThreadRecords(input.threadId, [
+            "providerThreads",
+          ]);
+          const providerThread = providerThreads.find(
+            (candidate) => candidate.id === thread.activeProviderThreadId,
+          );
+          if (!providerThread?.providerSessionId) return;
+          const session = yield* sessions.get(providerThread.providerSessionId);
+          if (Option.isNone(session) || session.value.applyRuntimePolicy === undefined) return;
+          // Above the ceiling the running turn keeps the policy it started with.
+          const runtimePolicy = yield* runtimePolicies
+            .resolve({ thread, modelSelection: thread.modelSelection })
+            .pipe(Effect.option);
+          if (Option.isNone(runtimePolicy)) return;
+          yield* session.value.applyRuntimePolicy({
+            providerThread,
+            runtimePolicy: runtimePolicy.value,
+          });
+        },
+      ),
       interrupt: Effect.fn("ProviderTurnControlService.interrupt")(
         function* (input) {
           const loaded = yield* load({ ...input, operation: "interrupt" });
@@ -455,11 +486,6 @@ export const layer: Layer.Layer<
             mcpAppModelContext,
             input.threadId,
           );
-          const { thread } = yield* projections.getThreadRecords(input.threadId, []);
-          // Above the ceiling the turn keeps the policy it started with.
-          const runtimePolicy = yield* runtimePolicies
-            .resolve({ thread, modelSelection: input.modelSelection ?? run.modelSelection })
-            .pipe(Effect.option);
           yield* loaded.session.value
             .steerTurn({
               threadId: input.threadId,
@@ -469,7 +495,6 @@ export const layer: Layer.Layer<
               ...(input.modelSelection === undefined
                 ? {}
                 : { modelSelection: input.modelSelection }),
-              ...(Option.isSome(runtimePolicy) ? { runtimePolicy: runtimePolicy.value } : {}),
               ...(appContext.length === 0 ? {} : { appContext }),
               message: {
                 messageId: message.id,

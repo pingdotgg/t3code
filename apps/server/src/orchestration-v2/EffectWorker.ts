@@ -222,6 +222,17 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
+          case "provider-session.apply-runtime-policy":
+            return providerTurnControl.applyRuntimePolicy({ threadId: effect.threadId }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
           case "provider-session.apply-thread-title":
             return providerTurnControl
               .applyThreadTitle({ threadId: effect.threadId, title: effect.request.title })
