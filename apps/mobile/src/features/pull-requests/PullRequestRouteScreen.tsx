@@ -59,6 +59,7 @@ import {
 } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-react";
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
 import {
   pullRequestConversationThreads,
@@ -70,7 +71,8 @@ import { PullRequestOverviewLoading } from "./PullRequestOverviewLoading";
 import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
 import { pullRequestStatus } from "./pullRequestStatus";
 import { use, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
-import { Linking, Platform, Pressable, StyleSheet, View } from "react-native";
+import { Platform, Pressable, StyleSheet, View } from "react-native";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { RefreshControl } from "../../components/ui/RefreshControl";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -569,12 +571,12 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const refresh = () =>
     pullRefresh.onRefresh(async (signal) => {
       const target = requestTarget(params);
-      await composerPullRequests.invalidate
-        .run(registry, {
-          environmentId: target.environmentId,
-          input: { reference: target.input },
-        })
-        .catch(() => undefined);
+      await runAtomCommand(
+        registry,
+        composerPullRequests.invalidate,
+        { environmentId: target.environmentId, input: { reference: target.input } },
+        { reportFailure: false },
+      );
       if (signal.aborted) return;
       if (guidesEnabled) refreshGuide();
       stack.refresh();
@@ -665,7 +667,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
               id: "open-on-provider",
               title: openOnProviderLabel(identity.provider, messages),
               icon: "arrow.up.right",
-              onPress: () => void Linking.openURL(identity.url),
+              onPress: () => void tryOpenExternalUrl(identity.url, "pull-request"),
             },
             {
               id: "copy-link",

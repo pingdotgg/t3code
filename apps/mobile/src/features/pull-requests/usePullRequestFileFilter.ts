@@ -1,8 +1,9 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { useMemo } from "react";
 import type { ReviewParsedDiff } from "../review/reviewModel";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
+import { useAtomCommand } from "../../state/use-atom-command";
 import {
   filterPullRequestTestFiles,
   filterPullRequestViewedFiles,
@@ -19,7 +20,7 @@ export function usePullRequestFileFilter(
   keptPaths: readonly string[] = [],
 ) {
   const preferences = useAtomValue(mobilePreferencesAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   const saved = AsyncResult.isSuccess(preferences) ? preferences.value : null;
   const hideTestFiles = saved?.pullRequestHideTestFiles === true;
   const hideViewedFiles = viewed.supported && saved?.pullRequestHideViewedFiles === true;
@@ -51,13 +52,21 @@ export function usePullRequestFileFilter(
     parsed: visible,
     hideTestFiles,
     hiddenCount,
-    toggle: () => savePreferences({ pullRequestHideTestFiles: !hideTestFiles }),
-    showAll: () => savePreferences({ pullRequestHideTestFiles: false }),
+    toggle: () => {
+      void savePreferences({ pullRequestHideTestFiles: !hideTestFiles });
+    },
+    showAll: () => {
+      void savePreferences({ pullRequestHideTestFiles: false });
+    },
     hideViewedFiles,
     viewedCount: viewedPaths.length,
     hiddenViewedCount: hiddenViewedPaths.length,
     canHideViewedFiles: viewed.supported && (viewedPaths.length > 0 || hideViewedFiles),
-    toggleViewedFiles: () => savePreferences({ pullRequestHideViewedFiles: !hideViewedFiles }),
-    showViewedFiles: () => savePreferences({ pullRequestHideViewedFiles: false }),
+    toggleViewedFiles: () => {
+      void savePreferences({ pullRequestHideViewedFiles: !hideViewedFiles });
+    },
+    showViewedFiles: () => {
+      void savePreferences({ pullRequestHideViewedFiles: false });
+    },
   };
 }

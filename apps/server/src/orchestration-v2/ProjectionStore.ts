@@ -5,7 +5,7 @@ import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { makeThreadFind } from "./ThreadFind.ts";
-import { unsentManualContinuationSource } from "./manualContinuation.ts";
+import { unsentManualContinuationSource } from "@t3tools/shared/orchestrationV2ManualContinuation";
 import type {
   OrchestrationV2ThreadLinkMetadata,
   OrchestrationV2SearchThreadInput,
@@ -103,6 +103,7 @@ import type * as Statement from "effect/sql/Statement";
 
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
+import { DELEGATED_TASK_MESSAGE_CONDITION } from "./delegatedTaskMessage.ts";
 import {
   DEFERRED_COMMAND_MESSAGE_CONDITION,
   JAVASCRIPT_TRIM_WHITESPACE,
@@ -375,6 +376,8 @@ export interface ProjectionRecordFilter {
   readonly attemptIds?: ReadonlyArray<RunAttemptId>;
   readonly messageRoles?: ReadonlyArray<OrchestrationV2ConversationMessage["role"]>;
   readonly monitorNotificationsOnly?: boolean;
+  /** User messages that are monitor notifications or delegated-completion wakes, through their partial index. */
+  readonly delegatedTaskMessagesOnly?: true;
   readonly turnItemRunId?: RunId;
   readonly messageIds?: ReadonlyArray<MessageId>;
   readonly messageRunIds?: ReadonlyArray<RunId>;
@@ -816,6 +819,20 @@ export interface ProjectionStoreV2Shape {
     threadId: ThreadId,
     runId: RunId,
   ) => Effect.Effect<OrchestrationV2Run | undefined, ProjectionStoreV2Error>;
+  /**
+   * One snapshot: the `windowSize` runs that ended last, unfinished runs, the runs of `taskIds` and
+   * their wakes. `runsFloor` is set when older runs were left out; every run that ran after it is
+   * in `runs`.
+   */
+  readonly getDelegatedChildControls: (
+    threadId: ThreadId,
+    input: { readonly taskIds: ReadonlyArray<NodeId>; readonly windowSize: number },
+  ) => Effect.Effect<
+    ProjectionRecords<"runs" | "messages" | "subagents" | "providerThreads"> & {
+      readonly runsFloor: OrchestrationV2Run | undefined;
+    },
+    ProjectionStoreV2Error
+  >;
   readonly canStartQueuedRun: (
     threadId: ThreadId,
   ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
@@ -4437,6 +4454,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   ${filter?.messageIds === undefined ? sql`` : sql`AND message_id IN (SELECT value FROM json_each(${encodeIdList(filter.messageIds)}))`}
                   ${filter?.messageRoles === undefined ? sql`` : sql`AND role IN (SELECT value FROM json_each(${encodeIdList(filter.messageRoles)}))`}
                   ${filter?.monitorNotificationsOnly === true ? sql`AND json_extract(payload_json, '$.notification.source.kind') = 'monitor'` : sql``}
+                  ${filter?.delegatedTaskMessagesOnly === true ? sql`AND ${sql.literal(DELEGATED_TASK_MESSAGE_CONDITION)}` : sql``}
                   ${filter?.messageRunIds === undefined ? sql`` : sql`AND run_id IN (SELECT value FROM json_each(${encodeIdList(filter.messageRunIds)}))`}
                 ORDER BY created_at ASC, message_id ASC
               `
@@ -5110,18 +5128,33 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               `;
             case "restart-continuations":
               return sql`
-                SELECT bindings.thread_id
-                FROM orchestration_v2_projection_provider_sessions AS sessions
-                JOIN orchestration_v2_projection_provider_session_bindings AS bindings
-                  ON bindings.provider_session_id = sessions.provider_session_id
-                WHERE sessions.status NOT IN ('stopped', 'error')
-                UNION
-                SELECT thread_id FROM orchestration_v2_projection_provider_sessions AS sessions
-                WHERE status NOT IN ('stopped', 'error') AND thread_id IS NOT NULL
-                  AND NOT EXISTS (
-                    SELECT 1 FROM orchestration_v2_projection_provider_session_bindings AS bindings
-                    WHERE bindings.provider_session_id = sessions.provider_session_id
-                  )
+                SELECT thread_id FROM (
+                  SELECT bindings.thread_id
+                  FROM orchestration_v2_projection_provider_sessions AS sessions
+                  JOIN orchestration_v2_projection_provider_session_bindings AS bindings
+                    ON bindings.provider_session_id = sessions.provider_session_id
+                  WHERE sessions.status NOT IN ('stopped', 'error')
+                  UNION
+                  SELECT thread_id FROM orchestration_v2_projection_provider_sessions AS sessions
+                  WHERE status NOT IN ('stopped', 'error') AND thread_id IS NOT NULL
+                    AND NOT EXISTS (
+                      SELECT 1 FROM orchestration_v2_projection_provider_session_bindings AS bindings
+                      WHERE bindings.provider_session_id = sessions.provider_session_id
+                    )
+                )
+                -- A live session alone continues nothing: restartContinuationRun
+                -- also needs an active provider thread or open background work.
+                WHERE thread_id IN (
+                  SELECT thread_id FROM orchestration_v2_projection_provider_threads
+                  WHERE status = 'active'
+                    OR CASE WHEN json_valid(payload_json)
+                      THEN json_array_length(payload_json, '$.pendingBackgroundTasks') > 0
+                      ELSE 0 END
+                  UNION
+                  SELECT thread_id FROM orchestration_v2_projection_turn_items
+                  WHERE type IN ('command_execution', 'dynamic_tool', 'subagent')
+                    AND status IN ('pending', 'running', 'waiting')
+                )
                 UNION
                 SELECT thread_id FROM orchestration_v2_projection_runs
                 WHERE status = 'starting'
@@ -5153,10 +5186,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT thread_id FROM orchestration_v2_projection_runtime_requests
                 WHERE status = 'pending'
                 UNION
-                SELECT bindings.thread_id
+                -- One bound thread stops a session; the other arms select the
+                -- bound threads with work, so idle threads on a shared session stay out.
+                SELECT (
+                  SELECT bindings.thread_id
+                  FROM orchestration_v2_projection_provider_session_bindings AS bindings
+                  JOIN orchestration_v2_projection_threads AS threads
+                    ON threads.thread_id = bindings.thread_id
+                  WHERE bindings.provider_session_id = sessions.provider_session_id
+                    AND threads.deleted_at IS NULL
+                  ORDER BY bindings.thread_id LIMIT 1
+                )
                 FROM orchestration_v2_projection_provider_sessions AS sessions
-                CROSS JOIN orchestration_v2_projection_provider_session_bindings AS bindings
-                  ON bindings.provider_session_id = sessions.provider_session_id
                 WHERE sessions.status NOT IN ('stopped', 'error')
                   OR (sessions.status = 'error' AND CASE WHEN json_valid(sessions.payload_json)
                     THEN json_array_length(sessions.payload_json, '$.extensionStatuses') > 0
@@ -6448,6 +6489,83 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             return rows[0] === undefined
               ? undefined
               : yield* decodeMessagePayload(rows[0].payload_json);
+          }),
+        )
+        .pipe(Effect.mapError(controlReadError(threadId)));
+
+    const getDelegatedChildControls: ProjectionStoreV2Shape["getDelegatedChildControls"] = (
+      threadId,
+      { taskIds, windowSize },
+    ) =>
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const records = yield* getThreadRecords(
+              threadId,
+              ["messages", "subagents", "providerThreads"],
+              { messageRoles: ["user"], delegatedTaskMessagesOnly: true },
+            );
+            // Spells migration 84's order and predicate so the window walks that index.
+            const windowRows = yield* sql<PayloadRow & { readonly completed_at: string | null }>`
+              SELECT payload_json, completed_at FROM orchestration_v2_projection_runs
+              WHERE thread_id = ${threadId}
+                AND status <> 'queued'
+                AND NOT (status = 'cancelled' AND json_extract(payload_json, '$.startedAt') IS NULL)
+              ORDER BY (completed_at IS NULL) DESC, completed_at DESC, ordinal DESC, run_id DESC
+              LIMIT ${windowSize}
+            `;
+            const window = yield* decodeRows(decodeRunPayload, threadId)(windowRows);
+            const last = window.length < windowSize ? undefined : window.at(-1);
+            const floorCompletedAt = windowRows.at(-1)?.completed_at ?? null;
+            // A window ending in unfinished runs bounds nothing, so read the whole thread.
+            const floor = floorCompletedAt === null ? undefined : last;
+            const rest = yield* (
+              last !== undefined && floor === undefined
+                ? sql<PayloadRow>`
+              SELECT payload_json FROM orchestration_v2_projection_runs
+              WHERE thread_id = ${threadId}`
+                : sql<PayloadRow>`
+              SELECT payload_json FROM orchestration_v2_projection_runs
+              WHERE thread_id = ${threadId}
+                AND status IN ('preparing', 'queued', 'starting', 'running', 'waiting')
+              UNION
+              SELECT payload_json FROM orchestration_v2_projection_runs
+              WHERE thread_id = ${threadId} AND json_valid(payload_json)
+                AND json_extract(payload_json, '$.delegatedTaskId') IS NOT NULL
+                AND json_extract(payload_json, '$.delegatedTaskId')
+                  IN (SELECT value FROM json_each(${encodeIdList(taskIds)}))
+              UNION
+              -- Unstarted cancelled runs are outside the window's index.
+              SELECT payload_json FROM orchestration_v2_projection_runs
+              WHERE thread_id = ${threadId} AND status = 'cancelled'
+                ${floor === undefined ? sql`` : sql`AND (completed_at IS NULL OR completed_at >= ${floorCompletedAt})`}`
+            ).pipe(Effect.flatMap(decodeRows(decodeRunPayload, threadId)));
+            const runs = new Map([...window, ...rest].map((run) => [run.id, run]));
+            const requested = new Set<RunId>();
+            for (;;) {
+              const wakeRunIds = [
+                ...new Set(
+                  records.messages.flatMap((message) =>
+                    message.runId !== null &&
+                    message.delegatedCompletion !== undefined &&
+                    runs.has(message.delegatedCompletion.parentRunId) &&
+                    !runs.has(message.runId) &&
+                    !requested.has(message.runId)
+                      ? [message.runId]
+                      : [],
+                  ),
+                ),
+              ];
+              if (wakeRunIds.length === 0) break;
+              for (const id of wakeRunIds) requested.add(id);
+              const wakes = yield* getThreadRecords(threadId, ["runs"], { runIds: wakeRunIds });
+              for (const run of wakes.runs) runs.set(run.id, run);
+            }
+            return {
+              ...records,
+              runs: [...runs.values()].toSorted((a, b) => a.ordinal - b.ordinal),
+              runsFloor: floor,
+            };
           }),
         )
         .pipe(Effect.mapError(controlReadError(threadId)));
@@ -8447,30 +8565,32 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
     const selectShellItemCounts = (threadIds: ReadonlyArray<ThreadId>) =>
       sql<ShellItemCountRow>`
-        SELECT counts.thread_id,
-          SUM(CASE WHEN counts.run_key = '' OR r.status <> 'rolled_back'
-            THEN counts.item_count - CASE
-              WHEN r.status IN ('queued', 'cancelled') THEN (
-                SELECT COUNT(*)
-                FROM orchestration_v2_projection_turn_items held
-                INDEXED BY orchestration_v2_projection_turn_items_queued_input_idx
-                WHERE held.run_id = counts.run_key
-                  AND held.type = 'user_message'
-                  AND json_valid(held.payload_json)
-                  AND json_extract(held.payload_json, '$.inputIntent') = 'queued_turn'
-              )
-              ELSE 0
-            END
-            ELSE 0 END) AS item_count,
-          SUM(CASE WHEN counts.run_key = '' THEN counts.item_count ELSE 0 END)
-            AS runless_item_count
-        FROM orchestration_v2_projection_turn_item_counts counts
-        -- The primary key would load each run's whole row just for its status.
-        LEFT JOIN orchestration_v2_projection_runs r
-          INDEXED BY orchestration_v2_projection_runs_run_status_idx
-          ON r.run_id = counts.run_key
-        WHERE counts.thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))
-        GROUP BY counts.thread_id
+        -- Only the thread's hidden runs are visited, so settled history costs nothing here.
+        SELECT totals.thread_id,
+          totals.item_count - COALESCE((
+            SELECT SUM(CASE WHEN r.status = 'rolled_back' THEN counts.item_count ELSE (
+              SELECT COUNT(*)
+              FROM orchestration_v2_projection_turn_items held
+              INDEXED BY orchestration_v2_projection_turn_items_queued_input_idx
+              WHERE held.run_id = counts.run_key
+                AND held.type = 'user_message'
+                AND json_valid(held.payload_json)
+                AND json_extract(held.payload_json, '$.inputIntent') = 'queued_turn'
+            ) END)
+            FROM orchestration_v2_projection_runs r
+              INDEXED BY orchestration_v2_projection_runs_hidden_items_idx
+            JOIN orchestration_v2_projection_turn_item_counts counts
+              ON counts.thread_id = r.thread_id AND counts.run_key = r.run_id
+            WHERE r.thread_id = totals.thread_id
+              AND r.status IN ('rolled_back', 'queued', 'cancelled')
+          ), 0) AS item_count,
+          COALESCE((
+            SELECT runless.item_count
+            FROM orchestration_v2_projection_turn_item_counts runless
+            WHERE runless.thread_id = totals.thread_id AND runless.run_key = ''
+          ), 0) AS runless_item_count
+        FROM orchestration_v2_projection_thread_item_counts totals
+        WHERE totals.thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))
       `;
 
     const selectShellProviderThreadRows = (threadIds?: ReadonlyArray<ThreadId>) =>
@@ -8492,6 +8612,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     ) => sql<ShellPendingTurnItemRow>`
       SELECT i.thread_id, i.payload_json, p.provider_instance_id AS owning_provider_instance_id
       FROM orchestration_v2_projection_turn_items i
+        INDEXED BY orchestration_v2_projection_turn_items_shell_pending_idx
       LEFT JOIN orchestration_v2_projection_provider_threads p
         ON p.provider_thread_id = i.provider_thread_id
       LEFT JOIN orchestration_v2_projection_runs r
@@ -9645,6 +9766,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getCheckpointCaptureContext: readOnReader(getCheckpointCaptureContext),
       getCheckpointRollbackContext: readOnReader(getCheckpointRollbackContext),
       getRunMessage: readOnReader(getRunMessage),
+      getDelegatedChildControls: readOnReader(getDelegatedChildControls),
       getRun: readOnReader(getRun),
       canStartQueuedRun: readOnReader(canStartQueuedRun),
       getHeldQueuedRuns: readOnReader(getHeldQueuedRuns),

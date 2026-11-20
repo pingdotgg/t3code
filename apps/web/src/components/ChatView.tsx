@@ -41,7 +41,11 @@ import { ThreadFind, ThreadFindCanvas } from "./chat/ThreadFindProvider";
 import { closeThreadFind, openThreadFind, useThreadFindOpen } from "./chat/threadFindStore";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
-import { isThreadEnvironmentLocked, resolveDraftHeroState } from "./ChatView.logic";
+import {
+  isThreadEnvironmentLocked,
+  resolveDraftHeroState,
+  threadErrorIsServerRuntime,
+} from "./ChatView.logic";
 import { useQueuedRunEdit } from "./chat/useQueuedRunEdit";
 import { recallCheckoutIsRepo, rememberCheckoutIsRepo } from "./ChatView.logic";
 import { useLogicalProjectEnvironments } from "../hooks/useLogicalProjectEnvironments";
@@ -979,7 +983,17 @@ export default function ChatView(props: ChatViewProps) {
   const threadError = isServerThread
     ? (localServerError ?? serverRuntime?.lastError ?? null)
     : localDraftError;
-  const threadErrorBannerKey = getThreadErrorBannerKey(routeThreadKey, threadError);
+  const threadErrorBannerKey = getThreadErrorBannerKey(
+    routeThreadKey,
+    threadError,
+    threadErrorIsServerRuntime({
+      isServerThread,
+      localServerError,
+      runtimeError: serverRuntime?.lastError ?? null,
+    })
+      ? (serverRuntime?.lastErrorSource ?? null)
+      : null,
+  );
   const visibleThreadError = shouldShowThreadErrorBanner(
     routeThreadKey,
     threadError,
@@ -2832,15 +2846,26 @@ export default function ChatView(props: ChatViewProps) {
     },
   });
 
+  const closeActiveRightPanelSurfaceStable = useStableCallback(() => {
+    if (activeRightPanelSurface) closeRightPanelSurface(activeRightPanelSurface);
+  });
+
   // A focused desktop browser page forwards these chords as menu actions.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to desktop bridge menu actions that toggle the right panel
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to desktop bridge menu actions that toggle or close the right panel
   useEffect(() => {
-    if (embedded) return;
+    if (embedded || backgroundThread) return;
     return window.desktopBridge?.onMenuAction((action) => {
       if (action === "rightPanel.toggle") toggleRightPanelStable();
       else if (action === "rightPanel.toggleMaximized") toggleRightPanelMaximizedStable();
+      else if (action === "rightPanel.close") closeActiveRightPanelSurfaceStable();
     });
-  }, [embedded, toggleRightPanelStable, toggleRightPanelMaximizedStable]);
+  }, [
+    embedded,
+    backgroundThread,
+    toggleRightPanelStable,
+    toggleRightPanelMaximizedStable,
+    closeActiveRightPanelSurfaceStable,
+  ]);
 
   usePasteToFocusComposer(embedded ? null : activeThreadId, composerRef);
   // A delegated task is a remote thread's subagent.
