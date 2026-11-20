@@ -219,14 +219,14 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
       /^opencode(?:-v2)?(\.exe|\.cmd)?$/i.test(
         options.settings.commandPath.split(/[\\/]/).pop() ?? "",
       ));
-  // Local installs launch each binary directly with no registry id; a command may
-  // also be named after the published package id.
+  // Local installs launch the binary directly with no registry id, named either
+  // for the CLI or for its registry id.
   const isCopilot =
     registryAgentId === "github-copilot-cli" ||
     matchesLocalAgentCommand(
       options.settings.commandPath,
       options.settings.source,
-      /^(?:github-)?copilot(?:-cli)?(\.exe|\.cmd)?$/i,
+      /^(?:copilot|github-copilot-cli)(\.exe|\.cmd)?$/i,
     );
   const isKimi =
     registryAgentId === "kimi-code" ||
@@ -240,7 +240,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     matchesLocalAgentCommand(
       options.settings.commandPath,
       options.settings.source,
-      /^claude(?:-agent)?-acp(\.exe|\.cmd)?$/i,
+      /^claude-agent-acp(\.exe|\.cmd)?$/i,
     );
   const isDroid =
     registryAgentId === "factory-droid" ||
