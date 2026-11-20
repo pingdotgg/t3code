@@ -488,6 +488,7 @@ export function layerWithRegistry<Error>(
         layerEventSinkProvided,
         IdAllocator.layer,
         layerStores,
+        ThreadCommandExecutor.layer,
       ),
     ),
   );
