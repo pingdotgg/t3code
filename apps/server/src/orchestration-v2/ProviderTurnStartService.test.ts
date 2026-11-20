@@ -23,6 +23,7 @@ import {
   ServerSettingsError,
   RunAttemptId,
   RunId,
+  ScheduledTaskId,
   ThreadId,
   TurnItemId,
   ProjectId,
@@ -481,6 +482,8 @@ function makeLocalCommandHarness(input: {
   readonly fileSystem?: FileSystem.FileSystem;
   readonly previousNativeSession?: boolean;
   readonly previousMessages?: ReadonlyArray<string>;
+  readonly createdBy?: "agent" | "system";
+  readonly scheduledTaskId?: ScheduledTaskId;
   readonly logoutFailure?: string;
   readonly openFailure?: unknown;
   readonly ensureThreadFailure?: unknown;
@@ -590,8 +593,9 @@ function makeLocalCommandHarness(input: {
       ? {}
       : { context: { version: 1 as const, records: input.contextRecords } }),
     streaming: false,
-    createdBy: "user",
-    creationSource: "web",
+    createdBy: input.createdBy ?? "user",
+    creationSource: input.createdBy === undefined ? "web" : "mcp",
+    ...(input.scheduledTaskId === undefined ? {} : { scheduledTaskId: input.scheduledTaskId }),
     createdAt: now,
     updatedAt: now,
   };
@@ -2553,6 +2557,73 @@ effectIt.effect.each([
 );
 
 effectIt.effect.each([
+  { scheduled: false, status: "superseded" },
+  { scheduled: true, status: "ready" },
+] as const)(
+  "a fresh run starts without failed runs' side chat notes; an unscheduled one retires them: %j",
+  ({ scheduled, status }) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "Start over",
+        sideChat: { contextRun: "failed" },
+      });
+      const projection = harness.projection();
+      const current = projection.runs.at(-1)!;
+      const [note] = projection.contextHandoffs;
+      harness.setProjection({
+        ...projection,
+        runs: projection.runs.map((run) =>
+          run.id === current.id ? { ...run, freshContext: true } : run,
+        ),
+        // Each send that fails before the side chat's fork resolves leaves its own note.
+        contextHandoffs: [
+          ...projection.contextHandoffs,
+          { ...note!, id: ContextHandoffId.make("side-chat-context-retry") },
+        ],
+        turnItems: scheduled
+          ? [
+              ...projection.turnItems,
+              {
+                type: "user_message",
+                id: TurnItemId.make("scheduled-fresh-message"),
+                threadId: projection.thread.id,
+                runId: current.id,
+                nodeId: null,
+                providerThreadId: current.providerThreadId,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 0,
+                status: "completed",
+                title: null,
+                startedAt: projection.updatedAt,
+                completedAt: projection.updatedAt,
+                updatedAt: projection.updatedAt,
+                createdBy: "user",
+                creationSource: "server",
+                messageId: current.userMessageId,
+                text: "Start over",
+                inputIntent: "turn_start",
+                attachments: [],
+                scheduledTaskId: ScheduledTaskId.make("fresh-session-task"),
+              },
+            ]
+          : projection.turnItems,
+      });
+
+      yield* harness.start;
+
+      expect(harness.startTurn.mock.calls[0]?.[0].message.text).toBe("Start over");
+      expect(
+        harness.projection().contextHandoffs.map((handoff) => [handoff.status, handoff.delivery]),
+      ).toEqual([
+        [status, undefined],
+        [status, undefined],
+      ]);
+    }),
+);
+
+effectIt.effect.each([
   {
     nativeForkFrom: "idle",
     canForkWhileSourceRunning: false,
@@ -3419,6 +3490,7 @@ effectIt.effect.each(["not_loaded", "error"] as const)(
         instanceId: harness.oldInstanceId,
         text: "/logout",
         hasAttachments: false,
+        sentByPerson: true,
       });
       expect(harness.open).not.toHaveBeenCalled();
       expect(harness.startRootRun).not.toHaveBeenCalled();
@@ -3440,6 +3512,26 @@ effectIt.effect.each(["not_loaded", "error"] as const)(
         projection.providerThreads.find((thread) => thread.id === "new-provider-thread")?.status,
       ).toBe(providerThreadStatus);
     }),
+);
+
+effectIt.effect.each([
+  { name: "an agent", createdBy: "agent" as const },
+  // A scheduled delivery keeps its task author's createdBy.
+  { name: "a scheduled task", scheduledTaskId: ScheduledTaskId.make("task") },
+])("does not let $name sign a provider out", ({ name: _name, ...sender }) =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "/logout",
+      ...sender,
+      previousNativeSession: true,
+    });
+
+    yield* harness.start;
+
+    expect(harness.tryHandlePromptCommand).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ sentByPerson: false }),
+    );
+  }),
 );
 
 for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {

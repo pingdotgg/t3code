@@ -115,6 +115,12 @@ const policies = (): ReadonlyArray<Policy> => [
     toggle: "BrowserCookieImport",
   },
   {
+    id: "PreviewTunnel",
+    title: "Allow the preview tunnel",
+    help: `Disabled stops other devices from opening this machine's local servers through ${APP_NAME}: no in-app browser tabs loaded on the device, no Open on this device, no port forwarding. Browser tabs still stream from this machine.`,
+    toggle: "PreviewTunnel",
+  },
+  {
     id: "AllowedDrivers",
     title: "Allowed providers",
     help: "Only the checked providers may run. Threads on other providers stay, marked unavailable.\n\nDisabled or Not Configured: no restriction.",

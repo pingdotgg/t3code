@@ -467,7 +467,7 @@ function UpdateControl({
           }
         : undefined;
     return inSidebar ? (
-      <SidebarMenuItem className="ml-auto flex flex-1">
+      <SidebarMenuItem className="@container/sidebar-update ml-auto flex min-w-8 flex-1">
         <SidebarUpdateCapsule run={run} local={local} icon={statusIcon} onRestart={onRestart} />
         {confirmDialog}
       </SidebarMenuItem>

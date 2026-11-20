@@ -1,5 +1,6 @@
 import { pipe } from "effect/Function";
 import * as DocumentText from "../../provider/DocumentText.ts";
+import { brokenRuntimeError } from "../../provider/providerCompatibility.ts";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
@@ -165,7 +166,6 @@ import {
 } from "@t3tools/provider-core/server/subagentProjection";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import { APP_NAME } from "@t3tools/shared/branding";
 
 const CODEX_PROVIDER = ProviderDriverKind.make("codex");
 const CODEX_CAPACITY_MAX_RETRIES = 5;
@@ -287,6 +287,7 @@ export const CodexProviderCapabilitiesV2 = {
     emitsTurnStarted: true,
     emitsTurnCompleted: true,
     supportsInterrupt: true,
+    supportsNativeResume: true,
     supportsActiveSteering: true,
     activeSteeringDuringCompaction: true,
     supportsSteeringByInterruptRestart: true,
@@ -707,10 +708,15 @@ function toCodexUserInputAnswers(
 }
 
 function compactStrings(values: ReadonlyArray<string | null | undefined>): ReadonlyArray<string> {
-  return values.flatMap((value) => {
-    const trimmed = trimText(value);
-    return trimmed === undefined ? [] : [trimmed];
-  });
+  // Codex derives the item's `query` from its action, so it often repeats an action value.
+  return [
+    ...new Set(
+      values.flatMap((value) => {
+        const trimmed = trimText(value);
+        return trimmed === undefined ? [] : [trimmed];
+      }),
+    ),
+  ];
 }
 
 function webSearchPatterns(item: CodexWebSearchItem): ReadonlyArray<string> {
@@ -1515,9 +1521,25 @@ const CODEX_T3_MCP_TOOL_TIMEOUT_SEC = 65 * 60;
 const CODEX_T3_DIRECT_MCP_SERVER = "t3-code-direct";
 const CODEX_DIRECT_ONLY_T3_TOOLS = ["t3_thread_wait", "delegate_task"];
 
+/** Names of the stdio MCP servers in a `config/read` config, the ones Codex starts per thread. */
+function codexStdioMcpServerNames(mcpServers: unknown): ReadonlyArray<string> {
+  if (mcpServers === null || typeof mcpServers !== "object") return [];
+  return Object.entries(mcpServers)
+    .filter(
+      ([name, server]) =>
+        // Codex splits config override keys on every dot.
+        !name.includes(".") &&
+        server !== null &&
+        typeof server === "object" &&
+        typeof Reflect.get(server, "command") === "string",
+    )
+    .map(([name]) => name);
+}
+
 function codexThreadRuntimeParams(input: {
   readonly threadId: ThreadId | null;
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
+  readonly stdioMcpServers?: ReadonlyArray<string>;
   readonly modelSelection?: { readonly model: string };
   readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
   readonly hiddenSkillPaths?: ReadonlyArray<string>;
@@ -1549,7 +1571,16 @@ function codexThreadRuntimeParams(input: {
       // One app-server serves many threads, so the id goes in per-thread shell config, not its env.
       ...(input.threadId === null
         ? {}
-        : { [`shell_environment_policy.set.${PortScanner.AGENT_THREAD_ENV}`]: input.threadId }),
+        : {
+            [`shell_environment_policy.set.${PortScanner.AGENT_THREAD_ENV}`]: input.threadId,
+            // Codex starts the user's stdio MCP servers per thread, outside the shell policy.
+            ...Object.fromEntries(
+              (input.stdioMcpServers ?? []).map((name) => [
+                `mcp_servers.${name}.env.${PortScanner.AGENT_THREAD_ENV}`,
+                input.threadId,
+              ]),
+            ),
+          }),
       ...(t3Server === undefined
         ? {}
         : {
@@ -1943,6 +1974,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
     driver: CODEX_PROVIDER,
+    checksVersionAtHandshake: adapterOptions.compatibility !== undefined,
     getCapabilities: Effect.fn("CodexAdapterV2.getCapabilities")(function () {
       return Effect.succeed(CodexProviderCapabilitiesV2);
     }),
@@ -2070,15 +2102,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               version && adapterOptions.compatibility
                 ? yield* adapterOptions.compatibility(version)
                 : undefined;
-            if (advisory?.status === "broken") {
-              const target =
-                advisory.recommendedVersion ?? advisory.recommendedRange ?? "a newer version";
-              return yield* new ProviderSetupError({
+            const refused =
+              version &&
+              brokenRuntimeError({
                 instanceId: adapterOptions.instanceId,
-                operation: "runtime",
-                detail: `Codex ${version} does not work with this ${APP_NAME} release. Update Codex to ${target}, then retry.`,
+                name: "Codex",
+                version,
+                advisory,
               });
-            }
+            if (refused) return yield* refused;
             yield* client.notify("initialized", undefined);
             yield* Ref.set(initialized, true);
           }),
@@ -2109,6 +2141,22 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           );
           return codexThreadRuntimeParams({ ...params, hiddenSkillPaths });
         });
+        // Read per thread: a workspace's project config can add its own servers.
+        const readStdioMcpServers = (cwd: string | null | undefined) =>
+          ensureInitialized.pipe(
+            Effect.andThen(
+              client.request("config/read", {
+                ...(cwd == null ? {} : { cwd }),
+                includeLayers: false,
+              }),
+            ),
+            Effect.map((response) => codexStdioMcpServerNames(response.config.mcp_servers)),
+            Effect.catch(() =>
+              Effect.logDebug("Codex config read failed.").pipe(
+                Effect.as<ReadonlyArray<string>>([]),
+              ),
+            ),
+          );
         const now = yield* DateTime.now;
         const session = providerSession({
           providerSessionId: input.providerSessionId,
@@ -2201,6 +2249,20 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           string,
           { readonly runtimeMode: RuntimeMode; readonly kinds: Set<ProviderRequestKind> }
         >();
+        // `codex resume` and the Codex app list the native name. A failed rename, including on a
+        // Codex without thread/name/set, is forgotten so the next turn sends it again.
+        const appliedThreadNames = new Map<string, string>();
+        const applyThreadName = Effect.fn("CodexAdapterV2.applyThreadName")(function* (
+          threadId: string,
+          name: string,
+        ) {
+          if (appliedThreadNames.get(threadId) === name) return;
+          const renamed = yield* client
+            .request("thread/name/set", { threadId, name })
+            .pipe(Effect.timeout("10 seconds"), Effect.isSuccess);
+          if (renamed) appliedThreadNames.set(threadId, name);
+          else appliedThreadNames.delete(threadId);
+        });
         /** Bind answers to the request's approval set so mode changes invalidate late answers. */
         const endSessionApprovalsOnModeChange = (context: ActiveCodexTurnContext) => {
           const nativeThreadId = context.providerThread.nativeThreadRef?.nativeId;
@@ -7703,6 +7765,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           const activation = { stopped: false };
           goalActivations.set(threadId, activation);
           yield* Effect.gen(function* () {
+            yield* applyThreadName(threadId, turnInput.appThread.title);
             yield* startNativeTurn(turnInput, yield* codexInput);
             if (activation.stopped) return;
             const { goal } = yield* client.request("thread/goal/set", {
@@ -7835,6 +7898,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             payload: cause,
           });
         // Codex unloads idle threads; MCP requests against one fail until it is resumed.
+        // The session's model and cwd belong to whichever thread opened this shared
+        // app-server, so leave them out: Codex resumes with the thread's saved settings
+        // and loads that workspace's project MCP servers.
         const withLoadedThread = <A, E, R>(
           providerThread: OrchestrationV2ProviderThread,
           threadId: string,
@@ -7842,15 +7908,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         ) =>
           request.pipe(
             Effect.catchIf(isCodexThreadNotFoundError, () =>
-              readMcpSession(providerThread.appThreadId).pipe(
-                Effect.flatMap((mcpSession) =>
+              Effect.all([
+                readMcpSession(providerThread.appThreadId),
+                readStdioMcpServers(undefined),
+              ]).pipe(
+                Effect.flatMap(([mcpSession, stdioMcpServers]) =>
                   resumeNativeThread(threadId, {
                     excludeTurns: true,
                     ...codexThreadRuntimeParams({
                       threadId: providerThread.appThreadId,
                       mcpSession,
-                      modelSelection: input.modelSelection,
-                      runtimePolicy: input.runtimePolicy,
+                      stdioMcpServers,
                     }),
                   }),
                 ),
@@ -8014,11 +8082,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }),
           ensureThread: (threadInput) =>
             ensureInitialized.pipe(
-              Effect.andThen(mcpSessions.read(threadInput.threadId)),
-              Effect.flatMap((mcpSession) =>
+              Effect.andThen(
+                Effect.all([
+                  mcpSessions.read(threadInput.threadId),
+                  readStdioMcpServers(threadInput.runtimePolicy.cwd),
+                ]),
+              ),
+              Effect.flatMap(([mcpSession, stdioMcpServers]) =>
                 threadRuntimeParams({
                   threadId: threadInput.threadId,
                   mcpSession,
+                  stdioMcpServers,
                   modelSelection: threadInput.modelSelection,
                   runtimePolicy: threadInput.runtimePolicy,
                 }),
@@ -8060,6 +8134,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 ...(yield* threadRuntimeParams({
                   threadId: appThreadId,
                   mcpSession: yield* readMcpSession(appThreadId),
+                  stdioMcpServers: yield* readStdioMcpServers(threadInput.runtimePolicy?.cwd),
                   ...(threadInput.modelSelection === undefined
                     ? {}
                     : { modelSelection: threadInput.modelSelection }),
@@ -8068,11 +8143,24 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     : { runtimePolicy: threadInput.runtimePolicy }),
                 })),
               });
+              // Codex resumes an active goal's turns right after the response; own them before it.
+              const previousRoot = rootProviderThreads.get(nativeThreadId);
+              rootProviderThreads.set(nativeThreadId, threadInput.providerThread);
+              goalUpdatesHeld.add(nativeThreadId);
               const response = yield* ensureInitialized.pipe(
                 Effect.andThen(resume),
                 Effect.flatMap(decodeCodexResumeMetadata),
+                // Stay registered: a lost or undecodable response may still have resumed the thread.
+                Effect.onError(() =>
+                  Effect.suspend(() => {
+                    if (previousRoot !== undefined) {
+                      rootProviderThreads.set(nativeThreadId, previousRoot);
+                    }
+                    return releaseGoalUpdates(nativeThreadId);
+                  }),
+                ),
               );
-              return {
+              const resumed = {
                 ...threadInput.providerThread,
                 providerSessionId: input.providerSessionId,
                 providerInstanceId: adapterOptions.instanceId,
@@ -8085,6 +8173,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 nativeConversationHeadRef: threadInput.providerThread.nativeConversationHeadRef,
                 updatedAt: codexTimestamp(response.thread.updatedAt),
               } satisfies OrchestrationV2ProviderThread;
+              rootProviderThreads.set(nativeThreadId, resumed);
+              yield* releaseGoalUpdates(nativeThreadId);
+              return rootProviderThreads.get(nativeThreadId) ?? resumed;
             },
             (effect, threadInput) =>
               effect.pipe(
@@ -8178,6 +8269,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ) {
                 return yield* activateGoal(turnInput, nativeThreadId, toCodexInput(turnInput));
               }
+              // Not in startNativeTurn: a capacity retry would replay its captured, possibly stale title.
+              if (nativeThreadId != null) {
+                yield* applyThreadName(nativeThreadId, turnInput.appThread.title);
+              }
               yield* startNativeTurn(
                 turnInput,
                 !continuation ? yield* toCodexInput(turnInput) : [],
@@ -8268,6 +8363,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 ),
               ),
           ),
+          applyThreadTitle: Effect.fn("CodexAdapterV2.applyThreadTitle")(function* ({
+            providerThread,
+            title,
+          }) {
+            const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
+            if (nativeThreadId != null) yield* applyThreadName(nativeThreadId, title);
+          }),
           applyModelSelection: Effect.fn("CodexAdapterV2.applyModelSelection")(function* ({
             providerThread,
             modelSelection,
@@ -8923,12 +9025,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 });
               }
               // thread/revert requires the thread loaded in this app-server; resume after restart or idle release.
+              // Like withLoadedThread, resume with the thread's saved model and cwd, not the session's.
               if (!loaded) {
                 yield* resumeNativeThread(threadId, {
                   excludeTurns: true,
                   ...(yield* threadRuntimeParams({
                     threadId: threadInput.providerThread.appThreadId,
                     mcpSession: yield* readMcpSession(threadInput.providerThread.appThreadId),
+                    stdioMcpServers: yield* readStdioMcpServers(undefined),
                     modelSelection: input.modelSelection,
                     runtimePolicy: input.runtimePolicy,
                   })),
@@ -8979,6 +9083,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 ...(yield* threadRuntimeParams({
                   threadId: threadInput.targetThreadId,
                   mcpSession: yield* mcpSessions.read(threadInput.targetThreadId),
+                  stdioMcpServers: yield* readStdioMcpServers(threadInput.runtimePolicy?.cwd),
                   ...(threadInput.modelSelection === undefined
                     ? {}
                     : { modelSelection: threadInput.modelSelection }),

@@ -69,6 +69,51 @@ describe("V2 context window presentation", () => {
         ?.usedTokens,
     ).toBe(2_000);
   });
+
+  it("prefers a completed compaction over usage reported before it", () => {
+    const usageBeforeCompaction = decodeTokenUsage({
+      usedTokens: 985_000,
+      maxTokens: 1_000_000,
+      updatedAt: "2026-06-19T23:55:00.000Z",
+    });
+    const snapshot = deriveLatestContextWindowSnapshot(
+      [compactionEntry(null)],
+      usageBeforeCompaction,
+    );
+    expect(snapshot?.usedTokens).toBe(2_000);
+    expect(snapshot?.maxTokens).toBe(1_000_000);
+
+    // A report in the compaction's own millisecond is the provider's post-compaction usage.
+    const reportedWithCompaction = decodeTokenUsage({
+      usedTokens: 2_000,
+      maxTokens: 1_000_000,
+      autoCompactThreshold: 900_000,
+      updatedAt: "2026-06-20T00:00:00.000Z",
+    });
+    expect(
+      deriveLatestContextWindowSnapshot([compactionEntry(null)], reportedWithCompaction)
+        ?.autoCompactThreshold,
+    ).toBe(900_000);
+
+    const { afterTokenCount: _, ...withoutCount } = compactionEntry(null).item;
+    expect(
+      deriveLatestContextWindowSnapshot([{ item: withoutCount }], usageBeforeCompaction),
+    ).toBeNull();
+    // A metadata-only provider thread update reports no usage, so an older count stays hidden.
+    const olderCompaction = {
+      item: {
+        ...compactionEntry(null).item,
+        updatedAt: DateTime.makeUnsafe("2026-06-19T00:00:00.000Z"),
+      },
+    };
+    expect(
+      deriveLatestContextWindowSnapshot([olderCompaction, { item: withoutCount }], null, {
+        id: ProviderThreadId.make("thread"),
+        contextUsage: null,
+        updatedAt: DateTime.makeUnsafe("2026-06-21T00:00:00.000Z"),
+      }),
+    ).toBeNull();
+  });
 });
 
 describe("live provider-turn usage (#8144)", () => {

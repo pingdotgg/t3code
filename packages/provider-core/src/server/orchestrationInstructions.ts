@@ -167,22 +167,29 @@ export function t3OrchestrationPrompt(input: {
   readonly orchestrationDelivered: boolean;
   readonly deviceInstructionsDelivered: boolean;
   readonly computerInstructionsDelivered: boolean;
+  /** Guidance for this provider's own tools, sent until `providerInstructionsDelivered`. */
+  readonly providerInstructions?: string;
+  readonly providerInstructionsDelivered?: boolean;
 }): string {
   if (!input.hasT3Mcp) return input.prompt;
-  if (!input.orchestrationDelivered) {
-    return prependT3OrchestrationInstructions(input.prompt, orchestrationInstructions(input));
-  }
-  const missing = [
-    ...(input.hasDeviceTools && !input.deviceInstructionsDelivered
-      ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS]
-      : []),
-    ...(input.hasComputerTools && !input.computerInstructionsDelivered
-      ? [T3_CODE_COMPUTER_TOOL_INSTRUCTIONS]
-      : []),
-  ];
-  return missing.length === 0
+  const instructions = [
+    ...(!input.orchestrationDelivered
+      ? [orchestrationInstructions(input)]
+      : [
+          ...(input.hasDeviceTools && !input.deviceInstructionsDelivered
+            ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS]
+            : []),
+          ...(input.hasComputerTools && !input.computerInstructionsDelivered
+            ? [T3_CODE_COMPUTER_TOOL_INSTRUCTIONS]
+            : []),
+        ]),
+    ...(input.providerInstructionsDelivered === true || input.providerInstructions === undefined
+      ? []
+      : [input.providerInstructions]),
+  ].map((part) => part.trim());
+  return instructions.length === 0
     ? input.prompt
-    : prependT3OrchestrationInstructions(input.prompt, missing.join("\n\n"));
+    : prependT3OrchestrationInstructions(input.prompt, instructions.join("\n\n"));
 }
 
 export function t3OrchestrationSystemPrompt(

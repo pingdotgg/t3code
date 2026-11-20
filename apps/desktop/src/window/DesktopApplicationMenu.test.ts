@@ -277,4 +277,29 @@ describe("DesktopApplicationMenu", () => {
       assert.equal(yield* Deferred.await(selectedAction), "check-for-updates");
     }),
   );
+
+  it.effect("labels every role item so the menu follows the UI language", () =>
+    Effect.gen(function* () {
+      // Electron's role defaults are English on every platform, so each role item needs a label.
+      for (const platform of ["darwin", "linux", "win32"] as const) {
+        const applicationMenuTemplate =
+          yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+        yield* configureMenu(yield* Deferred.make<string>(), applicationMenuTemplate, {
+          platform,
+        });
+
+        const unlabeled: string[] = [];
+        const collect = (template: readonly Electron.MenuItemConstructorOptions[]) => {
+          for (const item of template) {
+            if (item.role !== undefined && typeof item.label !== "string") {
+              unlabeled.push(item.role);
+            }
+            if (Array.isArray(item.submenu)) collect(item.submenu);
+          }
+        };
+        collect(yield* Deferred.await(applicationMenuTemplate));
+        assert.deepStrictEqual(unlabeled, [], platform);
+      }
+    }),
+  );
 });

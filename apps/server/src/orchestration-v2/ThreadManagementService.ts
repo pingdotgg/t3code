@@ -78,6 +78,7 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimit.ts";
 import { projectTurnItemForDetail } from "./WireProjection.ts";
+import { cancelledBeforeStart } from "./RestartBackgroundNote.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
@@ -1453,9 +1454,13 @@ const make = Effect.gen(function* () {
           )
         )
           return false;
+        // A wake cancelled before it started (its result was already read in-turn) did nothing.
         if (
           following.some(
-            (candidate) => candidate.status !== "queued" && candidate.status !== "completed",
+            (candidate) =>
+              candidate.status !== "queued" &&
+              candidate.status !== "completed" &&
+              !cancelledBeforeStart(candidate),
           )
         )
           return true;

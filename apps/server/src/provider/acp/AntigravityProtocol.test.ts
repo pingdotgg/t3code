@@ -491,7 +491,7 @@ describe("Antigravity tool results", () => {
     expect(JSON.stringify(event.rawPayload)).not.toContain("formatted_output");
   });
 
-  it("keeps 1.5 command output and its content text valid Unicode when cut", () => {
+  it("keeps 1.5 command input and output valid Unicode when cut", () => {
     const tail = `${"x".repeat(7_982)}build completed\r\n`;
     const output = `Command output:\nprefix\r\n🚀${tail}`;
     const expected = `[Earlier output truncated]\n\n${tail}`;
@@ -500,12 +500,15 @@ describe("Antigravity tool results", () => {
         ...commandCompleted,
         update: {
           ...commandCompleted.update,
+          rawInput: { CommandLine: output },
           rawOutput: { output, exit_code: 0 },
           content: [{ type: "content", content: { type: "text", text: output } }],
         },
       }).toolCall,
     );
+    expect(toolCall.command).toBe(expected.trimEnd());
     expect(toolCall.data).toMatchObject({
+      rawInput: { CommandLine: expected },
       rawOutput: { output: expected },
       content: [{ content: { text: expected.trimEnd() } }],
     });
@@ -570,6 +573,17 @@ describe("Antigravity tool results", () => {
     expect(serialized).not.toContain("image-blob");
     expect(serialized).not.toContain("inline-image");
     expect(serialized).not.toContain("inline-data-url");
+
+    // Leave three UTF-16 units for the retained output.
+    const padding = Object.fromEntries(
+      Array.from({ length: 7 }, (_, index) => [index, "x".repeat(8_000)]),
+    );
+    expect(
+      sanitizeAntigravityToolPayload({
+        rawOutput: { ...padding, tail: "x".repeat(7_997) },
+        item: { aggregatedOutput: "🚀ok" },
+      }),
+    ).toMatchObject({ item: { aggregatedOutput: "[Earlier output truncated]\n\nok" } });
   });
 });
 

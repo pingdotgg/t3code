@@ -213,6 +213,18 @@ check with:
 ssh user@example.com 'sh -lc "command -v claude codex"'
 ```
 
+Ada cannot answer a second sign-in prompt such as a Duo code. On macOS and
+Linux it can reuse a connection you signed in to in a terminal instead: turn on
+connection sharing for the host in `~/.ssh/config`, run `ssh <alias>`, then
+connect. When that connection closes, sign in again in a terminal and retry.
+
+```sshconfig
+Host <alias>
+  ControlMaster auto
+  ControlPath ~/.ssh/cm-%C
+  ControlPersist 8h
+```
+
 If SSH reconnecting fails after an app update, retry the launch once. Removing
 the connection stops a server that Ada launched; a server that was already
 running is left alone.
@@ -233,6 +245,52 @@ tabs from any device. The desktop app shows its own environment's tabs
 directly. Every other device, and the desktop app for other environments,
 streams them from the host. Agents keep using them while no device is
 connected, and `localhost` addresses reach servers on the host.
+
+A tab you open yourself in the desktop app for another environment loads on
+your computer instead, so the element picker, screenshots, and annotations work
+as they do locally. Its `localhost` addresses still reach servers on the host,
+over the connection the app already has, whichever way you connected. If the
+host cannot be reached, the tab shows a connection error; a `localhost`,
+`127.0.0.1`, or `[::1]` address never opens a server on your own computer.
+Other names that point at your computer, such as `/etc/hosts` entries, still
+do. These tabs ignore your system proxy settings, so they can't reach a host
+you connect to only through a proxy or over HTTPS with a privately issued
+certificate. The web app keeps streaming.
+
+The desktop app can also forward a port on the host to your computer, so any
+app there, such as your own browser, `curl`, or a database client, reaches it
+at `localhost`. Use the forward button on a server in the thread's **Servers**
+list, or **Forwarded ports** in the command palette, where you can also type
+any port number and stop forwards. A forward keeps the host's port number
+unless that port is taken on your computer, in which case it uses a free one
+and shows it. Forwards end when you stop them or quit the app. ⌘-click
+(Ctrl-click on Windows and Linux) on a remote server forwards it and opens it
+in your browser.
+
+A forwarded port behaves like a server running on your computer: anything on
+your computer can reach it, including web pages open in your browser, so a
+forwarded service is exposed the same way a local dev server is. Forwards
+listen only on your computer's loopback, never on your network. On Linux they
+accept only apps running as your user; on macOS and Windows, other users signed
+in to the same computer can reach them too.
+
+On iPhone, iPad, and Android, a tab showing one of the host's `localhost` pages
+has **Open on this device** in its menu. So does a long press on a `localhost`
+link in a chat. It opens the page in the phone's own browser view, at the same
+`localhost` address, so it scrolls and responds to touch natively. Like the
+desktop app, it never opens a server on the phone itself. The streamed tab
+stays where it was, and agents keep using it. Each host keeps its own cookies
+and site data on the phone. On iPhone and iPad the page runs under a stand-in
+address while the address bar shows `localhost`, so browser features that need
+a secure page, such as the clipboard or service workers, aren't available there.
+
+All of this rides the host's preview tunnel. Turn off **Settings → Sharing &
+access → Preview tunnel** on the host to stop other devices from loading its
+`localhost` pages themselves: port forwarding and **Open on this device** go
+away, and open tunnels close. Tabs keep working by streaming from the host, so
+anyone who can use the host's browser tabs can still view its `localhost` pages
+there. An administrator can also turn it off with a
+[managed policy](./managed-policy.md#other-capabilities).
 
 The first tab downloads a headless Chrome, about 120 MB, into the Ada home. It
 is the same browser [HTML renders](html-renders.md) use, so a host downloads it
@@ -409,6 +467,23 @@ from that machine's **Settings → Environments**. An address you type always
 needs a pasted code. From a terminal, use
 `ada environment link <address> --pairing-code <code> --access <mode>`.
 
+To link many machines at once, choose **Link several…** in the **Machines**
+header on web and desktop, or **Link several machines to …** under the network
+on mobile. It appears once this app has two other machines saved. Tick the
+machines, pick one access level for all of them, and confirm once. A machine
+can be ticked when this app is connected to it with a session that manages
+access there and has an address another machine can reach; the list says why
+when it cannot. Each machine reports its own result, and the ones that failed
+stay ticked so you can try only those again. Machines already linked are left
+as they are.
+
+For machines no app is connected to, put one `<address> <pairing-code>` per
+line in a file (make each code with `ada pair` on that machine) and run
+`ada environment link --from <file> --access <mode>`, or `--from -` to read
+standard input. It prints a result per line, leaves machines already linked as
+they are, and exits non-zero if any line failed, so the same file can be run
+again with fresh codes for the failures.
+
 You can also ask an agent to link a machine by name, such as "delegate this to
 my vps". It shows a card in the thread where you pick the machine the same way
 and the access, then approve. An address the agent gives that this app does
@@ -425,7 +500,9 @@ an address you trust: the code is sent there.
 - The link shows up in that machine's **Settings → Environments** like any
   outside agent. Revoke it there to end it. **Forget** on this machine only
   removes it here.
-- Links last 30 days. Link again with a new pairing code to renew one.
+- A link stays valid while agents use it. One unused for 30 days expires, as
+  does one to a machine on an older Ada after 30 days; link again with a
+  new pairing code.
 
 An agent can also hand a task to a linked machine with `delegate_task`: it runs
 there as an ordinary thread, in the project with the same repository (or the

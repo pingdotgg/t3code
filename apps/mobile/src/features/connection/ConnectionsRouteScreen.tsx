@@ -11,6 +11,7 @@ import { AppBar } from "../../components/ui/AppBar";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { LocalEnvironmentList } from "./LocalEnvironmentList";
 import { PullRequestRoutingSettings } from "./PullRequestRoutingSettings";
+import { LinkSeveralEnvironmentsAction } from "./LinkSeveralEnvironments";
 import { NetworkSection } from "./NetworkSection";
 
 export function ConnectionsRouteScreen() {
@@ -63,6 +64,15 @@ export function ConnectionsRouteScreen() {
           onUpdate={onUpdateEnvironment}
         />
         <NetworkSection />
+        {connectedEnvironments
+          .filter((environment) => environment.connectionState === "connected")
+          .map((environment) => (
+            <LinkSeveralEnvironmentsAction
+              key={environment.environmentId}
+              environmentId={environment.environmentId}
+              environmentLabel={environment.environmentLabel}
+            />
+          ))}
         <PullRequestRoutingSettings />
       </ScrollView>
     </View>

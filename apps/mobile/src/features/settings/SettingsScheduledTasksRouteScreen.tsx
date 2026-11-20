@@ -37,6 +37,7 @@ import {
   WEBHOOK_FILTER_OPS,
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
+import { scheduledTaskWorktreeBaseRef } from "@t3tools/client-runtime/scheduled-task-worktree";
 import { scheduleTimeZoneLabel } from "@t3tools/client-runtime/scheduled-task-time-zone";
 import {
   describeSchedule as describeRepeatSchedule,
@@ -73,6 +74,7 @@ import { buildModelOptions } from "../../lib/modelOptions";
 import { withImplicitFastModeSelection } from "../../lib/providerOptions";
 import { useProjects, useEnvironmentServerConfig } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
+import { usePaginatedBranches } from "../../state/queries";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { resolveNewTaskBranchLabel } from "../threads/new-task-context-presentation";
@@ -706,12 +708,19 @@ export function SettingsScheduledTaskEditRouteScreen() {
 
 function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }) {
   const gt = useGT();
-  const { editor, voiceOwnerKey, readEditor, setEditor, hasChanges, draftForEnvironment } =
-    useScheduledTaskEditor();
+  const {
+    editor,
+    voiceOwnerKey,
+    readEditor,
+    setEditor,
+    hasChanges,
+    saving,
+    setSaving,
+    draftForEnvironment,
+  } = useScheduledTaskEditor();
   const { availableTargets } = useSettingsEnvironmentFilter();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const [saving, setSaving] = useState(false);
   // Set once the save lands, so the removal guard lets the editor close.
   const saved = useRef(false);
   const ownerKey = editor ? `${voiceOwnerKey}:${editor.environmentId}` : null;
@@ -903,6 +912,21 @@ function TaskForm({
           project.id === draft.task?.projectId),
     )
     .sort((left, right) => Number(right.pinnedAt != null) - Number(left.pinnedAt != null));
+  const automaticBaseRef = draft.workspace === "worktree" && !draft.baseRef.trim();
+  const automaticBaseRefCwd = automaticBaseRef
+    ? (projects.find((project) => project.id === draft.projectId)?.workspaceRoot ?? null)
+    : null;
+  const automaticBaseRefs = usePaginatedBranches({
+    environmentId,
+    cwd: automaticBaseRefCwd,
+    query: "",
+  });
+  const worktreeBaseRef = scheduledTaskWorktreeBaseRef(draft.baseRef, automaticBaseRefs.refs);
+  // Until the project's refs load, the automatic base would save as `main`. A failed lookup falls back to it.
+  const automaticBaseRefLoading =
+    automaticBaseRefCwd !== null &&
+    automaticBaseRefs.data === null &&
+    automaticBaseRefs.error === null;
   const config = useEnvironmentServerConfig(environmentId);
   const destinationLabel = useScheduledTaskDestinationLabel(environmentId, draft.threadId);
   const boundThread = useScheduledTaskThread(environmentId, draft.threadId);
@@ -959,7 +983,8 @@ function TaskForm({
       saving ||
       dictationPending ||
       taskMissing ||
-      environmentUnavailable
+      environmentUnavailable ||
+      automaticBaseRefLoading
     )
       return;
     // Preserve signatures edited on other clients by sending the task's current value.
@@ -1028,6 +1053,7 @@ function TaskForm({
         routing.modelSelection,
         config?.providers ?? [],
       ),
+      ...(routing.threadId === null && draft.task?.threadId != null ? { unbindThread: true } : {}),
       workspaceStrategy:
         draft.workspace === "root"
           ? { type: "root" }
@@ -1035,7 +1061,7 @@ function TaskForm({
             ? { type: "existing_worktree", worktreePath: draft.checkoutPath.trim() }
             : {
                 type: "worktree",
-                baseRef: draft.baseRef.trim() || "main",
+                baseRef: worktreeBaseRef,
                 startFromOrigin: draft.startFromOrigin,
               },
       // A mode above the administrator's ceiling is refused; agents keep their own.
@@ -1295,7 +1321,7 @@ function TaskForm({
               label={gt("Base branch")}
               value={resolveNewTaskBranchLabel(
                 {
-                  branchName: draft.baseRef,
+                  branchName: automaticBaseRefLoading ? null : worktreeBaseRef,
                   startFromOrigin: draft.startFromOrigin,
                   workspaceMode: "worktree",
                 },
@@ -1650,6 +1676,7 @@ function TaskForm({
           dictationPending ||
           taskMissing ||
           environmentUnavailable ||
+          automaticBaseRefLoading ||
           // The server refuses an enabled webhook task under this policy.
           (draft.enabled && draft.schedule.mode === "webhook" && webhookDenial !== undefined)
         }

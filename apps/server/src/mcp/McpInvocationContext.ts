@@ -11,6 +11,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { formatThreadLink, hostedThreadLink } from "@t3tools/shared/threadLinks";
@@ -24,6 +25,7 @@ const ALL_MCP_CAPABILITIES = [
   "pull-requests",
   "computer",
   "issues",
+  "background-wait",
 ] as const;
 export type McpCapability = (typeof ALL_MCP_CAPABILITIES)[number];
 
@@ -46,6 +48,8 @@ export interface McpClientCaller {
   readonly linked?: boolean | undefined;
   /** The environment a link says it comes from; an agent never changes that machine's access. */
   readonly peerEnvironmentId?: EnvironmentId | undefined;
+  /** When a peer link's session ends unless it is used again, answered as `T3-Link-Expires-At`. */
+  readonly linkExpiresAt?: DateTime.Utc | undefined;
   /**
    * Narrower modes the client asked for on this request (`T3-Mode-Limit`):
    * another environment passing on the limits of the agent it calls for.
@@ -64,6 +68,12 @@ export interface McpClientCaller {
  * `clientModeCeiling`), so a client gains nothing by sending a broad one.
  */
 export const MODE_LIMIT_HEADER = "t3-mode-limit";
+
+/**
+ * `T3-Link-Expires-At: <ISO time>` answers a peer link's request with when its
+ * session now ends. Using a link renews it, so the linking side keeps this.
+ */
+export const LINK_EXPIRES_AT_HEADER = "t3-link-expires-at";
 
 /**
  * `T3-Sender-Thread: <environmentId>/<threadId>/<title>`, each URI-encoded: the
@@ -196,6 +206,15 @@ export const hiddenFromOutsideClients = (): boolean => {
   const fiber = Fiber.getCurrent();
   const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
   return scope === undefined || scope.thread !== undefined;
+};
+
+/** `hiddenFromOutsideClients`, and hidden from a thread whose provider cannot hold for background work. */
+export const hiddenWithoutBackgroundWait = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return (
+    scope === undefined || (scope.thread !== undefined && scope.capabilities.has("background-wait"))
+  );
 };
 
 /** `McpSchema.EnabledWhen` for tools that only serve links, hidden while the beta is off. */
