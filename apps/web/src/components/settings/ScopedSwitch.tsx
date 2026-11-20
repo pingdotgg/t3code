@@ -9,12 +9,14 @@ import { useScopedSettingsMixed } from "./useScopedSettings";
  * be undone. Before any pick, it turns the setting on everywhere.
  */
 export function ScopedSwitch({
-  settingKeys,
+  settingKeys = [],
+  mixed: mixedOverride,
   checked,
   onCheckedChange,
   ...props
-}: ComponentProps<typeof Switch> & { settingKeys: readonly (keyof ServerSettings)[] }) {
-  const mixed = useScopedSettingsMixed(settingKeys);
+}: ComponentProps<typeof Switch> & { settingKeys?: readonly (keyof ServerSettings)[] }) {
+  const keysMixed = useScopedSettingsMixed(settingKeys);
+  const mixed = mixedOverride ?? keysMixed;
   const [picked, setPicked] = useState(false);
   return (
     <Switch

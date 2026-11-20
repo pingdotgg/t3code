@@ -524,9 +524,9 @@ export function SourceControlWritingSettingsSection() {
             ) : null
           }
           control={
-            <Switch
+            <ScopedSwitch
               mixed={templatesMixed}
-              checked={templatesMixed ? false : style.followChangeRequestTemplates}
+              checked={style.followChangeRequestTemplates}
               onCheckedChange={(checked) =>
                 updateSettings({
                   sourceControlWritingStyle: {
