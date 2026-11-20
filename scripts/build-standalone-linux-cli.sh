@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # Builds this machine's standalone Linux CLI archive for a fork release, the same way
 # .github/workflows/fork-release.yml does. Needs vp (with Node from engines.node), cargo,
-# patchelf, and libatomic1. Usage: scripts/build-standalone-linux-cli.sh <version> <owner/repo> <out-dir>
+# patchelf, libatomic1, and T3CODE_APP_SCHEME (environment or root .env) set to the fork's
+# own scheme. Usage: scripts/build-standalone-linux-cli.sh <version> <owner/repo> <out-dir>
 set -euo pipefail
 
 version="$1"
 export GITHUB_REPOSITORY="$2"
 out_dir="$3"
 export T3CODE_STANDALONE=1
+# Fails in seconds, not after the build, when the fork's config (such as T3CODE_APP_SCHEME) is missing.
+node --input-type=module -e 'const { loadRepoEnv } = await import("./scripts/lib/public-config.ts"); loadRepoEnv();'
 
 case "$(uname -m)" in
   x86_64) arch=x64 ;;
