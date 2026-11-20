@@ -60,7 +60,7 @@ export function linkedThreadRouteParams(
 ) {
   return {
     viaEnvironmentId: target.viaEnvironmentId,
-    environmentId: target.environmentId,
-    threadId: target.threadId,
+    linkedEnvironmentId: target.environmentId,
+    linkedThreadId: target.threadId,
   };
 }

@@ -107,7 +107,7 @@ export function openLinkedThreadRead(input: {
     return;
   }
   void input.navigate({
-    to: "/linked/$viaEnvironmentId/$environmentId/$threadId",
+    to: "/linked/$viaEnvironmentId/$linkedEnvironmentId/$linkedThreadId",
     params: linkedThreadRouteParams(target),
   });
 }

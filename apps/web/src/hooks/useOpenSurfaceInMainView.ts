@@ -17,7 +17,7 @@ export function useOpenSurfaceInMainView(panelRef: ScopedThreadRef | null) {
     useRightPanelStore.getState().closeSurface(panelRef, surface.id);
     if (surface.kind === "linked-thread") {
       void navigate({
-        to: "/linked/$viaEnvironmentId/$environmentId/$threadId",
+        to: "/linked/$viaEnvironmentId/$linkedEnvironmentId/$linkedThreadId",
         params: linkedThreadRouteParams(surface),
       });
       return;

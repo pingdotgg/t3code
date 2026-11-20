@@ -4,7 +4,6 @@ import { T, useGT, useMessages, Var } from "gt-react";
 import { EyeIcon, PlugIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
-import { useOpenSurfaceInMainView } from "../../hooks/useOpenSurfaceInMainView";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { type LinkedThreadSurface, linkedThreadTitle } from "../../linkedThreadSurface";
 import { useEnvironment } from "../../state/environments";
@@ -22,7 +21,6 @@ import {
   ReadOnlyComposerLead,
   ReadOnlyComposerStatus,
 } from "./ReadOnlyComposerBar";
-import { SideThreadPaneHeader } from "./SideThreadPane";
 import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
 import type { MessagesTimelineHistoryControls } from "./MessagesTimeline";
@@ -84,8 +82,8 @@ export function LinkedThread(props: {
   readonly surface: LinkedThreadSurface;
   /** Whether it is showing; the stream runs only while it is. */
   readonly visible: boolean;
-  /** What sits above the timeline, given the thread's title once the stream or surface names it. */
-  readonly renderHeader: (title: string) => ReactNode;
+  /** What sits above the timeline on the main screen; a tab already names the thread. */
+  readonly renderHeader?: (title: string) => ReactNode;
 }) {
   const { surface, panelRef } = props;
   const gt = useGT();
@@ -182,7 +180,7 @@ export function LinkedThread(props: {
       data-chat-canvas
       className="flex h-full min-h-0 flex-col [--chat-lane-inset-end:0px] [--chat-lane-inset-start:0px] [--chat-timeline-gutter:0px]"
     >
-      {props.renderHeader(
+      {props.renderHeader?.(
         linkedThreadTitle(
           { title: projection?.thread.title || surface.title },
           gt("Thread on {label}", { label }),
@@ -265,23 +263,6 @@ export function LinkedThreadPane(props: {
   readonly surface: LinkedThreadSurface;
   /** Whether the tab is showing. */
   readonly visible: boolean;
-  readonly onClose: () => void;
 }) {
-  const { panelRef, surface } = props;
-  const openInMainView = useOpenSurfaceInMainView(panelRef);
-  return (
-    <LinkedThread
-      panelRef={panelRef}
-      surface={surface}
-      visible={props.visible}
-      renderHeader={(title) => (
-        <SideThreadPaneHeader
-          title={title}
-          kind="linked"
-          onOpenInMainView={() => openInMainView(surface)}
-          onClose={props.onClose}
-        />
-      )}
-    />
-  );
+  return <LinkedThread panelRef={props.panelRef} surface={props.surface} visible={props.visible} />;
 }

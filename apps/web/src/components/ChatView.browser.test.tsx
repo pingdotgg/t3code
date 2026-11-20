@@ -32,7 +32,7 @@ import stylesheet from "~/index.css?inline";
 import { environmentContextRecord } from "~/lib/composerContextRecords";
 import { startWorkspaceFocus } from "~/lib/workspaceFocus";
 import { usePromptStashStore } from "~/promptStashStore";
-import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { getRouter } from "~/router";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { environmentThreadDetails } from "~/state/threads";
@@ -805,7 +805,7 @@ it("selecting a side-chat tab focuses that side chat's composer", async () => {
   await expect.element(mainEditor).toHaveTextContent("main draft");
 });
 
-it("a subagent tab shows its read-only bar and moves to the main view", async () => {
+it("a subagent tab shows its read-only bar under no header of its own", async () => {
   const parent = threadWithHistory("subagent-parent", 1);
   const subagent = {
     ...threadWithHistory("subagent-child", 1),
@@ -829,8 +829,8 @@ it("a subagent tab shows its read-only bar and moves to the main view", async ()
     router: false,
   });
   const pane = screen.getByTestId("side-thread-pane");
-  // The same header as a side chat, without what only a side chat offers.
-  await expect.element(pane.getByRole("heading", { name: subagent.title })).toBeVisible();
+  // No header of its own: the tab names it, and only a side chat has actions to put in one.
+  await expect.element(pane.getByRole("heading", { name: subagent.title })).not.toBeInTheDocument();
   await expect.element(pane.getByText("Runs on its own")).toBeVisible();
   await expect.element(pane.getByRole("button", { name: "Add to chat" })).not.toBeInTheDocument();
   await expect
@@ -839,14 +839,6 @@ it("a subagent tab shows its read-only bar and moves to the main view", async ()
   await expect
     .element(screen.getByRole("textbox", { name: `Message ${parent.title}`, exact: true }))
     .toBeVisible();
-
-  await pane.getByRole("button", { name: "Open in main view" }).click();
-  await vi.waitFor(() =>
-    expect(router.state.location.pathname).toBe(`/${ENVIRONMENT_ID}/${subagent.id}`),
-  );
-  expect(
-    selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, parentRef).surfaces,
-  ).toEqual([]);
 });
 
 it("/side sends the draft's attachments and context, and keeps them when it does not start", async () => {

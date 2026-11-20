@@ -231,7 +231,6 @@ export function RightPanelSurfaceContent(props: {
           panelRef={threadRef}
           surface={surface}
           visible={visible && props.activeSurfaceId === surface.id}
-          onClose={() => onCloseSurface(surface)}
         />
       );
     case "device":
