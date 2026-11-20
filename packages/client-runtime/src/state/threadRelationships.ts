@@ -1,4 +1,5 @@
 import {
+  type EnvironmentId,
   isOrchestrationV2WorkActive,
   type OrchestrationV2ThreadShell,
   type ThreadId,
@@ -7,7 +8,7 @@ import * as DateTime from "effect/DateTime";
 
 import type { ThreadStructure } from "./models.ts";
 
-export type ThreadRelationshipKind = "parent" | "fork" | "subagent" | "transfer";
+export type ThreadRelationshipKind = "parent" | "fork" | "subagent" | "transfer" | "launched";
 
 export interface ThreadRelationshipNode {
   readonly threadId: ThreadId;
@@ -50,6 +51,8 @@ function edgeKey(edge: ThreadRelationshipEdge): string {
 export function deriveThreadRelationshipGraph(input: {
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
   readonly projection: ThreadStructure | null;
+  /** Where `threads` live, so a thread launched from one of them links to its launcher. */
+  readonly environmentId?: EnvironmentId;
 }): ThreadRelationshipGraph {
   const threadsById = new Map<ThreadId, OrchestrationV2ThreadShell>();
   for (const thread of input.threads) {
@@ -96,6 +99,22 @@ export function deriveThreadRelationshipGraph(input: {
       sourceThreadId: parentThreadId,
       targetThreadId: thread.id,
       kind: thread.lineage.relationshipToParent === "subagent" ? "subagent" : "fork",
+      status: thread.activityRunStatus ?? thread.status,
+    });
+  }
+  // A linked environment's task names a launcher there, whose subagent record lists it instead.
+  for (const thread of threads) {
+    const launcher = thread.delegatedFrom;
+    if (
+      launcher == null ||
+      launcher.environmentId !== input.environmentId ||
+      thread.archivedAt !== null
+    )
+      continue;
+    addEdge({
+      sourceThreadId: launcher.threadId,
+      targetThreadId: thread.id,
+      kind: "launched",
       status: thread.activityRunStatus ?? thread.status,
     });
   }
