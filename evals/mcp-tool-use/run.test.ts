@@ -2469,6 +2469,25 @@ it("shares failed device attempts across tools and launcher steps, resetting onl
   );
 });
 
+it("credits USER-01's screenshot script only when it runs, not when it is printed", () => {
+  const [pattern] = deviceCases().find((c) => c.id === "USER-01")?.expect.shellMust ?? [];
+  assert.isDefined(pattern);
+  const runs = (command: string) => new RegExp(pattern).test(command);
+  for (const command of [
+    "make screenshots_ios",
+    "cd /Users/user/acme/app && make screenshots_ios",
+    "ssh build-mac 'cd /Users/user/acme/app && make screenshots_ios'",
+    "echo ok; ssh build-mac 'cd /Users/user/acme/app && make screenshots_ios'",
+  ])
+    assert.isTrue(runs(command), command);
+  for (const command of [
+    "echo make screenshots_ios",
+    "echo 'cd /Users/user/acme/app && make screenshots_ios'",
+    `printf '%s\\n' "cd /Users/user/acme/app && make screenshots_ios"`,
+  ])
+    assert.isFalse(runs(command), command);
+});
+
 it("applies device shell checks to decoded cases and stops raw UI early", () => {
   // In USER-01 the user picks the project's own simctl script, so raw UI is the right route.
   for (const testCase of deviceCases().filter((c) => c.id !== "USER-01")) {
