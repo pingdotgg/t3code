@@ -3,6 +3,7 @@ package expo.modules.t3nativecontrols
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -120,6 +121,10 @@ class T3NativeControlsModule : Module() {
   }
 }
 
+private fun productName(context: Context): String =
+  context.packageManager.getApplicationInfo(context.packageName, PackageManager.GET_META_DATA)
+    .metaData?.getString("t3.productName") ?: "T3 Code"
+
 // Android 10+ lets apps add their own media without a storage permission.
 @RequiresApi(Build.VERSION_CODES.Q)
 private fun saveImageToPictures(context: Context, source: Uri, mimeType: String, name: String) {
@@ -127,7 +132,10 @@ private fun saveImageToPictures(context: Context, source: Uri, mimeType: String,
   val values = ContentValues().apply {
     put(MediaStore.Images.Media.DISPLAY_NAME, name)
     put(MediaStore.Images.Media.MIME_TYPE, mimeType)
-    put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/T3 Code")
+    put(
+      MediaStore.Images.Media.RELATIVE_PATH,
+      "${Environment.DIRECTORY_PICTURES}/${productName(context)}"
+    )
     put(MediaStore.Images.Media.IS_PENDING, 1)
   }
   val target = resolver.insert(

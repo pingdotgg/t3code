@@ -68,6 +68,23 @@ describe("rebrandCatalog", () => {
     });
   });
 
+  it.each([
+    ["Der T3-Code-Server und das T3-Chat-Konto", "Der EasyDev Code-Server und das T3-Chat-Konto"],
+    ["über die T3-Connect-Verknüpfung", "über die T3-Connect-Verknüpfung"],
+    ["deinem T3-Konto", "deinem T3-Konto"],
+    ["ditt T3-konto", "ditt T3-konto"],
+    ["T3 アカウント", "T3 アカウント"],
+    ["T3 계정", "T3 계정"],
+    ["你的 T3 账户", "你的 T3 账户"],
+    ["tu cuenta de T3", "tu cuenta de T3"],
+    ["votre compte T3", "votre compte T3"],
+    ["na sua conta T3", "na sua conta T3"],
+    ["в аккаунт T3", "в аккаунт T3"],
+  ])("translates %j to %j", (text, expected) => {
+    const key = catalogKey("x", "ICU");
+    expect(rebrandCatalog({ [key]: "x" }, { [key]: text }, NAME)).toEqual({ [key]: expected });
+  });
+
   const root = NodePath.resolve(import.meta.dirname, "../..");
   const read = (path: string) => JSON.parse(NodeFS.readFileSync(NodePath.join(root, path), "utf8"));
 
@@ -75,22 +92,28 @@ describe("rebrandCatalog", () => {
     "moves every %s translation that names the product to its renamed source's key",
     (app) => {
       const source: Record<string, unknown> = read(`${app}/src/i18n/translations/en.json`);
-      const portuguese: Record<string, unknown> = read(`${app}/src/i18n/translations/pt-BR.json`);
-      const rebranded = rebrandCatalog(source, portuguese, NAME);
       const named = Object.entries(source).filter(
         ([, text]) => JSON.stringify(rebrandStrings(text, NAME)) !== JSON.stringify(text),
       );
       expect(named.length).toBeGreaterThan(0);
-      for (const [key, text] of named) {
-        // Proves the hash matches GT's: the CLI wrote `key` for the unrenamed source.
-        const format = (["ICU", "JSX"] as const).find((f) => catalogKey(text, f) === key);
-        expect(format, key).toBeDefined();
-        if (!format) continue;
-        const renamed = rebrandedKey(text, format);
-        expect(rebranded[renamed]).toBeDefined();
-        expect(JSON.stringify(rebranded[renamed])).not.toContain("T3 Code");
+      const dir = NodePath.join(root, app, "src/i18n/translations");
+      for (const file of NodeFS.readdirSync(dir)) {
+        const catalog: Record<string, unknown> = read(`${app}/src/i18n/translations/${file}`);
+        const rebranded = rebrandCatalog(source, catalog, NAME);
+        for (const [key, text] of named) {
+          // Proves the hash matches GT's: the CLI wrote `key` for the unrenamed source.
+          const format = (["ICU", "JSX"] as const).find((f) => catalogKey(text, f) === key);
+          expect(format, key).toBeDefined();
+          if (!format) continue;
+          const renamed = rebrandedKey(text, format);
+          expect(rebranded[renamed], `${file} ${key}`).toBeDefined();
+          expect(JSON.stringify(rebranded[renamed])).not.toMatch(/T3[\s-]+Code/);
+        }
+        expect(JSON.stringify(rebranded), file).not.toMatch(
+          /Code-Code|EasyDev Code[- ]?(Connect|Chat)/,
+        );
+        expect(Object.keys(rebranded)).toHaveLength(Object.keys(catalog).length);
       }
-      expect(Object.keys(rebranded)).toHaveLength(Object.keys(portuguese).length);
     },
   );
 });

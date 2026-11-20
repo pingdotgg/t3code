@@ -28,8 +28,12 @@ export function rebrandName(env: Environment): string | null {
 const KEPT = String.raw`(?:Connect|Chat|Account|account|Tools)\b`;
 // Source names the product only before a space, so `T3-Code-1.0.dmg` and `com.t3tools.T3Code` stay.
 const IN_SOURCE = new RegExp(String.raw`\bT3\s+Code\b|\bT3(?=\s+[A-Za-z])(?!\s+${KEPT})`, "g");
-// Translations also write "T3-Thread" and "thread do T3".
-const IN_TRANSLATION = new RegExp(String.raw`\bT3\s+Code\b|\bT3\b(?!\s*${KEPT})`, "g");
+// Translations also write "T3-Thread", "thread do T3" and the account as "T3-Konto" or "compte T3".
+const KEPT_IN_TRANSLATION = String.raw`(?:${KEPT}|[Kk]onto\b|アカウント|계정|账户|帐户)`;
+const IN_TRANSLATION = new RegExp(
+  String.raw`\bT3[\s-]+Code\b|(?<!(?:cuenta de|compte|conta|аккаунт)\s)\bT3\b(?![\s-]*${KEPT_IN_TRANSLATION})`,
+  "g",
+);
 
 /** Renames the product in prose; `t3code`, `T3CODE_*` and the `t3` command never match. */
 export function rebrandText(text: string, name: string, pattern = IN_SOURCE): string {

@@ -488,6 +488,7 @@ const config: ExpoConfig = {
     // MainActivity mods run in reverse order; extend the tablet-orientation override.
     "./plugins/withAndroidWindowDisplayMetrics.cjs",
     "./plugins/withAndroidTabletOrientation.cjs",
+    ["./plugins/withProductName.cjs", "T3 Code"],
     ...(isIosPersonalTeamBuild ? ["./plugins/withoutIosPersonalTeamCapabilities.cjs"] : []),
   ],
   extra: {
