@@ -188,8 +188,69 @@ describe("environment theme", () => {
 
         yield* fs.rename(restored, environmentThemesDir);
         assert.deepEqual(yield* Queue.take(snapshots), ["Shared Light"]);
+
+        yield* fs.writeFileString(
+          path.join(environmentThemesDir, "nightfall.json"),
+          encodeThemeFile(NIGHTFALL_THEME),
+        );
+        assert.deepEqual(yield* Queue.take(snapshots), ["Nightfall", "Shared Light"]);
       }),
     ),
+  );
+
+  it.live.skipIf(!symlinksSupported)(
+    "publishes edits after the target of a symlinked themes directory is restored",
+    () =>
+      withEnvironmentThemes(
+        { "nightfall.json": encodeThemeFile(NIGHTFALL_THEME) },
+        Effect.gen(function* () {
+          const service = yield* EnvironmentTheme.EnvironmentThemeService;
+          const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const outside = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-linked-themes-" });
+          const target = path.join(outside, "active");
+          const restored = path.join(outside, "restored");
+          yield* fs.makeDirectory(target);
+          yield* fs.makeDirectory(restored);
+          yield* fs.writeFileString(
+            path.join(target, "shared-light.json"),
+            encodeThemeFile(SHARED_THEME),
+          );
+          yield* fs.writeFileString(
+            path.join(restored, "nightfall.json"),
+            encodeThemeFile(NIGHTFALL_THEME),
+          );
+
+          const snapshots = yield* service.streamChanges.pipe(
+            Stream.map((themes) => themes.map((theme) => theme.name)),
+            Stream.toQueue({ capacity: "unbounded" }),
+          );
+          assert.deepEqual(yield* Queue.take(snapshots), ["Nightfall"]);
+
+          yield* fs.rename(environmentThemesDir, path.join(outside, "original"));
+          yield* fs.symlink(target, environmentThemesDir);
+          assert.deepEqual(
+            yield* Stream.fromQueue(snapshots).pipe(
+              Stream.filter((names) => names.length > 0),
+              Stream.runHead,
+              Effect.map((names) => names.valueOrUndefined),
+            ),
+            ["Shared Light"],
+          );
+
+          yield* fs.rename(target, path.join(outside, "previous"));
+          assert.deepEqual(yield* Queue.take(snapshots), []);
+          yield* fs.rename(restored, target);
+          assert.deepEqual(yield* Queue.take(snapshots), ["Nightfall"]);
+
+          yield* fs.writeFileString(
+            path.join(target, "shared-light.json"),
+            encodeThemeFile(SHARED_THEME),
+          );
+          assert.deepEqual(yield* Queue.take(snapshots), ["Nightfall", "Shared Light"]);
+        }),
+      ),
   );
 
   it.effect("skips invalid files while keeping valid ones", () =>
