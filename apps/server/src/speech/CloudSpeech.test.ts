@@ -44,6 +44,7 @@ it.effect.each(["openai", "xai"] as const)("sends only to %s using its own saved
           ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
           speechLanguage: "en",
           speechCustomWords: [{ term: "T3 Code", aliases: [] }],
+          speechHints: ["Server"],
         })
         .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
     yield* service.setKey(provider === "openai" ? "xai" : "openai", Redacted.make("other"));
@@ -66,7 +67,10 @@ it.effect.each(["openai", "xai"] as const)("sends only to %s using its own saved
     expect(form.get("model")).toBe(
       provider === "openai" ? "gpt-transcribe" : "grok-voice-transcribe-2.0",
     );
-    expect(form.getAll(provider === "openai" ? "keywords[]" : "keyterm")).toEqual(["T3 Code"]);
+    expect(form.getAll(provider === "openai" ? "keywords[]" : "keyterm")).toEqual([
+      "Server",
+      "T3 Code",
+    ]);
     expect(form.get(provider === "openai" ? "languages[]" : "language")).toBe("en");
     expect([...form.keys()].at(-1)).toBe("file");
     const wav = new DataView(yield* Effect.promise(() => (form.get("file") as Blob).arrayBuffer()));

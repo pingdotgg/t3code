@@ -75,7 +75,10 @@ function audioBody(
   const form = new FormData();
   form.set("model", endpoints[provider].model);
   if (language !== "auto") form.set(provider === "openai" ? "languages[]" : "language", language);
-  for (const { term } of options.speechCustomWords) {
+  for (const term of [
+    ...(options.speechHints ?? []),
+    ...options.speechCustomWords.map(({ term }) => term),
+  ]) {
     if (provider === "openai" && /[<>\r\n]/.test(term)) continue;
     form.append(provider === "openai" ? "keywords[]" : "keyterm", term);
   }
