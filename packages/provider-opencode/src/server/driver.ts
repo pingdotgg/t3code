@@ -398,7 +398,10 @@ export const OpenCodeDriver: ProviderDriver<
       ),
     });
     const loadOpenCode2Models = yield* makeOpenCode2ModelLoader(
-      openCode2Server.withConnection(({ client }) => loadOpenCode2Catalog(client, host.paths.cwd)),
+      // An external server may not have the host's cwd; without a location it uses its own default.
+      openCode2Server.withConnection(({ client, external }) =>
+        loadOpenCode2Catalog(client, external ? undefined : host.paths.cwd),
+      ),
       processEnv,
     );
     const listOpenCode2Workspace = (cwd: string) =>
@@ -521,6 +524,7 @@ export const OpenCodeDriver: ProviderDriver<
           runtimeProbe.refresh,
           loadOpenCode2Models,
           processEnv,
+          host.compatibility,
         ).pipe(
           Effect.annotateLogs({ providerInstanceId: instanceId }),
           Effect.annotateSpans({ providerInstanceId: instanceId }),

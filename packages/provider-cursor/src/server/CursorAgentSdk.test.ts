@@ -2,6 +2,7 @@ import type { ListRunsOptions } from "@cursor/sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -205,6 +206,64 @@ describe("CursorAgentSdkRunner", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("rewinds the agent to the state its first unwound run started from", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-rewind-" });
+      const loaders = yield* Effect.promise(() =>
+        vi.importActual<typeof import("./sdk.ts")>("./sdk.ts"),
+      );
+      const sdk = loaders.loadCursorSdk();
+      const store = new sdk.JsonlLocalAgentStore(workspace);
+      const platform = yield* Effect.promise(() =>
+        sdk.createAgentPlatform({ localStore: store, workspaceRef: workspace }),
+      );
+      const { agent, run: first } = yield* Effect.promise(() =>
+        platform.store.createAgent({ agentId: "agent-rewind", workspaceRef: workspace }),
+      );
+      const finishRun = (runId: string, state: string) =>
+        Effect.promise(async () => {
+          const checkpoint = await platform.checkpointStore.saveCheckpoint(agent.agentId, {
+            toBinary: () => new TextEncoder().encode(state),
+          });
+          await platform.store.patchCheckpoint(agent.agentId, runId, checkpoint);
+          await platform.store.markRunTerminal(agent.agentId, runId, { status: "FINISHED" });
+          return checkpoint.blobId;
+        });
+      const followUp = Effect.promise(() => platform.store.createFollowUpRun(agent.agentId, {}));
+      const head = Effect.promise(
+        async () => (await platform.store.getAgent(agent.agentId))?.latestCheckpointRef?.blobId,
+      );
+
+      const afterFirst = yield* finishRun(first.runId, "after first");
+      const second = yield* followUp;
+      yield* finishRun(second.runId, "after second");
+      const third = yield* followUp;
+      const afterThird = yield* finishRun(third.runId, "after third");
+
+      const runner = yield* CursorAgentSdk.makeCursorAgentSdkRunner(() => undefined).pipe(
+        Effect.provideService(CursorSdk.CursorSdk, {
+          load: loaders.loadCursorSdk,
+          loadSqlite: loaders.loadCursorSqlite,
+        }),
+      );
+      const session = yield* runner.open({
+        operation: "resume",
+        agentId: agent.agentId,
+        storeCwd: workspace,
+        options: { apiKey: "synthetic-cursor-key", local: { cwd: workspace, store } },
+        threadId: ThreadId.make("rewind"),
+        providerSessionId: ProviderSessionId.make("rewind"),
+      });
+
+      yield* session.rewindAfterRun!(third.runId);
+      assert.strictEqual(yield* head, afterThird, "nothing ran after the kept run");
+      yield* session.rewindAfterRun!(first.runId);
+      assert.strictEqual(yield* head, afterFirst);
+      yield* session.close;
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("constructs without loading and reports first-use load failures as runner errors", () =>
     Effect.gen(function* () {
       const failure = new Error("missing SDK chunk");
@@ -339,6 +398,83 @@ describe("CursorAgentSdkRunner", () => {
           },
         ],
       );
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("keeps an agent's background shells and reports each start and end in order", () =>
+    Effect.gen(function* () {
+      const start = (conversationId: string, id: number) => {
+        let complete: (completion: object) => void = () => {};
+        const abort = vi.fn();
+        const kept: unknown = (
+          Reflect.get(globalThis, Symbol.for("@cursor/sdk.backgroundShell")) as Function
+        )({
+          conversationId,
+          command: "sleep 60",
+          shell: {
+            id,
+            pid: id + 1,
+            abort,
+            onComplete: (listener: typeof complete) => (complete = listener),
+          },
+        });
+        return { kept, abort, complete: (completion: object) => complete(completion) };
+      };
+      const events: Array<object> = [];
+      const stops: Array<() => void> = [];
+      const reported = yield* Deferred.make<void>();
+      const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
+      const session = yield* runner.open({
+        operation: "create",
+        options: {},
+        threadId: ThreadId.make("thread-cursor-agent-sdk-background"),
+        providerSessionId: ProviderSessionId.make("provider-session-cursor-agent-sdk-background"),
+      });
+      const run = yield* session.send({
+        message: "watch it",
+        onBackgroundShell: (event) =>
+          Effect.gen(function* () {
+            if (event.type === "started") {
+              const { stop, ...started } = event;
+              stops.push(stop);
+              events.push(started);
+              return;
+            }
+            events.push(event);
+            if (!event.stopped) yield* Deferred.succeed(reported, undefined);
+          }),
+      });
+      yield* run.wait;
+
+      const killed = start("agent-cursor-agent-sdk-test", 10);
+      const finished = start("agent-cursor-agent-sdk-test", 20);
+      const foreign = start("agent-someone-else", 30);
+      killed.complete({ code: null, aborted: true });
+      finished.complete({ code: 3, aborted: false, outputPath: "/terminals/20.txt" });
+      yield* Deferred.await(reported);
+      stops[0]!();
+
+      assert.deepStrictEqual([killed.kept, finished.kept, foreign.kept], [true, true, false]);
+      assert.strictEqual(killed.abort.mock.calls.length, 1);
+      const shell = (id: string, pid: number) => ({ id, pid, command: "sleep 60" });
+      assert.deepStrictEqual(events, [
+        { ...shell("10", 11), type: "started" },
+        { ...shell("20", 21), type: "started" },
+        {
+          ...shell("10", 11),
+          type: "ended",
+          stopped: true,
+          exitCode: undefined,
+          outputPath: undefined,
+        },
+        {
+          ...shell("20", 21),
+          type: "ended",
+          stopped: false,
+          exitCode: 3,
+          outputPath: "/terminals/20.txt",
+        },
+      ]);
     }).pipe(Effect.provide(layerTest)),
   );
 
