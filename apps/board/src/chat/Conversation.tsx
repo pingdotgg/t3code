@@ -1,30 +1,19 @@
 import { RegistryContext } from "@effect/atom-react";
-import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
-import { MessageId, type ThreadId } from "@t3tools/contracts";
-import { SendHorizontal, Square } from "lucide-react";
+import type { ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import {
-  type FormEvent,
-  type KeyboardEvent,
   useCallback,
   useContext,
   useLayoutEffect,
   useMemo,
   useRef,
-  useState,
   useSyncExternalStore,
 } from "react";
 
-import { failureText } from "../settings/failureText";
-import { newId } from "../state/boards";
-import {
-  environmentThreads,
-  interruptTurn,
-  startTurn,
-  useEnvironmentThread,
-} from "../state/threads";
+import { environmentThreads, useEnvironmentThread } from "../state/threads";
 import type { ValidBoard } from "../store/boardFiles";
+import { Composer } from "./Composer";
 import { PanelHeader } from "./PanelHeader";
 import { timelineSource } from "./projectionSource";
 import { isRunLive, timelineRows } from "./timeline";
@@ -64,9 +53,6 @@ export function Conversation({
   );
   const failure = Option.getOrNull(state.error);
 
-  const [draft, setDraft] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
   // A token is stamped as it reaches the thread state, ahead of the render that paints it.
   const stateAtom = environmentThreads.stateAtom(environmentId, threadId);
   useSyncExternalStore(
@@ -85,50 +71,6 @@ export function Conversation({
     const element = scroller.current;
     if (element !== null && atBottom.current) element.scrollTop = element.scrollHeight;
   });
-
-  const send = async (event?: FormEvent) => {
-    event?.preventDefault();
-    const text = draft.trim();
-    if (text === "" || projection === null) return;
-    setError(null);
-    setDraft("");
-    const result = await runAtomCommand(
-      registry,
-      startTurn,
-      {
-        environmentId,
-        input: {
-          threadId,
-          message: { messageId: MessageId.make(newId()), role: "user", text, attachments: [] },
-          runtimeMode: projection.thread.runtimeMode,
-          interactionMode: projection.thread.interactionMode,
-        },
-      },
-      { reportFailure: false },
-    );
-    if (result._tag !== "Success") {
-      setDraft(text);
-      setError(failureText(result));
-    }
-  };
-
-  const stop = async () => {
-    setError(null);
-    const result = await runAtomCommand(
-      registry,
-      interruptTurn,
-      { environmentId, input: { threadId } },
-      { reportFailure: false },
-    );
-    if (result._tag !== "Success") setError(failureText(result));
-  };
-
-  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-      void send();
-      event.preventDefault();
-    }
-  };
 
   return (
     <>
@@ -155,43 +97,7 @@ export function Conversation({
         ))}
         {live && rows.at(-1)?.kind === "user" && <p className="text-faint">Thinking</p>}
       </div>
-      <form onSubmit={(event) => void send(event)} className="shrink-0 border-t border-line p-2">
-        {error !== null && (
-          <p role="alert" className="mb-1.5 break-words text-red-400">
-            {error}
-          </p>
-        )}
-        <div className="flex items-end gap-2 rounded-xl border border-line bg-panel p-2 focus-within:border-muted">
-          <textarea
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={onKeyDown}
-            rows={2}
-            placeholder="Message the orchestrator"
-            aria-label="Message the orchestrator"
-            className="max-h-40 min-h-10 min-w-0 flex-1 resize-none bg-transparent text-fg outline-none placeholder:text-faint"
-          />
-          {live && draft.trim() === "" ? (
-            <button
-              type="button"
-              aria-label="Stop"
-              onClick={() => void stop()}
-              className="grid size-7 shrink-0 place-items-center rounded-full bg-fg text-bg"
-            >
-              <Square className="size-3 fill-current" />
-            </button>
-          ) : (
-            <button
-              type="submit"
-              aria-label="Send"
-              disabled={draft.trim() === ""}
-              className="grid size-7 shrink-0 place-items-center rounded-full bg-fg text-bg disabled:opacity-40"
-            >
-              <SendHorizontal className="size-3.5" />
-            </button>
-          )}
-        </div>
-      </form>
+      <Composer project={project} threadId={threadId} projection={projection} live={live} />
     </>
   );
 }

@@ -1,8 +1,16 @@
-import { ServerProvider } from "@t3tools/contracts";
+import { ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { canStart, NO_PICK, pickableInstances, resolvePick, selectionOf } from "./providers";
+import {
+  canStart,
+  defaultPick,
+  NO_PICK,
+  pickableInstances,
+  pickOf,
+  resolvePick,
+  selectionOf,
+} from "./providers";
 
 const decodeProvider = Schema.decodeUnknownSync(ServerProvider);
 
@@ -15,11 +23,15 @@ interface Fixture {
   readonly canAuthenticate?: boolean;
   readonly message?: string;
   readonly displayName?: string;
-  readonly models?: ReadonlyArray<{
-    readonly slug: string;
-    readonly isDefault?: boolean;
-    readonly isLegacy?: boolean;
-  }>;
+  readonly models?: ReadonlyArray<ModelFixture>;
+}
+
+interface ModelFixture {
+  readonly slug: string;
+  readonly isDefault?: boolean;
+  readonly isLegacy?: boolean;
+  readonly efforts?: ReadonlyArray<string>;
+  readonly defaultEffort?: string;
 }
 
 const provider = (fixture: Fixture) =>
@@ -35,10 +47,26 @@ const provider = (fixture: Fixture) =>
     setup: { canAuthenticate: fixture.canAuthenticate ?? false, canInstall: false },
     message: fixture.message,
     checkedAt: "2026-11-20T06:00:00.000Z",
-    models: (fixture.models ?? []).map((model) => ({
+    models: (fixture.models ?? []).map(({ efforts, defaultEffort, ...model }) => ({
       name: model.slug,
       isCustom: false,
-      capabilities: null,
+      capabilities:
+        efforts === undefined
+          ? null
+          : {
+              optionDescriptors: [
+                {
+                  id: "effort",
+                  label: "Effort",
+                  type: "select",
+                  options: efforts.map((id) => ({
+                    id,
+                    label: id,
+                    ...(id === defaultEffort ? { isDefault: true } : {}),
+                  })),
+                },
+              ],
+            },
       ...model,
     })),
   });
@@ -125,49 +153,132 @@ describe("the provider picker's instances", () => {
 });
 
 describe("the orchestrator's pick", () => {
-  const instances = pickableInstances([
-    provider({
-      instanceId: "claudeAgent",
-      driver: "claudeAgent",
-      status: "unauthenticated",
-      models: [{ slug: "claude-opus-5-5", isDefault: true }],
-    }),
-    provider({
-      instanceId: "codex",
-      driver: "codex",
-      models: [{ slug: "gpt-5.6-terra", isDefault: true }, { slug: "gpt-6-luna" }],
-    }),
-  ]);
+  const claude = (
+    status: "authenticated" | "unauthenticated",
+    models: ReadonlyArray<ModelFixture> = CLAUDE_MODELS,
+  ) => provider({ instanceId: "claudeAgent", driver: "claudeAgent", status, models });
+  const codex = provider({
+    instanceId: "codex",
+    driver: "codex",
+    models: [
+      {
+        slug: "gpt-5.6-terra",
+        isDefault: true,
+        efforts: ["low", "medium"],
+        defaultEffort: "medium",
+      },
+      { slug: "gpt-6-luna" },
+    ],
+  });
+  const CLAUDE_MODELS = [
+    {
+      slug: "claude-opus-5-5",
+      isDefault: true,
+      efforts: ["low", "medium", "high"],
+      defaultEffort: "medium",
+    },
+    { slug: "claude-sonnet-5-5", efforts: ["low", "medium", "high"], defaultEffort: "high" },
+  ];
 
-  it("Given nothing picked and the first instance signed out, when the pick resolves, then it falls to the first that can start", () => {
-    expect(resolvePick(instances, NO_PICK)).toEqual({
-      instanceId: "codex",
-      model: "gpt-5.6-terra",
+  it("Given a signed-in Claude Code that offers Opus 5.5, when nothing is picked, then it starts on Opus 5.5 at medium with no reason", () => {
+    const instances = pickableInstances([codex, claude("authenticated")]);
+    expect(defaultPick(instances)).toEqual({
+      value: { instanceId: "claudeAgent", model: "claude-opus-5-5", effort: "medium" },
+      reason: null,
     });
   });
 
-  it("Given a model typed before any pick, when the pick resolves, then the typed model is kept", () => {
-    expect(resolvePick(instances, { instanceId: "", model: "gpt-6-luna" })).toEqual({
+  it("Given a signed-out Claude Code, when nothing is picked, then the first signed-in instance and its default model start, with the reason", () => {
+    const instances = pickableInstances([claude("unauthenticated"), codex]);
+    expect(defaultPick(instances)).toEqual({
+      value: { instanceId: "codex", model: "gpt-5.6-terra", effort: "" },
+      reason: "Claude Code is signed out. Starting on Codex instead.",
+    });
+  });
+
+  it("Given a signed-in Claude Code without Opus 5.5, when nothing is picked, then the reason names the missing model", () => {
+    const instances = pickableInstances([
+      claude("authenticated", [{ slug: "claude-sonnet-5-5", isDefault: true }]),
+      codex,
+    ]);
+    expect(defaultPick(instances).reason).toBe(
+      "Claude Code does not offer claude-opus-5-5. Starting on Claude Code instead.",
+    );
+  });
+
+  it("Given no Claude Code instance, when nothing is picked, then the reason says the engine has none", () => {
+    expect(defaultPick(pickableInstances([codex])).reason).toBe(
+      "The engine has no Claude Code instance. Starting on Codex instead.",
+    );
+  });
+
+  it("Given an Opus 5.5 whose effort levels lack medium, when nothing is picked, then the model's own default effort is used", () => {
+    const instances = pickableInstances([
+      claude("authenticated", [{ slug: "claude-opus-5-5", efforts: ["low", "high"] }]),
+    ]);
+    expect(defaultPick(instances).value.effort).toBe("");
+  });
+
+  it("Given a model typed before any pick, when the pick resolves, then the typed model is kept on the default instance", () => {
+    const instances = pickableInstances([codex, claude("unauthenticated")]);
+    expect(resolvePick(instances, { ...NO_PICK, model: "gpt-6-luna" })).toEqual({
       instanceId: "codex",
       model: "gpt-6-luna",
+      effort: "",
     });
   });
 
   it("Given a pick, when it resolves, then the pick stands", () => {
-    const pick = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
+    const instances = pickableInstances([claude("authenticated")]);
+    const pick = { instanceId: "claudeAgent", model: "claude-sonnet-5-5", effort: "low" };
     expect(resolvePick(instances, pick)).toBe(pick);
   });
 
-  it("Given a typed model the instance does not list, when the selection is made, then the typed model is used with the offered list", () => {
-    expect(selectionOf(instances, { instanceId: "codex", model: " gpt-nope " })).toEqual({
+  it("Given a picked effort, when the selection is made, then the model selection carries it under the model's effort option", () => {
+    const instances = pickableInstances([claude("authenticated")]);
+    expect(
+      selectionOf(instances, {
+        instanceId: "claudeAgent",
+        model: "claude-opus-5-5",
+        effort: "medium",
+      }),
+    ).toEqual({
+      instanceId: "claudeAgent",
+      driver: "claudeAgent",
+      model: "claude-opus-5-5",
+      offered: ["claude-opus-5-5", "claude-sonnet-5-5"],
+      options: [{ id: "effort", value: "medium" }],
+    });
+  });
+
+  it("Given a typed model the instance does not list, when the selection is made, then the typed model is used with the offered list and no options", () => {
+    const instances = pickableInstances([codex]);
+    expect(
+      selectionOf(instances, { instanceId: "codex", model: " gpt-nope ", effort: "high" }),
+    ).toEqual({
       instanceId: "codex",
       driver: "codex",
       model: "gpt-nope",
       offered: ["gpt-5.6-terra", "gpt-6-luna"],
+      options: [],
     });
   });
 
   it("Given an empty model, when the selection is made, then the instance's default is used", () => {
-    expect(selectionOf(instances, { instanceId: "codex", model: "" })?.model).toBe("gpt-5.6-terra");
+    const instances = pickableInstances([codex]);
+    expect(selectionOf(instances, { instanceId: "codex", model: "", effort: "" })?.model).toBe(
+      "gpt-5.6-terra",
+    );
+  });
+
+  it("Given a thread's model selection, when it fills the picker, then the effort is the one the selection carries", () => {
+    const instances = pickableInstances([claude("authenticated")]);
+    expect(
+      pickOf(instances, {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-sonnet-5-5",
+        options: [{ id: "effort", value: "low" }],
+      }),
+    ).toEqual({ instanceId: "claudeAgent", model: "claude-sonnet-5-5", effort: "low" });
   });
 });

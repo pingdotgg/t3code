@@ -61,6 +61,8 @@ function chatItem(item: TurnItem): ChatItem | null {
       return { kind: "notice", id: item.id, text: item.failure.message, error: true };
     case "system_notice":
       return { kind: "notice", id: item.id, text: item.message, error: item.level === "error" };
+    case "compaction":
+      return { kind: "notice", id: item.id, text: "Context compacted", error: false };
     default:
       return null;
   }

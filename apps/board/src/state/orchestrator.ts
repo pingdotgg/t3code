@@ -58,6 +58,7 @@ export async function startBoardOrchestrator(
                 modelSelection: {
                   instanceId: ProviderInstanceId.make(request.instanceId),
                   model: request.model,
+                  ...(request.options.length > 0 ? { options: request.options } : {}),
                 },
                 runtimeMode: "full-access",
                 interactionMode: "default",

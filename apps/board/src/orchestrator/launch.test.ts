@@ -28,6 +28,7 @@ const SELECTION = {
   driver: "claudeAgent",
   model: "claude-sonnet-5-5",
   offered: ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5", "claude-fable-5-1"],
+  options: [{ id: "effort", value: "medium" }],
 };
 
 const PENDING: LaunchProjection = { runs: [], messages: [], failures: [] };
@@ -77,6 +78,7 @@ describe("launching an orchestrator", () => {
     expect(launched[0]).toMatchObject({
       instanceId: "claudeAgent",
       model: "claude-sonnet-5-5",
+      options: [{ id: "effort", value: "medium" }],
       title: "Orchestrator: Claude connector",
     });
     expect(launched[0]?.brief).toContain("/work/project/.agentboard/claude-connector");

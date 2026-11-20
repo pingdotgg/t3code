@@ -1,3 +1,4 @@
+import type { ProviderOptionSelection } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -8,6 +9,8 @@ import { type OrchestratorModel, resolveRoles, ROLES, roleFiles } from "./roles"
 
 export interface OrchestratorSelection extends OrchestratorModel {
   readonly model: string;
+  /** The model's options, such as its effort. */
+  readonly options: ReadonlyArray<ProviderOptionSelection>;
 }
 
 export interface LaunchRequest {
@@ -15,6 +18,7 @@ export interface LaunchRequest {
   readonly brief: string;
   readonly instanceId: string;
   readonly model: string;
+  readonly options: ReadonlyArray<ProviderOptionSelection>;
 }
 
 /** The engine calls that start the orchestrator and watch its first run. */
@@ -101,6 +105,7 @@ export async function launchOrchestrator(
     brief,
     instanceId: selection.instanceId,
     model: selection.model,
+    options: selection.options,
   });
   const launched: Board = { ...board, orchestratorThreadId: threadId };
   await writeBoard(ports.files, cwd, folder, launched);
