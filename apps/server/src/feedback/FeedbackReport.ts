@@ -7,7 +7,7 @@ import * as Struct from "effect/Struct";
 // Code points, as the scrubber caps them, so a valid input stays a valid report after redaction.
 const FeedbackText = Schema.String.check(Schema.isMaxCodePoints(300));
 
-/** Turns the trace of a requested report covers. */
+/** Turns the outline of a requested report covers at least. */
 export const FEEDBACK_TRACE_TURNS = 5;
 
 const reportFields = {
@@ -22,7 +22,14 @@ const reportFields = {
   ),
 };
 
-export const FeedbackInput = Schema.Struct(reportFields);
+export const FeedbackInput = Schema.Struct({
+  ...reportFields,
+  turns: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))
+    .annotate({
+      description: "How many recent turns, counting this one, the problem spans.",
+    })
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed(1))),
+});
 
 export const FeedbackTrace = AgentFeedbackTrace;
 export type FeedbackTrace = AgentFeedbackTrace;
@@ -49,7 +56,7 @@ export const FeedbackSubmitResult = Schema.Struct({
 });
 
 export const FEEDBACK_AWAITING_APPROVAL_NOTE =
-  "The user sees this report in a card and chooses there whether to send it and whether to include the conversation. Nothing is sent until they do, and you will not learn their choice. Do not wait for it, ask again, or send the report another way.";
+  "The user sees this report in a card and chooses there whether to send it and whether to include the conversation. Nothing is sent until they do, and you will not learn their choice. Do not wait for it or send it another way. Call again only if the user asks to change it; that shows a new card.";
 
 /** What `t3_feedback` answers for a requested report: shown to the user, not yet sent. */
 export const FeedbackAwaitingApproval = Schema.Struct({

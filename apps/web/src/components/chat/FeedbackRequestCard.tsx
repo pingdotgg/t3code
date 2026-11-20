@@ -2,6 +2,7 @@ import { T, msg, useMessages } from "gt-react";
 import { pipe } from "effect/Function";
 import {
   feedbackCardPreview,
+  feedbackConversationHint,
   feedbackPreviewFields,
   feedbackRequestDisplay,
   feedbackRequestFailureMessage,
@@ -138,7 +139,7 @@ function PendingFeedbackRequest(props: {
               <T>Include the conversation</T>
             </span>
             <span className="text-xs text-muted-foreground">
-              <T>Adds the text of your messages and the agent's replies in these turns.</T>
+              {feedbackConversationHint(props.item.conversationTrace, m)}
             </span>
           </span>
           <Switch

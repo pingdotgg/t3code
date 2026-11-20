@@ -16,7 +16,6 @@ import { providerDimensions } from "../telemetry/ProviderDimensions.ts";
 import {
   FEEDBACK_AWAITING_APPROVAL_NOTE,
   FEEDBACK_SUBJECT_MESSAGE,
-  FEEDBACK_TRACE_TURNS,
   type FeedbackAwaitingApproval,
   type FeedbackInput,
   type FeedbackLimitError,
@@ -28,7 +27,11 @@ import {
   resolveFeedbackSubject,
 } from "./FeedbackReport.ts";
 import * as Store from "./FeedbackStore.ts";
-import { buildFeedbackTrace, FEEDBACK_TRACE_ITEM_TYPES } from "./FeedbackTrace.ts";
+import {
+  buildFeedbackTrace,
+  FEEDBACK_TRACE_ITEM_TYPES,
+  feedbackTraceWindow,
+} from "./FeedbackTrace.ts";
 import { scrubFeedback } from "./scrubFeedback.ts";
 
 export class FeedbackSubjectError extends Schema.TaggedError<FeedbackSubjectError>()(
@@ -170,13 +173,14 @@ const make = Effect.fn("FeedbackService.make")(function* (
       // Records cannot filter on started, so widen past the unstarted (queued) runs the last
       // read found. Each pass reads more runs than the one before, until it holds enough
       // started runs or the whole thread.
-      let limit = FEEDBACK_TRACE_TURNS;
+      const window = feedbackTraceWindow(input.turns);
+      let limit = window;
       let runs = (yield* threads.getThreadRecords(threadId, ["runs"], { latestRunLimit: limit }))
         .runs;
       while (runs.length === limit) {
         const unstarted = runs.filter((candidate) => candidate.startedAt === null).length;
-        if (runs.length - unstarted >= FEEDBACK_TRACE_TURNS) break;
-        limit = FEEDBACK_TRACE_TURNS + unstarted;
+        if (runs.length - unstarted >= window) break;
+        limit = window + unstarted;
         runs = (yield* threads.getThreadRecords(threadId, ["runs"], { latestRunLimit: limit }))
           .runs;
       }
@@ -188,6 +192,7 @@ const make = Effect.fn("FeedbackService.make")(function* (
         buildFeedbackTrace({
           runs,
           items: turnItems,
+          turns: input.turns,
           withText,
           sensitive,
           t3Tools: mcpToolNames(),

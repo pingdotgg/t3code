@@ -58,13 +58,18 @@ const outcome = (item: OrchestrationV2TurnItem): NonNullable<Entry["outcome"]> =
 
 const bytes = (trace: FeedbackTrace) => Buffer.byteLength(JSON.stringify(trace));
 
+/** Started turns outlined for a report spanning `turns`. No more than the entry cap could fit. */
+export const feedbackTraceWindow = (turns: number) =>
+  Math.min(Math.max(FEEDBACK_TRACE_TURNS, turns), MAX_ENTRIES);
+
 /**
  * The outline of the last few started turns: who spoke and which tools ran, with no text, input,
- * or output. With `withText`, also the scrubbed message text of those turns.
+ * or output. With `withText`, also the scrubbed message text of the last `turns` of them.
  */
 export const buildFeedbackTrace = (input: {
   readonly runs: ReadonlyArray<OrchestrationV2Run>;
   readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+  readonly turns: number;
   readonly withText: boolean;
   readonly sensitive: ReadonlyArray<string>;
   readonly t3Tools: ReadonlyArray<string>;
@@ -74,7 +79,8 @@ export const buildFeedbackTrace = (input: {
   const runs = input.runs
     .filter((run) => run.startedAt !== null)
     .toSorted((a, b) => a.ordinal - b.ordinal)
-    .slice(-FEEDBACK_TRACE_TURNS);
+    .slice(-feedbackTraceWindow(input.turns));
+  const firstTextTurn = input.withText ? runs.length - input.turns + 1 : Infinity;
   const turnOf = new Map(runs.map((run, index) => [run.id, { turn: index + 1, run }] as const));
   // The `t3_feedback` call making this report is still running; listed, it reads as a hung call.
   const submitting = (item: OrchestrationV2TurnItem) =>
@@ -101,7 +107,7 @@ export const buildFeedbackTrace = (input: {
           type: item.type === "user_message" ? "user" : "assistant",
           length,
         };
-        if (!input.withText) return message;
+        if (turn < firstTextTurn) return message;
         const { text, cut } = scrubFeedbackText(item.text, input.sensitive, MAX_TEXT_CHARS);
         if (cut) truncated = true;
         return { ...message, text };

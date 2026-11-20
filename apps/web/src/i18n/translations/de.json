@@ -3544,7 +3544,7 @@
   "4e0710d19dfc2e7e": "Diesen Bericht an das T3-Team senden?",
   "87d0ae0723ba75d1": "Das ist alles, was deinen Rechner verlässt. Erst wenn du auf Senden klickst, wird etwas gesendet.",
   "bf19826f81484328": "Unterhaltung mitsenden",
-  "dd47d8b0079fcc79": "Fügt den Text deiner Nachrichten und der Antworten des Agenten aus diesen Runden hinzu.",
+  "260c6b45f52d2f27": "Fügt den Text deiner Nachrichten und der Antworten des Agenten aus {textTurns, plural, one {der letzten Runde} other {den letzten {textTurns} Runden}} hinzu.",
   "ddb7e6f8ce99e657": "Nur wer auf diesem Rechner Agenten ausführen kann, kann den Bericht senden oder ablehnen.",
   "03c1eb603c112f47": "Nicht senden",
   "653405e4ed498d9f": "Senden",

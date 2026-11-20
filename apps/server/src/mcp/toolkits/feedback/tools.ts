@@ -25,7 +25,7 @@ export const FeedbackToolkit = Toolkit.make(
   Tool.make("t3_feedback", {
     ...shared,
     description:
-      "Send feedback to the T3 team: a T3 tool or `t3` command that misbehaved, a confusing instruction, a missing capability, or anything about T3 Code the user asks you to send. Not the user's own code. Use your own words; never quote the user's messages, code, files, or names. A report the user asks for opens a card where they approve it and choose whether to include the conversation, so call this when asked without asking first, and never paste the conversation into it.",
+      "Send feedback to the T3 team: a T3 tool or `t3` command that misbehaved, a confusing instruction, a missing capability, or anything about T3 Code the user asks you to send. Not the user's own code. Use your own words; never quote the user's messages, code, files, or names. A report the user asks for opens a card where they approve it and choose whether to include the conversation of the `turns` you set, so call this when asked without asking first, and never paste the conversation into it.",
     parameters: FeedbackInput,
     success: Schema.Union([FeedbackSubmitResult, FeedbackAwaitingApproval]),
   })

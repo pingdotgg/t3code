@@ -112,6 +112,19 @@ export function feedbackTraceSummary(
   );
 }
 
+/** What the conversation switch adds: the text of the turns the agent said the problem spans. */
+export function feedbackConversationHint(
+  trace: NonNullable<AgentFeedbackPreview["trace"]>,
+  resolve: MFunctionType = mFallback,
+): string {
+  return resolve(
+    msg(
+      "Adds the text of your messages and the agent's replies in the last {textTurns, plural, one {turn} other {{textTurns} turns}}.",
+      { textTurns: trace.textTurns },
+    ),
+  );
+}
+
 /** The server's own message for a failed answer, else a generic one. */
 export function feedbackRequestFailureMessage(
   failure: unknown,

@@ -21,6 +21,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
@@ -34,7 +35,7 @@ import * as Settings from "../serverSettings.ts";
 import * as Analytics from "../telemetry/AnalyticsService.ts";
 import {
   FEEDBACK_AWAITING_APPROVAL_NOTE,
-  type FeedbackInput,
+  FeedbackInput,
   FeedbackStorageError,
 } from "./FeedbackReport.ts";
 import { listFeedbackReports } from "./FeedbackList.ts";
@@ -369,8 +370,10 @@ const input = {
   actual: "No items.",
   workaround: "",
   userRequested: false,
+  turns: 1,
 };
 const requested = { ...input, userRequested: true };
+const decodeFeedbackInput = Schema.decodeUnknownSync(FeedbackInput);
 const fromThread = { source: "mcp" as const, threadId };
 
 it.effect("stores nothing and fails when agent feedback is off", () =>
@@ -408,6 +411,7 @@ it.effect("scrubs the caller's private values and sends only the event contract"
             "git@github.com:acme/payments.git in Acme Payments with sk-proj-abcdefghij1234567890",
           workaround: "x".repeat(400),
           userRequested: true,
+          turns: 1,
         },
         true,
       );
@@ -559,7 +563,8 @@ it.effect("a card holds the outline and the conversation, and sends the one the 
       expect("trace" in unprompted && unprompted.trace).toBeNull();
 
       yield* Ref.set(runId, RunId.make("run:6"));
-      const card = yield* show(cards, requested);
+      const fiveTurns = { ...requested, turns: 5 };
+      const card = yield* show(cards, fiveTurns);
       const outline = card.preview.trace!;
       expect(outline).toMatchObject({ turns: 5, textTurns: 0, truncated: true });
       expect(outline.entries).toHaveLength(80);
@@ -614,7 +619,7 @@ it.effect("a card holds the outline and the conversation, and sends the one the 
       expect(withoutText.preview).toEqual(card.preview);
       expect(withoutText.conversationTrace).toBeUndefined();
       // On: the conversation is.
-      const included = yield* approved(cards, requested, true);
+      const included = yield* approved(cards, fiveTurns, true);
       expect(included.stored.trace).toEqual(included.card.conversationTrace);
       expect(included.closed.preview.trace).toEqual(included.card.conversationTrace);
       expect(included.closed.conversationTrace).toBeUndefined();
@@ -651,6 +656,30 @@ it.effect("a card holds the outline and the conversation, and sends the one the 
       // Turns with no message text give the card no conversation to include.
       yield* Ref.update(items, (all) => all.filter((item) => item.type === "dynamic_tool"));
       expect((yield* show(cards, requested)).conversationTrace).toBeUndefined();
+
+      // The outline covers at least 5 started turns, more when the agent says the problem spans
+      // more, up to the thread's; the conversation covers the turns the agent gave, oldest text
+      // dropped first to fit.
+      yield* Ref.set(items, turnItems);
+      const { turns: _omitted, ...omitted } = requested;
+      // The thread has 6 started turns; the byte cap leaves no room for the oldest one's text.
+      const rows = [
+        { run: "run:3", report: decodeFeedbackInput(omitted), turns: 5, text: [5] },
+        { run: "run:3", report: { ...requested, turns: 3 }, turns: 5, text: [3, 4, 5] },
+        { run: "run:4", report: { ...requested, turns: 6 }, turns: 6, text: [2, 3, 4, 5, 6] },
+        { run: "run:4", report: { ...requested, turns: 20 }, turns: 6, text: [2, 3, 4, 5, 6] },
+      ];
+      for (const row of rows) {
+        yield* Ref.set(runId, RunId.make(row.run));
+        const shownCard = yield* show(cards, row.report);
+        const conversation = shownCard.conversationTrace!;
+        expect(shownCard.preview.trace!.turns).toBe(row.turns);
+        expect(conversation).toMatchObject({ turns: row.turns, textTurns: row.text.length });
+        expect([
+          ...new Set(conversation.entries.flatMap((e) => (e.text === undefined ? [] : [e.turn]))),
+        ]).toEqual(row.text);
+      }
+      expect(rows.map(({ report }) => report.turns)).toEqual([1, 3, 6, 20]);
     }).pipe(Effect.provide(layer));
   }),
 );

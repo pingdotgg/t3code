@@ -36,13 +36,15 @@ card; people on a guest link cannot.
 
 Each report has the kind of problem, the T3 tool or command it concerns (or `general`), and up to
 300 characters each of expected behavior, actual behavior, and workaround, written by the agent,
-which is told not to quote your messages or code. A report you approved also carries an outline of
-the thread's last 5 turns, from when the agent asked: who spoke, how long each message was, and
-which tools ran, whether they worked, and how long they took. The outline has no text. Tools from
-your other MCP servers appear only as `mcp`. Turn on **Include the conversation** in the card to
-attach the text of your messages and the agent's replies in those turns too, up to 1,000
-characters per message and 16 KB in all, oldest text dropped first; the card shows that text
-before you send it. Tool inputs and outputs, files, and attachments are never sent. An agent can
+which is told not to quote your messages or code. The agent also says how many recent turns the
+problem spans. A report you approved carries an outline of those turns, and of at least the last 5,
+from when the agent asked: who spoke, how long each message was, and which tools ran, whether they
+worked, and how long they took. The outline has no text. Tools from your other MCP servers appear
+only as `mcp`. Turn on **Include the conversation** in the card to attach the text of your
+messages and the agent's replies in the turns the problem spans, up to 1,000 characters per
+message and 16 KB in all, oldest text dropped first; the card shows that text before you send it.
+To change a report, such as the turns it covers, ask the agent in the chat: it shows a new card,
+and you can decline the old one. Tool inputs and outputs, files, and attachments are never sent. An agent can
 show you at most 3 report cards and send 3 reports on its own per turn, and `t3 feedback` can
 send at most 10 an hour.
 

@@ -2,6 +2,7 @@ import { T, msg, useMessages, useGT } from "gt-react-native";
 import { pipe } from "effect/Function";
 import {
   feedbackCardPreview,
+  feedbackConversationHint,
   feedbackPreviewFields,
   feedbackRequestDisplay,
   feedbackRequestFailureMessage,
@@ -130,7 +131,7 @@ function PendingFeedbackRequest(props: {
               <T>Include the conversation</T>
             </Text>
             <Text className="font-sans text-xs text-foreground-muted">
-              <T>Adds the text of your messages and the agent's replies in these turns.</T>
+              {feedbackConversationHint(props.item.conversationTrace, m)}
             </Text>
           </View>
           <ThemedSwitch
