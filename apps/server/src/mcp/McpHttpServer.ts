@@ -44,7 +44,10 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { leanToolResult, wantsLeanResults } from "./McpResultShape.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as McpToolExposure from "./McpToolExposure.ts";
-import { MCP_TOOL_EXPOSURE_HEADER } from "@t3tools/provider-core/server/mcpSession";
+import {
+  isMcpToolExposureMode,
+  MCP_TOOL_EXPOSURE_HEADER,
+} from "@t3tools/provider-core/server/mcpSession";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
@@ -1457,22 +1460,37 @@ export const layerTools = layerInToolNameOrder(
   ),
 );
 
-const layerToolExposure = Layer.effect(
+// Opt-in grants a session holds on its own; a client with a tool budget lists theirs before the rest.
+const capabilityTools = new Map<McpInvocationContext.McpCapability, ReadonlyArray<string>>([
+  ["computer", [...Object.keys(ComputerToolkit.tools), ...Object.keys(ComputerLookToolkit.tools)]],
+  [
+    "device",
+    [...Object.keys(DeviceStandardToolkit.tools), ...Object.keys(DeviceScreenshotToolkit.tools)],
+  ],
+]);
+
+export const layerToolExposure = Layer.effect(
   McpToolExposure.McpToolExposure,
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
     return McpToolExposure.make(
       () =>
-        server.tools.map(({ tool }) => ({ name: tool.name, description: tool.description ?? "" })),
+        server.tools.map(({ tool }) => ({
+          name: tool.name,
+          description: tool.description ?? "",
+          inputSchema: tool.inputSchema,
+        })),
       () => server.notifications["notifications/tools/list_changed"]({}),
+      capabilityTools,
     );
   }),
 );
 
 /**
- * A provider session that sends `MCP_TOOL_EXPOSURE_HEADER: deferred` lists only
- * the direct tools and what its `tool_search` calls loaded. Calls are never
- * gated, and every other client lists everything but `tool_search`.
+ * A provider session that sends `MCP_TOOL_EXPOSURE_HEADER` lists the core tools and its own
+ * capability tools first: `deferred` adds what its `tool_search` calls loaded, `budgeted` adds the
+ * rest up to a size the client keeps. Calls are never gated, and every other client lists
+ * everything but `tool_search`.
  */
 const layerDeferredListing = McpServer.visibility(
   Effect.gen(function* () {
@@ -1480,12 +1498,19 @@ const layerDeferredListing = McpServer.visibility(
     // Untraced: it runs once per tool on every list request.
     return Effect.fnUntraced(function* ({ method, target, headers }: McpServer.MiddlewareOptions) {
       if (method !== "tools/list") return true;
-      const scope = yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext);
-      const providerSessionId = Option.getOrUndefined(scope)?.thread?.providerSessionId;
-      if (headers[MCP_TOOL_EXPOSURE_HEADER] !== "deferred" || providerSessionId === undefined) {
+      const mode = headers[MCP_TOOL_EXPOSURE_HEADER];
+      const scope = Option.getOrUndefined(
+        yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext),
+      );
+      const providerSessionId = scope?.thread?.providerSessionId;
+      if (!isMcpToolExposureMode(mode) || scope === undefined || providerSessionId === undefined) {
         return target !== McpToolExposure.TOOL_SEARCH;
       }
-      return exposure.isListed(providerSessionId, target);
+      return exposure.isListed(
+        { providerSessionId, capabilities: scope.capabilities },
+        mode,
+        target,
+      );
     });
   }),
   { global: true },
