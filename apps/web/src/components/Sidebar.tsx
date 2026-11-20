@@ -190,6 +190,7 @@ import {
   deleteSelectedThreadEntries,
   filterSidebarProjectScopeItems,
   firstValidTimestampMs,
+  isOpenThreadRenameKey,
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
@@ -2922,6 +2923,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       if (event.defaultPrevented || event.repeat || isCommandPaletteOpen() || isModelPickerOpen()) {
         return;
       }
+      if (routeThreadRef && isOpenThreadRenameKey(event)) {
+        const routeThread = threadByKey.get(scopedThreadKey(routeThreadRef));
+        if (!routeThread) return;
+        event.preventDefault();
+        startThreadRename(routeThreadRef, routeThread.title);
+        return;
+      }
       const command = resolveShortcutCommand(event, keybindings, {
         platform: navigator.platform,
         context: threadShortcutContext(routeThreadRef),
@@ -2958,6 +2966,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     orderedThreadKeys,
     routeRowThreadKey,
     routeThreadRef,
+    startThreadRename,
     threadByKey,
   ]);
 

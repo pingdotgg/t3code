@@ -658,6 +658,15 @@ type ThreadStatusInput = Pick<
   blockedOnThreadWait?: boolean | undefined;
 };
 
+// Opening a thread moves focus from its row to the composer, so F2 there renames it too.
+export function isOpenThreadRenameKey(event: KeyboardEvent): boolean {
+  return (
+    event.key === "F2" &&
+    event.target instanceof Element &&
+    event.target.closest('[data-workspace-area="composer"]') !== null
+  );
+}
+
 // Read at event time: subscribing Sidebar to terminal or modifier state re-renders every row.
 export function threadShortcutContext(routeThreadRef: ScopedThreadRef | null) {
   return {
