@@ -1,6 +1,13 @@
 import { useEffect } from "react";
-import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  RuntimeRequestId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { makeThreadRequestsResolvedAnnouncer } from "@t3tools/client-runtime/state/thread-requests";
 import { expect, it, vi } from "vite-plus/test";
 import { AsyncResult } from "effect/reactivity";
 
@@ -13,6 +20,8 @@ import {
 } from "../../composerDraftStore";
 import { showThreadUndoNotice } from "../../hooks/showThreadUndoNotice";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
+import { questionAttachmentDraftId } from "../../questionAttachments";
+import { readComposerImageBytes } from "./composerAttachmentFiles";
 import { getPreparingComposerImages } from "./preparingComposerImages";
 import { useComposerAttachmentIntake } from "./useComposerAttachmentIntake";
 
@@ -55,6 +64,121 @@ const compress = async (source: File) => {
 };
 const visiblePreparing = (targetKey: string) =>
   getPreparingComposerImages(targetKey).filter((image) => !image.hidden);
+
+it.each(["available", "full", "duplicate"] as const)(
+  "finishes a cancelled question's screenshot with an offscreen thread draft (%s)",
+  async (capacity) => {
+    const store = useComposerDraftStore.getState();
+    const environmentId = EnvironmentId.make(`intake-recovery-${capacity}`);
+    const threadId = ThreadId.make("thread");
+    const requestId = RuntimeRequestId.make("question");
+    const target = scopeThreadRef(environmentId, threadId);
+    const question = questionAttachmentDraftId(environmentId, threadId, requestId, "image");
+    using _draft = { [Symbol.dispose]: () => store.clearComposerContent(target) };
+    if (capacity !== "available") {
+      store.addFiles(
+        target,
+        Array.from(
+          { length: PROVIDER_SEND_TURN_MAX_ATTACHMENTS - (capacity === "duplicate" ? 1 : 0) },
+          (_, index) => {
+            const name = `notes-${index}.txt`;
+            return {
+              type: "file" as const,
+              id: name,
+              name,
+              mimeType: "text/plain",
+              sizeBytes: 1,
+              file: new File(["a"], name, { type: "text/plain" }),
+            };
+          },
+        ),
+      );
+    }
+    if (capacity === "duplicate") {
+      const { file } = await compress(pastedImage());
+      await readComposerImageBytes(file);
+      store.addImages(target, [
+        {
+          type: "image",
+          id: "existing-image",
+          name: file.name,
+          mimeType: file.type,
+          sizeBytes: file.size,
+          file,
+          previewUrl: URL.createObjectURL(file),
+        },
+      ]);
+    }
+    const resumeCompression = deferred<void>();
+    compression.prepare.mockReset().mockImplementation(async (file: File) => {
+      await resumeCompression.promise;
+      return compress(file);
+    });
+    const setThreadError = vi.fn();
+    let intake!: Intake;
+    await using _screen = await render(
+      <Harness
+        input={{
+          activeThreadId: threadId,
+          activePendingProgress: null,
+          activePendingIsResponding: false,
+          pendingUserInputs: [],
+          supportsQuestionAttachments: true,
+          isLiteralPendingAnswer: true,
+          projectSelectionRequired: false,
+          questionAttachmentTarget: question,
+          attachmentTargetKey: question,
+          fileStagingLimit: null,
+          promptRef: { current: "" },
+          composerImagesRef: { current: [] },
+          composerFilesRef: { current: [] },
+          composerEditorRef: { current: null },
+          isRevertingCheckpointRef: { current: false },
+          setThreadError,
+          countReservedAttachments: () => 0,
+          addComposerImage: (image) => store.addImages(question, [image]),
+          addComposerImagesToDraft: (images) => store.addImages(question, images),
+          addComposerFilesToDraft: () => [],
+          removeComposerImageFromDraft: () => {},
+          insertAttachmentReferences: () => false,
+        }}
+        ready={(value) => {
+          intake = value;
+        }}
+      />,
+    );
+    const attaching = intake.addComposerAttachments([pastedImage()]);
+    makeThreadRequestsResolvedAnnouncer(
+      environmentId,
+      threadId,
+    )([{ id: requestId, status: "cancelled" }]);
+    await act(async () => {
+      resumeCompression.resolve();
+      await attaching;
+    });
+
+    if (capacity === "full") {
+      expect(store.getComposerDraft(target)?.images).toEqual([]);
+      expect(setThreadError).toHaveBeenLastCalledWith(
+        threadId,
+        expect.stringContaining("image.png could not be restored"),
+      );
+    } else if (capacity === "duplicate") {
+      expect(store.getComposerDraft(target)?.images.map(({ id }) => id)).toEqual([
+        "existing-image",
+      ]);
+      expect(setThreadError).toHaveBeenLastCalledWith(threadId, null);
+    } else {
+      expect(store.getComposerDraft(target)?.persistedAttachments).toEqual([
+        expect.objectContaining({
+          name: "image.png",
+          dataUrl: expect.stringContaining("data:image/png;base64,"),
+        }),
+      ]);
+      expect(setThreadError).toHaveBeenLastCalledWith(threadId, null);
+    }
+  },
+);
 
 it("prepares a repeated paste without a tile, and still keeps a different image", async () => {
   const target = DraftId.make("intake-repeat-paste");

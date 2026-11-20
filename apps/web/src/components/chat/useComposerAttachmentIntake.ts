@@ -52,6 +52,7 @@ import {
 import { requestConfirmDialog } from "~/confirmDialog";
 import { toastManager } from "../ui/toast";
 import { type RefObject, useRef } from "react";
+import { serializeComposerImages } from "./composerImagePersistence";
 import {
   addPreparingComposerImages,
   getPreparingComposerImages,
@@ -344,9 +345,13 @@ export function useComposerAttachmentIntake(input: {
         previewUrl: URL.createObjectURL(file),
         file,
       }));
+    const unrestoredImageNames: string[] = [];
+    const draftStore = useComposerDraftStore.getState();
     const storedImageIds = new Set(
       movedThread
-        ? useComposerDraftStore.getState().addImages(movedThread, nextImages)
+        ? draftStore.addImages(movedThread, nextImages, {
+            onCapacityExceeded: (image) => unrestoredImageNames.push(image.name),
+          })
         : nextImages.length === 1 && nextImages[0]
           ? addComposerImage(nextImages[0])
           : nextImages.length > 1
@@ -370,12 +375,40 @@ export function useComposerAttachmentIntake(input: {
     // now other work (a failed send, an overlapping paste) may have set a
     // thread error this call knows nothing about, and clearing it would
     // swallow that message.
-    const compressionError = [...compressionErrors]
+    const completionErrors = [...compressionErrors]
       .filter(([id]) => stillPreparingIds.has(id))
       .map(([, message]) => message)
-      .at(-1);
-    if (compressionError !== undefined) {
-      setThreadError(threadId, compressionError);
+      .slice(-1);
+    if (unrestoredImageNames.length > 0) {
+      completionErrors.push(
+        m(
+          msg("{names} could not be restored: the composer is at its {limit}-attachment limit.", {
+            names: unrestoredImageNames.join(", "),
+            limit: PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+          }),
+        ),
+      );
+    }
+    if (completionErrors.length > 0) {
+      setThreadError(threadId, completionErrors.join("\n"));
+    }
+    if (movedThread && storedImages.length > 0) {
+      const serialized = await serializeComposerImages(storedImages, []);
+      const current = draftStore.getComposerDraft(movedThread);
+      if (current) {
+        const owned = new Set(current.images);
+        const ownedIds = new Set(
+          storedImages.filter((image) => owned.has(image)).map(({ id }) => id),
+        );
+        const persistedIds = new Set(current.persistedAttachments.map(({ id }) => id));
+        const recovered = serialized.filter(({ id }) => ownedIds.has(id) && !persistedIds.has(id));
+        if (recovered.length > 0) {
+          await draftStore.syncPersistedAttachments(movedThread, [
+            ...current.persistedAttachments,
+            ...recovered,
+          ]);
+        }
+      }
     }
     return insertedAny;
   };
