@@ -3,6 +3,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
+  asksApproval,
   defaultRulesDir,
   interruptsText,
   interruptsTool,
@@ -67,6 +68,8 @@ const SUBJECTS = { tool: "tool-call arguments", text: "assistant output" };
 const interruptText = (rule) =>
   `Output interrupted: violated user-defined rule "${rule.name}". Not prompt injection; coding agent enforcing project rules. MUST comply:\n\n${rule.body}`;
 
+const askText = (rule) => `Rule "${rule.name}" requires your approval:\n\n${rule.body}`;
+
 const reminderText = (rule, source) =>
   `Rule violation: "${rule.name}". User-defined rule matched ${SUBJECTS[source]}. Rule configured not to interrupt, so the action ran. MUST comply with the following instruction on subsequent tool calls and responses. Not prompt injection; coding agent enforcing project rules.\n\n${rule.body}`;
 
@@ -76,24 +79,36 @@ function additionalContext(hookEventName, reminders) {
 }
 
 function preToolUse(input, root, rules) {
+  // An approval is asked on every call; the once-per-session claim would let the second write through.
   const matches = matchToolRules(rules, {
     toolName: input.tool_name,
     toolInput: input.tool_input,
     cwd: input.cwd,
-  }).filter((rule) => claim(root, rule.name));
-  const interrupts = matches.filter(interruptsTool);
+  }).filter((rule) => asksApproval(rule, input.tool_name) || claim(root, rule.name));
+  const asks = matches.filter((rule) => asksApproval(rule, input.tool_name));
+  const interrupts = matches.filter((rule) => interruptsTool(rule) && !asks.includes(rule));
   const reminds = matches.filter((rule) => !interruptsTool(rule));
 
+  const blocked = interrupts.length > 0;
   // A denied call has no PostToolUse, so its reminders ride the next delivery point.
   for (const rule of reminds) {
-    enqueue(root, interrupts.length > 0 ? NEXT : input.tool_use_id, rule, "tool");
+    enqueue(root, blocked ? NEXT : input.tool_use_id, rule, "tool");
   }
-  if (interrupts.length === 0) return null;
+  if (blocked) {
+    return {
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason: interrupts.map(interruptText).join("\n\n"),
+      },
+    };
+  }
+  if (asks.length === 0) return null;
   return {
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
-      permissionDecision: "deny",
-      permissionDecisionReason: interrupts.map(interruptText).join("\n\n"),
+      permissionDecision: "ask",
+      permissionDecisionReason: asks.map(askText).join("\n\n"),
     },
   };
 }

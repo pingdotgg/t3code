@@ -36,6 +36,8 @@ node apps/board/scripts/install-omp-kit.mjs                      # user scope, ~
 node apps/board/scripts/install-omp-kit.mjs --config-dir /tmp/x  # an isolated Claude config
 ```
 
+A rule with `approval: ask` in its frontmatter makes the plugin answer a matching MCP tool call with Claude Code's `ask` decision, so the operator approves in place with the rule's text, on every call. omp ignores the field. MCP calls match by tool name only, never by their arguments, and a scope token may spell the tool the omp way (`tool:mcp__linear_save_issue`) or the Claude way (`tool:mcp__t3-code__set_issue_state`). Other tools, Bash included, keep the draft-first deny.
+
 The plugin loads in place from this checkout, so install from a checkout that stays. The language server needs `typescript` installed in the project it opens.
 
 ## The engine
