@@ -1,11 +1,18 @@
-import type { AssistantCitation } from "@t3tools/contracts";
-import {
-  createAssistantTextSelector,
-  type AssistantTextSelector,
-  splitsSurrogatePair,
-} from "@t3tools/shared/assistantCitations";
+import { type AssistantCitation } from "@t3tools/contracts";
 
 import { mathWrapperOf } from "../markdown-clipboard";
+
+export {
+  createAssistantTextSelector,
+  findAssistantCitationText,
+} from "@t3tools/shared/assistantCitations";
+import {
+  createAssistantTextSelector,
+  findAssistantCitationText,
+  splitsSurrogatePair,
+  type AssistantTextSelector,
+} from "@t3tools/shared/assistantCitations";
+export type { AssistantTextSelector } from "@t3tools/shared/assistantCitations";
 
 export type AssistantCitationSourceAnchor = {
   source: HTMLElement;
@@ -35,53 +42,6 @@ const CONTROL_SELECTOR = "button, input, textarea, select, [role=button], [conte
 const EXCLUDED_SELECTOR = `${CONTROL_SELECTOR}, [hidden], [aria-hidden=true], script, style, template, noscript, svg`;
 const BLOCK_SELECTOR =
   "address, article, aside, blockquote, dd, div, dl, dt, figcaption, figure, footer, h1, h2, h3, h4, h5, h6, header, hr, li, main, nav, ol, p, pre, section, table, td, th, tr, ul";
-
-function normalizeWhitespace(text: string): string {
-  return text.replace(/\s+/g, " ");
-}
-
-/** Offsets use normalized UTF-16 units. Saved offsets may drift, so they cannot break context ties. */
-export function findAssistantCitationText(
-  text: string,
-  selector: AssistantTextSelector,
-): { start: number; end: number } | null {
-  const normalized = normalizeWhitespace(text);
-  const quote = normalizeWhitespace(selector.text);
-  if (quote.trim().length === 0) return null;
-
-  const prefix = normalizeWhitespace(selector.prefix);
-  const suffix = normalizeWhitespace(selector.suffix);
-  const matchesContext = (start: number, end: number) =>
-    normalized.slice(Math.max(0, start - prefix.length), start) === prefix &&
-    normalized.slice(end, end + suffix.length) === suffix;
-
-  let match =
-    Number.isSafeInteger(selector.start) &&
-    Number.isSafeInteger(selector.end) &&
-    selector.start >= 0 &&
-    selector.end - selector.start === quote.length &&
-    normalized.slice(selector.start, selector.end) === quote &&
-    matchesContext(selector.start, selector.end)
-      ? { start: selector.start, end: selector.end }
-      : null;
-  let onlyQuote: { start: number; end: number } | null = null;
-  let quoteCount = 0;
-
-  for (
-    let start = normalized.indexOf(quote);
-    start !== -1;
-    start = normalized.indexOf(quote, start + 1)
-  ) {
-    const end = start + quote.length;
-    quoteCount += 1;
-    onlyQuote = { start, end };
-    if (!matchesContext(start, end)) continue;
-    if (match !== null && match.start !== start) return null;
-    match = { start, end };
-  }
-
-  return match ?? (quoteCount === 1 ? onlyQuote : null);
-}
 
 /** A text node, or a whole rendered formula standing for its TeX. */
 type TextChunk = { node: Text | Element; start: number; end: number };

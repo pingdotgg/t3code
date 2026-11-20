@@ -1,5 +1,6 @@
 import { LegendList } from "@legendapp/list/react-native";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { T, useGT } from "gt-react-native";
 import { useMemo, useRef, useState } from "react";
 import { Modal, Pressable, type TextInputInstance, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
@@ -19,6 +20,7 @@ export interface AttachToThreadSheetProps {
 
 function AttachToThreadBody(props: Omit<AttachToThreadSheetProps, "thread">) {
   const { candidates, onClose, onPick, projectTitleOf } = props;
+  const gt = useGT();
   const inputRef = useRef<TextInputInstance | null>(null);
   const [query, setQuery] = useState("");
   const needle = query.trim().toLowerCase();
@@ -34,23 +36,25 @@ function AttachToThreadBody(props: Omit<AttachToThreadSheetProps, "thread">) {
       <SafeAreaView style={{ flex: 1 }}>
         <SheetHeader
           presentation="inline"
-          title="Attach to thread"
+          title={gt("Attach to thread")}
           onClose={onClose}
-          accessibilityLabel="Close attach to thread"
+          accessibilityLabel={gt("Close attach to thread")}
         />
         <View className="flex-row px-5 pb-3">
           <SearchField
             inputRef={inputRef}
             autoFocus={false}
-            accessibilityLabel="Search threads"
-            clearAccessibilityLabel="Clear search"
-            placeholder="Search threads"
+            accessibilityLabel={gt("Search threads")}
+            clearAccessibilityLabel={gt("Clear search")}
+            placeholder={gt("Search threads")}
             value={query}
             onChangeText={setQuery}
           />
         </View>
         {visible.length === 0 ? (
-          <Text className="px-5 py-6 text-base text-foreground-muted">No threads to attach to</Text>
+          <Text className="px-5 py-6 text-base text-foreground-muted">
+            <T>No threads to attach to</T>
+          </Text>
         ) : (
           // oxlint-disable-next-line t3code/require-registered-list-scroll -- A full-screen Modal with an inline header; there is no navigation header to register with.
           <LegendList

@@ -3,6 +3,7 @@ import { boardHasUpdates } from "@t3tools/client-runtime/state/thread-board";
 import { resolveThreadGroupFor } from "@t3tools/client-runtime/state/thread-groups";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
+import { T, useGT, useMessages } from "gt-react";
 import { LayoutListIcon } from "lucide-react";
 
 import { cn } from "../../lib/utils";
@@ -13,20 +14,22 @@ import { resolveThreadStatusPill } from "../Sidebar.logic";
 
 export function ThreadGroupStrip(props: { environmentId: EnvironmentId; threadId: ThreadId }) {
   const { environmentId, threadId } = props;
+  const gt = useGT();
+  const messages = useMessages();
   const navigate = useNavigate();
   const shells = useQuietThreadShells();
   const group = resolveThreadGroupFor(shells, environmentId, threadId);
   if (!group) return null;
 
   const members = [
-    { shell: group.parent, suffix: "lead" },
+    { shell: group.parent, suffix: gt("lead", { $context: "suffix on the group lead thread" }) },
     ...group.workers.map((shell) => ({ shell, suffix: null })),
   ];
 
   return (
     <div className="flex min-w-0 shrink-0 items-center gap-1.5 border-b border-border px-3 py-1.5 sm:px-5">
       <nav
-        aria-label="Thread group"
+        aria-label={gt("Thread group")}
         className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto [-webkit-mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)] [mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {members.map(({ shell, suffix }) => {
@@ -52,7 +55,9 @@ export function ThreadGroupStrip(props: { environmentId: EnvironmentId; threadId
             >
               <span
                 role="img"
-                aria-label={status?.label ?? "Idle"}
+                aria-label={
+                  status ? messages(status.label) : gt("Idle", { $context: "agent status" })
+                }
                 className={cn(
                   "size-1.5 shrink-0 rounded-full",
                   status?.dotClass ?? "bg-muted-foreground/40",
@@ -61,7 +66,11 @@ export function ThreadGroupStrip(props: { environmentId: EnvironmentId; threadId
               />
               <span className="truncate">{shell.title}</span>
               {suffix ? <span className="shrink-0 text-muted-foreground">{suffix}</span> : null}
-              {current ? <span className="shrink-0 text-muted-foreground">you</span> : null}
+              {current ? (
+                <span className="shrink-0 text-muted-foreground">
+                  {gt("you", { $context: "suffix on the thread being viewed" })}
+                </span>
+              ) : null}
             </button>
           );
         })}
@@ -74,11 +83,13 @@ export function ThreadGroupStrip(props: { environmentId: EnvironmentId; threadId
         className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-border px-2.5 py-0.5 text-xs text-foreground/80 transition-colors hover:bg-accent focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
         <LayoutListIcon className="size-3" aria-hidden />
-        <span>Board</span>
+        <span>
+          <T>Board</T>
+        </span>
         {boardHasUpdates(group.parent) ? (
           <span
             role="img"
-            aria-label="New board updates"
+            aria-label={gt("New board updates")}
             className="size-1.5 shrink-0 rounded-full bg-info"
           />
         ) : null}

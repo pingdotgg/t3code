@@ -1,4 +1,5 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import { T, useGT, useMessages } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
@@ -18,6 +19,8 @@ export function BoardPanel(props: {
   readonly cwd: string | undefined;
 }) {
   const { threadRef, cwd } = props;
+  const gt = useGT();
+  const messages = useMessages();
   const { environmentId, threadId } = threadRef;
   const shells = useQuietThreadShells();
   const shellById = new Map(
@@ -59,14 +62,14 @@ export function BoardPanel(props: {
   if (board.data === null) {
     return (
       <p className="p-4 text-sm text-muted-foreground">
-        {board.error ?? (board.isPending ? "Loading board…" : null)}
+        {board.error ?? (board.isPending ? gt("Loading board…") : null)}
       </p>
     );
   }
   if (board.data.topics.length === 0) {
     return (
       <p className="p-4 text-sm text-muted-foreground">
-        No topics yet. Agents in this group post their current state here.
+        <T>No topics yet. Agents in this group post their current state here.</T>
       </p>
     );
   }
@@ -76,20 +79,20 @@ export function BoardPanel(props: {
     <div className="min-h-0 flex-1 overflow-y-auto">
       <ul className="flex flex-col divide-y divide-border">
         {board.data.topics.map((topic) => {
-          const presentation = presentBoardTopic(topic, viewedAt);
+          const presentation = presentBoardTopic(topic, viewedAt, messages);
           const editor = shellById.get(topic.lastEditorThreadId) ?? null;
           const status = editor ? resolveThreadStatusPill({ thread: editor }) : null;
           return (
             <li
               key={topic.id}
               className="flex flex-col gap-2 px-4 py-3"
-              aria-label={`${topic.title} board topic`}
+              aria-label={gt("{title} board topic", { title: topic.title })}
             >
               <div className="flex items-center gap-2">
                 <h3 className="min-w-0 flex-1 truncate text-sm font-medium">{topic.title}</h3>
                 {presentation.updated ? (
                   <Badge variant="info" size="sm">
-                    Updated
+                    {gt("Updated", { $context: "badge on a changed board topic" })}
                   </Badge>
                 ) : null}
               </div>
@@ -106,7 +109,9 @@ export function BoardPanel(props: {
                   <span className="inline-flex min-w-0 max-w-56 items-center gap-1.5">
                     <span
                       role="img"
-                      aria-label={status?.label ?? "Idle"}
+                      aria-label={
+                        status ? messages(status.label) : gt("Idle", { $context: "agent status" })
+                      }
                       className={cn(
                         "size-1.5 shrink-0 rounded-full",
                         status?.dotClass ?? "bg-muted-foreground/40",
@@ -117,7 +122,11 @@ export function BoardPanel(props: {
                   </span>
                 ) : null}
                 {presentation.editedLabel ? <span>{presentation.editedLabel}</span> : null}
-                {presentation.authorLeft ? <span>Author left the group</span> : null}
+                {presentation.authorLeft ? (
+                  <span>
+                    <T>Author left the group</T>
+                  </span>
+                ) : null}
               </div>
             </li>
           );

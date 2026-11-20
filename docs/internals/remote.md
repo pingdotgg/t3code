@@ -103,6 +103,11 @@ Unlinking on the linking side only forgets the token.
   [`linkRequestTarget`](../../packages/client-runtime/src/linkRequest.ts) names
   a machine for it only when the client already reaches exactly one machine
   there. An address alone never moves an unexpired link to another address.
+- **The receiving side owns a link's expiry.** It renews the session when the
+  link is used and answers each call with `T3-Link-Expires-At`; the linking
+  side stores that and never extends a link on its own. A receiving side that
+  predates renewal sends no header, so the link keeps its original 30 days on
+  both sides.
 - **All callers on one side share the link's single session on the other**,
   so idempotency keys are hashed with the caller's namespace before they
   leave. Without that, two agents reusing a key would collide on the far side.
@@ -157,6 +162,35 @@ in its query and carries the pairing secret in its fragment. Fragments stay out
 of requests to the hosted origin. The browser exchanges the secret with the
 environment and strips it from its history. Moving the token into a query
 parameter would disclose it to the wrong origin.
+
+## Desktop previews tunnel loopback
+
+A desktop webview for another environment keeps `localhost` URLs and reaches the environment's
+loopback through `/api/preview/tunnel`, one WebSocket per TCP connection, on the same origin as
+every other request. That is why it works over any connection method. Four choices are easy to
+undo by accident:
+
+- **Fixed proxy, not PAC.** Chromium never consults a PAC script for loopback hosts, even with
+  `<-loopback>`. The partition uses a fixed SOCKS5 proxy with the bypass list
+  `*,<-loopback>,169.254.0.0/16,fe80::/10`, in that order, since the last matching rule wins:
+  everything is direct except loopback. `<-loopback>` also takes link-local addresses, so the last
+  two rules hand them back to the direct route. A fixed proxy also has no
+  direct retry, so a failed tunnel is a connection error and never the reviewer's own localhost.
+  The rule matches hostnames, not resolved addresses, so a custom name that resolves to loopback
+  still goes direct.
+- **Media tickets.** Desktop main opens the tunnel but holds no environment credentials. Media
+  tickets are not DPoP-bound, so the renderer can hand one over. Main asks it for a tunnel URL per
+  connection, which also makes the tunnel follow a route switch.
+- **Owner check, not auth.** Chromium can't authenticate to a SOCKS proxy, so any local process
+  can connect to the listener and ride this user's tunnel. On Linux the listener looks the client
+  up in `/proc/net/tcp` and refuses other users. macOS and Windows have no such check yet. The
+  mobile app's device preview has the same listener while it is open: iOS suspends other apps, but
+  Android lets any app reach it, and apps cannot see another app's socket owner there.
+- **Off stays routed.** `allowsPreviewTunnel` (setting plus policy) gates the route and, from
+  server config, the clients, which then stream. The partition keeps its tunnel proxy anyway, so a
+  desktop tab left open fails instead of loading the reviewer's own localhost.
+- **System browser links** have no tunnel. They keep the private-network rewrite in
+  [`browserTargetResolver.ts`](../../apps/web/src/browser/browserTargetResolver.ts).
 
 ## Access and process ownership are different
 

@@ -2,6 +2,7 @@ import { useAndroidFloatingTabs } from "../settings/appearance/AppearancePrefere
 import { useState } from "react";
 import { useKeyboardState } from "react-native-keyboard-controller";
 import { Platform, View } from "react-native";
+import { useGT } from "gt-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Toast } from "../../components/ui/Toast";
 import {
@@ -16,10 +17,10 @@ import {
   dismissThreadUndoNotice,
   readThreadUndoNotice,
   useThreadUndoNotice,
-  threadUndoNoticeMessage,
 } from "./thread-undo-notice";
 
 export function ThreadUndoNotice(props: { readonly visible: boolean }) {
+  const gt = useGT();
   const floatingTabsEnabled = useAndroidFloatingTabs();
   const notice = useThreadUndoNotice();
   const insets = useSafeAreaInsets();
@@ -45,6 +46,7 @@ export function ThreadUndoNotice(props: { readonly visible: boolean }) {
   const [instance, setInstance] = useState({ notice, key: 0 });
   if (instance.notice !== notice) setInstance({ notice, key: instance.key + 1 });
   if (!props.visible || notice === null) return null;
+  const undoCount = notice.count?.() ?? 1;
   const foldedResting =
     rootMetrics?.hasHinge &&
     rootMetrics.horizontalSizeClass === "compact" &&
@@ -83,9 +85,21 @@ export function ThreadUndoNotice(props: { readonly visible: boolean }) {
       pointerEvents="box-none"
     >
       <Toast
-        message={threadUndoNoticeMessage(notice)}
+        message={
+          undoCount > 1
+            ? notice.action === "Settled"
+              ? gt("Settled {count} threads", { count: undoCount })
+              : notice.action === "Snoozed"
+                ? gt("Snoozed {count} threads", { count: undoCount })
+                : gt("Unpinned {count} threads", { count: undoCount })
+            : notice.action === "Settled"
+              ? gt("Settled thread")
+              : notice.action === "Snoozed"
+                ? gt("Snoozed thread")
+                : gt("Unpinned thread")
+        }
         action={{
-          label: "Undo",
+          label: gt("Undo"),
           onPress: () => {
             void notice.undo();
           },

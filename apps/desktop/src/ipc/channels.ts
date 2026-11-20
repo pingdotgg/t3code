@@ -127,6 +127,13 @@ export const PREVIEW_STATE_CHANGE_CHANNEL = "desktop:preview-state-change";
 export const PREVIEW_POINTER_EVENT_CHANNEL = "desktop:preview-pointer-event";
 export const PREVIEW_OPEN_LINK_CHANNEL = "desktop:preview-open-link";
 export const PREVIEW_FIND_RESULT_CHANNEL = "desktop:preview-find-result";
+export const PREVIEW_TUNNEL_ACCESS_REQUEST_CHANNEL = "desktop:preview-tunnel-access-request";
+export const PREVIEW_TUNNEL_ACCESS_RESOLVE_CHANNEL = "desktop:preview-tunnel-access-resolve";
+export const PORT_FORWARD_START_CHANNEL = "desktop:port-forward-start";
+export const PORT_FORWARD_STOP_CHANNEL = "desktop:port-forward-stop";
+export const PORT_FORWARD_LIST_CHANNEL = "desktop:port-forward-list";
+export const PORT_FORWARD_CHANGE_CHANNEL = "desktop:port-forward-change";
+export const PORT_FORWARD_SHARES_LOOPBACK_CHANNEL = "desktop:port-forward-shares-loopback";
 
 export const MAC_PERMISSION_HELPER_CHANNEL = "desktop:mac-permission-helper";
 
@@ -143,3 +150,5 @@ export const TAKE_LEGACY_LOCAL_STORAGE_CHANNEL = "desktop:take-legacy-local-stor
 export const COMPLETE_LEGACY_LOCAL_STORAGE_CHANNEL = "desktop:complete-legacy-local-storage";
 
 export const RESTART_AUDIO_SERVICE_CHANNEL = "desktop:restart-audio-service";
+
+export const START_FILE_DRAG_CHANNEL = "desktop:start-file-drag";

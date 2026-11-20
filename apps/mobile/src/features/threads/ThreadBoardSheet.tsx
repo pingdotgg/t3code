@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { T, useGT, useMessages } from "gt-react-native";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -32,6 +33,8 @@ type BoardTarget = { readonly environmentId: EnvironmentId; readonly threadId: T
 export function ThreadBoardSheet({ route }: StaticScreenProps<BoardTarget>) {
   const target = route.params;
   const navigation = useNavigation();
+  const gt = useGT();
+  const messages = useMessages();
   const insets = useSafeAreaInsets();
   const styles = useMarkdownPreviewStyles();
   const shells = useAtomValue(steadyNavigationThreadShellsAtom);
@@ -99,7 +102,10 @@ export function ThreadBoardSheet({ route }: StaticScreenProps<BoardTarget>) {
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
-      <SheetHeader title="Board" onClose={() => navigation.goBack()} />
+      <SheetHeader
+        title={gt("Board", { $context: "thread group board" })}
+        onClose={() => navigation.goBack()}
+      />
       <ScreenContent>
         <ScrollView
           nestedScrollEnabled
@@ -114,11 +120,11 @@ export function ThreadBoardSheet({ route }: StaticScreenProps<BoardTarget>) {
             </Text>
           ) : board === null ? null : topics.length === 0 ? (
             <Text className="pt-6 text-center text-sm text-foreground-muted">
-              No topics yet. Agents in this group post their current state here.
+              <T>No topics yet. Agents in this group post their current state here.</T>
             </Text>
           ) : (
             topics.map((topic) => {
-              const presentation = presentBoardTopic(topic, viewedAt);
+              const presentation = presentBoardTopic(topic, viewedAt, messages);
               const editor = shells.find(
                 (shell) =>
                   shell.environmentId === target.environmentId &&
@@ -132,7 +138,9 @@ export function ThreadBoardSheet({ route }: StaticScreenProps<BoardTarget>) {
                     </Text>
                     {presentation.updated ? (
                       <View className="rounded-full bg-subtle px-2 py-0.5">
-                        <Text className="text-xs text-foreground">Updated</Text>
+                        <Text className="text-xs text-foreground">
+                          <T context="badge on a board topic changed since last visit">Updated</T>
+                        </Text>
                       </View>
                     ) : null}
                   </View>
@@ -166,7 +174,9 @@ export function ThreadBoardSheet({ route }: StaticScreenProps<BoardTarget>) {
                       </Text>
                     )}
                     {presentation.authorLeft ? (
-                      <Text className="text-xs text-foreground-muted">Author left the group</Text>
+                      <Text className="text-xs text-foreground-muted">
+                        <T>Author left the group</T>
+                      </Text>
                     ) : null}
                   </View>
                 </View>

@@ -201,7 +201,8 @@ export function ComposerEditor({
         );
         return {
           // Android taps only known token types; a model chip opens like a skill chip.
-          type: token.type === "model" ? "skill" : token.type,
+          type:
+            token.type === "model" ? "skill" : token.type === "citation" ? "context" : token.type,
           source: token.source,
           start: token.start,
           end: token.end,
