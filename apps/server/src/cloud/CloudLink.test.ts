@@ -297,8 +297,9 @@ it.effect("an update the client walks away from still finishes", () => {
 });
 
 it.effect("mints a T3 Connect credential under the host's device approval setting", () =>
-  withService({}, ({ mintCredential, connectCredentialRequests }) =>
+  withService({}, ({ mintCredential, connectCredentialRequests, stored }) =>
     Effect.gen(function* () {
+      const before = new Set(stored.keys());
       const proof = yield* signRelayJwt({
         privateKey: cloudMintKeys.privateKey,
         typ: RELAY_MINT_REQUEST_TYP,
@@ -321,6 +322,10 @@ it.effect("mints a T3 Connect credential under the host's device approval settin
       assert.deepEqual(connectCredentialRequests, [
         { proofKeyThumbprint: "client-jkt", requireApproval: false },
       ]);
+      const markers = [...stored.keys()].filter((name) => !before.has(name)).toSorted();
+      assert.lengthOf(markers, 2);
+      assert.match(markers[0]!, /^cloud-mint-jti-[0-9a-f]{64}$/);
+      assert.match(markers[1]!, /^cloud-mint-nonce-[0-9a-f]{64}$/);
     }),
   ),
 );
