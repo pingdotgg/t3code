@@ -163,8 +163,9 @@ export class IssueService extends Context.Service<
     ) => Effect.Effect<IssueScopeRef & { readonly host: string }, IssueError>;
     /**
      * Resolve through a matching project, preferring `preferredProjectId`; other scopes are read-only.
-     * Standalone links must match the workspace in the issue's canonical URL from the connected
-     * tracker; that read comes back as `issue`, so callers need not read it again.
+     * A standalone link with no project bound to its tracker resolves through `preferredProjectId`,
+     * and must match the workspace in the issue's canonical URL from the connected tracker; that
+     * read comes back as `issue`, so callers need not read it again.
      */
     readonly resolveUrl: (
       url: string,
@@ -289,10 +290,48 @@ const make = Effect.gen(function* () {
     );
 
   /**
+   * A project with no binding for a standalone tracker, the No project included, serves its
+   * references with the environment's credential. The tracker decides what the account may change.
+   */
+  const requireStandaloneProject = (
+    ref: IssueScopeRef,
+    api: StandaloneIssueTrackerApi,
+  ): Effect.Effect<SupportedProject & { readonly writable: boolean }, IssueError> => {
+    const host = ref.host?.trim().toLowerCase();
+    if (host !== undefined && host !== api.standalone.host) {
+      return Effect.fail(new IssueUnavailableError({ reason: "tracker-unsupported" }));
+    }
+    return projects.getShell(ref.projectId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new IssueOperationError({
+            operation: "listProjects",
+            detail: "The project list could not be read.",
+            cause,
+          }),
+      ),
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.fail(new IssueUnavailableError({ reason: "tracker-unsupported" })),
+          onSome: (project) =>
+            Effect.succeed({
+              project,
+              api,
+              tracker: ref.tracker,
+              host: api.standalone.host,
+              scope: ref.scope.trim(),
+              writable: true,
+            }),
+        }),
+      ),
+    );
+  };
+
+  /**
    * The project whose checkout and credentials serve a reference, and whether the reference is
    * one of the project's own scopes. A reference naming another scope on the same tracker and
    * host is served by the project but marked read-only. A project with two trackers serves the
-   * one the reference names.
+   * one the reference names, and one with no binding for a standalone tracker still serves it.
    */
   const requireProject = (
     ref: IssueScopeRef,
@@ -300,9 +339,13 @@ const make = Effect.gen(function* () {
     listProjects({ projectId: ref.projectId }).pipe(
       Effect.flatMap(({ supported }) => {
         const host = ref.host?.trim().toLowerCase();
-        const onHost = supported.filter(
-          (candidate) =>
-            candidate.tracker === ref.tracker && (host === undefined || candidate.host === host),
+        const onTracker = supported.filter((candidate) => candidate.tracker === ref.tracker);
+        const api = registry.get(ref.tracker);
+        if (onTracker.length === 0 && api !== null && isStandaloneIssueTracker(api)) {
+          return requireStandaloneProject(ref, api);
+        }
+        const onHost = onTracker.filter(
+          (candidate) => host === undefined || candidate.host === host,
         );
         const scope = ref.scope.trim();
         const own = onHost.find(
@@ -730,28 +773,33 @@ const make = Effect.gen(function* () {
           onTracker.filter((project) => project.scope.toLowerCase() === gitHost?.link.scopeAlias),
         );
       const lender = own ?? preferFirst(onTracker);
-      if (lender === undefined) {
-        return yield* new IssueUnavailableError({ reason: "tracker-unsupported" });
-      }
-      const served = {
-        ...lender,
-        scope: own === undefined ? link.scope : lender.scope,
-        writable: own !== undefined,
-      };
+      const served =
+        lender !== undefined
+          ? {
+              ...lender,
+              scope: own === undefined ? link.scope : lender.scope,
+              writable: own !== undefined,
+            }
+          : standalone !== null && preferredProjectId !== undefined
+            ? yield* requireStandaloneProject(
+                { projectId: preferredProjectId, tracker, scope: link.scope },
+                standalone.api,
+              )
+            : yield* new IssueUnavailableError({ reason: "tracker-unsupported" });
       const resolved = {
-        projectId: lender.project.id,
-        tracker: lender.tracker,
-        host: lender.host,
+        projectId: served.project.id,
+        tracker: served.tracker,
+        host: served.host,
         scope: served.scope,
         key: link.key,
         writable: served.writable,
       };
       if (standalone === null) return resolved;
       // Team keys repeat across workspaces; only the credential's canonical issue URL identifies one.
-      const issue = yield* lender.api
+      const issue = yield* served.api
         .getIssue({
-          cwd: lender.project.workspaceRoot,
-          host: lender.host,
+          cwd: served.project.workspaceRoot,
+          host: served.host,
           scope: link.scope,
           key: link.key,
         })
