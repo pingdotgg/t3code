@@ -6,6 +6,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   collectProviderUsageLimits,
+  displayProviderUsageWindows,
   type LimitPace,
   paceOf,
   paceRemainingPercent,
@@ -57,10 +58,12 @@ export function ThreadDetailsUsage({
       : null;
   // Only this instance's data: the report keeps one instance per login, and any other entry may be
   // a different login or workspace, so fall back to the instance's own snapshot.
-  const limits =
-    report?.accounts.find((entry) => entry.instanceId === providerInstanceId)?.limits ??
-    providers.find((provider) => provider.instanceId === providerInstanceId)?.usageLimits;
-  if (!limits) return null;
+  const selectedProvider = providers.find((provider) => provider.instanceId === providerInstanceId);
+  const account = report?.accounts.find((entry) => entry.instanceId === providerInstanceId);
+  const limits = account?.limits ?? selectedProvider?.usageLimits;
+  const driver = account?.driver ?? selectedProvider?.driver;
+  if (!limits || !driver) return null;
+  const windows = displayProviderUsageWindows(driver, limits.windows);
   const notice = limitsNotice(limits, m);
 
   return (
@@ -80,7 +83,7 @@ export function ThreadDetailsUsage({
             opensUsage
           />
         ) : (
-          limits.windows.map((window) => <LimitRow key={window.id} window={window} now={now} />)
+          windows.map((window) => <LimitRow key={window.id} window={window} now={now} />)
         )}
       </div>
     </ThreadDetailsSection>

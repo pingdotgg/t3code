@@ -11,6 +11,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   type LimitAccount,
   displayLimitWindows,
+  displayProviderUsageWindows,
   cursorUsageWindowDetails,
   collectProviderUsageLimits,
   sameUsageLimitCommandCoverage,
@@ -1215,6 +1216,48 @@ describe("pooled account columns", () => {
     expect(visible.map((window) => window.id)).toEqual(ids);
     expect(visible.map((window) => window.remainingPercent)).toEqual(remaining);
     expect(cursorUsageWindowDetails(ids.at(-1)!, pool)?.label).toBe(label);
+  });
+
+  it("orders single-account Antigravity and Cursor windows like the pooled Usage page", () => {
+    const antigravity = ProviderDriverKind.make("antigravity");
+    const rawAntigravity = [
+      { ...window, id: "3p-5h", label: "Claude & GPT (shared) · 5-hour" },
+      { ...window, id: "gemini-5h", label: "Gemini · 5-hour" },
+      { ...weekly, id: "3p-weekly", label: "Claude & GPT (shared) · Weekly" },
+      { ...weekly, id: "gemini-argon-weekly", label: "Gemini 4 Argon · Weekly" },
+      { ...weekly, id: "gemini-weekly", label: "Gemini · Weekly" },
+    ];
+    expect(
+      displayProviderUsageWindows(antigravity, rawAntigravity).map((entry) => entry.id),
+    ).toEqual(["gemini-5h", "gemini-weekly", "gemini-argon-weekly", "3p-5h", "3p-weekly"]);
+    expect(rawAntigravity.map((entry) => entry.id)).toEqual([
+      "3p-5h",
+      "gemini-5h",
+      "3p-weekly",
+      "gemini-argon-weekly",
+      "gemini-weekly",
+    ]);
+
+    const cursor = ProviderDriverKind.make("cursor");
+    expect(
+      displayProviderUsageWindows(cursor, [
+        { ...weekly, id: "totalPercentUsed", usedPercent: 14 },
+        { ...weekly, id: "autoPercentUsed", usedPercent: 14 },
+      ]).map((entry) => entry.id),
+    ).toEqual(["autoPercentUsed"]);
+    expect(
+      displayProviderUsageWindows(cursor, [
+        { ...weekly, id: "apiPercentUsed", usedPercent: 20 },
+        { ...weekly, id: "totalPercentUsed", usedPercent: 50 },
+        { ...weekly, id: "autoPercentUsed", usedPercent: 30 },
+      ]).map((entry) => entry.id),
+    ).toEqual(["autoPercentUsed", "apiPercentUsed"]);
+    expect(
+      displayProviderUsageWindows(cursor, [
+        { ...weekly, id: "autoPercentUsed", usedPercent: 70 },
+        { ...weekly, id: "totalPercentUsed", usedPercent: 80 },
+      ]).map((entry) => entry.id),
+    ).toEqual(["totalPercentUsed", "autoPercentUsed"]);
   });
 
   // regression: #20349 sessions stay visible while the weekly quota is exhausted
