@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 
+import { MainTabs } from "../files/MainTabs";
 import { lastOpenedBoardAtom } from "../state/boards";
 import { OpenedBoard } from "./OpenedBoard";
 import { Viewport } from "./Viewport";
@@ -8,7 +9,9 @@ import { Viewport } from "./Viewport";
 export function OpenBoard() {
   const opened = useAtomValue(lastOpenedBoardAtom);
   return opened === null ? (
-    <Viewport />
+    <MainTabs files={null}>
+      <Viewport />
+    </MainTabs>
   ) : (
     <OpenedBoard projectId={opened.projectId} folder={opened.folder} />
   );

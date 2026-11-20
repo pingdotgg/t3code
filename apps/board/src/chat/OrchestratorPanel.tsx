@@ -6,7 +6,7 @@ import { Conversation } from "./Conversation";
 import { PanelHeader } from "./PanelHeader";
 import { StartOrchestrator } from "./StartOrchestrator";
 
-/** The chat with a board's orchestrator, in the side panel. */
+/** The chat with a board's orchestrator, in the side panel's first tab. */
 export function OrchestratorPanel({
   project,
   listed,
@@ -16,10 +16,7 @@ export function OrchestratorPanel({
 }) {
   const threadId = listed.board.orchestratorThreadId;
   return (
-    <aside
-      aria-label="Orchestrator"
-      className="flex min-h-0 w-[420px] shrink-0 flex-col border-l border-line bg-sidebar"
-    >
+    <section aria-label="Orchestrator" className="flex min-h-0 flex-1 flex-col">
       {threadId === null ? (
         <>
           <PanelHeader title={listed.board.name} status="Not started" />
@@ -28,6 +25,6 @@ export function OrchestratorPanel({
       ) : (
         <Conversation project={project} listed={listed} threadId={ThreadId.make(threadId)} />
       )}
-    </aside>
+    </section>
   );
 }

@@ -1,7 +1,7 @@
 import { CircleDot, FileText, GitBranch } from "lucide-react";
 import type { Components } from "react-markdown";
 
-import { openInPanel } from "../browser/panel";
+import { openInBrowser } from "../browser/browserTabs";
 import { ArtifactLink, CHIP_CLASS } from "./ArtifactLink";
 import { nodeToPlainText } from "./fences";
 import { useArtifactMatch } from "./artifactLookup";
@@ -44,7 +44,7 @@ export const MarkdownAnchor: NonNullable<Components["a"]> = ({
       onClick={(event) => {
         if (target.kind === "other") return;
         event.preventDefault();
-        if (target.kind !== "anchor") openInPanel(href);
+        if (target.kind !== "anchor") openInBrowser(href);
       }}
     >
       {reference !== null && <Icon className="size-3 shrink-0" aria-hidden />}

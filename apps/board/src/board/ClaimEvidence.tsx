@@ -1,4 +1,4 @@
-import { openInPanel } from "../browser/panel";
+import { openInBrowser } from "../browser/browserTabs";
 import type { MergeCondition } from "../domain/forYou";
 
 const isLink = (evidence: string) => /^https?:\/\//.test(evidence);
@@ -26,7 +26,7 @@ export function ClaimEvidence({ condition }: { condition: MergeCondition }) {
               onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => {
                 event.preventDefault();
-                openInPanel(evidence);
+                openInBrowser(evidence);
               }}
               className={`${chip} text-sky-300 hover:underline`}
             >

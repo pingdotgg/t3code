@@ -1,9 +1,9 @@
-import { useAtomMount, useAtomValue } from "@effect/atom-react";
+import { useAtomMount } from "@effect/atom-react";
 import { useState } from "react";
 
 import { OpenBoard } from "./board/OpenBoard";
-import { BrowserPanel } from "./browser/BrowserPanel";
-import { panelAtom } from "./browser/panel";
+import { PanelHost } from "./browser/PanelHost";
+import { PanelToggle } from "./browser/PanelToggle";
 import { EngineStatus } from "./sidebar/EngineStatus";
 import { EngineVersion } from "./sidebar/EngineVersion";
 import { SettingsScreen } from "./settings/SettingsScreen";
@@ -15,11 +15,12 @@ import { UsageBar } from "./usage/UsageBar";
 
 export function App() {
   const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
-  const browserOpen = useAtomValue(panelAtom).open;
   useAtomMount(updateWatcherAtom);
   return (
     <div className="grid h-full grid-rows-[var(--topbar-height)_minmax(0,1fr)_auto]">
-      <header className="drag-region border-b border-line bg-bg" />
+      <header className="drag-region flex items-center justify-end border-b border-line bg-bg px-2">
+        <PanelToggle />
+      </header>
       {/* Hidden, not unmounted, so the viewport keeps its pan and zoom while settings are open. */}
       <div
         className={
@@ -43,7 +44,7 @@ export function App() {
         <main className="min-h-0 min-w-0">
           <OpenBoard />
         </main>
-        {browserOpen && <BrowserPanel />}
+        <PanelHost />
       </div>
       {settingsPage !== null && (
         <SettingsScreen

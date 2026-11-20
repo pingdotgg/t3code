@@ -10,7 +10,7 @@ import type { EnvironmentId, PreviewStreamHostSetup } from "@t3tools/contracts";
 import { useCallback, useContext, useState } from "react";
 
 import { Notice } from "../artifacts/Notice";
-import type { AgentTabRef } from "./panel";
+import type { AgentTabRef } from "./browserTabs";
 import { previewStreamAccessAtom, usePreviewStreamAccess } from "./previewStream";
 
 /** A refused ticket is minted again. Past this many refusals without a frame, the stream is not coming. */

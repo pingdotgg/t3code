@@ -19,6 +19,10 @@ const LocalState = Schema.Struct({
   announcedUpdates: Schema.Record(Schema.String, Schema.String).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed({})),
   ),
+  /** The editor a file was last opened in, which the editor menu lists first. */
+  lastEditor: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
   /** The latest automatic update of each item, by key. */
   automaticUpdates: Schema.Record(
     Schema.String,
@@ -33,6 +37,7 @@ export const EMPTY_LOCAL_STATE: LocalState = {
   autoUpdate: { engine: false, providers: false },
   announcedUpdates: {},
   automaticUpdates: {},
+  lastEditor: null,
 };
 
 const decode = Schema.decodeUnknownOption(Schema.fromJsonString(LocalState));

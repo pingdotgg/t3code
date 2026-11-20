@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 
-import type { AgentTabRef } from "./panel";
+import type { AgentTabRef } from "./browserTabs";
 import { threadSessionsAtom } from "./previewStream";
 
 /** One agent's browser tabs, a row each. An agent with none shows nothing. */

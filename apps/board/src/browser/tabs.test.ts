@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { EMPTY_TABS, normalizeUrl, type Tab, tabsReducer } from "./tabs";
+import { EMPTY_TABS, normalizeUrl, type Tab, tabForUrl, tabsReducer } from "./tabs";
 
 const tab = (id: string, url: string): Tab => ({
   id,
@@ -82,6 +82,15 @@ describe("tabsReducer", () => {
       { ...tab("a", "https://a.test/"), title: "A page", loading: false },
       tab("b", "https://b.test/"),
     ]);
+  });
+});
+
+describe("tabForUrl", () => {
+  const state = { tabs: [tab("a", "https://a.test/"), tab("b", "https://b.test/")], activeId: "a" };
+
+  it("Given two tabs, when a link names the second one's page then that tab is found, and a link to another page finds none", () => {
+    expect(tabForUrl(state, "https://b.test/")?.id).toBe("b");
+    expect(tabForUrl(state, "https://c.test/")).toBeNull();
   });
 });
 

@@ -2,11 +2,13 @@ import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import { TriangleAlert } from "lucide-react";
 import { useContext, useMemo } from "react";
+import { createPortal } from "react-dom";
 
 import { ArtifactsProvider } from "../artifacts/ArtifactsContext";
-import { ArtifactViewer } from "../artifacts/ArtifactViewer";
 import { useBoardArtifacts } from "../artifacts/useBoardArtifacts";
+import { chatSlotAtom } from "../browser/panel";
 import { OrchestratorPanel } from "../chat/OrchestratorPanel";
+import { MainTabs } from "../files/MainTabs";
 import { mergeTicketKey } from "../domain/readiness";
 import { frameOrderAtom, peekAtom } from "../state/boardUi";
 import { useThreadFamily } from "../state/family";
@@ -23,7 +25,7 @@ import { Viewport } from "./Viewport";
 
 const NO_ORDER = {};
 
-/** A board's orchestrator card and lanes on the canvas, the peek drawer over it, and the orchestrator's panel beside it. */
+/** A board's orchestrator card and lanes on the canvas, the peek drawer over it, and the orchestrator's chat, which draws in the side panel's first tab. Open files are tabs over the canvas. */
 export function BoardScreen({
   project,
   listed,
@@ -61,6 +63,7 @@ export function BoardScreen({
       mergeOrderNotes,
     };
   }, [project, board.orchestratorThreadId, family, tickets, forYou.views]);
+  const chatSlot = useAtomValue(chatSlotAtom);
   const peek = useAtomValue(peekAtom);
   const focused = useAtomValue(focusedCardAtom);
   const focusedId =
@@ -71,7 +74,7 @@ export function BoardScreen({
     <ArtifactsProvider value={artifacts.value}>
       <PrProvider value={prContext}>
         <div className="flex h-full min-h-0">
-          <div className="relative min-w-0 flex-1">
+          <MainTabs files={artifacts.value.files}>
             <Viewport content={layout.content}>
               <OrchestratorCard
                 project={project}
@@ -141,11 +144,9 @@ export function BoardScreen({
               peek={peek}
               onClose={() => registry.set(peekAtom, null)}
             />
-            {artifacts.viewing !== null && (
-              <ArtifactViewer artifact={artifacts.viewing} onClose={artifacts.closeViewer} />
-            )}
-          </div>
-          <OrchestratorPanel project={project} listed={listed} />
+          </MainTabs>
+          {chatSlot !== null &&
+            createPortal(<OrchestratorPanel project={project} listed={listed} />, chatSlot)}
         </div>
       </PrProvider>
     </ArtifactsProvider>

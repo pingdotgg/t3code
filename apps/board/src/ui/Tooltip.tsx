@@ -7,6 +7,7 @@ const SIDE = {
 
 const ALIGN = {
   start: "left-0",
+  center: "left-1/2 -translate-x-1/2",
   /** For a control at the edge of its container, so the tip opens inward instead of past it. */
   end: "right-0",
 } as const;

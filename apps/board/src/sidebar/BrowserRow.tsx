@@ -2,21 +2,22 @@ import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { Globe } from "lucide-react";
 import { useContext } from "react";
 
-import { panelAtom, togglePanel } from "../browser/panel";
+import { showBrowser } from "../browser/browserTabs";
+import { filesViewAtom } from "../state/filesView";
 import { SidebarRow } from "./SidebarRow";
 
-/** Shows or hides the browser panel beside the board. */
+/** Shows the browser as a tab of the main view, beside the board. */
 export function BrowserRow() {
   const registry = useContext(RegistryContext);
-  const { open } = useAtomValue(panelAtom);
+  const showing = useAtomValue(filesViewAtom).surface !== null;
   return (
     <SidebarRow
       icon={<Globe className="size-3.5" />}
       title="Browser"
-      selected={open}
+      selected={showing}
       onClick={() => {
-        if (!open) performance.mark("board:browser-click");
-        togglePanel(registry);
+        if (!showing) performance.mark("board:browser-click");
+        showBrowser(registry);
       }}
     />
   );

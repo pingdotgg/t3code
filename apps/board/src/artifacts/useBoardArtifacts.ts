@@ -1,10 +1,12 @@
-import { useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useContext, useMemo, useState } from "react";
 
 import { groupArtifacts } from "../domain/artifact";
+import { boardRoots, type FilesBoard, locate } from "../files/target";
 import { boardArtifactsAtom, boardArtifactsKey, NO_ARTIFACTS } from "../state/artifacts";
 import type { BoardModel } from "../state/boardModel";
+import { openFile } from "../state/filesView";
 import type { Artifact } from "../store/artifacts";
 import type { ValidBoard } from "../store/boardFiles";
 import { type ArtifactsValue, BOARD_KEY } from "./ArtifactsContext";
@@ -13,16 +15,15 @@ export interface BoardArtifacts {
   readonly value: ArtifactsValue;
   /** The card count of each ticket whose cards are open, which the layout makes room for. */
   readonly cards: Readonly<Record<string, number>>;
-  readonly viewing: Artifact | null;
-  readonly closeViewer: () => void;
 }
 
-/** A board's artifacts, which cards are open, and the one the viewer shows. */
+/** A board's artifacts, and which cards are open. Opening one opens its file as a tab in the main view. */
 export function useBoardArtifacts(
   project: EnvironmentProject,
   listed: ValidBoard,
   model: BoardModel,
 ): BoardArtifacts {
+  const registry = useContext(RegistryContext);
   const { board } = listed;
   const tickets = useMemo(
     () => Object.values(model.lanes).flatMap((lane) => lane.map((view) => view.ticket)),
@@ -48,7 +49,6 @@ export function useBoardArtifacts(
     [all, tickets],
   );
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
-  const [viewing, setViewing] = useState<Artifact | null>(null);
   const toggle = useCallback(
     (key: string) =>
       setExpanded((current) => {
@@ -67,21 +67,31 @@ export function useBoardArtifacts(
       ),
     [expanded, groups],
   );
-  const closeViewer = useCallback(() => setViewing(null), []);
-  return {
-    value: {
+  const files = useMemo<FilesBoard>(
+    () => ({
       environmentId: project.environmentId,
-      cwd: project.workspaceRoot,
       // The engine serves an absolute path whichever thread names it, and a board has a thread of its own to name.
       mediaThreadId: board.orchestratorThreadId ?? board.id,
+      roots: boardRoots(project, tickets),
+    }),
+    [project, board.id, board.orchestratorThreadId, tickets],
+  );
+  const open = useCallback(
+    (artifact: Artifact) => {
+      const located = locate(files.roots, artifact.absolutePath);
+      if (located !== null) openFile(registry, { cwd: located.root.cwd, path: located.path });
+    },
+    [registry, files.roots],
+  );
+  return {
+    value: {
+      files,
       all,
       groups,
       expanded,
       toggle,
-      open: setViewing,
+      open,
     },
     cards,
-    viewing,
-    closeViewer,
   };
 }
