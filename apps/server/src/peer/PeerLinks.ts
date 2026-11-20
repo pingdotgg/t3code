@@ -480,8 +480,8 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Ends the session a replaced link's token holds, at the address a call with that token would
-   * have used. A peer without the endpoint keeps it until it expires.
+   * Ends the session a replaced link's token holds, at the first stored address that still answers
+   * as that peer. A peer without the endpoint keeps it until it expires.
    */
   const revokeReplaced = Effect.fn("PeerLinks.revokeReplaced")(function* (row: PeerLinkRow) {
     const stored = yield* secrets.get(row.secret_name);
