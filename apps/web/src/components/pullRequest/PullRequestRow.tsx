@@ -210,6 +210,14 @@ export function pullRequestRowStatus(entry: EnvironmentPullRequestEntry, prefix 
  */
 export const PAGE_ROW_CLASS = "gap-3 rounded-lg px-3 py-2.5 [contain-intrinsic-block-size:41px]";
 
+/**
+ * A page row skips its content off screen. It reserves the height it renders at (the padding and
+ * gap, a body line and a meta line), so a windowed list that measures it off screen sees no resize
+ * when it comes into view and moves no other row.
+ */
+export const PAGE_ROW_SKIP_CLASS =
+  "[content-visibility:auto] [contain-intrinsic-block-size:auto_calc(var(--spacing)*6.25_+_var(--type-body)*var(--text-body--line-height)_+_var(--type-meta)*var(--text-meta--line-height))]";
+
 /** How a page row, and a folded stack, answers the pointer and the keyboard. */
 export const PAGE_ROW_HOVER_CLASS = "hover:surface-ghost-hover";
 export const PAGE_ROW_PRESS_CLASS =
@@ -271,7 +279,8 @@ function PullRequestRowImpl({
       data-pull-request-stats-key={statsKey}
       data-pull-request-key={statsKey}
       className={cn(
-        "flex items-center rounded-lg [content-visibility:auto] [contain-intrinsic-block-size:61px]",
+        "flex items-center rounded-lg",
+        PAGE_ROW_SKIP_CLASS,
         selected ? "bg-selection-subtle" : PAGE_ROW_HOVER_CLASS,
       )}
     >
