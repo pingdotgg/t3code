@@ -4105,6 +4105,7 @@
   "4214d97447ddd9e9": "Contexte : {usedTokens} tokens utilisés",
   "66be4fb43249bbd2": "{used} tokens sur {max}",
   "ee3ae58c8b38a425": "{left} % restant",
+  "c287bed6b3fab5b1": "{left} % restant. {pace}",
   "ebb26f93fb83a71b": "{label} : {left} % restant",
   "1b16346722b65812": "{timeLeft} % de la fenêtre restant",
   "728c6cc1431e76c8": "Réinitialisation dans {duration} · {time}",

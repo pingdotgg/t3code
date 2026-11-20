@@ -4111,6 +4111,7 @@
   "4214d97447ddd9e9": "上下文：已使用 {usedTokens} token",
   "66be4fb43249bbd2": "{used} / {max} token",
   "ee3ae58c8b38a425": "剩余 {left}%",
+  "c287bed6b3fab5b1": "剩余 {left}%。{pace}",
   "ebb26f93fb83a71b": "{label}：剩余 {left}%",
   "1b16346722b65812": "窗口剩余 {timeLeft}%",
   "728c6cc1431e76c8": "{duration} 后重置 · {time}",

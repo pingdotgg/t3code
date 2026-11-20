@@ -4092,6 +4092,7 @@
   "4214d97447ddd9e9": "컨텍스트: 토큰 {usedTokens}개 사용됨",
   "66be4fb43249bbd2": "토큰 {max}개 중 {used}개",
   "ee3ae58c8b38a425": "{left}% 남음",
+  "c287bed6b3fab5b1": "{left}% 남음. {pace}",
   "ebb26f93fb83a71b": "{label}: {left}% 남음",
   "1b16346722b65812": "기간 {timeLeft}% 남음",
   "728c6cc1431e76c8": "{duration} 후 초기화 · {time}",

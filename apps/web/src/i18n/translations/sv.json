@@ -4105,6 +4105,7 @@
   "4214d97447ddd9e9": "Kontext: {usedTokens} token använda",
   "66be4fb43249bbd2": "{used} av {max} token",
   "ee3ae58c8b38a425": "{left} % kvar",
+  "c287bed6b3fab5b1": "{left} % kvar. {pace}",
   "ebb26f93fb83a71b": "{label}: {left} % kvar",
   "1b16346722b65812": "{timeLeft} % av fönstret kvar",
   "728c6cc1431e76c8": "Återställs om {duration} · {time}",

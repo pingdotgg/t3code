@@ -4104,6 +4104,7 @@
   "4214d97447ddd9e9": "Contexto: {usedTokens} tokens usados",
   "66be4fb43249bbd2": "{used} de {max} tokens",
   "ee3ae58c8b38a425": "{left}% restante",
+  "c287bed6b3fab5b1": "{left}% restante. {pace}",
   "ebb26f93fb83a71b": "{label}: {left}% restante",
   "1b16346722b65812": "{timeLeft}% da janela restante",
   "728c6cc1431e76c8": "Renova em {duration} · {time}",

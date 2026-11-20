@@ -14,7 +14,7 @@ import {
 import { formatDuration, limitsNotice } from "@t3tools/shared/usageLimitsCopy";
 import { Link } from "@tanstack/react-router";
 import { msg, useGT, useLocale, useMessages } from "gt-react";
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { useNowMinute } from "../../hooks/useNowMinute";
@@ -168,6 +168,13 @@ function LimitRow({
   const pace = paceOf(window, now);
   const timeLeft = paceRemainingPercent(window, now);
   const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
+  const resets =
+    window.resetsAt && resetsAt > now
+      ? gt("Resets in {duration} · {time}", {
+          duration: formatDuration(resetsAt - now, m),
+          time: formatUpcomingTimestamp(window.resetsAt, timestampFormat, now, undefined, m),
+        })
+      : null;
   return (
     <UsageRow
       label={window.label}
@@ -175,7 +182,12 @@ function LimitRow({
       tone={left <= 10 ? "error" : left <= 20 ? "warning" : null}
       tick={timeLeft}
       value={`${left}%`}
-      ariaValue={gt("{left}% left", { left })}
+      ariaValue={
+        pace
+          ? gt("{left}% left. {pace}", { left, pace: m(PACE_LABEL[pace]) })
+          : gt("{left}% left", { left })
+      }
+      ariaDescription={resets}
       opensUsage
       tooltip={
         <>
@@ -187,14 +199,7 @@ function LimitRow({
               {m(PACE_LABEL[pace])} · {gt("{timeLeft}% of the window left", { timeLeft })}
             </span>
           ) : null}
-          {window.resetsAt && resetsAt > now ? (
-            <span className="text-muted-foreground">
-              {gt("Resets in {duration} · {time}", {
-                duration: formatDuration(resetsAt - now, m),
-                time: formatUpcomingTimestamp(window.resetsAt, timestampFormat, now, undefined, m),
-              })}
-            </span>
-          ) : null}
+          {resets ? <span className="text-muted-foreground">{resets}</span> : null}
         </>
       }
     />
@@ -209,6 +214,7 @@ function UsageRow({
   tick = null,
   value,
   ariaValue = value,
+  ariaDescription = null,
   tooltip,
   muted = false,
   opensUsage = false,
@@ -221,13 +227,17 @@ function UsageRow({
   readonly tick?: number | null;
   readonly value: string;
   readonly ariaValue?: string;
+  /** Tooltip detail that the row's aria-label would otherwise hide from screen readers. */
+  readonly ariaDescription?: string | null;
   readonly tooltip: ReactNode;
   readonly muted?: boolean;
   readonly opensUsage?: boolean;
 }) {
   const gt = useGT();
+  const descriptionId = useId();
   const rowProps = {
     "aria-label": gt("{label}: {value}", { label, value: ariaValue }),
+    "aria-describedby": ariaDescription ? descriptionId : undefined,
     className: cn(
       "col-span-3 grid h-6 grid-cols-subgrid items-center rounded-lg px-2.5 outline-none hover:bg-black/[0.035] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-popup-open:bg-black/[0.035] dark:hover:bg-white/[0.08] dark:data-popup-open:bg-white/[0.08]",
       opensUsage
@@ -287,6 +297,11 @@ function UsageRow({
         >
           {value}
         </span>
+        {ariaDescription ? (
+          <span id={descriptionId} className="sr-only">
+            {ariaDescription}
+          </span>
+        ) : null}
       </TooltipTrigger>
       {/* Rows sit 8px inside the card; clear its edge instead of overlapping it. */}
       <TooltipPopup side="left" sideOffset={16}>

@@ -4106,6 +4106,7 @@
   "4214d97447ddd9e9": "Context: {usedTokens} tokens used",
   "66be4fb43249bbd2": "{used} of {max} tokens",
   "ee3ae58c8b38a425": "{left}% left",
+  "c287bed6b3fab5b1": "{left}% left. {pace}",
   "ebb26f93fb83a71b": "{label}: {left}% left",
   "1b16346722b65812": "{timeLeft}% of the window left",
   "728c6cc1431e76c8": "Resets in {duration} · {time}",
