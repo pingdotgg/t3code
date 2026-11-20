@@ -117,6 +117,7 @@ import { placeholderThreadTitle } from "../orchestration-v2/placeholderThreadTit
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
+import { snoozeHolds } from "../orchestration-v2/threadSnooze.ts";
 import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingErrors.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
@@ -3496,12 +3497,8 @@ const make = Effect.gen(function* () {
           (thread) =>
             titleContains === undefined || thread.title.toLocaleLowerCase().includes(titleContains),
         )
-        // Only a snooze that ends later can hold, so the rest skip building a shell.
-        .filter(
-          (thread) =>
-            input.snoozed !== true ||
-            (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs),
-        );
+        // Only a snooze that still holds can count, so the rest skip building a shell.
+        .filter((thread) => input.snoozed !== true || snoozeHolds(thread, nowMs));
       // Shells are the costly part, so build them only for the threads the page needs.
       const shellsOf = (threads: ReadonlyArray<{ readonly id: ThreadId }>) =>
         threads.length === 0

@@ -159,7 +159,9 @@ export function effectiveSnoozed(
   shell: ThreadSnoozeShell,
   options: { readonly now: string },
 ): boolean {
-  if (shell.snoozedUntil == null) return false;
+  // With no wake time, a snooze holds until the thread is woken.
+  if (shell.snoozedUntil == null)
+    return shell.snoozedAt != null && !threadRaisedHandWhileSnoozed(shell);
   const wakeAtMs = Date.parse(shell.snoozedUntil);
   if (Number.isNaN(wakeAtMs)) return false;
   if (wakeAtMs <= Date.parse(options.now)) return false;
@@ -170,8 +172,9 @@ export function threadWokeAt(
   shell: ThreadSnoozeShell,
   options: { readonly now: string },
 ): string | null {
-  if (shell.snoozedUntil == null) return null;
-  const wakeAtMs = Date.parse(shell.snoozedUntil);
+  if (shell.snoozedUntil == null && shell.snoozedAt == null) return null;
+  const wakeAtMs =
+    shell.snoozedUntil == null ? Number.POSITIVE_INFINITY : Date.parse(shell.snoozedUntil);
   if (Number.isNaN(wakeAtMs)) return null;
   // An early hand-raise wake stays authoritative even after the scheduled
   // wake time passes: reporting snoozedUntil then would resurface a Woke
@@ -194,7 +197,7 @@ export function threadWokeAt(
     const runtime = shell.runtime ?? shell.session ?? null;
     return runtime?.updatedAt ?? shell.snoozedAt ?? null;
   }
-  return wakeAtMs <= Date.parse(options.now) ? shell.snoozedUntil : null;
+  return wakeAtMs <= Date.parse(options.now) ? (shell.snoozedUntil ?? null) : null;
 }
 
 const HOUR_MS = 60 * 60 * 1_000;
@@ -398,10 +401,11 @@ export function pickSnoozePreset(input: {
 }
 
 export function snoozeWakeLabel(
-  snoozedUntil: string,
+  snoozedUntil: string | null,
   options: { readonly now: string },
   resolve: MFunctionType = mFallback,
 ): string {
+  if (snoozedUntil === null) return "∞";
   const wakeMs = Date.parse(snoozedUntil);
   const nowMs = Date.parse(options.now);
   const now = () => resolve(msg("now", { $context: "a snoozed thread wakes now" }));

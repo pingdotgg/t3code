@@ -115,4 +115,20 @@ describe("limitRecoveryCommand arming", () => {
     const thread = failedThread(30 * HOUR_MS, 24 * HOUR_MS + 1);
     assert.isNull(limitRecoveryCommand(thread, true, nowMs));
   });
+
+  it("resumes an armed thread only once its snooze stops holding", () => {
+    const failed = failedThread(6 * HOUR_MS, HOUR_MS);
+    const armed = {
+      ...failed,
+      limitRecovery: {
+        runId: failed.latestRunId!,
+        resetAt: failed.usageLimitResetAt!,
+        autoResume: true,
+        snooze: false,
+      },
+    };
+    assert.equal(limitRecoveryCommand(armed, true, nowMs)?.type, "message.dispatch");
+    const snoozedAt = DateTime.makeUnsafe(nowMs - HOUR_MS);
+    assert.isNull(limitRecoveryCommand({ ...armed, snoozedAt, snoozedUntil: null }, true, nowMs));
+  });
 });

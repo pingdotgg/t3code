@@ -170,10 +170,20 @@ export function createIssueEnvironmentAtoms<R, E>(
     mode: "serial",
     key: ({ environmentId }: { readonly environmentId: string }) => environmentId,
   } as const;
+  const statusRefreshes = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "environment-data:issues:status-refreshes",
+    tag: WS_METHODS.issuesSubscribeStatusRefreshes,
+  });
   const detail = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:issues:detail",
     tag: WS_METHODS.issuesDetail,
     staleTimeMs: 30_000,
+    // An issue status rule saw this issue move, so an open detail reads it again.
+    refreshTrigger: ({ environmentId, input }) =>
+      statusRefreshes({
+        environmentId,
+        input: { tracker: input.tracker, key: input.key.toUpperCase() },
+      }),
   });
   const detailRef = ({ projectId, tracker, host, scope, key }: IssueRef): IssueRef => ({
     projectId,

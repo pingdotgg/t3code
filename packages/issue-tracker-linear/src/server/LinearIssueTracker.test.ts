@@ -643,4 +643,62 @@ describe("LinearIssueTracker", () => {
       link: { name: "Intake", about: "", url: "https://linear.app/team/ENG/new?template=tpl_2" },
     });
   });
+
+  it.effect("reads a team's workflow and its issues' states by team id for status rules", () =>
+    Effect.gen(function* () {
+      const numbers: Array<ReadonlyArray<number>> = [];
+      const { tracker } = fakeLinear({
+        T3Viewer: () => ({
+          viewer: JULIUS,
+          organization: { urlKey: "acme" },
+          teams: { nodes: [{ id: "team_eng", key: "ENG", name: "Engineering" }] },
+        }),
+        T3TeamStates: (variables) => {
+          expect(variables.id).toBe("team_eng");
+          return {
+            team: {
+              states: {
+                nodes: [
+                  state("Done", "completed", 2),
+                  state("In Progress", "started", 1),
+                  state("Todo", "unstarted", 0),
+                ],
+              },
+            },
+          };
+        },
+        T3IssueStates: (variables) => {
+          expect(variables.teamId).toBe("team_eng");
+          const batch = variables.numbers as ReadonlyArray<number>;
+          numbers.push(batch);
+          return {
+            issues: {
+              nodes: batch.includes(1) ? [{ identifier: "ENG-1", state: { id: "st_done" } }] : [],
+            },
+          };
+        },
+      });
+      const automation = (yield* tracker).automation;
+      expect(yield* automation.listContainers()).toEqual({
+        workspace: "acme",
+        containers: [{ id: "team_eng", name: "Engineering (ENG)" }],
+      });
+      expect(
+        (yield* automation.listStates({ workspace: "acme", containerId: "team_eng" })).map(
+          (option) => option.name,
+        ),
+      ).toEqual(["Todo", "In Progress", "Done"]);
+      const keys = [
+        "ENG-1",
+        "eng-1",
+        "not a key",
+        ...Array.from({ length: 250 }, (_, i) => `ENG-${i + 2}`),
+      ];
+      expect(
+        yield* automation.readStatuses({ workspace: "acme", containerId: "team_eng", keys }),
+      ).toEqual([{ key: "ENG-1", stateId: "st_done" }]);
+      // Numbers are deduplicated and read 250 at a time.
+      expect(numbers.map((batch) => batch.length)).toEqual([250, 1]);
+    }),
+  );
 });

@@ -78,6 +78,20 @@ function makeQueuedTurnShell(overrides: Partial<QueuedTurnShell> = {}): QueuedTu
 }
 
 describe("effectiveSnoozed", () => {
+  it("holds a snooze with no wake time until a new question wakes it", () => {
+    const shell = makeShell({ snoozedUntil: null, snoozedAt: SNOOZED_AT });
+    expect(effectiveSnoozed(shell, { now: NOW })).toBe(true);
+    expect(threadWokeAt(shell, { now: NOW })).toBeNull();
+    const asking = makeShell({
+      snoozedAt: SNOOZED_AT,
+      pending: "user-input",
+      pendingUserInputAt: "2026-04-10T11:00:00.000Z",
+    });
+    expect(effectiveSnoozed(asking, { now: NOW })).toBe(false);
+    expect(threadWokeAt(asking, { now: NOW })).toBe("2026-04-10T11:00:00.000Z");
+    expect(effectiveSnoozed(makeShell({}), { now: NOW })).toBe(false);
+  });
+
   it("never hides on malformed wake data", () => {
     expect(effectiveSnoozed(makeShell({ snoozedUntil: "not-a-date" }), { now: NOW })).toBe(false);
   });
@@ -525,6 +539,7 @@ describe("snoozeWakeLabel", () => {
     expect(snoozeWakeLabel(wake, { now: "2026-04-10T12:01:00.000Z" })).toBe("59m");
     expect(snoozeWakeLabel(wake, { now: "2026-04-10T13:00:10.000Z" })).toBe("1m");
     expect(snoozeWakeLabel(wake, { now: "2026-04-10T13:00:30.000Z" })).toBe("now");
+    expect(snoozeWakeLabel(null, { now: NOW })).toBe("∞");
   });
 });
 

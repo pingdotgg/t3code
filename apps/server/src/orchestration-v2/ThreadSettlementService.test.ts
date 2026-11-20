@@ -184,6 +184,13 @@ describe("isAutoSettlementCandidate", () => {
       snoozedAt: at(-60 * 60 * 1_000),
     });
     expect(ThreadSettlementService.isAutoSettlementCandidate(snoozed, NOW_MS)).toBe(false);
+    // A snooze with no wake time holds until something wakes it.
+    expect(
+      ThreadSettlementService.isAutoSettlementCandidate(
+        shell({ ...snoozed, snoozedUntil: null }),
+        NOW_MS,
+      ),
+    ).toBe(false);
     expect(
       ThreadSettlementService.isAutoSettlementCandidate(
         shell({ ...snoozed, status: "failed", latestRunCompletedAt: at(-30 * 60 * 1_000) }),

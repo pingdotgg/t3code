@@ -266,6 +266,7 @@ import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import * as IssueService from "./issue/IssueService.ts";
 import * as ThreadIssueService from "./orchestration-v2/ThreadIssueService.ts";
 import * as IssueTrackerConnections from "./issue/IssueTrackerConnections.ts";
+import * as IssueThreadAutomationService from "./issue/IssueThreadAutomationService.ts";
 import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewGuideService.ts";
 import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
 import { pullRequestSyncKey } from "./pullRequest/pullRequestSyncKey.ts";
@@ -1509,6 +1510,7 @@ export const layerWsRpc = (
       const issues = yield* IssueService.IssueService;
       const threadIssues = yield* ThreadIssueService.ThreadIssueService;
       const issueTrackers = yield* IssueTrackerConnections.IssueTrackerConnections;
+      const issueAutomation = yield* IssueThreadAutomationService.IssueThreadAutomationService;
       const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
@@ -2017,9 +2019,17 @@ export const layerWsRpc = (
         [WS_METHODS.issuesUpdate]: (input) => issues.update(input),
         [WS_METHODS.issuesSetState]: (input) => issues.setState(input),
         [WS_METHODS.issuesReact]: (input) => issues.react(input),
+        // Zero means no change was seen yet, which a client has nothing to refresh for.
+        [WS_METHODS.issuesSubscribeStatusRefreshes]: (input) =>
+          issueAutomation
+            .subscribeStatusRefreshes(input)
+            .pipe(Stream.filter((revision) => revision > 0)),
         [WS_METHODS.issueTrackersList]: () => issueTrackers.list,
         [WS_METHODS.issueTrackersConnect]: (input) => issueTrackers.connect(input),
         [WS_METHODS.issueTrackersBindProject]: (input) => issueTrackers.bindProject(input),
+        [WS_METHODS.issueTrackersAutomation]: () => issueAutomation.overview,
+        [WS_METHODS.issueTrackersAutomationCatalog]: (input) => issueAutomation.catalog(input),
+        [WS_METHODS.issueTrackersSaveAutomation]: (input) => issueAutomation.save(input),
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
@@ -3735,6 +3745,7 @@ export const layer = Layer.unwrap(
     const issues = yield* IssueService.IssueService;
     const threadIssues = yield* ThreadIssueService.ThreadIssueService;
     const issueTrackers = yield* IssueTrackerConnections.IssueTrackerConnections;
+    const issueAutomation = yield* IssueThreadAutomationService.IssueThreadAutomationService;
     const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
     const peerLinks = yield* PeerLinks.PeerLinks;
     const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
@@ -3836,6 +3847,12 @@ export const layer = Layer.unwrap(
               Layer.provide(Layer.succeed(ThreadIssueService.ThreadIssueService, threadIssues)),
               Layer.provide(
                 Layer.succeed(IssueTrackerConnections.IssueTrackerConnections, issueTrackers),
+              ),
+              Layer.provide(
+                Layer.succeed(
+                  IssueThreadAutomationService.IssueThreadAutomationService,
+                  issueAutomation,
+                ),
               ),
               Layer.provide(OtlpEndpointCheck.layer),
               Layer.provide(
