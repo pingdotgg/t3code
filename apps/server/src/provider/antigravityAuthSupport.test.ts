@@ -887,6 +887,82 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
     }),
   );
 
+  it.effect(
+    "prepares an isolated profile with empty config sentinels and copied auth files only",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped();
+        const userHome = path.join(root, "home");
+        const sourceProfile = path.join(root, "source-profile");
+        const isolatedProfile = path.join(root, "isolated-profile");
+        yield* fs.makeDirectory(path.join(userHome, ".gemini", "config", "skills", "s1"), {
+          recursive: true,
+        });
+        yield* fs.writeFileString(path.join(userHome, ".gemini", "AGENTS.md"), "global rule");
+        yield* fs.makeDirectory(path.join(sourceProfile, "antigravity-acp"), { recursive: true });
+        yield* fs.makeDirectory(path.join(sourceProfile, "config"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(sourceProfile, "antigravity-acp", "acp_token.json"),
+          '{"refresh_token":"legacy"}',
+        );
+        yield* fs.writeFileString(
+          path.join(sourceProfile, "antigravity-acp", "antigravity-oauth-token"),
+          '{"token":{"access_token":"tok"}}',
+        );
+        yield* fs.writeFileString(
+          path.join(sourceProfile, "antigravity-acp", "installation_id"),
+          "install-1",
+        );
+        yield* fs.writeFileString(
+          path.join(sourceProfile, "config", "hooks.json"),
+          '{"guard":{"PreInvocation":[{"command":"echo hi"}]}}',
+        );
+        yield* fs.writeFileString(
+          path.join(sourceProfile, "config", "mcp_config.json"),
+          '{"mcpServers":{"ai-memory":{"command":"mem"}}}',
+        );
+
+        const helper = preflightHelper(Effect.void);
+        yield* prepareAntigravityProfile({
+          profileDirectory: isolatedProfile,
+          userHome,
+          runtimeExecutablePath: "/fake/isolated-node",
+          platform: "linux",
+          baseEnv: {},
+          isolateUserConfig: true,
+          copyAuthFromProfileDirectory: sourceProfile,
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, helper.spawner));
+
+        expect(
+          yield* fs.exists(path.join(isolatedProfile, "antigravity-acp", "acp_token.json")),
+        ).toBe(false);
+        expect(
+          yield* fs.readFileString(
+            path.join(isolatedProfile, "antigravity-acp", "antigravity-oauth-token"),
+          ),
+        ).toBe('{"token":{"access_token":"tok"}}');
+        expect(
+          yield* fs.readFileString(
+            path.join(isolatedProfile, "antigravity-acp", "installation_id"),
+          ),
+        ).toBe("install-1");
+        expect(yield* fs.exists(path.join(isolatedProfile, "config", ".migrated"))).toBe(true);
+        expect(yield* fs.readFileString(path.join(isolatedProfile, "config", "hooks.json"))).toBe(
+          "{}\n",
+        );
+        expect(
+          yield* fs.readFileString(path.join(isolatedProfile, "config", "mcp_config.json")),
+        ).toBe('{"mcpServers":{}}\n');
+        expect(yield* fs.readFileString(path.join(isolatedProfile, "config", "config.json"))).toBe(
+          "{}\n",
+        );
+        expect(yield* fs.exists(path.join(isolatedProfile, "AGENTS.md"))).toBe(false);
+        expect(yield* fs.exists(path.join(isolatedProfile, "config", "skills"))).toBe(false);
+      }),
+  );
+
   it.effect("rejects Python BROWSER delimiter collisions before starting a helper", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

@@ -31,10 +31,7 @@ import { HttpClient } from "effect/http";
 import * as AcpErrors from "effect-acp/errors";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
-import {
-  isAntigravityTextGenerationAvailable,
-  makeAntigravityTextGeneration,
-} from "../../textGeneration/AntigravityTextGeneration.ts";
+import { makeAntigravityTextGeneration } from "../../textGeneration/AntigravityTextGeneration.ts";
 import { makeAntigravityAuth, type AntigravityAuth } from "../AntigravityAuth.ts";
 import * as AntigravityInstallation from "../AntigravityInstallation.ts";
 import { brokenRuntimeError } from "../providerCompatibility.ts";
@@ -227,6 +224,7 @@ export const AntigravityDriver: ProviderDriver<
     const prepareSpawn = Effect.fn("AntigravityDriver.prepareSpawn")(function* (
       cwd: string,
       baseEnv: NodeJS.ProcessEnv,
+      options?: { readonly isolatedTextProfile?: boolean },
     ): Effect.fn.Return<
       {
         readonly executable: AntigravityInstallation.AntigravityExecutable;
@@ -253,12 +251,32 @@ export const AntigravityDriver: ProviderDriver<
             }),
         ),
       );
+      const targetProfileDirectory =
+        options?.isolatedTextProfile === true
+          ? yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-text-" }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderSetupError({
+                    instanceId,
+                    operation: "start",
+                    detail: "Could not create an isolated Antigravity text profile directory.",
+                    cause,
+                  }),
+              ),
+            )
+          : profileDirectory;
       const profile = yield* prepareAntigravityProfile({
-        profileDirectory,
+        profileDirectory: targetProfileDirectory,
         baseEnv: processEnvironment,
         auth,
         userHome,
         tempDirectory: directories.runtimeTemp,
+        ...(options?.isolatedTextProfile === true
+          ? {
+              isolateUserConfig: true,
+              copyAuthFromProfileDirectory: profileDirectory,
+            }
+          : {}),
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
@@ -312,7 +330,7 @@ export const AntigravityDriver: ProviderDriver<
     });
 
     const makeRuntime = Effect.fn("AntigravityDriver.makeRuntime")(function* (
-      input: AntigravityAdapterV2RuntimeInput,
+      input: AntigravityAdapterV2RuntimeInput & { readonly isolatedTextProfile?: boolean },
     ): Effect.fn.Return<
       AcpSessionRuntime.AcpSessionRuntime["Service"],
       AcpErrors.AcpError | ProviderSetupError,
@@ -320,12 +338,13 @@ export const AntigravityDriver: ProviderDriver<
     > {
       // `buildAntigravityAcpSpawnInput` sets `extendEnv: false`, so thread variables only reach the
       // agent's shell through `baseEnv`.
-      const { processEnvironment: threadEnvironment, ...runtimeInput } = input;
+      const { processEnvironment: threadEnvironment, isolatedTextProfile, ...runtimeInput } = input;
       const { executable, spawn } = yield* prepareSpawn(
         runtimeInput.cwd,
         threadEnvironment === undefined
           ? processEnvironment
           : { ...processEnvironment, ...threadEnvironment },
+        isolatedTextProfile === true ? { isolatedTextProfile: true } : undefined,
       );
       const runtime = yield* makeAntigravityAcpRuntime({
         ...runtimeInput,
@@ -602,11 +621,8 @@ export const AntigravityDriver: ProviderDriver<
           Effect.provideService(Path.Path, path),
           Effect.catch(() => Effect.logWarning("Could not save Antigravity permission modes.")),
         ),
-      supportsTextGeneration: isAntigravityTextGenerationAvailable(profileDirectory).pipe(
-        Effect.provideService(FileSystem.FileSystem, fileSystem),
-        Effect.provideService(Path.Path, path),
-        Effect.orElseSucceed(() => false),
-      ),
+      // Text generation always runs in an isolated ephemeral GEMINI_HOME without hooks or MCP.
+      supportsTextGeneration: Effect.succeed(true),
     }).pipe(
       Effect.mapError(
         (cause) =>
@@ -651,12 +667,14 @@ export const AntigravityDriver: ProviderDriver<
     });
     const textGeneration = yield* makeAntigravityTextGeneration({
       profileDirectory,
+      isolatedProfile: true,
       defaultModel,
       withProcess: authFlow.withProcess,
       makeRuntime: (cwd) =>
         makeRuntime({
           cwd,
           mcpServers: [],
+          isolatedTextProfile: true,
         }),
     });
 
