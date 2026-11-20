@@ -435,6 +435,15 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
+    // Outside the thread's queue: finishing can wait on the agent, and messages must not.
+    mcpSignInStart: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread:mcp-sign-in-start",
+      tag: WS_METHODS.providerMcpSignInStart,
+    }),
+    mcpSignInComplete: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread:mcp-sign-in-complete",
+      tag: WS_METHODS.providerMcpSignInComplete,
+    }),
   };
   const commands = {
     ...sent,

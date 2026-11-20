@@ -3714,6 +3714,12 @@
     },
     " kann nicht geladen werden"
   ],
+  "0fd6b38d7839f885": "Bei {server} angemeldet",
+  "54789628a737f557": "Bei {server} anmelden",
+  "8aecbd38f1facf71": "Erlaube den Zugriff in deinem Browser. Danach öffnet er eine Seite, die vielleicht nicht lädt: Kopiere die Adresse dieser Seite und füge sie hier ein.",
+  "2281dc87b05d4a4c": "Anmeldung wird gestartet…",
+  "880d3e6e7ff86899": "Adresse der Seite, die dein Browser geöffnet hat",
+  "e52585cdfcf317cf": "Anmeldung abschließen",
   "9cc6288e83305ca3": "Das Diagramm konnte nicht gerendert werden.",
   "74d986aed0381cb0": "Der Diagramm-Renderer konnte nicht geladen werden.",
   "d694484d6fea351e": "Diagramm vergrößern",
