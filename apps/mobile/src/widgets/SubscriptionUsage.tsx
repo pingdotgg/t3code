@@ -86,13 +86,19 @@ function SubscriptionUsage(
       ] ?? "auto";
     const windows = stale
       ? []
-      : provider.windows.filter((window) => period === "auto" || window.kind === period);
+      : provider.windows.filter(
+          (window) =>
+            period === "auto" ||
+            window.kind === period ||
+            (period === "session" && window.kind === "daily"),
+        );
     const tightest = windows.reduce<(typeof windows)[number] | undefined>(
       (result, window) => (!result || window.remaining < result.remaining ? window : result),
       undefined,
     );
     const compactWindows = [
       windows.find((window) => window.kind === "session"),
+      windows.find((window) => window.kind === "daily"),
       windows.find((window) => window.kind === "weekly"),
     ].filter((window) => window !== undefined);
     const shown =
