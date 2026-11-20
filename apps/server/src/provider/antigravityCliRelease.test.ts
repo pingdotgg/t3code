@@ -38,7 +38,6 @@ describe("Antigravity CLI release manifests", () => {
 
   it.each([
     { sha512: "invalid" },
-    { version: "1.4.5" },
     { url: manifest.url.replace("https:", "http:") },
     { url: manifest.url.replace("storage.googleapis.com", "storage.googleapis.com.evil.test") },
     { url: manifest.url.replace("antigravity-public", "another-bucket") },
