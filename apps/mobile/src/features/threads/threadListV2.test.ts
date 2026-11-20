@@ -1751,11 +1751,13 @@ describe("Working section beta", () => {
       "finished-early",
     ]);
     expect(layout.workingCount).toBe(1);
-    expect(layout.workingShelfHeaderIndex).toBe(4);
+    expect(layout.workingShelfHeaderIndex).toBe(1);
+    expect(layout.inboxHeaderIndex).toBe(1);
 
     const off = build({ workingShelfEnabled: false });
     expect(ids(off)).toContain("working");
     expect(off.workingCount).toBe(0);
+    expect(off.inboxHeaderIndex).toBeNull();
   });
 
   it("keeps an inactive row in Working during the shared grace and returns it on expiry", () => {
@@ -1794,11 +1796,16 @@ describe("Working section beta", () => {
     expect(ids(layout).slice(1)).toEqual(["finished-early", "finished-late", "asks-approval"]);
   });
 
-  it("places the shelf after queued tasks and before snoozed and settled threads", () => {
+  it("places the shelf above the inbox, after queued tasks and pinned threads", () => {
     const layout = buildThreadListV2Items({
       threads: [
         makeThread({ id: ThreadId.make("active"), title: "active" }),
         makeThread({ id: ThreadId.make("working"), title: "working", runtime: running }),
+        makeThread({
+          id: ThreadId.make("pinned"),
+          title: "pinned",
+          pinnedAt: "2026-06-01T00:00:00.000Z",
+        }),
         makeThread({
           id: ThreadId.make("snoozed"),
           title: "snoozed",
@@ -1826,6 +1833,7 @@ describe("Working section beta", () => {
       workingCount: layout.workingCount,
       workingShelfExpanded: true,
       workingShelfHeaderIndex: layout.workingShelfHeaderIndex,
+      inboxHeaderIndex: layout.inboxHeaderIndex,
       snoozedCount: layout.snoozedCount,
       snoozedShelfExpanded: true,
       snoozedShelfHeaderIndex: layout.snoozedShelfHeaderIndex,
@@ -1842,9 +1850,11 @@ describe("Working section beta", () => {
       ),
     ).toEqual([
       "queued",
-      "active",
+      "pinned",
       "v2-working-shelf",
       "working",
+      "v2-inbox-header",
+      "active",
       "v2-snoozed-shelf",
       "snoozed",
       "v2-settled-shelf",

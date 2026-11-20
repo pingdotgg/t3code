@@ -73,6 +73,7 @@ import { threadListEnvironmentsAtom } from "../../state/presentation";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import {
+  ThreadListV2InboxHeader,
   ThreadListV2PendingRow,
   ThreadListV2Row,
   ThreadListV2SettledShelfHeader,
@@ -506,6 +507,9 @@ export function HomeScreen(props: HomeScreenProps) {
           onToggle={toggleWorkingShelf}
         />
       );
+    }
+    if (item.type === "v2-inbox-header") {
+      return <ThreadListV2InboxHeader />;
     }
     if (item.type === "v2-snoozed-shelf") {
       return (

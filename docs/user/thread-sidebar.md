@@ -164,10 +164,11 @@ open.
 ### Fold working threads (beta)
 
 Threads that are working or waiting on work they will resume from move into a collapsed
-**Working** section below the active list.
+**Working** section.
 That includes subagents, watched pull requests with checks still running, Claude monitors,
 and background commands or other monitors the agent says it is waiting on. A dev server or other process an agent leaves running does not keep a thread
-there. A thread returns to the top of the active list when it finishes, fails, or needs an approval or
+there. On web and desktop the section sits below the active list. On iOS and Android it sits above
+it, under pinned threads, and the active list below it is labeled **Inbox**. A thread returns to the top of the active list when it finishes, fails, or needs an approval or
 answer. The Working section lists the thread you last sent work to first. Pinned threads stay in
 the pinned section.
 
