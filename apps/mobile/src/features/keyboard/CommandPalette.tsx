@@ -1,5 +1,4 @@
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
-import { useAtomValue } from "@effect/atom-react";
 import { uuidv4 } from "../../lib/uuid";
 import { useNavigation } from "@react-navigation/native";
 import {
@@ -48,7 +47,6 @@ import { T3KeyboardCommands } from "../../native/T3KeyboardCommands";
 import {
   useDelegatedUnderParent,
   useProjects,
-  useServerConfigs,
   useThreadShell,
   useVisibleThreadShells,
 } from "../../state/entities";
@@ -57,13 +55,12 @@ import { requestThreadMessageJump } from "../threads/threadMessageJump";
 import { useCanShareWithGuest } from "../threads/useCanShareWithGuest";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { serverEnvironment } from "../../state/server";
 import { useWorkspaceEnvironments } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadSearchMatchExcerpt } from "../threads/thread-search-match";
-import { pickTriageEnvironment } from "../triage/triageTarget";
 import { useStartTriage } from "../triage/useStartTriage";
+import { useTriageEnvironment } from "../triage/useTriageEnvironment";
 import { useNewTaskFlow } from "../threads/new-task-flow-provider";
 import { useActiveNewTask } from "../../state/active-new-task";
 import {
@@ -275,22 +272,14 @@ export function CommandPalette(props: {
     query.startsWith(">") ? "" : query,
     environmentLabels === undefined ? {} : { environmentLabels },
   );
-  const serverConfigs = useServerConfigs();
   const startTriage = useStartTriage();
   const newTaskFlow = useNewTaskFlow();
   const draftEnvironmentId =
     useActiveNewTask() === null ? null : (newTaskFlow.selectedProject?.environmentId ?? null);
-  const triageEnvironmentId = pickTriageEnvironment({
-    // The route names the machine even before the thread shell loads.
-    onScreen: activeThreadRef?.environmentId ?? draftEnvironmentId,
-    connected: searchEnvironmentIds,
-    supportsTriage: (environmentId) =>
-      serverConfigs.get(environmentId)?.environment.capabilities.triage === true,
-  });
-  const canTriage =
-    useAtomValue(serverEnvironment.prepareTriage.permissionAtom(triageEnvironmentId)) &&
-    triageEnvironmentId !== null &&
-    serverConfigs.get(triageEnvironmentId)?.environment.capabilities.triage === true;
+  // The route names the machine even before the thread shell loads.
+  const triageEnvironmentId = useTriageEnvironment(
+    activeThreadRef?.environmentId ?? draftEnvironmentId,
+  );
   const canShareWithGuest = useCanShareWithGuest(activeThreadRef?.environmentId ?? null);
   const contentMatchByKey = new Map(
     search.matches
@@ -356,7 +345,7 @@ export function CommandPalette(props: {
         run: () => openSettings(navigation, "SettingsArchive"),
       },
     ];
-    if (canTriage) {
+    if (triageEnvironmentId !== null) {
       const triageEnvironmentLabel = savedConnectionsById[triageEnvironmentId]?.environmentLabel;
       actions.push({
         key: "triage",
@@ -498,7 +487,6 @@ export function CommandPalette(props: {
     activeThread,
     activeThreadRef,
     environments.length,
-    canTriage,
     canShareWithGuest,
     navigation,
     projects,

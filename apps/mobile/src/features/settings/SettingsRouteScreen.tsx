@@ -31,6 +31,8 @@ import { SettingsScreen } from "./components/SettingsScreen";
 import type { SettingsPageTarget } from "./components/settings-page-targets";
 import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilterHeader";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
+import { useStartTriage } from "../triage/useStartTriage";
+import { useTriageEnvironment } from "../triage/useTriageEnvironment";
 import { filterSettingsSections } from "./settings-search";
 import { usePaneRole } from "../../components/ui/Pane";
 import { useGT, useMessages } from "gt-react-native";
@@ -228,6 +230,10 @@ function SettingsList(props: { readonly connections: readonly SettingsListRow[] 
 
 function useSettingsIndexSections(): SettingsListSection[] {
   const gt = useGT();
+  // The command palette is keyboard-only, so touch users start triage here.
+  const triageEnvironmentId = useTriageEnvironment(null);
+  const startTriage = useStartTriage();
+  const { savedConnectionsById } = useSavedRemoteConnections();
   const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
   const noServerTargets = selectedTargets.length === 0;
   const selectedProject = projectGroups.find((group) => group.key === selectedProjectKey);
@@ -296,6 +302,17 @@ function useSettingsIndexSections(): SettingsListSection[] {
       rows: [
         serverPage("SettingsEnvironmentMaintenance", "arrow.clockwise", gt("Maintenance")),
         page("SettingsLabs", "flask", gt("Labs")),
+        ...(triageEnvironmentId !== null
+          ? [
+              {
+                id: "triage",
+                icon: "stethoscope" as const,
+                label: gt("Triage an issue"),
+                value: savedConnectionsById[triageEnvironmentId]?.environmentLabel,
+                onPress: () => void startTriage(triageEnvironmentId),
+              },
+            ]
+          : []),
         page("SettingsAbout", "info.circle", gt("About")),
         page("SettingsArchive", "archivebox", gt("Archive")),
       ],
