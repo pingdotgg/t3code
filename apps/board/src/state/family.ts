@@ -8,7 +8,10 @@ import type { FamilyRow } from "./boardModel";
 import { environmentShell } from "./projects";
 import { engineProvidersAtom } from "./server";
 
-const families = createThreadFamilyAtoms(connectionAtomRuntime, environmentShell.stateAtom);
+export const threadFamilies = createThreadFamilyAtoms(
+  connectionAtomRuntime,
+  environmentShell.stateAtom,
+);
 
 const NO_FAMILY: ReadonlyArray<FamilyRow> = [];
 
@@ -25,10 +28,10 @@ export function useThreadFamily(
     () =>
       orchestratorThreadId === null
         ? undefined
-        : families.mount(registry, environmentId, ThreadId.make(orchestratorThreadId)),
+        : threadFamilies.mount(registry, environmentId, ThreadId.make(orchestratorThreadId)),
     [registry, environmentId, orchestratorThreadId],
   );
-  const threads = useAtomValue(families.snapshotAtom(environmentId))?.threads;
+  const threads = useAtomValue(threadFamilies.snapshotAtom(environmentId))?.threads;
   return useMemo(
     () =>
       orchestratorThreadId === null || threads === undefined

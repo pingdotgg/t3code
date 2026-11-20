@@ -8,7 +8,9 @@ import type { TicketView } from "../state/boardModel";
 import { AgentCard } from "./AgentCard";
 import { ArtifactCards } from "./ArtifactCards";
 import { ArtifactCount } from "./ArtifactCount";
-import { artifactsHeight, CARD_GAP, FRAME_PAD, type FrameBox, hasChips } from "./layout";
+import { artifactsHeight, CARD_GAP, FRAME_PAD, type FrameBox, hasChips, hasPrRow } from "./layout";
+import { PrChip } from "./PrChip";
+import { RemoveWorktree } from "./RemoveWorktree";
 import { useViewScale } from "./Viewport";
 
 const DRAG_THRESHOLD_PX = 4;
@@ -34,11 +36,6 @@ function verdictText(verdict: Verdict) {
           : "border-emerald-400/40 text-emerald-300";
   return { text: `${verdict.role} ${counts.length === 0 ? "clean" : counts.join(" ")}`, tone };
 }
-
-const prText = (pr: NonNullable<Ticket["pr"]>) => {
-  const text = String(pr);
-  return /^\d+$/.test(text) ? `#${text}` : (text.split("/").at(-1) ?? text);
-};
 
 /** A ticket on its lane: what it is, where its work lives, its reviews, and the agents on it. */
 export function TicketFrame({
@@ -143,9 +140,16 @@ export function TicketFrame({
                 : `${ticket.branch} → ${ticket.base}`}
           </span>
         </p>
+        {hasPrRow(ticket) && (
+          <div className="mt-1.5 flex h-[20px] items-center gap-1.5">
+            <PrChip view={view} />
+            {ticket.stage === "merged" && ticket.worktreePath != null && (
+              <RemoveWorktree view={view} />
+            )}
+          </div>
+        )}
         {hasChips(ticket) && (
           <div className="mt-1.5 flex h-[44px] flex-wrap content-start gap-1 overflow-hidden">
-            {ticket.pr != null && <span className={chip}>PR {prText(ticket.pr)}</span>}
             {ticket.headSha != null && (
               <span className={`${chip} font-mono`}>{ticket.headSha.slice(0, 7)}</span>
             )}

@@ -5,7 +5,7 @@ import { cardTitle, type CardState, type CardView, type ForYouItem } from "../do
 import { answerItem, type ForYouTarget } from "../foryou/actions";
 import { ApprovalBody } from "./ApprovalBody";
 import { ItemActions } from "./ItemActions";
-import { MergeConditions } from "./MergeConditions";
+import { MergeApprovalConditions } from "./MergeApprovalConditions";
 import { SecretBody } from "./SecretBody";
 import { useRevealRef } from "./Viewport";
 
@@ -122,9 +122,7 @@ export function ForYouCard({ view, context }: { view: CardView; context: CardCon
               {card.item.body}
             </p>
           )}
-          {card.item.kind === "merge_approval" && (
-            <MergeConditions conditions={card.item.conditions} />
-          )}
+          {card.item.kind === "merge_approval" && <MergeApprovalConditions item={card.item} />}
           <ItemActions
             item={card.item}
             sent={sent}

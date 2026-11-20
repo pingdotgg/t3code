@@ -53,7 +53,7 @@ Tab separated. The first line is the header `time`, `decision`, `alternatives`, 
 
 One JSON object per line. Every line has `id`, `kind`, `title`, `body`, `status`, and `createdAt`, an ISO time. `kind` is one of:
 
-- `merge_approval`: a ticket is ready to merge. It also has `conditions`, with the six merge-ready conditions below, each `{ "met": true, "evidence": ["<absolute path or link>"], "note": "<one line>" }`. `met` is required. `evidence` and `note` are optional. Name every file that shows a condition holds.
+- `merge_approval`: a ticket is ready to merge. It also has `ticket`, the ticket's `key`, and `conditions`, with the six merge-ready conditions below, each `{ "met": true, "evidence": ["<absolute path or link>"], "note": "<one line>" }`. `met` is required. `evidence` and `note` are optional. Name every file that shows a condition holds.
 - `question`: you need an answer. It also has `options`, a list of short answers. The user can press one or type their own.
 - `ticket_draft`: tickets you propose, written out in `body`, for the user to approve before you add them to `tickets.json`.
 - `gate`: a decision that waits on the user, the same one you write to `gates.md`.
@@ -65,9 +65,9 @@ The six conditions, with these exact keys in `conditions`:
 - `ci_green`: CI is green on the head.
 - `reviews_fixed`: independent reviews are in, and the findings they introduced are fixed.
 - `delta_rereviewed`: the fix-round delta was reviewed again.
-- `readmes_pass`: the READMEs the change touched pass their check.
+- `readmes_pass`: the READMEs the change touched pass their check. Leave the check's output in `artifacts/<ticket key>/` under the board folder, in a file whose name has `readme-check`, such as `readme-check.txt`.
 - `parent_ready`: the parent ticket is merged or ready, and `note` says the merge order.
-- `smoke_named`: the smoke evidence is named.
+- `smoke_named`: the smoke evidence is named. Put a file whose name has `smoke` in `artifacts/<ticket key>/` under the board folder, such as `smoke.png` or `smoke.txt`.
 
 `status` is `open`, `held`, or `resolved`. To change an item, append a line with the same `id`, the new `status`, and a `resolution` of a few words. That line needs no other field. The latest line for an `id` wins. The board counts items whose latest status is `open`. A line the board cannot read is skipped, and the board names its line number to the user, so keep every line valid JSON with these fields.
 

@@ -4,6 +4,8 @@ import { X } from "lucide-react";
 import type { BoardModel } from "../state/boardModel";
 import type { Peek } from "../state/boardUi";
 import { AgentLog } from "./AgentLog";
+import { DrawerReadiness } from "./DrawerReadiness";
+import { PrChecks } from "./PrChecks";
 
 const STATE_LABEL = {
   working: "Working",
@@ -79,6 +81,12 @@ export function PeekDrawer({
             </dd>
           </div>
         </dl>
+      )}
+      {view !== undefined && (
+        <div className="max-h-[50%] shrink-0 overflow-y-auto">
+          <PrChecks view={view} />
+          <DrawerReadiness view={view} />
+        </div>
       )}
       {agent === null ? (
         <p className="px-3 py-3 text-faint">Select an agent card to read its thread.</p>
