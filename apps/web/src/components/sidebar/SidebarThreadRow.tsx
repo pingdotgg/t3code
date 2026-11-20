@@ -1122,19 +1122,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     useRightPanelStore.getState().open(threadRef, "pull-requests");
     if (!props.isRouteThread) onThreadActivate(threadRef);
   };
-  const prBadge =
-    prBadgeShape?.kind === "stack" || pr || currentLinkedPr ? (
-      <ThreadPullRequestBadgeControl
-        render={<InlineButton />}
-        badge={prBadgeShape}
-        pullRequests={thread.pullRequests}
-        number={pr?.number ?? currentLinkedPr?.number}
-        url={pr?.url ?? currentLinkedPr?.url}
-        status={prStatus}
-        onOpenList={openLinkedItems}
-        onOpenPullRequest={handlePrClick}
-      />
-    ) : null;
   const firstIssue = thread.issues?.[0];
   const issueCount = thread.issues?.length ?? 0;
   const issueState = useSidebarLinkedIssueState(
@@ -1155,6 +1142,38 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       : gt("{count, plural, one {{count} linked issue} other {{count} linked issues}}", {
           count: issueCount,
         });
+  const issueMark = (
+    <IssueIcon aria-hidden className={cn("size-3 shrink-0", issueStatus?.toneClassName)} />
+  );
+  const issueRows = (
+    <ThreadDetailsIssueRows
+      links={thread.issues ?? []}
+      threadRef={threadRef}
+      compact={false}
+      mountScope="sidebar-tooltip"
+      onOpen={() => {
+        if (!props.isRouteThread) onThreadActivate(threadRef);
+      }}
+    />
+  );
+  const prBadge =
+    prBadgeShape?.kind === "stack" || pr || currentLinkedPr ? (
+      <ThreadPullRequestBadgeControl
+        render={<InlineButton />}
+        badge={prBadgeShape}
+        pullRequests={thread.pullRequests}
+        number={pr?.number ?? currentLinkedPr?.number}
+        url={pr?.url ?? currentLinkedPr?.url}
+        status={prStatus}
+        issues={
+          firstIssue
+            ? { count: issueCount, label: issueLabel, mark: issueMark, rows: issueRows }
+            : undefined
+        }
+        onOpenList={openLinkedItems}
+        onOpenPullRequest={handlePrClick}
+      />
+    ) : null;
   const issueBadge = firstIssue ? (
     <Tooltip>
       <TooltipTrigger
@@ -1170,7 +1189,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           />
         }
       >
-        <IssueIcon aria-hidden className={cn("size-3 shrink-0", issueStatus?.toneClassName)} />
+        {issueMark}
         <span className="max-w-16 truncate text-xs font-normal text-secondary-label tabular-nums">
           {issueCount === 1 ? firstIssue.displayKey : issueCount}
         </span>
@@ -1183,15 +1202,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         onContextMenu={(event) => event.stopPropagation()}
       >
         <div className="-mx-1 max-h-[calc(var(--available-height)-0.5rem-2px)] overflow-y-auto overscroll-contain">
-          <ThreadDetailsIssueRows
-            links={thread.issues ?? []}
-            threadRef={threadRef}
-            compact={false}
-            mountScope="sidebar-tooltip"
-            onOpen={() => {
-              if (!props.isRouteThread) onThreadActivate(threadRef);
-            }}
-          />
+          {issueRows}
         </div>
       </TooltipPopup>
     </Tooltip>
@@ -1282,8 +1293,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         <span className="flex-1" />
       )}
       {terminalStatusIcon}
-      {prBadge}
-      {issueBadge}
+      {prBadge ?? issueBadge}
       {diff ? (
         <span className="shrink-0 font-mono">
           <span className="text-diff-addition-foreground">+{formatDiffCount(diff.insertions)}</span>{" "}
