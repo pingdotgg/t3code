@@ -39,6 +39,73 @@ function splitFilePath(path: string): { readonly name: string; readonly director
     : { name: path.slice(separator + 1), directory: path.slice(0, separator) };
 }
 
+/** Its own component so the per-file labels are translated only while the dialog's popup is mounted. */
+function CommitFileRows({
+  files,
+  excludedFiles,
+  canOpenFiles,
+  onToggleFile,
+  onOpenFile,
+}: {
+  files: VcsStatusResult["workingTree"]["files"];
+  excludedFiles: ReadonlySet<string>;
+  canOpenFiles: boolean;
+  onToggleFile: (path: string) => void;
+  onOpenFile: (path: string) => void;
+}) {
+  const gt = useGT();
+  return (
+    <>
+      {files.map((file) => {
+        const isExcluded = excludedFiles.has(file.path);
+        const { name, directory } = splitFilePath(file.path);
+        return (
+          <div
+            key={file.path}
+            className={cn("flex h-8 min-w-0 items-center gap-2.5 px-2", isExcluded && "opacity-55")}
+          >
+            <Checkbox
+              checked={!isExcluded}
+              aria-label={gt("Include {path}", { path: file.path })}
+              onCheckedChange={() => onToggleFile(file.path)}
+            />
+            <button
+              type="button"
+              className="flex min-w-0 flex-1 text-left enabled:cursor-pointer"
+              aria-label={gt("Open {path}", { path: file.path })}
+              disabled={!canOpenFiles}
+              onClick={() => onOpenFile(file.path)}
+            >
+              <span className="flex min-w-0 flex-1 items-center gap-2.5">
+                <FileDiffIcon aria-hidden className="size-3.5 shrink-0 text-diff-modified" />
+                <span className="min-w-0 shrink truncate text-body text-foreground">{name}</span>
+                {directory ? (
+                  <StartTruncatedPath
+                    path={directory}
+                    className="min-w-0 flex-1 text-meta text-dim-foreground"
+                  />
+                ) : (
+                  <span className="flex-1" />
+                )}
+              </span>
+            </button>
+            <span
+              className={cn(
+                "shrink-0 font-mono text-meta tabular-nums",
+                isExcluded ? "text-dim-foreground" : "text-muted-foreground",
+              )}
+            >
+              {file.insertions > 0 ? `+${formatDiffCount(file.insertions)}` : ""}
+              {file.insertions > 0 && file.deletions > 0 ? " " : ""}
+              {file.deletions > 0 ? `−${formatDiffCount(file.deletions)}` : ""}
+            </span>
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 /**
  * Review and commit the working tree: pick the branch to commit on, include or exclude files,
  * and write an optional message. The caller runs the commit.
@@ -206,60 +273,13 @@ export function GitCommitDialog({
               </p>
             ) : (
               <div className="max-h-52 overflow-y-auto">
-                {allFiles.map((file) => {
-                  const isExcluded = excludedFiles.has(file.path);
-                  const { name, directory } = splitFilePath(file.path);
-                  return (
-                    <div
-                      key={file.path}
-                      className={cn(
-                        "flex h-8 min-w-0 items-center gap-2.5 px-2",
-                        isExcluded && "opacity-55",
-                      )}
-                    >
-                      <Checkbox
-                        checked={!isExcluded}
-                        aria-label={gt("Include {path}", { path: file.path })}
-                        onCheckedChange={() => toggleFile(file.path)}
-                      />
-                      <button
-                        type="button"
-                        className="flex min-w-0 flex-1 text-left enabled:cursor-pointer"
-                        aria-label={gt("Open {path}", { path: file.path })}
-                        disabled={!canOpenFiles}
-                        onClick={() => onOpenFile(file.path)}
-                      >
-                        <span className="flex min-w-0 flex-1 items-center gap-2.5">
-                          <FileDiffIcon
-                            aria-hidden
-                            className="size-3.5 shrink-0 text-diff-modified"
-                          />
-                          <span className="min-w-0 shrink truncate text-body text-foreground">
-                            {name}
-                          </span>
-                          {directory ? (
-                            <StartTruncatedPath
-                              path={directory}
-                              className="min-w-0 flex-1 text-meta text-dim-foreground"
-                            />
-                          ) : (
-                            <span className="flex-1" />
-                          )}
-                        </span>
-                      </button>
-                      <span
-                        className={cn(
-                          "shrink-0 font-mono text-meta tabular-nums",
-                          isExcluded ? "text-dim-foreground" : "text-muted-foreground",
-                        )}
-                      >
-                        {file.insertions > 0 ? `+${formatDiffCount(file.insertions)}` : ""}
-                        {file.insertions > 0 && file.deletions > 0 ? " " : ""}
-                        {file.deletions > 0 ? `−${formatDiffCount(file.deletions)}` : ""}
-                      </span>
-                    </div>
-                  );
-                })}
+                <CommitFileRows
+                  files={allFiles}
+                  excludedFiles={excludedFiles}
+                  canOpenFiles={canOpenFiles}
+                  onToggleFile={toggleFile}
+                  onOpenFile={onOpenFile}
+                />
               </div>
             )}
           </div>
