@@ -27,6 +27,8 @@ const otherOwner = "t3-auth-session-other";
 const authorizationUrl =
   "https://accounts.google.com/o/oauth2/v2/auth?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A51234%2F&state=test-state";
 const callbackUrl = "http://127.0.0.1:51234/?state=test-state&code=test-code";
+const loginUrl =
+  "https://accounts.google.com/o/oauth2/auth?response_type=code&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&state=login-state";
 
 const initialized = {
   protocolVersion: 1,
@@ -60,8 +62,11 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
     readonly supportsLogout?: boolean;
     readonly beforeInitialize?: Effect.Effect<void>;
     readonly forwardCallback?: Effect.Effect<void, ProviderSetupError>;
+    readonly codeLogin?: boolean;
   } = {},
 ) {
+  const loginCodes: string[] = [];
+  const loginCode = yield* Deferred.make<void>();
   const authenticated = yield* Deferred.make<void, AcpErrors.AcpError>();
   const discovered = yield* Deferred.make<void, AcpErrors.AcpError>();
   const closed = yield* Deferred.make<void>();
@@ -132,6 +137,21 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
       Effect.sync(() => {
         forwarded += 1;
       }),
+    codeLogin: ({ onAuthorizationUrl }) =>
+      Effect.gen(function* () {
+        if (!options.codeLogin) return undefined;
+        events.push("login-open");
+        yield* Effect.addFinalizer(() => Effect.sync(() => events.push("login-close")));
+        yield* onAuthorizationUrl(loginUrl);
+        return {
+          submit: (response: string) =>
+            Effect.sync(() => loginCodes.push(response)).pipe(
+              Effect.andThen(Deferred.succeed(loginCode, undefined)),
+              Effect.asVoid,
+            ),
+          completed: Deferred.await(loginCode),
+        };
+      }),
   });
   return {
     auth,
@@ -142,6 +162,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
     events,
     catalog: () => catalog,
     forwarded: () => forwarded,
+    loginCodes,
     receiveAuthorizationUrl: (url: string) =>
       Effect.suspend(() =>
         receiveAuthorizationUrl
@@ -167,6 +188,42 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityAuth"
       yield* Deferred.succeed(harness.authenticated, undefined);
       yield* Deferred.succeed(harness.discovered, undefined);
       yield* phase(harness.auth, "succeeded");
+    }),
+  );
+
+  it.effect("signs in through the CLI's code login, then authenticates a fresh process", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ codeLogin: true });
+      const state = yield* harness.auth.controller.start(owner);
+      const waiting = yield* phase(harness.auth, "waiting");
+      assert.equal(waiting.authorizationUrl, loginUrl);
+      assert.equal(waiting.interaction?.type, "credentials");
+      const respond = (code: string) =>
+        harness.auth.controller.respond!(owner, {
+          instanceId,
+          flowId: state.flowId!,
+          interactionId: state.flowId!,
+          response: { type: "credentials", values: { code } },
+        });
+      for (const invalid of [callbackUrl, "two words", ""]) {
+        assert.isTrue(Exit.isFailure(yield* respond(invalid).pipe(Effect.exit)), invalid);
+      }
+      assert.equal((yield* respond("4/0Ab-code")).phase, "verifying");
+      assert.deepEqual(harness.loginCodes, ["4/0Ab-code"]);
+
+      yield* Deferred.succeed(harness.authenticated, undefined);
+      yield* Deferred.succeed(harness.discovered, undefined);
+      yield* phase(harness.auth, "succeeded");
+      assert.deepEqual(harness.events, [
+        "login-open",
+        "login-close",
+        "process-open",
+        "initialize",
+        "authenticate",
+        "session-new",
+        "catalog-published",
+        "process-close",
+      ]);
     }),
   );
 
