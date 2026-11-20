@@ -1,5 +1,8 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
+import { msg, T, useGT, useMessages } from "gt-react";
+import { m } from "../i18n/messages";
 import {
   isAtomCommandInterrupted,
   executeAtomQuery,
@@ -31,7 +34,7 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
-import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+import { getTerminalLabel } from "@t3tools/shared/terminalLabelsCopy";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import {
@@ -88,6 +91,7 @@ import { readEnvironmentScope } from "../state/session";
 import { terminalEnvironment } from "../state/terminal";
 import { useEnvironmentScope } from "../state/session";
 import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
+import { terminalInputWriter } from "./terminal/terminalInputWriter";
 import { useAtomCommand } from "../state/use-atom-command";
 import { preventTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import { observeResize } from "../lib/observeResize";
@@ -191,7 +195,7 @@ export function synchronizeTerminalOutput(
   return update.cursor;
 }
 
-/** Writes what changed between two session notifications: new output, then a new error. */
+/** Writes what changed between two session notifications: new output, then the error, again after a reset. */
 export function synchronizeTerminalSession(
   terminal: Parameters<typeof synchronizeTerminalOutput>[0],
   previous: Pick<TerminalSessionState, "output" | "version" | "error">,
@@ -203,7 +207,12 @@ export function synchronizeTerminalSession(
       ? cursor
       : synchronizeTerminalOutput(terminal, session, cursor);
   // An attach failure can change only the error, keeping the last buffer.
-  if (session.error !== null && session.error !== previous.error) {
+  if (
+    session.error !== null &&
+    (session.error !== previous.error ||
+      nextCursor.generation !== cursor.generation ||
+      nextCursor.resetVersion !== cursor.resetVersion)
+  ) {
     writeSystemMessage(terminal, session.error);
   }
   return nextCursor;
@@ -407,8 +416,10 @@ function terminalSelectionMenuItems(options?: {
   return [
     ...(options?.canAddToChat === false
       ? []
-      : ([{ id: "add-to-chat", label: "Add to chat" }] satisfies ContextMenuItem<"add-to-chat">[])),
-    { id: "copy", label: "Copy" },
+      : ([
+          { id: "add-to-chat", label: m(msg("Add to chat")) },
+        ] satisfies ContextMenuItem<"add-to-chat">[])),
+    { id: "copy", label: m(msg("Copy")) },
   ];
 }
 
@@ -423,9 +434,9 @@ function terminalContextMenuItems(options: {
       ...item,
       disabled: !hasSelection,
     })),
-    { id: "paste", label: "Paste", ...(options.readOnly ? { disabled: true } : {}) },
-    { id: "select-all", label: "Select all" },
-    { id: "scroll-to-bottom", label: "Jump to latest" },
+    { id: "paste", label: m(msg("Paste")), ...(options.readOnly ? { disabled: true } : {}) },
+    { id: "select-all", label: m(msg("Select all", { $context: "select all terminal text" })) },
+    { id: "scroll-to-bottom", label: m(msg("Jump to latest")) },
   ];
 }
 
@@ -521,11 +532,14 @@ function TerminalSessionViewport({
   const canReadFilesystem = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
   const [linkPath, setLinkPath] = useState<string | null>(null);
   const metadataThreadRef = useContext(FileMetadataThreadContext);
+  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const hostname = serverConfig?.hostname;
+  const readHostname = useEffectEvent(() => hostname);
   const linkMetadataQuery =
     linkPath !== null && canOpenHostEditor && canReadFilesystem
       ? getFileMetadataQueryAtom(
           environmentId,
-          resolveTerminalLinkTarget(linkPath, cwd),
+          resolveTerminalLinkTarget(linkPath, cwd, hostname),
           cwd,
           metadataThreadRef,
         )
@@ -546,7 +560,7 @@ function TerminalSessionViewport({
       return false;
     const query = getFileMetadataQueryAtom(
       environmentId,
-      resolveTerminalLinkTarget(text, cwd),
+      resolveTerminalLinkTarget(text, cwd, hostname),
       cwd,
       metadataThreadRef,
     );
@@ -557,7 +571,6 @@ function TerminalSessionViewport({
       (result.value?.kind === "file" || result.value?.kind === "directory")
     );
   });
-  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const openInPreferredEditor = useOpenInPreferredEditor(
     environmentId,
     serverConfig?.availableEditors ?? [],
@@ -570,6 +583,8 @@ function TerminalSessionViewport({
   const runTerminalWrite = useAtomCommand(terminalEnvironment.write, {
     reportFailure: false,
   });
+  // Recovery keeps the original registry-bound command after this viewport unmounts.
+  const retainedTerminalWrite = useRef(runTerminalWrite);
   const runTerminalResize = useAtomCommand(terminalEnvironment.resize, {
     reportFailure: false,
   });
@@ -617,20 +632,22 @@ function TerminalSessionViewport({
     (listener: (session: TerminalSessionState) => void) =>
       appAtomRegistry.subscribe(terminalSessionAtom, listener),
   );
-  const writeTerminal = useEffectEvent((data: string) =>
-    runTerminalWrite({
-      environmentId,
-      input: { threadId, terminalId, data },
-    }),
-  );
-  const resizeTerminal = useEffectEvent((cols: number, rows: number) => {
-    if (writableSessionGeneration(readTerminalSession(), hasTerminalWriteAccess()) === null) {
-      return;
-    }
-    return runTerminalResize({
+  // The surface reports a resent grid like any other, so the next report is the retry.
+  const resizeRetryGenerationRef = useRef<number | null>(null);
+  const resizeTerminal = useEffectEvent(async (cols: number, rows: number) => {
+    const generation = writableSessionGeneration(readTerminalSession(), hasTerminalWriteAccess());
+    const retry = generation !== null && generation === resizeRetryGenerationRef.current;
+    resizeRetryGenerationRef.current = null;
+    if (generation === null) return;
+    const result = await runTerminalResize({
       environmentId,
       input: { threadId, terminalId, cols, rows },
     });
+    // Resend the current grid, not this one: a newer resize may already be queued behind it.
+    if (!retry && result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      resizeRetryGenerationRef.current = generation;
+      terminalRef.current?.resendSize();
+    }
   });
   const outputCursorRef = useRef<TerminalOutputCursor>(INITIAL_TERMINAL_OUTPUT_CURSOR);
   const synchronizedStatusRef = useRef<TerminalSessionState["status"]>("closed");
@@ -643,7 +660,10 @@ function TerminalSessionViewport({
         shouldHandleTerminalExit(status, synchronized, hasHandledExitRef.current, version)
       ) {
         hasHandledExitRef.current = true;
-        writeSystemMessage(terminal, status === "closed" ? "Terminal closed" : "Process exited");
+        writeSystemMessage(
+          terminal,
+          status === "closed" ? m(msg("Terminal closed")) : m(msg("Process exited")),
+        );
         window.setTimeout(() => {
           if (hasHandledExitRef.current) {
             handleSessionExited();
@@ -711,6 +731,8 @@ function TerminalSessionViewport({
         theme: terminalThemeFromApp(mount),
         font: terminalFontOptions(setupFont.family, setupFont.size),
         onData: (data) => handleData(data),
+        onBinary: (data) => void sendTerminalInput(data, m(msg("Terminal write failed")), "binary"),
+        onReply: (data) => void sendTerminalInput(data, m(msg("Terminal write failed")), "reply"),
         onResize: (cols, rows) => void resizeTerminal(cols, rows),
         onSelectionChange: () => {},
         beforeKey: (event) => handleBeforeKey(event),
@@ -831,7 +853,7 @@ function TerminalSessionViewport({
         if (requestId !== selectionActionRequestIdRef.current) return;
         const activeTerminal = terminalRef.current;
         if (activeTerminal) {
-          writeSystemMessage(activeTerminal, error instanceof Error ? error.message : fallback);
+          writeSystemMessage(activeTerminal, thrownErrorMessage(error, m) ?? fallback);
         }
       };
 
@@ -843,9 +865,15 @@ function TerminalSessionViewport({
 
       const copySelection = async (text: string, requestId: number) => {
         try {
-          await writeTextToClipboard(text, "terminal selection");
+          await writeTextToClipboard(text, {
+            target: "terminal selection",
+            unavailableMessage: msg(
+              "Clipboard API is unavailable while copying terminal selection.",
+            ),
+            failureMessage: msg("Failed to copy terminal selection to the clipboard."),
+          });
         } catch (error) {
-          reportIfCurrent(requestId, error, "Unable to copy terminal selection");
+          reportIfCurrent(requestId, error, m(msg("Unable to copy terminal selection")));
         }
         focusIfCurrent(requestId);
       };
@@ -857,11 +885,18 @@ function TerminalSessionViewport({
         try {
           // Let the surface own clipboard reads so paste shortcuts can supersede an in-flight menu paste.
           await activeTerminal.pasteFromClipboard(
-            () => readTextFromClipboard("terminal input"),
+            () =>
+              readTextFromClipboard({
+                target: "terminal input",
+                unavailableMessage: msg(
+                  "Clipboard API is unavailable while reading terminal input.",
+                ),
+                failureMessage: msg("Failed to read terminal input from the clipboard."),
+              }),
             () => requestId === selectionActionRequestIdRef.current,
           );
         } catch (error) {
-          reportIfCurrent(requestId, error, "Unable to read the clipboard");
+          reportIfCurrent(requestId, error, m(msg("Unable to read the clipboard")));
           return;
         }
         focusIfCurrent(requestId);
@@ -885,7 +920,7 @@ function TerminalSessionViewport({
             { x: event.clientX, y: event.clientY },
           );
         } catch (error) {
-          reportIfCurrent(requestId, error, "Unable to open the terminal context menu");
+          reportIfCurrent(requestId, error, m(msg("Unable to open the terminal context menu")));
           focusIfCurrent(requestId);
           return;
         }
@@ -915,21 +950,74 @@ function TerminalSessionViewport({
         }
       };
 
-      const sendTerminalInput = async (data: string, fallbackError: string) => {
+      const readInputSession = () => appAtomRegistry.get(terminalSessionAtom);
+      const canWriteInput = () => readEnvironmentScope(environmentId, AuthTerminalOperateScope);
+      const writeInputChunk = (data: string, kind?: "binary" | "reply") =>
+        retainedTerminalWrite.current({
+          environmentId,
+          input: kind
+            ? { threadId, terminalId, data, [kind]: true }
+            : { threadId, terminalId, data },
+        });
+      const sendTerminalInput = (
+        data: string,
+        fallbackError: string,
+        kind?: "binary" | "reply",
+      ) => {
         // The server rejects input until the shell runs, and each rejection would print an error.
-        if (writableSessionGeneration(readTerminalSession(), hasTerminalWriteAccess()) === null) {
-          return;
-        }
-        const activeTerminal = terminalRef.current;
-        if (!activeTerminal) return;
-        const result = await writeTerminal(data);
-        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          writeSystemMessage(
-            activeTerminal,
-            error instanceof Error ? error.message : fallbackError,
-          );
-        }
+        // Input belongs to the shell and surface it was typed into; a restart the client has seen drops what is left.
+        const session = readTerminalSession();
+        const generation = writableSessionGeneration(session, hasTerminalWriteAccess());
+        const lifecycleVersion = session.lifecycleVersion;
+        if (generation === null) return;
+        const writeInput = terminalInputWriter(
+          JSON.stringify([environmentId, threadId, terminalId]),
+          () => appAtomRegistry.mount(terminalSessionAtom),
+        );
+        let reported = false;
+        const report = (message: string) => {
+          if (reported || terminalRef.current !== terminal) return;
+          reported = true;
+          writeSystemMessage(terminal, message);
+        };
+        return writeInput(
+          data,
+          async (chunk) => {
+            const currentSession = readInputSession();
+            if (
+              terminalRef.current !== terminal ||
+              currentSession.lifecycleVersion !== lifecycleVersion ||
+              writableSessionGeneration(currentSession, canWriteInput()) !== generation
+            ) {
+              return "not-dispatched";
+            }
+            const result = await writeInputChunk(chunk, kind);
+            if (result._tag === "Success") return true;
+            if (terminalRef.current === terminal && !isAtomCommandInterrupted(result)) {
+              const error = squashAtomCommandFailure(result);
+              report(thrownErrorMessage(error, m) ?? fallbackError);
+            }
+            return false;
+          },
+          // Close the bracket only for the process that saw it open; wait while its pid is unknown.
+          async () => {
+            const pid = session.summary?.pid ?? null;
+            const current = readInputSession();
+            const currentPid = current.summary?.pid ?? null;
+            if (currentPid === null) return false;
+            if (pid !== null && currentPid !== pid) return true;
+            if (writableSessionGeneration(current, canWriteInput()) === null) return false;
+            const result = await writeInputChunk("\x1b[201~");
+            if (result._tag === "Success") return true;
+            if (!isAtomCommandInterrupted(result)) {
+              const error = squashAtomCommandFailure(result);
+              report(thrownErrorMessage(error, m) ?? m(msg("Failed to close interrupted paste")));
+            }
+            return false;
+          },
+          () =>
+            report(m(msg("Terminal paste interrupted. Paste again when the terminal is ready."))),
+        );
       };
 
       function handleBeforeKey(event: KeyboardEvent): boolean {
@@ -956,7 +1044,7 @@ function TerminalSessionViewport({
         if (navigationData !== null) {
           event.preventDefault();
           event.stopPropagation();
-          void sendTerminalInput(navigationData, "Failed to move cursor");
+          void sendTerminalInput(navigationData, m(msg("Failed to move cursor")));
           return false;
         }
 
@@ -964,14 +1052,14 @@ function TerminalSessionViewport({
         if (deleteData !== null) {
           event.preventDefault();
           event.stopPropagation();
-          void sendTerminalInput(deleteData, "Failed to delete terminal input");
+          void sendTerminalInput(deleteData, m(msg("Failed to delete terminal input")));
           return false;
         }
 
         if (!isTerminalClearShortcut(event)) return true;
         event.preventDefault();
         event.stopPropagation();
-        void sendTerminalInput("\u000c", "Failed to clear terminal");
+        void sendTerminalInput("\u000c", m(msg("Failed to clear terminal")));
         return false;
       }
 
@@ -985,14 +1073,17 @@ function TerminalSessionViewport({
         if (!latestTerminal) return;
         if (isTerminalUrl(text)) {
           if (!localApi) {
-            writeSystemMessage(latestTerminal, "Opening links is unavailable in this browser.");
+            writeSystemMessage(
+              latestTerminal,
+              m(msg("Opening links is unavailable in this browser.")),
+            );
             return;
           }
           const fallbackToBrowser = () => {
             void localApi.shell.openExternal(text).catch((error: unknown) => {
               writeSystemMessage(
                 latestTerminal,
-                error instanceof Error ? error.message : "Unable to open link",
+                thrownErrorMessage(error, m) ?? m(msg("Unable to open link")),
               );
             });
           };
@@ -1005,15 +1096,15 @@ function TerminalSessionViewport({
               toastManager.add(
                 stackedThreadToast({
                   type: "error",
-                  title: "Unable to open link",
-                  description: error instanceof Error ? error.message : "An error occurred.",
+                  title: m(msg("Unable to open link")),
+                  description: thrownErrorMessage(error, m) ?? m(msg("An error occurred.")),
                 }),
               );
             },
           );
           return;
         }
-        const target = resolveTerminalLinkTarget(text, cwd);
+        const target = resolveTerminalLinkTarget(text, cwd, readHostname());
         void (async () => {
           const result = await openTerminalPath(target);
           if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
@@ -1022,13 +1113,13 @@ function TerminalSessionViewport({
           const error = squashAtomCommandFailure(result);
           writeSystemMessage(
             latestTerminal,
-            error instanceof Error ? error.message : "Unable to open path",
+            thrownErrorMessage(error, m) ?? m(msg("Unable to open path")),
           );
         })();
       }
 
       function handleData(data: string): void {
-        void sendTerminalInput(data, "Terminal write failed");
+        void sendTerminalInput(data, m(msg("Terminal write failed")));
       }
 
       const themeObserver = new MutationObserver(() => {
@@ -1079,8 +1170,10 @@ function TerminalSessionViewport({
         setupTerminal = null;
         if (cancelled) return;
         const message =
-          error instanceof Error ? error.message : "Unable to initialize libghostty-vt";
-        mount.textContent = `${message}. Close and reopen the terminal to retry.`;
+          thrownErrorMessage(error, m) ?? m(msg("Unable to initialize libghostty-vt"));
+        mount.textContent = m(
+          msg("{message}. Close and reopen the terminal to retry.", { message }),
+        );
       });
 
     return () => {
@@ -1091,7 +1184,7 @@ function TerminalSessionViewport({
         mount.focus({ preventScroll: true });
       }
     };
-  }, [cwd, environmentId, terminalId]);
+  }, [cwd, environmentId, terminalId, terminalSessionAtom, threadId]);
 
   const attachContainer = (mount: HTMLDivElement) => {
     containerRef.current = mount;
@@ -1233,6 +1326,7 @@ function TerminalSplitPanes({
   visible: boolean;
   keybindings: ResolvedKeybindingsConfig;
 }) {
+  const gt = useGT();
   return (
     <div
       className="grid h-full w-full min-w-0 gap-0 overflow-hidden"
@@ -1268,7 +1362,7 @@ function TerminalSplitPanes({
                 threadRef={threadRef}
                 threadId={threadId}
                 terminalId={terminalId}
-                terminalLabel={terminalLabelById.get(terminalId) ?? "Terminal"}
+                terminalLabel={terminalLabelById.get(terminalId) ?? gt("Terminal")}
                 cwd={terminalLaunchLocation.cwd}
                 {...(terminalLaunchLocation.worktreePath !== undefined
                   ? { worktreePath: terminalLaunchLocation.worktreePath }
@@ -1308,6 +1402,7 @@ function TerminalSidebarGroup({
   onActiveTerminalChange: (terminalId: string) => void;
   onCloseTerminal: (terminalId: string) => void;
 }) {
+  const gt = useGT();
   const isGroupActive = terminalGroup.terminalIds.includes(activeTerminalId);
   const groupActiveTerminalId = isGroupActive
     ? activeTerminalId
@@ -1315,10 +1410,10 @@ function TerminalSidebarGroup({
   const terminalCount = terminalGroup.terminalIds.length;
   const isSplitGroup = terminalCount > 1;
   const groupLabel = !isSplitGroup
-    ? "Single"
+    ? gt("Single", { $context: "terminal group with one terminal" })
     : terminalGroup.splitDirection === "vertical"
-      ? "Stacked"
-      : "Side by side";
+      ? gt("Stacked", { $context: "terminals split vertically" })
+      : gt("Side by side", { $context: "terminals split horizontally" });
   const GroupIcon = !isSplitGroup
     ? Square
     : terminalGroup.splitDirection === "vertical"
@@ -1346,10 +1441,14 @@ function TerminalSidebarGroup({
       <div className="flex flex-col gap-0.5">
         {terminalGroup.terminalIds.map((terminalId) => {
           const isActive = terminalId === activeTerminalId;
-          const terminalLabel = terminalLabelById.get(terminalId) ?? "Terminal";
-          const closeTerminalLabel = `Close ${terminalLabel}${
-            isActive && closeShortcutLabel ? ` (${closeShortcutLabel})` : ""
-          }`;
+          const terminalLabel = terminalLabelById.get(terminalId) ?? gt("Terminal");
+          const closeTerminalLabel =
+            isActive && closeShortcutLabel
+              ? gt("Close {terminal} ({shortcut})", {
+                  terminal: terminalLabel,
+                  shortcut: closeShortcutLabel,
+                })
+              : gt("Close {terminal}", { terminal: terminalLabel });
           return (
             <div
               key={terminalId}
@@ -1415,8 +1514,10 @@ export default function ThreadTerminalDrawer({
   terminalLabelsById,
   terminalLaunchLocationsById,
 }: ThreadTerminalDrawerProps) {
+  const gt = useGT();
+  const messages = useMessages();
   const canOperateTerminal = useEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope);
-  const terminalArea = workspaceAreaProps("terminal", 5, "Terminal");
+  const terminalArea = workspaceAreaProps("terminal", 5, gt("Terminal"));
   const isPanel = mode === "panel";
   const [advancedTypography] = useLocalStorage(
     TYPOGRAPHY_ADVANCED_STORAGE_KEY,
@@ -1531,7 +1632,10 @@ export default function ThreadTerminalDrawer({
   const terminalLabelById = (() => {
     const next = new Map<string, string>();
     for (const terminalId of normalizedTerminalIds) {
-      next.set(terminalId, terminalLabelsById?.get(terminalId) ?? getTerminalLabel(terminalId));
+      next.set(
+        terminalId,
+        terminalLabelsById?.get(terminalId) ?? getTerminalLabel(terminalId, messages),
+      );
     }
     return next;
   })();
@@ -1568,21 +1672,21 @@ export default function ThreadTerminalDrawer({
       ...(runtimeEnv ? { runtimeEnv } : {}),
     };
   const splitTerminalActionLabel = hasReachedSplitLimit
-    ? `Split Terminal Horizontally (max ${MAX_TERMINALS_PER_GROUP} per group)`
+    ? gt("Split Terminal Horizontally (max {max} per group)", { max: MAX_TERMINALS_PER_GROUP })
     : splitShortcutLabel
-      ? `Split Terminal Horizontally (${splitShortcutLabel})`
-      : "Split Terminal Horizontally";
+      ? gt("Split Terminal Horizontally ({shortcut})", { shortcut: splitShortcutLabel })
+      : gt("Split Terminal Horizontally");
   const splitTerminalVerticalActionLabel = hasReachedSplitLimit
-    ? `Split Terminal Vertically (max ${MAX_TERMINALS_PER_GROUP} per group)`
+    ? gt("Split Terminal Vertically (max {max} per group)", { max: MAX_TERMINALS_PER_GROUP })
     : splitVerticalShortcutLabel
-      ? `Split Terminal Vertically (${splitVerticalShortcutLabel})`
-      : "Split Terminal Vertically";
+      ? gt("Split Terminal Vertically ({shortcut})", { shortcut: splitVerticalShortcutLabel })
+      : gt("Split Terminal Vertically");
   const newTerminalActionLabel = newShortcutLabel
-    ? `New Terminal (${newShortcutLabel})`
-    : "New Terminal";
+    ? gt("New Terminal ({shortcut})", { shortcut: newShortcutLabel })
+    : gt("New Terminal");
   const closeTerminalActionLabel = closeShortcutLabel
-    ? `Close Terminal (${closeShortcutLabel})`
-    : "Close Terminal";
+    ? gt("Close Terminal ({shortcut})", { shortcut: closeShortcutLabel })
+    : gt("Close Terminal");
   const onSplitTerminalAction = () => {
     if (!canOperateTerminal || hasReachedSplitLimit) return;
     onSplitTerminal();
@@ -1597,7 +1701,7 @@ export default function ThreadTerminalDrawer({
   };
   const confirmCloseTerminal = (terminalId: string) => {
     if (!canOperateTerminal) return;
-    const label = terminalLabelById.get(terminalId) ?? getTerminalLabel(terminalId);
+    const label = terminalLabelById.get(terminalId) ?? getTerminalLabel(terminalId, m);
     void confirmTerminalClose([label]).then((confirmed) => {
       if (confirmed && readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope)) {
         onCloseTerminal(terminalId, threadRef);
@@ -1723,7 +1827,9 @@ export default function ThreadTerminalDrawer({
       >
         {resizeHandle}
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-4 py-6 text-center text-sm text-muted-foreground">
-          <p>No terminal sessions for this thread yet.</p>
+          <p>
+            <T>No terminal sessions for this thread yet.</T>
+          </p>
           <Button
             size="xs"
             variant="outline"
