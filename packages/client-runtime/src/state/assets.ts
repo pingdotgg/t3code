@@ -21,6 +21,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
+import { toServerClock } from "../clock.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { request } from "../rpc/client.ts";
@@ -147,7 +148,8 @@ const KEEP_URL_MIN_LIFE_MS = 5 * 60_000;
 
 /**
  * A re-mint signs a new URL even when the file is unchanged, and a new URL reloads the image.
- * Keep the shown URL while the server reports the same file revision and it has time left.
+ * Keep the shown URL while the server reports the same file revision and it has time left
+ * on the server's clock, which signed its expiry.
  */
 function keepUnchangedFile(
   shown: AsyncResult.AsyncResult<AssetCreateUrlResult, unknown>,
@@ -216,7 +218,10 @@ export function makeRevisionedAssetUrlFamily(
         }
         const show = (value: AsyncResult.AsyncResult<AssetCreateUrlResult, unknown>) => {
           const previous = shownByResource.get(resourceKey);
-          const shown = previous === undefined ? value : keepUnchangedFile(previous, value, now());
+          const shown =
+            previous === undefined
+              ? value
+              : keepUnchangedFile(previous, value, toServerClock(environmentId, now()));
           shownByResource.set(resourceKey, shown);
           return shown;
         };

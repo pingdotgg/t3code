@@ -22,6 +22,7 @@ import {
   PrimaryConnectionTarget,
   type SupervisorConnectionState,
 } from "../connection/model.ts";
+import { recordServerClock } from "../clock.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { resolveMediaSource } from "../mediaSource.ts";
@@ -344,16 +345,16 @@ type MintResult = AsyncResult.AsyncResult<{
   fileRevision?: string;
 }>;
 
-const minted = (n: number, fileRevision?: string): MintResult =>
+const minted = (n: number, fileRevision?: string, expiresAt = 60 * 60_000): MintResult =>
   AsyncResult.success({
     relativeUrl: `/a/${n}`,
-    expiresAt: 60 * 60_000,
+    expiresAt,
     ...(fileRevision === undefined ? {} : { fileRevision }),
   });
 
 // A stand-in for the asset URL query: a refresh starts a mint (counted, shown as
 // waiting) and `settle` completes the latest one.
-function setup(initial: MintResult) {
+function setup(initial: MintResult, now: () => number = () => 0) {
   let mints = 0;
   // Node removal runs on the registry's scheduler; `unmount` flushes it so the
   // next mount of the same revision builds a fresh node.
@@ -372,10 +373,7 @@ function setup(initial: MintResult) {
       registry.set(server, AsyncResult.waiting(registry.get(server)));
     },
   ).pipe(Atom.keepAlive);
-  const revisioned = makeRevisionedAssetUrlFamily(
-    () => query,
-    () => 0,
-  );
+  const revisioned = makeRevisionedAssetUrlFamily(() => query, now);
   const atom = (revision: string | null) =>
     revisioned({
       environmentId: revisionedEnvironmentId,
@@ -389,7 +387,8 @@ function setup(initial: MintResult) {
       for (const task of scheduled.splice(0)) task();
     };
   };
-  const settle = (fileRevision?: string) => registry.set(server, minted(mints + 1, fileRevision));
+  const settle = (fileRevision?: string, expiresAt?: number) =>
+    registry.set(server, minted(mints + 1, fileRevision, expiresAt));
   const url = (revision: string | null) => {
     const result = registry.get(atom(revision));
     return result._tag === "Success" ? result.value.relativeUrl : null;
@@ -476,5 +475,33 @@ describe("makeRevisionedAssetUrlFamily", () => {
     settle("file-b");
     expect(url("mutation-4")).toBe("/a/5");
     edited();
+  });
+
+  it("swaps in a renewed URL once the shown one nears expiry on the server's clock", () => {
+    let clientNow = 0;
+    const { mount, settle, url } = setup(minted(0, "file-a"), () => clientNow);
+    recordServerClock(revisionedEnvironmentId, {
+      serverTimeMs: 10 * 60_000,
+      requestedAtMs: 0,
+      receivedAtMs: 0,
+    });
+    try {
+      const first = mount("mutation-1");
+      settle("file-a");
+      first();
+
+      // Server minute 59: the client's clock says eleven minutes remain, the server's says one.
+      clientNow = 49 * 60_000;
+      const renewed = mount("mutation-2");
+      settle("file-a", 120 * 60_000);
+      expect(url("mutation-2")).toBe("/a/3");
+      renewed();
+    } finally {
+      recordServerClock(revisionedEnvironmentId, {
+        serverTimeMs: undefined,
+        requestedAtMs: 0,
+        receivedAtMs: 0,
+      });
+    }
   });
 });
