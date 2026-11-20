@@ -1289,7 +1289,7 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       const { command, usage, offers, send, startTurn, until, throughPromptSettled } =
         yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
       yield* startTurn(1, false);
-      yield* throughPromptSettled;
+      const prompt = yield* throughPromptSettled;
       yield* TestClock.adjust("10 minutes");
       yield* send({
         sessionUpdate: "tool_call_update",
@@ -1305,6 +1305,20 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       yield* send(usage);
       yield* TestClock.adjust("3 seconds");
       const run = yield* until((event) => event.type === "turn.terminal");
+      const commandItems = (events: typeof run) =>
+        events.flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "command_execution" &&
+          event.turnItem.nativeItemRef?.nativeId === command.toolCallId
+            ? [event.turnItem]
+            : [],
+        );
+      assert.isUndefined(Reflect.get(commandItems(prompt)[0]!, "awaitingCompletion"));
+      assert.deepInclude(
+        commandItems(run).map((item) => [item.status, Reflect.get(item, "awaitingCompletion")]),
+        ["running", true],
+      );
+      assert.isUndefined(Reflect.get(commandItems(run).at(-1)!, "awaitingCompletion"));
       const terminal = run.at(-1);
       assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
       assert.include(JSON.stringify(run), "Here is the chart.", "the reply is part of the run");
@@ -2041,7 +2055,7 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
 
 describe("AntigravityAdapterV2 session system prompt", () => {
   it.effect.each(["1.5.0"])(
-    "carries PR linking once per turn on %s, which does not advertise a system prompt append",
+    "carries PR linking and background command guidance on %s without a system prompt append",
     (agentVersion) =>
       Effect.gen(function* () {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -2161,6 +2175,12 @@ describe("AntigravityAdapterV2 session system prompt", () => {
         assert.include(sent, "through the Antigravity harness, as gemini-test-low");
         assert.notInclude(append, "systemPrompt");
         assert.include(sent, "<pull_request_linking>");
+        assert.include(sent, "<antigravity_background_work>");
+        assert.include(sent, "explicitly reports a running background task ID");
+        assert.include(sent, "When it wakes you, check the result and continue");
+        assert.include(sent, "If there is no pending wakeup, keep working or explain the blocker");
+        assert.include(sent, "does not wake you when it becomes ready");
+        assert.include(sent, "run a separate, finite readiness check with a timeout");
       }).pipe(Effect.provide(layerSession)),
   );
 });

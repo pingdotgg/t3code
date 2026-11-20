@@ -167,6 +167,7 @@ type PendingBackgroundWorkTurnItem = {
   } | null;
   readonly input?: unknown;
   readonly monitor?: boolean | undefined;
+  readonly awaitingCompletion?: true | undefined;
   readonly prompt?: string | undefined;
   readonly childThreadId?: ThreadId | null;
 };
@@ -258,24 +259,49 @@ export function pendingBackgroundTurnItems<Item extends PendingBackgroundWorkTur
   );
 }
 
+export function deriveActiveCommandWaits(
+  turnItems: ReadonlyArray<PendingBackgroundWorkTurnItem>,
+  activeRunId: string | null | undefined,
+): ReadonlyArray<PendingBackgroundWorkTask> {
+  if (activeRunId == null) return [];
+  return turnItems.flatMap((item) =>
+    item.runId === activeRunId &&
+    item.type === "command_execution" &&
+    item.status === "running" &&
+    item.awaitingCompletion === true
+      ? [
+          {
+            taskId: nativeTaskIdFromTurnItem(item),
+            kind: "command" as const,
+            description:
+              (typeof item.input === "string" && item.input.trim()) ||
+              descriptionFromTurnItem(item),
+            awaited: true as const,
+          },
+        ]
+      : [],
+  );
+}
+
 export function derivePendingBackgroundWork(input: {
   readonly latestRun: PendingBackgroundWorkRun | null | undefined;
   readonly providerThreads: ReadonlyArray<PendingBackgroundWorkProviderThread>;
   readonly turnItems: ReadonlyArray<PendingBackgroundWorkTurnItem>;
   readonly activeProviderThreadId?: string | null;
-  readonly hasActiveRun?: boolean;
+  readonly activeRunId?: string | null;
   /** Excludes rolled-back runs; optional only when the caller already filtered them, as SQL shell reads do. */
   readonly runs?: ReadonlyArray<PendingBackgroundWorkRun>;
   readonly pullRequests?: ReadonlyArray<PendingBackgroundWorkPullRequest> | undefined;
 }): ReadonlyArray<PendingBackgroundWorkTask> {
-  const hasActiveRun =
-    input.hasActiveRun ??
-    input.runs?.some(
-      (run) => run.status === "preparing" || run.status === "starting" || run.status === "running",
-    ) ??
-    false;
-  if (hasActiveRun) {
-    return [];
+  const activeRunId =
+    input.activeRunId === undefined
+      ? input.runs?.findLast(
+          (run) =>
+            run.status === "preparing" || run.status === "starting" || run.status === "running",
+        )?.id
+      : input.activeRunId;
+  if (activeRunId != null) {
+    return deriveActiveCommandWaits(input.turnItems, activeRunId);
   }
   if (input.latestRun == null) {
     return pullRequestWatchTasks(input.pullRequests);

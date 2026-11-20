@@ -8847,7 +8847,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     providerThreads: providerThreadsByThreadId.get(thread.id) ?? [],
                     turnItems: pendingTurnItemsByThreadId.get(thread.id) ?? [],
                     activeProviderThreadId: thread.activeProviderThreadId,
-                    hasActiveRun: false,
+                    activeRunId: null,
                     pullRequests: thread.pullRequests,
                   }),
                 } satisfies ProjectionSettlementCandidate;
@@ -9059,7 +9059,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             providerThreads: providerThreadsByThreadId.get(thread.id) ?? [],
             turnItems: pendingTurnItemsByThreadId.get(thread.id) ?? [],
             activeProviderThreadId: thread.activeProviderThreadId,
-            hasActiveRun: row.active_run_id !== null,
+            activeRunId: row.active_run_id,
             pullRequests: thread.pullRequests,
           }),
         ];
