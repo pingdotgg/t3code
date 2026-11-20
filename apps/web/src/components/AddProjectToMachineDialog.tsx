@@ -231,6 +231,9 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
         projectId: newProjectId(),
         title: project.title,
         remoteUrl,
+        provider: project.repositoryIdentity?.provider,
+        protocol:
+          protocol === "https" && cloneUrlProtocol(sourceUrl) !== "https" ? "https" : undefined,
         destinationPath: destinationPath.trim(),
         files: [...selectedFiles.keys()],
       });
