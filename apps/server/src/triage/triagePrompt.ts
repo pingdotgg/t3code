@@ -1,5 +1,9 @@
 import { CLI_RELEASE_REPOSITORY } from "@t3tools/shared/cliRelease";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import { BUILD_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
+
+/** The build's hosted web app, such as app.t3.codes; empty for a standalone build without one. */
+export const HOSTED_WEB_APP_HOST = BUILD_HOSTED_APP_URL && new URL(BUILD_HOSTED_APP_URL).host;
 
 /** Keep TRIAGE_PLAYBOOK byte-identical to .github/triage/PLAYBOOK.md after unescaping backticks and backslashes. */
 
@@ -72,7 +76,7 @@ different code depending on it:
 
 - How is T3 Code running on this machine: \`npx t3 serve\` in a terminal, the
   background service, or the desktop app?
-- Which surface is the user connecting from: the website (app.t3.codes), the
+- Which surface is the user connecting from: the website${HOSTED_WEB_APP_HOST && ` (${HOSTED_WEB_APP_HOST})`}, the
   desktop app against a local server, the desktop app against a remote server,
   or the mobile app?
 

@@ -14,7 +14,11 @@ import * as Path from "effect/Path";
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import { buildTriageAppPrompt, type TriageSourceClone } from "./triagePrompt.ts";
+import {
+  buildTriageAppPrompt,
+  HOSTED_WEB_APP_HOST,
+  type TriageSourceClone,
+} from "./triagePrompt.ts";
 import { triageSourceCacheDir, writeTriageSession } from "./triageSession.ts";
 
 const T3CODE_REPOSITORY_URL = `https://github.com/${CLI_RELEASE_REPOSITORY}`;
@@ -44,7 +48,7 @@ const describeClient = (client: AuthClientPresentationMetadata) =>
     client.appVersion === undefined ? undefined : `version ${client.appVersion}`,
     client.os === undefined ? undefined : `on ${client.os}`,
     client.browser === undefined ? undefined : `in ${client.browser}`,
-    client.webDeployment === "hosted" ? "(app.t3.codes)" : undefined,
+    client.webDeployment === "hosted" ? `(${HOSTED_WEB_APP_HOST || "hosted web app"})` : undefined,
   ]
     .filter((part) => part !== undefined)
     .join(" ");

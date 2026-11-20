@@ -19,6 +19,7 @@ import {
 } from "@t3tools/shared/devProxy";
 
 import { loadRepoEnv } from "../../scripts/lib/public-config";
+import { standaloneBuildDefine } from "../../scripts/lib/standalone-build";
 import { resolveTaggedSourceVersion } from "../../scripts/lib/tagged-source-version";
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
 import { tailwindPlugins } from "./vite/tailwind";
@@ -374,6 +375,8 @@ export default defineConfig(({ command }) => {
       "import.meta.env.VITE_T3CODE_STANDALONE": JSON.stringify(repoEnv.T3CODE_STANDALONE ?? ""),
       "import.meta.env.VITE_RELEASE_CHANNEL": JSON.stringify(configuredReleaseChannel),
       "import.meta.env.APP_VERSION": JSON.stringify(configuredAppVersion),
+      // Provider sign-in returns only to this build's own hosted app.
+      ...standaloneBuildDefine({ ...repoEnv, T3CODE_HOSTED_APP_URL: configuredHostedAppUrl }),
     },
     resolve: {
       tsconfigPaths: true,

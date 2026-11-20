@@ -17,7 +17,18 @@ describe("standaloneBuildDefine", () => {
     ).toEqual({
       __T3CODE_BUILD_STANDALONE__: "true",
       __T3CODE_BUILD_RELEASE_REPOSITORY__: '"fork/t3code-releases"',
+      __T3CODE_BUILD_HOSTED_APP_URL__: '""',
     });
+  });
+
+  it("trusts only the fork's own hosted app", () => {
+    expect(
+      standaloneBuildDefine({
+        T3CODE_STANDALONE: "1",
+        GITHUB_REPOSITORY: "fork/t3code",
+        T3CODE_HOSTED_APP_URL: "https://t3.fork.example/",
+      }).__T3CODE_BUILD_HOSTED_APP_URL__,
+    ).toBe('"https://t3.fork.example"');
   });
 
   it.each([{}, { GITHUB_REPOSITORY: "not a repo" }, { GITHUB_REPOSITORY: "pingdotgg/t3code" }])(
