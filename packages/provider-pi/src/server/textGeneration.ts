@@ -1,3 +1,4 @@
+import { APP_NAME } from "@t3tools/shared/branding";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -55,7 +56,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
             : null;
         const broken =
           version === null
-            ? "T3 Code could not determine the Pi version. Update Pi and try again."
+            ? `${APP_NAME} could not determine the Pi version. Update Pi and try again.`
             : brokenVersionDetail({
                 name: "Pi",
                 version,

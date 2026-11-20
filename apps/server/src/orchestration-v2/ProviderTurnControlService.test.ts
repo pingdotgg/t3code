@@ -545,7 +545,7 @@ it.effect("steers a running turn with its sender and the thread's MCP app model 
     assert.equal(steered.length, 1);
     assert.equal(
       steered[0]!.message.text,
-      '[T3 Code: the agent in T3 thread "thread:steer-sender" sent this message, not the user.]\n\nWhat did the app report?',
+      '[Ada: the agent in Ada thread "thread:steer-sender" sent this message, not the user.]\n\nWhat did the app report?',
     );
     assert.deepEqual("appContext" in steered[0]! ? steered[0].appContext : undefined, [
       { key: "mcp_app_turn-item_call-1", text: "Pressed: blue" },

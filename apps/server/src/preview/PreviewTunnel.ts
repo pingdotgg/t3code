@@ -1,5 +1,6 @@
 // Carries a remote desktop's preview traffic to this machine's loopback ports, one TCP
 // connection per WebSocket. Raw bytes, so pages keep their own origin, HMR sockets and TLS.
+import { APP_NAME } from "@t3tools/shared/branding";
 import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequest";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import { allowsPreviewTunnel, AuthTerminalOperateScope } from "@t3tools/contracts";
@@ -44,7 +45,7 @@ export class PreviewTunnelDisabledError extends Schema.TaggedError<PreviewTunnel
   {},
 ) {
   override get message(): string {
-    return "The preview tunnel is turned off on this T3 Code server.";
+    return `The preview tunnel is turned off on this ${APP_NAME} server.`;
   }
 }
 
