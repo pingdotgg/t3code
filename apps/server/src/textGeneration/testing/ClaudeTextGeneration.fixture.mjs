@@ -58,8 +58,11 @@ if (argsMustContain && !args.includes(argsMustContain)) {
   fail("args missing expected content", 2);
 }
 
-const argsMustNotContain = process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN;
-if (argsMustNotContain && args.includes(argsMustNotContain)) {
+// One forbidden fragment per line.
+const argsMustNotContain = (process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN ?? "")
+  .split("\n")
+  .filter(Boolean);
+if (argsMustNotContain.some((fragment) => args.includes(fragment))) {
   fail("args contained forbidden content", 3);
 }
 

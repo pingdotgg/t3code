@@ -233,8 +233,9 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
     Effect.gen(function* () {
       const isolation = {
         cwdMustNotBe: process.cwd(),
-        argsMustContain: "--safe-mode --disallowedTools * --setting-sources",
-        argsMustNotContain: "--bare",
+        argsMustContain: "--safe-mode --setting-sources",
+        // `--disallowedTools *` also blocks the tool Claude uses to return structured_output.
+        argsMustNotContain: "--bare\n--disallowedTools",
       };
       const modelSelection = {
         instanceId: ProviderInstanceId.make("claudeAgent"),
@@ -293,8 +294,9 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
       {
         output: JSON.stringify({ structured_output: { statements: [] } }),
         cwdMustNotBe: process.cwd(),
-        argsMustContain: "--safe-mode --disallowedTools * --setting-sources",
-        argsMustNotContain: "--bare",
+        argsMustContain: "--safe-mode --setting-sources",
+        // `--disallowedTools *` also blocks the tool Claude uses to return structured_output.
+        argsMustNotContain: "--bare\n--disallowedTools",
       },
       (textGeneration) =>
         textGeneration.generateConversationSummary({
@@ -329,8 +331,9 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
           },
         }),
         cwdMustNotBe: process.cwd(),
-        argsMustContain: "--safe-mode --disallowedTools * --setting-sources",
-        argsMustNotContain: "--bare",
+        argsMustContain: "--safe-mode --setting-sources",
+        // `--disallowedTools *` also blocks the tool Claude uses to return structured_output.
+        argsMustNotContain: "--bare\n--disallowedTools",
       },
       (textGeneration) =>
         textGeneration.generateModelEvaluation({
