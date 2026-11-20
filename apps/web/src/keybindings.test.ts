@@ -16,6 +16,7 @@ import {
   effectiveShortcutsForCommand,
   formatShortcutLabel,
   isRichTextBoldShortcut,
+  isSidebarToggleShortcut,
   isTerminalNewShortcut,
   isTerminalSplitShortcut,
   resolveChatShortcutCommand,
@@ -811,6 +812,33 @@ describe("isRichTextBoldShortcut", () => {
     const modB = event({ key: "b", metaKey: true });
     assert.isFalse(isRichTextBoldShortcut(modB, { isCollapsed: true }));
     assert.isFalse(isRichTextBoldShortcut(modB, null));
+  });
+});
+
+describe("isSidebarToggleShortcut", () => {
+  it("leaves Ctrl+B to a focused terminal, where it is the tmux prefix", () => {
+    const ctrlB = event({ key: "b", ctrlKey: true });
+    assert.isFalse(
+      isSidebarToggleShortcut(ctrlB, DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: true },
+      }),
+    );
+    assert.isTrue(
+      isSidebarToggleShortcut(ctrlB, DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+    );
+  });
+
+  it("keeps Cmd+B toggling the sidebar from a focused terminal on macOS", () => {
+    assert.isTrue(
+      isSidebarToggleShortcut(event({ key: "b", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+    );
   });
 });
 

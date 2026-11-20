@@ -1,3 +1,4 @@
+import { useGT, T } from "gt-react";
 import type { EnvironmentId, UsageLimitSourceClearCooldownInput } from "@t3tools/contracts";
 import { useRef, useState } from "react";
 
@@ -14,6 +15,7 @@ export function SourceClearCooldown({
   readonly input: UsageLimitSourceClearCooldownInput;
   readonly label?: string | undefined;
 }) {
+  const gt = useGT();
   const clearCooldown = useAtomCommand(serverEnvironment.clearSourceCooldown, {
     reportFailure: false,
   });
@@ -32,10 +34,10 @@ export function SourceClearCooldown({
     });
     setStatus(
       result._tag === "Success"
-        ? "Proxy cooldown cleared. Retry your request."
+        ? gt("Proxy cooldown cleared. Retry your request.")
         : "error" in result.cause && result.cause.error instanceof Error
           ? result.cause.error.message
-          : "Could not clear the proxy cooldown.",
+          : gt("Could not clear the proxy cooldown."),
     );
   };
 
@@ -43,10 +45,10 @@ export function SourceClearCooldown({
     <div className="flex flex-col gap-2 border-t border-border pt-3">
       {label ? <span className="text-xs text-muted-foreground">{label}</span> : null}
       <Button size="sm" variant="outline" disabled={busy} onClick={() => void clear()}>
-        {busy ? "Clearing…" : "Clear cooldown"}
+        {busy ? gt("Clearing…") : gt("Clear cooldown")}
       </Button>
       <p className="text-xs text-muted-foreground">
-        Clear a stale proxy block after resetting quota. No reset credit is used.
+        <T>Clear a stale proxy block after resetting quota. No reset credit is used.</T>
       </p>
       {status ? (
         <p role="status" className="text-xs text-muted-foreground">

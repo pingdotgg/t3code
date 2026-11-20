@@ -38,6 +38,8 @@ import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { SecretSourceCheckResult } from "./settingsSecretValue.ts";
+import { SecretReference } from "./secretReference.ts";
 import {
   ProviderAuthCancelInput,
   ProviderAuthCompleteInput,
@@ -168,6 +170,32 @@ import {
 } from "./provider.ts";
 import { ProviderInstanceId, ProviderInstanceMutation } from "./providerInstance.ts";
 import {
+  IssueCandidates,
+  IssueCommentInput,
+  IssueCommentsPage,
+  IssueCommentsPageInput,
+  IssueCreateInput,
+  IssueCreateResult,
+  IssueDetail,
+  IssueLinkedThreadsResult,
+  IssueListInput,
+  IssueListResult,
+  IssueOperationError,
+  IssueReactionInput,
+  IssueRef,
+  IssueScopeRef,
+  IssueSetStateInput,
+  IssueTemplateList,
+  IssueTrackerBindProjectInput,
+  IssueTrackerConnectInput,
+  IssueTrackerConnection,
+  IssueTrackerConnectionError,
+  IssueTrackerConnectionList,
+  IssueUnavailableError,
+  IssueUpdateInput,
+  ThreadIssueKey,
+} from "./issue.ts";
+import {
   GuestShareCreateError,
   GuestShareCreateInput,
   GuestShareCreateResult,
@@ -216,18 +244,6 @@ import {
   PullRequestUnavailableError,
   PullRequestUpdateInput,
 } from "./pullRequest.ts";
-import {
-  IssueCommentInput,
-  IssueCreateInput,
-  IssueCreateResult,
-  IssueDetail,
-  IssueDetailInput,
-  IssueListInput,
-  IssueListResult,
-  IssueOperationError,
-  IssueSetStateInput,
-  IssueUnavailableError,
-} from "./issue.ts";
 import {
   RelayClientInstallFailedError,
   RelayClientInstallProgressEventSchema,
@@ -375,7 +391,7 @@ import {
   DatabaseStorageStatus,
   ServerSettings,
   ServerSettingsError,
-  ServerSettingsPatch,
+  ClientServerSettingsPatch,
   ListTextGeneratorModelsInput,
   ListTextGeneratorModelsResult,
   TextGeneratorError,
@@ -538,8 +554,10 @@ export const WS_METHODS = {
   peerLinksLink: "peerLinks.link",
   peerLinksUnlink: "peerLinks.unlink",
   peerLinksAnswerRequest: "peerLinks.answerRequest",
+  serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
+  serverCheckSecretSource: "server.checkSecretSource",
   serverSearchAcpRegistry: "server.searchAcpRegistry",
   serverPrepareAcpRegistryAgent: "server.prepareAcpRegistryAgent",
   serverUninstallAcpRegistryManagedBinary: "server.uninstallAcpRegistryManagedBinary",
@@ -609,17 +627,28 @@ export const WS_METHODS = {
   pullRequestsInvalidate: "pullRequests.invalidate",
   pullRequestsReportState: "pullRequests.reportState",
   pullRequestsSubscribeRefreshes: "pullRequests.subscribeRefreshes",
+  pullRequestsSubscribeLinkedThreadRefreshes: "pullRequests.subscribeLinkedThreadRefreshes",
   pullRequestsReviewerCandidates: "pullRequests.reviewerCandidates",
   pullRequestsRequestReviewers: "pullRequests.requestReviewers",
   pullRequestsLabelCandidates: "pullRequests.labelCandidates",
   pullRequestsSetLabels: "pullRequests.setLabels",
 
-  // Source control methods
+  // Issue tracking methods
   issuesList: "issues.list",
   issuesDetail: "issues.detail",
-  issuesComment: "issues.comment",
+  issuesComments: "issues.comments",
+  issuesTemplates: "issues.templates",
+  issuesCandidates: "issues.candidates",
   issuesCreate: "issues.create",
+  issuesComment: "issues.comment",
+  issuesUpdate: "issues.update",
   issuesSetState: "issues.setState",
+  issuesReact: "issues.react",
+  issuesLinkedThreads: "issues.linkedThreads",
+  issueTrackersList: "issueTrackers.list",
+  issueTrackersConnect: "issueTrackers.connect",
+  issueTrackersBindProject: "issueTrackers.bindProject",
+
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
   sourceControlPublishRepository: "sourceControl.publishRepository",
@@ -697,6 +726,16 @@ export const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProv
     usageLimitsCommand: Schema.optional(Schema.Boolean),
     /** As on `subscribeServerConfig`: a failed cwd scan replies with the machine catalog as a pending snapshot. */
     providerCatalogsOnDemand: Schema.optional(Schema.Boolean),
+    /**
+     * Reply with no providers; the config stream carries the result. For callers that only wait
+     * for the refresh. Ignored with `instanceId` and `cwd`, whose reply is the snapshot.
+     */
+    omitProviders: Schema.optional(Schema.Boolean),
+    /**
+     * With `providerCatalogsOnDemand`, a cwd reply also carries the machine slash command names
+     * and skills with their `catalogDigest`. Sent by a client whose held lists are not current.
+     */
+    machineCatalog: Schema.optional(Schema.Boolean),
   }),
   success: ServerProviderUpdatedPayload,
   error: Schema.Union([EnvironmentAuthorizationError, ProviderSetupError]),
@@ -888,9 +927,16 @@ const WsPeerLinksAnswerRequestRpc = Rpc.make(WS_METHODS.peerLinksAnswerRequest, 
   error: Schema.Union([PeerLinkRequestError, EnvironmentAuthorizationError]),
 });
 
+// No in-tree caller; installed Swift TestFlight builds still request it.
+const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
+  payload: Schema.Struct({}),
+  success: ServerSettings,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
 const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
   payload: Schema.Struct({
-    patch: ServerSettingsPatch,
+    patch: ClientServerSettingsPatch,
     providerInstanceMutation: Schema.optionalKey(ProviderInstanceMutation),
   }),
   success: ServerSettings,
@@ -900,6 +946,12 @@ const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
 const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
   payload: Schema.Struct({}),
   success: SourceControlDiscoveryResult,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsServerCheckSecretSourceRpc = Rpc.make(WS_METHODS.serverCheckSecretSource, {
+  payload: Schema.Struct({ source: SecretReference }),
+  success: SecretSourceCheckResult,
   error: EnvironmentAuthorizationError,
 });
 
@@ -1067,12 +1119,6 @@ const WsServerReportClientActivityRpc = Rpc.make(WS_METHODS.serverReportClientAc
   payload: ClientActivityReportInput,
   error: EnvironmentAuthorizationError,
 });
-
-const IssueRpcErrorWithAuth = Schema.Union([
-  IssueUnavailableError,
-  IssueOperationError,
-  EnvironmentAuthorizationError,
-]);
 
 const PullRequestRpcError = Schema.Union([
   PullRequestUnavailableError,
@@ -1263,6 +1309,17 @@ const WsPullRequestsSubscribeRefreshesRpc = Rpc.make(WS_METHODS.pullRequestsSubs
   stream: true,
 });
 
+// Separate from the refreshes above so linked-thread changes don't refetch forge-backed reads.
+const WsPullRequestsSubscribeLinkedThreadRefreshesRpc = Rpc.make(
+  WS_METHODS.pullRequestsSubscribeLinkedThreadRefreshes,
+  {
+    payload: Schema.Struct({}),
+    success: NonNegativeInt,
+    error: EnvironmentAuthorizationError,
+    stream: true,
+  },
+);
+
 // Fetch reviewer candidates only when the menu opens to avoid unused host requests.
 const WsPullRequestsReviewerCandidatesRpc = Rpc.make(WS_METHODS.pullRequestsReviewerCandidates, {
   payload: PullRequestReviewerCandidatesInput,
@@ -1288,40 +1345,112 @@ const WsPullRequestsSetLabelsRpc = Rpc.make(WS_METHODS.pullRequestsSetLabels, {
   error: PullRequestRpcError,
 });
 
-const WsSourceControlLookupRepositoryRpc = Rpc.make(WS_METHODS.sourceControlLookupRepository, {
-  payload: SourceControlRepositoryLookupInput,
-  success: SourceControlRepositoryInfo,
-  error: Schema.Union([SourceControlRepositoryError, EnvironmentAuthorizationError]),
-});
+const IssueRpcError = Schema.Union([
+  IssueUnavailableError,
+  IssueOperationError,
+  EnvironmentAuthorizationError,
+]);
 
 const WsIssuesListRpc = Rpc.make(WS_METHODS.issuesList, {
   payload: IssueListInput,
   success: IssueListResult,
-  error: IssueRpcErrorWithAuth,
+  error: IssueRpcError,
 });
 
 const WsIssuesDetailRpc = Rpc.make(WS_METHODS.issuesDetail, {
-  payload: IssueDetailInput,
+  payload: IssueRef,
   success: IssueDetail,
-  error: IssueRpcErrorWithAuth,
+  error: IssueRpcError,
 });
 
-const WsIssuesCommentRpc = Rpc.make(WS_METHODS.issuesComment, {
-  payload: IssueCommentInput,
-  success: Schema.Void,
-  error: IssueRpcErrorWithAuth,
+/** Older comments, one page at a time, past the cursor the detail handed over. */
+const WsIssuesLinkedThreadsRpc = Rpc.make(WS_METHODS.issuesLinkedThreads, {
+  payload: ThreadIssueKey,
+  success: IssueLinkedThreadsResult,
+  error: IssueRpcError,
+});
+
+const WsIssuesCommentsRpc = Rpc.make(WS_METHODS.issuesComments, {
+  payload: IssueCommentsPageInput,
+  success: IssueCommentsPage,
+  error: IssueRpcError,
+});
+
+const WsIssuesTemplatesRpc = Rpc.make(WS_METHODS.issuesTemplates, {
+  payload: IssueScopeRef,
+  success: IssueTemplateList,
+  error: IssueRpcError,
+});
+
+/** Read when a label or assignee picker opens, not with every issue. */
+const WsIssuesCandidatesRpc = Rpc.make(WS_METHODS.issuesCandidates, {
+  payload: IssueScopeRef,
+  success: IssueCandidates,
+  error: IssueRpcError,
 });
 
 const WsIssuesCreateRpc = Rpc.make(WS_METHODS.issuesCreate, {
   payload: IssueCreateInput,
   success: IssueCreateResult,
-  error: IssueRpcErrorWithAuth,
+  error: IssueRpcError,
+});
+
+const WsIssuesCommentRpc = Rpc.make(WS_METHODS.issuesComment, {
+  payload: IssueCommentInput,
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+const WsIssuesUpdateRpc = Rpc.make(WS_METHODS.issuesUpdate, {
+  payload: IssueUpdateInput,
+  success: Schema.Void,
+  error: IssueRpcError,
 });
 
 const WsIssuesSetStateRpc = Rpc.make(WS_METHODS.issuesSetState, {
   payload: IssueSetStateInput,
   success: Schema.Void,
-  error: IssueRpcErrorWithAuth,
+  error: IssueRpcError,
+});
+
+const WsIssuesReactRpc = Rpc.make(WS_METHODS.issuesReact, {
+  payload: IssueReactionInput,
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+const IssueTrackerRpcError = Schema.Union([
+  IssueTrackerConnectionError,
+  EnvironmentAuthorizationError,
+]);
+
+/** Every standalone tracker this server ships, each with its connection probed afresh. */
+const WsIssueTrackersListRpc = Rpc.make(WS_METHODS.issueTrackersList, {
+  payload: Schema.Struct({}),
+  success: IssueTrackerConnectionList,
+  error: IssueTrackerRpcError,
+});
+
+/**
+ * Verifies the credential against the tracker before storing it; the result is the new status.
+ * A null token disconnects, which also unbinds every project that pointed at the tracker.
+ */
+const WsIssueTrackersConnectRpc = Rpc.make(WS_METHODS.issueTrackersConnect, {
+  payload: IssueTrackerConnectInput,
+  success: IssueTrackerConnection,
+  error: IssueTrackerRpcError,
+});
+
+const WsIssueTrackersBindProjectRpc = Rpc.make(WS_METHODS.issueTrackersBindProject, {
+  payload: IssueTrackerBindProjectInput,
+  success: Schema.Void,
+  error: IssueTrackerRpcError,
+});
+
+const WsSourceControlLookupRepositoryRpc = Rpc.make(WS_METHODS.sourceControlLookupRepository, {
+  payload: SourceControlRepositoryLookupInput,
+  success: SourceControlRepositoryInfo,
+  error: Schema.Union([SourceControlRepositoryError, EnvironmentAuthorizationError]),
 });
 
 const WsSourceControlCloneRepositoryRpc = Rpc.make(WS_METHODS.sourceControlCloneRepository, {
@@ -2037,6 +2166,13 @@ export const WsSubscribeServerConfigRpc = Rpc.make(WS_METHODS.subscribeServerCon
     workspaceSnapshotsOnDemand: Schema.optional(Schema.Boolean),
     /** With on-demand snapshots, also omit machine slash commands and skills a cwd snapshot replaces. */
     providerCatalogsOnDemand: Schema.optional(Schema.Boolean),
+    /**
+     * With on-demand catalogs, send a `catalogDigest` in place of the machine slash command names
+     * and skills. The client keeps the lists it holds and loads new ones with a cwd snapshot.
+     */
+    providerCatalogDigests: Schema.optional(Schema.Boolean),
+    /** Send provider changes as `providerStatusDeltas`; older clients reject the event type. */
+    providerStatusDeltas: Schema.optional(Schema.Boolean),
   }),
   success: ServerConfigStreamEvent,
   error: Schema.Union([KeybindingsConfigError, ServerSettingsError, EnvironmentAuthorizationError]),
@@ -2144,6 +2280,20 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
 ) {}
 
 export const WsRpcGroup = RpcGroup.make(
+  WsIssuesListRpc,
+  WsIssuesDetailRpc,
+  WsIssuesCommentsRpc,
+  WsIssuesTemplatesRpc,
+  WsIssuesCandidatesRpc,
+  WsIssuesLinkedThreadsRpc,
+  WsIssuesCreateRpc,
+  WsIssuesCommentRpc,
+  WsIssuesUpdateRpc,
+  WsIssuesSetStateRpc,
+  WsIssuesReactRpc,
+  WsIssueTrackersListRpc,
+  WsIssueTrackersConnectRpc,
+  WsIssueTrackersBindProjectRpc,
   WsGuestShareCreateRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
@@ -2175,6 +2325,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRunStorageCleanupRpc,
   WsServerGetStorageCleanupReportRpc,
   WsServerGetDatabaseStorageRpc,
+  WsServerGetSettingsRpc,
   WsServerReclaimDatabaseSpaceRpc,
   WsServerUpdateSettingsRpc,
   WsPeerLinksListRpc,
@@ -2182,6 +2333,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPeerLinksUnlinkRpc,
   WsPeerLinksAnswerRequestRpc,
   WsServerDiscoverSourceControlRpc,
+  WsServerCheckSecretSourceRpc,
   WsServerSearchAcpRegistryRpc,
   WsServerPrepareAcpRegistryAgentRpc,
   WsServerUninstallAcpRegistryManagedBinaryRpc,
@@ -2238,11 +2390,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsPullRequestsSetFilesViewedRpc,
   WsPullRequestsRunActionRpc,
   WsPullRequestsUpdateRpc,
-  WsIssuesListRpc,
-  WsIssuesDetailRpc,
-  WsIssuesCommentRpc,
-  WsIssuesCreateRpc,
-  WsIssuesSetStateRpc,
   WsPullRequestsCommentRpc,
   WsPullRequestsUpdateCommentRpc,
   WsPullRequestsSubmitReviewRpc,
@@ -2252,6 +2399,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPullRequestsInvalidateRpc,
   WsPullRequestsReportStateRpc,
   WsPullRequestsSubscribeRefreshesRpc,
+  WsPullRequestsSubscribeLinkedThreadRefreshesRpc,
   WsPullRequestsReviewerCandidatesRpc,
   WsPullRequestsRequestReviewersRpc,
   WsPullRequestsLabelCandidatesRpc,

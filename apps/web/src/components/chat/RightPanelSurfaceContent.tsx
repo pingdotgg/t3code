@@ -1,6 +1,8 @@
+import { useGT } from "gt-react";
 import type {
   EditorId,
   EnvironmentId,
+  IssueTrackerKind,
   PreviewAnnotationPayload,
   ProjectId,
   ResolvedKeybindingsConfig,
@@ -20,6 +22,7 @@ import {
   PersistentThreadTerminalPanel,
   type PersistentThreadTerminalPanelProps,
 } from "../PersistentThreadTerminals";
+import { IssueDetailPanel } from "../issue/IssueDetailPanel";
 import { pullRequestPanelContext } from "../pullRequest/pullRequestDetail.logic";
 import { PullRequestDetailPanel } from "../pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "../pullRequest/PullRequestGhosts";
@@ -81,11 +84,13 @@ export function RightPanelSurfaceContent(props: {
   readonly onCloseSurface: (surface: RightPanelSurface) => void;
   readonly terminal: RightPanelTerminalProps;
   readonly pullRequest: RightPanelPullRequestProps;
+  readonly issuesSupported: boolean;
   readonly files: RightPanelFileProps;
   readonly issueProject: EnvironmentProject | null;
   readonly sideChatParentPanel: SideChatParentPanel;
 }) {
   const { surface, threadRef, visible, onCloseSurface } = props;
+  const gt = useGT();
   if (surface === null) return null;
   switch (surface.kind) {
     case "issues":
@@ -97,8 +102,6 @@ export function RightPanelSurfaceContent(props: {
             projectId={props.issueProject.id}
             projectTitle={props.issueProject.title}
             cwd={props.files.workspaceRoot}
-            openNumber={surface.openNumber}
-            openRequestId={surface.openRequestId}
             composerDraftTarget={props.composerDraftTarget}
           />
         </Suspense>
@@ -143,8 +146,8 @@ export function RightPanelSurfaceContent(props: {
       if (!pullRequest.supported) {
         return (
           <PullRequestsUnavailableState
-            title="Pull requests unavailable"
-            error="Update this environment's T3 Code server to browse pull requests."
+            title={gt("Pull requests unavailable")}
+            error={gt("Update this environment's T3 Code server to browse pull requests.")}
           />
         );
       }
@@ -191,6 +194,40 @@ export function RightPanelSurfaceContent(props: {
         />
       );
     }
+    case "issue":
+      if (!props.pullRequest.capabilityKnown) return <PullRequestDetailGhost />;
+      if (!props.issuesSupported) {
+        return (
+          <PullRequestsUnavailableState
+            title={gt("Issues unavailable")}
+            error={gt("Update this environment's T3 Code server to browse issues.")}
+          />
+        );
+      }
+      return (
+        <IssueDetailPanel
+          key={`${surface.environmentId ?? props.environmentId}:${surface.id}`}
+          environmentId={
+            (surface.environmentId as EnvironmentId | undefined) ?? props.environmentId
+          }
+          reference={{
+            projectId: surface.projectId as ProjectId,
+            tracker: surface.tracker as IssueTrackerKind,
+            ...(surface.host ? { host: surface.host } : {}),
+            scope: surface.scope,
+            key: surface.key,
+          }}
+          threadRef={threadRef}
+          onSelectPullRequest={(reference) => {
+            useRightPanelStore.getState().openPullRequest(threadRef, {
+              projectId: reference.projectId,
+              repository: reference.repository,
+              number: reference.number,
+              ...(reference.host ? { host: reference.host } : {}),
+            });
+          }}
+        />
+      );
     case "pull-requests":
       return <ThreadPullRequestsPanel threadRef={threadRef} />;
     case "side-chat":

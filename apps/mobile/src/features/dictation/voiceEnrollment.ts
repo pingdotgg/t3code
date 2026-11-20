@@ -1,3 +1,5 @@
+import { msg } from "gt-react-native";
+import { m } from "../../i18n/messages";
 import { nativeErrorMessage } from "./dictationDownloads";
 import type { DictationNativeModule } from "./dictationNative";
 
@@ -96,7 +98,8 @@ export function createVoiceEnrollment(deps: VoiceEnrollmentDeps): VoiceEnrollmen
     set({ phase: "checking" });
     const uri = await active.stop().catch(() => null);
     if (mine !== run) return discard(uri === null ? [] : [uri]);
-    if (uri === null) return set({ phase: "idle", message: "The recording failed. Try again." });
+    if (uri === null)
+      return set({ phase: "idle", message: m(msg("The recording failed. Try again.")) });
 
     const problem = await deps.native.checkEnrollmentClip(uri).then(
       (check) => (check.problem === null ? null : (check.message ?? "Record that sample again.")),

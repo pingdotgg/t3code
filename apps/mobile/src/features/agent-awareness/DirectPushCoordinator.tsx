@@ -1,14 +1,15 @@
+import { useGT } from "gt-react-native";
 import { useAtomValue } from "@effect/atom-react";
 import { Atom, AsyncResult } from "effect/reactivity";
 import { useEffect, useEffectEvent, useState } from "react";
-import { AppState, Platform } from "react-native";
+import { AppState } from "react-native";
 import * as Notifications from "expo-notifications";
 import type { DirectPushDelivery, EnvironmentId } from "@t3tools/contracts";
 import { useEnvironments } from "../../state/environments";
 import { useThreadShells } from "../../state/entities";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { supportsAgentAwarenessPush } from "./capabilities";
+import { supportsDirectPush } from "./capabilities";
 import { disableDirectPush, rememberDirectPushToken, syncDirectPush } from "./directRegistration";
 import {
   endLocalLiveActivities,
@@ -34,6 +35,7 @@ function setDelivery(id: EnvironmentId, delivery: DirectPushDelivery | undefined
 }
 
 function Coordinator() {
+  const gt = useGT();
   const { environments } = useEnvironments();
   const threads = useThreadShells();
   const preferences = useAtomValue(mobilePreferencesAtom);
@@ -104,9 +106,12 @@ function Coordinator() {
     for (const environment of environments) {
       if (environment.connection.phase === "connected") {
         void disableDirectPush(environment.environmentId)
-          .then(() => setStatus(environment.environmentId, "Disabled"))
+          .then(() => setStatus(environment.environmentId, gt("Disabled")))
           .catch(() =>
-            setStatus(environment.environmentId, "Could not disable delivery. Reconnect to retry."),
+            setStatus(
+              environment.environmentId,
+              gt("Could not disable delivery. Reconnect to retry."),
+            ),
           );
       }
     }
@@ -122,7 +127,7 @@ function Coordinator() {
     for (const environment of environments) {
       if (environment.connection.phase !== "connected") continue;
       const id = environment.environmentId;
-      setStatus(id, "Registering…");
+      setStatus(id, gt("Registering…"));
       void syncDirectPush(id, liveEnabled)
         .then((status) => {
           if (isCancelled()) return;
@@ -130,15 +135,17 @@ function Coordinator() {
           setStatus(
             id,
             status?.registered
-              ? "Registered with Apple notification delivery"
-              : "APNs setup needed on this server",
+              ? gt("Registered with Apple notification delivery")
+              : gt("APNs setup needed on this server"),
           );
         })
         .catch((error: unknown) => {
           if (!isCancelled())
             setStatus(
               id,
-              error instanceof Error ? error.message : "Registration failed. Reconnect to retry.",
+              error instanceof Error
+                ? error.message
+                : gt("Registration failed. Reconnect to retry."),
             );
         });
     }
@@ -157,5 +164,5 @@ function Coordinator() {
   return null;
 }
 export function DirectPushCoordinator() {
-  return Platform.OS === "ios" && supportsAgentAwarenessPush() ? <Coordinator /> : null;
+  return supportsDirectPush() ? <Coordinator /> : null;
 }

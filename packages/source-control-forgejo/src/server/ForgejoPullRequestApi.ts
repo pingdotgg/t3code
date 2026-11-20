@@ -825,6 +825,7 @@ const make = Effect.gen(function* () {
     merge: "merge",
     squash: "squash",
     rebase: "rebase",
+    "fast-forward": "fast-forward-only",
   };
 
   const runAction: ForgejoPullRequestApiShape["runAction"] = Effect.fn(

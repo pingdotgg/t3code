@@ -68,6 +68,7 @@ export const withLocalTracing = <A, E, R>(effect: Effect.Effect<A, E, R>): Effec
 export function layer(
   _config: RelayClientTracingConfig | null,
   _resource: RelayClientTracingResource,
+  _options?: { readonly isEnabled?: () => boolean },
 ): Layer.Layer<never, never, HttpClient.HttpClient> {
   return Layer.succeed(RelayClientTracer, Option.none());
 }

@@ -1,3 +1,5 @@
+import { msg } from "gt-react-native";
+import { m } from "../../i18n/messages";
 import type {
   DirectPushDelivery,
   DirectPushRegistration,
@@ -7,6 +9,7 @@ import type {
 import { requestDirectPush } from "@t3tools/client-runtime/rpc";
 import {
   createRuntimeCommand,
+  runAtomCommand,
   runInEnvironment,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
@@ -33,7 +36,7 @@ async function request(
   environmentId: EnvironmentId,
   input: Parameters<typeof requestDirectPush>[0],
 ) {
-  const result = await command.run(appAtomRegistry, { environmentId, request: input });
+  const result = await runAtomCommand(appAtomRegistry, command, { environmentId, request: input });
   if (result._tag !== "Success") throw squashAtomCommandFailure(result);
   return result.value;
 }
@@ -198,8 +201,17 @@ export async function disableDirectPush(environmentId: EnvironmentId) {
 
 /** Apple's answer to the server's latest send, the one thing that tells a bad token from a quiet agent. */
 export function describeDirectPushDelivery(delivery: DirectPushDelivery): string {
-  if (delivery.status === 200) return `Last push: delivered ${relativeTime(delivery.at)} ago`;
+  if (delivery.status === 200)
+    return m(msg("Last push: delivered {value} ago", { value: relativeTime(delivery.at) }));
   if (delivery.status === null)
-    return `Last push: no answer from Apple${delivery.reason ? ` (${delivery.reason})` : ""}`;
-  return `Last push: rejected by Apple (${delivery.reason ?? `HTTP ${delivery.status}`})`;
+    return m(
+      msg("Last push: no answer from Apple{value}", {
+        value: delivery.reason ? ` (${delivery.reason})` : "",
+      }),
+    );
+  return m(
+    msg("Last push: rejected by Apple ({value})", {
+      value: delivery.reason ?? `HTTP ${delivery.status}`,
+    }),
+  );
 }

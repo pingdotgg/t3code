@@ -1,110 +1,310 @@
-/**
- * What the issue tools actually do.
- *
- * Each one resolves the agent's thread to its project and hands the rest to `IssueService`, so
- * an agent reads and writes issues through exactly the path the panel does — same providers,
- * same capability gating, same errors.
- */
-import { IssueOperationError, IssueUnavailableError, type ProjectId } from "@t3tools/contracts";
+import {
+  threadIssueKeysEqual,
+  type IssueDetail,
+  type IssueRef,
+  type OrchestrationV2ThreadShell,
+  type ProjectId,
+  type ThreadId,
+} from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import * as IssueService from "../../../issue/IssueService.ts";
-import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
-import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
+import * as ThreadIssueService from "../../../orchestration-v2/ThreadIssueService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { IssueToolkit } from "./tools.ts";
+import * as McpToolAccess from "../../McpToolAccess.ts";
+import {
+  IssueLinkFailedError,
+  IssueProjectNotFoundError,
+  IssueProjectRequiredError,
+  IssuesToolkit,
+  IssueTargetIncompleteError,
+  type IssueTargetInput,
+  IssueThreadNotFoundError,
+  IssueThreadRequiredError,
+  type ListThreadIssuesResult,
+} from "./tools.ts";
 
-const DEFAULT_LIST_LIMIT = 30;
+/** A resolved reference, with the host the link stores and whether it may be written. */
+interface ResolvedTarget extends IssueRef {
+  readonly host: string;
+  readonly url: string | null;
+  readonly writable: boolean;
+  /** Present when resolving the URL already read the issue. */
+  readonly issue?: IssueDetail;
+}
 
-export const IssueToolkitHandlersLive = McpToolAccess.toLayer(
-  IssueToolkit,
-  Effect.gen(function* () {
-    const issues = yield* IssueService.IssueService;
-    const threads = yield* ThreadManagementService.ThreadManagementService;
+/** What the tools report from a thread shell; exported so the shape is testable without a layer. */
+function listThreadIssues(
+  thread: Pick<OrchestrationV2ThreadShell, "issues">,
+): ListThreadIssuesResult {
+  return {
+    issues: (thread.issues ?? []).map((link) => ({
+      projectId: link.projectId,
+      tracker: link.tracker,
+      host: link.host,
+      scope: link.scope,
+      key: link.key,
+      url: link.url,
+      source: link.source,
+      displayKey: link.displayKey,
+      title: link.title,
+    })),
+  };
+}
 
-    /**
-     * The project the calling agent is working in.
-     *
-     * A credential without the issues capability is refused here rather than at the provider:
-     * the agent should be told it may not do this at all, not that a repository could not be
-     * read.
-     */
-    const currentProject = Effect.fn("mcp.issues.currentProject")(function* () {
-      const invocation = yield* McpInvocationContext.McpInvocationContext;
-      if (!invocation.capabilities.has("issues")) {
-        return yield* new IssueUnavailableError({
-          reason: "provider-unsupported",
-          detail: "This agent session may not read issues.",
-        });
-      }
-      const scope = yield* McpInvocationContext.requireThreadScope(invocation, "Issue tools");
-      const thread = yield* threads.getThreadShell(scope.thread.threadId).pipe(
-        Effect.mapError(
-          () =>
-            new IssueOperationError({
-              operation: "resolveThread",
-              detail: "The thread could not be read.",
-            }),
-        ),
-      );
-      if (thread === null || thread.deletedAt !== null) {
-        return yield* new IssueOperationError({
-          operation: "resolveThread",
-          detail: "This agent's thread could not be found.",
-        });
-      }
-      return thread.projectId satisfies ProjectId;
-    });
+const make = Effect.gen(function* () {
+  const engine = yield* Orchestrator.OrchestratorV2;
+  const issues = yield* IssueService.IssueService;
+  const threadIssues = yield* ThreadIssueService.ThreadIssueService;
 
+  /** The caller's own thread, read when a tool defaults to it. */
+  const callerThread = Effect.fn("IssuesToolkit.callerThread")(function* () {
+    const scope = yield* McpInvocationContext.requireMcpCapability("issues");
+    return scope.thread === undefined
+      ? undefined
+      : yield* engine.getThreadShell(scope.thread.threadId).pipe(
+          Effect.orElseSucceed(() => null),
+          Effect.map((shell) => shell ?? undefined),
+        );
+  });
+
+  const requireThread = Effect.fn("IssuesToolkit.requireThread")(function* (
+    requested: ThreadId | undefined,
+  ) {
+    const scope = yield* McpInvocationContext.requireMcpCapability("issues");
+    const threadId = requested ?? scope.thread?.threadId;
+    if (threadId === undefined) return yield* new IssueThreadRequiredError();
+    const thread = yield* engine.getThreadShell(threadId).pipe(
+      Effect.map(Option.fromNullishOr),
+      Effect.mapError((cause) => new IssueLinkFailedError({ cause })),
+    );
+    if (Option.isNone(thread) || thread.value.deletedAt !== null) {
+      return yield* new IssueThreadNotFoundError({ threadId });
+    }
+    return thread.value;
+  });
+
+  /** Where a key-only reference is read: the named project's tracker, or the caller's thread's. */
+  const requireProjectScope = Effect.fn("IssuesToolkit.requireProjectScope")(function* (
+    requested: ProjectId | undefined,
+  ) {
+    // A named project skips the caller's thread, so the capability is checked here too.
+    yield* McpInvocationContext.requireMcpCapability("issues");
+    const projectId = requested ?? (yield* callerThread())?.projectId;
+    if (projectId === undefined) return yield* new IssueProjectRequiredError();
+    return yield* issues
+      .projectScope(projectId)
+      .pipe(Effect.mapError(() => new IssueProjectNotFoundError({ projectId })));
+  });
+
+  /**
+   * Turns whichever shape the agent passed into one reference. A URL resolves through whichever
+   * project here is a checkout of its repository; a key is completed with the named project's
+   * binding, or the caller's thread's project.
+   */
+  const resolveTarget = Effect.fn("IssuesToolkit.resolveTarget")(function* (
+    input: IssueTargetInput,
+  ) {
+    yield* McpInvocationContext.requireMcpCapability("issues");
+    if (input.url !== undefined) {
+      const preferred = input.projectId ?? (yield* callerThread())?.projectId;
+      const resolved = yield* issues.resolveUrl(input.url, preferred);
+      return { ...resolved, url: input.url } satisfies ResolvedTarget;
+    }
+    if (input.key === undefined) return yield* new IssueTargetIncompleteError();
+    const scope = yield* requireProjectScope(input.projectId);
     return {
-      issue_list: McpToolAccess.readsAsCaller(
-        Effect.fn("mcp.issues.list")(function* (input) {
-          const projectId = yield* currentProject();
-          const result = yield* issues.list({
-            projectId,
-            state: input.state ?? "open",
-            ...(input.query === undefined || input.query.trim().length === 0
-              ? {}
-              : { query: input.query.trim() }),
-            limit: input.limit ?? DEFAULT_LIST_LIMIT,
-          });
-          return { issues: result.entries, truncated: result.truncated };
-        }),
-      ),
+      ...scope,
+      key: input.key,
+      url: null,
+      writable: true,
+    } satisfies ResolvedTarget;
+  });
 
-      issue_read: McpToolAccess.readsAsCaller(
-        Effect.fn("mcp.issues.read")(function* (input) {
-          const projectId = yield* currentProject();
-          // No repository: the project's own is authoritative, so it is not something an agent
-          // could name wrongly.
-          return yield* issues.detail({ projectId, number: input.number });
-        }),
-      ),
+  /** Without a URL when the issue was named by key and never read: an empty one is not reusable. */
+  const identityOf = (target: ResolvedTarget) => ({
+    projectId: target.projectId,
+    tracker: target.tracker,
+    host: target.host,
+    scope: target.scope,
+    key: target.key,
+    ...(target.url === null ? {} : { url: target.url }),
+  });
 
-      issue_comment: McpToolAccess.actsAsCaller(
-        Effect.fn("mcp.issues.comment")(function* (input) {
-          const projectId = yield* currentProject();
-          yield* issues.comment({ projectId, number: input.number, body: input.body });
-        }),
-      ),
+  const refOf = (target: ResolvedTarget): IssueRef & { readonly host: string } => ({
+    projectId: target.projectId,
+    tracker: target.tracker,
+    host: target.host,
+    scope: target.scope,
+    key: target.key,
+  });
 
-      issue_create: McpToolAccess.actsAsCaller(
-        Effect.fn("mcp.issues.create")(function* (input) {
-          const projectId = yield* currentProject();
-          return yield* issues.create({
-            projectId,
-            title: input.title,
-            ...(input.body === undefined ? {} : { body: input.body }),
-          });
-        }),
-      ),
+  const readIssue = (target: ResolvedTarget) =>
+    target.issue === undefined ? issues.detail(refOf(target)) : Effect.succeed(target.issue);
 
-      issue_set_state: McpToolAccess.actsAsCaller(
-        Effect.fn("mcp.issues.setState")(function* (input) {
-          const projectId = yield* currentProject();
-          yield* issues.setState({ projectId, number: input.number, state: input.state });
-        }),
-      ),
-    };
-  }),
-);
+  /** A link needs the issue's URL, which a key-only reference does not carry; one read fills it. */
+  const linkFailure = <E>(cause: Cause.Cause<E>) =>
+    Cause.hasInterruptsOnly(cause)
+      ? Effect.failCause(cause as Cause.Cause<never>)
+      : Effect.fail(new IssueLinkFailedError({ cause }));
+
+  /** A tool that changes `threadId`, or the caller's own thread when it is omitted. */
+  const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A, E, R>(
+    handle: (params: P) => Effect.Effect<A, E, R>,
+  ) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
+
+  return {
+    list_issues: McpToolAccess.reads((input) =>
+      Effect.gen(function* () {
+        const { projectId } = yield* requireProjectScope(input.projectId);
+        const result = yield* issues.list({
+          projectId,
+          state: input.state ?? "open",
+          ...(input.query === undefined ? {} : { query: input.query }),
+          ...(input.limit === undefined ? {} : { limit: input.limit }),
+          ...(input.cursors === undefined ? {} : { cursors: input.cursors }),
+        });
+        return {
+          issues: result.entries.map((entry) => ({
+            projectId: entry.projectId,
+            tracker: entry.tracker,
+            host: entry.host,
+            scope: entry.scope,
+            key: entry.key,
+            url: entry.url,
+            displayKey: entry.displayKey,
+            title: entry.title,
+            state: entry.state,
+            author: entry.author?.login ?? null,
+            assignees: entry.assignees.map((actor) => actor.login),
+            labels: entry.labels.map((label) => label.name),
+            updatedAt: entry.updatedAt,
+            commentCount: entry.commentCount,
+          })),
+          nextCursors: result.nextCursors,
+          errors: result.errors.map((error) => ({
+            projectId: error.projectId,
+            message: error.message,
+          })),
+        };
+      }),
+    ),
+    read_issue: McpToolAccess.reads((input) =>
+      Effect.gen(function* () {
+        const target = yield* resolveTarget(input);
+        const detail = yield* readIssue(target);
+        return {
+          ...identityOf(target),
+          url: target.url ?? detail.url,
+          displayKey: detail.displayKey,
+          title: detail.title,
+          state: detail.state,
+          writable: detail.writable,
+          capabilities: detail.capabilities,
+          states: detail.states,
+          author: detail.author?.login ?? null,
+          assignees: detail.assignees.map((actor) => actor.login),
+          labels: detail.labels.map((label) => label.name),
+          createdAt: detail.createdAt,
+          updatedAt: detail.updatedAt,
+          closedAt: detail.closedAt,
+          body: detail.body,
+          comments: detail.comments.map((comment) => ({
+            id: comment.id,
+            author: comment.author?.login ?? null,
+            body: comment.body,
+            createdAt: comment.createdAt,
+          })),
+          commentsTruncated: detail.commentsCursor !== null,
+          linkedPullRequests: detail.linkedPullRequests.map((pullRequest) => ({
+            url: pullRequest.url,
+            title: pullRequest.title,
+            state: pullRequest.state,
+            closesIssue: pullRequest.closesIssue,
+          })),
+        };
+      }),
+    ),
+    create_issue: McpToolAccess.writesWithCapability((input) =>
+      Effect.gen(function* () {
+        const scope = yield* requireProjectScope(input.projectId);
+        const created = yield* issues.create({
+          ...scope,
+          title: input.title,
+          body: input.body ?? "",
+          labels: input.labels ?? [],
+          assignees: input.assignees ?? [],
+        });
+        return {
+          ...scope,
+          key: created.key,
+          url: created.url,
+          displayKey: created.displayKey,
+        };
+      }),
+    ),
+    comment_on_issue: McpToolAccess.writesWithCapability((input) =>
+      Effect.gen(function* () {
+        const target = yield* resolveTarget(input);
+        yield* issues.comment({ ...refOf(target), body: input.body });
+        return identityOf(target);
+      }),
+    ),
+    set_issue_state: McpToolAccess.writesWithCapability((input) =>
+      Effect.gen(function* () {
+        const target = yield* resolveTarget(input);
+        yield* issues.setState({
+          ...refOf(target),
+          state: input.state,
+        });
+        return identityOf(target);
+      }),
+    ),
+    link_issue: writesThread((input) =>
+      Effect.gen(function* () {
+        const thread = yield* requireThread(input.threadId);
+        const target = yield* resolveTarget({
+          ...input,
+          projectId: input.projectId ?? thread.projectId,
+        });
+        // Reading the issue proves it exists and names it for the thread's row.
+        const detail = yield* readIssue(target);
+        const url = target.url ?? detail.url;
+        const { alreadyLinked } = yield* threadIssues
+          .link({
+            threadId: thread.id,
+            ref: refOf(target),
+            url,
+            displayKey: detail.displayKey,
+            title: detail.title,
+            source: "agent",
+          })
+          .pipe(Effect.catchCause(linkFailure));
+        return { ...identityOf(target), url, alreadyLinked };
+      }),
+    ),
+    unlink_issue: writesThread((input) =>
+      Effect.gen(function* () {
+        const thread = yield* requireThread(input.threadId);
+        const target = yield* resolveTarget({
+          ...input,
+          projectId: input.projectId ?? thread.projectId,
+        });
+        const existing = (thread.issues ?? []).find((link) => threadIssueKeysEqual(link, target));
+        if (existing === undefined) return { ...identityOf(target), wasLinked: false };
+        const { wasLinked } = yield* threadIssues
+          .unlink({ threadId: thread.id, key: target })
+          .pipe(Effect.catchCause(linkFailure));
+        return { ...identityOf(target), url: existing.url, wasLinked };
+      }),
+    ),
+    list_thread_issues: McpToolAccess.reads((input) =>
+      requireThread(input.threadId).pipe(Effect.map(listThreadIssues)),
+    ),
+  } satisfies McpToolAccess.Handlers<typeof IssuesToolkit.tools>;
+});
+
+export const layer = McpToolAccess.toLayer(IssuesToolkit, make);

@@ -8,6 +8,7 @@ import {
   type VoiceInputState,
 } from "@t3tools/client-runtime/voice-input";
 
+import { m } from "../../i18n/messages";
 import { normalizeVoiceInputDecibels, VOICE_WAVEFORM_SAMPLE_COUNT } from "./voiceInputMetering";
 
 const VOICE_METERING_INTERVAL_MS = 80;
@@ -19,7 +20,7 @@ export type VoiceInputTarget = {
   readonly label?: string;
   readonly readDraft: () => VoiceDraftSnapshot | null;
   readonly commitDraft: VoiceInputControllerDependencies["commitDraft"];
-  readonly subscribe: () => () => void;
+  readonly subscribe?: (() => () => void) | undefined;
 };
 
 export type VoiceInputSnapshot = {
@@ -52,27 +53,28 @@ export function createVoiceInputTarget(
   readText: () => string | null,
   commitDraft: VoiceInputTarget["commitDraft"],
   selection: VoiceDraftSnapshot["selection"],
-  subscribeToChanges: (onChange: () => void) => () => void,
+  subscribeToChanges?: (onChange: () => void) => () => void,
 ): VoiceInputTarget {
   let revision = 0;
   return {
     ownerKey,
     readDraft: () => {
       const text = readText();
-      if (text === null) return null;
-      return { ownerKey, text, selection, revision };
+      return text === null ? null : { ownerKey, text, selection, revision };
     },
     commitDraft,
-    subscribe: () => {
-      let previousText = readText();
-      return subscribeToChanges(() => {
-        const text = readText();
-        if (text !== previousText) {
-          previousText = text;
-          revision += 1;
+    subscribe: subscribeToChanges
+      ? () => {
+          let previousText = readText();
+          return subscribeToChanges(() => {
+            const text = readText();
+            if (text !== previousText) {
+              previousText = text;
+              revision += 1;
+            }
+          });
         }
-      });
-    },
+      : undefined,
   };
 }
 
@@ -84,7 +86,7 @@ export class VoiceInputSession {
   readonly controller: VoiceInputController;
   private readonly dependencies: VoiceInputSessionDependencies;
   private target: VoiceInputTarget | null = null;
-  private unsubscribe: (() => void) | null = null;
+  private unsubscribe: (() => void) | undefined;
   private snapshot: VoiceInputSnapshot = {
     state: IDLE_STATE,
     ownerKey: null,
@@ -101,6 +103,7 @@ export class VoiceInputSession {
   constructor(dependencies: VoiceInputSessionDependencies) {
     this.dependencies = dependencies;
     this.controller = new VoiceInputController({
+      resolve: m,
       ...dependencies,
       onStateChange: (state) => this.handleStateChange(state),
       readDraft: () => this.target?.readDraft() ?? null,
@@ -146,7 +149,7 @@ export class VoiceInputSession {
   start(target: VoiceInputTarget): Promise<void> {
     if (voiceInputBlocksSubmission(this.controller.currentState)) return Promise.resolve();
     this.target = target;
-    this.unsubscribe = target.subscribe();
+    this.unsubscribe = target.subscribe?.();
     return this.controller.start();
   }
 
@@ -154,14 +157,14 @@ export class VoiceInputSession {
     this.controller.dispose();
     this.stopRecordingActivity();
     this.unsubscribe?.();
-    this.unsubscribe = null;
+    this.unsubscribe = undefined;
     this.listeners.clear();
   }
 
   private handleStateChange(state: VoiceInputState): void {
     if (!voiceInputBlocksSubmission(state)) {
       this.unsubscribe?.();
-      this.unsubscribe = null;
+      this.unsubscribe = undefined;
     }
     const previousPhase = this.snapshot.state.phase;
     let elapsedSeconds = this.snapshot.elapsedSeconds;

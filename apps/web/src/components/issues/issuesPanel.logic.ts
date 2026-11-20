@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m } from "../../i18n/messages";
 import { sanitizeBranchFragment } from "@t3tools/shared/git";
 import type { IssueListEntry, IssueListState } from "@t3tools/contracts";
 
@@ -5,15 +7,15 @@ export const ISSUE_STATE_FILTERS: ReadonlyArray<{
   readonly value: IssueListState;
   readonly label: string;
 }> = [
-  { value: "open", label: "Open" },
-  { value: "closed", label: "Closed" },
-  { value: "all", label: "All" },
+  { value: "open", label: m(msg("Open")) },
+  { value: "closed", label: m(msg("Closed")) },
+  { value: "all", label: m(msg("All")) },
 ];
 
 export const ISSUE_SORTS = [
-  { value: "recent", label: "Recent" },
-  { value: "oldest", label: "Oldest" },
-  { value: "comments", label: "Discussed" },
+  { value: "recent", label: m(msg("Recent")) },
+  { value: "oldest", label: m(msg("Oldest")) },
+  { value: "comments", label: m(msg("Discussed")) },
 ] as const;
 
 export type IssueSort = (typeof ISSUE_SORTS)[number]["value"];
@@ -53,7 +55,7 @@ export function narrowIssues(
   return entries.filter(
     (entry) =>
       entry.title.toLowerCase().includes(needle) ||
-      String(entry.number) === needle.replace(/^#/u, "") ||
+      entry.key.toLowerCase() === needle.replace(/^#/u, "") ||
       entry.labels.some((label) => label.name.toLowerCase().includes(needle)),
   );
 }
@@ -72,11 +74,11 @@ export function labelColor(color: string | null): string | undefined {
 }
 
 export function issueContextForComposer(issue: {
-  readonly number: number;
+  readonly displayKey: string;
   readonly title: string;
   readonly url: string;
-  readonly state: string;
-  readonly repository: string;
+  readonly state: { readonly name: string };
+  readonly scope: string;
   readonly body: string;
   readonly comments: ReadonlyArray<{
     readonly author: { readonly login: string } | null;
@@ -84,9 +86,9 @@ export function issueContextForComposer(issue: {
   }>;
 }): string {
   const lines = [
-    `## ${issue.repository}#${issue.number}: ${issue.title}`,
+    `## ${issue.scope}${issue.displayKey.startsWith("#") ? "" : "/"}${issue.displayKey}: ${issue.title}`,
     "",
-    `State: ${issue.state}`,
+    `State: ${issue.state.name}`,
     `Link: ${issue.url}`,
     "",
     issue.body.trim().length > 0 ? issue.body.trim() : "_No description._",
@@ -113,14 +115,10 @@ export function appendIssueContext(prompt: string, context: string): string {
   return existing.length === 0 ? `${context}\n\n` : `${existing}\n\n${context}\n\n`;
 }
 
-export function issueBranchName(issue: {
-  readonly number: number;
-  readonly title: string;
-}): string {
+export function issueBranchName(issue: { readonly key: string; readonly title: string }): string {
+  const key = sanitizeBranchFragment(issue.key);
   const slug = sanitizeBranchFragment(issue.title);
-  return slug.length === 0 || slug === "update"
-    ? `issue-${issue.number}`
-    : `issue-${issue.number}-${slug}`;
+  return slug.length === 0 || slug === "update" ? `issue-${key}` : `issue-${key}-${slug}`;
 }
 
 const ISSUE_BRANCH_PATTERN = /^issue-(\d+)(?:-|$)/u;

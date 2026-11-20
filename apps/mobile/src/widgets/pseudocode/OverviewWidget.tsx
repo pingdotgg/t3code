@@ -18,6 +18,17 @@ export function OverviewWidget(
   environment: WidgetEnvironment,
 ) {
   "widget";
+  const copy = {
+    caughtUp: "All caught up. Start a task in PseudoCode.",
+    recent: "Recent results",
+    needsAttention: "{attentionCount} need you",
+    connectOverview:
+      "Follow your work and see when your agent needs you. Open PseudoCode to connect.",
+    delayed: "Updates delayed · Open to reconnect",
+    moreThreads: "+{value} more threads",
+    workOverview: "Your work, at a glance",
+    ...props.copy,
+  };
   const large = environment.widgetFamily === "systemLarge";
   const dark = environment.colorScheme !== "light";
   // The server heartbeats only while agents are active; idle results are not late.
@@ -110,10 +121,10 @@ export function OverviewWidget(
           ]}
         >
           {(props.attentionCount ?? 0) > 0
-            ? `${props.attentionCount} need you`
+            ? copy.needsAttention.replace("{attentionCount}", String(props.attentionCount ?? 0))
             : (props.activeCount ?? 0) > 0
               ? `${props.activeCount} active`
-              : "Recent results"}
+              : copy.recent}
         </Text>
       </HStack>
       {rows.map((row) => (
@@ -183,19 +194,17 @@ export function OverviewWidget(
       ))}
       {rows.length === 0 ? (
         <Text modifiers={[font({ size: 13 }), foregroundStyle("secondary"), lineLimit(3)]}>
-          {props.activities === undefined
-            ? "Follow your work and see when your agent needs you. Open PseudoCode to connect."
-            : "All caught up. Start a task in PseudoCode."}
+          {props.activities === undefined ? copy.connectOverview : copy.caughtUp}
         </Text>
       ) : null}
       <Spacer minLength={0} />
       <HStack>
         <Text modifiers={[font({ size: 10 }), foregroundStyle("secondary"), lineLimit(1)]}>
           {delayed
-            ? "Updates delayed · Open to reconnect"
+            ? copy.delayed
             : activities.length > rows.length
-              ? `+${activities.length - rows.length} more threads`
-              : "Your work, at a glance"}
+              ? copy.moreThreads.replace("{value}", String(activities.length - rows.length))
+              : copy.workOverview}
         </Text>
         <Spacer minLength={4} />
         {props.updatedAt ? (

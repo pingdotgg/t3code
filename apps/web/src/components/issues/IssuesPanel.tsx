@@ -1,9 +1,12 @@
+import { useGT, T } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentId,
   IssueDetail,
   IssueListEntry,
   IssueListState,
+  IssueRef,
+  IssueScopeRef,
   ProjectId,
   ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -43,10 +46,6 @@ interface IssuesPanelProps {
   readonly projectId: ProjectId;
   readonly projectTitle: string;
   readonly cwd: string;
-  /** Set when a link in the transcript asked for one issue rather than the list. */
-  readonly openNumber?: number | undefined;
-  /** Moves on every link click, so the same issue reopens rather than being ignored. */
-  readonly openRequestId?: number | undefined;
   /** Where "Add to thread" writes. Absent on a surface with no composer beside it. */
   readonly composerDraftTarget?: ScopedThreadRef | DraftId | undefined;
 }
@@ -59,21 +58,14 @@ interface IssuesPanelProps {
  * only where the host said this account may write.
  */
 export function IssuesPanel(props: IssuesPanelProps) {
+  const gt = useGT();
   const canCreate = useAtomValue(issueEnvironment.create.permissionAtom(props.environmentId));
   const [state, setState] = useState<IssueListState>("open");
   const [sort, setSort] = useState<IssueSort>("recent");
   const [search, setSearch] = useState("");
   const [submittedSearch, setSubmittedSearch] = useState("");
-  const [openNumber, setOpenNumber] = useState<number | null>(props.openNumber ?? null);
+  const [openIssue, setOpenIssue] = useState<IssueRef | null>(null);
   const [composing, setComposing] = useState(false);
-  const [honouredRequestId, setHonouredRequestId] = useState(props.openRequestId ?? 0);
-
-  // A link in the transcript names an issue; the panel opens it, and opens it again if the same
-  // link is clicked after the reader has navigated away from it.
-  if (props.openRequestId !== undefined && props.openRequestId !== honouredRequestId) {
-    setHonouredRequestId(props.openRequestId);
-    setOpenNumber(props.openNumber ?? null);
-  }
 
   const listQuery = useEnvironmentQuery(
     issueEnvironment.list({
@@ -87,7 +79,16 @@ export function IssuesPanel(props: IssuesPanelProps) {
   );
 
   const result = listQuery.data;
-  const searchesOnHost = result?.provider?.searchesOnHost ?? false;
+  const searchesOnHost = result?.trackers.some((tracker) => tracker.capabilities?.search) ?? false;
+  const createScopes = (result?.scopes ?? []).filter((scope) =>
+    result?.trackers.some(
+      (tracker) =>
+        tracker.tracker === scope.tracker &&
+        (scope.host === undefined || tracker.host === scope.host) &&
+        tracker.configured &&
+        tracker.capabilities?.create,
+    ),
+  );
   const sortedEntries = sortIssues(result?.entries ?? [], sort);
   const entries = searchesOnHost ? sortedEntries : narrowIssues(sortedEntries, submittedSearch);
 
@@ -97,33 +98,30 @@ export function IssuesPanel(props: IssuesPanelProps) {
     setSubmittedSearch("");
   };
 
-  if (openNumber !== null) {
-    const repository = entries.find((entry) => entry.number === openNumber)?.repository;
+  if (openIssue !== null) {
     return (
       <IssueDetailView
         environmentId={props.environmentId}
-        projectId={props.projectId}
-        repository={repository ?? result?.entries[0]?.repository ?? ""}
-        number={openNumber}
+        reference={openIssue}
         cwd={props.cwd}
         composerDraftTarget={props.composerDraftTarget}
-        onBack={() => setOpenNumber(null)}
+        onBack={() => setOpenIssue(null)}
         onChanged={listQuery.refresh}
       />
     );
   }
 
-  if (composing) {
+  if (composing && createScopes.length > 0) {
     return (
       <NewIssueView
         environmentId={props.environmentId}
-        projectId={props.projectId}
+        scopes={createScopes}
         projectTitle={props.projectTitle}
         onCancel={() => setComposing(false)}
-        onCreated={(number) => {
+        onCreated={(issue) => {
           setComposing(false);
           listQuery.refresh();
-          setOpenNumber(number);
+          setOpenIssue(issue);
         }}
       />
     );
@@ -144,9 +142,9 @@ export function IssuesPanel(props: IssuesPanelProps) {
                 if (event.key === "Enter") submitSearch();
                 if (event.key === "Escape" && search.length > 0) clearSearch();
               }}
-              placeholder={searchesOnHost ? "Search issues" : "Filter loaded issues"}
+              placeholder={searchesOnHost ? gt("Search issues") : gt("Filter loaded issues")}
               size="compact"
-              aria-label="Search issues"
+              aria-label={gt("Search issues")}
             />
             {search.length > 0 ? (
               <InputGroupAddon align="inline-end">
@@ -154,7 +152,7 @@ export function IssuesPanel(props: IssuesPanelProps) {
                   variant="ghost-muted"
                   size="icon-micro"
                   onClick={clearSearch}
-                  aria-label="Clear search"
+                  aria-label={gt("Clear search")}
                 >
                   <X className="size-3.5" />
                 </Button>
@@ -166,7 +164,7 @@ export function IssuesPanel(props: IssuesPanelProps) {
             size="icon"
             className="size-7"
             onClick={listQuery.refresh}
-            aria-label="Refresh issues"
+            aria-label={gt("Refresh issues")}
           >
             <RefreshCw className={cn("size-3.5", listQuery.isPending && "animate-spin")} />
           </Button>
@@ -175,8 +173,8 @@ export function IssuesPanel(props: IssuesPanelProps) {
             size="icon"
             className="size-7"
             onClick={() => setComposing(true)}
-            aria-label="New issue"
-            disabled={!canCreate}
+            aria-label={gt("New issue")}
+            disabled={!canCreate || createScopes.length === 0}
           >
             <Plus className="size-3.5" />
           </Button>
@@ -218,34 +216,43 @@ export function IssuesPanel(props: IssuesPanelProps) {
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {listQuery.error !== null ? (
-          <PanelMessage title="Issues could not be read." detail={listQuery.error} />
+          <PanelMessage title={gt("Issues could not be read.")} detail={listQuery.error} />
         ) : entries.length === 0 ? (
           <PanelMessage
             title={
               listQuery.isPending
-                ? "Loading issues."
-                : result?.provider?.configured === false
-                  ? "No issue tracker here."
-                  : "No issues."
+                ? gt("Loading issues.")
+                : result?.trackers.every((tracker) => !tracker.configured)
+                  ? gt("No issue tracker here.")
+                  : gt("No issues.")
             }
             detail={
               listQuery.isPending
                 ? null
                 : // A tracker that is off is a setting, not an empty list, and saying so stops
                   // the reader looking for issues that can never appear.
-                  (result?.provider?.detail ??
+                  (result?.errors[0]?.message ??
+                  result?.trackers.find((tracker) => tracker.detail)?.detail ??
                   (submittedSearch.length > 0
-                    ? "Nothing matched that search."
-                    : `Nothing open in ${props.projectTitle}.`))
+                    ? gt("Nothing matched that search.")
+                    : gt("Nothing open in {projectTitle}.", { projectTitle: props.projectTitle })))
             }
           />
         ) : (
           <ul className="divide-y divide-border/40">
             {entries.map((entry) => (
               <IssueRow
-                key={entry.number}
+                key={`${entry.tracker}:${entry.host}:${entry.scope}:${entry.key}`}
                 entry={entry}
-                onOpen={() => setOpenNumber(entry.number)}
+                onOpen={() =>
+                  setOpenIssue({
+                    projectId: entry.projectId,
+                    tracker: entry.tracker,
+                    host: entry.host,
+                    scope: entry.scope,
+                    key: entry.key,
+                  })
+                }
               />
             ))}
           </ul>
@@ -270,7 +277,7 @@ function IssueRow(props: { readonly entry: IssueListEntry; readonly onOpen: () =
           <span className="min-w-0 flex-1 text-xs leading-snug text-foreground">{entry.title}</span>
         </div>
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 pl-5 text-2xs text-muted-foreground">
-          <span>#{entry.number}</span>
+          <span>{entry.displayKey}</span>
           {entry.author ? <span>{entry.author.login}</span> : null}
           {comments ? <span>{comments}</span> : null}
           {entry.labels.slice(0, 3).map((label) => (
@@ -294,7 +301,7 @@ function IssueRow(props: { readonly entry: IssueListEntry; readonly onOpen: () =
 
 function StateIcon(props: { readonly state: IssueDetail["state"] }) {
   // Issue states wear the pull request tones: open matches an open PR, closed (done) a merged one.
-  return props.state === "closed" ? (
+  return props.state.category === "closed" ? (
     <CircleCheck
       className={cn(
         "mt-0.5 size-3.5 shrink-0",
@@ -321,19 +328,14 @@ function PanelMessage(props: { readonly title: string; readonly detail: string |
 
 function IssueDetailView(props: {
   readonly environmentId: EnvironmentId;
-  readonly projectId: ProjectId;
-  readonly repository: string;
-  readonly number: number;
+  readonly reference: IssueRef;
   readonly cwd: string;
   readonly composerDraftTarget?: ScopedThreadRef | DraftId | undefined;
   readonly onBack: () => void;
   readonly onChanged: () => void;
 }) {
-  const reference = {
-    projectId: props.projectId,
-    repository: props.repository,
-    number: props.number,
-  };
+  const gt = useGT();
+  const { reference } = props;
   const detailQuery = useEnvironmentQuery(
     issueEnvironment.detail({ environmentId: props.environmentId, input: reference }),
   );
@@ -347,6 +349,7 @@ function IssueDetailView(props: {
   const [pending, setPending] = useState<"comment" | "state" | null>(null);
 
   const detail = detailQuery.data;
+  const targetState = detail?.states.find((state) => state.category !== detail.state.category);
 
   const postComment = async () => {
     const body = draft.trim();
@@ -362,11 +365,11 @@ function IssueDetailView(props: {
   };
 
   const toggleState = async () => {
-    if (!canSetState || !detail || pending !== null) return;
+    if (!canSetState || !targetState || pending !== null) return;
     setPending("state");
     const result = await setState({
       environmentId: props.environmentId,
-      input: { ...reference, state: detail.state === "open" ? "closed" : "open" },
+      input: { ...reference, state: targetState.name },
     });
     setPending(null);
     if (result._tag === "Success") props.onChanged();
@@ -379,7 +382,7 @@ function IssueDetailView(props: {
   const startWork = async () => {
     if (!detail || starting) return;
     setStarting(true);
-    const opened = await newThread(scopeProjectRef(props.environmentId, props.projectId), {
+    const opened = await newThread(scopeProjectRef(props.environmentId, reference.projectId), {
       branch: issueBranchName(detail),
     }).then(
       (result) => result,
@@ -389,8 +392,8 @@ function IssueDetailView(props: {
     if (opened === null) {
       toastManager.add({
         type: "error",
-        title: "Could not open a thread",
-        description: "Try again from the project, or open a thread first.",
+        title: gt("Could not open a thread"),
+        description: gt("Try again from the project, or open a thread first."),
       });
       return;
     }
@@ -399,8 +402,8 @@ function IssueDetailView(props: {
     store.setPrompt(opened.draftId, appendIssueContext(current, issueContextForComposer(detail)));
     toastManager.add({
       type: "success",
-      title: "Thread opened",
-      description: "The issue is in the composer. Read it over, then send.",
+      title: gt("Thread opened"),
+      description: gt("The issue is in the composer. Read it over, then send."),
     });
   };
 
@@ -408,13 +411,15 @@ function IssueDetailView(props: {
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-border/60 px-3 py-2">
         <Button variant="ghost" size="xs" onClick={props.onBack}>
-          Back
+          <T>Back</T>
         </Button>
-        <span className="text-2xs text-muted-foreground">#{props.number}</span>
+        <span className="text-2xs text-muted-foreground">
+          {detail?.displayKey ?? reference.key}
+        </span>
         <div className="flex-1" />
         {detail !== null ? (
           <Button variant="ghost" size="xs" disabled={starting} onClick={() => void startWork()}>
-            {starting ? <Loader2 className="size-3 animate-spin" /> : "Start work"}
+            {starting ? <Loader2 className="size-3 animate-spin" /> : gt("Start work")}
           </Button>
         ) : null}
         {detail !== null && props.composerDraftTarget !== undefined ? (
@@ -429,26 +434,26 @@ function IssueDetailView(props: {
               store.setPrompt(target, appendIssueContext(current, issueContextForComposer(detail)));
             }}
           >
-            Add to thread
+            <T>Add to thread</T>
           </Button>
         ) : null}
-        {detail?.capabilities.close && detail.viewerCanWrite ? (
+        {detail?.writable && detail.viewerPermissions.setState && targetState ? (
           <Button
             variant="ghost"
             size="xs"
             onClick={() => void toggleState()}
             disabled={!canSetState || pending !== null}
           >
-            {detail.state === "open" ? "Close" : "Reopen"}
+            {detail.state.category === "open" ? gt("Close") : gt("Reopen")}
           </Button>
         ) : null}
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
         {detailQuery.error !== null ? (
-          <PanelMessage title="This issue could not be read." detail={detailQuery.error} />
+          <PanelMessage title={gt("This issue could not be read.")} detail={detailQuery.error} />
         ) : detail === null ? (
-          <PanelMessage title="Loading." detail={null} />
+          <PanelMessage title={gt("Loading.")} detail={null} />
         ) : (
           <div className="space-y-4">
             <div className="space-y-1.5">
@@ -457,7 +462,7 @@ function IssueDetailView(props: {
                 <h2 className="min-w-0 flex-1 text-sm font-medium leading-snug">{detail.title}</h2>
               </div>
               <p className="pl-5 text-2xs text-muted-foreground">
-                {detail.author?.login ?? "unknown"} opened this in {detail.repository}
+                {detail.author?.login ?? "unknown"} <T>opened this in</T> {detail.scope}
               </p>
             </div>
 
@@ -468,7 +473,9 @@ function IssueDetailView(props: {
                 environmentId={props.environmentId}
               />
             ) : (
-              <p className="text-2xs text-muted-foreground">No description.</p>
+              <p className="text-2xs text-muted-foreground">
+                <T>No description.</T>
+              </p>
             )}
 
             {detail.comments.map((entry) => (
@@ -484,21 +491,21 @@ function IssueDetailView(props: {
               </div>
             ))}
 
-            {detail.commentsTruncated ? (
+            {detail.commentsCursor !== null ? (
               <p className="text-2xs text-muted-foreground">
-                This conversation is longer than what is shown.
+                <T>This conversation is longer than what is shown.</T>
               </p>
             ) : null}
           </div>
         )}
       </div>
 
-      {detail?.capabilities.comment && detail.viewerCanWrite ? (
+      {detail?.capabilities.comment && detail.writable && detail.viewerPermissions.comment ? (
         <div className="shrink-0 border-t border-border/60 p-2">
           <textarea
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
-            placeholder="Leave a comment"
+            placeholder={gt("Leave a comment")}
             rows={3}
             className="w-full resize-none rounded border border-input bg-background px-2 py-1.5 text-xs outline-none focus-visible:outline-2 focus-visible:-outline-offset-1 focus-visible:outline-ring"
           />
@@ -508,7 +515,7 @@ function IssueDetailView(props: {
               onClick={() => void postComment()}
               disabled={!canComment || draft.trim().length === 0 || pending !== null}
             >
-              {pending === "comment" ? <Loader2 className="size-3 animate-spin" /> : "Comment"}
+              {pending === "comment" ? <Loader2 className="size-3 animate-spin" /> : gt("Comment")}
             </Button>
           </div>
         </div>
@@ -519,57 +526,77 @@ function IssueDetailView(props: {
 
 function NewIssueView(props: {
   readonly environmentId: EnvironmentId;
-  readonly projectId: ProjectId;
+  readonly scopes: ReadonlyArray<IssueScopeRef>;
   readonly projectTitle: string;
   readonly onCancel: () => void;
-  readonly onCreated: (number: number) => void;
+  readonly onCreated: (issue: IssueRef) => void;
 }) {
+  const gt = useGT();
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
+  const [scopeIndex, setScopeIndex] = useState(0);
+  const scope = props.scopes[scopeIndex];
   const canCreate = useAtomValue(issueEnvironment.create.permissionAtom(props.environmentId));
   const create = useAtomCommand(issueEnvironment.create, { reportFailure: true });
   const [pending, setPending] = useState(false);
 
   const submit = async () => {
     const trimmed = title.trim();
-    if (!canCreate || trimmed.length === 0 || pending) return;
+    if (!canCreate || !scope || trimmed.length === 0 || pending) return;
     setPending(true);
     const result = await create({
       environmentId: props.environmentId,
       input: {
-        projectId: props.projectId,
+        ...scope,
         title: trimmed,
-        ...(body.trim().length === 0 ? {} : { body }),
+        body,
+        labels: [],
+        assignees: [],
       },
     });
     setPending(false);
     // The draft stays on screen where it failed, so nothing typed is thrown away.
-    if (result._tag === "Success") props.onCreated(result.value.number);
+    if (result._tag === "Success") props.onCreated({ ...scope, key: result.value.key });
   };
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-3 py-2">
         <Button variant="ghost" size="xs" onClick={props.onCancel}>
-          Cancel
+          <T>Cancel</T>
         </Button>
-        <span className="text-2xs text-muted-foreground">New issue in {props.projectTitle}</span>
+        <span className="text-2xs text-muted-foreground">
+          <T>New issue in</T> {props.projectTitle}
+        </span>
       </div>
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+        {props.scopes.length > 1 ? (
+          <select
+            aria-label={gt("Issue tracker")}
+            value={scopeIndex}
+            onChange={(event) => setScopeIndex(Number(event.target.value))}
+          >
+            {props.scopes.map((entry, index) => (
+              <option key={`${entry.tracker}:${entry.host}:${entry.scope}`} value={index}>
+                {entry.host ? `${entry.host}/${entry.scope}` : entry.scope}
+              </option>
+            ))}
+          </select>
+        ) : null}
         <Input
           value={title}
           onChange={(event) => setTitle(event.target.value)}
-          placeholder="Title"
+          placeholder={gt("Title")}
           size="compact"
-          aria-label="Issue title"
+          aria-label={gt("Issue title")}
         />
         <textarea
           value={body}
           onChange={(event) => setBody(event.target.value)}
-          placeholder="Description (optional)"
+          placeholder={gt("Description (optional)")}
           rows={10}
           className="w-full resize-none rounded border border-input bg-background px-2 py-1.5 text-xs outline-none focus-visible:outline-2 focus-visible:-outline-offset-1 focus-visible:outline-ring"
-          aria-label="Issue description"
+          aria-label={gt("Issue description")}
         />
       </div>
       <div className="shrink-0 border-t border-border/60 p-2">
@@ -579,7 +606,7 @@ function NewIssueView(props: {
             onClick={() => void submit()}
             disabled={!canCreate || title.trim().length === 0 || pending}
           >
-            {pending ? <Loader2 className="size-3 animate-spin" /> : "Create"}
+            {pending ? <Loader2 className="size-3 animate-spin" /> : gt("Create")}
           </Button>
         </div>
       </div>

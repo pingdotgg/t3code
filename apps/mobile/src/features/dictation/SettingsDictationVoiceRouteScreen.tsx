@@ -1,3 +1,4 @@
+import { useGT, T } from "gt-react-native";
 import { File } from "expo-file-system";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { Alert, AppState, View } from "react-native";
@@ -56,6 +57,7 @@ function DictationVoice(props: {
   readonly native: DictationNativeModule;
   readonly downloads: DictationDownloads;
 }) {
+  const gt = useGT();
   const { native, downloads } = props;
   const filter = useSyncExternalStore(downloads.subscribe, downloads.getSnapshot)[
     VOICE_FILTER_MODEL_ID
@@ -106,8 +108,8 @@ function DictationVoice(props: {
   };
 
   const confirmDeleteProfile = () =>
-    Alert.alert("Delete your voice profile?", "Dictation will keep every voice it hears.", [
-      { text: "Cancel", style: "cancel" },
+    Alert.alert(gt("Delete your voice profile?"), gt("Dictation will keep every voice it hears."), [
+      { text: gt("Cancel"), style: "cancel" },
       {
         text: "Delete",
         style: "destructive",
@@ -123,8 +125,8 @@ function DictationVoice(props: {
     ]);
 
   const confirmDeleteFilter = () =>
-    Alert.alert("Delete the voice filter?", "Dictation will keep every voice it hears.", [
-      { text: "Cancel", style: "cancel" },
+    Alert.alert(gt("Delete the voice filter?"), gt("Dictation will keep every voice it hears."), [
+      { text: gt("Cancel"), style: "cancel" },
       {
         text: "Delete",
         style: "destructive",
@@ -141,10 +143,12 @@ function DictationVoice(props: {
   return (
     <DictationSettingsPage title={TITLE}>
       {filter.status?.installed === false ? (
-        <SettingsSection title="Voice filter">
+        <SettingsSection title={gt("Voice filter")}>
           <DownloadRow
             name="voice filter"
-            description={`Tells your voice from other people's. ${formatMegabytes(VOICE_FILTER_DOWNLOAD_BYTES)}.`}
+            description={gt("Tells your voice from other people's. {value}.", {
+              value: formatMegabytes(VOICE_FILTER_DOWNLOAD_BYTES),
+            })}
             state={filter}
             onDownload={() => void downloads.download(VOICE_FILTER_MODEL_ID)}
             onCancel={() => downloads.cancel(VOICE_FILTER_MODEL_ID)}
@@ -153,7 +157,7 @@ function DictationVoice(props: {
       ) : null}
 
       {installed && profile !== null && (!enrolled || rerecording) ? (
-        <SettingsSection title="Record your voice">
+        <SettingsSection title={gt("Record your voice")}>
           <EnrollmentRecorder
             enrollment={enrollment}
             onCancel={
@@ -169,8 +173,8 @@ function DictationVoice(props: {
             <View className="border-t border-border-subtle">
               <ListActionRow
                 icon="doc.text"
-                label="Use the built-in sample voice"
-                description="Simulator only. Enrolls the voice in the sample recording."
+                label={gt("Use the built-in sample voice")}
+                description={gt("Simulator only. Enrolls the voice in the sample recording.")}
                 onPress={enrollSampleVoice}
               />
             </View>
@@ -179,25 +183,29 @@ function DictationVoice(props: {
       ) : null}
 
       {installed && enrolled && !rerecording ? (
-        <SettingsSection title="Voice profile">
+        <SettingsSection title={gt("Voice profile")}>
           <ListToggleRow
             icon="person.fill.checkmark"
-            label="Only my voice"
-            description="Removes other people's speech before transcribing."
+            label={gt("Only my voice")}
+            description={gt("Removes other people's speech before transcribing.")}
             value={settings.onlyMyVoice}
             onValueChange={(onlyMyVoice) => updateDictationSettings({ onlyMyVoice })}
           />
           <View className="border-t border-border-subtle">
-            <ListRowLayout label="Recorded" detail={formatDay(profile?.createdAt ?? null)} />
+            <ListRowLayout label={gt("Recorded")} detail={formatDay(profile?.createdAt ?? null)} />
           </View>
           <View className="border-t border-border-subtle">
-            <ListActionRow icon="mic" label="Record again" onPress={() => setRerecording(true)} />
+            <ListActionRow
+              icon="mic"
+              label={gt("Record again")}
+              onPress={() => setRerecording(true)}
+            />
           </View>
           <View className="border-t border-border-subtle">
             <ListActionRow
               icon="trash"
               tone="danger"
-              label="Delete voice profile"
+              label={gt("Delete voice profile")}
               onPress={confirmDeleteProfile}
             />
           </View>
@@ -209,11 +217,11 @@ function DictationVoice(props: {
       )}
 
       {installed ? (
-        <SettingsSection title="Storage">
+        <SettingsSection title={gt("Storage")}>
           <ListActionRow
             icon="trash"
             tone="danger"
-            label="Delete voice filter"
+            label={gt("Delete voice filter")}
             detail={formatMegabytes(filter.status?.sizeOnDiskBytes ?? 0)}
             onPress={confirmDeleteFilter}
           />
@@ -225,15 +233,19 @@ function DictationVoice(props: {
 
       {settings.modelId === "apple" ? (
         <Footnote>
-          Only my voice works with a downloaded model. Apple dictation keeps every voice it hears.
+          <T>
+            Only my voice works with a downloaded model. Apple dictation keeps every voice it hears.
+          </T>
         </Footnote>
       ) : null}
       <Footnote>
-        The filter compares each stretch of speech with your voice profile and removes the ones that
-        are someone else and quieter than you, further from the phone. A voice as loud as yours
-        stays. It adds a short wait after each recording. If it does not recognise you, nothing is
-        removed. Your voice profile stays on this device. The filter model is by pyannote, WeSpeaker
-        and BUT Speech@FIT (CC BY 4.0), converted by Fluid Inference.
+        <T>
+          The filter compares each stretch of speech with your voice profile and removes the ones
+          that are someone else and quieter than you, further from the phone. A voice as loud as
+          yours stays. It adds a short wait after each recording. If it does not recognise you,
+          nothing is removed. Your voice profile stays on this device. The filter model is by
+          pyannote, WeSpeaker and BUT Speech@FIT (CC BY 4.0), converted by Fluid Inference.
+        </T>
       </Footnote>
     </DictationSettingsPage>
   );
@@ -248,6 +260,7 @@ function EnrollmentRecorder(props: {
   readonly enrollment: VoiceEnrollment;
   readonly onCancel: (() => void) | null;
 }) {
+  const gt = useGT();
   const { enrollment } = props;
   const { phase, accepted, message } = useSyncExternalStore(
     enrollment.subscribe,
@@ -258,22 +271,25 @@ function EnrollmentRecorder(props: {
     <View className="gap-3 px-4 py-4">
       <Text className="text-sm font-t3-medium text-foreground-muted">
         {phase === "saving"
-          ? "Saving your voice profile"
-          : `Sample ${sample + 1} of ${ENROLLMENT_CLIP_COUNT}. Read this aloud:`}
+          ? gt("Saving your voice profile")
+          : gt("Sample {value} of {ENROLLMENT_CLIP_COUNT}. Read this aloud:", {
+              value: sample + 1,
+              ENROLLMENT_CLIP_COUNT,
+            })}
       </Text>
       <Text className="text-base leading-[23px] text-foreground">{ENROLLMENT_PROMPTS[sample]}</Text>
       {message === null ? null : <Text className="text-sm text-danger-foreground">{message}</Text>}
       <View className="flex-row items-center gap-3">
         {phase === "recording" ? (
           <Button
-            label="Stop"
+            label={gt("Stop")}
             icon="stop.fill"
             tone="danger"
             onPress={() => void enrollment.stop()}
           />
         ) : (
           <Button
-            label="Record"
+            label={gt("Record")}
             icon="mic"
             tone="primary"
             loading={phase !== "idle"}
@@ -281,7 +297,7 @@ function EnrollmentRecorder(props: {
           />
         )}
         {props.onCancel === null || phase === "saving" ? null : (
-          <Button label="Cancel" tone="text" onPress={props.onCancel} />
+          <Button label={gt("Cancel")} tone="text" onPress={props.onCancel} />
         )}
       </View>
     </View>

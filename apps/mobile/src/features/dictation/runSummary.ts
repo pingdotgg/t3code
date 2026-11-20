@@ -1,3 +1,5 @@
+import { msg } from "gt-react-native";
+import { m } from "../../i18n/messages";
 import { dictationModelName } from "./dictationModels";
 import type { DictationFilterReport } from "./dictationNative";
 import type { DictationFallback, DictationRun } from "./dictationStore";
@@ -11,26 +13,27 @@ const FALLBACK_REASONS: Record<DictationFallback, string> = {
 const seconds = (value: number) => `${value.toFixed(1)} s`;
 
 function describeFilter(filter: DictationFilterReport): string {
-  if (filter.applied) return `Removed ${seconds(filter.droppedSeconds)} of other voices.`;
+  if (filter.applied)
+    return m(msg("Removed {value} of other voices.", { value: seconds(filter.droppedSeconds) }));
   switch (filter.skipped) {
     case "onlyYou":
-      return "Only your voice was heard.";
+      return m(msg("Only your voice was heard."));
     case "noMatch":
-      return "Your voice was not recognised, so nothing was removed.";
+      return m(msg("Your voice was not recognised, so nothing was removed."));
     case "similarLevel":
-      return "Another voice was as loud as yours, so nothing was removed.";
+      return m(msg("Another voice was as loud as yours, so nothing was removed."));
     case "mostlyOther":
-      return "Most of the recording did not match your voice, so nothing was removed.";
+      return m(msg("Most of the recording did not match your voice, so nothing was removed."));
     case "noProfile":
-      return "No voice profile is recorded, so nothing was removed.";
+      return m(msg("No voice profile is recorded, so nothing was removed."));
     case "notInstalled":
-      return "The voice filter is not downloaded, so nothing was removed.";
+      return m(msg("The voice filter is not downloaded, so nothing was removed."));
     case "tooShort":
-      return "The recording was too short to filter.";
+      return m(msg("The recording was too short to filter."));
     case "noSpeech":
-      return "No speech was found to filter.";
+      return m(msg("No speech was found to filter."));
     default:
-      return "The voice filter left this recording as it was.";
+      return m(msg("The voice filter left this recording as it was."));
   }
 }
 
@@ -43,5 +46,5 @@ export function describeRun(run: DictationRun): string {
       : `${seconds(run.processingSeconds)} for ${seconds(run.audioSeconds)} of audio`;
   const reason = run.fallback === null ? "" : `, because ${FALLBACK_REASONS[run.fallback]}`;
   const filter = run.filter === null ? "" : ` ${describeFilter(run.filter)}`;
-  return `${engine}${reason}. Took ${timing}.${filter}`;
+  return m(msg("{engine}{reason}. Took {timing}.{filter}", { engine, reason, timing, filter }));
 }

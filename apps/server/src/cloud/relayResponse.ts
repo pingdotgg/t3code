@@ -65,8 +65,12 @@ function recoveryHint(error: RelayProtectedError): string {
       return "Unlink an unused environment in Cloud Connect, then restart PseudoCode on this machine.";
     case "RelayAuthInvalidError":
       return "Run `t3 connect login` to check this machine's authorization. If the stored credential was revoked, sign out with `t3 connect logout`, then run `t3 connect` again. Restart PseudoCode after signing in.";
-    case "RelayEnvironmentLinkProofExpiredError":
     case "RelayEnvironmentLinkProofInvalidError":
+      if (error.reason === "environment_key_mismatch") {
+        return "Cloud Connect already has this environment linked with a different key. Unlink it in Cloud Connect, then restart PseudoCode on this machine.";
+      }
+      return "Check this machine's date and time, update PseudoCode, then restart it.";
+    case "RelayEnvironmentLinkProofExpiredError":
       return "Check this machine's date and time, update PseudoCode, then restart it.";
     default:
       return "Retry when the relay is available. If this continues, include the trace ID when reporting it.";

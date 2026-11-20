@@ -1,3 +1,4 @@
+import { useGT, T } from "gt-react-native";
 import { useAtomValue } from "@effect/atom-react";
 import type { VoiceTranscriber } from "@t3tools/client-runtime/voice-input";
 import * as Clipboard from "expo-clipboard";
@@ -76,6 +77,7 @@ function DictationModels(props: {
   readonly native: DictationNativeModule;
   readonly downloads: DictationDownloads;
 }) {
+  const gt = useGT();
   const { native, downloads } = props;
   const snapshot = useSyncExternalStore(downloads.subscribe, downloads.getSnapshot);
   const { settings, lastRun } = useDictationState();
@@ -118,10 +120,10 @@ function DictationModels(props: {
 
   const confirmDelete = (model: LocalDictationModel) =>
     Alert.alert(
-      `Delete ${model.name}?`,
-      "The model is removed from this device. You can download it again.",
+      gt("Delete {name}?", { name: model.name }),
+      gt("The model is removed from this device. You can download it again."),
       [
-        { text: "Cancel", style: "cancel" },
+        { text: gt("Cancel"), style: "cancel" },
         {
           text: "Delete",
           style: "destructive",
@@ -163,7 +165,7 @@ function DictationModels(props: {
     if (uri === null || transcriber === null || transcriber === "checking") {
       setTrial({
         of: SAMPLE,
-        result: { status: "failed", message: "Dictation is not available right now." },
+        result: { status: "failed", message: gt("Dictation is not available right now.") },
       });
       return;
     }
@@ -200,7 +202,7 @@ function DictationModels(props: {
       <>
         <View className="gap-1 border-t border-border-subtle px-4 py-3">
           <Text className="text-base text-foreground" selectable>
-            {heard ? result.text : "No speech was found in this recording."}
+            {heard ? result.text : gt("No speech was found in this recording.")}
           </Text>
           {lastRun === null ? null : (
             <Text className="text-sm text-foreground-muted">{describeRun(lastRun)}</Text>
@@ -210,7 +212,7 @@ function DictationModels(props: {
           <View className="border-t border-border-subtle">
             <ListActionRow
               icon="doc.on.doc"
-              label={copied ? "Copied" : "Copy the text"}
+              label={copied ? gt("Copied") : gt("Copy the text")}
               onPress={() => void Clipboard.setStringAsync(result.text).then(() => setCopied(true))}
             />
           </View>
@@ -221,11 +223,13 @@ function DictationModels(props: {
 
   return (
     <DictationSettingsPage title={TITLE}>
-      <SettingsSection title="Use for dictation">
+      <SettingsSection title={gt("Use for dictation")}>
         <ListChoiceRow
-          label="Apple"
+          label={gt("Apple")}
           description={
-            appleMissing ? "Not available on this device." : "Built into iOS. Nothing to download."
+            appleMissing
+              ? gt("Not available on this device.")
+              : gt("Built into iOS. Nothing to download.")
           }
           disabled={appleMissing}
           selected={settings.modelId === "apple" && !appleMissing}
@@ -244,7 +248,7 @@ function DictationModels(props: {
       </SettingsSection>
 
       {missing.length === 0 ? null : (
-        <SettingsSection title="Download">
+        <SettingsSection title={gt("Download")}>
           {missing.map((model, index) => (
             <View
               key={model.id}
@@ -263,7 +267,9 @@ function DictationModels(props: {
                   disabled
                   icon="arrow.down.circle"
                   label={model.name}
-                  description={`${model.summary} Needs more memory than this device has.`}
+                  description={gt("{summary} Needs more memory than this device has.", {
+                    summary: model.summary,
+                  })}
                 />
               )}
             </View>
@@ -271,11 +277,11 @@ function DictationModels(props: {
         </SettingsSection>
       )}
 
-      <SettingsSection title="Try it">
+      <SettingsSection title={gt("Try it")}>
         <ListActionRow
           icon="play"
-          label="Transcribe a sample"
-          description="Runs a built-in recording through the model in use."
+          label={gt("Transcribe a sample")}
+          description={gt("Runs a built-in recording through the model in use.")}
           loading={running === SAMPLE}
           disabled={running !== null}
           onPress={transcribeSample}
@@ -284,11 +290,11 @@ function DictationModels(props: {
       </SettingsSection>
 
       <SettingsSection
-        title="Recent recordings"
+        title={gt("Recent recordings")}
         footer={`Your last ${KEPT_VOICE_RECORDINGS} dictations stay on this device, canceled ones included. Tap one to transcribe it again with the model in use and without the voice filter.`}
       >
         {recordings.length === 0 ? (
-          <ListRowLayout disabled icon="mic" label="No recordings yet" />
+          <ListRowLayout disabled icon="mic" label={gt("No recordings yet")} />
         ) : (
           recordings.map((recording, index) => (
             <View
@@ -309,7 +315,7 @@ function DictationModels(props: {
       </SettingsSection>
 
       {installed.length === 0 ? null : (
-        <SettingsSection title="Storage">
+        <SettingsSection title={gt("Storage")}>
           {installed.map((model, index) => (
             <View
               key={model.id}
@@ -333,8 +339,10 @@ function DictationModels(props: {
       )}
 
       <Footnote>
-        Downloaded models run on this device, and recordings never leave it. Parakeet models are by
-        NVIDIA and moondream (CC BY 4.0), converted by Fluid Inference.
+        <T>
+          Downloaded models run on this device, and recordings never leave it. Parakeet models are
+          by NVIDIA and moondream (CC BY 4.0), converted by Fluid Inference.
+        </T>
       </Footnote>
     </DictationSettingsPage>
   );

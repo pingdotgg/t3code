@@ -1,62 +1,89 @@
-import type { SourceControlProviderKind } from "@t3tools/contracts";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import type {
+  EnvironmentId,
+  IssueTrackerConnectionList,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
+import { resolveIssueLinkTarget } from "@t3tools/client-runtime/issue-links";
+import { useNavigate } from "@tanstack/react-router";
+import type { MouseEvent } from "react";
+
+import { readIssueListPreferences } from "../components/issue/issueListPreferences";
+import { ISSUES_PANEL_REF, PULL_REQUESTS_PANEL_REF, useRightPanelStore } from "../rightPanelStore";
+import { useProjects, useServerConfigs } from "../state/entities";
 
 /**
- * An issue the panel can open, named the way a project's repository identity names one.
- *
- * Kept apart from the change-request matcher next door because the answer is different: a change
- * request opens the pull request surface, an issue opens the issues surface, and the two paths
- * are told apart only by what the host wrote in the URL.
+ * Opens an issue link beside the thread, and says whether it did. Anything else — a host no
+ * project here is on, a link that merely looks like one — is left alone for the caller to handle
+ * as the ordinary link it is. Mirrors `useOpenChangeRequestLink`: a reader following a link the
+ * agent wrote is reading the thread, and should still be reading it afterwards.
  */
-export interface IssueLink {
-  readonly host: string;
-  readonly repository: string;
-  readonly number: number;
-}
-
-/**
- * GitHub and Forgejo share `/{owner}/{repo}/issues/{n}`, distinctive enough to trust on any host,
- * since Forgejo hostnames are arbitrary. Null keeps the system browser: a doubtful match would
- * open a panel that cannot find the issue.
- */
-export function parseIssueUrl(targetUrl: string): IssueLink | null {
-  let url: URL;
-  try {
-    url = new URL(targetUrl);
-  } catch {
-    return null;
-  }
-  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
-  // A trailing segment means a comment anchor or a sub-page, not the issue itself.
-  const match = /^\/([^/]+\/[^/]+)\/issues\/(\d+)(?:\/|$)/u.exec(url.pathname);
-  const repository = match?.[1];
-  const number = Number(match?.[2]);
-  if (!repository || !Number.isSafeInteger(number) || number <= 0) return null;
-  return { host: url.hostname.toLowerCase(), repository: repository.toLowerCase(), number };
-}
-
-/**
- * The project an issue link belongs to, matched the way the server matches: the repository is
- * the full path below the host, and the host is the first segment of the canonical remote, so
- * github.com and an Enterprise install stay apart.
- */
-export function findProjectForIssue(
-  projects: ReadonlyArray<EnvironmentProject>,
-  link: IssueLink,
-): EnvironmentProject | undefined {
-  return projects.find((project) => {
-    const identity = project.repositoryIdentity;
-    if (!identity) return false;
-    const kind = identity.provider as SourceControlProviderKind | undefined;
-    if (kind === undefined) return false;
-    const repository =
-      identity.displayName ??
-      (identity.owner && identity.name ? `${identity.owner}/${identity.name}` : null);
-    return (
-      repository !== null &&
-      repository.toLowerCase() === link.repository &&
-      sourceControlClients.changeRequestHost(identity, kind) === link.host
-    );
-  });
+export function useOpenIssueLink(
+  threadRef?: ScopedThreadRef,
+  panelRef?: ScopedThreadRef,
+): (
+  event: Pick<
+    MouseEvent<HTMLElement>,
+    "preventDefault" | "stopPropagation" | "metaKey" | "ctrlKey"
+  >,
+  targetUrl: string,
+  targetEnvironmentId?: EnvironmentId,
+  trackers?: IssueTrackerConnectionList,
+) => boolean {
+  const allProjects = useProjects();
+  const serverConfigs = useServerConfigs();
+  const navigate = useNavigate();
+  return (event, targetUrl, targetEnvironmentId, trackers) => {
+    if (event.metaKey || event.ctrlKey) return false;
+    const resolvedPanelRef = panelRef ?? threadRef;
+    // A list page's panel ref is a placeholder, not an environment; the link names its own.
+    const environmentId = threadRef?.environmentId ?? targetEnvironmentId;
+    if (resolvedPanelRef === undefined || environmentId === undefined) return false;
+    if (serverConfigs.get(environmentId)?.environment.capabilities.issues !== true) return false;
+    const target = resolveIssueLinkTarget({
+      url: targetUrl,
+      projects: allProjects.filter((project) => project.environmentId === environmentId),
+      trackers,
+    });
+    if (target === null) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    const surface = {
+      projectId: target.ref.projectId,
+      tracker: target.ref.tracker,
+      ...(target.ref.host === undefined ? {} : { host: target.ref.host }),
+      scope: target.ref.scope,
+      key: target.ref.key,
+      url: targetUrl,
+    };
+    // A list page's panel is the Issues page's: its pull request tabs render this markdown too,
+    // and the pull request list's own panel shows pull requests only. Opening the tab here, not
+    // only through the URL, also brings back one that is already open.
+    if (resolvedPanelRef === PULL_REQUESTS_PANEL_REF) {
+      useRightPanelStore.getState().openIssue(ISSUES_PANEL_REF, { ...surface, environmentId });
+      const selection = {
+        selectedEnvironmentId: environmentId,
+        selectedProjectId: target.ref.projectId,
+        ...(target.ref.host === undefined ? {} : { selectedHost: target.ref.host }),
+        tracker: target.ref.tracker,
+        scope: target.ref.scope,
+        key: target.ref.key,
+      };
+      // Already on the Issues page, the list keeps the filters it is showing.
+      if (window.location.pathname === "/issues") {
+        void navigate({
+          from: "/issues",
+          to: "/issues",
+          search: (previous) => ({ ...previous, ...selection }),
+        });
+      } else {
+        void navigate({ to: "/issues", search: { ...readIssueListPreferences(), ...selection } });
+      }
+      return true;
+    }
+    useRightPanelStore.getState().openIssue(resolvedPanelRef, {
+      ...(resolvedPanelRef.environmentId === environmentId ? {} : { environmentId }),
+      ...surface,
+    });
+    return true;
+  };
 }

@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import type { ReactNode } from "react";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -35,10 +36,11 @@ export function DictationSettingsPage(props: {
 
 /** Shown where the native dictation module is not in the build, such as on Android. */
 export function DictationUnavailable(props: { readonly title: string }) {
+  const gt = useGT();
   return (
     <DictationSettingsPage title={props.title}>
       <SettingsSection>
-        <ListRowLayout icon="mic" label="Not available on this device" />
+        <ListRowLayout icon="mic" label={gt("Not available on this device")} />
       </SettingsSection>
     </DictationSettingsPage>
   );
@@ -56,13 +58,14 @@ export function DownloadRow(props: {
   readonly onDownload: () => void;
   readonly onCancel: () => void;
 }) {
+  const gt = useGT();
   const { progress, error } = props.state;
   return (
     <View>
       {progress === null ? (
         <ListActionRow
           icon="arrow.down.circle"
-          label={`Download ${props.name}`}
+          label={gt("Download {name}", { name: props.name })}
           description={props.description}
           onPress={props.onDownload}
         />
@@ -73,12 +76,12 @@ export function DownloadRow(props: {
             label={props.name}
             description={
               progress.phase === "preparing"
-                ? "Getting the model ready. This can take a minute."
-                : `Downloading, ${Math.round(progress.fraction * 100)}%`
+                ? gt("Getting the model ready. This can take a minute.")
+                : gt("Downloading, {value}%", { value: Math.round(progress.fraction * 100) })
             }
             accessory={
               progress.phase === "downloading" ? (
-                <Button label="Cancel" tone="text" size="compact" onPress={props.onCancel} />
+                <Button label={gt("Cancel")} tone="text" size="compact" onPress={props.onCancel} />
               ) : undefined
             }
           />

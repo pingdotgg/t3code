@@ -49,7 +49,6 @@ function draft(overrides: Partial<VoiceDraftSnapshot> = {}): VoiceDraftSnapshot 
     ownerKey: "environment:thread",
     text: "hello world",
     selection: { start: 6, end: 11 },
-    revision: 1,
     ...overrides,
   };
 }
@@ -111,7 +110,7 @@ describe("environment voice input", () => {
     expect(harness.controller.currentState.phase).toBe("error");
     expect(harness.deleted).toEqual([]);
 
-    harness.setDraft(draft({ text: "updated ", revision: 2, selection: { start: 8, end: 8 } }));
+    harness.setDraft(draft({ text: "updated ", selection: { start: 8, end: 8 } }));
     await harness.controller.start();
     expect(transcribe.mock.calls.map(([uri]) => uri)).toEqual([
       "file:///voice.m4a",
@@ -290,8 +289,69 @@ describe("resolveTranscriptCommit", () => {
     });
   });
 
-  it("does not add text to another owner's draft or to one that is gone", () => {
+  it.each([
+    [
+      "at the start of the selection",
+      { start: 6, end: 11 },
+      "hello [cite]world",
+      "hello [cite]world new text",
+    ],
+    [
+      "inside the selection",
+      { start: 6, end: 11 },
+      "hello wo[cite]rld",
+      "hello wo[cite]rld new text",
+    ],
+    ["at the caret", { start: 6, end: 6 }, "hello [cite] world", "hello [cite] new text world"],
+    [
+      "that repeats the selection",
+      { start: 0, end: 5 },
+      "hello there hello world",
+      "hello there hello new text world",
+    ],
+    [
+      "that repeats the selection next to it",
+      { start: 0, end: 5 },
+      "hello hello world",
+      "hello hello new text world",
+    ],
+  ])("keeps text inserted %s while recording", (_, selection, current, expected) => {
+    const captured = draft({ text: "hello world", selection });
+    const result = resolveTranscriptCommit(
+      captured,
+      draft({ text: current, selection: { start: 0, end: 0 } }),
+      "new text",
+      "en-US",
+    );
+    expect(result).toMatchObject({ kind: "commit", text: expected });
+  });
+
+  it("keeps every citation when several were inserted while recording", () => {
+    const captured = draft({ text: "[todo", selection: { start: 0, end: 1 } });
+    const current = "[A](t3-citation://v1/a)[todo[B](t3-citation://v1/b)";
+    const result = resolveTranscriptCommit(
+      captured,
+      draft({ text: current, selection: { start: 0, end: 0 } }),
+      "spoken",
+      "en-US",
+    );
+    expect(result).toMatchObject({ kind: "commit", text: `${current} spoken` });
+  });
+
+  it("keeps surrogate pairs whole when an emoji changed while recording", () => {
+    const captured = draft({ text: "🔔", selection: { start: 0, end: 0 } });
+    const result = resolveTranscriptCommit(
+      captured,
+      draft({ text: "🤔", selection: { start: 0, end: 0 } }),
+      "hello",
+      "en-US",
+    );
+    expect(result).toMatchObject({ kind: "commit", text: "🤔hello" });
+  });
+
+  it("does not insert into a missing draft or another owner's draft", () => {
     const captured = draft();
+    expect(resolveTranscriptCommit(captured, null, "text", "en-US")).toEqual({ kind: "stale" });
     expect(
       resolveTranscriptCommit(captured, draft({ ownerKey: "other" }), "text", "en-US"),
     ).toEqual({ kind: "stale" });
@@ -530,6 +590,7 @@ describe("VoiceInputController", () => {
       phase: "error",
       error: "Could not transcribe this recording.",
       errorAction: "transcribe",
+      errorCode: "transcription-failed",
     });
 
     if (edited) harness.setDraft(edited);

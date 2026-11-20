@@ -1,3 +1,4 @@
+import { useGT, T } from "gt-react-native";
 import { useState } from "react";
 import { Alert, View } from "react-native";
 
@@ -30,6 +31,7 @@ export function SettingsDictationCorrectionsRouteScreen() {
 }
 
 function DictationCorrections() {
+  const gt = useGT();
   const { settings, learning } = useDictationState();
   const [heard, setHeard] = useState("");
   const [written, setWritten] = useState("");
@@ -43,23 +45,27 @@ function DictationCorrections() {
   };
 
   const review = (pair: CorrectionPair) =>
-    Alert.alert(`Replace "${pair.heard}" with "${pair.written}"?`, undefined, [
-      {
-        text: "Always replace",
-        onPress: () =>
-          updateDictationLearning((state) => saveRule(state, pair, "learned", Date.now())),
-      },
-      {
-        text: "Never",
-        style: "destructive",
-        onPress: () => updateDictationLearning((state) => forgetPair(state, pair)),
-      },
-      { text: "Cancel", style: "cancel" },
-    ]);
+    Alert.alert(
+      gt('Replace "{heard}" with "{written}"?', { heard: pair.heard, written: pair.written }),
+      undefined,
+      [
+        {
+          text: gt("Always replace"),
+          onPress: () =>
+            updateDictationLearning((state) => saveRule(state, pair, "learned", Date.now())),
+        },
+        {
+          text: gt("Never"),
+          style: "destructive",
+          onPress: () => updateDictationLearning((state) => forgetPair(state, pair)),
+        },
+        { text: gt("Cancel"), style: "cancel" },
+      ],
+    );
 
   const confirmDelete = (pair: CorrectionPair) =>
-    Alert.alert(`Stop replacing "${pair.heard}"?`, undefined, [
-      { text: "Cancel", style: "cancel" },
+    Alert.alert(gt('Stop replacing "{heard}"?', { heard: pair.heard }), undefined, [
+      { text: gt("Cancel"), style: "cancel" },
       {
         text: "Delete",
         style: "destructive",
@@ -72,15 +78,17 @@ function DictationCorrections() {
       <SettingsSection>
         <ListToggleRow
           icon="pencil"
-          label="Learn from my corrections"
-          description="Notices the words you fix before sending. A name or a term fixed twice becomes a replacement. Everyday words are suggested first."
+          label={gt("Learn from my corrections")}
+          description={gt(
+            "Notices the words you fix before sending. A name or a term fixed twice becomes a replacement. Everyday words are suggested first.",
+          )}
           value={settings.learnCorrections}
           onValueChange={(learnCorrections) => updateDictationSettings({ learnCorrections })}
         />
       </SettingsSection>
 
       {suggestions.length === 0 ? null : (
-        <SettingsSection title="Suggestions">
+        <SettingsSection title={gt("Suggestions")}>
           {suggestions.map((pair, index) => (
             <View
               key={`${pair.heard}\n${pair.written}`}
@@ -88,7 +96,7 @@ function DictationCorrections() {
             >
               <ListRow
                 label={`${pair.heard} → ${pair.written}`}
-                description={`Corrected ${pair.sightings.length} times`}
+                description={gt("Corrected {length} times", { length: pair.sightings.length })}
                 onPress={() => review(pair)}
               />
             </View>
@@ -96,23 +104,27 @@ function DictationCorrections() {
         </SettingsSection>
       )}
 
-      <SettingsSection title="Add a replacement">
+      <SettingsSection title={gt("Add a replacement")}>
         <View className="h-13 flex-row items-center gap-3 px-4">
-          <Text className="w-20 text-base leading-[23px] text-foreground-muted">Heard</Text>
+          <Text className="w-20 text-base leading-[23px] text-foreground-muted">
+            <T>Heard</T>
+          </Text>
           <AppTextInput
-            accessibilityLabel="Heard"
+            accessibilityLabel={gt("Heard")}
             autoCapitalize="none"
             autoCorrect={false}
             className={FIELD_CLASS_NAME}
-            placeholder="pseudo code"
+            placeholder={gt("pseudo code")}
             value={heard}
             onChangeText={setHeard}
           />
         </View>
         <View className="h-13 flex-row items-center gap-3 border-t border-border-subtle px-4">
-          <Text className="w-20 text-base leading-[23px] text-foreground-muted">Written</Text>
+          <Text className="w-20 text-base leading-[23px] text-foreground-muted">
+            <T>Written</T>
+          </Text>
           <AppTextInput
-            accessibilityLabel="Written"
+            accessibilityLabel={gt("Written")}
             autoCapitalize="none"
             autoCorrect={false}
             className={FIELD_CLASS_NAME}
@@ -125,13 +137,15 @@ function DictationCorrections() {
           />
         </View>
         <View className="border-t border-border-subtle px-4 py-3">
-          <Button label="Add" icon="plus" size="compact" disabled={!canAdd} onPress={add} />
+          <Button label={gt("Add")} icon="plus" size="compact" disabled={!canAdd} onPress={add} />
         </View>
       </SettingsSection>
 
-      <SettingsSection title="Replacements">
+      <SettingsSection title={gt("Replacements")}>
         {learning.rules.length === 0 ? (
-          <Text className="px-4 py-4 text-base text-foreground-muted">No replacements yet.</Text>
+          <Text className="px-4 py-4 text-base text-foreground-muted">
+            <T>No replacements yet.</T>
+          </Text>
         ) : (
           learning.rules.map((rule, index) => (
             <View
@@ -140,7 +154,7 @@ function DictationCorrections() {
             >
               <ListRow
                 label={`${rule.heard} → ${rule.written}`}
-                detail={rule.source === "learned" ? "Learned" : "Added"}
+                detail={rule.source === "learned" ? gt("Learned") : gt("Added")}
                 onPress={() => confirmDelete(rule)}
               />
             </View>
@@ -149,8 +163,10 @@ function DictationCorrections() {
       </SettingsSection>
 
       <Footnote>
-        Replacements apply to whole words in every dictation, whichever model wrote them. They are
-        kept in this app's data, which your device backups include.
+        <T>
+          Replacements apply to whole words in every dictation, whichever model wrote them. They are
+          kept in this app's data, which your device backups include.
+        </T>
       </Footnote>
     </DictationSettingsPage>
   );

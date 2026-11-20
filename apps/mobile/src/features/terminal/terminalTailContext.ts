@@ -1,3 +1,5 @@
+import { msg } from "gt-react-native";
+import { m } from "../../i18n/messages";
 import {
   COMPOSER_CONTEXT_TERMINAL_TEXT_MAX_CHARS,
   type ComposerContextId,
@@ -44,7 +46,13 @@ export function buildTerminalTailContextRecord(input: {
     version: 1,
     kind: "terminal",
     contextId: input.contextId,
-    label: `${input.terminalLabel} · last ${count} ${count === 1 ? "line" : "lines"}`,
+    label: m(
+      msg("{terminalLabel} · last {count} {value2}", {
+        terminalLabel: input.terminalLabel,
+        count,
+        value2: count === 1 ? "line" : "lines",
+      }),
+    ),
     terminalId: input.terminalId,
     terminalLabel: input.terminalLabel,
     lineStart: start + 1,

@@ -2,6 +2,10 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as SqlitePersistence from "../../../persistence/Sqlite.ts";
 import { IssueService } from "../../../issue/IssueService.ts";
 import { DocumentText } from "../../../provider/DocumentText.ts";
+import { EnvironmentThemeService } from "../../../environmentTheme.ts";
+import { GitManager } from "../../../git/GitManager.ts";
+import { PullRequestService } from "../../../pullRequest/PullRequestService.ts";
+import { ThreadIssueService } from "../../../orchestration-v2/ThreadIssueService.ts";
 import { PeerForwarding } from "../../../peer/PeerForwarding.ts";
 import { PeerLinkRequests } from "../../../peer/PeerLinkRequests.ts";
 import { PeerLinks } from "../../../peer/PeerLinks.ts";
@@ -50,6 +54,10 @@ const layerStubServices = Layer.mergeAll(
   SqlitePersistence.layerMemory,
   Layer.mock(IssueService)({}),
   Layer.mock(DocumentText)({}),
+  Layer.mock(EnvironmentThemeService)({}),
+  Layer.mock(GitManager)({}),
+  Layer.mock(PullRequestService)({}),
+  Layer.mock(ThreadIssueService)({}),
   Layer.mock(PeerForwarding)({}),
   Layer.mock(PeerLinkRequests)({}),
   Layer.mock(PeerLinks)({}),
