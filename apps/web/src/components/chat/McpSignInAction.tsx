@@ -48,6 +48,9 @@ export function McpSignInAction({
   const gt = useGT();
   const formId = useId();
   const allowed = useAtomValue(threadEnvironment.mcpSignInStart.permissionAtom(environmentId));
+  const signedIn = useAtomValue(
+    threadEnvironment.mcpSignedInAtom(environmentId, { threadId, server }),
+  );
   const start = useAtomCommand(threadEnvironment.mcpSignInStart, { reportFailure: false });
   const complete = useAtomCommand(threadEnvironment.mcpSignInComplete, { reportFailure: false });
   const { copyToClipboard, isCopied } = useCopyToClipboard();
@@ -56,7 +59,7 @@ export function McpSignInAction({
   if (!allowed) return null;
 
   const input = { threadId, providerThreadId, server };
-  const signedIn = () => {
+  const done = () => {
     setSignIn(null);
     toastManager.add({ type: "success", title: gt("Signed in to {server}", { server }) });
   };
@@ -67,7 +70,7 @@ export function McpSignInAction({
     if (result._tag === "Failure") {
       setSignIn({ phase: "failed", url: null, message: formatEnvironmentQueryError(result.cause) });
     } else if (result.value.authorizationUrl === null) {
-      signedIn();
+      done();
     } else {
       setSignIn({ phase: "ready", url: result.value.authorizationUrl });
     }
@@ -82,23 +85,29 @@ export function McpSignInAction({
     if (result._tag === "Failure") {
       setSignIn({ phase: "failed", url, message: formatEnvironmentQueryError(result.cause) });
     } else {
-      signedIn();
+      done();
     }
   };
   const url = signIn !== null && signIn.phase !== "starting" ? signIn.url : null;
 
   return (
     <>
-      <InlineButton
-        aria-label={gt("Sign in to {server}", { server })}
-        onClick={(event) => {
-          event.stopPropagation();
-          void begin();
-        }}
-        onKeyDown={stopRowToggle}
-      >
-        <T>Sign in</T>
-      </InlineButton>
+      {signedIn ? (
+        <span className="shrink-0 text-sm text-success-foreground">
+          <T>Signed in</T>
+        </span>
+      ) : (
+        <InlineButton
+          aria-label={gt("Sign in to {server}", { server })}
+          onClick={(event) => {
+            event.stopPropagation();
+            void begin();
+          }}
+          onKeyDown={stopRowToggle}
+        >
+          <T>Sign in</T>
+        </InlineButton>
+      )}
       <Dialog
         open={signIn !== null}
         onOpenChange={(open) => {

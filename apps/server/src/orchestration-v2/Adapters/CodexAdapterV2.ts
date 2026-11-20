@@ -8934,6 +8934,20 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             start: Effect.fn("CodexAdapterV2.mcpSignIn.start")(
               function* ({ providerThread, server }) {
                 const threadId = yield* getNativeThreadId(providerThread);
+                // A notice can outlive its problem, as when another client signed the server in.
+                const status = yield* ensureInitialized.pipe(
+                  Effect.andThen(
+                    client.request("mcpServerStatus/list", {
+                      serverName: server,
+                      threadId,
+                      detail: "toolsAndAuthOnly",
+                    }),
+                  ),
+                  Effect.orElseSucceed(() => ({ data: [] })),
+                );
+                if (status.data.some((entry) => entry.runtimeStatus === "connected")) {
+                  return { authorizationUrl: null };
+                }
                 // With the thread, Codex reconnects the server there once the sign-in succeeds.
                 const { authorizationUrl } = yield* ensureInitialized.pipe(
                   Effect.andThen(
@@ -8977,6 +8991,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               const signIn = mcpSignIns.get(server);
               if (signIn === undefined) return yield* fail(`Start the sign-in to ${server} again.`);
               // A browser on this machine may already have opened Codex's callback page.
+              let delivered = true;
               if (!(yield* Deferred.isDone(signIn.succeeded))) {
                 const callback = yield* Effect.try({
                   try: () => oauthCallbackUrl(callbackUrl, signIn.redirectUri, signIn.state),
@@ -8990,21 +9005,27 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     `Codex takes this sign-in at ${callback.host}. Finish it in a browser that can reach that address.`,
                   );
                 }
-                // Codex listens on the machine it runs on, which may not be the browser's.
-                yield* HttpClient.get(callback).pipe(
+                // Codex listens on the machine it runs on, which may not be the browser's. Its
+                // listener closes once a browser reached it, so a refused request can still win.
+                delivered = yield* HttpClient.get(callback).pipe(
                   Effect.provide(FetchHttpClient.layer),
                   Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
                   Effect.provideService(HttpClient.TracerPropagationEnabled, false),
-                  Effect.mapError(() =>
-                    fail(`Codex didn't take the sign-in to ${server}. Start again.`),
-                  ),
+                  Effect.as(true),
+                  Effect.orElseSucceed(() => false),
                 );
               }
               const succeeded = yield* Deferred.await(signIn.succeeded).pipe(
                 Effect.timeoutOrElse({
-                  duration: "30 seconds",
+                  duration: delivered ? "30 seconds" : "2 seconds",
                   orElse: () =>
-                    Effect.fail(fail(`Codex didn't finish the sign-in to ${server}. Start again.`)),
+                    Effect.fail(
+                      fail(
+                        delivered
+                          ? `Codex didn't finish the sign-in to ${server}. Start again.`
+                          : `Codex didn't take the sign-in to ${server}. Start again.`,
+                      ),
+                    ),
                 }),
               );
               mcpSignIns.delete(server);

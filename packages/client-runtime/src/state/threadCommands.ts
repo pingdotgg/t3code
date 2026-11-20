@@ -154,6 +154,12 @@ export function createThreadEnvironmentAtoms<R, E>(
       }),
   });
 
+  // A sign-in counts for every notice about that server in the thread, until the app reloads.
+  const mcpSignedInFamily = Atom.family((_key: string) => Atom.make(false).pipe(Atom.keepAlive));
+  const mcpSignedInAtom = (
+    environmentId: EnvironmentId,
+    input: { readonly threadId: ThreadId; readonly server: string },
+  ) => mcpSignedInFamily(JSON.stringify([environmentId, input.threadId, input.server]));
   const sent = {
     armTitleRegeneration: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:regenerate-title",
@@ -439,10 +445,19 @@ export function createThreadEnvironmentAtoms<R, E>(
     mcpSignInStart: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:commands:thread:mcp-sign-in-start",
       tag: WS_METHODS.providerMcpSignInStart,
+      // No page to open means the server already works.
+      onSuccess: ({ environmentId, input }, registry, result) =>
+        Effect.sync(() => {
+          if (result.authorizationUrl === null) {
+            registry.set(mcpSignedInAtom(environmentId, input), true);
+          }
+        }),
     }),
     mcpSignInComplete: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:commands:thread:mcp-sign-in-complete",
       tag: WS_METHODS.providerMcpSignInComplete,
+      onSuccess: ({ environmentId, input }, registry) =>
+        Effect.sync(() => registry.set(mcpSignedInAtom(environmentId, input), true)),
     }),
   };
   const commands = {
@@ -490,6 +505,7 @@ export function createThreadEnvironmentAtoms<R, E>(
     ...commands,
     regenerateTitle,
     rowActionsAtom,
+    mcpSignedInAtom,
     snapshotAtom: optimistic.snapshotAtom,
     pendingThreadIdsAtom: optimistic.pendingThreadIdsAtom,
     settle: optimistic.wrap(commands.settle, (thread, _input, now, accepted) =>
