@@ -531,11 +531,11 @@ const make = Effect.gen(function* () {
   const managedPolicy = yield* ManagedPolicy.ManagedPolicy;
 
   // Relay-signed text must not name a file directly; a digest is also a fixed, safe length.
-  const replayMarkerName = (prefix: string, value: string) =>
-    digest.digest(Digest.sha256, stringToBytes(value)).pipe(
-      Effect.map((hash) => `${prefix}${Hex.encode(hash)}`),
-      Effect.orDie,
-    );
+  // Untraced: it runs twice per proof inside the health and mint spans.
+  const replayMarkerName = Effect.fnUntraced(function* (prefix: string, value: string) {
+    const hash = yield* digest.digest(Digest.sha256, stringToBytes(value)).pipe(Effect.orDie);
+    return `${prefix}${Hex.encode(hash)}`;
+  });
 
   const withSecrets = Effect.provideService(ServerSecretStore.ServerSecretStore, secrets);
   const withRuntimeFiles = <A, E>(
