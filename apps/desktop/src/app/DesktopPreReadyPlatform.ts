@@ -184,7 +184,7 @@ export const make = Effect.gen(function* () {
     }
 
     if (platform === "win32") {
-      // DirectComposition makes the window flicker over other apps on NVIDIA GPUs.
+      // DirectComposition can cause flicker over other apps on NVIDIA GPUs.
       Electron.app.commandLine.appendSwitch("disable-direct-composition");
     }
 
