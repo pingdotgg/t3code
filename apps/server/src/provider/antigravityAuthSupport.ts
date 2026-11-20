@@ -88,6 +88,8 @@ export interface AntigravityProfile {
   readonly tempDirectory: string;
   readonly browserCommand: string;
   readonly caBundlePath?: string;
+  /** Without a display the agy CLI fails sign-in fast instead of waiting on a browser it never opens. */
+  readonly headless?: boolean;
 }
 
 export interface AntigravityAuthConfig {
@@ -156,8 +158,11 @@ function antigravityProfileSettings(auth: AntigravityAuthConfig): string {
 export interface AntigravityAuthorizationUrl {
   readonly authorizationUrl: string;
   readonly redirectUri: string;
-  readonly state: string;
+  readonly state: string | undefined;
 }
+
+/** `agy acp --login` lands on this Google-hosted page, which shows the code to paste back. */
+const ANTIGRAVITY_CLI_LOGIN_REDIRECT_URI = "https://antigravity.google/oauth-callback";
 
 function authSupportError(detail: string) {
   return new AcpErrors.AcpTransportError({ detail, cause: undefined });
@@ -207,7 +212,10 @@ function antigravityEnvironment(
   const environment: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(baseEnv)) {
     // Windows treats environment keys as case-insensitive. Remove aliases too.
-    if (!removedEnvironmentKeys.has(key.toUpperCase())) environment[key] = value;
+    const name = key.toUpperCase();
+    if (removedEnvironmentKeys.has(name)) continue;
+    if (profile.headless && (name === "DISPLAY" || name === "WAYLAND_DISPLAY")) continue;
+    environment[key] = value;
   }
   // Put the GCP pair in settings.json because GOOGLE_API_KEY takes precedence in the environment.
   const credential =
@@ -314,6 +322,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   readonly auth?: AntigravityAuthConfig;
   readonly userHome?: string;
   readonly tempDirectory?: string;
+  readonly headless?: boolean;
 }) {
   const auth = input.auth ?? ANTIGRAVITY_PERSONAL_AUTH;
   const fs = yield* FileSystem.FileSystem;
@@ -386,6 +395,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
     tempDirectory,
     browserCommand,
     ...(caBundlePath === undefined ? {} : { caBundlePath }),
+    ...(input.headless ? { headless: true } : {}),
   };
   const environment = antigravityEnvironment(profile, input.baseEnv ?? process.env, auth);
   yield* Effect.gen(function* () {
@@ -466,6 +476,8 @@ export function buildAntigravityAcpSpawnInput(input: {
   readonly baseEnv?: NodeJS.ProcessEnv;
   readonly auth?: AntigravityAuthConfig;
   readonly runtimeTempDirectory?: string;
+  /** agy only: run `acp --login` instead of serving ACP. */
+  readonly login?: boolean;
 }): AcpSessionRuntime.AcpSpawnInput {
   return {
     command: input.installation.executablePath,
@@ -476,6 +488,7 @@ export function buildAntigravityAcpSpawnInput(input: {
       input.installation.harnessPath === null
         ? [
             "acp",
+            ...(input.login ? ["--login"] : []),
             "--gemini-dir",
             input.profile.geminiHome,
             "--app-data-dir",
@@ -502,6 +515,7 @@ export function buildAntigravityAcpSpawnInput(input: {
 export const parseAntigravityAuthorizationUrl = Effect.fn("parseAntigravityAuthorizationUrl")(
   function* (
     authorizationUrl: string,
+    options: { readonly cliLogin?: boolean } = {},
   ): Effect.fn.Return<AntigravityAuthorizationUrl, AcpErrors.AcpError> {
     const invalidUrl = () =>
       authSupportError("Antigravity returned an invalid Google sign-in URL.");
@@ -511,30 +525,83 @@ export const parseAntigravityAuthorizationUrl = Effect.fn("parseAntigravityAutho
     const url = yield* decodeUrl(authorizationUrl).pipe(Effect.mapError(invalidUrl));
     const state = url.searchParams.get("state");
     const redirectUri = url.searchParams.get("redirect_uri");
+    const states = url.searchParams.getAll("state").length;
     if (
       url.origin !== "https://accounts.google.com" ||
-      url.pathname !== "/o/oauth2/v2/auth" ||
+      !(
+        url.pathname === "/o/oauth2/v2/auth" ||
+        (options.cliLogin === true && url.pathname === "/o/oauth2/auth")
+      ) ||
       url.username !== "" ||
       url.password !== "" ||
       url.hash !== "" ||
-      url.searchParams.getAll("state").length !== 1 ||
+      states > 1 ||
+      (states === 0 && options.cliLogin !== true) ||
       url.searchParams.getAll("redirect_uri").length !== 1 ||
       url.searchParams.getAll("response_type").length !== 1 ||
       url.searchParams.get("response_type") !== "code" ||
-      state === null ||
-      state.length === 0 ||
-      state.length > 512 ||
-      /\s/.test(state) ||
+      (state !== null && (state.length === 0 || state.length > 512 || /\s/.test(state))) ||
       redirectUri === null ||
-      !/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}\/$/.test(redirectUri)
+      (options.cliLogin === true
+        ? redirectUri !== ANTIGRAVITY_CLI_LOGIN_REDIRECT_URI
+        : !/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}\/$/.test(redirectUri))
     ) {
       return yield* invalidUrl();
     }
-    const redirect = yield* decodeUrl(redirectUri).pipe(Effect.mapError(invalidUrl));
-    if (Number(redirect.port) < 1_024) return yield* invalidUrl();
-    return { authorizationUrl, redirectUri, state };
+    if (options.cliLogin !== true) {
+      const redirect = yield* decodeUrl(redirectUri).pipe(Effect.mapError(invalidUrl));
+      if (Number(redirect.port) < 1_024) return yield* invalidUrl();
+    }
+    return { authorizationUrl, redirectUri, state: state ?? undefined };
   },
 );
+
+export interface AntigravityCliLogin {
+  /** Answers the CLI's paste prompt with one line. */
+  readonly submit: (code: string) => Effect.Effect<void, PlatformError.PlatformError>;
+  /** Forwards the printed Google link, then succeeds once the CLI has stored the sign-in. */
+  readonly finished: Effect.Effect<void, AcpErrors.AcpError | PlatformError.PlatformError>;
+}
+
+/**
+ * `agy acp --login` prints the Google link, reads the code from stdin and stores the token, so a
+ * remote client can sign in without a browser on this machine.
+ */
+export const startAntigravityCliLogin = Effect.fn("startAntigravityCliLogin")(function* (input: {
+  readonly spawn: AcpSessionRuntime.AcpSpawnInput;
+  readonly onAuthorizationUrl: (url: string) => Effect.Effect<void, AcpErrors.AcpError>;
+}) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const child = yield* spawner.spawn(
+    ChildProcess.make(input.spawn.command, input.spawn.args, {
+      ...(input.spawn.cwd === undefined ? {} : { cwd: input.spawn.cwd }),
+      env: input.spawn.env,
+      extendEnv: false,
+      shell: false,
+    }),
+  );
+  const readLink = child.stdout.pipe(
+    Stream.decodeText(),
+    Stream.splitLines,
+    Stream.map((line) => line.trim()),
+    Stream.filter((line) => line.startsWith("https://accounts.google.com/")),
+    Stream.runForEach(input.onAuthorizationUrl),
+  );
+  return {
+    submit: (code) => Stream.run(Stream.encodeText(Stream.make(`${code}\n`)), child.stdin),
+    finished: Effect.all([readLink, Stream.runDrain(child.stderr), child.exitCode], {
+      concurrency: "unbounded",
+    }).pipe(
+      Effect.flatMap(([, , exitCode]) =>
+        Number(exitCode) === 0
+          ? Effect.void
+          : Effect.fail(
+              authSupportError("Antigravity sign-in did not finish. Start sign-in again."),
+            ),
+      ),
+    ),
+  } satisfies AntigravityCliLogin;
+});
 
 export function makeAntigravityStdoutTransform(
   input: {
