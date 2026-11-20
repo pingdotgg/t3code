@@ -144,4 +144,33 @@ describe("resolveThreadDetailsLimits", () => {
       rows: [{ label: "Session", left: 70, accounts: 1, from: { hubs: ["Hub"], signedIn: false } }],
     });
   });
+
+  it("orders single-instance windows with displayProviderUsageWindows", () => {
+    const antigravity = ProviderDriverKind.make("antigravity");
+    const antigravityId = ProviderInstanceId.make("antigravity");
+    const provider: ServerProvider = {
+      ...claudeInstance({
+        checkedAt,
+        windows: [
+          { id: "3p-5h", kind: "session", label: "Claude & GPT · 5-hour", usedPercent: 10 },
+          { id: "gemini-5h", kind: "session", label: "Gemini · 5-hour", usedPercent: 20 },
+          { id: "3p-weekly", kind: "weekly", label: "Claude & GPT · Weekly", usedPercent: 30 },
+          { id: "gemini-weekly", kind: "weekly", label: "Gemini · Weekly", usedPercent: 40 },
+        ],
+      }),
+      instanceId: antigravityId,
+      driver: antigravity,
+      auth: { status: "authenticated" },
+    };
+    const resolved = resolveThreadDetailsLimits(antigravityId, null, [provider], [], now);
+    expect(resolved?.kind).toBe("instance");
+    if (resolved?.kind === "instance") {
+      expect(resolved.limits.windows.map((window) => window.id)).toEqual([
+        "gemini-5h",
+        "gemini-weekly",
+        "3p-5h",
+        "3p-weekly",
+      ]);
+    }
+  });
 });

@@ -11,6 +11,7 @@ import {
   collectLimitPools,
   collectProviderUsageLimits,
   displayLimitWindows,
+  displayProviderUsageWindows,
   hubRoutes,
   instanceHubs,
   type LimitPoolWindow,
@@ -40,10 +41,15 @@ export function resolveThreadDetailsLimits(
     report?.accounts.find((entry) => entry.instanceId === provider.instanceId)?.limits ??
     provider.usageLimits;
   if (!own) return null;
+  const windows = displayProviderUsageWindows(provider.driver, own.windows);
+  const instance: ThreadDetailsLimits = {
+    kind: "instance",
+    limits: windows === own.windows ? own : { ...own, windows },
+  };
   const hubs = instanceHubs(provider, sources);
-  if (limitsNotice(own) === null || hubs.length === 0) return { kind: "instance", limits: own };
+  if (limitsNotice(own) === null || hubs.length === 0) return instance;
   // An instance sent to a hub reads no limits of its own; its hub pools the accounts it spends.
-  return hubPool(provider.driver, model, providers, hubs, now) ?? { kind: "instance", limits: own };
+  return hubPool(provider.driver, model, providers, hubs, now) ?? instance;
 }
 
 export function nextPoolReset(window: LimitPoolWindow, now: number) {
