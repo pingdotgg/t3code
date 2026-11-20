@@ -194,6 +194,8 @@ export const EnvironmentSpeechModel = Schema.Struct({
   active: Schema.Boolean,
   state: EnvironmentSpeechModelState,
   downloaded: Schema.optionalKey(Schema.Finite),
+  /** The file outside T3 Code's model folder this model is used from. */
+  linkedFrom: Schema.optionalKey(Schema.String),
 });
 export type EnvironmentSpeechModel = typeof EnvironmentSpeechModel.Type;
 
@@ -202,7 +204,18 @@ export const EnvironmentSpeechModels = Schema.Struct({
 });
 export type EnvironmentSpeechModels = typeof EnvironmentSpeechModels.Type;
 
+export const EnvironmentSpeechModelDownload = Schema.Struct({
+  ...EnvironmentSpeechModels.fields,
+  // Older environments return only the catalog.
+  cancelled: Schema.optionalKey(Schema.Boolean),
+});
+export type EnvironmentSpeechModelDownload = typeof EnvironmentSpeechModelDownload.Type;
+
 export const EnvironmentSpeechModelRequest = Schema.Struct({ modelId: SpeechModelId });
+/** A model file, or a folder to search for them, on the environment's own disk. */
+export const EnvironmentSpeechModelLinkRequest = Schema.Struct({
+  path: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+});
 
 export const EnvironmentSpeechState = Schema.Literals(["missing-model", "ready", "transcribing"]);
 export type EnvironmentSpeechState = typeof EnvironmentSpeechState.Type;
@@ -215,6 +228,7 @@ const SupportedSpeechStatus = Schema.Struct({
   size: Schema.Finite,
   supportsStreaming: Schema.Boolean,
   supportsBufferedStreaming: Schema.optionalKey(Schema.Boolean),
+  supportsModelLinking: Schema.optionalKey(Schema.Boolean),
   supportsTranslation: Schema.Boolean,
   languages: Schema.optionalKey(Schema.Array(Schema.String)),
   supportsLanguageDetection: Schema.optionalKey(Schema.Boolean),
@@ -279,6 +293,8 @@ export const SpeechTranscriptionOptions = Schema.Struct({
   speechLanguage: SpeechLanguage,
   speechTranslateToEnglish: Schema.Boolean,
   speechCustomWords: SpeechCustomWords,
+  /** Recognition-only terms, such as the project name; never rewrite the transcript. */
+  speechHints: Schema.optionalKey(Schema.Array(SpeechCustomWord).check(Schema.isMaxLength(8))),
   speechRemoveFillerWords: Schema.Boolean,
   /** Preserve this cue for separately consented transcript cleanup. */
   speechCorrectionWord: Schema.optionalKey(SpeechCorrectionCue),
