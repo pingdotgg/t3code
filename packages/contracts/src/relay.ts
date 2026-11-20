@@ -352,6 +352,7 @@ export const RelayEnvironmentLinkProofInvalidReason = Schema.Literals([
   "challenge_invalid",
   "origin_not_allowed",
   "endpoint_not_secure",
+  "environment_key_mismatch",
 ]);
 export type RelayEnvironmentLinkProofInvalidReason =
   typeof RelayEnvironmentLinkProofInvalidReason.Type;

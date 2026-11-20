@@ -52,7 +52,7 @@ it("keeps the note for the provider thread that lost the work across a provider 
     pendingRestartCancelledBackgroundWork({
       runs,
       providerTurns: runs.filter((source) => source.id !== target.id).map(turnFor),
-      compactionMessageIds: new Set(),
+      compactionMessageIds: () => new Set(),
       run: target,
       attempts: [{ id: target.activeAttemptId!, runId: target.id }],
     });
@@ -77,7 +77,7 @@ it("delivers a resumed queued run's note even after a higher-ordinal run", () =>
     pendingRestartCancelledBackgroundWork({
       runs,
       providerTurns: [resumed, ranFirst].map(turnFor),
-      compactionMessageIds: new Set(),
+      compactionMessageIds: () => new Set(),
       run: next,
       attempts: [{ id: next.activeAttemptId!, runId: next.id }],
     }),
@@ -198,7 +198,7 @@ it("does not repeat the note when a steer restarts the run on a new attempt", ()
             ]
           : []),
       ],
-      compactionMessageIds: new Set(),
+      compactionMessageIds: () => new Set(),
       run: steered,
       attempts: runAttemptIds.map((id) => ({ id, runId: steered.id })),
     });
@@ -225,7 +225,7 @@ it("counts a prompted mid-turn or chained continuation as delivering the note", 
     pendingRestartCancelledBackgroundWork({
       runs: [cut, continuation, later],
       providerTurns: [cutTurn, ...(delivered ? [turnFor(continuation)] : [])],
-      compactionMessageIds: new Set(),
+      compactionMessageIds: () => new Set(),
       run: later,
       attempts: [{ id: later.activeAttemptId!, runId: later.id }],
     });
@@ -249,7 +249,7 @@ it("counts a prompted mid-turn or chained continuation as delivering the note", 
       pendingRestartCancelledBackgroundWork({
         runs: [cut, unstarted, later],
         providerTurns: turns,
-        compactionMessageIds: new Set(),
+        compactionMessageIds: () => new Set(),
         run: later,
         attempts: [{ id: later.activeAttemptId!, runId: later.id }],
       }),
@@ -270,7 +270,7 @@ it("counts a prompted mid-turn or chained continuation as delivering the note", 
     pendingRestartCancelledBackgroundWork({
       runs: [cut, steered, later],
       providerTurns: turns,
-      compactionMessageIds: new Set(),
+      compactionMessageIds: () => new Set(),
       run: later,
       attempts,
     }),
