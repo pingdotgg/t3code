@@ -53,6 +53,7 @@ import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import { copyWorkingTreeSnapshot } from "../vcs/workingTreeSnapshot.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -77,6 +78,7 @@ export type ThreadLaunchWorkspaceStrategy =
       readonly baseRef: string;
       readonly branch?: string | undefined;
       readonly startFromOrigin?: boolean | undefined;
+      readonly snapshotFrom?: string | undefined;
     };
 
 export interface ThreadLaunchInitialMessage {
@@ -820,6 +822,19 @@ const make = Effect.gen(function* () {
           ),
         }));
         yield* setupTracker.stageStatus(threadId, "checkout", "done");
+        if (input.workspaceStrategy.snapshotFrom !== undefined) {
+          const parentCwd = input.workspaceStrategy.snapshotFrom;
+          const childCwd = worktree.worktree.path;
+          yield* Effect.tryPromise({
+            try: () =>
+              copyWorkingTreeSnapshot({
+                parentCwd,
+                childCwd,
+                brief: input.initialMessage?.text ?? "",
+              }),
+            catch: (cause) => mapError(input, "provision-worktree", threadId)(cause),
+          });
+        }
       }
 
       // Do not rewrite reused worktrees; that could undo the original branch rename.

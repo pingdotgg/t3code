@@ -756,6 +756,8 @@ export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
     baseRef: TrimmedNonEmptyString,
     branch: Schema.optional(TrimmedNonEmptyString),
     startFromOrigin: Schema.optional(Schema.Boolean),
+    // Parent checkout whose tracked edits are copied into the new worktree at spawn.
+    snapshotFrom: Schema.optional(TrimmedNonEmptyString),
   }),
 ]);
 export type OrchestrationV2ThreadLaunchWorkspaceStrategy =

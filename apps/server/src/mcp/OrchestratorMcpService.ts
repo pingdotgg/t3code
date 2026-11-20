@@ -2884,7 +2884,12 @@ const make = Effect.gen(function* () {
               ),
             );
         }
-        workspaceStrategy = { type: "worktree", baseRef: base.commitSha, startFromOrigin: false };
+        workspaceStrategy = {
+          type: "worktree",
+          baseRef: base.commitSha,
+          startFromOrigin: false,
+          snapshotFrom: parent.thread.worktreePath ?? project.workspaceRoot,
+        };
       }
       // ThreadManagementService.dispatch is the chokepoint for this command
       // type's own enablement check, using the same command id and its

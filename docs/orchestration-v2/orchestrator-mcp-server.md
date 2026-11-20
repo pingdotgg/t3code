@@ -255,8 +255,9 @@ provider's first advertised model.
 Set `target.options` using the options returned by `orchestrator_capabilities`, such as
 `{effort: "max"}`. Supplied values override inherited selections; `{}` or `[]` clears them.
 For local delegation, use `isolation: "worktree"` for a separate prepared checkout from
-the parent's commit; the default `"shared"` uses the parent's checkout. Uncommitted parent
-edits are not copied. A linked-environment target (`target.environmentId`) runs in the remote
+the parent's commit; the default `"shared"` uses the parent's checkout. Tracked edits in
+the parent checkout are copied in at spawn. Untracked files are copied only when the task
+names their path. Install trees such as `node_modules` stay out. A linked-environment target (`target.environmentId`) runs in the remote
 project's checkout and rejects worktree isolation. To launch an isolated thread there, use
 `t3_thread_launch` with `environmentId` and a worktree `workspaceStrategy`.
 

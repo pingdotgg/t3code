@@ -179,7 +179,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   isolation: Schema.optional(
     Schema.Literals(["shared", "worktree"]).annotate({
       description:
-        "'shared' (default): parent checkout. 'worktree': new prepared checkout from the parent commit, for a separate checkout or PR per child. Uncommitted edits stay out.",
+        "'shared' (default): parent checkout. 'worktree': new prepared checkout from the parent commit, for a separate checkout or PR per child. Tracked edits in the parent checkout are copied in at spawn. Untracked files are copied only when the task names their path. Install trees such as node_modules stay out.",
     }),
   ),
   mode: Schema.optional(
