@@ -492,6 +492,26 @@ describe("pools", () => {
     );
     expect(report?.accounts).toHaveLength(1);
     expect(report?.accounts[0]?.email).toBe("g@example.com");
+
+    // Two bridged instances: a fresher credential-only report keeps the older instance's email.
+    const fresherWithoutEmail = {
+      ...local,
+      instanceId: ProviderInstanceId.make("antigravity-2"),
+      usageLimits: {
+        checkedAt: "2026-09-03T12:15:00.000Z",
+        credentialFingerprint: "google-key",
+        windows: [{ ...window, id: "gemini-weekly", usedPercent: 45 }],
+      },
+    };
+    const bridgedReport = collectProviderUsageLimits(
+      withEmail.instanceId,
+      [withEmail, fresherWithoutEmail],
+      [],
+      now,
+    );
+    expect(bridgedReport?.accounts).toHaveLength(1);
+    expect(bridgedReport?.accounts[0]?.email).toBe("g@example.com");
+    expect(bridgedReport?.accounts[0]?.limits.windows[0]?.usedPercent).toBe(45);
   });
 
   it("takes windows from a fresher hub read but credits and redeem from the native instance", () => {

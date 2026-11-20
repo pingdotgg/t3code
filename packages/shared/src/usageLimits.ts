@@ -873,7 +873,7 @@ export function collectProviderUsageLimits(
   type NativeSnapshot = { provider: ServerProvider; limits: ServerProviderUsageLimits };
   const nativeByAccount = new Map<
     string,
-    { usage: NativeSnapshot; credits: NativeSnapshot | null }
+    { usage: NativeSnapshot; credits: NativeSnapshot | null; email: string | undefined }
   >();
   for (const provider of providersWithLimits(providers)) {
     if (provider.driver !== selected.driver || !provider.usageLimits) continue;
@@ -897,6 +897,9 @@ export function collectProviderUsageLimits(
     nativeByAccount.set(key, {
       usage: providerWins ? snapshot : previous.usage,
       credits,
+      email: providerWins
+        ? (provider.auth.email ?? previous?.email)
+        : (previous.email ?? provider.auth.email),
     });
   }
   const native = [...nativeByAccount.values()];
@@ -911,6 +914,7 @@ export function collectProviderUsageLimits(
   for (const {
     usage: { provider, limits },
     credits,
+    email,
   } of native) {
     const key = resolveKey(nativeReport(provider));
     const hubCredits = sources
@@ -951,7 +955,7 @@ export function collectProviderUsageLimits(
           : { instanceId: credits?.provider.instanceId ?? provider.instanceId },
       ...(provider.displayName ? { displayName: provider.displayName } : {}),
       ...(provider.accentColor ? { accentColor: provider.accentColor } : {}),
-      ...(provider.auth.email ? { email: provider.auth.email } : {}),
+      ...(email ? { email } : {}),
       limits: shownCredits ? { ...limits, resetCredits: shownCredits } : limits,
     });
   }
