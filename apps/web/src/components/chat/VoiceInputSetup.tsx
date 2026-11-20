@@ -1,9 +1,9 @@
 import { T, Var, msg, useGT, useLocale } from "gt-react";
 import { m } from "~/i18n/messages";
-import { useStableCallback } from "~/hooks/useStableCallback";
 import {
-  listBrowserMicrophones,
+  labelBrowserMicrophones,
   updateMicrophoneOrder,
+  useMicrophoneRefresh,
   type BrowserMicrophone,
 } from "../../speech/browserMicrophones";
 import type {
@@ -13,7 +13,7 @@ import type {
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { CircleAlertIcon, MicIcon, RefreshCwIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
 import {
@@ -58,30 +58,17 @@ export function VoiceInputSetup(props: {
   const selectedMicrophone = preferredMicrophoneId(order, microphones);
   const [loadingMicrophones, setLoadingMicrophones] = useState(false);
   const [microphoneError, setMicrophoneError] = useState<string | null>(null);
-  const microphoneRefreshId = useRef(0);
-  const refreshMicrophones = useStableCallback(async () => {
-    if (!navigator.mediaDevices?.enumerateDevices) return;
-    const requestId = ++microphoneRefreshId.current;
-    setLoadingMicrophones(true);
-    const devices = await listBrowserMicrophones().catch(() => null);
-    if (requestId !== microphoneRefreshId.current) return;
-
-    if (devices === null) {
-      setMicrophoneError(m(msg("Couldn’t list microphones. The system default still works.")));
-    } else {
-      setMicrophones(devices);
-      setMicrophoneError(null);
-    }
-    setLoadingMicrophones(false);
+  const refreshMicrophones = useMicrophoneRefresh({
+    enabled: props.open && props.step === 1,
+    onStart: () => setLoadingMicrophones(true),
+    onResult: (devices) => {
+      if (devices) setMicrophones(labelBrowserMicrophones(devices));
+      setMicrophoneError(
+        devices ? null : m(msg("Couldn’t list microphones. The system default still works.")),
+      );
+      setLoadingMicrophones(false);
+    },
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to native microphone changes while the device setup step is visible
-  useEffect(() => {
-    if (!props.open || props.step !== 1) return;
-    queueMicrotask(() => void refreshMicrophones());
-    const mediaDevices = navigator.mediaDevices;
-    mediaDevices?.addEventListener?.("devicechange", refreshMicrophones);
-    return () => mediaDevices?.removeEventListener?.("devicechange", refreshMicrophones);
-  }, [props.open, props.step, refreshMicrophones]);
   const selectedIsUnavailable = Boolean(
     selectedMicrophone && !microphones.some((device) => device.deviceId === selectedMicrophone),
   );
