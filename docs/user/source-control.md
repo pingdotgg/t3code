@@ -317,6 +317,11 @@ pull request link in the conversation. Creating a pull request from Git actions 
 and so does an agent creating one with `gh pr create` or `glab mr create`. Agents can link other
 pull requests with the `link_pull_request` tool.
 
+Agents can also read, open, update, reply on, and merge pull requests in the thread's repository
+through T3 Code's own tools, which use the same sign-in as the Pull requests page. An agent merges
+only the commit it last read: if someone pushed since, the merge is refused. On github.com an
+agent can also land a GitHub stack in one merge, like **Merge stack** below.
+
 Use **Link pull request to thread** in the command palette to keep a pull request with the thread. From a review
 on the Pull requests page, **Link to thread** lets you search for an active thread. The review header
 also lists the threads that link to it, including archived threads, so you can return to their context.
@@ -333,7 +338,7 @@ review is terminal. An open or unsynced link keeps it active.
 
 Ask the agent to watch, monitor, or babysit a pull request and it calls `watch_pull_request`. While
 the thread is active, the server checks the pull request every two minutes and wakes the agent when a
-check fails or waits for a maintainer's approval, the required checks pass, someone else comments or reviews, or the branch starts to
+check fails or waits for a maintainer's approval, the required checks pass, the other checks finish after a failure, someone else comments or reviews, or the branch starts to
 conflict. On github.com it also wakes the agent, with GitHub's reason, when the merge queue drops
 the pull request without merging it. Threads in a project that watch the same pull request share one check. On GitHub, a check
 first asks whether anything changed and reads the pull request only when it did, which keeps
@@ -364,8 +369,9 @@ out from the matching organization and repository.
 The Issues page lists the issues of every project whose remote is on GitHub, GitLab, Azure
 DevOps or Forgejo, grouped per tracker account. Open it from the sidebar's utility row or with
 **Open issues** in the command palette. Filter by open or closed, by your involvement
-(assigned, opened by you, mentioning you), by project, and by tracker; the search box asks the tracker
-itself where it can search. Press **Load more** at the end of a group to read further back.
+(assigned, opened by you, mentioning you), and by tracker. Under **Projects**, uncheck the
+projects you do not want to see; the list remembers them, and a project you add later shows.
+The search box asks the tracker itself where it can search. Press **Load more** at the end of a group to read further back.
 The **Views** menu saves and restores a search, filter, and sort setup, as it does for pull
 requests.
 

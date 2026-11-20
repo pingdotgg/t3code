@@ -256,16 +256,24 @@ export const IssueListCursors = Schema.Record(
 );
 export type IssueListCursors = typeof IssueListCursors.Type;
 
+export const ISSUE_LIST_MAX_EXCLUDED_PROJECTS = 1_000;
+
 export const IssueListInput = Schema.Struct({
   state: IssueListState,
   involvement: Schema.optional(IssueInvolvement),
   projectId: Schema.optional(ProjectId),
+  /** Projects left out of the listing, as the issues page hides them. */
+  excludeProjectIds: Schema.optional(
+    Schema.Array(ProjectId).check(Schema.isMaxLength(ISSUE_LIST_MAX_EXCLUDED_PROJECTS)),
+  ),
   /** Narrows to one host, named as the host itself. Absent means every host the workspace has. */
   host: Schema.optional(TrimmedNonEmptyString),
   /** Rows per scope, which with a continuation is rows per slice. */
   limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 200 }))),
   /** Carry on from an earlier answer: only the scopes named here are read, one slice each. */
   cursors: Schema.optional(IssueListCursors),
+  /** An explicit refresh of the first page may also refresh tracker metadata. */
+  refresh: Schema.optional(Schema.Boolean),
   /** Free text the trackers themselves are asked to match. */
   query: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(200))),
   /** Label names an issue must carry, every one of them. */

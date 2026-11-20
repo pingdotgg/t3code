@@ -38,6 +38,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -77,6 +78,9 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 const projectId = ProjectId.make("project:launch-test");
 const otherProjectId = ProjectId.make("project:launch-other");
 const encodeThreadProjection = Schema.encodeEffect(OrchestrationV2ThreadProjectionJson);
+const dispatchIntakeCommand = (
+  command: Parameters<typeof ThreadMessageIntake.dispatchCommand>[0],
+) => ThreadMessageIntake.dispatchCommand(command, { managesProviders: true });
 const modelSelection = {
   instanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5.1-codex",
@@ -2508,6 +2512,46 @@ it.effect(
     }),
 );
 
+it.effect("prepares a launch whose caller goes away after its first message commits", () =>
+  Effect.gen(function* () {
+    const messageCommitted = yield* Deferred.make<void>();
+    const finishDispatch = yield* Deferred.make<void>();
+    const setupEntered = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      runSetup: () =>
+        Deferred.succeed(setupEntered, undefined).pipe(Effect.as({ status: "no-script" as const })),
+      dispatch: (command, dispatch) =>
+        dispatch(command).pipe(
+          Effect.tap((result) =>
+            result.storedEvents.some((stored) => stored.event.type === "run.created")
+              ? Deferred.succeed(messageCommitted, undefined).pipe(
+                  Effect.andThen(Deferred.await(finishDispatch)),
+                )
+              : Effect.void,
+          ),
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const launch = yield* Effect.forkChild(
+        launches.launch(
+          launchInput({
+            command: "command:launch:caller-gone",
+            thread: "thread:launch:caller-gone",
+            message: "Prepare without the caller",
+            workspace: { type: "worktree", baseRef: "main" },
+          }),
+        ),
+      );
+      yield* Deferred.await(messageCommitted);
+      yield* Effect.sync(() => launch.interruptUnsafe());
+      yield* Deferred.succeed(finishDispatch, undefined);
+      yield* Fiber.await(launch);
+      yield* Deferred.await(setupEntered);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
 it.effect("creates a strong provider-thread mapping for an imported native session", () => {
   const harness = makeHarness();
   return Effect.gen(function* () {
@@ -2672,7 +2716,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
     }).pipe(Effect.flip);
     assert.equal(missingProject._tag, "ThreadLaunchError");
     assert.equal((yield* claimedFiles).length, 1);
-    const missingThread = yield* ThreadMessageIntake.dispatchCommand({
+    const missingThread = yield* dispatchIntakeCommand({
       type: "message.dispatch",
       commandId: CommandId.make("intake-no-thread"),
       threadId: ThreadId.make("missing-thread"),
@@ -2686,7 +2730,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
     assert.equal(missingThread._tag, "OrchestratorProjectionError");
     assert.equal((yield* claimedFiles).length, 1);
 
-    const dispatch = ThreadMessageIntake.dispatchCommand({
+    const dispatch = dispatchIntakeCommand({
       type: "message.dispatch",
       commandId: CommandId.make("intake-dispatch"),
       threadId: input.threadId,
@@ -2722,7 +2766,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
     });
     assert.isNotNull(filePath);
     yield* fs.writeFile(filePath, new Uint8Array([5, 6, 7, 8]));
-    const edit = ThreadMessageIntake.dispatchCommand({
+    const edit = dispatchIntakeCommand({
       type: "queued-run.edit",
       commandId: CommandId.make("intake-edit"),
       threadId: input.threadId,
@@ -2748,7 +2792,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
     assert.deepEqual(yield* fs.readFile(durableFilePath), new Uint8Array([5, 6, 7, 8]));
     assert.deepEqual(yield* fs.readFile(filePath), new Uint8Array([5, 6, 7, 8]));
     const beforeRejectedEdit = (yield* claimedFiles).length;
-    const rejectedEdit = yield* ThreadMessageIntake.dispatchCommand({
+    const rejectedEdit = yield* dispatchIntakeCommand({
       type: "queued-run.edit",
       commandId: CommandId.make("intake-edit-rejected"),
       threadId: input.threadId,

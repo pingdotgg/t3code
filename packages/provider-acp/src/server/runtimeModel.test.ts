@@ -17,6 +17,7 @@ import {
   sessionUpdateIsReplay,
   syntheticLoadSessionResponseFromInitialize,
   toolCallProgressLength,
+  toolCallVisibleOutputChanged,
   withTrackedPermissionToolCall,
   type AcpToolCallState,
 } from "./runtimeModel.ts";
@@ -335,7 +336,6 @@ describe("AcpRuntimeModel", () => {
         update: {
           sessionUpdate: "tool_call_update",
           toolCallId: "read-1",
-          kind: "read",
           ...(locations === undefined ? {} : { locations }),
         },
       } satisfies EffectAcpSchema.SessionNotification);
@@ -351,14 +351,21 @@ describe("AcpRuntimeModel", () => {
     const cleared = mergeToolCallState(created, toolCall([]));
     expect(cleared.data.locations).toEqual([]);
     expect(mergeToolCallState(created, toolCall(null)).data.locations).toEqual([]);
-    expect(
+    const emits = (previous: AcpToolCallState, next: AcpToolCallState) =>
       decideToolCallUpdateEmission({
-        previous: created,
-        next: cleared,
+        previous,
+        next,
         lastEmittedDetailLength: 0,
         skippedSinceEmit: 0,
-      }).emit,
-    ).toBe(true);
+      }).emit;
+    expect(emits(created, cleared)).toBe(true);
+    expect(toolCallVisibleOutputChanged(created, cleared)).toBe(true);
+    const relocated = mergeToolCallState(cleared, toolCall([{ path: "/workspace/src/app.ts" }]));
+    expect(emits(cleared, relocated)).toBe(true);
+    expect(toolCallVisibleOutputChanged(cleared, relocated)).toBe(true);
+    const repeated = mergeToolCallState(relocated, toolCall([{ path: "/workspace/src/app.ts" }]));
+    expect(emits(relocated, repeated)).toBe(false);
+    expect(toolCallVisibleOutputChanged(relocated, repeated)).toBe(false);
   });
 
   it("clears explicitly nulled ACP v2 tool call fields and replaces raw input", () => {
@@ -1092,6 +1099,65 @@ describe("AcpRuntimeModel", () => {
       },
     });
     expect(idle.events).toEqual([]);
+
+    const toolCall = (update: EffectAcpSchema.SessionUpdate) => {
+      const event = parseSessionUpdateEvent({ sessionId: "session-1", update }).events[0];
+      if (event?._tag !== "ToolCallUpdated") throw new Error("expected a compaction tool call");
+      return event.toolCall;
+    };
+    const draft = toolCall({
+      sessionUpdate: "compaction_summary_chunk",
+      compactionId: "compact-1",
+      content: { type: "text", text: "Draft summary" },
+    });
+    const finish = (summary?: ReadonlyArray<EffectAcpSchema.ContentBlock> | null) =>
+      mergeToolCallState(
+        draft,
+        toolCall({
+          sessionUpdate: "compaction_update",
+          compactionId: "compact-1",
+          status: "completed",
+          ...(summary === undefined ? {} : { summary }),
+        }),
+      ).data.rawOutput;
+
+    expect(finish()).toBe("Draft summary");
+    expect([finish(null), finish([]), finish([{ type: "text", text: "" }])]).toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
+
+    const fail = (
+      previous: ReturnType<typeof toolCall>,
+      patch: Pick<
+        Extract<EffectAcpSchema.SessionUpdate, { sessionUpdate: "compaction_update" }>,
+        "summary" | "error"
+      >,
+    ) =>
+      mergeToolCallState(
+        previous,
+        toolCall({
+          sessionUpdate: "compaction_update",
+          compactionId: "compact-1",
+          status: "failed",
+          ...patch,
+        }),
+      );
+    const failed = fail(draft, { error: "Budget exhausted" });
+    const summaryCleared = fail(failed, { summary: null });
+    const errorCleared = fail(summaryCleared, { error: null });
+    const fields = (state: ReturnType<typeof toolCall>) => [
+      state.data.rawOutput,
+      state.data.compactionError,
+    ];
+    expect(fields(failed)).toEqual(["Draft summary", "Budget exhausted"]);
+    expect(fields(summaryCleared)).toEqual([undefined, "Budget exhausted"]);
+    expect(fields(errorCleared)).toEqual([undefined, undefined]);
+    expect(fields(fail(draft, { summary: null, error: "Budget exhausted" }))).toEqual([
+      undefined,
+      "Budget exhausted",
+    ]);
   });
 
   it("applies ACP v2 agent-owned terminal snapshots and output chunks", () => {
@@ -1315,6 +1381,28 @@ describe("extractMcpToolCallIdentity", () => {
     });
   });
 
+  it("recovers server, tool, and arguments from Antigravity call_mcp_tool calls", () => {
+    // agy 1.5.12 reaches MCP tools its context budget left out through call_mcp_tool.
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "call_13347576314095519317",
+      kind: "execute",
+      title: "MCP Tool navigate_page",
+      status: "in_progress",
+      rawInput: {
+        ServerName: "chrome-devtools",
+        ToolName: "navigate_page",
+        Arguments: { url: "https://example.com" },
+      },
+    });
+
+    expect(extractMcpToolCallIdentity(toolCall)).toEqual({
+      server: "chrome-devtools",
+      tool: "navigate_page",
+      input: { url: "https://example.com" },
+    });
+  });
+
   it("recovers T3 identity from acp-mcp-call fallback commands", () => {
     const toolCall = toolCallFromUpdate({
       sessionUpdate: "tool_call",
@@ -1376,6 +1464,7 @@ describe("extractMcpToolCallIdentity", () => {
     });
     const merged = mergeToolCallState(created, completed);
 
+    expect(merged.title).toBe(created.title);
     expect(extractMcpToolCallIdentity(merged)).toEqual({
       server: "t3-code",
       tool: "orchestrator_capabilities",
