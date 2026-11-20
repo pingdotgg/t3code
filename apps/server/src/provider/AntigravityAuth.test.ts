@@ -426,6 +426,38 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityAuth"
     }),
   );
 
+  it.effect("does not blame the network when stored sign-in succeeds but no session opens", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ interactive: false });
+      yield* harness.auth.controller.start(owner);
+      yield* Deferred.await(harness.authenticateCalled);
+      yield* Deferred.succeed(harness.authenticated, undefined);
+      const blamesNetwork = /reach(ed)? Google|network|ipv6/i;
+
+      yield* TestClock.adjust("30 seconds");
+      const hinted = yield* harness.auth.controller.subscribe(owner).pipe(Stream.runHead);
+      assert.notMatch(Option.getOrThrow(hinted).message ?? "", blamesNetwork);
+
+      yield* TestClock.adjust("270 seconds");
+      const failed = yield* phase(harness.auth, "failed");
+      assert.notMatch(failed.message ?? "", blamesNetwork);
+    }),
+  );
+
+  it.effect("does not call a completed Google sign-in expired when no session opens", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const state = yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      yield* harness.auth.controller.complete(owner, { flowId: state.flowId!, callbackUrl });
+      yield* Deferred.succeed(harness.authenticated, undefined);
+
+      yield* TestClock.adjust("300 seconds");
+      const failed = yield* phase(harness.auth, "failed");
+      assert.notInclude(failed.message ?? "", "expired");
+    }),
+  );
+
   it.effect("keeps the expired message once the Google link was shown", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
