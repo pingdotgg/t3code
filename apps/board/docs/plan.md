@@ -1353,19 +1353,19 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends C2 to the base-branch stack and the operator lands it bottom-up.
 
-## Browse and read files in the main view, and open them in an editor (F1)
+## Browse files from a right sidebar explorer and read them in the main view, as Orca does (F1)
 
 **Depends on.** C2.
 
 **Files.**
 
-- [ ] Create `apps/board/src/files/FilesView.tsx`, `apps/board/src/files/FileTree.tsx`, `apps/board/src/files/FilePreview.tsx`, and `apps/board/src/files/OpenInEditor.tsx`.
+- [ ] Create `apps/board/src/files/FileExplorer.tsx`, `apps/board/src/files/FileTree.tsx`, `apps/board/src/files/FileView.tsx`, `apps/board/src/files/FilePreview.tsx`, and `apps/board/src/files/OpenInEditor.tsx`.
 - [ ] Create `apps/board/src/files/editorChoice.ts` and `apps/board/src/files/editorChoice.test.ts`.
-- [ ] Edit `apps/board/src/artifacts/ArtifactViewer.tsx`, `apps/board/src/domain/artifact.ts`, and the main view host in `App.tsx`.
+- [ ] Edit `apps/board/src/artifacts/ArtifactViewer.tsx`, `apps/board/src/domain/artifact.ts`, the right panel host B11 created, and the main view host in `App.tsx`.
 
 **Build.**
 
-- [ ] Show files in the main view, where the board canvas is, never in the right panel. **Files** in the left nav, a file link in the chat, and an artifact card each open the main view with the tree on its left and the preview beside it. Its root picker lists the project and every ticket worktree on the board. Selecting a board in the sidebar returns the main view to its canvas.
+- [ ] Copy Orca's file layout, and capture Orca's explorer, an opened file, and its three-dot menu first as the references. The file tree lives in an explorer tab of the right sidebar, in a tab strip shaped like Orca's beside the Browser tab, so D1 and M1 can add Changes and Checks. Clicking a file opens its content in the main view the way Orca opens it, beside the board, and closing it returns to the canvas. A file link in the chat and an artifact card open files the same way. The explorer's root picker lists the project and every ticket worktree on the board. Leave out anything Orca's file flow does not have.
 - [ ] Copy behavior from T3 web's file browser, read only, and never import from `apps/web`. The sources are `apps/web/src/components/files/FileBrowserPanel.tsx`, `FileExplorerPane.tsx`, `FilePreviewPanel.tsx`, `fileTreeExpansion.ts`, and `useDirectoryEntries`. Use the same tree and code packages T3 web uses.
 - [ ] In `FileTree.tsx`, list folders lazily through `projects.listEntries` with paths relative to the chosen root's `cwd`, and keep expansion per root.
 - [ ] In `FilePreview.tsx`, show code with C2's colors, markdown rendered, images through signed media URLs, TSV and CSV as tables through `@t3tools/shared/delimitedPreview`, PDFs as pages, and a placeholder for other binaries, each with copy and download.
@@ -1375,7 +1375,7 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 
 **You see.**
 
-- [ ] Files open in the main view with the project's and each worktree's file tree beside the preview, and the three-dot menu opens the file in VS Code, Cursor, or Zed, with the last pick listed first.
+- [ ] The right sidebar's explorer shows the project's and each worktree's file tree, a clicked file opens in the main view as it does in Orca, and the three-dot menu opens the file in VS Code, Cursor, or Zed, with the last pick listed first.
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
@@ -1383,15 +1383,15 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe.
 
-- [ ] Lane 1. Regression lane against trunk. Trunk has no file view, so record that fact. Open **Files** at head on a seeded project. Save `f1-tree.png`. Pass when the main view shows the tree and the tree matches `git ls-files` for the folders opened.
+- [ ] Lane 1. Regression lane against trunk. Trunk has no explorer, so record that fact. Open the explorer tab at head on a seeded project. Save `f1-tree.png` beside the Orca reference. Pass when the right sidebar shows the tree and the tree matches `git ls-files` for the folders opened.
 - [ ] Lane 2. Switch the root to a ticket worktree. Save `f1-worktree.png`. Pass when the tree shows that worktree's files, including its `.omp/artifacts/`.
 - [ ] Lane 3. Open a TypeScript file, a markdown file, an image, a TSV, and a PDF. Save `f1-previews.png`. Pass when each renders as the Build boxes say.
-- [ ] Lane 4. Open a file from a chat file link and from an artifact card. Save `f1-open-from.png`. Pass when both open in the main view, and selecting the board returns its canvas.
+- [ ] Lane 4. Open a file from the explorer, a chat file link, and an artifact card. Save `f1-open-from.png` beside the Orca reference. Pass when each opens in the main view as Orca opens it, and closing it returns the canvas.
 - [ ] Lane 5. Read `availableEditors` from the lane engine's server config, and open the three-dot menu. Save `f1-editors.txt` and `f1-menu.png` beside the Orca reference capture. Pass when the menu lists exactly those editors and matches Orca's menu shape.
 - [ ] Lane 6. Choose **Open in VS Code** on a project file. Save `f1-open-vscode.png` from a full-screen capture. Pass when VS Code shows that file.
 - [ ] Lane 7. Choose **Open in Cursor**, reload the app, and open the menu again. Save `f1-open-cursor.png`. Pass when Cursor showed the file and the menu lists Cursor first after the reload.
 - [ ] Lane 8. Copy and download a file. Save `f1-copy.txt`. Pass when the clipboard and the downloaded file match the file's contents.
-- [ ] Lane 9. Run the Windows app with the file view and the orchestrator chat open. Save `f1-windows.png` from a full-window capture. Pass when the tree, the preview, and the three-dot menu fit, and the right panel holds no Files tab.
+- [ ] Lane 9. Run the Windows app with the explorer, an opened file, and the orchestrator chat. Save `f1-windows.png` from a full-window capture. Pass when the sidebar, the file view, and the three-dot menu fit and match the Orca references.
 - [ ] Lane 10. Run the boundary check, the standards check, and the dependency rules at head. Save `f1-checks.txt`. Pass when all three exit 0.
 
 **Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
@@ -1426,7 +1426,7 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 
 **Build.**
 
-- [ ] Add a Changes tab to the right panel beside Browser, laid out like Orca's source control view in `/home/kyle/personalDev/main/artifacts/agent-board-prototype/refs/orca-right-source-control.png`. It shows the PR number with search and more, the branch and its base with an open-on-host link, a commit message box, a Commit button with a dropdown, the changed files, and a collapsible Commits section. It works on the same roots as F1's file view, the project and each ticket worktree.
+- [ ] Add a Changes tab to the right sidebar's tab strip beside the explorer and Browser, laid out like Orca's source control view in `/home/kyle/personalDev/main/artifacts/agent-board-prototype/refs/orca-right-source-control.png`. It shows the PR number with search and more, the branch and its base with an open-on-host link, a commit message box, a Commit button with a dropdown, the changed files, and a collapsible Commits section. It works on the same roots as F1's explorer, the project and each ticket worktree.
 - [ ] Copy behavior from T3 web's diff panel, read only, and never import from `apps/web`. The sources are `apps/web/src/components/DiffPanel.tsx`, `DiffPanelShell.tsx`, `DiffWorkerPoolProvider.tsx`, `DiffFilePathCopyButton.tsx`, and `apps/web/src/components/diffs/`. Use the same diff package T3 web uses.
 - [ ] Offer two sources, as T3 does. **Uncommitted** reads `review.getDiffPreview` with `sourceKind: "working-tree"`. **Branch** reads it with `sourceKind: "branch-range"` against the ticket's base from `tickets.json`, or the default branch for the project.
 - [ ] In `CommitList.tsx`, list the branch's commits from `review.getBranchCommits`, and show one commit's diff with `commitSha`.
