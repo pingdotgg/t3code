@@ -2,7 +2,7 @@
 
 Agent Board is a desktop app for running projects through an orchestrator on the T3 Code engine. The sidebar lists T3 projects, each project lists its boards, and each board shows one orchestrator, its tickets in lanes, the agents working each ticket, artifact cards, and For-you cards. The workflow it shows is the XEO-3330 run from November 2026.
 The rule the program enforces is that the engine stays upstream. No PR edits a file that exists upstream, except `pnpm-lock.yaml`. Every PR passes `apps/board/scripts/check-engine-untouched.mjs`. The repo's lint and dependency standards apply to every file in the repo, and fail only on lines we add or change.
-The PRs, in stack order, are B0, B1, S1, K1, B2, U1, B3, W1, B4, B5, B6, B7, B8, B9, B10, B11, B12, and O1.
+The PRs, in stack order, are B0, B1, S1, K1, B2, U1, B3, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, B12, and O1.
 
 ## How to read this
 
@@ -38,9 +38,9 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
 - [ ] Follow this dependency graph. Base each PR on its parent's branch, because the execution playbook stacks.
   - [ ] B0 is first. It branches from `main` of `13kparkin/t3code`.
   - [ ] B1 after B0. S1 after B1. K1 after S1. B2 after K1. U1 after B2. B3 after U1. W1 after B3. B4 after W1. B5 after B4. B6 after B5.
-  - [ ] B7 after B6. B8 after B7. B9 after B8. B10 after B9. B11 after B10. B12 after B11. O1 after B12.
+  - [ ] B7 after B6. C1 after B7. B8 after C1. B9 after B8. B10 after B9. B11 after B10. B12 after B11. O1 after B12.
 - [ ] Hold the file boundaries. Every PR touches only `apps/board/**`, `.github/workflows/agent-board.yml`, and `pnpm-lock.yaml`. S1 also adds `standards/**`, `.vite-hooks/pre-push`, and `.claude/settings.json`, which upstream does not have. K1 and B12 write outside the repo only through their install scripts.
-- [ ] Hold the review gate. B1, B2, U1, W1, B4, B5, B6, B7, B8, B9, B10, and B11 change an interaction. They post their screenshots and video in chat at merge, so the operator can ask for a follow-up PR.
+- [ ] Hold the review gate. B1, B2, U1, W1, B4, B5, B6, B7, C1, B8, B9, B10, and B11 change an interaction. They post their screenshots and video in chat at merge, so the operator can ask for a follow-up PR.
 - [ ] Cap building agents at 2 at once, and run a push as the only heavy job, because this machine has 15 GB of RAM and 4 cores.
 
 ### PR mechanics, for every PR
@@ -823,9 +823,67 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends B7 to the base-branch stack and the operator lands it bottom-up.
 
-## Route everything that needs the user into For-you cards (B8)
+## Switch the orchestrator's model and run slash commands from its chat (C1)
 
 **Depends on.** B7.
+
+**Files.**
+
+- [ ] Create `apps/board/src/chat/Composer.tsx`, `apps/board/src/chat/ModelPicker.tsx`, and `apps/board/src/chat/SlashMenu.tsx`.
+- [ ] Create `apps/board/src/chat/slash.ts` and `apps/board/src/chat/slash.test.ts`.
+- [ ] Edit `apps/board/src/chat/OrchestratorPanel.tsx`, `apps/board/src/providers/providers.ts`, and `apps/board/src/board/CreateBoard.tsx`.
+
+**Build.**
+
+- [ ] Default every new board's orchestrator to Claude Code with `claude-opus-5-5` at `medium` effort. When the engine has no signed-in Claude instance or doesn't offer that model, preselect the first signed-in instance and its default model, and say why under the picker.
+- [ ] In `ModelPicker.tsx`, let the operator change the orchestrator's provider instance, model, and effort from the composer, the way T3's chat composer does. The next turn goes out with that `modelSelection` through `startThreadTurn`. Read T3 web's composer model picker under `apps/web/src` for behavior and copy the pattern, never the import.
+- [ ] In `SlashMenu.tsx`, open a filtered menu when the operator types `/` at the start of the message. It lists the orchestrator instance's `slashCommands` and `skills` from the engine's server config (`packages/contracts/src/server.ts:111-143`), so Claude Code's commands, installed skills, and plugin skills all appear, plus the composer actions T3's own chat offers. Arrow keys move, Enter picks, Escape closes, and a command with an `input` hint keeps the cursor for its argument. Mirror how T3 web's composer turns a picked command or skill into the message it sends.
+- [ ] In `slash.ts`, keep the matching and ranking pure. Prefix matches come first, then word matches, grouped as commands, skills, and T3 actions.
+
+**You see.**
+
+- [ ] A new board's orchestrator starts on Claude Opus 5.5 at medium effort, the composer can switch the model for the next turn, and typing `/` lists Claude Code's commands, skills, and T3's actions.
+
+**Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] `slash.test.ts` ranks a fixed list of commands and skills for the inputs `/`, `/re`, and `/rev` into literal expected orders, and turns a picked command with an argument into the literal message text. Run `vp test run src/chat/slash.test.ts` from `apps/board`.
+
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe.
+
+- [ ] Lane 1. Regression lane against trunk. On trunk the board dialog preselects whatever the engine lists first. Create a board at head. Save `c1-default.png`. Pass when the orchestrator thread runs `claude-opus-5-5` at `medium`, read from the thread.
+- [ ] Lane 2. Hide the Claude instance from the lane engine and create a board. Save `c1-fallback.png`. Pass when the first signed-in instance is preselected and the reason shows.
+- [ ] Lane 3. Switch the model to `claude-sonnet-5-5` in the composer and send a message. Save `c1-switch.png`. Pass when that turn's run reports `claude-sonnet-5-5`.
+- [ ] Lane 4. Switch to a Codex instance and send a message. Save `c1-switch-codex.png`. Pass when the turn runs on Codex, or the panel shows T3's reason when it refuses a provider change mid-thread.
+- [ ] Lane 5. Type `/`. Save `c1-slash.png`. Pass when the menu lists the instance's slash commands and skills, including `omp-kit` plugin skills, grouped as in `slash.ts`.
+- [ ] Lane 6. Type `/comp` and press Enter. Save `c1-compact.png`. Pass when Claude Code runs its compact command in the orchestrator thread.
+- [ ] Lane 7. Pick a skill from the menu and send. Save `c1-skill.png`. Pass when the orchestrator's reply shows it loaded that skill.
+- [ ] Lane 8. Use only the keyboard to open, move through, pick from, and close the menu. Save `c1-keyboard.png`. Pass when every step works without the mouse and focus returns to the composer.
+- [ ] Lane 9. Run the Windows app and open the menu. Save `c1-windows.png` from a full-window capture. Pass when the menu and the model picker fit inside the panel above the usage bar.
+- [ ] Lane 10. Run the boundary check and the standards check at head. Save `c1-checks.txt`. Pass when both exit 0.
+
+**Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] Metric. Time from typing `/` to the menu's first paint with 200 commands and skills. Trunk has no menu, so the budget is absolute.
+- [ ] Probe. Log `board:slash-open` and `board:slash-painted` ten times.
+- [ ] Baseline. Record that trunk has no menu, then record the head times.
+- [ ] Rule. The median stays under 50 ms, recorded for O1.
+
+**Review gate.** The operator reviews at merge.
+
+- [ ] Copy lane 1, 3, and 5 screenshots into `apps/board/docs/media/c1-review-<slug>.png`.
+- [ ] Record a 30 to 60 second video of the change from a lane. Save it as `apps/board/docs/media/c1-review.mp4`.
+- [ ] Post the screenshots and the video in chat for the operator at merge.
+
+**Merge.**
+
+- [ ] Root's clean verdict at the exact head SHA.
+- [ ] Bugbot triage done.
+- [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
+- [ ] The root appends C1 to the base-branch stack and the operator lands it bottom-up.
+
+## Route everything that needs the user into For-you cards (B8)
+
+**Depends on.** C1.
 
 **Files.**
 
