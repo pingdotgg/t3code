@@ -29,6 +29,7 @@ import { Button } from "../../components/ui/Button";
 import { ControlPill } from "../../components/ui/ControlPill";
 import * as Dialog from "../../components/ui/Dialog";
 import { EmptyState } from "../../components/ui/EmptyState";
+import { useContentTopInset } from "../../components/ui/useBarInset";
 import { cn } from "../../lib/cn";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { uuidv4 } from "../../lib/uuid";
@@ -81,6 +82,17 @@ async function openModelReader(uri: string, signal: AbortSignal) {
   }
   if (!response.ok || !response.body) throw new Error(`Model request failed (${response.status}).`);
   return response.body.getReader();
+}
+
+async function streamModelChunks(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal: AbortSignal,
+  sendChunk: (data: string) => Promise<void>,
+) {
+  for await (const data of modelTransferChunks(reader, MAX_MODEL_BYTES)) {
+    signal.throwIfAborted();
+    await sendChunk(data);
+  }
 }
 
 /** The file screen's menu actions for its model viewer, and the props that connect them. */
@@ -165,6 +177,7 @@ export function ModelFilePreview({
 }) {
   const gt = useGT();
   const insets = useSafeAreaInsets();
+  const headerInset = useContentTopInset();
   const theme = useUniwindTheme();
   const background = String(theme["--color-sheet"]);
   const pinColor = String(theme["--color-primary"]);
@@ -238,17 +251,19 @@ export function ModelFilePreview({
       reader = await openModelReader(uri, controller.signal);
       controller.signal.throwIfAborted();
       post({ type: "begin", id });
-      for await (const data of modelTransferChunks(reader, MAX_MODEL_BYTES)) {
-        controller.signal.throwIfAborted();
-        const acked = new Promise<void>((resolve, reject) => {
-          acks.current.set(id, resolve);
-          controller.signal.addEventListener("abort", () => reject(controller.signal.reason), {
-            once: true,
+      await streamModelChunks(reader, controller.signal, (data) => {
+        return new Promise<void>((resolve, reject) => {
+          const signal = controller.signal;
+          const abort = () => reject(signal.reason);
+          signal.addEventListener("abort", abort, { once: true });
+          acks.current.set(id, () => {
+            signal.removeEventListener("abort", abort);
+            resolve();
           });
+          post({ type: "chunk", id, data });
         });
-        post({ type: "chunk", id, data });
-        await acked;
-      }
+      });
+      controller.signal.throwIfAborted();
       post({ type: "end", id, format, view: startView(), wireframe: wireframeRef.current });
     })().catch((cause: unknown) => {
       if (controller.signal.aborted) return;
@@ -491,7 +506,7 @@ export function ModelFilePreview({
   ] as const;
 
   return (
-    <View className="flex-1 bg-sheet">
+    <View className="flex-1 bg-sheet" style={{ paddingTop: headerInset }}>
       {annotating ? (
         <View className="h-11 flex-row items-center gap-2 border-b border-border px-4">
           <Text className="min-w-0 flex-1 text-sm text-foreground" numberOfLines={1}>

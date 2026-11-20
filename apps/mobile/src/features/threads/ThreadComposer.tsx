@@ -490,8 +490,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const isToolbarVisible = isVoiceInputPresented;
   const hasEditingAttachments =
     (queuedEdit !== null && queuedEdit.existingAttachments.length > 0) ||
-    stripAttachments.length > 0 ||
-    modelDrafts.length > 0;
+    stripAttachments.length > 0;
   const openModelView = (path: string, view: ModelCameraView) => {
     Keyboard.dismiss();
     navigation.navigate("ThreadFile", {
@@ -674,32 +673,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
           />
         </Animated.View>
       ) : null}
-      {modelDrafts.map((draft) => (
-        <Animated.View
-          key={draft.record.contextId}
-          className="px-[14px] pb-2 pt-2"
-          entering={COMPOSER_ATTACHMENT_ENTERING}
-          exiting={FadeOut.duration(120)}
-        >
-          <ModelAnnotationDraftCard
-            draft={draft}
-            screenshot={draftAttachments.find((attachment) => attachment.id === draft.screenshotId)}
-            disabled={isSubmissionLocked}
-            onRemove={() => {
-              props.onChangeDraftMessage(
-                replaceComposerContextReferences(draftMessage, (reference) =>
-                  reference.contextId === draft.record.contextId
-                    ? ""
-                    : formatComposerContextReference(reference),
-                ),
-              );
-              if (draft.screenshotId !== null) props.onRemoveDraftImage(draft.screenshotId);
-            }}
-            onPressScreenshot={(uri, name) => onPressPreview({ kind: "image", uri, name })}
-            onOpenView={props.isDraft ? undefined : openModelView}
-          />
-        </Animated.View>
-      ))}
       {stripAttachments.length > 0 ? (
         <Animated.View
           className="px-[14px] pb-2.5 pt-2"
@@ -853,6 +826,34 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
             error={voiceInput.state.phase === "error" ? voiceInput.state.error : null}
             onDismiss={voiceInput.cancel}
           />
+          {modelDrafts.map((draft) => (
+            <Animated.View
+              key={draft.record.contextId}
+              className="px-[14px] pb-2 pt-2"
+              entering={COMPOSER_ATTACHMENT_ENTERING}
+              exiting={FadeOut.duration(120)}
+            >
+              <ModelAnnotationDraftCard
+                draft={draft}
+                screenshot={draftAttachments.find(
+                  (attachment) => attachment.id === draft.screenshotId,
+                )}
+                environmentId={props.environmentId}
+                disabled={isSubmissionLocked}
+                onRemove={() => {
+                  props.onChangeDraftMessage(
+                    replaceComposerContextReferences(draftMessage, (reference) =>
+                      reference.contextId === draft.record.contextId
+                        ? ""
+                        : formatComposerContextReference(reference),
+                    ),
+                  );
+                  if (draft.screenshotId !== null) props.onRemoveDraftImage(draft.screenshotId);
+                }}
+                onOpenView={props.isDraft ? undefined : openModelView}
+              />
+            </Animated.View>
+          ))}
           {isExpanded ? editingAttachments : null}
           {attachmentBlockReason !== null ? (
             <View className="flex-row items-center gap-1.5 px-4 py-1.5">
