@@ -294,6 +294,7 @@ export default function DiffPanel({
   const isGitSelection =
     diffSelection.kind === "branch" ||
     diffSelection.kind === "unstaged" ||
+    diffSelection.kind === "unstaged-only" ||
     diffSelection.kind === "commit";
   const toolCallItems = useQuietThreadVisibleTurnItems(toolCallSelection ? routeThreadRef : null);
   const toolCallDetail = useTurnItemDetail(
@@ -325,9 +326,19 @@ export default function DiffPanel({
 
   const selectedRunId = diffSelection.kind === "turn" ? diffSelection.turnId : null;
   const selectedGitScope =
-    diffSelection.kind === "unstaged" || diffSelection.kind === "commit"
+    diffSelection.kind === "unstaged" ||
+    diffSelection.kind === "unstaged-only" ||
+    diffSelection.kind === "commit"
       ? diffSelection.kind
       : "branch";
+  const selectedGitSourceKind =
+    selectedGitScope === "unstaged"
+      ? "working-tree"
+      : selectedGitScope === "unstaged-only"
+        ? "unstaged"
+        : selectedGitScope === "commit"
+          ? "commit"
+          : "branch-range";
   const selectedCommitSha = diffSelection.kind === "commit" ? diffSelection.sha : null;
   const selectedBaseRef =
     diffSelection.kind === "branch" || diffSelection.kind === "commit"
@@ -380,13 +391,8 @@ export default function DiffPanel({
           ...(selectedCommitSha !== null ? { commitSha: selectedCommitSha } : {}),
           ignoreWhitespace: diffIgnoreWhitespace,
           metadataOnly: true,
-          ...(selectedCommitSha === null
-            ? {
-                sourceKind:
-                  selectedGitScope === "unstaged"
-                    ? ("working-tree" as const)
-                    : ("branch-range" as const),
-              }
+          ...(selectedGitSourceKind !== "commit"
+            ? ({ sourceKind: selectedGitSourceKind } as const)
             : {}),
         }
       : undefined;
@@ -424,13 +430,7 @@ export default function DiffPanel({
     : null;
 
   const selectedGitSource = branchDiffPreview.data?.sources.find(
-    (source) =>
-      source.kind ===
-      (selectedGitScope === "unstaged"
-        ? "working-tree"
-        : selectedGitScope === "commit"
-          ? "commit"
-          : "branch-range"),
+    (source) => source.kind === selectedGitSourceKind,
   );
   const comparisonHeadRef = selectedGitSource?.headRef ?? gitStatusQuery.data?.refName ?? "HEAD";
   const comparisonBaseRef =
@@ -446,7 +446,9 @@ export default function DiffPanel({
       ? (selectedCommitSubject ?? gt("Commit {sha}", { sha: selectedCommitSha.slice(0, 7) }))
       : selectedGitScope === "unstaged"
         ? gt("Uncommitted")
-        : gt("Changes");
+        : selectedGitScope === "unstaged-only"
+          ? gt("Unstaged")
+          : gt("Changes");
   const selectedTurnLabel = gt("Turn {count}", { count: selectedCheckpointTurnCount ?? "?" });
   const selectedScopeLabel = toolCallSelection
     ? gt("Tool call")
@@ -814,7 +816,7 @@ export default function DiffPanel({
     if (!routeThreadRef) return;
     useDiffPanelStore.getState().selectTurn(routeThreadRef, runId);
   };
-  const selectGitScope = (scope: "branch" | "unstaged") => {
+  const selectGitScope = (scope: "branch" | "unstaged" | "unstaged-only") => {
     if (!routeThreadRef) return;
     useDiffPanelStore.getState().selectGitScope(routeThreadRef, scope);
   };
@@ -832,7 +834,7 @@ export default function DiffPanel({
         ? "latest"
         : selectedTurnValue;
   const selectScopeValue = (value: string) => {
-    if (value === "unstaged" || value === "branch") {
+    if (value === "unstaged" || value === "unstaged-only" || value === "branch") {
       selectGitScope(value);
     } else if (value === selectedCommitValue) {
       selectGitScope("branch");
@@ -895,6 +897,11 @@ export default function DiffPanel({
               <DropdownMenuRadioItem value="unstaged" closeOnClick>
                 <span>
                   <T>Uncommitted</T>
+                </span>
+              </DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="unstaged-only" closeOnClick>
+                <span>
+                  <T>Unstaged</T>
                 </span>
               </DropdownMenuRadioItem>
               <DropdownMenuRadioItem value="latest" closeOnClick>
@@ -1448,9 +1455,11 @@ export default function DiffPanel({
                         ? gt("Loading checkpoint diff...")
                         : selectedGitScope === "unstaged"
                           ? gt("Loading uncommitted changes...")
-                          : selectedGitScope === "commit"
-                            ? gt("Loading commit...")
-                            : gt("Loading changes...")
+                          : selectedGitScope === "unstaged-only"
+                            ? gt("Loading unstaged changes...")
+                            : selectedGitScope === "commit"
+                              ? gt("Loading commit...")
+                              : gt("Loading changes...")
                   }
                 />
               ) : (

@@ -12205,5 +12205,8 @@
   "27d76249d09eb69f": "Granskningsguiden är klar",
   "faa3bb26abb39c93": "Granskningsguiden misslyckades",
   "b7df38b7d8792d78": "Öppna guiden",
-  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide"
+  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide",
+  "8a2abacef1acdcd4": "Ej stagade",
+  "a2a76ecd429d5b15": "Läser in ej stagade ändringar...",
+  "49180cc2fc63ffa2": "Ej stagade"
 }

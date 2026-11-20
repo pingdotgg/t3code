@@ -13,7 +13,7 @@ import { msg } from "gt-react-native";
 
 import { m, type MessageResolver } from "../../i18n/messages";
 
-export type ReviewSectionKind = "turn" | "working-tree" | "branch-range";
+export type ReviewSectionKind = "turn" | "working-tree" | "unstaged" | "branch-range";
 
 const CHANGES_SECTION_ID = "git:branch-range";
 const CHANGES_TITLE = msg("Changes", { $context: "diff section: branch changes" });
@@ -147,6 +147,9 @@ const readyCheckpointOrder = Order.make<ThreadCheckpointSummary>(
 function gitSubtitle(section: ReviewDiffPreviewSource, resolve: MessageResolver): string | null {
   if (section.kind === "working-tree") {
     return resolve(UNCOMMITTED_SUBTITLE);
+  }
+  if (section.kind === "unstaged") {
+    return resolve(msg("Unstaged and untracked files"));
   }
   if (section.baseRef) {
     return `${section.baseRef} ... ${section.headRef ?? "HEAD"}`;
