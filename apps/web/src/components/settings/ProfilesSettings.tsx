@@ -18,9 +18,11 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
+import { msg, T, useGT, Var, useMessages } from "gt-react";
 import { useState } from "react";
 
 import { useOpenInPreferredEditor } from "../../editorPreferences";
+import { m } from "../../i18n/messages";
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { useEnvironments } from "../../state/environments";
 import {
@@ -74,7 +76,7 @@ import {
 } from "@t3tools/client-runtime/profiles-editor";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 const EMPTY_PROFILES: ProfilesFile = { profiles: {} };
 const isProfilesError = Schema.is(ProfilesError);
@@ -83,19 +85,22 @@ function failureMessage(result: { readonly cause: Cause.Cause<unknown> }) {
   const error = squashAtomCommandFailure(result);
   return {
     conflict: isProfilesError(error) && error.reason === "conflict",
-    message: error instanceof Error ? error.message : "Something went wrong.",
+    message: error instanceof Error ? error.message : m(msg("Something went wrong.")),
   };
 }
 
 export function ProfilesSettingsPanel() {
+  const gt = useGT();
   const { environment, scope } = useSettingsScope();
   if (!environment || scope.kind === "project" || scope.kind === "checkout") {
     return (
       <SettingsPageContainer>
-        <SettingsSection id="profiles" title="Profiles">
+        <SettingsSection id="profiles" title={gt("Profiles")}>
           <p className="px-4 py-3 text-sm text-muted-foreground">
-            Profiles belong to an environment. Choose one to edit its profiles; saving copies them
-            to your other environments.
+            <T>
+              Profiles belong to an environment. Choose one to edit its profiles; saving copies them
+              to your other environments.
+            </T>
           </p>
         </SettingsSection>
       </SettingsPageContainer>
@@ -130,6 +135,9 @@ function useDraft<T>(saved: T) {
 }
 
 function EnvironmentProfiles({ environmentId }: { environmentId: EnvironmentId }) {
+  const gt = useGT();
+  const messages = useMessages();
+  const searchableSetting = useSearchableSetting();
   const editorQuery = useEnvironmentQuery(profilesEnvironment.editor({ environmentId, input: {} }));
   const canWrite = useAtomValue(profilesEnvironment.writeEditor.permissionAtom(environmentId));
   const canManageProviders = useAtomValue(
@@ -175,13 +183,13 @@ function EnvironmentProfiles({ environmentId }: { environmentId: EnvironmentId }
       editorQuery.refresh();
       toastManager.add({
         type: "warning",
-        title: "Profiles changed elsewhere",
-        description: "They were reloaded. Make your change again.",
+        title: gt("Profiles changed elsewhere"),
+        description: gt("They were reloaded. Make your change again."),
       });
     } else {
       toastManager.add({
         type: "error",
-        title: "Could not save profiles",
+        title: gt("Could not save profiles"),
         description: failure.message,
       });
     }
@@ -197,8 +205,8 @@ function EnvironmentProfiles({ environmentId }: { environmentId: EnvironmentId }
       editorQuery.refresh();
       toastManager.add({
         type: "warning",
-        title: "Profiles changed elsewhere",
-        description: "This section was reloaded. Make your change again.",
+        title: gt("Profiles changed elsewhere"),
+        description: gt("This section was reloaded. Make your change again."),
       });
       return;
     }
@@ -214,9 +222,15 @@ function EnvironmentProfiles({ environmentId }: { environmentId: EnvironmentId }
     if (
       to === null &&
       (await requestConfirmDialog(
-        `Delete the ${PROFILE_DRIVER_LABELS[driver]} settings “${from}”?${
-          users.length > 0 ? `\n${users.join(", ")} will use the provider default.` : ""
-        }`,
+        users.length > 0
+          ? gt(
+              "Delete the {provider} settings “{name}”?\n{profiles} will use the provider default.",
+              { provider: PROFILE_DRIVER_LABELS[driver], name: from, profiles: users.join(", ") },
+            )
+          : gt("Delete the {provider} settings “{name}”?", {
+              provider: PROFILE_DRIVER_LABELS[driver],
+              name: from,
+            }),
         { variant: "destructive" },
       )) !== true
     ) {
@@ -251,7 +265,12 @@ function EnvironmentProfiles({ environmentId }: { environmentId: EnvironmentId }
     }
     const users = profilesUsingMcpServer(savedProfiles, name);
     const confirmed = await requestConfirmDialog(
-      `Delete the MCP server “${name}”?${users.length > 0 ? `\nIt is used by ${users.join(", ")}.` : ""}`,
+      users.length > 0
+        ? gt("Delete the MCP server “{name}”?\nIt is used by {profiles}.", {
+            name,
+            profiles: users.join(", "),
+          })
+        : gt("Delete the MCP server “{name}”?", { name }),
       { variant: "destructive" },
     );
     if (confirmed !== true) return;
@@ -279,7 +298,12 @@ function EnvironmentProfiles({ environmentId }: { environmentId: EnvironmentId }
     }
     const users = profilesUsingPrompt(savedProfiles, name);
     const confirmed = await requestConfirmDialog(
-      `Delete the prompt “${name}”?${users.length > 0 ? `\nIt is used by ${users.join(", ")}.` : ""}`,
+      users.length > 0
+        ? gt("Delete the prompt “{name}”?\nIt is used by {profiles}.", {
+            name,
+            profiles: users.join(", "),
+          })
+        : gt("Delete the prompt “{name}”?", { name }),
       { variant: "destructive" },
     );
     if (confirmed !== true) return;
@@ -323,7 +347,7 @@ function EnvironmentProfiles({ environmentId }: { environmentId: EnvironmentId }
         <>
           <SettingsSection
             {...searchableSetting("profiles-list")}
-            title="Profiles"
+            title={gt("Profiles")}
             headerAction={
               <SaveActions
                 dirty={profiles.dirty}
@@ -344,7 +368,7 @@ function EnvironmentProfiles({ environmentId }: { environmentId: EnvironmentId }
           </SettingsSection>
           <SettingsSection
             {...searchableSetting("profiles-provider-settings")}
-            title="Provider settings"
+            title={gt("Provider settings")}
             headerAction={
               <SaveActions
                 dirty={providerSettings.dirty}
@@ -390,7 +414,7 @@ function EnvironmentProfiles({ environmentId }: { environmentId: EnvironmentId }
           {state.mcpServers !== undefined ? (
             <SettingsSection
               {...searchableSetting("profiles-mcp-servers")}
-              title="MCP servers"
+              title={gt("MCP servers")}
               headerAction={
                 <SaveActions
                   dirty={mcpServers.dirty}
@@ -398,7 +422,7 @@ function EnvironmentProfiles({ environmentId }: { environmentId: EnvironmentId }
                     disabled ||
                     !canManageProviders ||
                     Object.values(mcpServers.value.mcpServers).some(
-                      (server) => mcpServerError(server) !== null,
+                      (server) => mcpServerError(server, messages) !== null,
                     )
                   }
                   onDiscard={mcpServers.discard}
@@ -425,7 +449,7 @@ function EnvironmentProfiles({ environmentId }: { environmentId: EnvironmentId }
         <>
           <SettingsSection
             {...searchableSetting("profiles-prompts")}
-            title="Prompts"
+            title={gt("Prompts")}
             headerAction={
               <SaveActions
                 dirty={prompts.dirty}
@@ -459,19 +483,22 @@ function EnvironmentProfiles({ environmentId }: { environmentId: EnvironmentId }
 }
 
 function AllowMcpCommands({ environmentId }: { environmentId: EnvironmentId }) {
+  const gt = useGT();
   const allowed = useEnvironmentSettings(environmentId, (value) => value.profilesMcpCommands);
   const update = useUpdateEnvironmentSettings(environmentId);
   const canManage = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   return (
     <SettingsRow
-      title="Allow MCP commands"
-      description="Let profiles start command servers on this machine. Off by default, because profiles sync from your other machines. Sessions that need one fail to start until this is on."
+      title={gt("Allow MCP commands")}
+      description={gt(
+        "Let profiles start command servers on this machine. Off by default, because profiles sync from your other machines. Sessions that need one fail to start until this is on.",
+      )}
       control={
         <Switch
           checked={allowed}
           disabled={!canManage}
           onCheckedChange={(checked) => void update({ profilesMcpCommands: checked })}
-          aria-label="Allow MCP commands"
+          aria-label={gt("Allow MCP commands")}
         />
       }
     />
@@ -488,13 +515,13 @@ function SaveActions(props: {
   return (
     <span className="flex items-center gap-2">
       <Badge variant="outline" size="sm">
-        Unsaved
+        <T>Unsaved</T>
       </Badge>
       <Button size="xs" variant="ghost" onClick={props.onDiscard}>
-        Discard
+        <T>Discard</T>
       </Button>
       <Button size="xs" disabled={props.disabled} onClick={props.onSave}>
-        Save
+        <T>Save</T>
       </Button>
     </span>
   );
@@ -509,6 +536,9 @@ function FolderAndSync(props: {
   canWrite: boolean;
   onCreate: () => void;
 }) {
+  const messages = useMessages();
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
   const { environmentId, state } = props;
   const settings = useEnvironmentSettings(environmentId, (value) => value);
   const update = useUpdateEnvironmentSettings(environmentId);
@@ -527,11 +557,11 @@ function FolderAndSync(props: {
   return (
     <SettingsSection
       {...searchableSetting("profiles")}
-      title="Folder & sync"
+      title={gt("Folder & sync")}
       headerAction={
         <span className="flex items-center gap-2">
           <Button size="xs" variant="outline" disabled={props.pending} onClick={props.onReload}>
-            Reload
+            <T>Reload</T>
           </Button>
           <Button
             size="xs"
@@ -539,22 +569,24 @@ function FolderAndSync(props: {
             disabled={snapshot.running}
             onClick={() => void syncProfilesNow()}
           >
-            {snapshot.running ? "Syncing…" : "Sync now"}
+            {snapshot.running ? gt("Syncing…") : gt("Sync now")}
           </Button>
         </span>
       }
     >
       <SettingsRow
-        title="Profiles folder"
+        title={gt("Profiles folder")}
         description={
           state?.folder ??
-          "Leave blank to use <T3 home>/profiles. Profiles are copied to your other environments."
+          gt("Leave blank to use {path}. Profiles are copied to your other environments.", {
+            path: "<T3 home>/profiles",
+          })
         }
         control={
           <span className="flex items-center gap-2">
             <Input
-              aria-label="Profiles folder"
-              placeholder="Default"
+              aria-label={gt("Profiles folder")}
+              placeholder={gt("Default", { $context: "uses the default profiles folder" })}
               defaultValue={settings.profilesFolder}
               disabled={!canWriteSettings}
               onBlur={(event) => {
@@ -573,19 +605,21 @@ function FolderAndSync(props: {
                 if (result._tag === "Success") return;
                 toastManager.add({
                   type: "error",
-                  title: "Could not open the profiles folder",
+                  title: gt("Could not open the profiles folder"),
                   description: failureMessage(result).message,
                 });
               }}
             >
-              Open in editor
+              <T>Open in editor</T>
             </Button>
           </span>
         }
       />
       <SettingsRow
-        title="Sync with other machines"
-        description="Copy profiles to and from your other connected machines. The latest change wins. Turn off to keep this machine's profiles to itself."
+        title={gt("Sync with other machines")}
+        description={gt(
+          "Copy profiles to and from your other connected machines. The latest change wins. Turn off to keep this machine's profiles to itself.",
+        )}
         control={
           <Switch
             checked={settings.profilesSync}
@@ -593,13 +627,13 @@ function FolderAndSync(props: {
             onCheckedChange={(checked) =>
               update({ profilesSync: checked }, { onSaved: () => void syncProfilesNow() })
             }
-            aria-label="Sync with other machines"
+            aria-label={gt("Sync with other machines")}
           />
         }
       />
       <SettingsRow
-        title="Default profile for new threads"
-        description="Does not affect existing threads or delegated children."
+        title={gt("Default profile for new threads")}
+        description={gt("Does not affect existing threads or delegated children.")}
         control={
           <Select
             value={settings.defaultProfile ?? "__folder__"}
@@ -608,16 +642,20 @@ function FolderAndSync(props: {
               void update({ defaultProfile: value === "__folder__" ? null : value });
             }}
           >
-            <SelectTrigger size="sm" aria-label="Default profile for new threads">
+            <SelectTrigger size="sm" aria-label={gt("Default profile for new threads")}>
               <SelectValue>
                 {settings.defaultProfile === null
-                  ? "Folder default"
-                  : settings.defaultProfile || "No profile"}
+                  ? gt("Folder default")
+                  : settings.defaultProfile || gt("No profile")}
               </SelectValue>
             </SelectTrigger>
             <SelectPopup>
-              <SelectItem value="__folder__">Folder default</SelectItem>
-              <SelectItem value="">No profile</SelectItem>
+              <SelectItem value="__folder__">
+                <T>Folder default</T>
+              </SelectItem>
+              <SelectItem value="">
+                <T>No profile</T>
+              </SelectItem>
               {Object.entries(catalog?.profiles ?? {}).map(([id, profile]) => (
                 <SelectItem key={id} value={id} disabled={Boolean(profile.warning)}>
                   {id}
@@ -645,25 +683,34 @@ function FolderAndSync(props: {
         ) : null}
         {state ? (
           <p className="text-muted-foreground">
-            Revision {state.sync.revision}. {usable.length} profiles available. Changes apply at the
-            next session start.
+            <T>
+              Revision <Var>{state.sync.revision}</Var>. <Var>{usable.length}</Var> profiles
+              available. Changes apply at the next session start.
+            </T>
           </p>
         ) : null}
         {state && state.profiles === null && !state.error ? (
           <div className="flex items-center justify-between gap-3">
-            <p className="text-muted-foreground">This folder has no profiles.json yet.</p>
+            <p className="text-muted-foreground">
+              <T>
+                This folder has no <Var>{"profiles.json"}</Var> yet.
+              </T>
+            </p>
             <Button size="xs" disabled={!props.canWrite} onClick={props.onCreate}>
-              Create profiles
+              <T>Create profiles</T>
             </Button>
           </div>
         ) : null}
         <ul className="space-y-0.5">
           {environments.map((environment) => {
-            const status = syncStatusText({
-              connected: environment.connection.phase === "connected",
-              canWrite: writable.has(environment.environmentId),
-              status: snapshot.statuses.get(environment.environmentId),
-            });
+            const status = syncStatusText(
+              {
+                connected: environment.connection.phase === "connected",
+                canWrite: writable.has(environment.environmentId),
+                status: snapshot.statuses.get(environment.environmentId),
+              },
+              messages,
+            );
             return (
               <li key={environment.environmentId} className="flex justify-between gap-3">
                 <span className="truncate">{environment.label}</span>
@@ -695,6 +742,8 @@ function ProfilesEditor(props: {
   disabled: boolean;
   onChange: (file: ProfilesFile) => void;
 }) {
+  const messages = useMessages();
+  const gt = useGT();
   const { file, state } = props;
   const ids = Object.keys(file.profiles);
   const [selected, setSelected] = useState<string | null>(null);
@@ -702,9 +751,9 @@ function ProfilesEditor(props: {
   const profile = current === null ? undefined : file.profiles[current];
   const [newName, setNewName] = useState("");
   const [renameTo, setRenameTo] = useState("");
-  const newNameError = newName === "" ? null : profileNameError(newName, ids);
+  const newNameError = newName === "" ? null : profileNameError(newName, ids, messages);
   const renameError =
-    renameTo === "" || renameTo === current ? null : profileNameError(renameTo, ids);
+    renameTo === "" || renameTo === current ? null : profileNameError(renameTo, ids, messages);
   const setProfile = (next: Profile) => {
     if (current !== null)
       props.onChange({ ...file, profiles: { ...file.profiles, [current]: next } });
@@ -712,7 +761,7 @@ function ProfilesEditor(props: {
 
   return (
     <div className="space-y-3 px-3 py-3 sm:px-4">
-      <ul className="flex flex-wrap gap-1.5" aria-label="Profiles">
+      <ul className="flex flex-wrap gap-1.5" aria-label={gt("Profiles")}>
         {ids.map((id) => {
           const warning = state.catalog.profiles[id]?.warning;
           return (
@@ -726,8 +775,7 @@ function ProfilesEditor(props: {
                   setRenameTo("");
                 }}
               >
-                {id}
-                {file.default === id ? " (default)" : ""}
+                {file.default === id ? gt("{profile} (default)", { profile: id }) : id}
                 {warning ? " ⚠" : ""}
               </Button>
             </li>
@@ -736,8 +784,8 @@ function ProfilesEditor(props: {
       </ul>
       <div className="flex flex-wrap items-center gap-2">
         <Input
-          aria-label="New profile name"
-          placeholder="New profile name"
+          aria-label={gt("New profile name")}
+          placeholder={gt("New profile name")}
           value={newName}
           disabled={props.disabled}
           aria-invalid={newNameError !== null}
@@ -753,7 +801,7 @@ function ProfilesEditor(props: {
             setNewName("");
           }}
         >
-          Add profile
+          <T>Add profile</T>
         </Button>
       </div>
       {newNameError ? <p className="text-xs text-destructive">{newNameError}</p> : null}
@@ -767,7 +815,7 @@ function ProfilesEditor(props: {
           ) : null}
           <div className="flex flex-wrap items-center gap-2">
             <Input
-              aria-label="Rename profile"
+              aria-label={gt("Rename profile")}
               placeholder={current}
               value={renameTo}
               disabled={props.disabled}
@@ -786,7 +834,7 @@ function ProfilesEditor(props: {
                 setRenameTo("");
               }}
             >
-              Rename
+              <T>Rename</T>
             </Button>
             <Button
               size="xs"
@@ -798,7 +846,7 @@ function ProfilesEditor(props: {
                 setSelected(copy);
               }}
             >
-              Duplicate
+              <T>Duplicate</T>
             </Button>
             <Button
               size="xs"
@@ -806,30 +854,33 @@ function ProfilesEditor(props: {
               disabled={props.disabled || file.default === current}
               onClick={() => props.onChange({ ...file, default: current })}
             >
-              Make default
+              <T>Make default</T>
             </Button>
             <Button
               size="xs"
               variant="destructive-outline"
               disabled={props.disabled}
               onClick={async () => {
-                const confirmed = await requestConfirmDialog(`Delete the profile “${current}”?`, {
-                  variant: "destructive",
-                });
+                const confirmed = await requestConfirmDialog(
+                  gt("Delete the profile “{profile}”?", { profile: current }),
+                  { variant: "destructive" },
+                );
                 if (confirmed === true) props.onChange(deleteProfile(file, current));
               }}
             >
-              Delete
+              <T>Delete</T>
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Threads that already use this profile keep its old name. After a rename or delete, pick
-            a profile again in those threads.
+            <T>
+              Threads that already use this profile keep its old name. After a rename or delete,
+              pick a profile again in those threads.
+            </T>
           </p>
           {renameError ? <p className="text-xs text-destructive">{renameError}</p> : null}
           <Input
-            aria-label="Profile description"
-            placeholder="Description"
+            aria-label={gt("Profile description")}
+            placeholder={gt("Description")}
             value={profile.description ?? ""}
             disabled={props.disabled}
             onChange={(event) =>
@@ -843,14 +894,14 @@ function ProfilesEditor(props: {
             }
           />
           <NamedChecklist
-            title="Prompts"
-            description="Added to the agent’s instructions in this order."
+            title={gt("Prompts")}
+            description={gt("Added to the agent’s instructions in this order.")}
             names={orderedNames(
               profile.prompts,
               state.prompts.map(({ name }) => name),
             )}
             checked={profile.prompts}
-            missingLabel="no prompt file"
+            missingLabel={gt("no prompt file")}
             known={state.prompts.map(({ name }) => name)}
             disabled={props.disabled}
             onToggle={(name, on) =>
@@ -858,14 +909,14 @@ function ProfilesEditor(props: {
             }
           />
           <NamedChecklist
-            title="Skills"
-            description="Listed for the agent to use."
+            title={gt("Skills")}
+            description={gt("Listed for the agent to use.")}
             names={orderedNames(
               profile.skills,
               state.skills.map(({ name }) => name),
             )}
             checked={profile.skills}
-            missingLabel="not installed"
+            missingLabel={gt("not installed")}
             known={state.skills.map(({ name }) => name)}
             warnings={Object.fromEntries(
               state.skills.flatMap((skill) => (skill.warning ? [[skill.name, skill.warning]] : [])),
@@ -877,14 +928,14 @@ function ProfilesEditor(props: {
           />
           {state.mcpServers !== undefined ? (
             <NamedChecklist
-              title="MCP servers"
-              description="Added to Claude and Codex sessions."
+              title={gt("MCP servers")}
+              description={gt("Added to Claude and Codex sessions.")}
               names={orderedNames(
                 profile.mcpServers ?? [],
                 Object.keys(props.mcpServers.mcpServers),
               )}
               checked={profile.mcpServers ?? []}
-              missingLabel="not defined"
+              missingLabel={gt("not defined")}
               known={Object.keys(props.mcpServers.mcpServers)}
               disabled={props.disabled}
               onToggle={(name, on) =>
@@ -899,7 +950,9 @@ function ProfilesEditor(props: {
             />
           ) : null}
           <div className="space-y-1.5">
-            <p className="text-sm text-foreground">Provider settings</p>
+            <p className="text-sm text-foreground">
+              <T>Provider settings</T>
+            </p>
             {PROFILE_DRIVERS.map((driver) => (
               <ProviderSettingsPick
                 key={driver}
@@ -921,12 +974,14 @@ function ProfilesEditor(props: {
             ))}
           </div>
           <Collapsible>
-            <CollapsibleTrigger>Advanced</CollapsibleTrigger>
+            <CollapsibleTrigger>
+              <T context="collapsible section of less common profile fields">Advanced</T>
+            </CollapsibleTrigger>
             <CollapsiblePanel>
               <div className="grid grid-cols-1 gap-2 pt-2 sm:grid-cols-3">
                 <Input
-                  aria-label="Provider instance"
-                  placeholder="Provider instance"
+                  aria-label={gt("Provider instance")}
+                  placeholder={gt("Provider instance")}
                   value={profile.provider ?? ""}
                   disabled={props.disabled}
                   onChange={(event) => {
@@ -941,8 +996,8 @@ function ProfilesEditor(props: {
                   }}
                 />
                 <Input
-                  aria-label="Model"
-                  placeholder="Model"
+                  aria-label={gt("Model")}
+                  placeholder={gt("Model")}
                   value={profile.model ?? ""}
                   disabled={props.disabled}
                   onChange={(event) =>
@@ -956,8 +1011,8 @@ function ProfilesEditor(props: {
                   }
                 />
                 <Input
-                  aria-label="Effort"
-                  placeholder="Effort"
+                  aria-label={gt("Effort", { $context: "model reasoning effort" })}
+                  placeholder={gt("Effort", { $context: "model reasoning effort" })}
                   value={profile.effort ?? ""}
                   disabled={props.disabled}
                   onChange={(event) =>
@@ -975,7 +1030,9 @@ function ProfilesEditor(props: {
           </Collapsible>
         </div>
       ) : (
-        <p className="text-xs text-muted-foreground">No profiles yet. Add one to start.</p>
+        <p className="text-xs text-muted-foreground">
+          <T>No profiles yet. Add one to start.</T>
+        </p>
       )}
     </div>
   );
@@ -1004,7 +1061,9 @@ function NamedChecklist(props: {
         <p className="text-xs text-muted-foreground">{props.description}</p>
       </div>
       {props.names.length === 0 ? (
-        <p className="text-xs text-muted-foreground">None in this folder.</p>
+        <p className="text-xs text-muted-foreground">
+          <T>None in this folder.</T>
+        </p>
       ) : (
         <div className="grid grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-2">
           {props.names.map((name) => (
@@ -1040,6 +1099,7 @@ function ProviderSettingsPick(props: {
   disabled: boolean;
   onChange: (name: string | undefined) => void;
 }) {
+  const gt = useGT();
   const names =
     props.value !== undefined && !props.names.includes(props.value)
       ? [...props.names, props.value]
@@ -1054,15 +1114,19 @@ function ProviderSettingsPick(props: {
           props.onChange(value === PROVIDER_DEFAULT || value === null ? undefined : value)
         }
       >
-        <SelectTrigger size="sm" aria-label={`${PROFILE_DRIVER_LABELS[props.driver]} settings`}>
-          <SelectValue>{props.value ?? "Provider default"}</SelectValue>
+        <SelectTrigger
+          size="sm"
+          aria-label={gt("{provider} settings", { provider: PROFILE_DRIVER_LABELS[props.driver] })}
+        >
+          <SelectValue>{props.value ?? gt("Provider default")}</SelectValue>
         </SelectTrigger>
         <SelectPopup>
-          <SelectItem value={PROVIDER_DEFAULT}>Provider default</SelectItem>
+          <SelectItem value={PROVIDER_DEFAULT}>
+            <T>Provider default</T>
+          </SelectItem>
           {names.map((name) => (
             <SelectItem key={name} value={name}>
-              {name}
-              {props.names.includes(name) ? "" : " (missing)"}
+              {props.names.includes(name) ? name : gt("{name} (missing)", { name })}
             </SelectItem>
           ))}
         </SelectPopup>
@@ -1078,18 +1142,20 @@ function PromptsEditor(props: {
   onChange: (contents: Readonly<Record<string, string>>) => void;
   onDelete: (name: string) => void;
 }) {
+  const messages = useMessages();
+  const gt = useGT();
   const names = Object.keys(props.contents).toSorted();
   const [selected, setSelected] = useState<string | null>(null);
   const current = selected !== null && selected in props.contents ? selected : (names[0] ?? null);
   const [newName, setNewName] = useState("");
-  const newNameError = newName === "" ? null : profileNameError(newName, names);
+  const newNameError = newName === "" ? null : profileNameError(newName, names, messages);
   const users = current === null ? [] : profilesUsingPrompt(props.profiles, current);
   return (
     <div className="space-y-3 px-3 py-3 sm:px-4">
       <div className="flex flex-wrap items-center gap-2">
         {names.length > 0 ? (
           <Select value={current ?? ""} onValueChange={(value) => setSelected(value)}>
-            <SelectTrigger size="sm" aria-label="Prompt">
+            <SelectTrigger size="sm" aria-label={gt("Prompt")}>
               <SelectValue>{current}</SelectValue>
             </SelectTrigger>
             <SelectPopup>
@@ -1102,8 +1168,8 @@ function PromptsEditor(props: {
           </Select>
         ) : null}
         <Input
-          aria-label="New prompt name"
-          placeholder="New prompt name"
+          aria-label={gt("New prompt name")}
+          placeholder={gt("New prompt name")}
           value={newName}
           disabled={props.disabled}
           aria-invalid={newNameError !== null}
@@ -1119,7 +1185,7 @@ function PromptsEditor(props: {
             setNewName("");
           }}
         >
-          Add prompt
+          <T>Add prompt</T>
         </Button>
         {current !== null ? (
           <Button
@@ -1128,7 +1194,7 @@ function PromptsEditor(props: {
             disabled={props.disabled}
             onClick={() => props.onDelete(current)}
           >
-            Delete
+            <T>Delete</T>
           </Button>
         ) : null}
       </div>
@@ -1136,7 +1202,7 @@ function PromptsEditor(props: {
       {current !== null ? (
         <>
           <Textarea
-            aria-label={`Prompt ${current}`}
+            aria-label={gt("Prompt {name}", { name: current })}
             value={props.contents[current] ?? ""}
             disabled={props.disabled}
             onChange={(event) =>
@@ -1144,11 +1210,15 @@ function PromptsEditor(props: {
             }
           />
           <p className="text-xs text-muted-foreground">
-            {users.length > 0 ? `Used by ${users.join(", ")}.` : "No profile uses this prompt."}
+            {users.length > 0
+              ? gt("Used by {profiles}.", { profiles: users.join(", ") })
+              : gt("No profile uses this prompt.")}
           </p>
         </>
       ) : (
-        <p className="text-xs text-muted-foreground">No prompts yet.</p>
+        <p className="text-xs text-muted-foreground">
+          <T>No prompts yet.</T>
+        </p>
       )}
     </div>
   );
@@ -1159,12 +1229,15 @@ function SkillsSection(props: {
   state: ProfilesEditorState;
   disabled: boolean;
 }) {
+  const messages = useMessages();
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
   const run = useAtomCommand(profilesEnvironment.runSkills, { reportFailure: false });
   const [running, setRunning] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [source, setSource] = useState("");
   const [skill, setSkill] = useState("");
-  const skillError = skill === "" ? null : profileNameError(skill, []);
+  const skillError = skill === "" ? null : profileNameError(skill, [], messages);
   const disabled = props.disabled || running;
 
   const runSkills = async (input: ProfilesSkillsInput, done: string) => {
@@ -1183,21 +1256,23 @@ function SkillsSection(props: {
   return (
     <SettingsSection
       {...searchableSetting("profiles-skills")}
-      title="Skills"
+      title={gt("Skills")}
       headerAction={
         <Button
           size="xs"
           variant="outline"
           disabled={disabled}
-          onClick={() => void runSkills({ _tag: "update" }, "Skills updated")}
+          onClick={() => void runSkills({ _tag: "update" }, gt("Skills updated"))}
         >
-          Update all
+          <T>Update all</T>
         </Button>
       }
     >
       <div className="space-y-3 px-3 py-3 sm:px-4">
         {props.state.skills.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No skills in this folder.</p>
+          <p className="text-xs text-muted-foreground">
+            <T>No skills in this folder.</T>
+          </p>
         ) : (
           <ul className="space-y-2">
             {props.state.skills.map((entry) => (
@@ -1206,7 +1281,8 @@ function SkillsSection(props: {
                   <p className="font-medium text-foreground">
                     {entry.name}{" "}
                     <span className="font-normal text-muted-foreground">
-                      {entry.source ?? "local"}
+                      {entry.source ??
+                        gt("local", { $context: "skill source, created in this folder" })}
                     </span>
                   </p>
                   {entry.description ? (
@@ -1214,7 +1290,9 @@ function SkillsSection(props: {
                   ) : null}
                   {entry.warning ? <p className="text-warning">{entry.warning}</p> : null}
                   {entry.needsInstall ? (
-                    <p className="text-warning">Its dependencies are not installed here.</p>
+                    <p className="text-warning">
+                      <T>Its dependencies are not installed here.</T>
+                    </p>
                   ) : null}
                 </div>
                 <span className="flex shrink-0 items-center gap-2">
@@ -1226,11 +1304,11 @@ function SkillsSection(props: {
                       onClick={() =>
                         void runSkills(
                           { _tag: "install", name: entry.name },
-                          `Installed dependencies for ${entry.name}`,
+                          gt("Installed dependencies for {skill}", { skill: entry.name }),
                         )
                       }
                     >
-                      Install dependencies
+                      <T>Install dependencies</T>
                     </Button>
                   ) : null}
                   <Button
@@ -1239,7 +1317,7 @@ function SkillsSection(props: {
                     disabled={disabled}
                     onClick={async () => {
                       const confirmed = await requestConfirmDialog(
-                        `Remove the skill “${entry.name}”?`,
+                        gt("Remove the skill “{skill}”?", { skill: entry.name }),
                         {
                           variant: "destructive",
                         },
@@ -1247,12 +1325,12 @@ function SkillsSection(props: {
                       if (confirmed === true) {
                         void runSkills(
                           { _tag: "remove", name: entry.name },
-                          `Removed ${entry.name}`,
+                          gt("Removed {skill}", { skill: entry.name }),
                         );
                       }
                     }}
                   >
-                    Remove
+                    <T>Remove</T>
                   </Button>
                 </span>
               </li>
@@ -1261,15 +1339,15 @@ function SkillsSection(props: {
         )}
         <div className="flex flex-wrap items-center gap-2">
           <Input
-            aria-label="Skill source"
-            placeholder="owner/repo or URL"
+            aria-label={gt("Skill source")}
+            placeholder={gt("{example} or URL", { example: "owner/repo" })}
             value={source}
             disabled={disabled}
             onChange={(event) => setSource(event.target.value)}
           />
           <Input
-            aria-label="Skill name"
-            placeholder="Skill (optional)"
+            aria-label={gt("Skill name")}
+            placeholder={gt("Skill (optional)")}
             value={skill}
             disabled={disabled}
             aria-invalid={skillError !== null}
@@ -1286,7 +1364,7 @@ function SkillsSection(props: {
                   source: source.trim(),
                   ...(skill === "" ? {} : { skill }),
                 },
-                "Skill added",
+                gt("Skill added"),
               );
               if (added) {
                 setSource("");
@@ -1294,7 +1372,7 @@ function SkillsSection(props: {
               }
             }}
           >
-            {running ? "Running…" : "Add skill"}
+            {running ? gt("Running…") : gt("Add skill")}
           </Button>
         </div>
         {skillError ? <p className="text-xs text-destructive">{skillError}</p> : null}

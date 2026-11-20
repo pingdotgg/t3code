@@ -44,7 +44,7 @@ describe("groupThreadTerminals", () => {
         summary("b", { controller: "agent" }),
         summary("c", { status: "exited", exitCode: 0 }),
         summary("d", { status: "exited", exitCode: 1 }),
-      ].map(terminalStatusLabel),
+      ].map((terminal) => terminalStatusLabel(terminal)),
     ).toEqual(["Running", "Idle", "Exited", "Exit 1"]);
   });
 });

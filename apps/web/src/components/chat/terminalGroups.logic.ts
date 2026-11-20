@@ -1,4 +1,7 @@
 import type { TerminalSummary } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 export interface ThreadTerminalGroups {
   readonly running: ReadonlyArray<TerminalSummary>;
@@ -23,16 +26,37 @@ export function groupThreadTerminals(
   return { running, settled, failedCount: settled.filter(terminalFailed).length };
 }
 
-export function terminalGroupLabel(group: "running" | "settled", count: number): string {
-  return `${count} ${group} terminal${count === 1 ? "" : "s"}`;
+export function terminalGroupLabel(
+  group: "running" | "settled",
+  count: number,
+  resolve: MessageResolver = m,
+): string {
+  return group === "running"
+    ? resolve(
+        msg("{count, plural, one {{count} running terminal} other {{count} running terminals}}", {
+          count,
+        }),
+      )
+    : resolve(
+        msg("{count, plural, one {{count} settled terminal} other {{count} settled terminals}}", {
+          count,
+        }),
+      );
 }
 
-export function terminalStatusLabel(summary: TerminalSummary): string {
-  if (summary.status === "error") return "Error";
+export function terminalStatusLabel(
+  summary: TerminalSummary,
+  resolve: MessageResolver = m,
+): string {
+  if (summary.status === "error") return resolve(msg("Error", { $context: "terminal status" }));
   if (summary.status === "exited") {
     return summary.exitCode === null || summary.exitCode === 0
-      ? "Exited"
-      : `Exit ${summary.exitCode}`;
+      ? resolve(msg("Exited", { $context: "terminal status" }))
+      : resolve(
+          msg("Exit {code}", { code: summary.exitCode, $context: "terminal status, exit code" }),
+        );
   }
-  return summary.hasRunningSubprocess ? "Running" : "Idle";
+  return summary.hasRunningSubprocess
+    ? resolve(msg("Running", { $context: "terminal status" }))
+    : resolve(msg("Idle", { $context: "terminal status" }));
 }

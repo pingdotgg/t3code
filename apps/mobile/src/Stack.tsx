@@ -209,6 +209,7 @@ const ROUTE_TITLES: Readonly<Record<string, string>> = {
   NewTaskEnvironment: msg("Environment"),
   NewTaskBranch: msg("Branch"),
   AddProject: msg("Add project"),
+  AddProjectMultiRepo: msg("Multi-repo project"),
   ThreadFiles: msg("Files"),
   SettingsLegal: msg("Legal"),
   ConnectOnboarding: msg("Set up {product}", { product: "T3 Connect" }),
@@ -695,7 +696,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
     }),
     AddProjectMultiRepo: createNativeStackScreen({
       linking: "new/add-project/multi-repo",
-      options: pageRoute({ title: "Multi-repo project" }),
+      options: pageRoute(),
       screen: AddProjectMultiRepoRoute,
     }),
     AddProjectLocal: createNativeStackScreen({

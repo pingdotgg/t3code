@@ -1,4 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import { T, useGT } from "gt-react";
 import { useState } from "react";
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
@@ -13,7 +14,7 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../ui/dialog";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 
 export function AgentSecretVaults({
@@ -23,44 +24,48 @@ export function AgentSecretVaults({
   readonly environmentId: EnvironmentId;
   readonly readOnly: boolean;
 }) {
+  const gt = useGT();
+  const setting = useSearchableSetting();
   const vaults = useEnvironmentSettings(environmentId, (settings) => settings.agentSecretVaults);
   const update = useUpdateEnvironmentSettings(environmentId);
   const [editing, setEditing] = useState<string | null>(null);
   return (
     <SettingsSection
-      {...searchableSetting("agent-secret-vaults")}
+      {...setting("agent-secret-vaults")}
       headerAction={
         !readOnly ? (
           <Button size="xs" variant="outline" onClick={() => setEditing("")}>
-            Add agent vault
+            <T>Add agent vault</T>
           </Button>
         ) : null
       }
     >
       <p className="px-4 py-3 text-sm text-muted-foreground">
-        Share a 1Password vault with agents on this environment. Each vault uses its own read-only
-        service-account token. Access is allowed or not; there are no approval prompts.
+        <T>
+          Share a 1Password vault with agents on this environment. Each vault uses its own read-only
+          service-account token. Access is allowed or not; there are no approval prompts.
+        </T>
       </p>
       {Object.keys(vaults).length === 0 ? (
-        <SettingsRow title="No vaults shared with agents." />
+        <SettingsRow title={gt("No vaults shared with agents.")} />
       ) : (
         Object.keys(vaults).map((name) => (
           <SettingsRow
             key={name}
             title={name}
-            description="Shared with agents on this environment"
+            description={gt("Shared with agents on this environment")}
             control={
               !readOnly ? (
                 <div className="flex gap-1">
                   <Button size="xs" variant="ghost" onClick={() => setEditing(name)}>
-                    Change token
+                    <T>Change token</T>
                   </Button>
                   <Button
                     size="xs"
                     variant="ghost"
                     onClick={() => update({ agentSecretVaults: { [name]: null } })}
                   >
-                    Remove vault
+                    <T>Remove vault</T>
                   </Button>
                 </div>
               ) : null
@@ -88,6 +93,7 @@ function VaultDialog({
   readonly name: string;
   readonly onClose: () => void;
 }) {
+  const gt = useGT();
   const update = useUpdateEnvironmentSettings(environmentId);
   const [vault, setVault] = useState(name);
   const [token, setToken] = useState("");
@@ -105,11 +111,15 @@ function VaultDialog({
     >
       <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>{name ? `Change token for ${name}` : "Share an agent vault"}</DialogTitle>
+          <DialogTitle>
+            {name ? gt("Change token for {name}", { name }) : gt("Share an agent vault")}
+          </DialogTitle>
           <DialogDescription>
-            The token stays in this server's secret storage and is never returned to clients. Use a
-            separate read-only service account restricted to this vault. Install the op CLI on the
-            server.
+            <T>
+              The token stays in this server's secret storage and is never returned to clients. Use
+              a separate read-only service account restricted to this vault. Install the op CLI on
+              the server.
+            </T>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -125,7 +135,9 @@ function VaultDialog({
             }}
           >
             <div className="grid gap-1.5">
-              <Label htmlFor="agent-vault-name">Vault name</Label>
+              <Label htmlFor="agent-vault-name">
+                <T>Vault name</T>
+              </Label>
               <Input
                 id="agent-vault-name"
                 value={vault}
@@ -136,7 +148,9 @@ function VaultDialog({
               />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="agent-vault-token">Service-account token</Label>
+              <Label htmlFor="agent-vault-token">
+                <T>Service-account token</T>
+              </Label>
               <Input
                 id="agent-vault-token"
                 type="password"
@@ -150,10 +164,10 @@ function VaultDialog({
         </DialogPanel>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
-            Cancel
+            <T>Cancel</T>
           </Button>
           <Button type="submit" form="agent-vault-form" disabled={!valid}>
-            {name ? "Save token" : "Share vault"}
+            {name ? gt("Save token") : gt("Share vault")}
           </Button>
         </DialogFooter>
       </DialogPopup>

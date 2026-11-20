@@ -11,6 +11,7 @@ import {
   profilesUsingMcpServer,
   withKey,
 } from "@t3tools/client-runtime/profiles-editor";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useState } from "react";
 
 import { Badge } from "../ui/badge";
@@ -21,7 +22,7 @@ import { Textarea } from "../ui/textarea";
 import { SecretSourceInput, useSecretSources } from "./SecretSourceInput";
 
 type Kind = "http" | "stdio";
-const KIND_LABELS: Record<Kind, string> = { http: "URL", stdio: "Command" };
+const KIND_LABELS: Record<Kind, string> = { http: msg("URL"), stdio: msg("Command") };
 const kindOf = (server: ProfileMcpServer): Kind => ("command" in server ? "stdio" : "http");
 const blank = (kind: Kind): ProfileMcpServer =>
   kind === "http" ? { type: "http", url: "https://" } : { command: "" };
@@ -34,15 +35,17 @@ export function McpServersEditor(props: {
   onChange: (value: McpServersFile) => void;
   onDelete: (name: string) => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const names = Object.keys(props.value.mcpServers);
   const [selected, setSelected] = useState<string | null>(null);
   const current = selected !== null && names.includes(selected) ? selected : (names[0] ?? null);
   const server = current === null ? undefined : props.value.mcpServers[current];
   const [newName, setNewName] = useState("");
   const [newKind, setNewKind] = useState<Kind>("http");
-  const newNameError = newName === "" ? null : mcpServerNameError(newName, names);
+  const newNameError = newName === "" ? null : mcpServerNameError(newName, names, m);
   const users = current === null ? [] : profilesUsingMcpServer(props.profiles, current);
-  const serverError = server === undefined ? null : mcpServerError(server);
+  const serverError = server === undefined ? null : mcpServerError(server, m);
   const setServer = (next: ProfileMcpServer) => {
     if (current !== null)
       props.onChange({ mcpServers: { ...props.value.mcpServers, [current]: next } });
@@ -51,12 +54,14 @@ export function McpServersEditor(props: {
   return (
     <div className="space-y-3 px-3 py-3 sm:px-4">
       <p className="text-xs text-muted-foreground">
-        Tick servers in a profile to add them to its Claude and Codex sessions. Other providers
-        start without them. Plain values are copied to your other machines with the profiles; use a
-        secret provider for tokens.
+        <T>
+          Tick servers in a profile to add them to its Claude and Codex sessions. Other providers
+          start without them. Plain values are copied to your other machines with the profiles; use
+          a secret provider for tokens.
+        </T>
       </p>
       {names.length > 0 ? (
-        <ul className="flex flex-wrap gap-1.5" aria-label="MCP servers">
+        <ul className="flex flex-wrap gap-1.5" aria-label={gt("MCP servers")}>
           {names.map((name) => (
             <li key={name}>
               <Button
@@ -73,8 +78,8 @@ export function McpServersEditor(props: {
       ) : null}
       <div className="flex flex-wrap items-center gap-2">
         <Input
-          aria-label="New MCP server name"
-          placeholder="New server name"
+          aria-label={gt("New MCP server name")}
+          placeholder={gt("New server name")}
           value={newName}
           disabled={props.disabled}
           aria-invalid={newNameError !== null}
@@ -85,12 +90,12 @@ export function McpServersEditor(props: {
           disabled={props.disabled}
           onValueChange={(value) => setNewKind(value === "stdio" ? "stdio" : "http")}
         >
-          <SelectTrigger size="sm" aria-label="New MCP server type">
-            <SelectValue>{KIND_LABELS[newKind]}</SelectValue>
+          <SelectTrigger size="sm" aria-label={gt("New MCP server type")}>
+            <SelectValue>{m(KIND_LABELS[newKind])}</SelectValue>
           </SelectTrigger>
           <SelectPopup>
-            <SelectItem value="http">{KIND_LABELS.http}</SelectItem>
-            <SelectItem value="stdio">{KIND_LABELS.stdio}</SelectItem>
+            <SelectItem value="http">{m(KIND_LABELS.http)}</SelectItem>
+            <SelectItem value="stdio">{m(KIND_LABELS.stdio)}</SelectItem>
           </SelectPopup>
         </Select>
         <Button
@@ -105,7 +110,7 @@ export function McpServersEditor(props: {
             setNewName("");
           }}
         >
-          Add server
+          <T>Add server</T>
         </Button>
       </div>
       {newNameError ? <p className="text-xs text-destructive">{newNameError}</p> : null}
@@ -114,11 +119,11 @@ export function McpServersEditor(props: {
         <div className="space-y-3 rounded-lg border border-border/60 p-3">
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="outline" size="sm">
-              {KIND_LABELS[kindOf(server)]}
+              {m(KIND_LABELS[kindOf(server)])}
             </Badge>
             <Input
-              aria-label="MCP server description"
-              placeholder="Description"
+              aria-label={gt("MCP server description")}
+              placeholder={gt("Description")}
               value={server.description ?? ""}
               disabled={props.disabled}
               onChange={(event) =>
@@ -137,14 +142,14 @@ export function McpServersEditor(props: {
               disabled={props.disabled}
               onClick={() => props.onDelete(current)}
             >
-              Delete
+              <T>Delete</T>
             </Button>
           </div>
           {"command" in server ? (
             <>
               <Input
-                aria-label="MCP server command"
-                placeholder="Command, such as npx"
+                aria-label={gt("MCP server command")}
+                placeholder={gt("Command, such as {example}", { example: "npx" })}
                 value={server.command}
                 disabled={props.disabled}
                 aria-invalid={serverError !== null}
@@ -152,8 +157,8 @@ export function McpServersEditor(props: {
               />
               {serverError ? <p className="text-xs text-destructive">{serverError}</p> : null}
               <Textarea
-                aria-label="MCP server arguments"
-                placeholder="Arguments, one per line"
+                aria-label={gt("MCP server arguments")}
+                placeholder={gt("Arguments, one per line")}
                 value={(server.args ?? []).join("\n")}
                 disabled={props.disabled}
                 onChange={(event) =>
@@ -167,12 +172,12 @@ export function McpServersEditor(props: {
                 }
               />
               <p className="text-xs text-muted-foreground">
-                Runs on each machine that turns on Allow MCP commands above.
+                <T>Runs on each machine that turns on Allow MCP commands above.</T>
               </p>
               <ValuesEditor
                 environmentId={props.environmentId}
-                title="Environment variables"
-                keyLabel="Variable name"
+                title={gt("Environment variables")}
+                keyLabel={gt("Variable name")}
                 values={server.env}
                 disabled={props.disabled}
                 onChange={(env) => setServer(withKey(server, "env", env))}
@@ -181,7 +186,7 @@ export function McpServersEditor(props: {
           ) : (
             <>
               <Input
-                aria-label="MCP server URL"
+                aria-label={gt("MCP server URL")}
                 placeholder="https://example.com/mcp"
                 value={server.url}
                 disabled={props.disabled}
@@ -191,8 +196,8 @@ export function McpServersEditor(props: {
               {serverError ? <p className="text-xs text-destructive">{serverError}</p> : null}
               <ValuesEditor
                 environmentId={props.environmentId}
-                title="Headers"
-                keyLabel="Header name"
+                title={gt("Headers", { $context: "HTTP request headers" })}
+                keyLabel={gt("Header name")}
                 values={server.headers}
                 disabled={props.disabled}
                 onChange={(headers) => setServer(withKey(server, "headers", headers))}
@@ -200,11 +205,15 @@ export function McpServersEditor(props: {
             </>
           )}
           <p className="text-xs text-muted-foreground">
-            {users.length > 0 ? `Used by ${users.join(", ")}.` : "No profile uses this server."}
+            {users.length > 0
+              ? gt("Used by {profiles}.", { profiles: users.join(", ") })
+              : gt("No profile uses this server.")}
           </p>
         </div>
       ) : (
-        <p className="text-xs text-muted-foreground">No MCP servers yet.</p>
+        <p className="text-xs text-muted-foreground">
+          <T>No MCP servers yet.</T>
+        </p>
       )}
     </div>
   );
@@ -246,7 +255,7 @@ function ValuesEditor(props: {
             disabled={props.disabled}
             onClick={() => set(key, undefined)}
           >
-            Remove
+            <T>Remove</T>
           </Button>
         </div>
       ))}
@@ -271,7 +280,7 @@ function ValuesEditor(props: {
             setNewKey("");
           }}
         >
-          Add
+          <T>Add</T>
         </Button>
       </div>
     </div>

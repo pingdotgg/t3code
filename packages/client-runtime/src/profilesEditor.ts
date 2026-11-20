@@ -7,6 +7,8 @@ import type {
   ProfilesFile,
   ProviderSettingsFile,
 } from "@t3tools/contracts";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 export const PROFILE_DRIVERS = ["claudeAgent", "codex", "pi"] as const;
 
@@ -18,31 +20,44 @@ export const PROFILE_DRIVER_LABELS: Record<ProfileProviderSettingsDriver, string
 
 const PROFILE_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
 
-export function profileNameError(name: string, taken: ReadonlyArray<string>): string | null {
-  if (name.length === 0) return "Enter a name.";
-  if (name.length > 128) return "Use at most 128 characters.";
+export function profileNameError(
+  name: string,
+  taken: ReadonlyArray<string>,
+  resolve: MFunctionType = mFallback,
+): string | null {
+  if (name.length === 0) return resolve(msg("Enter a name."));
+  if (name.length > 128) return resolve(msg("Use at most 128 characters."));
   if (!PROFILE_ID_PATTERN.test(name)) {
-    return "Use letters, digits, - and _, starting with a letter or digit.";
+    return resolve(msg("Use letters, digits, - and _, starting with a letter or digit."));
   }
-  if (taken.includes(name)) return "That name is taken.";
+  if (taken.includes(name)) return resolve(msg("That name is taken."));
   return null;
 }
 
-export function mcpServerNameError(name: string, taken: ReadonlyArray<string>): string | null {
-  if (/^t3[-_]?code/i.test(name)) return "Names starting with t3-code are T3's own.";
-  return profileNameError(name, taken);
+export function mcpServerNameError(
+  name: string,
+  taken: ReadonlyArray<string>,
+  resolve: MFunctionType = mFallback,
+): string | null {
+  if (/^t3[-_]?code/i.test(name)) return resolve(msg("Names starting with t3-code are T3's own."));
+  return profileNameError(name, taken, resolve);
 }
 
 /** Matches the server schema, so the editor can say what is missing before saving. */
-export function mcpServerError(server: {
-  readonly url?: string;
-  readonly command?: string;
-}): string | null {
+export function mcpServerError(
+  server: {
+    readonly url?: string;
+    readonly command?: string;
+  },
+  resolve: MFunctionType = mFallback,
+): string | null {
   if (server.command !== undefined)
-    return server.command.trim() === "" ? "Enter a command, such as npx." : null;
+    return server.command.trim() === ""
+      ? resolve(msg("Enter a command, such as {example}.", { example: "npx" }))
+      : null;
   return /^https?:\/\/\S+$/.test(server.url ?? "")
     ? null
-    : "Enter a full URL, such as https://example.com/mcp.";
+    : resolve(msg("Enter a full URL, such as {example}.", { example: "https://example.com/mcp" }));
 }
 
 export const EMPTY_MCP_SERVERS: McpServersFile = { mcpServers: {} };
@@ -279,16 +294,22 @@ export type JsonObjectParse =
   | { readonly ok: false; readonly error: string };
 
 /** Blank is no advanced keys; anything else must be a JSON object. */
-export function parseJsonObject(text: string): JsonObjectParse {
+export function parseJsonObject(text: string, resolve: MFunctionType = mFallback): JsonObjectParse {
   if (text.trim() === "") return { ok: true, value: undefined };
   let value: unknown;
   try {
     value = JSON.parse(text);
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : "Invalid JSON." };
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : resolve(msg("Invalid JSON.")),
+    };
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return { ok: false, error: 'Enter a JSON object, like { "key": true }.' };
+    return {
+      ok: false,
+      error: resolve(msg("Enter a JSON object, like {example}.", { example: '{ "key": true }' })),
+    };
   }
   // JSON.parse only produces JSON values.
   return { ok: true, value: Object.keys(value).length === 0 ? undefined : (value as JsonObject) };
@@ -342,27 +363,47 @@ export function editDraft<T>(saved: T, draft: SectionDraft<T> | null, next: T): 
   };
 }
 
-export function syncStatusText(input: {
-  readonly connected: boolean;
-  readonly canWrite: boolean;
-  readonly status: ProfilesSyncStatus | undefined;
-}): { readonly text: string; readonly tone: "muted" | "warning" | "error" } {
-  if (!input.connected) return { text: "Not connected", tone: "muted" };
-  if (!input.canWrite) return { text: "No permission to change settings", tone: "muted" };
+export function syncStatusText(
+  input: {
+    readonly connected: boolean;
+    readonly canWrite: boolean;
+    readonly status: ProfilesSyncStatus | undefined;
+  },
+  resolve: MFunctionType = mFallback,
+): { readonly text: string; readonly tone: "muted" | "warning" | "error" } {
+  if (!input.connected) return { text: resolve(msg("Not connected")), tone: "muted" };
+  if (!input.canWrite) {
+    return { text: resolve(msg("No permission to change settings")), tone: "muted" };
+  }
   const { status } = input;
-  if (status === undefined) return { text: "Not synced yet", tone: "muted" };
+  if (status === undefined) return { text: resolve(msg("Not synced yet")), tone: "muted" };
   switch (status.kind) {
     case "inSync":
-      return { text: `In sync, revision ${status.revision}`, tone: "muted" };
+      return {
+        text: resolve(msg("In sync, revision {revision}", { revision: status.revision })),
+        tone: "muted",
+      };
     case "updated":
-      return { text: `Updated just now, revision ${status.revision}`, tone: "muted" };
+      return {
+        text: resolve(msg("Updated just now, revision {revision}", { revision: status.revision })),
+        tone: "muted",
+      };
     case "backup":
-      return { text: `Updated; its own changes were saved to ${status.path}`, tone: "warning" };
+      return {
+        text: resolve(msg("Updated; its own changes were saved to {path}", { path: status.path })),
+        tone: "warning",
+      };
     case "failed":
-      return { text: `Failed: ${status.message}`, tone: "error" };
+      return {
+        text: resolve(msg("Failed: {message}", { message: status.message })),
+        tone: "error",
+      };
     case "off":
-      return { text: `Sync off, revision ${status.revision}`, tone: "muted" };
+      return {
+        text: resolve(msg("Sync off, revision {revision}", { revision: status.revision })),
+        tone: "muted",
+      };
     case "unsupported":
-      return { text: "Its T3 version does not sync profiles", tone: "muted" };
+      return { text: resolve(msg("Its T3 version does not sync profiles")), tone: "muted" };
   }
 }

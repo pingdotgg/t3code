@@ -241,59 +241,67 @@ const SOURCE_CONTROL_HOST_TERMS = sourceControlClients.definitions
 export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "profiles",
-    title: "Profiles folder and sync",
+    title: msg("Profiles folder and sync"),
     to: "/settings/profiles",
     scope: "environment-defaults",
     environmentOnly: true,
     searchTerms: [
-      "profiles folder path open in editor sync now copy environments machines revision backup create profiles.json",
+      msg(
+        "profiles folder path open in editor sync now copy environments machines revision backup create profiles.json",
+      ),
     ],
   },
   {
     id: "profiles-list",
-    title: "Profiles",
+    title: msg("Profiles"),
     to: "/settings/profiles",
     scope: "environment-defaults",
     environmentOnly: true,
     searchTerms: [
-      "profile default new threads prompts skills provider settings add duplicate rename delete model effort",
+      msg(
+        "profile default new threads prompts skills provider settings add duplicate rename delete model effort",
+      ),
     ],
   },
   {
     id: "profiles-provider-settings",
-    title: "Provider settings",
+    title: msg("Provider settings"),
     to: "/settings/profiles",
     scope: "environment-defaults",
     environmentOnly: true,
     searchTerms: [
-      "claude codex pi blocked tools bundled skills plugins auto memory co-author attribution chrome features prompt templates config",
+      msg(
+        "claude codex pi blocked tools bundled skills plugins auto memory co-author attribution chrome features prompt templates config",
+      ),
     ],
   },
   {
     id: "profiles-mcp-servers",
-    title: "Profile MCP servers",
+    title: msg("Profile MCP servers"),
     to: "/settings/profiles",
     scope: "environment-defaults",
     environmentOnly: true,
     searchTerms: [
-      "mcp servers model context protocol url http headers command stdio npx env allow commands tools",
+      msg(
+        "mcp servers model context protocol url http headers command stdio npx env allow commands tools",
+      ),
     ],
   },
   {
     id: "profiles-prompts",
-    title: "Profile prompts",
+    title: msg("Profile prompts"),
     to: "/settings/profiles",
     scope: "environment-defaults",
     environmentOnly: true,
-    searchTerms: ["prompt parts instructions system prompt markdown"],
+    searchTerms: [msg("prompt parts instructions system prompt markdown")],
   },
   {
     id: "profiles-skills",
-    title: "Profile skills",
+    title: msg("Profile skills"),
     to: "/settings/profiles",
     scope: "environment-defaults",
     environmentOnly: true,
-    searchTerms: ["skills npx add install dependencies update remove repo source SKILL.md"],
+    searchTerms: [msg("skills npx add install dependencies update remove repo source SKILL.md")],
   },
   {
     id: "storage-worktree-keep-when",
@@ -907,10 +915,10 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "workler-workspaces",
-    title: "Create new workspaces with Workler",
+    title: msg("Create new workspaces with Workler"),
     to: "/settings/general",
     scope: "environment-defaults",
-    searchTerms: ["fork features workspace clone rules git worktree"],
+    searchTerms: [msg("fork features workspace clone rules git worktree")],
   },
   {
     id: "worktree-submodules",
@@ -1506,7 +1514,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "agent-secret-vaults",
-    title: "Agent vaults",
+    title: msg("Agent vaults"),
     to: "/settings/secrets",
     searchTerms: ["1password", "vault", "token", "secret_run", "secret_list", "credentials"],
   },

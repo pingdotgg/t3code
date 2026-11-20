@@ -1902,7 +1902,11 @@ export default function ThreadTerminalDrawer({
               label={controllerActionLabel}
             >
               <Bot className="size-3.25" />
-              {agentHasControl && <span className="pr-0.5 text-2xs">Agent</span>}
+              {agentHasControl && (
+                <span className="pr-0.5 text-2xs">
+                  {gt("Agent", { $context: "terminal controller badge" })}
+                </span>
+              )}
             </TerminalActionButton>
             <div className="h-4 w-px bg-border/80" />
             <TerminalActionButton
@@ -1992,7 +1996,11 @@ export default function ThreadTerminalDrawer({
                     label={controllerActionLabel}
                   >
                     <Bot className="size-3.25" />
-                    {agentHasControl && <span className="text-2xs">Agent</span>}
+                    {agentHasControl && (
+                      <span className="text-2xs">
+                        {gt("Agent", { $context: "terminal controller badge" })}
+                      </span>
+                    )}
                   </TerminalActionButton>
                   <TerminalActionButton
                     disabled={!canOperateTerminal}

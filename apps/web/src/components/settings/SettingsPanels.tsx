@@ -845,14 +845,19 @@ export function GeneralSettingsPanel() {
 
   return (
     <SettingsPageContainer>
-      <SettingsSection id="fork-features" title="Fork features">
+      <SettingsSection id="fork-features" title={gt("Fork features")}>
         <SettingsRow
-          {...searchableSetting("workler-workspaces")}
-          description="Create automatically located workspaces as independent clones and apply this repository's Workler copy/link rules. Explicit worktree paths still use Git."
+          {...setting("workler-workspaces")}
+          description={
+            <T>
+              Create automatically located workspaces as independent clones and apply this
+              repository's Workler copy/link rules. Explicit worktree paths still use Git.
+            </T>
+          }
           resetAction={
             settings.useWorklerForNewWorkspaces !== DEFAULT_WORKLER_WORKSPACES_ENABLED ? (
               <SettingResetButton
-                label="create new workspaces with Workler"
+                ariaLabel={gt("Reset create new workspaces with Workler to default")}
                 onClick={() =>
                   updateSettings({
                     useWorklerForNewWorkspaces: DEFAULT_WORKLER_WORKSPACES_ENABLED,
@@ -867,7 +872,7 @@ export function GeneralSettingsPanel() {
               onCheckedChange={(checked) =>
                 updateSettings({ useWorklerForNewWorkspaces: Boolean(checked) })
               }
-              aria-label="Create new workspaces with Workler"
+              aria-label={gt("Create new workspaces with Workler")}
             />
           }
         />

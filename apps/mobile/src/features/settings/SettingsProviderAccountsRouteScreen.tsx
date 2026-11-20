@@ -55,7 +55,7 @@ export function SettingsProviderAccountsRouteScreen() {
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
         <SettingsSection>
-          <SettingsRow icon="person.crop.circle" label="Profiles" target="SettingsProfiles" />
+          <SettingsRow icon="person.crop.circle" label={gt("Profiles")} target="SettingsProfiles" />
         </SettingsSection>
         {selectedTargets.length === 0 ? (
           <Text className="text-foreground-muted">

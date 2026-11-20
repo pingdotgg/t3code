@@ -138,8 +138,8 @@ function TerminalHeader(props: {
                     title: props.agentHasControl ? gt("Take over") : gt("Give to agent"),
                     icon: props.agentHasControl ? "person.crop.circle" : "brain",
                     subtitle: props.agentHasControl
-                      ? "Typing also takes over"
-                      : "The agent can type here until you take over",
+                      ? gt("Typing also takes over")
+                      : gt("The agent can type here until you take over"),
                     onPress: props.onToggleController,
                   },
                   {

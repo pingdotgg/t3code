@@ -75,7 +75,7 @@ import {
   type ParamListBase,
 } from "@react-navigation/native";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { msg, useGT, useMessages } from "gt-react-native";
+import { msg, T, useGT, useMessages } from "gt-react-native";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -84,7 +84,7 @@ import * as Cause from "effect/Cause";
 import * as Order from "effect/Order";
 import { AsyncResult } from "effect/reactivity";
 import { cn } from "../../lib/cn";
-import { m } from "../../i18n/messages";
+import { m, type MessageResolver } from "../../i18n/messages";
 import { useProjects, useServerConfigs, waitForProject } from "../../state/entities";
 import { filesystemEnvironment } from "../../state/filesystem";
 import { projectEnvironment } from "../../state/projects";
@@ -683,8 +683,8 @@ export function AddProjectSourceScreen(props: { readonly environmentId?: string 
             {selectedEnvironment.multiRepoProjects ? (
               <ListRow
                 icon={<SymbolView name="folder" size={20} tintColorClassName="accent-icon-muted" />}
-                title="Multi-repo project"
-                subtitle="One workspace across several repositories"
+                title={gt("Multi-repo project")}
+                subtitle={gt("One workspace across several repositories")}
                 disabled={!canCloneProject}
                 onPress={() =>
                   navigation.dispatch(
@@ -770,17 +770,19 @@ export function AddProjectSourceScreen(props: { readonly environmentId?: string 
           </ListSection>
           {multiRepoSetups.length > 0 ? (
             <>
-              <SectionTitle>Set up from another machine</SectionTitle>
+              <SectionTitle>{gt("Set up from another machine")}</SectionTitle>
               <ListSection>
                 {multiRepoSetups.map((setup, index) => (
                   <ListRow
                     key={setup.key}
                     title={setup.source.title}
-                    subtitle={`${setup.members.length} repositories, from ${
+                    subtitle={multiRepoSetupSubtitle(
+                      setup.members.length,
                       environmentOptions.find(
                         (environment) => environment.environmentId === setup.source.environmentId,
-                      )?.label ?? "another machine"
-                    }`}
+                      )?.label,
+                      messages,
+                    )}
                     icon={
                       <SymbolView
                         name="folder"
@@ -1767,6 +1769,7 @@ export function AddProjectMultiRepoScreen(props: {
   readonly sourceEnvironmentId?: string | string[];
   readonly sourceProjectId?: string | string[];
 }) {
+  const gt = useGT();
   const environment = useEnvironmentFromParam(props.environmentId);
   const canWriteSourceControl = useEnvironmentScope(
     environment?.environmentId ?? null,
@@ -1890,19 +1893,21 @@ export function AddProjectMultiRepoScreen(props: {
       });
   };
   return (
-    <AddProjectShell title="Multi-repo project">
+    <AddProjectShell title={gt("Multi-repo project")}>
       {error ? <ErrorBanner message={error} /> : null}
       {environment ? (
         <>
-          <Text>Pick a folder with repositories, or an empty folder to clone into.</Text>
+          <Text>
+            <T>Pick a folder with repositories, or an empty folder to clone into.</T>
+          </Text>
           <ProjectPathInput
             value={pathInput}
             onChangeText={setPathInput}
             onSubmit={() => void submit()}
           />
           <TextInput
-            accessibilityLabel="Repositories to clone"
-            placeholder="Git URLs or owner/repo names"
+            accessibilityLabel={gt("Repositories to clone")}
+            placeholder={gt("Git URLs or owner/repo names")}
             value={repositories}
             onChangeText={(value) => {
               setChoice({ setup: null, repositories: value });
@@ -1914,14 +1919,14 @@ export function AddProjectMultiRepoScreen(props: {
           {setups.map((setup) => (
             <NavigationRow
               key={setup.key}
-              title={`Use ${setup.source.title}`}
+              title={gt("Use {title}", { title: setup.source.title })}
               onPress={() => {
                 setChoice({ setup, repositories: remoteList(setup) });
               }}
             />
           ))}
           <PrimaryActionButton
-            label="Add project"
+            label={gt("Add project")}
             disabled={!canAddProject || busy || isBrowseNavigating || !pathInput.trim()}
             loading={busy}
             onPress={() => void submit()}
@@ -1938,6 +1943,26 @@ export function AddProjectMultiRepoScreen(props: {
       )}
     </AddProjectShell>
   );
+}
+
+function multiRepoSetupSubtitle(
+  count: number,
+  machine: string | undefined,
+  resolve: MessageResolver = m,
+): string {
+  return machine === undefined
+    ? resolve(
+        msg(
+          "{count, plural, one {{count} repository, from another machine} other {{count} repositories, from another machine}}",
+          { count },
+        ),
+      )
+    : resolve(
+        msg(
+          "{count, plural, one {{count} repository, from {machine}} other {{count} repositories, from {machine}}}",
+          { count, machine },
+        ),
+      );
 }
 
 function remoteList(setup: MultiRepoProjectSetup | null): string {

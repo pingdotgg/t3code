@@ -24,8 +24,8 @@ export function resolveWebAppStageLabel(input: {
   readonly dulli?: boolean;
 }): string {
   return (
-    // oxlint-disable-next-line t3code/no-untranslated-copy -- release channel name, part of the product name
     resolveHostedAppChannelLabel(input.hostedAppChannel) ??
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- release channel name, part of the product name
     (input.development ? "Dev" : input.dulli ? "Latest" : "Beta")
   );
 }

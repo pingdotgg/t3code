@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { profileNameError } from "@t3tools/client-runtime/profiles-editor";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ProfilesEditorState, ProfilesSkillsInput } from "@t3tools/contracts";
+import { T, useGT, useMessages } from "gt-react-native";
 import { useRef, useState } from "react";
 import { TextInput, View } from "react-native";
 
@@ -17,6 +18,8 @@ export function ProfileSkillsSettings(props: {
   readonly environmentId: EnvironmentId;
   readonly state: ProfilesEditorState;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const canRun = useAtomValue(profilesEnvironment.runSkills.permissionAtom(props.environmentId));
   const run = useAtomCommand(profilesEnvironment.runSkills, { reportFailure: false });
   const [running, setRunning] = useState(false);
@@ -25,7 +28,7 @@ export function ProfileSkillsSettings(props: {
   const [output, setOutput] = useState<string | null>(null);
   const [source, setSource] = useState("");
   const [skill, setSkill] = useState("");
-  const skillError = skill === "" ? null : profileNameError(skill, []);
+  const skillError = skill === "" ? null : profileNameError(skill, [], messages);
   const disabled = !canRun || running;
   async function runSkills(input: ProfilesSkillsInput) {
     if (!canRun || pending.current) return;
@@ -44,28 +47,32 @@ export function ProfileSkillsSettings(props: {
       }
     } else {
       const error = squashAtomCommandFailure(result);
-      setFailure(error instanceof Error ? error.message : "Could not update skills.");
+      setFailure(error instanceof Error ? error.message : gt("Could not update skills."));
     }
   }
   return (
     <SettingsSection
-      title="Skills"
-      footer="Skill commands run on the selected environment. Dependencies are installed on that machine only."
+      title={gt("Skills")}
+      footer={gt(
+        "Skill commands run on the selected environment. Dependencies are installed on that machine only.",
+      )}
     >
       <View className="gap-3 p-4">
         <Button
-          label="Update all"
+          label={gt("Update all")}
           loading={running}
           disabled={disabled}
           onPress={() => void runSkills({ _tag: "update" })}
         />
         {!canRun ? (
           <Text className="text-sm text-foreground-muted">
-            Provider management permission is required to manage skills.
+            <T>Provider management permission is required to manage skills.</T>
           </Text>
         ) : null}
         {props.state.skills.length === 0 ? (
-          <Text className="text-foreground-muted">No skills</Text>
+          <Text className="text-foreground-muted">
+            <T>No skills</T>
+          </Text>
         ) : null}
         {props.state.skills.map((entry) => (
           <View key={entry.name} className="gap-2 border-t border-border-subtle pt-3">
@@ -74,31 +81,32 @@ export function ProfileSkillsSettings(props: {
               <Text className="text-sm text-foreground-muted">{entry.description}</Text>
             ) : null}
             <Text selectable className="text-sm text-foreground-muted">
-              {entry.source ?? "local"}
+              {entry.source ?? gt("local", { $context: "skill source, installed locally" })}
             </Text>
             {entry.warning ? <Notice message={entry.warning} /> : null}
             {entry.needsInstall ? (
               <>
                 <Text className="text-sm text-foreground-muted">
-                  Dependencies need installing on this machine.
+                  <T>Dependencies need installing on this machine.</T>
                 </Text>
                 <Button
-                  label="Install dependencies"
+                  label={gt("Install dependencies")}
                   disabled={disabled}
                   onPress={() => void runSkills({ _tag: "install", name: entry.name })}
                 />
               </>
             ) : null}
             <Button
-              label="Remove"
+              label={gt("Remove")}
               tone="danger"
               disabled={disabled}
               onPress={() =>
                 Dialog.confirm({
-                  title: `Remove skill “${entry.name}”?`,
-                  message:
+                  title: gt("Remove skill “{name}”?", { name: entry.name }),
+                  message: gt(
                     "Profiles using this skill will show a warning until you remove its reference or add it again.",
-                  confirmText: "Remove",
+                  ),
+                  confirmText: gt("Remove"),
                   destructive: true,
                   onConfirm: () => void runSkills({ _tag: "remove", name: entry.name }),
                 })
@@ -106,12 +114,14 @@ export function ProfileSkillsSettings(props: {
             />
           </View>
         ))}
-        <Text className="font-t3-medium text-foreground">Add skill</Text>
+        <Text className="font-t3-medium text-foreground">
+          <T>Add skill</T>
+        </Text>
         <TextInput
-          accessibilityLabel="Skill source"
+          accessibilityLabel={gt("Skill source")}
           className="rounded-lg border border-border-subtle px-3 py-2 text-base text-foreground"
           placeholderTextColorClassName="accent-foreground-muted"
-          placeholder="owner/repo or source URL"
+          placeholder={gt("owner/repo or source URL")}
           autoCapitalize="none"
           autoCorrect={false}
           editable={!disabled}
@@ -119,10 +129,10 @@ export function ProfileSkillsSettings(props: {
           onChangeText={setSource}
         />
         <TextInput
-          accessibilityLabel="Optional skill name"
+          accessibilityLabel={gt("Optional skill name")}
           className="rounded-lg border border-border-subtle px-3 py-2 text-base text-foreground"
           placeholderTextColorClassName="accent-foreground-muted"
-          placeholder="Skill name (optional)"
+          placeholder={gt("Skill name (optional)")}
           autoCapitalize="none"
           autoCorrect={false}
           editable={!disabled}
@@ -131,7 +141,7 @@ export function ProfileSkillsSettings(props: {
         />
         {skillError ? <Text className="text-sm text-danger-foreground">{skillError}</Text> : null}
         <Button
-          label="Add skill"
+          label={gt("Add skill")}
           disabled={disabled || !source.trim() || skillError !== null}
           onPress={() =>
             void runSkills({ _tag: "add", source: source.trim(), ...(skill ? { skill } : {}) })

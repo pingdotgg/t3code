@@ -1146,8 +1146,8 @@ function OpenCommandPaletteDialog(props: {
       sourceItems.push({
         kind: "action",
         value: `action:add-project:${environmentId}:multi-repo`,
-        title: "Multi-repo project",
-        description: "One workspace across several repositories",
+        title: gt("Multi-repo project"),
+        description: gt("One workspace across several repositories"),
         searchTerms: ["multi repo workler group"],
         icon: <FolderGit2Icon className={ITEM_ICON_CLASS} />,
         keepOpen: true,

@@ -1,5 +1,6 @@
 import { type StaticScreenProps, useNavigation } from "@react-navigation/native";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { T, useGT } from "gt-react-native";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -14,6 +15,7 @@ import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 export function SettingsProfilesRouteScreen({
   route,
 }: StaticScreenProps<{ readonly environmentId?: EnvironmentId } | undefined>) {
+  const gt = useGT();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { availableTargets, selectedTargets, selectedProjectKey } = useSettingsEnvironmentFilter();
@@ -22,7 +24,7 @@ export function SettingsProfilesRouteScreen({
     ? availableTargets.find((target) => target.environmentId === requested)
     : selectedTargets[0];
   return (
-    <SettingsScreen title="Profiles">
+    <SettingsScreen title={gt("Profiles")}>
       <ScreenScrollView
         className="flex-1"
         contentInsetAdjustmentBehavior="automatic"
@@ -32,7 +34,7 @@ export function SettingsProfilesRouteScreen({
       >
         <View className="gap-3">
           <Menu
-            accessibilityLabel="Profiles environment"
+            accessibilityLabel={gt("Profiles environment")}
             actions={availableTargets.map((target) => ({
               id: target.environmentId,
               title: target.label,
@@ -46,14 +48,14 @@ export function SettingsProfilesRouteScreen({
             }}
           >
             <Button
-              label={environment?.label ?? "Select a connected environment"}
+              label={environment?.label ?? gt("Select a connected environment")}
               disabled={availableTargets.length === 0}
               onPress={() => {}}
             />
           </Menu>
           {selectedProjectKey !== null ? (
             <Text className="text-sm text-foreground-muted">
-              Profiles belong to an environment, not a project.
+              <T>Profiles belong to an environment, not a project.</T>
             </Text>
           ) : null}
         </View>
@@ -62,8 +64,8 @@ export function SettingsProfilesRouteScreen({
         ) : (
           <Text className="text-foreground-muted">
             {requested
-              ? "This environment is not connected. Choose another environment above."
-              : "Select a connected environment."}
+              ? gt("This environment is not connected. Choose another environment above.")
+              : gt("Select a connected environment.")}
           </Text>
         )}
       </ScreenScrollView>

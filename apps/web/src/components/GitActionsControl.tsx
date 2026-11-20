@@ -1582,8 +1582,11 @@ function CheckoutGitActionsControl({
         toastManager.add(
           stackedThreadToast({
             type: "success",
-            title: "Made a multi-repo project",
-            description: `New worktrees now branch ${summarizeRepositories(result.value.members)} together. Edit .workler in the project folder to change the list.`,
+            title: gt("Made a multi-repo project"),
+            description: gt(
+              "New worktrees now branch {repositories} together. Edit .workler in the project folder to change the list.",
+              { repositories: summarizeRepositories(result.value.members) },
+            ),
             ...(threadToastData !== undefined ? { data: threadToastData } : {}),
           }),
         );
@@ -1594,8 +1597,8 @@ function CheckoutGitActionsControl({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not make a multi-repo project",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: gt("Could not make a multi-repo project"),
+          description: error instanceof Error ? error.message : gt("An error occurred."),
           ...(threadToastData !== undefined ? { data: threadToastData } : {}),
         }),
       );
@@ -1686,13 +1689,15 @@ function CheckoutGitActionsControl({
           variant="ghost"
           part="row"
           panel
-          title={`Groups ${summarizeRepositories(multiRepoCandidate.repositories)}, so a new worktree branches them all together.`}
+          title={gt("Groups {repositories}, so a new worktree branches them all together.", {
+            repositories: summarizeRepositories(multiRepoCandidate.repositories),
+          })}
           disabled={!canMakeMultiRepo || isMakingMultiRepo}
           onClick={makeMultiRepoProject}
         >
           <FoldersIcon className="size-3.5" aria-hidden />
           <span className={cn("ml-0.5", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
-            {isMakingMultiRepo ? "Making multi-repo project..." : "Make multi-repo project"}
+            {isMakingMultiRepo ? gt("Making multi-repo project...") : gt("Make multi-repo project")}
           </span>
         </ThreadDetailsControl>
       ) : null}

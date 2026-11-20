@@ -5,6 +5,7 @@ import { type EnvironmentId, type ModelSelection } from "@t3tools/contracts";
 import { selectProfile, supportsProfiles } from "@t3tools/shared/profiles";
 import { type ComposerThreadTarget, useComposerDraftStore } from "../../composerDraftStore";
 import { serverEnvironment } from "../../state/server";
+import { T, useGT } from "gt-react";
 import { ChevronDownIcon } from "lucide-react";
 import { Select, SelectValue, SelectPopup, SelectItem } from "../ui/select";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
@@ -26,6 +27,7 @@ export function ProfilePicker(props: {
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
   const apply = useApplyThreadModelPick();
   const navigate = useNavigate();
+  const gt = useGT();
   const composerMenuProps = useComposerMenuProps();
   const freshAtom = serverEnvironment.profileConfig({
     environmentId: props.environmentId,
@@ -73,7 +75,7 @@ export function ProfilePicker(props: {
               (provider) => provider.instanceId === picked.selection.instanceId,
             )?.driver;
             if (id && (!selectedDriver || !supportsProfiles(selectedDriver))) {
-              toastManager.add({ type: "warning", title: "Profiles not supported here" });
+              toastManager.add({ type: "warning", title: gt("Profiles not supported here") });
               return;
             }
             useComposerDraftStore.getState().setModelSelection(props.target, picked.selection, {
@@ -83,22 +85,29 @@ export function ProfilePicker(props: {
             void apply(props.target);
             toastManager.add({
               type: "info",
-              title: picked.notice ?? "Profile selected for the next session start",
+              title: picked.notice ?? gt("Profile selected for the next session start"),
             });
           }}
         >
-          <ComposerSelectControl size={props.size} aria-label="Profile">
+          <ComposerSelectControl
+            size={props.size}
+            aria-label={gt("Profile", { $context: "composer control, agent profile" })}
+          >
             <span data-composer-control-label className="max-w-20 truncate sm:max-w-32">
-              <SelectValue>{props.selection.profileId ?? "No profile"}</SelectValue>
+              <SelectValue>{props.selection.profileId ?? gt("No profile")}</SelectValue>
             </span>
             <ChevronDownIcon data-composer-control-chevron className="size-3.5 opacity-70" />
           </ComposerSelectControl>
           <SelectPopup alignItemWithTrigger={false} {...composerMenuProps}>
             <p className="max-w-72 px-3 py-2 text-xs text-muted-foreground">
-              Changes apply at the next session start. Stop and restart the thread to apply
-              immediately.
+              <T>
+                Changes apply at the next session start. Stop and restart the thread to apply
+                immediately.
+              </T>
             </p>
-            <SelectItem value="">No profile</SelectItem>
+            <SelectItem value="">
+              <T>No profile</T>
+            </SelectItem>
             {Object.entries(catalog.profiles).map(([id, profile]) => (
               <SelectItem key={id} value={id} disabled={Boolean(profile.warning)}>
                 {id}
@@ -106,12 +115,16 @@ export function ProfilePicker(props: {
                 {profile.warning ? `: ${profile.warning}` : ""}
               </SelectItem>
             ))}
-            <SelectItem value={EDIT_PROFILES}>Edit profiles…</SelectItem>
+            <SelectItem value={EDIT_PROFILES}>
+              <T>Edit profiles…</T>
+            </SelectItem>
           </SelectPopup>
         </Select>
       </TooltipTrigger>
       <TooltipPopup>
-        {supported ? "Profile for the next session start" : "This provider doesn't use profiles"}
+        {supported
+          ? gt("Profile for the next session start")
+          : gt("This provider doesn't use profiles")}
       </TooltipPopup>
     </Tooltip>
   );
