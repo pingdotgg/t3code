@@ -72,6 +72,7 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
   - [ ] For Electron lanes, run `AGENT_BOARD_CDP_PORT=<9300 + n> vp run --filter @agent-board/app dev:windows`, which launches the Windows build of Electron on the Windows PC, and attach the `browser` API inside `eval` to `http://127.0.0.1:<9300 + n>`. WSL's mirrored networking shares 127.0.0.1 with Windows. Capture the full window, frame included, with a PowerShell `CopyFromScreen` of the window bounds.
 - [ ] Deliver input only through `orca-ide click`, `fill`, `keypress`, and `drag`, or the `browser` API actions. Read state only through `orca-ide eval` and `orca-ide snapshot`.
 - [ ] Save every screenshot to `/tmp/swarm-<pr-id>/worker-<n>/<slug>.png` and return the paths with the report.
+- [ ] Never create a GitHub repo for a lane. A lane that needs a real PR, issue, or CI run uses the one private repo `13kparkin/agent-board-lanes`, on branches named `lane/<pr-id>/<n>/...`. Close the lane's PRs and issues and delete its branches when the lane ends. Run its CI on a local self-hosted runner. Copy only `bin/`, `config.sh`, `env.sh`, `run.sh`, `externals/`, and the `run-helper*` templates from `~/.local/share/shortyard-runner/linux-1`, never its credential files, register the copy to `agent-board-lanes` with the label `board-lane`, which the repo's `RUNNER_LINUX` variable already names, and unregister it when the lane ends.
 
 ## Guard the engine boundary (B0)
 
@@ -1505,7 +1506,7 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 
 - [ ] `checkList.test.ts` sorts a fixed list with all seven statuses, a required check, and a placeholder into a literal expected order and rollup text. Run `vp test run src/checks/checkList.test.ts` from `apps/board`.
 
-**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe. A lane that needs a real PR uses a private throwaway repo with CI on a local self-hosted runner.
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe. A lane that needs a real PR uses the shared lane repo from the boot recipe.
 
 - [ ] Lane 1. Regression lane against trunk. Trunk's drawer lists check names only. Open the Checks tab at head on a PR with passing, failing, running, and skipped checks. Save `m1-checks.png`. Pass when the rows match `gh pr checks`.
 - [ ] Lane 2. Watch a running check finish. Save `m1-running.png`. Pass when its row moves from running to passed with no reload.
@@ -1569,14 +1570,14 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 
 - [ ] `issueLinks.test.ts` finds the keys in a fixed text, joins a fixed `tickets.json` to fixed issues, and turns approved create, state, and comment items into literal expected `issues.create`, `issues.setState`, and `issues.comment` inputs. Run `vp test run src/issues/issueLinks.test.ts` from `apps/board`.
 
-**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe. Linear lanes read the operator's workspace with a key the operator enters at lane time, and never write to it. Write lanes use a scratch Linear workspace key the operator provides, or a throwaway GitHub repo.
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe. Linear lanes read the operator's workspace with a key the operator enters at lane time, and never write to it. Write lanes use a scratch Linear workspace key the operator provides, or the shared lane repo from the boot recipe.
 
 - [ ] Lane 1. Regression lane against trunk. Trunk's dialog has no Create From row, so record that fact. Connect Linear at head. Save `l1-connect.png`. Pass when `issueTrackers.list` shows Linear connected and the key appears in no board file or log.
 - [ ] Lane 2. Bind the project to a team. Save `l1-bind.png`. Pass when `issues.list` returns that team's issues.
 - [ ] Lane 3. Search the Linear tab. Save `l1-search.png`. Pass when the results match Linear's own search for the same text.
 - [ ] Lane 4. Create a board from an issue. Save `l1-from-issue.png`. Pass when the orchestrator's first message holds the issue's description and comments.
 - [ ] Lane 5. Load a `tickets.json` whose tickets link child issues. Save `l1-ticket-chip.png`. Pass when each frame shows the key, state, and assignee Linear reports.
-- [ ] Lane 6. Search the GitHub tab on a throwaway repo with three issues. Save `l1-github.png`. Pass when all three are listed and one starts a board.
+- [ ] Lane 6. Search the GitHub tab on the shared lane repo after opening three lane issues there. Save `l1-github.png`. Pass when all three are listed and one starts a board.
 - [ ] Lane 7. Have a real Claude orchestrator change an issue's state in the scratch tracker twice, once through a `tracker_write` item and once by calling `set_issue_state` itself, then have a Codex orchestrator call it once. Save `l1-write.png`. Pass when every call waits for the operator with the exact change shown, **Hold** leaves the issue unchanged, and **Approve** changes it.
 - [ ] Lane 8. Use **Add from Linear** on an existing board. Save `l1-add.png`. Pass when the orchestrator adds a ticket linked to that issue.
 - [ ] Lane 9. Run the Windows app and open the new-board dialog on the Linear tab. Save `l1-windows.png` from a full-window capture. Pass when it matches the layout of Orca's dialog in the reference screenshot.
