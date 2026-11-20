@@ -145,6 +145,14 @@ export interface CursorAgentSdkSession {
   readonly close: Effect.Effect<void, CursorAgentSdkRunnerError>;
 }
 
+export interface CursorAgentSdkTextGenerateInput {
+  readonly prompt: string;
+  readonly apiKey: string;
+  readonly model: NonNullable<AgentOptions["model"]>;
+  readonly cwd: string;
+  readonly stateRoot: string;
+}
+
 export class CursorAgentSdkRunner extends Context.Service<
   CursorAgentSdkRunner,
   {
@@ -152,6 +160,10 @@ export class CursorAgentSdkRunner extends Context.Service<
       input: CursorAgentSdkOpenInput,
     ) => Effect.Effect<CursorAgentSdkSession, CursorAgentSdkRunnerError>;
     readonly assertComplete: Effect.Effect<void, CursorAgentSdkRunnerError>;
+    /** Absent on in-process test doubles; the out-of-process runner provides it. */
+    readonly textGenerate?: (
+      input: CursorAgentSdkTextGenerateInput,
+    ) => Effect.Effect<RunResult, CursorAgentSdkRunnerError>;
   }
 >()("@t3tools/provider-cursor/server/CursorAgentSdk/CursorAgentSdkRunner") {}
 
@@ -391,7 +403,7 @@ export function loggedCursorSendOptions(
   };
 }
 
-function makeCursorAgentSdkProtocolLogger(input: {
+export function makeCursorAgentSdkProtocolLogger(input: {
   readonly nativeEventLogger: ProviderEventLoggers.EventNdjsonLogger | undefined;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];

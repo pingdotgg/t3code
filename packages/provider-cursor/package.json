@@ -23,6 +23,14 @@
       "types": "./src/server/CursorAgentSdk.ts",
       "import": "./src/server/CursorAgentSdk.ts"
     },
+    "./server/CursorAgentSdkProcessRunner": {
+      "types": "./src/server/CursorAgentSdkProcessRunner.ts",
+      "import": "./src/server/CursorAgentSdkProcessRunner.ts"
+    },
+    "./server/worker": {
+      "types": "./src/server/CursorAgentSdkWorker.ts",
+      "import": "./src/server/CursorAgentSdkWorker.ts"
+    },
     "./server/accountUsage": {
       "types": "./src/server/accountUsage.ts",
       "import": "./src/server/accountUsage.ts"
