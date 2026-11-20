@@ -6,12 +6,13 @@ import { shortcutLabelForCommand } from "../keybindings";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { PlusIcon, ScaleIcon } from "lucide-react";
-import { memo } from "react";
+import { memo, type ReactElement } from "react";
 import { T, useGT } from "gt-react";
 
 import { ADD_TO_MACHINE_LABEL_CLASS, type EnvironmentOption } from "./BranchToolbar.logic";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useComposerMenuProps } from "./chat/composerEventScope";
+import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import {
   Select,
   SelectGroup,
@@ -29,6 +30,24 @@ interface BranchToolbarEnvironmentSelectorProps {
   availableEnvironments: readonly EnvironmentOption[];
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
   onAddToMachine?: (() => void) | undefined;
+}
+
+/** A disabled machine row that says, on hover, why it cannot be chosen. */
+export function UnavailableEnvironmentReason(props: { reason: string; item: ReactElement }) {
+  return (
+    <Popover>
+      <PopoverTrigger
+        openOnHover
+        nativeButton={false}
+        render={<span className="block w-full cursor-not-allowed" />}
+      >
+        {props.item}
+      </PopoverTrigger>
+      <PopoverPopup tooltipStyle width="md" side="right" align="center">
+        {props.reason}
+      </PopoverPopup>
+    </Popover>
+  );
 }
 
 // Action values cannot collide with server-minted environment IDs.
@@ -150,18 +169,32 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
               </span>
             </SelectItem>
           )}
-          {availableEnvironments.map((env) => (
-            <SelectItem
-              key={env.environmentId}
-              value={environmentValue(env.environmentId)}
-              disabled={onEnvironmentChange === undefined && env.environmentId !== environmentId}
-            >
-              <span className="inline-flex items-center gap-1.5">
-                <EnvironmentMachineIcon kind={env.machine} className="size-3" />
-                {env.label}
-              </span>
-            </SelectItem>
-          ))}
+          {availableEnvironments.map((env) => {
+            const item = (
+              <SelectItem
+                key={env.environmentId}
+                value={environmentValue(env.environmentId)}
+                disabled={
+                  env.unavailableReason !== undefined ||
+                  (onEnvironmentChange === undefined && env.environmentId !== environmentId)
+                }
+              >
+                <span className="inline-flex items-center gap-1.5">
+                  <EnvironmentMachineIcon kind={env.machine} className="size-3" />
+                  {env.label}
+                </span>
+              </SelectItem>
+            );
+            return env.unavailableReason === undefined ? (
+              item
+            ) : (
+              <UnavailableEnvironmentReason
+                key={env.environmentId}
+                reason={env.unavailableReason}
+                item={item}
+              />
+            );
+          })}
           {onAddToMachine ? (
             <SelectItem value={ADD_MACHINE_VALUE}>
               <span className={ADD_TO_MACHINE_LABEL_CLASS}>

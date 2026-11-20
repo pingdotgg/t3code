@@ -21,6 +21,8 @@ export interface EnvironmentOption {
   label: string;
   isPrimary: boolean;
   machine: EnvironmentMachineKind;
+  /** Set when this machine is listed but cannot be chosen, with the reason it gives. */
+  unavailableReason?: string;
 }
 
 /** "Add to another machine" stays muted until hovered: easy to find, quieter than the machines. */

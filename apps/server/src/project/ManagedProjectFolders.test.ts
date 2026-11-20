@@ -18,6 +18,7 @@ import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Result from "effect/Result";
 import { ChildProcessSpawner } from "effect/process";
 import * as Scope from "effect/Scope";
 
@@ -142,6 +143,11 @@ it.effect("offers nothing, and says why once, when the data dir sits inside a Gi
       // The root prefixes the data dir, so it must appear on its own.
       assert.include(failure.message.replaceAll(baseDir, ""), repositoryRoot);
       yield* Effect.flip(scratch.ensureScratchProject);
+      const availability = yield* scratch.scratchAvailability;
+      assert.deepStrictEqual(
+        Result.getFailure(availability).pipe(Option.map((e) => e.message)),
+        Option.some(failure.message),
+      );
     }).pipe(
       Effect.provide(
         Layer.mergeAll(layer(baseDir), Logger.layer([logger], { mergeWithExisting: false })),

@@ -1,4 +1,7 @@
-import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
+import {
+  availableScratchWorkspaceRoot,
+  canCreateProjectInEnvironment,
+} from "@t3tools/client-runtime/operations/projects";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
@@ -30,7 +33,11 @@ export function useLogicalProjectEnvironments(
     environments.map((environment) => [environment.environmentId, environment]),
   );
   const envs: EnvironmentOption[] = [];
-  const pushEnvironment = (environmentId: EnvironmentId, projectId: ProjectId | null) => {
+  const pushEnvironment = (
+    environmentId: EnvironmentId,
+    projectId: ProjectId | null,
+    unavailableReason?: string,
+  ) => {
     const environment = environmentById.get(environmentId) ?? null;
     envs.push({
       environmentId,
@@ -38,6 +45,7 @@ export function useLogicalProjectEnvironments(
       label: environment?.label ?? environmentId,
       isPrimary: environmentId === primaryEnvironmentId,
       machine: resolveEnvironmentMachineKind(environment?.serverConfig ?? null),
+      ...(unavailableReason === undefined ? {} : { unavailableReason }),
     });
   };
   if (scratchDraft) {
@@ -46,8 +54,13 @@ export function useLogicalProjectEnvironments(
         environment.connection.phase,
         environment.serverConfig,
       );
-      if (scratchRoot === null && environment.environmentId !== activeProject.environmentId)
+      if (scratchRoot === null && environment.environmentId !== activeProject.environmentId) {
+        const reason = canCreateProjectInEnvironment(environment.connection.phase)
+          ? environment.serverConfig?.scratchUnavailableReason
+          : undefined;
+        if (reason !== undefined) pushEnvironment(environment.environmentId, null, reason);
         continue;
+      }
       const scratchProject =
         environment.environmentId === activeProject.environmentId
           ? activeProject

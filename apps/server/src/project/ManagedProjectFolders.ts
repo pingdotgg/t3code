@@ -112,6 +112,8 @@ export class ManagedProjectFolders extends Context.Service<
   ManagedProjectFolders,
   {
     readonly scratchRoot: Effect.Effect<Option.Option<string>>;
+    /** The scratch root, or why this environment offers none. */
+    readonly scratchAvailability: Effect.Effect<Result.Result<string, ScratchUnavailableError>>;
     readonly ensureScratchProject: Effect.Effect<{ readonly projectId: ProjectId }, ScratchError>;
     readonly isScratchProject: (projectId: ProjectId) => Effect.Effect<boolean>;
     readonly folderForThread: (input: {
@@ -292,13 +294,15 @@ const make = Effect.gen(function* () {
       ),
       Effect.orElseSucceed(() => root),
     );
-  const scratchRoot = scratchProbe.pipe(
-    Effect.flatMap((probed) =>
-      Result.isSuccess(probed)
-        ? scratchProjectRoot(probed.success).pipe(Effect.asSome)
-        : Effect.succeedNone,
-    ),
-  );
+  const scratchAvailability: ManagedProjectFolders["Service"]["scratchAvailability"] =
+    scratchProbe.pipe(
+      Effect.flatMap((probed): Effect.Effect<Result.Result<string, ScratchUnavailableError>> =>
+        Result.isSuccess(probed)
+          ? scratchProjectRoot(probed.success).pipe(Effect.map(Result.succeed))
+          : Effect.succeed(Result.fail(probed.failure)),
+      ),
+    );
+  const scratchRoot = scratchAvailability.pipe(Effect.map((result) => Result.getSuccess(result)));
 
   const makeScratchFolder = (folder: string) =>
     fileSystem
@@ -510,6 +514,7 @@ const make = Effect.gen(function* () {
 
   return ManagedProjectFolders.of({
     scratchRoot,
+    scratchAvailability,
     ensureScratchProject,
     isScratchProject,
     folderForThread,
