@@ -294,26 +294,38 @@ describe("provider update launch notification logic", () => {
     });
     expect(claudeView).toMatchObject({ title: "Claude updated: v1.1.0" });
 
-    const codexView = getProviderUpdateSidebarPillView(
-      [
-        claudeUpdated,
-        provider({
-          driver: driver("codex"),
-          version: "1.2.0",
-          latestVersion: "1.2.0",
-          advisoryStatus: "current",
-          updateState: {
-            status: "succeeded",
-            startedAt: laterCheckedAt,
-            finishedAt: laterCheckedAt,
-            message: "Provider updated.",
-            output: null,
-          },
-        }),
-      ],
-      { visibleAfterIso: sessionStartedAt, dismissedKeys: new Set(claudeView?.dismissKeys) },
-    );
+    const bothUpdated = [
+      claudeUpdated,
+      provider({
+        driver: driver("codex"),
+        version: "1.2.0",
+        latestVersion: "1.2.0",
+        advisoryStatus: "current",
+        updateState: {
+          status: "succeeded",
+          startedAt: laterCheckedAt,
+          finishedAt: laterCheckedAt,
+          message: "Provider updated.",
+          output: null,
+        },
+      }),
+    ];
+    const codexView = getProviderUpdateSidebarPillView(bothUpdated, {
+      visibleAfterIso: sessionStartedAt,
+      dismissedKeys: new Set(claudeView?.dismissKeys),
+    });
     expect(codexView).toMatchObject({ tone: "success", title: "Codex updated: v1.2.0" });
+
+    const groupedView = getProviderUpdateSidebarPillView(bothUpdated, {
+      visibleAfterIso: sessionStartedAt,
+    });
+    expect(groupedView).toMatchObject({ title: "2 providers updated" });
+    expect(
+      getProviderUpdateSidebarPillView(bothUpdated, {
+        visibleAfterIso: sessionStartedAt,
+        dismissedKeys: new Set(groupedView?.dismissKeys),
+      }),
+    ).toBeNull();
   });
 });
 
