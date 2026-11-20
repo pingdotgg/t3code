@@ -186,7 +186,6 @@ export const PullRequestToolError = Schema.Union([
   PullRequestListFailedError,
   PullRequestWatchService.PullRequestWatchFailedError,
   PullRequestUnavailableError,
-  PullRequestWatchService.PullRequestNotOpenError,
   PullRequestWatchService.PullRequestWatchFromSubagentError,
   PullRequestProjectNotFoundError,
   PullRequestGuideFailedError,
@@ -258,8 +257,17 @@ export const WatchPullRequestResult = Schema.Struct({
   ...PullRequestIdentity,
   watching: Schema.Boolean,
   wasWatching: Schema.Boolean,
+  state: Schema.optional(
+    Schema.Literals(["merged", "closed"]).annotate({
+      description: "The PR already ended, so nothing was watched.",
+    }),
+  ),
+  next: Schema.optional(Schema.String),
 });
 export type WatchPullRequestResult = typeof WatchPullRequestResult.Type;
+
+export const alreadyEndedWatchNext = (state: "merged" | "closed") =>
+  `This PR is already ${state}, so there is nothing to watch. Report that and end your turn.`;
 
 export const ThreadPullRequestEntry = Schema.Struct({
   ...PullRequestIdentity,
@@ -383,14 +391,14 @@ const WatchPullRequestInput = Schema.Struct({
   until: Schema.optional(
     PullRequestWatchUntil.annotate({
       description:
-        'How long this thread stays working. Omit it to keep the current value; a new watch starts at "checks". "checks": until checks finish, for a PR you hand to the user. "merged": until it merges or closes or you unwatch it, when you will act on it yourself, such as merging after someone else approves.',
+        'How long this thread stays working. Omit to keep the current value; a new watch starts at "checks". "checks": until checks finish, for a PR you hand to the user. "merged": until it merges, closes or is unwatched, when you act on it yourself, such as merging after approval.',
     }),
   ),
 });
 
 const WatchPullRequestTool = Tool.make("watch_pull_request", {
   description:
-    "Watch an open PR for this thread, linking it first if needed. T3 wakes you on failed checks, passed required checks, new comments or reviews, or conflicts. Handle old comments first. Only later ones wake you. After this call, end your turn. The watch stays on after each wake, so do not call this again on a wake. A wake is not a merge decision. Check readiness yourself.",
+    "Watch an open PR for this thread, linking it if needed. T3 wakes you on failed checks, passed required checks, new comments or reviews, conflicts, and once on merge or close unless you did it via CLI. Handle old comments first; only new ones wake you. After this call, end your turn. The watch stays on: do not call this again on a wake. A wake is not a merge decision. Check readiness yourself.",
   parameters: WatchPullRequestInput,
   success: WatchPullRequestResult,
   failure: PullRequestToolError,
@@ -609,7 +617,7 @@ export const MergePullRequestResult = Schema.Struct({
 export type MergePullRequestResult = typeof MergePullRequestResult.Type;
 
 const ReadPullRequestTool = Tool.make("pull_request_read", {
-  description: "Read a PR's state, checks, review comments, or diff. Use instead of gh or cafe.",
+  description: "Read a PR's state, checks, review comments, or diff.",
   parameters: Schema.Struct({
     ...ThreadPullRequestInput.fields,
     sections: Schema.optional(
@@ -811,8 +819,7 @@ export const RerunChecksResult = Schema.Struct({
 export type RerunChecksResult = typeof RerunChecksResult.Type;
 
 const CheckLogsTool = Tool.make("ci_logs", {
-  description:
-    "Read the tail of a PR's failing check logs, or one named check's. Use instead of gh run view.",
+  description: "Read the tail of a PR's failing check logs, or one named check's.",
   parameters: Schema.Struct({
     ...ThreadPullRequestInput.fields,
     check: Schema.optional(TrimmedNonEmptyString),
