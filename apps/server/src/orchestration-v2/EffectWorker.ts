@@ -101,6 +101,7 @@ export const layerExecutor: Layer.Layer<
   | ThreadTitleRegenerationService.ThreadTitleRegenerationService
   | ThreadManagementService.ThreadManagementService
   | ProjectionStore.ProjectionStoreV2
+  | EffectOutbox.EffectOutboxV2
   | ServerSettings.ServerSettingsService
 > = Layer.effect(
   OrchestrationEffectExecutorV2,
@@ -116,6 +117,7 @@ export const layerExecutor: Layer.Layer<
       yield* ThreadTitleRegenerationService.ThreadTitleRegenerationService;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+    const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
     const settings = yield* ServerSettings.ServerSettingsService;
     const startRun = (
       effect: EffectOutbox.OrchestrationEffectV2,
@@ -368,6 +370,12 @@ export const layerExecutor: Layer.Layer<
                     ) {
                       return yield* error;
                     }
+                    const persisted = Option.getOrUndefined(yield* effectOutbox.get(effect.id));
+                    if (
+                      persisted?.request.type === "provider-turn.steer" &&
+                      persisted.request.runtimeAccepted === true
+                    )
+                      return;
                     const projection = yield* threads.getThreadRecords(
                       effect.threadId,
                       ["messages", "runs"],

@@ -1495,6 +1495,7 @@ function layerStartEffectWorker(
     Layer.provide(
       Layer.mergeAll(
         harness.layer,
+        Layer.mock(EffectOutbox.EffectOutboxV2)({}),
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
         Layer.mock(ProviderTurnControlService.ProviderTurnControlServiceV2)(control),
         Layer.mock(RunFinalizationService.RunFinalizationService)({}),
