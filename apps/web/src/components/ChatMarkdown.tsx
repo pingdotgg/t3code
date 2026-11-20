@@ -14,7 +14,7 @@ import {
   inlineCodeFilePathCandidate,
 } from "@t3tools/shared/markdownLinks";
 import { taskListMarkerOffset } from "@t3tools/shared/markdownTaskList";
-import { isHostPath, resolveWorkspaceFilePath } from "@t3tools/shared/path";
+import { isHostPath, isWindowsAbsolutePath, resolveWorkspaceFilePath } from "@t3tools/shared/path";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import {
   AuthFilesystemReadScope,
@@ -159,6 +159,7 @@ import {
   markdownFileEditorTarget,
   resolveMarkdownFileHostPath,
 } from "../markdownFileHostPath";
+import { useSaveFileAs } from "./files/useSaveFileAs";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -600,6 +601,8 @@ function useChatMarkdownState({
   const environmentId = threadRef?.environmentId ?? explicitEnvironmentId ?? null;
   const canOperateHost = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
+  const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
+  const saveFileAs = useSaveFileAs();
   const isClientHost = useAtomValue(clientHostEnvironmentAtom(environmentId));
   const remoteOpen = useRemoteOpenResolution(environmentId);
   const canUseShellActions =
@@ -1005,6 +1008,20 @@ function useChatMarkdownState({
             : undefined
         }
         revealLabel={revealInFileManagerLabel}
+        onSave={
+          threadRef &&
+          canReadFiles &&
+          !isAppBundle &&
+          !fileLinkMeta.filePath.endsWith("/") &&
+          !(isWindowsAbsolutePath(fileLinkMeta.filePath) && fileLinkMeta.filePath.endsWith("\\"))
+            ? () =>
+                void saveFileAs({
+                  environmentId: threadRef.environmentId,
+                  threadId: threadRef.threadId,
+                  path: async () => (await resolveHostPath()).absolutePath,
+                })
+            : undefined
+        }
         onOpenInBrowser={
           threadRef &&
           canOperatePreview &&
