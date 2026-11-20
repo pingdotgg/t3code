@@ -14,9 +14,11 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient } from "effect/http";
 
@@ -89,6 +91,8 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       /** `data` of the agent's "Internal error" response to `session/new`. */
       readonly newSessionErrorData?: unknown;
       readonly initialMode?: string;
+      /** Makes this the agy CLI, whose `acp --login` prints this link and exits on a pasted code. */
+      readonly cliLoginUrl?: string;
     } = {},
   ) {
     const directory = path.join(root, name);
@@ -112,6 +116,11 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
         ...(options.initialMode === undefined
           ? []
           : [`export T3_ACP_INITIAL_MODE=${shellQuote(options.initialMode)}`]),
+        ...(options.cliLoginUrl === undefined
+          ? []
+          : [
+              `if [ "$2" = --login ]; then printf '%s\\n' ${shellQuote(options.cliLoginUrl)}; read -r _; exit 0; fi`,
+            ]),
         `exec ${shellQuote(nodePath)} ${shellQuote(mockAgentPath)} "$@"`,
         "",
       ].join("\n"),
@@ -121,7 +130,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     yield* fs.chmod(harnessPath, 0o755);
     return {
       executablePath,
-      harnessPath,
+      harnessPath: options.cliLoginUrl === undefined ? harnessPath : null,
       source: "managed",
       version: name,
       managedVersionDirectory: directory,
@@ -539,6 +548,52 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           T3_ACP_MCP_ENTRYPOINT: "/ambient/entrypoint.mjs",
         });
         yield* h.assertClosed;
+      }),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "signs in through `agy acp --login` only in standalone builds",
+    () =>
+      Effect.gen(function* () {
+        const cliLoginUrl =
+          "https://accounts.google.com/o/oauth2/auth?response_type=code&client_id=test-client" +
+          "&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&state=cli-state";
+        const owner = "antigravity-driver-sign-in";
+        for (const standalone of [true, false]) {
+          const h = yield* makeHarness({
+            environment: [{ name: "DISPLAY", value: ":7" }],
+          }).pipe(
+            Effect.provideService(
+              ConfigProvider.ConfigProvider,
+              ConfigProvider.fromUnknown({ T3CODE_STANDALONE: standalone }),
+            ),
+          );
+          h.controls.selected = yield* h.makeExecutable(`runtime agy ${standalone}`, {
+            cliLoginUrl,
+          });
+          const auth = h.instance.auth!;
+          const settled = (phases: ReadonlyArray<string>) =>
+            auth.subscribe(owner).pipe(
+              Stream.filter((state) => phases.includes(state.phase)),
+              Stream.runHead,
+              Effect.map((state) => Option.getOrThrow(state).phase),
+            );
+          const state = yield* auth.start(owner);
+          // An upstream build never pauses for a pasted code.
+          expect(yield* settled(["waiting", "succeeded", "failed"])).toBe(
+            standalone ? "waiting" : "succeeded",
+          );
+          if (standalone) {
+            yield* auth.complete(owner, {
+              flowId: state.flowId!,
+              callbackUrl: "https://antigravity.google/oauth-callback?state=cli-state&code=4%2F0Ab",
+            });
+            expect(yield* settled(["succeeded", "failed"])).toBe("succeeded");
+          }
+          const logins = h.launches.filter((launch) => launch.args.includes("--login"));
+          expect(logins.length).toBe(standalone ? 1 : 0);
+          if (standalone) expect(logins[0]?.environment.DISPLAY).toBeUndefined();
+        }
       }),
   );
 

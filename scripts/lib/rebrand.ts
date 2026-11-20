@@ -35,8 +35,12 @@ export function rebrandName(env: Environment): string | null {
 
 // T3 Connect, T3 Chat, the T3 account and T3 Tools are services and a company the fork does not run.
 const KEPT = String.raw`(?:Connect|Chat|Account|account|Tools)\b`;
-// Source names the product only before a space, so `T3-Code-1.0.dmg` and `com.t3tools.T3Code` stay.
-const IN_SOURCE = new RegExp(String.raw`\bT3\s+Code\b|\bT3(?=\s+[A-Za-z])(?!\s+${KEPT})`, "g");
+// Source names the product only before a space or `'s`, so `T3-Code-1.0.dmg` and `com.t3tools.T3Code`
+// stay. A `\n` escape in a string literal also starts a word, as in the work-log sentence keys.
+const IN_SOURCE = new RegExp(
+  String.raw`(?:\b|(?<=\\n))T3(?:\s+Code\b|(?=\s+[A-Za-z])(?!\s+${KEPT})|(?='s\b))`,
+  "g",
+);
 // Translations also write "T3-Thread", "thread do T3" and the account as "T3-Konto" or "compte T3".
 const KEPT_IN_TRANSLATION = String.raw`(?:${KEPT}|[Kk]onto\b|アカウント|계정|账户|帐户)`;
 const IN_TRANSLATION = new RegExp(

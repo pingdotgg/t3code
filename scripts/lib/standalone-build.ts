@@ -33,3 +33,36 @@ export function standaloneBuildDefine(env: Environment): Record<string, string> 
     ),
   };
 }
+
+/**
+ * The `.well-known` files a standalone web build serves in place of T3's, by path; a null file is
+ * removed. Null for default builds. With no Android signing fingerprint, assetlinks is dropped.
+ */
+export function standaloneWellKnownFiles(env: Environment): Record<string, string | null> | null {
+  if (!/^(1|true)$/i.test(env.T3CODE_STANDALONE?.trim() ?? "")) return null;
+  const teamId = env.T3CODE_IOS_TEAM_ID?.trim();
+  const bundleId = env.T3CODE_MOBILE_BUNDLE_ID?.trim();
+  return {
+    ".well-known/assetlinks.json": null,
+    ".well-known/apple-app-site-association.json":
+      teamId && bundleId
+        ? `${JSON.stringify(
+            {
+              applinks: {
+                details: [
+                  {
+                    // The mobile app's variants append these to the bundle id.
+                    appIDs: ["", ".preview", ".dev"].map(
+                      (suffix) => `${teamId}.${bundleId}${suffix}`,
+                    ),
+                    components: [{ "/": "/threads/*" }],
+                  },
+                ],
+              },
+            },
+            null,
+            2,
+          )}\n`
+        : null,
+  };
+}

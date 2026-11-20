@@ -9,6 +9,7 @@ import openClawLogo from "./logos/openclaw.png";
 import pokeLogo from "./logos/poke.png";
 import { msg } from "gt-react";
 
+import { APP_BASE_NAME } from "~/branding";
 import { m, type MessageResolver } from "~/i18n/messages";
 
 /** How the Connect step hands T3 Code's MCP URL to an app. Every `link` is https. */
@@ -54,7 +55,8 @@ export const MCP_APPS: readonly McpApp[] = [
     logo: pokeLogo,
     handoff: {
       kind: "open",
-      link: (url) => `https://poke.com/integrations/new?name=T3%20Code&url=${encoded(url)}`,
+      link: (url) =>
+        `https://poke.com/integrations/new?name=${encoded(APP_BASE_NAME)}&url=${encoded(url)}`,
     },
     steps: [msg("Open poke.com/integrations/new."), msg("Paste the URL and add the integration.")],
     docs: "https://poke.com/docs/mcp-servers",
@@ -66,7 +68,7 @@ export const MCP_APPS: readonly McpApp[] = [
     handoff: {
       kind: "open",
       link: (url) =>
-        `https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=T3%20Code&connectorUrl=${encoded(url)}`,
+        `https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=${encoded(APP_BASE_NAME)}&connectorUrl=${encoded(url)}`,
     },
     steps: [
       msg("In Claude, open Customize, then Connectors."),

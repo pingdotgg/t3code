@@ -28,6 +28,11 @@ describe("rebrandText", () => {
     ["Open T3\n          Code", "Open EasyDev Code"],
     ["Sem o T3 Code, o T3 home fica", "Sem o EasyDev Code, o EasyDev Code home fica"],
     ["T3 Codeのサーバー", "EasyDev Codeのサーバー"],
+    ["Create\\nCreated\\nT3 threads", "Create\\nCreated\\nEasyDev Code threads"],
+    [
+      "Could not save the browser in T3's home.",
+      "Could not save the browser in EasyDev Code's home.",
+    ],
   ])("renames %j", (text, expected) => {
     expect(rebrandText(text, NAME)).toBe(expected);
   });
