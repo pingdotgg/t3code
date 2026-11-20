@@ -4,7 +4,7 @@
   "ignorePatterns": [".repos/**"],
   // Exported types are part of our contracts even before they have consumers.
   // Effect schemas count as types: a schema without a consumer is not reported.
-  "rules": { "unused-types": "off" },
+  "rules": { "unused-types": "off", "unused-dev-dependencies": "error" },
   "effect": { "schemaExportsAsTypes": true },
   // Files that run in production and that no import or package manifest reaches.
   "entry": [
@@ -14,69 +14,33 @@
     "apps/desktop/gnome-extension/extension.js",
     "apps/desktop/src/preview/Annotation.css",
     // Metro embeds the browser entries in the native WebView.
-    "apps/mobile/src/features/devices/device-stream.browser.ts",
     "apps/mobile/src/features/browser/preview-stream.browser.ts",
-    // React Native codegen discovers component specifications by filename.
-    "apps/mobile/modules/t3-source-text/src/*NativeComponent.ts",
-    // Alchemy loads src/worker.ts as the Worker entry and reads its default export.
-    "infra/task-cache/alchemy.run.ts",
-    "infra/relay/alchemy.run.ts",
-    "infra/relay/src/persistence/schema.ts",
-    "infra/relay/src/worker.ts",
   ],
   // Scripts, fixtures and tool configs that run outside production.
   "supportEntry": [
     // CodeRabbit loads its configuration by filename.
     ".coderabbit.config.ts",
-    ".github/scripts/thread-transfer-report.cjs",
-    ".github/scripts/pr-limits.cjs",
-    // These fixture scripts are injected into a browser page by path.
-    "scripts/fixtures/*/*.js",
-    // Native verification and worktree setup (from t3.json) run directly.
-    // release-desktop.yml bundles the Windows verify script with esbuild and runs the
-    // desktop launch check through xvfb-run. electron-builder loads the macOS signer
-    // and the Linux afterPack hook by path, mobile-e2e.ts runs agent-device's CLI by
-    // path, and mobile-behavior.ts spawns its runner by path.
-    "scripts/linux-after-pack.ts",
+    // Worktree setup (from t3.json) runs directly, electron-builder loads the macOS
+    // signer by path, and mobile-behavior.ts spawns its runner by path.
     "scripts/mobile-behavior/run.ts",
-    "scripts/mobile-native-client.ts",
     "scripts/setup-worktree.ts",
     "scripts/sign-macos.ts",
-    "scripts/prepare-server-compile-cache.cjs",
-    "scripts/smoke-desktop-app.ts",
-    "scripts/verify-windows-desktop-artifact.ts",
-    // e2e loads its config and the scenarios by path, and starts the app script.
-    "scripts/e2e.config.ts",
-    "scripts/prove-scenario.ts",
+    // e2e loads the scenarios by path.
     "scripts/scenarios/*.ts",
-    "apps/server/scripts/cli.ts",
-    "apps/server/scripts/fetch-expo-schema.ts",
     "apps/server/scripts/probe-claude-fork-local-rollback-replay.ts",
     "apps/server/scripts/update-test-shard-weights.ts",
     "apps/server/scripts/verify-background-live.ts",
     "apps/server/src/provider/testFixtures/*.mjs",
-    // graphqlgen reads its config.
-    "apps/server/graphql.config.ts",
-    "packages/issue-tracker-linear/graphql.config.ts",
-    "packages/source-control-github/graphql.config.ts",
     "packages/source-control-github/scripts/measure-pr-preview.ts",
     // Worktree setup (scripts/setup-worktree.ts) runs this directly, and evidence
     // fixtures run under node.
     "apps/web/scripts/warm-dep-cache.ts",
     "apps/web/test/fixtures/**/*.mjs",
-    // Expo loads plugins and the fingerprint config by string.
+    // Expo loads the fingerprint config by string.
     "apps/mobile/fingerprint.config.js",
-    "apps/mobile/plugins/*.cjs",
     "apps/mobile/scripts/generate-device-stream.mts",
-    // The bootstrap and Vite+ hook are loaded by shell/package configuration.
+    // The bootstrap is loaded by shell configuration.
     "infra/task-cache/scripts/install.ts",
-    "infra/task-cache/scripts/install-ci.ts",
-    "infra/task-cache/src/runHook.ts",
-    "infra/task-cache/src/flush.ts",
-    "infra/task-cache/src/nativeRunHook.js",
-    "infra/task-cache/src/preload.mjs",
-    "packages/effect-acp/test/fixtures/*.ts",
-    "packages/effect-codex-app-server/test/fixtures/*.ts",
   ],
   "ignoreFindings": [
     // The `t3` npm package's files: copied into the package, never imported.
@@ -95,14 +59,11 @@
       "rules": { "unused-exports": "off" },
     },
     {
-      // Generated GraphQL operations export every selection's class, and generated
-      // upstream protocol definitions are retained as a complete set.
+      // Generated GraphQL operations export every selection's class.
       "files": [
         "apps/server/**/*.graphql.ts",
         "packages/issue-tracker-linear/**/*.graphql.ts",
         "packages/source-control-github/**/*.graphql.ts",
-        "packages/effect-acp/src/_generated/**",
-        "packages/effect-codex-app-server/src/_generated/**",
       ],
       "rules": { "unused-exports": "off", "unused-namespace-members": "off" },
     },
@@ -116,7 +77,7 @@
         // The Vite+ web build prerequisite.
         // Native and disk-loaded provider packages stay external to the bundle; the
         // CLI archive and desktop sidecar stage them from this manifest.
-        "ignoreDependencies": ["@t3tools/web", "@napi-rs/keyring", "transcribe-cpp"],
+        "ignoreDependencies": ["@t3tools/web", "transcribe-cpp"],
       },
       "apps/desktop": {
         // The injected runtime resolves Playwright by string; release tooling runs
