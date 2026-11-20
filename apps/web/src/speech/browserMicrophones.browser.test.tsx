@@ -42,7 +42,10 @@ it("drops a microphone scan resolved during the commit that removes its view", a
   await using screen = await render(<App />, { router: false });
   await started.promise;
   // act would flush passive cleanup before the scan can complete.
-  screen.getByRole("button", { name: "Close microphone view" }).element().click();
+  screen
+    .getByRole("button", { name: "Close microphone view" })
+    .element()
+    .dispatchEvent(new MouseEvent("click", { bubbles: true }));
   await expect.element(screen.getByText("Microphone view closed")).toBeVisible();
   expect(onResult).not.toHaveBeenCalled();
 });
