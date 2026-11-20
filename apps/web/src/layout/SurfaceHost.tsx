@@ -209,6 +209,73 @@ type ClosingTab = { placed: { slot: LayoutPaneSlot; style: React.CSSProperties }
 );
 const NO_GHOSTS: ReadonlyMap<string, ClosingTab> = new Map();
 
+/** A shown surface tab, by the pane and thread it shows in. */
+interface SurfaceMountRequest {
+  readonly tabId: string;
+  readonly paneId: string;
+  readonly threadKey: string;
+}
+
+/** The element a shown surface tab renders in: kept across a switch among its pane's tabs. */
+interface SurfaceMount {
+  readonly key: string;
+  readonly paneId: string;
+  readonly threadKey: string;
+}
+const NO_SURFACE_MOUNTS: ReadonlyMap<string, SurfaceMount> = new Map();
+
+/**
+ * Which element each shown surface tab renders in, by tab id. A tab keeps its
+ * own, also into another pane; a tab newly shown in a pane takes the element
+ * its pane's last tab of the same thread showed in, so its header and strip
+ * stay and only the content changes, as a right panel's header does.
+ */
+export function selectSurfaceMounts(
+  previous: ReadonlyMap<string, SurfaceMount>,
+  shown: readonly SurfaceMountRequest[],
+): ReadonlyMap<string, SurfaceMount> {
+  const next = new Map<string, SurfaceMount>();
+  const claimed = new Set<string>();
+  const take = (tabId: string, paneId: string, threadKey: string, key: string) => {
+    next.set(tabId, { key, paneId, threadKey });
+    claimed.add(key);
+  };
+  const waiting: SurfaceMountRequest[] = [];
+  for (const entry of shown) {
+    const own = previous.get(entry.tabId);
+    if (own && !claimed.has(own.key)) take(entry.tabId, entry.paneId, entry.threadKey, own.key);
+    else waiting.push(entry);
+  }
+  const fresh: SurfaceMountRequest[] = [];
+  for (const entry of waiting) {
+    const pane = [...previous.values()].find(
+      (mount) =>
+        mount.paneId === entry.paneId &&
+        mount.threadKey === entry.threadKey &&
+        !claimed.has(mount.key),
+    );
+    if (pane) take(entry.tabId, entry.paneId, entry.threadKey, pane.key);
+    else fresh.push(entry);
+  }
+  // A new element never reuses a key that was just in use: React would keep that element.
+  const used = new Set([...claimed, ...[...previous.values()].map((mount) => mount.key)]);
+  for (const { tabId, paneId, threadKey } of fresh) {
+    let key = tabId;
+    for (let n = 2; used.has(key); n += 1) key = `${tabId}#${n}`;
+    used.add(key);
+    take(tabId, paneId, threadKey, key);
+  }
+  const unchanged =
+    next.size === previous.size &&
+    [...next].every(([tabId, mount]) => {
+      const was = previous.get(tabId);
+      return (
+        was?.key === mount.key && was.paneId === mount.paneId && was.threadKey === mount.threadKey
+      );
+    });
+  return unchanged ? previous : next;
+}
+
 /**
  * Pane edges land on whole pixels, so borders and text stay crisp at any split.
  * Both panes round the same boundary, so the gap between them stays exact.
@@ -1246,6 +1313,16 @@ export function LayoutSurfaceHost({
     const content = surfaceTabsById.get(tabId);
     return content ? [{ placed, tabId, content }] : [];
   });
+  const [surfaceMounts, setSurfaceMounts] = useState(NO_SURFACE_MOUNTS);
+  const nextSurfaceMounts = selectSurfaceMounts(
+    surfaceMounts,
+    surfaceSlots.map(({ tabId, placed, content }) => ({
+      tabId,
+      paneId: placed.slot.paneId,
+      threadKey: scopedThreadKey(content.threadRef),
+    })),
+  );
+  if (nextSurfaceMounts !== surfaceMounts) setSurfaceMounts(nextSurfaceMounts);
   const launcherSlots = [...slotByTabId].flatMap(([tabId, placed]) => {
     const content = launcherTabsById.get(tabId);
     return content ? [{ placed, tabId, content }] : [];
@@ -1566,7 +1643,7 @@ export function LayoutSurfaceHost({
           )}
           {surfaceSlots.map(({ placed, tabId, content }) => (
             <LayoutSurfaceTabSurface
-              key={tabId}
+              key={nextSurfaceMounts.get(tabId)?.key ?? tabId}
               active={active}
               tabId={tabId}
               content={content}
@@ -1966,15 +2043,6 @@ function LayoutSurfaceTabSurface({
   } satisfies LayoutPaneState;
   const tab = { id: tabId, content } satisfies LayoutTab;
   const slotRef = useRef<HTMLDivElement | null>(null);
-  const focusOrigin = useRef(document.activeElement);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the control that gave the surface keyboard focus when its pane unmounts.
-  useLayoutEffect(() => {
-    const host = slotRef.current;
-    if (host) return holdSurfaceFocusOrigin(host, focusOrigin.current);
-  }, []);
-  // Focus that lands on the pane (cmd+J, alt+cmd+B, a launcher's letter, a
-  // click on its tab) moves the keyboard in.
-  usePaneKeyboard(slotRef, focused && !staged, surfaceKeyboardTarget);
   return (
     <div
       ref={slotRef}
@@ -2004,8 +2072,32 @@ function LayoutSurfaceTabSurface({
         ) : null}
       </LayoutPaneContext>
       {split && !staged ? <PaneCuts /> : null}
+      <SurfaceTabFocus key={tabId} slotRef={slotRef} focused={focused && !staged} />
     </div>
   );
+}
+
+/**
+ * Keyboard focus for each tab shown in a surface's element, as when every tab
+ * mounted its own: focus that lands on the pane (cmd+J, alt+cmd+B, a
+ * launcher's letter, a click on its tab) moves the keyboard in, and the
+ * control that gave the tab focus gets it back as the tab leaves.
+ */
+function SurfaceTabFocus({
+  slotRef,
+  focused,
+}: {
+  slotRef: React.RefObject<HTMLDivElement | null>;
+  focused: boolean;
+}) {
+  const focusOrigin = useRef(document.activeElement);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the control that gave the surface keyboard focus when its tab leaves the pane.
+  useLayoutEffect(() => {
+    const host = slotRef.current;
+    if (host) return holdSurfaceFocusOrigin(host, focusOrigin.current);
+  }, [slotRef]);
+  usePaneKeyboard(slotRef, focused, surfaceKeyboardTarget);
+  return null;
 }
 
 /** Where the keyboard goes in each kind of pane that takes layout focus. */

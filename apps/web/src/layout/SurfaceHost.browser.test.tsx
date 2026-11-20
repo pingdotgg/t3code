@@ -36,7 +36,7 @@ import {
   setLayoutStripViewportWidth,
   useLayoutStore,
 } from "./layoutStore";
-import { LayoutSurfaceHost } from "./SurfaceHost";
+import { LayoutSurfaceHost, selectSurfaceMounts } from "./SurfaceHost";
 import { requestLayoutSurfacePlacement, useLayoutSurfaceSync } from "./surfaceSync";
 
 const TOUR_KEY = "t3code:layout-tour:v1";
@@ -380,6 +380,34 @@ it("keeps a pane's tab strip and moves its joined tab when the pane switches tab
   );
   expect(secondPaneStrip()).toBe(strip);
   expect(strip.isConnected).toBe(true);
+});
+
+it("keeps a pane's surface element across a switch among its tabs of one thread", () => {
+  const shown = (tabId: string, paneId: string, threadKey = "thread-a") => ({
+    tabId,
+    paneId,
+    threadKey,
+  });
+  const keys = (mounts: ReturnType<typeof selectSurfaceMounts>) =>
+    Object.fromEntries([...mounts].map(([tabId, mount]) => [tabId, mount.key]));
+  const first = selectSurfaceMounts(new Map(), [shown("files", "p1"), shown("diff", "p2")]);
+  expect(keys(first)).toEqual({ files: "files", diff: "diff" });
+  expect(selectSurfaceMounts(first, [shown("files", "p1"), shown("diff", "p2")])).toBe(first);
+
+  // README.md replaces Files in its pane: the element stays, so its header does.
+  const switched = selectSurfaceMounts(first, [shown("readme", "p1"), shown("diff", "p2")]);
+  expect(keys(switched)).toEqual({ readme: "files", diff: "diff" });
+  // Another thread's tab in that pane gets its own.
+  const otherThread = selectSurfaceMounts(switched, [
+    shown("pr", "p1", "thread-b"),
+    shown("diff", "p2"),
+  ]);
+  expect(keys(otherThread)).toEqual({ pr: "pr", diff: "diff" });
+
+  // A tab dragged to another pane takes its element along; the pane it left starts a new one,
+  // never one just in use.
+  const moved = selectSurfaceMounts(switched, [shown("readme", "p2"), shown("files", "p1")]);
+  expect(keys(moved)).toEqual({ readme: "files", files: "files#2" });
 });
 
 it("keeps an unfocused pane's joined tab with a dim rim, and black chrome keeps the notch", async () => {
