@@ -37,6 +37,7 @@ import * as ContextHandoffService from "../ContextHandoffService.ts";
 import * as EffectOutbox from "../EffectOutbox.ts";
 import * as EffectWorker from "../EffectWorker.ts";
 import * as EventSink from "../EventSink.ts";
+import * as ThreadViewers from "../ThreadViewers.ts";
 import * as EventStore from "../EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Orchestrator from "../Orchestrator.ts";
@@ -291,10 +292,12 @@ export function layerWithRegistry<Error>(
   } = {},
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2
+  | EffectOutbox.EffectOutboxV2
   | EffectWorker.OrchestrationEffectWorkerV2
   | EventSink.EventSinkV2
   | ProviderSessionManager.ProviderSessionManagerV2
-  | CommandOutputRecorder.CommandOutputRecorder,
+  | CommandOutputRecorder.CommandOutputRecorder
+  | ThreadCommandExecutor.ThreadCommandExecutor,
   Error | MigrationError | PlatformError.PlatformError | SqlError
 > {
   const layerServerConfig = Layer.effect(
@@ -327,6 +330,7 @@ export function layerWithRegistry<Error>(
       ),
     ),
   ).pipe(Layer.orDie);
+  const layerEffectOutboxProvided = EffectOutbox.layer.pipe(Layer.provide(layerDatabase));
   const wrapProjectionStore = options.wrapProjectionStore;
   const layerProjectionStore =
     wrapProjectionStore === undefined
@@ -342,11 +346,11 @@ export function layerWithRegistry<Error>(
     layerProjectionStore,
     ProjectStore.layer,
     CommandReceiptStore.layer,
-    EffectOutbox.layer,
+    layerEffectOutboxProvided,
     TurnItemPositionStore.layer,
   ).pipe(Layer.provide(layerDatabase));
   const layerEventSinkProvided = EventSink.layerFromStores.pipe(
-    Layer.provide(Layer.mergeAll(layerStores, layerDatabase)),
+    Layer.provide(Layer.mergeAll(layerStores, layerDatabase, ThreadViewers.layer)),
   );
   const layerRuntime = RuntimePolicy.layerEnforcingCeiling.pipe(
     Layer.provide(Layer.merge(layerRuntimeBase, layerServerSettings)),
@@ -427,6 +431,7 @@ export function layerWithRegistry<Error>(
         layerProviderEventIngestorProvided,
         layerServerSettings,
         layerStores,
+        ThreadCommandExecutor.layer,
       ),
     ),
   );
@@ -449,7 +454,14 @@ export function layerWithRegistry<Error>(
     ),
   );
   const layerProviderTurnControlServiceProvided = ProviderTurnControlService.layer.pipe(
-    Layer.provide(Layer.merge(layerStores, layerProviderSessionManagerProvided)),
+    Layer.provide(
+      Layer.mergeAll(
+        layerEventSinkProvided,
+        McpAppModelContext.layerEmpty,
+        layerStores,
+        layerProviderSessionManagerProvided,
+      ),
+    ),
   );
   const layerRuntimeRequestServiceProvided = RuntimeRequestService.layer.pipe(
     Layer.provide(Layer.merge(layerStores, layerProviderSessionManagerProvided)),
@@ -546,6 +558,7 @@ export function layerWithRegistry<Error>(
         layerThreadTitleRegenerationTest,
         layerServerSettings,
         layerThreadManagementProvided,
+        layerStores,
       ),
     ),
   );
@@ -553,12 +566,14 @@ export function layerWithRegistry<Error>(
     Layer.provide(Layer.merge(layerStores, layerEffectExecutorProvided)),
   );
   const layerReplayRuntime = Layer.mergeAll(
+    layerEffectOutboxProvided,
     layerOrchestratorProvided,
     layerProviderSessionManagerProvided,
     layerEffectWorkerProvided,
     layerEventSinkProvided,
     layerContinuationWorkerProvided,
     layerCommandOutputHubProvided,
+    ThreadCommandExecutor.layer,
   ).pipe(
     Layer.provide(ProviderTurnStartServiceTestkit.layer),
     Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),

@@ -2,6 +2,7 @@ import {
   CLIENT_GUARDED_RPC_SCOPES,
   type DeviceListInput,
   clientRpcRequiredScopes,
+  containsSecretReference,
   authScopeRequiredResponse,
   AssetCreateUrlInput,
   AuthAccessReadScope,
@@ -23,6 +24,8 @@ import {
   AuthRelayWriteScope,
   AuthTerminalOperateScope,
   ORCHESTRATION_V2_WS_METHODS,
+  type OrchestrationV2Command,
+  type OrchestrationV2ThreadLaunchInput,
   AuthTerminalReadScope,
   type AuthEnvironmentScope,
   EnvironmentAuthorizationError,
@@ -34,6 +37,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
+import { isProviderSignOutPrompt } from "../orchestration-v2/CommandPolicy.ts";
 
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
@@ -90,7 +94,14 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverRemoveKeybinding]: AuthSettingsWriteScope,
   [WS_METHODS.serverGetStorageCleanupReport]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetDatabaseStorage]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverGetSettings]: AuthOrchestrationReadScope,
   [WS_METHODS.peerLinksList]: AuthAccessReadScope,
+  // Names only, so a client that reads threads can open a linked environment's.
+  [WS_METHODS.peerLinksNames]: AuthOrchestrationReadScope,
+  // A linked environment's thread is read as this one's own are.
+  [WS_METHODS.peerLinksSubscribeThread]: AuthOrchestrationReadScope,
+  [WS_METHODS.peerLinksThreadHistoryPage]: AuthOrchestrationReadScope,
+  [WS_METHODS.peerLinksThreadItem]: AuthOrchestrationReadScope,
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
   [WS_METHODS.serverSearchAcpRegistry]: AuthOrchestrationReadScope,
   [WS_METHODS.serverPrepareAcpRegistryAgent]: AuthProvidersManageScope,
@@ -131,6 +142,15 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.pullRequestsStack]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsLinkedThreads]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsDetail]: AuthOrchestrationReadScope,
+  [WS_METHODS.issuesList]: AuthOrchestrationReadScope,
+  [WS_METHODS.issuesDetail]: AuthOrchestrationReadScope,
+  [WS_METHODS.issuesComments]: AuthOrchestrationReadScope,
+  [WS_METHODS.issuesTemplates]: AuthOrchestrationReadScope,
+  [WS_METHODS.issuesCandidates]: AuthOrchestrationReadScope,
+  [WS_METHODS.issuesLinkedThreads]: AuthOrchestrationReadScope,
+  [WS_METHODS.issueTrackersList]: AuthOrchestrationReadScope,
+  [WS_METHODS.issueTrackersConnect]: AuthSettingsWriteScope,
+  [WS_METHODS.issueTrackersBindProject]: AuthSettingsWriteScope,
   [WS_METHODS.pullRequestsPreview]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsChecks]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsActivity]: AuthOrchestrationReadScope,
@@ -142,6 +162,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.pullRequestsInvalidate]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsReportState]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsSubscribeRefreshes]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsSubscribeLinkedThreadRefreshes]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsReviewerCandidates]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsLabelCandidates]: AuthOrchestrationReadScope,
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
@@ -253,6 +274,32 @@ const requiredScopesForSettingsUpdate = (payload: unknown) => {
 const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
 const decodeAssetCreateUrlInput = Schema.decodeUnknownSync(AssetCreateUrlInput);
 
+/**
+ * A queued edit that omits `attachments` keeps the queued ones, which a payload cannot show;
+ * ThreadMessageIntake.dispatchCommand decides that case.
+ */
+const sendsProviderSignOutPrompt = (method: string, payload: unknown): boolean => {
+  if (method === ORCHESTRATION_V2_WS_METHODS.launchThread) {
+    const message = (payload as OrchestrationV2ThreadLaunchInput).initialMessage;
+    return message !== undefined && isProviderSignOutPrompt(message);
+  }
+  if (method !== ORCHESTRATION_V2_WS_METHODS.dispatchCommand) return false;
+  const command = payload as OrchestrationV2Command;
+  switch (command.type) {
+    case "message.dispatch":
+      return isProviderSignOutPrompt(command);
+    case "queued-run.edit":
+      return (
+        command.attachments !== undefined &&
+        isProviderSignOutPrompt({ text: command.text, attachments: command.attachments })
+      );
+    case "delegated_task.request":
+      return isProviderSignOutPrompt({ text: command.task, attachments: [] });
+    default:
+      return false;
+  }
+};
+
 const requiredScopesForRpcCall = (
   method: string,
   payload: unknown,
@@ -272,12 +319,23 @@ const requiredScopesForRpcCall = (
     ];
   }
   if (method === WS_METHODS.serverUpdateSettings) return requiredScopesForSettingsUpdate(payload);
+  // These send the credential they are given to a URL the caller names, as a saved setting would.
+  if (
+    (method === WS_METHODS.deviceSimlockIdentity ||
+      method === WS_METHODS.deviceEasAccount ||
+      method === WS_METHODS.serverListTextGeneratorModels) &&
+    containsSecretReference(payload)
+  ) {
+    return [AuthSettingsWriteScope, AuthProvidersManageScope];
+  }
   if (method === WS_METHODS.projectsMutate) {
     return requiredScopesForProjectMutation(decodeProjectMutation(payload));
   }
   const guarded = clientRpcRequiredScopes(method, payload);
-  if (guarded.length > 0) return guarded;
-  return [requiredScopeForRpcMethod(method)];
+  const scopes = guarded.length > 0 ? guarded : [requiredScopeForRpcMethod(method)];
+  return sendsProviderSignOutPrompt(method, payload)
+    ? [...scopes, AuthProvidersManageScope]
+    : scopes;
 };
 
 /**
