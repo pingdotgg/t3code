@@ -69,6 +69,7 @@ import { useRemoteOpenState } from "~/remoteOpen";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
 import { useDeadlinePassed } from "~/hooks/useDeadline";
+import { toServerClock } from "@t3tools/client-runtime/clock";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
@@ -279,7 +280,10 @@ export function WorkspaceBrowserPreview(props: {
   // The page's later asset requests use the grant it loaded with, so a page kept open across
   // commands reloads with a renewed URL shortly before that grant expires.
   const [grant, setGrant] = useState<{ documentKey: string; expiresAt: number } | null>(null);
-  const grantExpiring = useDeadlinePassed(grant === null ? null : grant.expiresAt - 60_000);
+  // `expiresAt` is on the server's clock; the deadline runs on this one.
+  const grantExpiring = useDeadlinePassed(
+    grant === null ? null : grant.expiresAt - 60_000 - toServerClock(props.environmentId, 0),
+  );
   if (
     !pdf &&
     assetUrl._tag === "Success" &&
