@@ -215,6 +215,30 @@ describe("AzureDevOpsIssueTracker", () => {
     }),
   );
 
+  it.effect("reads a Bug's text from Repro Steps when it has no Description", () =>
+    Effect.gen(function* () {
+      const { "System.Description": _description, ...fields } = WORK_ITEM.fields;
+      const bug = {
+        ...WORK_ITEM,
+        fields: { ...fields, "Microsoft.VSTS.TCM.ReproSteps": "<div>Open the composer.</div>" },
+      };
+      const writes: Array<string[]> = [];
+      const api = yield* tracker((args) => {
+        if (args[0] === "boards" && args[2] === "update") writes.push([...args]);
+        return args[0] === "boards" ? encode(bug) : answer(args);
+      });
+      const scope = { cwd: "/w", host: "dev.azure.com", scope: "acme/Web App", key: "7" };
+      const issue = yield* api.getIssue(scope);
+      expect(issue.body).toBe("<div>Open the composer.</div>");
+      yield* api.update!({ ...scope, body: "Close it.", labels: ["ui"] });
+      expect(
+        writes.map((args) =>
+          args.slice(args.indexOf("--id") + 2, args.indexOf("--only-show-errors")),
+        ),
+      ).toEqual([["--fields", "System.Tags=ui", "Microsoft.VSTS.TCM.ReproSteps=Close it."]]);
+    }),
+  );
+
   it.effect("filters open work items by the project's own finished states", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -503,50 +527,34 @@ describe("AzureDevOpsIssueTracker", () => {
     }),
   );
 
-  it.effect("reads and edits a Bug's text in Repro Steps when it has no Description", () =>
+  it.effect("writes a blank work item's text to the field its type's form shows", () =>
     Effect.gen(function* () {
-      const reproSteps =
-        "## Steps\n\n1. Open the composer\n2. Type a message\n\n```\nfocus lost\n```";
-      // An Agile or CMMI Bug as `az boards work-item show` answers it: no Description key at all.
-      const bug = {
-        ...WORK_ITEM,
-        fields: {
-          ...WORK_ITEM.fields,
-          "System.Description": undefined,
-          "Microsoft.VSTS.TCM.ReproSteps": reproSteps,
-        },
-        multilineFieldsFormat: { "Microsoft.VSTS.TCM.ReproSteps": "markdown" },
+      // A custom type is told by its fields, not its name: "Defect" has Repro Steps, Epic has not.
+      const types = {
+        value: [...WORK_ITEM_TYPES.value, { name: "Defect", hasReproSteps: true, states: [] }],
       };
-      let shown: unknown = bug;
-      const writes: Array<{ args: string[]; stdin: string | undefined }> = [];
-      const api = yield* tracker((args, stdin) => {
-        if (args[0] === "boards" && args[2] !== "show") writes.push({ args: [...args], stdin });
-        return args[0] === "boards" && args[2] === "show" ? encode(shown) : answer(args);
+      const blank = { ...WORK_ITEM.fields, "System.Description": "" };
+      let shown: unknown;
+      const writes: Array<string[]> = [];
+      const api = yield* tracker((args) => {
+        if (args[0] === "boards" && args[2] === "update") writes.push([...args]);
+        if (args[0] === "boards") return encode(shown);
+        return args[args.indexOf("--resource") + 1] === "workitemtypes"
+          ? encode(types)
+          : answer(args);
       });
       const own = { cwd: "/w", host: "dev.azure.com", scope: "acme/Web App", key: "7" };
-      expect((yield* api.getIssue(own)).body).toBe(reproSteps);
-      shown = { ...bug, fields: { ...bug.fields, "System.Description": "<p>Both.</p>" } };
-      expect((yield* api.getIssue(own)).body).toBe("<p>Both.</p>");
-
-      // A Description written to this Bug would hide its Repro Steps on the next read.
-      shown = bug;
-      yield* api.update!({ ...own, body: "1. Type", labels: ["ui"] });
-      yield* api.update!({ ...own, title: "@title", body: "@body" });
-      // With both fields blank, the type decides: a Bug's form shows Repro Steps, an Epic's Description.
-      const blank = { ...bug.fields, "Microsoft.VSTS.TCM.ReproSteps": "" };
-      shown = { ...bug, fields: blank };
+      shown = { ...WORK_ITEM, fields: { ...blank, "System.WorkItemType": "Defect" } };
       yield* api.update!({ ...own, body: "First text" });
-      shown = { ...bug, fields: { ...blank, "System.WorkItemType": "Epic" } };
+      shown = { ...WORK_ITEM, fields: { ...blank, "System.WorkItemType": "Epic" } };
       yield* api.update!({ ...own, body: "First text" });
       expect(
-        writes.map((write) => [write.args.slice(write.args.indexOf("--id") + 2, -3), write.stdin]),
+        writes.map((args) =>
+          args.slice(args.indexOf("--id") + 2, args.indexOf("--only-show-errors")),
+        ),
       ).toEqual([
-        // az keeps only the last `--fields`, so the labels share the one the body goes in.
-        [["--fields", "Microsoft.VSTS.TCM.ReproSteps=1. Type", "System.Tags=ui"], undefined],
-        [["--title=@-"], "@title"],
-        [["--fields", "Microsoft.VSTS.TCM.ReproSteps=@-"], "@body"],
-        [["--fields", "Microsoft.VSTS.TCM.ReproSteps=First text"], undefined],
-        [["--description=First text"], undefined],
+        ["--fields", "Microsoft.VSTS.TCM.ReproSteps=First text"],
+        ["--description=First text"],
       ]);
     }),
   );

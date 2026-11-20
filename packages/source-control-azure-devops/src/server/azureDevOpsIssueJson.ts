@@ -161,12 +161,27 @@ function toLabels(tags: string | null | undefined): ReadonlyArray<IssueLabel> {
   }));
 }
 
+/** The field a work item keeps its text in, which is the one an edit of its body writes. */
+export type BodyField = "System.Description" | "Microsoft.VSTS.TCM.ReproSteps";
+
 export interface AzureDevOpsWorkItem extends TrackerIssueSummary {
   readonly body: string;
-  readonly bodyField: "System.Description" | "Microsoft.VSTS.TCM.ReproSteps" | null;
+  readonly bodyField: BodyField | null;
   readonly project: string | null;
   readonly workItemType: string | null;
   readonly relations: ReadonlyArray<typeof Relation.Type>;
+}
+
+/**
+ * A Bug has Repro Steps where other types have a Description, and in Agile and CMMI no Description.
+ * Null when both are blank: then only the type's own fields say which one its form shows.
+ */
+function bodyFieldOf(fields: typeof Fields.Type): BodyField | null {
+  if (trimmed(fields["System.Description"]) !== null) return "System.Description";
+  if (trimmed(fields["Microsoft.VSTS.TCM.ReproSteps"]) !== null) {
+    return "Microsoft.VSTS.TCM.ReproSteps";
+  }
+  return null;
 }
 
 /** Null for a row this cannot place: no title, no dates, or no project to build a link from. */
@@ -181,13 +196,7 @@ function toWorkItem(raw: typeof WorkItem.Type, closed: ClosedStates): AzureDevOp
     return null;
   }
   const assignee = toActor(fields["System.AssignedTo"]);
-  // Agile and CMMI Bugs have no Description on their form and keep their text in Repro Steps.
-  const bodyField =
-    trimmed(fields["System.Description"]) !== null
-      ? "System.Description"
-      : trimmed(fields["Microsoft.VSTS.TCM.ReproSteps"]) !== null
-        ? "Microsoft.VSTS.TCM.ReproSteps"
-        : null;
+  const bodyField = bodyFieldOf(fields);
   return {
     key: String(raw.id),
     displayKey: `#${raw.id}`,

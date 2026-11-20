@@ -565,13 +565,6 @@ export const make: Effect.Effect<
       stdin: input.stdin,
     }).pipe(Effect.asVoid);
 
-  /** A write names its work item by id alone, so the item is first read to be the scope's own. */
-  const owned = (
-    operation: string,
-    cwd: string,
-    scope: { readonly organization: string; readonly project: string; readonly number: number },
-  ) => workItem({ ...scope, cwd, operation, closed: new Set() });
-
   /** Azure keeps tags as one `; `-joined field and takes exactly one assignee. */
   const fieldArgs = (
     operation: string,
@@ -844,13 +837,14 @@ export const make: Effect.Effect<
         Effect.flatMap((scope) =>
           fieldArgs("update", input).pipe(Effect.map((fields) => ({ scope, fields }))),
         ),
+        // `az` names a work item by id alone, so the read proves the item is the scope's own; it
+        // also names the field the item keeps its text in.
         Effect.flatMap(({ scope, fields }) =>
-          owned("update", input.cwd, scope).pipe(
+          workItem({ ...scope, cwd: input.cwd, operation: "update", closed: new Set() }).pipe(
             Effect.flatMap((item) =>
               item.bodyField !== null || input.body === undefined
                 ? Effect.succeed(item.bodyField ?? "System.Description")
-                : // With both fields blank, only the type says which one its form shows.
-                  workItemTypes({ ...scope, cwd: input.cwd, operation: "update" }).pipe(
+                : workItemTypes({ ...scope, cwd: input.cwd, operation: "update" }).pipe(
                     Effect.map((types) =>
                       types.find(
                         (type) => type.name.toLowerCase() === item.workItemType?.toLowerCase(),
@@ -870,11 +864,9 @@ export const make: Effect.Effect<
               : [{ ...AzureDevOpsCli.textOption("--title", input.title), field: false }]),
             ...(input.body === undefined
               ? []
-              : [
-                  bodyField === "System.Description"
-                    ? { ...AzureDevOpsCli.textOption("--description", input.body), field: false }
-                    : { ...AzureDevOpsCli.textOption(bodyField, input.body), field: true },
-                ]),
+              : bodyField === "System.Description"
+                ? [{ ...AzureDevOpsCli.textOption("--description", input.body), field: false }]
+                : [{ ...AzureDevOpsCli.textOption(bodyField, input.body), field: true }]),
           ];
           // az has one stdin, so each value read from it needs its own call.
           const batches =
@@ -885,9 +877,9 @@ export const make: Effect.Effect<
             batches,
             (batch, index) => {
               // az keeps only the last `--fields`, so every field of a call goes in one.
-              const values = [
-                ...batch.flatMap((text) => (text.field ? [text.arg] : [])),
+              const pairs = [
                 ...(index === 0 ? fields : []),
+                ...batch.flatMap((text) => (text.field ? [text.arg] : [])),
               ];
               return update({
                 ...scope,
@@ -895,7 +887,7 @@ export const make: Effect.Effect<
                 operation: "update",
                 args: [
                   ...batch.flatMap((text) => (text.field ? [] : [text.arg])),
-                  ...(values.length === 0 ? [] : ["--fields", ...values]),
+                  ...(pairs.length === 0 ? [] : ["--fields", ...pairs]),
                 ],
                 stdin: batch.find((text) => text.stdin !== undefined)?.stdin,
               });
@@ -907,7 +899,7 @@ export const make: Effect.Effect<
 
     setState: (input) =>
       target("setState", input).pipe(
-        // The read also proves the item is the scope's own, as `owned` does for other writes.
+        // `az` names a work item by id alone, so the read also proves the item is the scope's own.
         Effect.flatMap((scope) =>
           workItem({ ...scope, cwd: input.cwd, operation: "setState", closed: new Set() }).pipe(
             Effect.flatMap((item) =>
