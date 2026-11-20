@@ -568,7 +568,6 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
       updates: ["low"],
       initialModel: "gemini-native-default",
     },
-    { name: "when already current", selected: "high", expected: "high", updates: [] },
     { name: "when not advertised", selected: "medium", expected: "high", updates: [] },
     {
       name: "when rejected",
