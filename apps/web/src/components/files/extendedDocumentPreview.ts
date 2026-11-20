@@ -483,11 +483,13 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
           }
           const html = notebookText(data["text/html"]);
           if (html.trim() && htmlImagesFit(html)) return { kind: "html" as const, text: html };
+          const plainText = output.text ?? data["text/plain"];
           return {
             kind: "text" as const,
-            text: notebookText(
-              output.text ?? data["text/plain"] ?? tracebackLines(output.traceback),
-            ),
+            text:
+              plainText === undefined || plainText === null
+                ? notebookText(tracebackLines(output.traceback))
+                : terminalOutputPlainText(notebookText(plainText)),
           };
         })
         .filter((output) => output.text.trim().length > 0),
