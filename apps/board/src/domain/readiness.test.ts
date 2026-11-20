@@ -30,6 +30,7 @@ const live = (checks: ReadonlyArray<CheckRun>, headSha: string | null = "abc1234
   mergeability: "mergeable",
   headSha,
   checks,
+  url: "https://github.com/acme/app/pull/12",
 });
 
 const green = live([check("lint", "success"), check("test", "success")]);

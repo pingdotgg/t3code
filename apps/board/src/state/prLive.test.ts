@@ -180,4 +180,14 @@ describe("live pull request state", () => {
   it("Given no source has answered, when it is built, then there is no live state", () => {
     expect(buildLive({ link: undefined, summary: null, checks: null, runs: [] })).toBeNull();
   });
+
+  it("Given a thread link and no summary, when it is built, then the link's page is the chip's url", () => {
+    const live = buildLive({
+      link: link(12, { snapshot: snapshot() }),
+      summary: null,
+      checks: null,
+      runs: [],
+    });
+    expect(live?.url).toBe("https://github.com/acme/app/pull/12");
+  });
 });
