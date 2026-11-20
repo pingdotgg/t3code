@@ -654,11 +654,16 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
             Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(false)),
           );
         yield* fs.makeDirectory(path.join(configSkills, "review"), { recursive: true });
+        const skillsJson = path.join(userHome, ".gemini", "config", "skills.json");
+        yield* fs.writeFileString(skillsJson, JSON.stringify({ entries: [{ path: "/shared" }] }));
 
         yield* prepareAntigravityProfile({ profileDirectory, userHome });
         const configLink = path.join(profileDirectory, "config", "skills");
         const cliLink = path.join(profileDirectory, "antigravity-cli", "skills");
         expect(yield* fs.readLink(configLink)).toBe(configSkills);
+        expect(yield* fs.readLink(path.join(profileDirectory, "config", "skills.json"))).toBe(
+          skillsJson,
+        );
         expect(yield* isLink(cliLink)).toBe(false);
         expect(yield* fs.exists(path.join(configLink, "review"))).toBe(true);
         expect(yield* fs.exists(path.join(profileDirectory, "config", "mcp_config.json"))).toBe(

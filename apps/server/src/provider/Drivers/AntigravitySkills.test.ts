@@ -94,6 +94,40 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
     }),
   );
 
+  it.effect("reads skills declared in global and workspace skills.json", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const input = yield* makeWorkspace();
+      const shared = path.join(input.userHome, "shared-skills");
+      yield* writeSkill(path.join(shared, "global-skill"), "---\nname: global-skill\n---\n");
+      yield* writeSkill(
+        path.join(input.cwd, "tools", "skills", "workspace-skill"),
+        "---\nname: workspace-skill\n---\n",
+      );
+      yield* fileSystem.makeDirectory(path.join(input.userHome, ".gemini", "config"), {
+        recursive: true,
+      });
+      yield* fileSystem.writeFileString(
+        path.join(input.userHome, ".gemini", "config", "skills.json"),
+        JSON.stringify({ entries: [{ path: shared }] }),
+      );
+      yield* fileSystem.makeDirectory(path.join(input.cwd, ".agents"), { recursive: true });
+      yield* fileSystem.writeFileString(
+        path.join(input.cwd, ".agents", "skills.json"),
+        JSON.stringify({ entries: [{ path: "tools/skills" }] }),
+      );
+
+      assert.deepEqual(
+        (yield* discoverAntigravitySkills(input)).map((skill) => [skill.name, skill.scope]),
+        [
+          ["global-skill", "user"],
+          ["workspace-skill", "project"],
+        ],
+      );
+    }),
+  );
+
   it.effect("reads skills from enabled plugins in the instance's Antigravity profile", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
