@@ -467,6 +467,7 @@
   "7eabeed193759388": "El orden de rutas debe incluir cada ruta guardada una vez.",
   "18de69e3b6ac3891": "El perfil de conexión {connectionId} no es una conexión bearer.",
   "0a84ce2f4fb90d82": "El perfil de conexión {connectionId} no es una conexión SSH.",
+  "468d32c6b30df608": "Tailscale HTTPS",
   "4d022ee84149d47f": "Enlace remoto",
   "0b367ce72b45a911": "La conexión con {host} falló de forma inesperada.",
   "91ca7e48f40bfa3c": "{host} no respondió durante la configuración de la conexión.",

@@ -467,6 +467,7 @@
   "7eabeed193759388": "Ruttordningen måste ta med varje sparad rutt en gång.",
   "18de69e3b6ac3891": "Anslutningsprofilen {connectionId} är ingen bearer-anslutning.",
   "0a84ce2f4fb90d82": "Anslutningsprofilen {connectionId} är ingen SSH-anslutning.",
+  "468d32c6b30df608": "Tailscale HTTPS",
   "4d022ee84149d47f": "Fjärrlänk",
   "0b367ce72b45a911": "Anslutningen till {host} misslyckades oväntat.",
   "91ca7e48f40bfa3c": "{host} svarade inte när anslutningen konfigurerades.",

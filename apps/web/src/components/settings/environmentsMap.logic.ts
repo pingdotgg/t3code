@@ -26,6 +26,8 @@ export type FleetOutgoingLinks =
 export interface FleetRouteInput {
   readonly id: string;
   readonly kind: ConnectionRouteKind;
+  /** The route's own label when it says more than its kind, such as "Tailscale HTTPS". */
+  readonly label?: string;
 }
 
 export interface FleetEnvironmentInput {
@@ -121,6 +123,7 @@ export type FleetEdge =
       readonly to: string;
       readonly routeId: string;
       readonly routeKind: ConnectionRouteKind;
+      readonly routeLabel?: string;
       readonly state: FleetRouteState;
     }
   | {
@@ -215,6 +218,7 @@ export function buildFleetGraph(input: {
         to: id,
         routeId: route.id,
         routeKind: route.kind,
+        ...(route.label === undefined ? {} : { routeLabel: route.label }),
         state: routeState(environment, route.id),
       });
     }

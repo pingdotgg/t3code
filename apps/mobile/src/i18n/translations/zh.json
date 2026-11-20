@@ -467,6 +467,7 @@
   "7eabeed193759388": "路由顺序必须包含每条已保存的路由，且不能重复。",
   "18de69e3b6ac3891": "连接配置 {connectionId} 不是 Bearer 连接。",
   "0a84ce2f4fb90d82": "连接配置 {connectionId} 不是 SSH 连接。",
+  "468d32c6b30df608": "Tailscale HTTPS",
   "4d022ee84149d47f": "远程连接",
   "0b367ce72b45a911": "{host} 连接意外失败。",
   "91ca7e48f40bfa3c": "{host} 在连接设置期间无响应。",

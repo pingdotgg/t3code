@@ -467,6 +467,7 @@
   "7eabeed193759388": "A ordem das rotas precisa listar cada rota salva uma vez.",
   "18de69e3b6ac3891": "O perfil de conexão {connectionId} não é uma conexão bearer.",
   "0a84ce2f4fb90d82": "O perfil de conexão {connectionId} não é uma conexão SSH.",
+  "468d32c6b30df608": "Tailscale HTTPS",
   "4d022ee84149d47f": "Link remoto",
   "0b367ce72b45a911": "A conexão com {host} falhou inesperadamente.",
   "91ca7e48f40bfa3c": "{host} não respondeu durante a configuração da conexão.",

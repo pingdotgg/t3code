@@ -3,7 +3,9 @@ import {
   type ConnectionRouteKind,
   connectionRouteId,
   connectionRouteKind,
+  connectionRouteLabelText,
   connectionRoutes,
+  routeHttpBaseUrl,
 } from "@t3tools/client-runtime/connection";
 import {
   ANOTHER_ADDRESS,
@@ -304,6 +306,10 @@ function useFleetGraph() {
       routes: connectionRoutes(environment.entry).map((route) => ({
         id: connectionRouteId(route.target),
         kind: connectionRouteKind(route),
+        ...(connectionRouteKind(route) === "tailnet" &&
+        routeHttpBaseUrl(route)?.startsWith("https:") === true
+          ? { label: connectionRouteLabelText(route, m) }
+          : {}),
       })),
       activeRouteId: active === null ? null : connectionRouteId(active.target),
       refusedRouteIds: environment.refusedRouteIds,
@@ -1496,7 +1502,9 @@ const FleetScene = memo(function FleetScene({
               fadeName(!routeLit(edge)),
             )}
           >
-            <span className="truncate">{routeKindLabel(edge.routeKind, gt)}</span>
+            <span className="truncate">
+              {edge.routeLabel ?? routeKindLabel(edge.routeKind, gt)}
+            </span>
           </span>
         );
       })}
@@ -1909,7 +1917,7 @@ const FleetScene = memo(function FleetScene({
                   spoken,
                   ...routes.map(
                     (edge) =>
-                      `${routeKindLabel(edge.routeKind, gt)}: ${routeStateLabel(edge.state, gt)}`,
+                      `${edge.routeLabel ?? routeKindLabel(edge.routeKind, gt)}: ${routeStateLabel(edge.state, gt)}`,
                   ),
                 ].join(", "),
               )}

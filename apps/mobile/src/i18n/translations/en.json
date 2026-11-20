@@ -467,6 +467,7 @@
   "7eabeed193759388": "The route order must list every saved route once.",
   "18de69e3b6ac3891": "Connection profile {connectionId} is not a bearer connection.",
   "0a84ce2f4fb90d82": "Connection profile {connectionId} is not an SSH connection.",
+  "468d32c6b30df608": "Tailscale HTTPS",
   "4d022ee84149d47f": "Remote link",
   "0b367ce72b45a911": "{host} connection failed unexpectedly.",
   "91ca7e48f40bfa3c": "{host} did not respond during connection setup.",

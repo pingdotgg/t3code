@@ -467,6 +467,7 @@
   "7eabeed193759388": "Die Routenreihenfolge muss jede gespeicherte Route genau einmal enthalten.",
   "18de69e3b6ac3891": "Verbindungsprofil {connectionId} ist keine Bearer-Verbindung.",
   "0a84ce2f4fb90d82": "Verbindungsprofil {connectionId} ist keine SSH-Verbindung.",
+  "468d32c6b30df608": "Tailscale HTTPS",
   "4d022ee84149d47f": "Remote-Verbindung",
   "0b367ce72b45a911": "Die Verbindung zu {host} ist unerwartet fehlgeschlagen.",
   "91ca7e48f40bfa3c": "{host} hat während der Verbindungseinrichtung nicht geantwortet.",
