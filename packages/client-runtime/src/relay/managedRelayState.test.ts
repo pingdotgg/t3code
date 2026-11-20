@@ -1,5 +1,6 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import {
+  RelayInternalError,
   type RelayClientDeviceRecord,
   type RelayClientEnvironmentRecord,
 } from "@t3tools/contracts/relay";
@@ -143,6 +144,135 @@ describe("createManagedRelayQueryManager", () => {
       for (const unsubscribe of readers) unsubscribe();
 
       expect(logs).toEqual([["[t3-cloud] Relay device listing failed"]]);
+    }),
+  );
+
+  it.effect("reconciles a failed deregistration without hiding unconfirmed cleanup", () =>
+    Effect.gen(function* () {
+      setSession();
+      const failure = new ManagedRelay.ManagedRelayRequestFailedError({
+        action: "unlink relay environment",
+        cause: new Error("tunnel cleanup failed"),
+        status: 500,
+      });
+      const verificationFailure = new ManagedRelay.ManagedRelayRequestFailedError({
+        action: "list relay-managed environments",
+        cause: new Error("listing unavailable"),
+        status: 503,
+      });
+      for (const state of ["revoked", "linked", "unavailable"] as const) {
+        const result = yield* deregisterManagedRelayEnvironment(registry, {
+          accountId: "account-1",
+          environmentId: environment.environmentId,
+        }).pipe(
+          Effect.provideService(
+            ManagedRelay.ManagedRelayClient,
+            createClient({
+              unlinkEnvironment: () => Effect.fail(failure),
+              listEnvironments: () =>
+                state === "unavailable"
+                  ? Effect.fail(verificationFailure)
+                  : Effect.succeed(state === "linked" ? [environment] : []),
+            }),
+          ),
+          Effect.match({
+            onFailure: (error) => ({ error }),
+            onSuccess: (value) => ({ value }),
+          }),
+        );
+        expect(result).toEqual(
+          state === "revoked"
+            ? { value: { cleanup: "unconfirmed", cause: failure } }
+            : { error: failure },
+        );
+      }
+    }),
+  );
+
+  it.effect("preserves a cleanup conflict even when verification cannot confirm a live link", () =>
+    Effect.gen(function* () {
+      setSession();
+      const conflict = new ManagedRelay.ManagedRelayRequestFailedError({
+        action: "unlink relay environment",
+        cause: new Error("environment was linked again"),
+        status: 409,
+      });
+      for (const verificationAvailable of [false, true]) {
+        const result = yield* deregisterManagedRelayEnvironment(registry, {
+          accountId: "account-1",
+          environmentId: environment.environmentId,
+          retryCleanup: true,
+        }).pipe(
+          Effect.provideService(
+            ManagedRelay.ManagedRelayClient,
+            createClient({
+              unlinkEnvironment: () => Effect.fail(conflict),
+              listEnvironments: () =>
+                verificationAvailable
+                  ? Effect.succeed([])
+                  : Effect.fail(
+                      new ManagedRelay.ManagedRelayRequestFailedError({
+                        action: "list relay-managed environments",
+                        cause: new Error("listing unavailable"),
+                        status: 503,
+                      }),
+                    ),
+            }),
+          ),
+          Effect.match({ onFailure: (error) => error, onSuccess: () => null }),
+        );
+        expect(result).toBe(conflict);
+      }
+    }),
+  );
+
+  it.effect("keeps cleanup retryable through another failure and failed verification", () =>
+    Effect.gen(function* () {
+      setSession();
+      let linked = true;
+      let attempts = 0;
+      const client = createClient({
+        unlinkEnvironment: ({ cleanupOnly }) =>
+          Effect.suspend(() => {
+            attempts++;
+            expect(cleanupOnly).toBe(attempts > 1);
+            const wasLinked = linked;
+            linked = false;
+            return attempts < 3
+              ? Effect.fail(
+                  new ManagedRelay.ManagedRelayRequestFailedError({
+                    action: "unlink relay environment",
+                    cause: new Error("tunnel has active connections"),
+                    status: 500,
+                    relayError: new RelayInternalError({
+                      code: "internal_error",
+                      reason: "upstream_unavailable",
+                      traceId: "cleanup-failed",
+                    }),
+                  }),
+                )
+              : Effect.succeed({ ok: wasLinked });
+          }),
+        listEnvironments: () =>
+          attempts === 2
+            ? Effect.fail(
+                new ManagedRelay.ManagedRelayRequestFailedError({
+                  action: "list relay-managed environments",
+                  cause: new Error("listing unavailable"),
+                }),
+              )
+            : Effect.sync(() => (linked ? [environment] : [])),
+      });
+      const deregister = (retryCleanup: boolean) =>
+        deregisterManagedRelayEnvironment(registry, {
+          accountId: "account-1",
+          environmentId: environment.environmentId,
+          retryCleanup,
+        }).pipe(Effect.provideService(ManagedRelay.ManagedRelayClient, client));
+
+      expect(yield* deregister(false)).toMatchObject({ cleanup: "unconfirmed" });
+      expect(yield* deregister(true)).toMatchObject({ cleanup: "unconfirmed" });
+      expect(yield* deregister(true)).toEqual({ cleanup: "complete" });
     }),
   );
 

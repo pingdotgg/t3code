@@ -46,6 +46,7 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as HttpClientError from "effect/http/HttpClientError";
 import type * as HttpMethod from "effect/http/HttpMethod";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
+import type * as HttpApiError from "effect/http-api/HttpApiError";
 import { msg } from "gt-i18n";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import { type MarkedText, markedTextEnglish } from "../errors/translatable.ts";
@@ -333,6 +334,7 @@ export type ManagedRelayClientError = typeof ManagedRelayClientError.Type;
 type RelayHttpRequestError =
   | RelayProtectedErrorType
   | HttpClientError.HttpClientError
+  | HttpApiError.Conflict
   | Schema.SchemaError;
 
 export class ManagedRelayDpopSigner extends Context.Service<
@@ -396,6 +398,8 @@ export class ManagedRelayClient extends Context.Service<
     readonly unlinkEnvironment: (input: {
       readonly clerkToken: string;
       readonly environmentId: RelayClientEnvironmentRecord["environmentId"];
+      /** Finish cleanup of an already revoked link without revoking a newer one. */
+      readonly cleanupOnly?: boolean | undefined;
     }) => Effect.Effect<RelayOkResponse, ManagedRelayClientError>;
     readonly getT3ChatLink: (input: {
       readonly clerkToken: string;
@@ -441,6 +445,7 @@ const isRelayProtectedError = Schema.is(RelayProtectedError);
 const TRACEPARENT_TRACE_ID = /^[\da-f]{2}-([\da-f]{32})-[\da-f]{16}-[\da-f]{2}$/i;
 
 function untypedResponseFields(cause: RelayHttpRequestError) {
+  if (cause._tag === "Conflict") return { status: 409 };
   const response = HttpClientError.isHttpClientError(cause) ? cause.response : undefined;
   if (!response) return {};
   const traceId = TRACEPARENT_TRACE_ID.exec(response.headers.traceparent ?? "")?.[1];
@@ -913,15 +918,17 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
     ),
     unlinkEnvironment: Effect.fnUntraced(
       function* (input) {
-        return yield* client.client
-          .unlinkEnvironment({
-            headers: bearerHeaders(input.clerkToken),
-            params: { environmentId: input.environmentId },
-          })
-          .pipe(
-            Effect.mapError(relayRequestError("unlink relay environment")),
-            timeoutRelayRequest("Relay environment unlinking"),
-          );
+        const request = {
+          headers: bearerHeaders(input.clerkToken),
+          params: { environmentId: input.environmentId },
+        };
+        const response: Effect.Effect<RelayOkResponse, RelayHttpRequestError> = input.cleanupOnly
+          ? client.client.cleanupEnvironment(request)
+          : client.client.unlinkEnvironment(request);
+        return yield* response.pipe(
+          Effect.mapError(relayRequestError("unlink relay environment")),
+          timeoutRelayRequest("Relay environment unlinking"),
+        );
       },
       Effect.withSpan("clientRuntime.managedRelay.unlinkEnvironment"),
       withRelayClientTracing,

@@ -79,7 +79,10 @@ export function T3ConnectProfilePage() {
     readonly linkedAtById: ReadonlyMap<EnvironmentId, string>;
   }>({ accountId: null, linkedAtById: new Map() });
 
-  const handleDeregister = async (environment: RelayClientEnvironmentRecord) => {
+  const handleDeregister = async (
+    environment: RelayClientEnvironmentRecord,
+    retryCleanup = false,
+  ) => {
     const accountId = environmentsState.accountId;
     if (!accountId || mutationPendingRef.current) return;
 
@@ -88,6 +91,7 @@ export function T3ConnectProfilePage() {
     const result = await deregisterEnvironment({
       accountId,
       environmentId: environment.environmentId,
+      retryCleanup,
     });
     mutationPendingRef.current = false;
     setDeregisteringEnvironmentId(null);
@@ -100,10 +104,49 @@ export function T3ConnectProfilePage() {
       });
       environmentsState.refresh();
       void refreshRelayEnvironments();
+      if (result.value.cleanup === "unconfirmed") {
+        const cause = result.value.cause;
+        const traceId = findErrorTraceId(cause);
+        console.warn("[t3-connect] Server removed but deregistration cleanup is unconfirmed", {
+          environmentId: environment.environmentId,
+          traceId,
+          cause,
+        });
+        const cleanupMessage = gt(
+          "The server was removed from your account, but tunnel cleanup could not be confirmed. Retry to finish cleanup.",
+        );
+        Dialog.alert(
+          gt("Server removed; cleanup unconfirmed"),
+          traceId
+            ? gt("{message}\n\nTrace ID: {traceId}", { message: cleanupMessage, traceId })
+            : cleanupMessage,
+          [
+            { text: gt("Retry cleanup"), onPress: () => void handleDeregister(environment, true) },
+            ...(traceId
+              ? [
+                  {
+                    text: gt("Copy trace ID"),
+                    onPress: () => copyTextWithHaptic(traceId, { target: "connection-trace-id" }),
+                  },
+                ]
+              : []),
+            { text: gt("OK"), style: "cancel" },
+          ],
+        );
+      }
       return;
     }
     if (isAtomCommandInterrupted(result)) return;
 
+    if (retryCleanup) {
+      setRemovedEnvironments((current) => {
+        if (current.accountId !== accountId) return current;
+        const linkedAtById = new Map(current.linkedAtById);
+        linkedAtById.delete(environment.environmentId);
+        return { accountId, linkedAtById };
+      });
+    }
+    environmentsState.refresh();
     const cause = squashAtomCommandFailure(result);
     const message =
       cause instanceof Error
@@ -117,17 +160,22 @@ export function T3ConnectProfilePage() {
       cause,
     });
     Dialog.alert(
-      gt("Could not deregister server"),
+      retryCleanup ? gt("Could not finish tunnel cleanup") : gt("Could not deregister server"),
       traceId ? gt("{message}\n\nTrace ID: {traceId}", { message, traceId }) : message,
-      traceId
-        ? [
-            {
-              text: gt("Copy trace ID"),
-              onPress: () => copyTextWithHaptic(traceId, { target: "connection-trace-id" }),
-            },
-            { text: gt("OK"), style: "cancel" },
-          ]
-        : undefined,
+      [
+        ...(retryCleanup
+          ? [{ text: gt("Retry cleanup"), onPress: () => void handleDeregister(environment, true) }]
+          : []),
+        ...(traceId
+          ? [
+              {
+                text: gt("Copy trace ID"),
+                onPress: () => copyTextWithHaptic(traceId, { target: "connection-trace-id" }),
+              },
+            ]
+          : []),
+        { text: gt("OK"), style: "cancel" },
+      ],
     );
   };
 

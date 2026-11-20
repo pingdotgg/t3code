@@ -40,6 +40,29 @@ function clerkToken(subject: string, nonce: string): string {
 }
 
 describe("ManagedRelayClient", () => {
+  it.effect("sends cleanup retries to the cleanup endpoint, never the destructive unlink", () => {
+    const requests: Array<Request> = [];
+    const fetchFn = ((input, init) => {
+      requests.push(new Request(input, init));
+      return Promise.resolve(new Response(null, { status: 404 }));
+    }) satisfies typeof globalThis.fetch;
+    return Effect.gen(function* () {
+      const client = yield* ManagedRelay.ManagedRelayClient;
+      yield* client
+        .unlinkEnvironment({
+          clerkToken: "clerk-token",
+          environmentId: EnvironmentId.make("environment-1"),
+          cleanupOnly: true,
+        })
+        .pipe(Effect.flip);
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.method).toBe("POST");
+      expect(new URL(requests[0]!.url).pathname).toBe(
+        "/v1/client/environment-links/environment-1/cleanup",
+      );
+    }).pipe(Effect.provide(layerManagedRelayTest(fetchFn)));
+  });
+
   it.effect("rejects unsafe relay URLs before sending credentials", () => {
     let requestCount = 0;
     const fetchFn = (() => {

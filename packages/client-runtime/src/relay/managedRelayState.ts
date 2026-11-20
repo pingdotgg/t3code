@@ -225,11 +225,40 @@ export const deregisterManagedRelayEnvironment = Effect.fn(
   "clientRuntime.managedRelaySession.deregisterEnvironment",
 )(function* (
   registry: AtomRegistry.AtomRegistry,
-  input: { readonly accountId: string; readonly environmentId: EnvironmentId },
+  input: {
+    readonly accountId: string;
+    readonly environmentId: EnvironmentId;
+    readonly retryCleanup?: boolean | undefined;
+  },
 ) {
   const clerkToken = yield* requireSessionClerkToken(registry, input.accountId, "deregister");
   const relay = yield* ManagedRelay.ManagedRelayClient;
-  yield* relay.unlinkEnvironment({ clerkToken, environmentId: input.environmentId });
+  return yield* relay
+    .unlinkEnvironment({
+      clerkToken,
+      environmentId: input.environmentId,
+      cleanupOnly: input.retryCleanup,
+    })
+    .pipe(
+      Effect.map(() => ({ cleanup: "complete" as const })),
+      Effect.catch((cause) => {
+        if (input.retryCleanup && isManagedRelayRequestFailedError(cause) && cause.status === 409) {
+          return Effect.fail(cause);
+        }
+        const unconfirmed = { cleanup: "unconfirmed" as const, cause };
+        // The account's list is authoritative: a link that is gone leaves only cleanup to retry.
+        return relay.listEnvironments({ clerkToken }).pipe(
+          Effect.matchEffect({
+            onFailure: () =>
+              input.retryCleanup ? Effect.succeed(unconfirmed) : Effect.fail(cause),
+            onSuccess: (environments) =>
+              environments.some((environment) => environment.environmentId === input.environmentId)
+                ? Effect.fail(cause)
+                : Effect.succeed(unconfirmed),
+          }),
+        );
+      }),
+    );
 });
 
 /** Returns the T3 Chat page URL where the signed-in user confirms the link. */

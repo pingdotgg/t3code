@@ -508,6 +508,8 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
     readonly userId: string;
     readonly environmentId: string;
     readonly managedEndpointNamespace?: string | undefined;
+    /** Finish cleanup of a revoked link; refuses while a link exists so a re-link survives. */
+    readonly cleanupOnly?: boolean | undefined;
   }) {
     const links = yield* EnvironmentLinks.EnvironmentLinks;
     const managedEndpointProvider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
@@ -519,6 +521,9 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
       userId: input.userId,
       environmentId: input.environmentId,
     });
+    if (input.cleanupOnly && link !== null) {
+      return yield* new HttpApiError.Conflict({});
+    }
     const unlinked =
       link === null
         ? false
@@ -528,11 +533,29 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
             environmentPublicKey: link.environmentPublicKey,
           });
     // Deprovision after revocation commits; retry even if already revoked to finish failed Cloudflare cleanup.
-    const deprovisioned = yield* managedEndpointProvider.deprovision({
+    let deprovisioned = yield* managedEndpointProvider.deprovision({
       userId: input.userId,
       environmentId: input.environmentId,
       target: deprovisionTarget,
     });
+    if (!deprovisioned) {
+      const key = { userId: input.userId, environmentId: input.environmentId };
+      const retryTarget = yield* managedEndpointProvider.prepareDeprovision(key);
+      if ((yield* links.getForUser(key)) !== null) {
+        return yield* new HttpApiError.Conflict({});
+      }
+      deprovisioned =
+        retryTarget === null
+          ? true
+          : yield* managedEndpointProvider.deprovision({ ...key, target: retryTarget });
+      if (!deprovisioned) {
+        return yield* new ManagedEndpointProvider.ManagedEndpointDeprovisioningFailed({
+          ...key,
+          stage: "claim-deprovision",
+          cause: "Cleanup claim was superseded",
+        });
+      }
+    }
     const endpointKey =
       deprovisionTarget && input.managedEndpointNamespace
         ? HeldHooks.endpointKeyForTunnelName(
@@ -550,13 +573,6 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
           }),
         ),
       );
-    }
-    if (!deprovisioned) {
-      const key = { userId: input.userId, environmentId: input.environmentId };
-      const retryTarget = yield* managedEndpointProvider.prepareDeprovision(key);
-      if (retryTarget !== null && (yield* links.getForUser(key)) === null) {
-        yield* managedEndpointProvider.deprovision({ ...key, target: retryTarget });
-      }
     }
     return unlinked;
   },
@@ -954,6 +970,26 @@ export const layerClientApi = HttpApiBuilder.group(
             userId,
             environmentId: params.environmentId,
             managedEndpointNamespace: config.managedEndpointNamespace,
+          }).pipe(
+            Effect.catchTags({
+              SqlError: () => relayInternalErrorResponse("internal_error"),
+              Conflict: () => relayInternalErrorResponse("internal_error"),
+              ManagedEndpointDeprovisioningFailed: () =>
+                relayInternalErrorResponse("upstream_unavailable"),
+            }),
+          );
+          return { ok: unlinked };
+        }, mapRelayCommonApiErrors("not_authorized")),
+      )
+      .handle(
+        "cleanupEnvironment",
+        Effect.fn("relay.api.client.cleanupEnvironment")(function* ({ params }) {
+          const { userId } = yield* RelayClientPrincipal;
+          const unlinked = yield* unlinkEnvironmentRecord({
+            userId,
+            environmentId: params.environmentId,
+            managedEndpointNamespace: config.managedEndpointNamespace,
+            cleanupOnly: true,
           }).pipe(
             Effect.catchTags({
               SqlError: () => relayInternalErrorResponse("internal_error"),
