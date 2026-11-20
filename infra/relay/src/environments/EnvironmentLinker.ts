@@ -55,6 +55,7 @@ export class EnvironmentLinkProofInvalid extends Schema.TaggedError<EnvironmentL
       "consume_proof_nonce",
       "consume_challenge_nonce",
       "validate_origin",
+      "validate_existing_link",
       "validate_endpoint",
     ]),
     cause: Schema.optional(Schema.Defect()),
@@ -70,6 +71,7 @@ export type EnvironmentLinkError =
   | EnvironmentLinkProofInvalid
   | DpopProofs.DpopProofReplayPersistenceError
   | EnvironmentLinks.EnvironmentLinkUpsertPersistenceError
+  | EnvironmentLinks.EnvironmentLinkLookupPersistenceError
   | EnvironmentCredentials.EnvironmentCredentialCreatePersistenceError
   | ManagedEndpointProvider.ManagedEndpointProviderError;
 
@@ -289,6 +291,20 @@ const make = Effect.gen(function* () {
           environmentId: verified.environmentId,
           reason: "origin_not_allowed",
           stage: "validate_origin",
+        });
+      }
+      // The account bearer alone must not move an active link, its tunnel and its trusted key to
+      // another key. Unlinking first releases the tunnel, so nothing of the old link is handed over.
+      const existing = yield* links.getForUser({
+        userId: input.userId,
+        environmentId: verified.environmentId,
+      });
+      if (existing !== null && existing.environmentPublicKey !== verified.environmentPublicKey) {
+        return yield* new EnvironmentLinkProofInvalid({
+          userId: input.userId,
+          environmentId: verified.environmentId,
+          reason: "environment_key_mismatch",
+          stage: "validate_existing_link",
         });
       }
       // Non-tunnel links must release provisioned tunnel/DNS resources; best-effort deprovision is idempotent.
