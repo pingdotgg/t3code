@@ -54,8 +54,7 @@ export function useCommandPalettePortForwardItem(input: {
   const forwards = usePortForwards();
   const { environments } = useEnvironments();
   const reachable = environments.filter(
-    (environment) =>
-      environment.connection.phase === "connected" && canForwardPorts(environment.entry.target),
+    (environment) => environment.connection.phase === "connected" && canForwardPorts(environment),
   );
   const tunnelling = useEnvironmentsWithScope(reachable, AuthTerminalOperateScope);
   const tunnelled = reachable.filter((environment) => tunnelling.has(environment.environmentId));

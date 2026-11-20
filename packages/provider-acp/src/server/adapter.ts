@@ -147,6 +147,8 @@ const ACP_DEFERRED_FINALIZE_DEBOUNCE: Duration.Input = "3000 millis";
 // A model can stay silent this long before the first token of a reply the agent started itself.
 const ACP_OPEN_REPLY_QUIET_LIMIT: Duration.Input = "2 minutes";
 const ACP_BUSY_PROMPT_RETRY_INTERVAL: Duration.Input = "1 second";
+const ACP_PROMPT_INACTIVITY_SLICE_MILLIS = 60_000;
+const ACP_HOST_SLEEP_TOLERANCE_MILLIS = 10_000;
 
 // pi-agent-core agents (oh-my-pi) end a turn while background work runs and reject
 // prompts until it finishes; the prompt is resent rather than failing the turn.
@@ -8767,10 +8769,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* Deferred.await(context.promptDispatched);
           context.lastProgressAt = yield* Clock.currentTimeMillis;
           while (true) {
-            const remaining =
-              context.lastProgressAt + timeoutMillis - (yield* Clock.currentTimeMillis);
+            const sliceStartedAt = yield* Clock.currentTimeMillis;
+            const remaining = context.lastProgressAt + timeoutMillis - sliceStartedAt;
             if (remaining > 0) {
-              yield* Effect.sleep(Duration.millis(remaining));
+              const slice = Math.min(remaining, ACP_PROMPT_INACTIVITY_SLICE_MILLIS);
+              yield* Effect.sleep(Duration.millis(slice));
+              // Host sleep is not agent silence. Timers either fire late on wake (macOS, Windows)
+              // or pause while the wall clock jumps (Linux); both overrun a short slice.
+              const now = yield* Clock.currentTimeMillis;
+              if (now - sliceStartedAt > slice + ACP_HOST_SLEEP_TOLERANCE_MILLIS) {
+                context.lastProgressAt = now;
+              }
               continue;
             }
             const outcome = yield* runtimeTransitionPermit.withPermit(
@@ -9637,6 +9646,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 yield* Ref.update(continuationGeneration, (value) => value + 1);
               }),
             );
+            // A session released mid-prompt (worktree handoff) never sees its prompt settle.
+            const openTurn = yield* Ref.get(activeTurn);
+            if (openTurn !== null && !openTurn.finalized) {
+              openTurn.interrupted = true;
+              yield* finalizeTurn(openTurn, "interrupted");
+            }
             const requests = [...(yield* Ref.get(pendingRuntimeRequests)).values()];
             yield* Effect.forEach(
               requests,
@@ -9972,6 +9987,29 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 ),
               ),
           ),
+          // The held turn already waits on these commands; their tool calls carry no task id,
+          // so any id matches while one runs on this thread.
+          ...(flavor.toolOutlivesPrompt === undefined
+            ? {}
+            : {
+                awaitBackgroundTasks: Effect.fn("AcpAdapterV2.awaitBackgroundTasks")(function* ({
+                  providerThread,
+                  taskIds,
+                }) {
+                  const outlives = flavor.toolOutlivesPrompt;
+                  const context = yield* Ref.get(activeTurn);
+                  const holdsCommand =
+                    outlives !== undefined &&
+                    defersFinalizeForBackgroundWork &&
+                    context !== null &&
+                    !context.finalized &&
+                    context.nativeThreadId === providerThread.nativeThreadRef?.nativeId &&
+                    [...context.tools.values()].some(
+                      (tool) => toolStatus(tool.status) === "running" && outlives(tool),
+                    );
+                  return { matched: holdsCommand ? [...new Set(taskIds)] : [] };
+                }),
+              }),
           interruptTurn: Effect.fn("AcpAdapterV2.interruptTurn")(
             function* (turnInput: ProviderAdapter.ProviderAdapterV2InterruptInput) {
               return yield* Effect.uninterruptibleMask((restore) =>
