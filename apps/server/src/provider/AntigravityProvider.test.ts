@@ -930,7 +930,6 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         yield* harness.provider.onSignedOut;
         yield* Deferred.succeed(releaseSafety, true);
         yield* Fiber.join(startFiber);
-        yield* Effect.yieldNow;
         expect(yield* Ref.get(reads)).toBe(3);
         expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
       }),
