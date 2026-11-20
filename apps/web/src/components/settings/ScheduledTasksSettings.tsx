@@ -1540,7 +1540,6 @@ function ScheduledTaskEditorForm({
   readonly onClose: () => void;
 }) {
   const messages = useMessages();
-  const locale = useLocale();
   const gt = useGT();
   const { scope, connectedEnvironments } = useSettingsScope();
   const [environmentId, setEnvironmentId] = useState(initialEnvironmentId);
@@ -1720,8 +1719,8 @@ function ScheduledTaskEditorForm({
     }
     if (schedule.type === "interval" && schedule.window !== undefined && !offersIntervalWindow) {
       reportFailure(
-        "Time windows are not available here",
-        "Update this environment to use interval time windows.",
+        gt("Time windows are not available here"),
+        gt("Update this environment to use interval time windows."),
       );
       return;
     }
@@ -2399,15 +2398,21 @@ function ScheduledTaskEditorForm({
                     count: Number(draft.intervalMinutes),
                   })}
                 </span>
+              </div>
                 <div className="flex items-center justify-between gap-4">
                   <div className="min-w-0 space-y-1">
-                    <Label htmlFor="scheduled-task-interval-window"><T>Time window</T></Label>
+                    <Label htmlFor="scheduled-task-interval-window">
+                      <T>Time window</T>
+                    </Label>
                     <p
                       id="scheduled-task-interval-window-description"
                       className="text-sm text-muted-foreground"
                     >
-                      <T>Run only between these hours on the days below. Off means all day, every day.
-                      Time uses the environment's time zone, which may differ from your phone's.</T>
+                      <T>
+                        Run only between these hours on the days below. Off means all day, every
+                        day. Time uses the environment's time zone, which may differ from your
+                        phone's.
+                      </T>
                     </p>
                   </div>
                   <Switch
@@ -2432,7 +2437,9 @@ function ScheduledTaskEditorForm({
                 {draft.intervalWindowEnabled ? (
                   <div className="flex flex-wrap items-center gap-3">
                     <div className="flex items-center gap-2">
-                      <Label htmlFor="scheduled-task-window-start"><T>Start</T></Label>
+                      <Label htmlFor="scheduled-task-window-start">
+                        <T>Start</T>
+                      </Label>
                       <div className="w-32">
                         <Input
                           type="time"
@@ -2448,7 +2455,9 @@ function ScheduledTaskEditorForm({
                           }
                         />
                       </div>
-                      <Label htmlFor="scheduled-task-window-end"><T>End</T></Label>
+                      <Label htmlFor="scheduled-task-window-end">
+                        <T>End</T>
+                      </Label>
                       <div className="w-32">
                         <Input
                           type="time"
@@ -2464,7 +2473,11 @@ function ScheduledTaskEditorForm({
                           }
                         />
                       </div>
-                      <span className="text-xs text-muted-foreground"><T context="between the run time and the weekday buttons, as in Run at 9:00 on Mon Wed">on</T></span>
+                      <span className="text-xs text-muted-foreground">
+                        <T context="between the run time and the weekday buttons, as in Run at 9:00 on Mon Wed">
+                          on
+                        </T>
+                      </span>
                     </div>
                     <WeekdayToggleGroup
                       weekdays={draft.weekdays}

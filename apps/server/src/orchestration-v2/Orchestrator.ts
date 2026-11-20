@@ -77,6 +77,7 @@ import {
   resolveProjectProviderInstanceEnabled,
   type ProviderSessionId,
   RunId,
+  ScheduledTask,
   RuntimeMode,
   ThreadLinkedPullRequest,
   ThreadId,
@@ -120,6 +121,9 @@ import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import { isMissedScheduledRun } from "../scheduledTasks/Schedule.ts";
 
 import * as ProjectStore from "./ProjectStore.ts";
 import * as TaskFolderStore from "../workspace/TaskFolderStore.ts";
@@ -229,6 +233,10 @@ import {
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
+
+const decodeScheduledTaskSchedule = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(ScheduledTask.fields.schedule),
+);
 
 const isMessageQuestionAnswer = Schema.is(
   Schema.Union([TrimmedNonEmptyString, Schema.NonEmptyArray(TrimmedNonEmptyString)]),
@@ -1654,6 +1662,7 @@ const hasRunningDelegatedTasks = (subagents: ReadonlyArray<OrchestrationV2Subage
   );
 
 const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(function* () {
+  const sql = yield* SqlClient.SqlClient;
   const checkpointService = yield* CheckpointServiceV2;
   const commandPolicy = yield* CommandPolicyV2;
   const contextHandoffService = yield* ContextHandoffServiceV2;
@@ -3279,6 +3288,37 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const detachReason = freshContext
         ? FRESH_CONTEXT_DETACH_REASON
         : "Provider or model selection changed.";
+      // Scheduled message IDs distinguish interval ticks from manual runs of the same task.
+      if (
+        queuedMessage.scheduledTaskId !== undefined &&
+        queuedMessage.id.startsWith(`scheduled-task-message:${queuedMessage.scheduledTaskId}:`) &&
+        queuedMessage.id.endsWith(":scheduled")
+      ) {
+        const taskId = queuedMessage.scheduledTaskId;
+        const [row] = yield* sql<{
+          readonly schedule_json: string;
+        }>`SELECT schedule_json FROM scheduled_tasks WHERE task_id = ${taskId}`.pipe(
+          NodeSqliteClient.readOnly,
+        );
+        if (row !== undefined) {
+          const schedule = yield* decodeScheduledTaskSchedule(row.schedule_json);
+          const currentTime = yield* DateTime.withCurrentZoneLocal(DateTime.nowInCurrentZone);
+          if (
+            schedule.type === "interval" &&
+            schedule.window !== undefined &&
+            isMissedScheduledRun(schedule, queuedRun.requestedAt, currentTime)
+          ) {
+            yield* Effect.logInfo("Skipping schedule task run", {
+              taskId,
+              reason: "queued occurrence outside time window",
+            });
+            yield* writeSystemEvents(
+              queuedRunCancellationEvents(projection, queuedRun, yield* DateTime.now),
+            );
+            return true;
+          }
+        }
+      }
       yield* writeSystemEvents(
         [
           ...(selectionChanged
@@ -3450,13 +3490,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ),
   );
 
-  // A provider failure hold leaves buffered wakes unheld, so a second pass starts the first one.
-  const startNextQueuedRun = (...args: Parameters<typeof startNextQueuedRunOnce>) =>
-    startNextQueuedRunOnce(...args).pipe(
-      Effect.flatMap((wakeLeftUnheld) =>
-        wakeLeftUnheld === true ? startNextQueuedRunOnce(args[0]) : Effect.void,
-      ),
-    );
+  // Continue after a skipped occurrence or a provider failure that leaves buffered wakes unheld.
+  const startNextQueuedRun = Effect.fn("Orchestrator.startNextQueuedRuns")(function* (
+    ...args: Parameters<typeof startNextQueuedRunOnce>
+  ) {
+    let again = yield* startNextQueuedRunOnce(...args);
+    while (again === true) again = yield* startNextQueuedRunOnce(args[0]);
+  });
 
   // Under load a resumed provider can time out before taking the prompt; the restart still owes the turn.
   const retryContinuationStart = Effect.fn("Orchestrator.retryContinuationStart")(function* (
@@ -17719,6 +17759,7 @@ export const layer: Layer.Layer<
   | RuntimePolicyV2
   | ServerSettings.ServerSettingsService
   | TaskFolderStore.TaskFolderStore
+  | SqlClient.SqlClient
   | ThreadForkServiceV2
 > = Layer.effect(OrchestratorV2, makeOrchestrator()).pipe(
   // Layers memoize by reference, so this is the tracker ThreadLaunchService holds workspaces in.

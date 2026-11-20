@@ -139,7 +139,12 @@ function describeSchedule(
     );
   }
   if (task.schedule.type === "interval")
-    return formatScheduledTaskInterval(task.schedule.everyMs, m, task.schedule.window, locale);
+    return formatScheduledTaskInterval(
+      task.schedule.everyMs,
+      task.schedule.window,
+      resolve,
+      locale,
+    );
   const days = task.schedule.weekdays?.length
     ? repeatLabel(task.schedule.weekdays, resolve, locale)
     : resolve(msg("Every day"));
@@ -822,7 +827,6 @@ function TaskForm({
 }) {
   const gt = useGT();
   const m = useMessages();
-  const locale = useLocale();
   const { readEditor } = useScheduledTaskEditor();
   const navigation = useNavigation<NativeStackNavigationProp<ScheduledTaskRoutes>>();
   const tasks = useEnvironmentQuery(
@@ -1577,7 +1581,7 @@ function TaskForm({
                     draft.schedule.intervalWindowEnd,
                   ) ? null : (
                     <Text className="px-4 pb-3 text-sm text-danger-foreground">
-                      End time must be after the start time.
+                      <T>End time must be after the start time.</T>
                     </Text>
                   )}
                   <WeekdayRow

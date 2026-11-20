@@ -67,8 +67,24 @@ export function scheduleLabel(
     const window = schedule.window;
     if (!window) return cadence;
     const selected = new Set(window.weekdays ?? []);
-    const days = selected.size === 0 || selected.size === 7 ? resolve(msg("every day")) : [...selected].filter((day) => day >= 0 && day <= 6).toSorted((a, b) => a - b).map((day) => weekdayShortLabel(day, locale)).join(", ");
-    return resolve(msg("{cadence}, {days} {start}–{end}", { cadence, days, start: window.start, end: window.end }));
+    const days =
+      selected.size === 0 || selected.size === 7
+        ? resolve(msg("every day"))
+        : selected.size === 5 && [1, 2, 3, 4, 5].every((day) => selected.has(day))
+          ? [1, 5].map((day) => weekdayShortLabel(day, locale)).join("–")
+          : [...selected]
+              .filter((day) => day >= 0 && day <= 6)
+              .toSorted((a, b) => a - b)
+              .map((day) => weekdayShortLabel(day, locale))
+              .join(", ");
+    return resolve(
+      msg("{cadence}, {days} {start}–{end}", {
+        cadence,
+        days,
+        start: window.start,
+        end: window.end,
+      }),
+    );
   }
   const weekdays = schedule.weekdays ?? [];
   const time = formatTimeOfDay(schedule.timeOfDay, timestampFormat);
@@ -209,11 +225,26 @@ export function scheduleDraftErrors(draft: DraftState, resolve: MessageResolver 
     const start = clockMinutes(draft.intervalWindowStart);
     const end = clockMinutes(draft.intervalWindowEnd);
     if (start === null || end === null)
-      return [{ title: resolve(msg("Invalid time window")), description: resolve(msg("Enter a start and end time.")) }];
+      return [
+        {
+          title: resolve(msg("Invalid time window")),
+          description: resolve(msg("Enter a start and end time.")),
+        },
+      ];
     if (end <= start)
-      return [{ title: resolve(msg("Invalid time window")), description: resolve(msg("End must be after start.")) }];
+      return [
+        {
+          title: resolve(msg("Invalid time window")),
+          description: resolve(msg("End must be after start.")),
+        },
+      ];
     if (draft.weekdays.size === 0)
-      return [{ title: resolve(msg("Choose days")), description: resolve(msg("Select at least one day.")) }];
+      return [
+        {
+          title: resolve(msg("Choose days")),
+          description: resolve(msg("Select at least one day.")),
+        },
+      ];
     return [];
   }
   if (draft.scheduleMode !== "webhook") return [];
