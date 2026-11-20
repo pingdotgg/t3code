@@ -8565,30 +8565,32 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
     const selectShellItemCounts = (threadIds: ReadonlyArray<ThreadId>) =>
       sql<ShellItemCountRow>`
-        SELECT counts.thread_id,
-          SUM(CASE WHEN counts.run_key = '' OR r.status <> 'rolled_back'
-            THEN counts.item_count - CASE
-              WHEN r.status IN ('queued', 'cancelled') THEN (
-                SELECT COUNT(*)
-                FROM orchestration_v2_projection_turn_items held
-                INDEXED BY orchestration_v2_projection_turn_items_queued_input_idx
-                WHERE held.run_id = counts.run_key
-                  AND held.type = 'user_message'
-                  AND json_valid(held.payload_json)
-                  AND json_extract(held.payload_json, '$.inputIntent') = 'queued_turn'
-              )
-              ELSE 0
-            END
-            ELSE 0 END) AS item_count,
-          SUM(CASE WHEN counts.run_key = '' THEN counts.item_count ELSE 0 END)
-            AS runless_item_count
-        FROM orchestration_v2_projection_turn_item_counts counts
-        -- The primary key would load each run's whole row just for its status.
-        LEFT JOIN orchestration_v2_projection_runs r
-          INDEXED BY orchestration_v2_projection_runs_run_status_idx
-          ON r.run_id = counts.run_key
-        WHERE counts.thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))
-        GROUP BY counts.thread_id
+        -- Only the thread's hidden runs are visited, so settled history costs nothing here.
+        SELECT totals.thread_id,
+          totals.item_count - COALESCE((
+            SELECT SUM(CASE WHEN r.status = 'rolled_back' THEN counts.item_count ELSE (
+              SELECT COUNT(*)
+              FROM orchestration_v2_projection_turn_items held
+              INDEXED BY orchestration_v2_projection_turn_items_queued_input_idx
+              WHERE held.run_id = counts.run_key
+                AND held.type = 'user_message'
+                AND json_valid(held.payload_json)
+                AND json_extract(held.payload_json, '$.inputIntent') = 'queued_turn'
+            ) END)
+            FROM orchestration_v2_projection_runs r
+              INDEXED BY orchestration_v2_projection_runs_hidden_items_idx
+            JOIN orchestration_v2_projection_turn_item_counts counts
+              ON counts.thread_id = r.thread_id AND counts.run_key = r.run_id
+            WHERE r.thread_id = totals.thread_id
+              AND r.status IN ('rolled_back', 'queued', 'cancelled')
+          ), 0) AS item_count,
+          COALESCE((
+            SELECT runless.item_count
+            FROM orchestration_v2_projection_turn_item_counts runless
+            WHERE runless.thread_id = totals.thread_id AND runless.run_key = ''
+          ), 0) AS runless_item_count
+        FROM orchestration_v2_projection_thread_item_counts totals
+        WHERE totals.thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))
       `;
 
     const selectShellProviderThreadRows = (threadIds?: ReadonlyArray<ThreadId>) =>
