@@ -346,6 +346,7 @@ export class AcpRegistryOperationError extends Schema.TaggedError<AcpRegistryOpe
       Schema.Array(AcpRegistryProbeAuthMethod).check(Schema.isMaxLength(32)),
     ),
     authAction: Schema.optionalKey(AcpRegistryUrlAuthAction),
+    pendingHistoryThreadId: Schema.optionalKey(ThreadId),
     cause: Schema.optionalKey(Schema.Defect()),
   },
 ) {}

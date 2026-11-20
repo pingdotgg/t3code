@@ -1,5 +1,6 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
+  AcpRegistryOperationError,
   AuthOrchestrationOperateScope,
   AuthProvidersManageScope,
   AuthOrchestrationReadScope,
@@ -36,6 +37,8 @@ interface AcpSessionProject {
   readonly title: string;
   readonly workspaceRoot: string;
 }
+
+type SessionImportState = Pick<AcpRegistrySession, "importedThreadId" | "nativeHistoryPending">;
 
 function needsImport(session: AcpRegistrySession) {
   return session.importedThreadId === null || session.nativeHistoryPending === true;
@@ -120,12 +123,12 @@ function InstanceSessionManagement(
   const canRead = useEnvironmentScope(props.environmentId, AuthOrchestrationReadScope);
   const { projectId } = props;
   const projectGeneration = useRef(0);
-  const deletionsDuringList = useRef<Set<string> | null>(null);
+  const mutationsDuringList = useRef<Map<string, SessionImportState | null> | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Late continuations must not act on a replaced project scope.
   useLayoutEffect(() => {
     return () => {
       projectGeneration.current += 1;
-      deletionsDuringList.current = null;
+      mutationsDuringList.current = null;
     };
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Retiring a project invalidates its pending operations even when the instance stays mounted.
   }, [projectId]);
@@ -193,8 +196,8 @@ function InstanceSessionManagement(
   const loadSessions = async (cursor?: string) => {
     const generation = projectGeneration.current;
     if (projectId === null || loading) return;
-    const deletedSessionIds = new Set<string>();
-    deletionsDuringList.current = deletedSessionIds;
+    const mutations = new Map<string, SessionImportState | null>();
+    mutationsDuringList.current = mutations;
     setLoading(true);
     const result = await listSessions({
       environmentId: props.environmentId,
@@ -205,13 +208,14 @@ function InstanceSessionManagement(
       },
     });
     if (generation !== projectGeneration.current) return;
-    deletionsDuringList.current = null;
+    mutationsDuringList.current = null;
     setLoading(false);
     if (result._tag === "Success") {
-      // A pending list can return a snapshot taken before a deletion completed.
-      const listedSessions = result.value.sessions.filter(
-        (session) => !deletedSessionIds.has(session.sessionId),
-      );
+      // A pending list can return a snapshot taken before a mutation completed.
+      const listedSessions = result.value.sessions.flatMap((session) => {
+        const mutation = mutations.get(session.sessionId);
+        return mutation === null ? [] : [{ ...session, ...mutation }];
+      });
       setSessions((current) =>
         cursor === undefined ? listedSessions : [...current, ...listedSessions],
       );
@@ -242,14 +246,16 @@ function InstanceSessionManagement(
     });
     if (generation !== projectGeneration.current) return;
     setImportingSessionId(null);
-    if (result._tag === "Success") {
+    const updateImportState = (state: SessionImportState) => {
+      mutationsDuringList.current?.set(session.sessionId, state);
       setSessions((current) =>
         current.map((candidate) =>
-          candidate.sessionId === session.sessionId
-            ? { ...candidate, importedThreadId: result.value.threadId, nativeHistoryPending: false }
-            : candidate,
+          candidate.sessionId === session.sessionId ? { ...candidate, ...state } : candidate,
         ),
       );
+    };
+    if (result._tag === "Success") {
+      updateImportState({ importedThreadId: result.value.threadId, nativeHistoryPending: false });
       toastManager.add({
         type: "success",
         title: result.value.imported
@@ -258,12 +264,24 @@ function InstanceSessionManagement(
       });
       return;
     }
+    const error = squashAtomCommandFailure(result);
+    if (error instanceof AcpRegistryOperationError && error.pendingHistoryThreadId !== undefined) {
+      updateImportState({
+        importedThreadId: error.pendingHistoryThreadId,
+        nativeHistoryPending: true,
+      });
+    }
     reportFailure(gt("Could not import ACP session"), result);
   };
 
   const deleteNativeSession = async (session: AcpRegistrySession) => {
     const generation = projectGeneration.current;
-    if (projectId === null || deletingSessionId !== null || session.importedThreadId !== null)
+    if (
+      projectId === null ||
+      deletingSessionId !== null ||
+      importingSessionId === session.sessionId ||
+      session.importedThreadId !== null
+    )
       return;
     const confirmed = await ensureLocalApi().dialogs.confirm(
       gt('Permanently delete native ACP session "{session}"?', {
@@ -285,7 +303,7 @@ function InstanceSessionManagement(
     if (generation !== projectGeneration.current) return;
     setDeletingSessionId(null);
     if (result._tag === "Success") {
-      deletionsDuringList.current?.add(session.sessionId);
+      mutationsDuringList.current?.set(session.sessionId, null);
       setSessions((current) =>
         current.filter((candidate) => candidate.sessionId !== session.sessionId),
       );
@@ -523,6 +541,7 @@ function InstanceSessionManagement(
                           disabled={
                             !canOperate ||
                             session.importedThreadId !== null ||
+                            importingSessionId === session.sessionId ||
                             deletingSessionId !== null
                           }
                           onClick={() => void deleteNativeSession(session)}

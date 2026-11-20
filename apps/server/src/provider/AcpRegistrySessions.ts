@@ -145,13 +145,14 @@ const make = Effect.gen(function* () {
   });
 
   const importHistory = Effect.fn("AcpRegistrySessions.importHistory")(
-    (threadId: ThreadId, workspaceRoot: string) =>
+    (threadId: ThreadId, workspaceRoot: string, nativeHistoryPending: boolean) =>
       agentSessionImporter.importNativeHistory({ threadId, workspaceRoot }).pipe(
         Effect.mapError(
           (cause) =>
             new AcpRegistryOperationError({
               reason: "session_import_failed",
               message: "Could not import the ACP session history.",
+              ...(nativeHistoryPending ? { pendingHistoryThreadId: threadId } : {}),
               cause,
             }),
         ),
@@ -199,7 +200,7 @@ const make = Effect.gen(function* () {
         historyOrigin: existing.historyOrigin,
         hasRun: existing.latestRunId !== null,
       });
-      yield* importHistory(threadId, workspaceRoot);
+      yield* importHistory(threadId, workspaceRoot, repairing);
       return { threadId, imported: repairing } as const;
     }
 
@@ -257,7 +258,7 @@ const make = Effect.gen(function* () {
         cause: launched.failure,
       });
     }
-    yield* importHistory(threadId, workspaceRoot);
+    yield* importHistory(threadId, workspaceRoot, true);
     return { threadId, imported: true } as const;
   }, coordinator.withSessionMutation);
 
