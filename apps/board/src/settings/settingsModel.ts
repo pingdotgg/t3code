@@ -206,6 +206,11 @@ export function saveWorktreesDirectory(path: string): SettingsInput {
   return { patch: { worktreesDirectory: path.trim() } };
 }
 
+/** T3's switch for provider version checks, shared by every client of the engine. */
+export function saveProviderUpdateChecks(enabled: boolean): SettingsInput {
+  return { patch: { enableProviderUpdateChecks: enabled } };
+}
+
 export type CleanupMode = "inherit" | "off" | "custom";
 
 export interface CleanupValues {

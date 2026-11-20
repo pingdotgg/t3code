@@ -1,6 +1,8 @@
+import { useAtomValue } from "@effect/atom-react";
 import { CircleHelp, Plus, Settings } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
+import { updateNoticeAtom } from "../state/updatesAtoms";
 import { Tooltip } from "../ui/Tooltip";
 import { AddProject } from "./AddProject";
 import { ForYouRow } from "./ForYouRow";
@@ -19,6 +21,8 @@ export function Sidebar({
   onOpenSettings: () => void;
 }) {
   const [adding, setAdding] = useState(false);
+  const updateOffered = useAtomValue(updateNoticeAtom);
+  const settingsLabel = updateOffered ? "Settings, update available" : "Settings";
   return (
     <aside
       aria-label="Sidebar"
@@ -55,16 +59,21 @@ export function Sidebar({
       <Section title="Workspace" empty="Nothing here yet" className="shrink-0" />
       <div className="flex-1" />
       <div className="flex shrink-0 flex-col gap-2 border-t border-line p-2 text-xs text-muted">
-        {footer}
         <div className="flex items-center gap-1">
-          <Tooltip text="Settings">
+          <Tooltip text={settingsLabel}>
             <button
               type="button"
-              aria-label="Settings"
+              aria-label={settingsLabel}
               onClick={onOpenSettings}
-              className={footerIcon}
+              className={`relative ${footerIcon}`}
             >
               <Settings className="size-4" />
+              {updateOffered && (
+                <span
+                  data-testid="settings-update-dot"
+                  className="absolute top-0.5 right-0.5 size-[7px] rounded-full bg-sky-400"
+                />
+              )}
             </button>
           </Tooltip>
           <Tooltip text="Help">
@@ -73,6 +82,7 @@ export function Sidebar({
             </button>
           </Tooltip>
         </div>
+        {footer}
       </div>
     </aside>
   );
