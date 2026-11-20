@@ -1,5 +1,19 @@
+diff --git a/android/src/main/java/expo/modules/widgets/ExpoWidgetsPeekWidget.kt b/android/src/main/java/expo/modules/widgets/ExpoWidgetsPeekWidget.kt
+index edabde8f51b3bd9162b634e46f2f09686c3a3b8a..1a17f3b12972bff9849d39dc257cf1b63a80c5a9 100644
+--- a/android/src/main/java/expo/modules/widgets/ExpoWidgetsPeekWidget.kt
++++ b/android/src/main/java/expo/modules/widgets/ExpoWidgetsPeekWidget.kt
+@@ -25,7 +25,8 @@ internal class ExpoWidgetsPeekWidget(
+     val layout = WidgetsLayoutRegistry.layout(appContext, widgetName)
+       ?: return createErrorRoot("No layout found for $widgetName")
+     val props = WidgetsLayoutRegistry.props(appContext, widgetName)
+-    val environment = getWidgetEnvironment(appContext)
++    val environment = getWidgetEnvironment(appContext) +
++      mapOf("width" to size.width.value.toDouble(), "height" to size.height.value.toDouble())
+     val node = evaluateLayout(appContext, layout, props, environment)
+ 
+     return node.toPeekRoot(appContext, InteractionSource.Widget(widgetName), size)
 diff --git a/build/ExpoWidgets.js b/build/ExpoWidgets.js
-index 85f3fbd..05b8dd8 100644
+index 85f3fbdddade637ed6a96fd0c532a22c675d45c5..05b8dd87f58bfc4acf66652ea04cec777f9be7ca 100644
 --- a/build/ExpoWidgets.js
 +++ b/build/ExpoWidgets.js
 @@ -34,6 +34,7 @@ class LiveActivityFactoryStub {
@@ -11,7 +25,7 @@ index 85f3fbd..05b8dd8 100644
  class CustomNotificationStub {
      getId() {
 diff --git a/build/Widgets.d.ts b/build/Widgets.d.ts
-index fb37d5d..47a97af 100644
+index fb37d5dd61d34768907ac397d4a6ddfce675bccb..47a97af1b8138caa10ca6f67bad6798ef1ea4a72 100644
 --- a/build/Widgets.d.ts
 +++ b/build/Widgets.d.ts
 @@ -100,6 +100,8 @@ export declare class LiveActivityFactory<T extends object = object> {
@@ -24,7 +38,7 @@ index fb37d5d..47a97af 100644
  /**
   * Creates a dismissal policy that removes the Live Activity at the specified time within a four-hour window.
 diff --git a/build/Widgets.js b/build/Widgets.js
-index cc1efce..3ce8897 100644
+index cc1efce0ce87337ac55d41a66659048c26698870..3ce8897445a1f4d4be3d4ae69ef6231f1ed604f4 100644
 --- a/build/Widgets.js
 +++ b/build/Widgets.js
 @@ -134,6 +134,9 @@ import ExpoWidgetsModule from './ExpoWidgets';
@@ -38,10 +52,23 @@ index cc1efce..3ce8897 100644
  /**
   * Creates a dismissal policy that removes the Live Activity at the specified time within a four-hour window.
 diff --git a/build/Widgets.types.d.ts b/build/Widgets.types.d.ts
-index 4c474bb..dbfb8b1 100644
+index 4c474bb2730376c8e182159c096a6031da4864de..f4e2464de5fe0583cd0e893ee4639648fd779033 100644
 --- a/build/Widgets.types.d.ts
 +++ b/build/Widgets.types.d.ts
-@@ -98,6 +98,10 @@ export type LiveActivityEnvironment = {
+@@ -50,6 +50,12 @@ export type WidgetEnvironment<T extends object | undefined = undefined> = {
+      * The color scheme of the widget's environment.
+      */
+     colorScheme?: 'light' | 'dark';
++    /**
++     * The widget's current size in dp.
++     * @platform android
++     */
++    width?: number;
++    height?: number;
+     /**
+      * A Boolean value that indicates whether the display or environment currently requires reduced luminance.
+      *
+@@ -98,6 +104,10 @@ export type LiveActivityEnvironment = {
       * @platform ios
       */
      colorScheme: 'light' | 'dark';
@@ -52,7 +79,7 @@ index 4c474bb..dbfb8b1 100644
      /**
       * Whether the activity is displayed in a context with reduced luminance.
       * @platform iOS 16+
-@@ -307,6 +311,7 @@ export declare class NativeLiveActivityFactory extends SharedObject {
+@@ -307,6 +317,7 @@ export declare class NativeLiveActivityFactory extends SharedObject {
      constructor(name: string, layout: string);
      start(props?: string, url?: string, staleDate?: number): NativeLiveActivity;
      getInstances(): NativeLiveActivity[];
@@ -61,10 +88,10 @@ index 4c474bb..dbfb8b1 100644
  export declare class NativeLiveActivity extends SharedObject<LiveActivityEvents> {
      getId(): string;
 diff --git a/ios/LiveActivityFactory.swift b/ios/LiveActivityFactory.swift
-index 29e4f15..629e547 100644
+index 29e4f1566d188665e301d32bc1ad85640f83e68c..629e547d8604757e89dd571eab7ad43f7c649cdb 100644
 --- a/ios/LiveActivityFactory.swift
 +++ b/ios/LiveActivityFactory.swift
-@@ -14,7 +14,16 @@ final class LiveActivityFactory: SharedObject {
+@@ -14,11 +14,23 @@ final class LiveActivityFactory: SharedObject {
      WidgetsStorage.set(layout, forKey: "__expo_widgets_live_activity_\(name)_layout")
    }
  
@@ -81,7 +108,7 @@ index 29e4f15..629e547 100644
      guard ActivityAuthorizationInfo().areActivitiesEnabled else {
        throw LiveActivitiesNotSupportedException()
      }
-@@ -22,3 +31,6 @@ final class LiveActivityFactory: SharedObject {
+ 
 +    // A replacement started beside an ended card would leave both visible.
 +    dismissEnded()
 +
@@ -89,7 +116,7 @@ index 29e4f15..629e547 100644
        let initialState = LiveActivityAttributes.ContentState(name: name, props: props)
        let activity = try Activity.request(
 diff --git a/ios/Widgets/Utils.swift b/ios/Widgets/Utils.swift
-index 76b2199..6cb52c3 100644
+index 76b2199c2d3f879463fed5d2bd49038b0428a2e7..6cb52c3de4ad9696bc0c51ad62401cce96f405e7 100644
 --- a/ios/Widgets/Utils.swift
 +++ b/ios/Widgets/Utils.swift
 @@ -125,6 +125,10 @@ func getLiveActivityEnvironment(for environment: EnvironmentValues, in context:
@@ -104,7 +131,7 @@ index 76b2199..6cb52c3 100644
      env["isActivityUpdateReduced"] = environment.isActivityUpdateReduced
      env["activityFamily"] = "\(environment.activityFamily)"
 diff --git a/ios/Widgets/WidgetLiveActivity.swift b/ios/Widgets/WidgetLiveActivity.swift
-index 4d135c4..dae4744 100644
+index 4d135c4e4eb1f846315654ed9d835a935d120d42..dae47445b27516fa2464a25b68bddc8f6dec3e1e 100644
 --- a/ios/Widgets/WidgetLiveActivity.swift
 +++ b/ios/Widgets/WidgetLiveActivity.swift
 @@ -19,53 +19,41 @@ struct LiveActivityAttributes: ActivityAttributes {
@@ -207,10 +234,10 @@ index 4d135c4..dae4744 100644
        LiveActivityBanner(context: context, nodes: nodes)
      } else if let node = nodes["banner"] as? [String: Any] {
 diff --git a/ios/WidgetsModule.swift b/ios/WidgetsModule.swift
-index 285136b..d36eac4 100644
+index 285136b3774e531b35c1a3e832506f93f61654be..d36eac46f435a78afda1724d92d685f3fb19406b 100644
 --- a/ios/WidgetsModule.swift
 +++ b/ios/WidgetsModule.swift
-@@ -97,4 +97,8 @@ public final class WidgetsModule: Module {
+@@ -97,6 +97,10 @@ public final class WidgetsModule: Module {
        Function("getInstances") { (liveActivity: LiveActivityFactory) in
          try liveActivity.getInstances()
        }
@@ -219,21 +246,25 @@ index 285136b..d36eac4 100644
 +        liveActivity.dismissEnded()
 +      }
      }
+ 
+     Class("LiveActivity", LiveActivity.self) {
 diff --git a/src/ExpoWidgets.ts b/src/ExpoWidgets.ts
-index db15000..6863dc9 100644
+index db1500090738cca841ded2967078b8c594bac738..6863dc94a3bb61196920489e3f10f21b77c0cce9 100644
 --- a/src/ExpoWidgets.ts
 +++ b/src/ExpoWidgets.ts
-@@ -59,4 +59,5 @@ class LiveActivityFactoryStub {
+@@ -59,6 +59,7 @@ class LiveActivityFactoryStub {
    getInstances(): NativeLiveActivity[] {
      return [];
    }
 +  dismissEnded(): void {}
  }
+ 
+ class CustomNotificationStub {
 diff --git a/src/Widgets.ts b/src/Widgets.ts
-index 814b312..9818907 100644
+index 814b3120b254aaea5ccefab0ab52804ca48ecaf8..98189070a124481a0f366c86116552ca0945fcd7 100644
 --- a/src/Widgets.ts
 +++ b/src/Widgets.ts
-@@ -213,4 +213,9 @@ export class LiveActivityFactory<T extends object = object> {
+@@ -213,6 +213,11 @@ export class LiveActivityFactory<T extends object = object> {
        .getInstances()
        .map((instance) => new LiveActivity<T>(instance));
    }
@@ -243,11 +274,26 @@ index 814b312..9818907 100644
 +    this.nativeLiveActivityFactory.dismissEnded();
 +  }
  }
+ 
+ /**
 diff --git a/src/Widgets.types.ts b/src/Widgets.types.ts
-index 690d069..c60dd79 100644
+index 690d0695c726dd4f260ba3aeb4edb82b9a72cd39..dc700b6f9320406ae567da5f25f88358a5816a8f 100644
 --- a/src/Widgets.types.ts
 +++ b/src/Widgets.types.ts
-@@ -112,6 +112,10 @@ export type LiveActivityEnvironment = {
+@@ -63,6 +63,12 @@ export type WidgetEnvironment<T extends object | undefined = undefined> = {
+    * The color scheme of the widget's environment.
+    */
+   colorScheme?: 'light' | 'dark';
++  /**
++   * The widget's current size in dp.
++   * @platform android
++   */
++  width?: number;
++  height?: number;
+   /**
+    * A Boolean value that indicates whether the display or environment currently requires reduced luminance.
+    *
+@@ -112,6 +118,10 @@ export type LiveActivityEnvironment = {
     * @platform ios
     */
    colorScheme: 'light' | 'dark';
@@ -258,9 +304,11 @@ index 690d069..c60dd79 100644
    /**
     * Whether the activity is displayed in a context with reduced luminance.
     * @platform iOS 16+
-@@ -337,4 +341,5 @@ export declare class NativeLiveActivityFactory extends SharedObject {
+@@ -337,6 +347,7 @@ export declare class NativeLiveActivityFactory extends SharedObject {
    constructor(name: string, layout: string);
    start(props?: string, url?: string, staleDate?: number): NativeLiveActivity;
    getInstances(): NativeLiveActivity[];
 +  dismissEnded(): void;
  }
+ 
+ export declare class NativeLiveActivity extends SharedObject<LiveActivityEvents> {
