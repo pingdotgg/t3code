@@ -14,5 +14,8 @@ if (!majorVersion) {
 
 module.exports = {
   nativeModuleSourceType: "files",
-  extraSources: [{ type: "contents", id: "appMajorVersion", contents: majorVersion }],
+  extraSources: [
+    { type: "contents", id: "appMajorVersion", contents: majorVersion },
+    { type: "file", filePath: "plugins/ios/T3AppIntents.swift", reasons: ["iosAppIntents"] },
+  ],
 };

@@ -104,6 +104,12 @@ sees the recording, which runs in T3 Code itself.
 are down, and **Toggle** always needs a second press. Change the chord itself in
 [Keybindings settings](./keybindings.md).
 
+On iPhone, the **Start Dictation** action opens a new thread that is already
+listening. Find it under T3 Code in the Shortcuts app, assign it to the Action
+button, or say "Start dictation in T3 Code" to Siri. The thread opens in the
+same project a new thread from the app would use, or in the project picker when
+there is none.
+
 ## Improve recognition
 
 - **Language** picks what you speak. **Auto** lets a multilingual model detect

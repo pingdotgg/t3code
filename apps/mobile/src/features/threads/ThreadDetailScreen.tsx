@@ -236,6 +236,7 @@ export interface ThreadDetailScreenProps {
     ) => React.ReactNode;
     readonly controls: (viewportHeight: number) => React.ReactNode;
     readonly editorRef: React.RefObject<ComposerEditorHandle | null>;
+    readonly takeDictationRequest: (() => boolean) | undefined;
     readonly sendBlockedReason: string | null;
     readonly interactionLocked: boolean;
   };
@@ -1901,6 +1902,7 @@ function ThreadDetailBody(
                         canOperateThread={props.canOperateThread}
                         reportedModelSelection={reportedModelSelection}
                         editorRef={composerEditorRef}
+                        takeDictationRequest={props.draftMode?.takeDictationRequest}
                         placeholder={
                           props.activePendingApproval
                             ? props.activePendingApproval.supportsFeedback

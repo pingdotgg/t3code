@@ -95,6 +95,7 @@ import {
 import { incomingShareImports, useIncomingShare } from "../sharing/IncomingShareProvider";
 import { idleShareFlagAtom, idleShareImportPhaseAtom } from "./incomingShareImport";
 import { newTaskFlowKey } from "./new-task-flow-state";
+import { takeNewTaskDictation } from "./new-task-dictation";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ConnectionStatusDot } from "../connection/ConnectionStatusDot";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -162,6 +163,7 @@ export function NewTaskDraftScreen(props: {
   };
   readonly draftId?: string;
   readonly incomingShareId?: string;
+  readonly dictationRequestId?: string;
 }) {
   const gt = useGT();
   const m = useMessages();
@@ -1024,6 +1026,13 @@ export function NewTaskDraftScreen(props: {
     },
     m,
   );
+  const requestedProjectId = props.initialProjectRef?.projectId;
+  const isOnRequestedProject =
+    selectedProjectKey === scopedProjectKey(selectedProject.environmentId, selectedProject.id) &&
+    (requestedProjectId === undefined ||
+      (selectedProject.id === requestedProjectId &&
+        selectedProject.environmentId === props.initialProjectRef?.environmentId));
+
   return (
     <>
       <ThreadScreenBinding
@@ -1035,6 +1044,10 @@ export function NewTaskDraftScreen(props: {
           content: heroViewport,
           controls: draftControls,
           editorRef: promptInputRef,
+          takeDictationRequest:
+            isFocused && isOnRequestedProject
+              ? () => takeNewTaskDictation(props.dictationRequestId)
+              : undefined,
           sendBlockedReason: setupBlockReason,
           interactionLocked: isComposerInteractionLocked,
         }}

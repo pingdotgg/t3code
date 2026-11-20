@@ -88,6 +88,8 @@ import { useWorkspaceTabs } from "./workspace/WorkspaceTabsContext";
 import { HomeListOptionsProvider } from "../home/home-list-options";
 import { buildHomeProjectScopes, resolveHomeProjectFilterScope } from "../home/homeThreadList";
 import { newTaskDestination, newTaskFilteredProject } from "../threads/new-task-project-selection";
+import { requestNewTaskDictation } from "../threads/new-task-dictation";
+import { useStartDictationIntent } from "../shortcuts/useStartDictationIntent";
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
 import { PaneContext } from "../../components/ui/Pane";
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
@@ -587,7 +589,7 @@ function AdaptiveWorkspaceLayoutContent(
   const compactAndroidSettings =
     Platform.OS === "android" && androidSettingsOpen && !layout.usesSplitView;
   // Reads the open page when pressed, so the layout context doesn't change on every navigation.
-  const handleStartNewTask = () => {
+  const startNewTask = (requestId: string) => {
     const state = rootStackState(navigation);
     const currentRoute = workspaceRoutesOf(
       state?.routes.slice(0, state.index + 1) ?? [],
@@ -632,7 +634,7 @@ function AdaptiveWorkspaceLayoutContent(
     handleSelectThreadRoute(
       newTaskDestination({
         projects,
-        requestId: uuidv4(),
+        requestId,
         useLastProject: saved?.useLastProjectForNewThreads,
         currentProject: environmentId && projectId ? { environmentId, projectId } : undefined,
         filteredProject: filteredScope
@@ -648,9 +650,17 @@ function AdaptiveWorkspaceLayoutContent(
     );
   };
 
+  const handleStartNewTask = () => startNewTask(uuidv4());
+
   useHardwareKeyboardCommand("newTask", () => {
     handleStartNewTask();
     return true;
+  });
+
+  useStartDictationIntent(() => {
+    const requestId = uuidv4();
+    requestNewTaskDictation(requestId);
+    startNewTask(requestId);
   });
 
   const inspectorColumnTargetWidth = panes.auxiliaryPaneVisible
