@@ -9553,6 +9553,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   detail: `Provider turn ${turnInput.providerTurnId} is not active and cannot be steered.`,
                 });
               }
+              // `agy acp` rejects a prompt while the running one waits on a question or approval,
+              // so the message waits as a follow-up until the user answers.
+              if ((yield* Ref.get(pendingRuntimeRequests)).size > 0) {
+                return yield* new ProviderAdapter.ProviderAdapterSteerDeclinedError({
+                  driver,
+                  providerThreadId: turnInput.providerThread.id,
+                  providerTurnId: turnInput.providerTurnId,
+                });
+              }
               const generation = yield* Ref.get(runtimeCallbackGeneration);
               const checkPromptOutcome =
                 flavor.watchPromptOutcome === undefined
@@ -9961,7 +9970,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             (effect, turnInput) =>
               effect.pipe(
                 Effect.mapError((cause) =>
-                  cause._tag === "ProviderAdapterSteerRunUnsupportedError"
+                  cause._tag === "ProviderAdapterSteerRunUnsupportedError" ||
+                  cause._tag === "ProviderAdapterSteerDeclinedError"
                     ? cause
                     : new ProviderAdapter.ProviderAdapterSteerRunError({
                         driver,
