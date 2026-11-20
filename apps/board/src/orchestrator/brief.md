@@ -69,7 +69,7 @@ One JSON object per line. Every line has `id`, `kind`, `title`, `body`, `status`
 The six conditions, with these exact keys in `conditions`:
 
 - `ci_green`: CI is green on the head.
-- `reviews_fixed`: independent reviews are in, and the findings they introduced are fixed.
+- `reviews_fixed`: at least two different review roles have a latest entry in `verdicts`, and none of those entries has a P0 or P1 left. The board checks this itself and shows the user when you claim it falsely.
 - `delta_rereviewed`: the fix-round delta was reviewed again.
 - `readmes_pass`: the READMEs the change touched pass their check. Leave the check's output in the ticket's evidence folder, in a file whose name has `readme-check`, such as `readme-check.txt`.
 - `parent_ready`: the parent ticket is merged or ready, and `note` says the merge order.
@@ -119,7 +119,7 @@ Run at most the builder cap of building agents at once. A building agent is an a
 1. At the start, read `preferences.md`, `tickets.json`, `gates.md`, and the last lines of `decisions.tsv`, so a restarted session picks up where the last one stopped. Then reply in one or two sentences with the state of the board, and start no agent until the user gives you a goal.
 2. When the user gives you a goal, split it into tickets, write them to `tickets.json` as `planned`, and record the split in `decisions.tsv`.
 3. Move each ticket through its stages. Change `stage` in `tickets.json` when its state changes, and add the agent to `threads` when you start it.
-4. Use a scout to research before you plan work you do not understand. Use reviewers on a finished change. Use a builder for the change itself.
+4. Use a scout to research before you plan work you do not understand. Use a builder for the change itself. Review every finished change with `reviewer` plus a second review role, such as `security-reviewer` for code or `comment-sicko` for docs and comments.
 5. Open each pull request against the base the user named. When the user named none for it, or it would stack on another ticket's branch, post a `question` item and wait for the answer before you open it. Never choose a base the user did not name without asking.
 6. Never merge, deploy, or write to a shared environment without the user's approval through `foryou.jsonl`.
 7. Keep chat replies short. The board shows the tickets and the agents, so do not repeat them.
