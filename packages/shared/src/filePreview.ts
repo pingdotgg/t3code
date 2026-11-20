@@ -47,9 +47,9 @@ export function filePreviewKind(
   const richDocuments = options?.richDocuments !== false;
   const office = richDocuments ? officePreviewKind(file) : null;
   if (office) return office;
+  if (richDocuments && modelPreviewKind(file)) return "model";
   const binary = binaryPreviewKind(file);
   if (binary) return binary;
-  if (richDocuments && modelPreviewKind(file)) return "model";
   if (mime === "application/pdf") return "pdf";
   if (mime === "text/html") return "html";
   if (mime === "text/markdown" || mime === "text/x-markdown") return "markdown";
@@ -108,6 +108,11 @@ const BINARY_MIME_TYPES = new Map([
   [".db", "application/vnd.sqlite3"],
 ]);
 
+const ZIP_MIME_TYPES: ReadonlySet<string> = new Set([
+  "application/zip",
+  "application/x-zip-compressed",
+]);
+
 export function binaryPreviewKind(file: {
   readonly name: string;
   readonly mimeType?: string;
@@ -116,9 +121,8 @@ export function binaryPreviewKind(file: {
   if (["application/vnd.sqlite3", "application/x-sqlite3", "application/x-sqlite"].includes(mime))
     return "sqlite";
   if (
+    ZIP_MIME_TYPES.has(mime) ||
     [
-      "application/zip",
-      "application/x-zip-compressed",
       "application/java-archive",
       "application/x-java-archive",
       "application/x-tar",
@@ -162,6 +166,7 @@ export function modelPreviewKind(file: {
   }
   const alias = MODEL_MIME_ALIASES.get(mime);
   if (alias) return alias;
+  if (ZIP_MIME_TYPES.has(mime) && file.name.toLowerCase().endsWith(".3mf")) return "3mf";
   if (mime && !GENERIC_MIME_TYPES.has(mime) && mime !== "text/plain") return null;
   const dot = file.name.lastIndexOf(".");
   if (dot < 0) return null;
