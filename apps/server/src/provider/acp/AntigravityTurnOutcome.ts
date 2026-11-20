@@ -24,6 +24,9 @@ const QUOTA_EXHAUSTED = /\breason:QUOTA_EXHAUSTED\b/;
 // history, so every later prompt to that session fails the same way.
 const INVALID_THINKING_SIGNATURE =
   /\bmessages\.\d+\.content\.\d+(?:\.thinking\.signature: Field required|: Invalid `signature` in `thinking` block)/;
+// The runtime stores a failed context-summarization step and replays it on every later
+// prompt to that session, whatever first made it fail.
+const FAILED_CHECKPOINT = /\bcontext summarization: checkpoint step \d+ failed\b/;
 const RESET_TIMESTAMP = /\bquotaResetTimeStamp:([^\s\]]+)/;
 const RESET_DELAY = /\bquotaResetDelay:((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]])/;
 // google.rpc.RetryInfo, which plain rate limits carry instead of a quota reset.
@@ -124,10 +127,26 @@ function turnFailure(
   if (errorText === undefined && stopReason !== "refusal") return undefined;
   const text = errorText ?? "";
   const apiError = API_ERROR.exec(text);
-  const reusable = (failure: OrchestrationV2ProviderFailure) =>
-    ({ failure, threadDisposition: "reusable" }) as const;
+  const failedCheckpoint = FAILED_CHECKPOINT.test(text);
+  const settle = (failure: OrchestrationV2ProviderFailure) =>
+    failedCheckpoint
+      ? {
+          // A quota failure keeps its reset time so usage-limit recovery can resume the thread.
+          failure:
+            failure.class === "usage_limit"
+              ? failure
+              : makeProviderFailure({
+                  class: "provider_error",
+                  message:
+                    "Antigravity could not summarize this conversation, so its saved session can no longer continue. The next message starts a fresh Antigravity session with this thread's context.",
+                  code: "CHECKPOINT_FAILED",
+                  retryable: true,
+                }),
+          threadDisposition: "broken" as const,
+        }
+      : ({ failure, threadDisposition: "reusable" } as const);
   if (stopReason === "refusal" || QUOTA_EXHAUSTED.test(text)) {
-    return reusable(
+    return settle(
       makeProviderFailure({
         class: "usage_limit",
         message: "You have reached your Antigravity quota for this period.",
@@ -150,7 +169,7 @@ function turnFailure(
     };
   }
   if (apiError === null) {
-    return reusable(
+    return settle(
       makeProviderFailure({
         class: "provider_error",
         message: "Antigravity stopped this turn because of an error.",
@@ -159,7 +178,7 @@ function turnFailure(
   }
   const [, httpStatus, message, status] = apiError;
   const rateLimited = httpStatus === "429" || status === "RESOURCE_EXHAUSTED";
-  return reusable(
+  return settle(
     makeProviderFailure({
       class: rateLimited ? "usage_limit" : "provider_error",
       message: message!.trim(),
