@@ -498,6 +498,16 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
   } = {},
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const mcpAppConfigs = options.mcpAppConfigs;
+  const recordMcpAppConfig = (providerThread: OrchestrationV2ProviderThread) =>
+    Effect.gen(function* () {
+      if (mcpAppConfigs === undefined) return;
+      const config =
+        providerThread.appThreadId === null
+          ? undefined
+          : yield* mcpSessions.read(providerThread.appThreadId);
+      yield* Ref.update(mcpAppConfigs, (configs) => [...configs, config]);
+    });
   const countClose = Effect.addFinalizer(() =>
     Ref.update(state, (current) => ({
       ...current,
@@ -640,28 +650,18 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
             ),
           respondToRuntimeRequest: () => Effect.void,
           readThreadSnapshot: () => unimplemented("readThreadSnapshot unused in test"),
-          ...(options.mcpAppConfigs === undefined
+          ...(mcpAppConfigs === undefined
             ? {}
-            : (() => {
-                const recordMcpAppConfig = (providerThread: OrchestrationV2ProviderThread) =>
-                  Effect.gen(function* () {
-                    const config =
-                      providerThread.appThreadId === null
-                        ? undefined
-                        : yield* mcpSessions.read(providerThread.appThreadId);
-                    yield* Ref.update(options.mcpAppConfigs!, (configs) => [...configs, config]);
-                  });
-                return {
-                  mcpApps: {
-                    listTools: ({ providerThread }) =>
-                      recordMcpAppConfig(providerThread).pipe(Effect.as([])),
-                    callTool: ({ providerThread }) =>
-                      recordMcpAppConfig(providerThread).pipe(Effect.as({ content: [] })),
-                    readResource: ({ providerThread }) =>
-                      recordMcpAppConfig(providerThread).pipe(Effect.as({ contents: [] })),
-                  },
-                };
-              })()),
+            : {
+                mcpApps: {
+                  listTools: ({ providerThread }) =>
+                    recordMcpAppConfig(providerThread).pipe(Effect.as([])),
+                  callTool: ({ providerThread }) =>
+                    recordMcpAppConfig(providerThread).pipe(Effect.as({ content: [] })),
+                  readResource: ({ providerThread }) =>
+                    recordMcpAppConfig(providerThread).pipe(Effect.as({ contents: [] })),
+                },
+              }),
           rollbackThread: () => unimplemented("rollbackThread unused in test"),
           forkThread: () => unimplemented("forkThread unused in test"),
         } satisfies ProviderAdapter.ProviderAdapterV2SessionRuntime;
