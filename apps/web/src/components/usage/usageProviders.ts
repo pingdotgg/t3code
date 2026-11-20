@@ -16,6 +16,11 @@ export const PROVIDER_PRESENTATION = {
     color: "var(--contrast-foreground)",
     driverKind: ProviderDriverKind.make("codex"),
   },
+  devin: {
+    label: "Devin",
+    color: "#7b8cff",
+    driverKind: ProviderDriverKind.make("devin"),
+  },
   claude: {
     label: "Claude Code",
     color: "#d97757",
