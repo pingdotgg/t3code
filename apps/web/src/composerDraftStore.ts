@@ -671,7 +671,10 @@ interface ComposerDraftStoreState {
   addImages: (
     threadRef: ComposerThreadTarget,
     images: ComposerImageAttachment[],
-    options?: { allowDuplicates?: boolean },
+    options?: {
+      allowDuplicates?: boolean;
+      onCapacityExceeded?: (image: ComposerImageAttachment) => void;
+    },
   ) => string[];
   removeImage: (threadRef: ComposerThreadTarget, imageId: string) => void;
   /** Returns the ids of files appended; a re-pick that replaces a marker is not listed. */
@@ -754,6 +757,12 @@ interface ComposerDraftStoreState {
   syncPersistedAttachments: (
     threadRef: ComposerThreadTarget,
     attachments: PersistedComposerImageAttachment[],
+  ) => Promise<void>;
+  /** Saves records for the supplied images that the draft still owns after serialization. */
+  appendPersistedAttachments: (
+    threadRef: ComposerThreadTarget,
+    images: ReadonlyArray<ComposerImageAttachment>,
+    attachments: ReadonlyArray<PersistedComposerImageAttachment>,
   ) => Promise<void>;
   clearComposerContent: (threadRef: ComposerThreadTarget) => void;
   /** Clears text and attachments, preserving terminal/element contexts, preview annotations, and review comments. */
@@ -2585,7 +2594,6 @@ function readPersistedAttachmentIdsFromStorage(threadKey: string): string[] {
 
 function verifyPersistedAttachments(
   threadKey: string,
-  attachments: PersistedComposerImageAttachment[],
   set: (
     partial:
       | ComposerDraftStoreState
@@ -2609,7 +2617,7 @@ function verifyPersistedAttachments(
       return state;
     }
     const imageIdSet = new Set(current.images.map((image) => image.id));
-    const persistedAttachments = attachments.filter(
+    const persistedAttachments = current.persistedAttachments.filter(
       (attachment) => imageIdSet.has(attachment.id) && persistedIdSet.has(attachment.id),
     );
     const nonPersistedImageIds: string[] = [];
@@ -3563,6 +3571,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return [];
           }
           let acceptedIds: string[] = [];
+          const capacityRejections: ComposerImageAttachment[] = [];
           set((state) => {
             const existing = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
             const existingIds = new Set(existing.images.map((image) => image.id));
@@ -3587,6 +3596,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 existing.images.length + existing.files.length + dedupedIncoming.length >=
                 PROVIDER_SEND_TURN_MAX_ATTACHMENTS
               ) {
+                capacityRejections.push(image);
                 if (!acceptedPreviewUrls.has(image.previewUrl)) {
                   revokeObjectPreviewUrl(image.previewUrl);
                 }
@@ -3611,6 +3621,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               },
             };
           });
+          capacityRejections.forEach((image) => options?.onCapacityExceeded?.(image));
           return acceptedIds;
         },
         removeImage: (threadRef, imageId) => {
@@ -4364,7 +4375,24 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
           await Promise.resolve();
-          verifyPersistedAttachments(threadKey, attachments, set);
+          verifyPersistedAttachments(threadKey, set);
+        },
+        appendPersistedAttachments: async (threadRef, images, attachments) => {
+          const current = get().getComposerDraft(threadRef);
+          if (!current || attachments.length === 0) return;
+          const ownedImages = new Set(current.images);
+          const ownedIds = new Set(
+            images.filter((image) => ownedImages.has(image)).map(({ id }) => id),
+          );
+          const ownedRecords = attachments.filter(({ id }) => ownedIds.has(id));
+          if (ownedRecords.length === 0) return;
+          const persistedById = new Map(
+            current.persistedAttachments.map((record) => [record.id, record]),
+          );
+          for (const record of ownedRecords) {
+            if (!persistedById.has(record.id)) persistedById.set(record.id, record);
+          }
+          await get().syncPersistedAttachments(threadRef, [...persistedById.values()]);
         },
         clearComposerContent: (threadRef) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";

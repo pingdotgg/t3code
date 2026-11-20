@@ -2,7 +2,7 @@ import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   authScopeResponse,
-  AuthStandardClientScopes,
+  AuthAdministrativeClientScopes,
   connectDeviceVerificationCode,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -107,7 +107,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         const authenticated = yield* serverAuth.authenticateHttpRequest(request);
         expect(devExchange.cookieName).toMatch(/^t3_dev_session_/);
         expect(devExchange.expireNormalCookie).toBe(true);
-        expect(devExchange.response).toMatchObject(authScopeResponse(AuthStandardClientScopes));
+        expect(devExchange.response).toMatchObject(
+          authScopeResponse(AuthAdministrativeClientScopes),
+        );
         expect(authenticated.scopes).toEqual(["orchestration:read"]);
       }).pipe(
         Effect.provide(
@@ -265,7 +267,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         expect((yield* Effect.flip(sessions.verify(token)))._tag).toBe("SessionTokenRevokedError");
         expect(
           (yield* serverAuth.createBrowserSession(recovery.credential, requestMetadata)).response,
-        ).toMatchObject({ authenticated: true, ...authScopeResponse(AuthStandardClientScopes) });
+        ).toMatchObject({
+          authenticated: true,
+          ...authScopeResponse(AuthAdministrativeClientScopes),
+        });
       }).pipe(
         Effect.provide(
           layerEnvironmentAuth({
@@ -347,6 +352,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           expect(retried.credential).toBe(requested.credential);
 
           expect(yield* serverAuth.approveConnectDevice(request!.id)).toBe(true);
+          // A stale prompt on another client must not report denying an approved device.
+          expect(yield* serverAuth.revokePairingLink(request!.id)).toBe(false);
           expect(
             (yield* serverAuth.listPairingLinks()).some((link) => link.connectDeviceRequest),
           ).toBe(false);
@@ -519,6 +526,68 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         expect(yield* refused(idle.access_token, key.thumbprint)).toBe(
           "ServerAuthInvalidCredentialError",
         );
+      }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
+    );
+
+    it.effect("renews a peer link's session while it is used, and no other MCP client's", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const day = 24 * 60 * 60 * 1000;
+        const issue = (peerLink: boolean) =>
+          serverAuth.issueMcpClientSession({
+            label: peerLink ? "T3 Code · A" : "ChatGPT",
+            access: "auto",
+            peerLink,
+            client: requestMetadata,
+          });
+        const use = (session: { readonly token: string }) =>
+          serverAuth.authenticateMcpClient(makeBearerRequest(session.token)).pipe(
+            Effect.map((client) => client.linkExpiresAt?.epochMilliseconds ?? null),
+            Effect.catchTags({
+              ServerAuthInvalidCredentialError: () => Effect.succeed("refused" as const),
+            }),
+          );
+        const listedExpiry = (session: { readonly sessionId: string }) =>
+          serverAuth
+            .listSessions()
+            .pipe(
+              Effect.map(
+                (sessions) =>
+                  sessions.find((listed) => listed.sessionId === session.sessionId)?.expiresAt
+                    .epochMilliseconds,
+              ),
+            );
+        const issuedAt = (yield* DateTime.now).epochMilliseconds;
+        const used = yield* issue(true);
+        const idle = yield* issue(true);
+        const revoked = yield* issue(true);
+        const outside = yield* issue(false);
+
+        // Within a day of its full lifetime, a call leaves the session row alone.
+        yield* TestClock.adjust("12 hours");
+        expect(yield* use(used)).toBe(issuedAt + 30 * day);
+        expect(yield* listedExpiry(used)).toBe(issuedAt + 30 * day);
+
+        yield* TestClock.adjust("468 hours");
+        expect(yield* use(used)).toBe(issuedAt + 50 * day);
+        expect(yield* listedExpiry(used)).toBe(issuedAt + 50 * day);
+        expect(yield* use(outside)).toBeNull();
+        expect(yield* listedExpiry(outside)).toBe(issuedAt + 30 * day);
+        expect(yield* serverAuth.revokeSession(revoked.sessionId)).toBe(true);
+        expect(yield* use(revoked)).toBe("refused");
+
+        // Day 40: past the token's own 30 days, so only the renewal keeps the used link.
+        yield* TestClock.adjust("20 days");
+        expect(yield* use(used)).toBe(issuedAt + 70 * day);
+        expect(yield* use(idle)).toBe("refused");
+        expect(yield* use(outside)).toBe("refused");
+        expect(yield* use(revoked)).toBe("refused");
+        expect(yield* listedExpiry(idle)).toBeUndefined();
+        expect(yield* listedExpiry(revoked)).toBeUndefined();
+
+        // Renewed links still end 30 days after their last use.
+        yield* TestClock.adjust("30 days");
+        expect(yield* use(used)).toBe("refused");
       }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
     );
 
@@ -754,7 +823,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           makeCookieRequest(sessions.cookieName, exchanged.sessionToken),
         );
 
-        expect(verified.scopes).toEqual(AuthStandardClientScopes);
+        expect(verified.scopes).toEqual(AuthAdministrativeClientScopes);
         expect(verified.subject).toBe("administrative-bootstrap");
       }).pipe(Effect.provide(layerEnvironmentAuth())),
     );
@@ -793,12 +862,26 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           const clientsBeforeRevoke = yield* serverAuth.listClientSessions(
             administrativeSession.sessionId,
           );
+          const unspentCode = yield* serverAuth.issuePairingCredential({ label: "unspent" });
+          const unspentApproval = yield* serverAuth.issuePairingCredential({
+            access: "read-only",
+          });
           const revokedCount = yield* serverAuth.revokeOtherClientSessions(
             administrativeSession.sessionId,
           );
           const clientsAfterRevoke = yield* serverAuth.listClientSessions(
             administrativeSession.sessionId,
           );
+          expect(
+            (yield* serverAuth
+              .createBrowserSession(unspentCode.credential, requestMetadata)
+              .pipe(Effect.exit))._tag,
+          ).toBe("Failure");
+          expect(
+            (yield* serverAuth
+              .consumeMcpApprovalCode(unspentApproval.credential, "read-only")
+              .pipe(Effect.exit))._tag,
+          ).toBe("Failure");
 
           expect(listedPairingLinks.map((entry) => entry.id)).toContain(pairingCredential.id);
           expect(listedPairingLinks.find((entry) => entry.id === pairingCredential.id)?.label).toBe(
