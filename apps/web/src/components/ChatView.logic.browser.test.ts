@@ -65,6 +65,18 @@ it("keeps focus in a region with its own keys on window return", async () => {
   );
 });
 
+it("keeps focus on a trigger whose menu just opened on window return", () => {
+  const trigger = document.createElement("button");
+  trigger.setAttribute("aria-expanded", "true");
+  document.body.append(trigger);
+  using _trigger = { [Symbol.dispose]: () => trigger.remove() };
+
+  trigger.focus();
+  expect(shouldRefocusComposerOnWindowFocus(document.activeElement, null)).toBe(false);
+  trigger.setAttribute("aria-expanded", "false");
+  expect(shouldRefocusComposerOnWindowFocus(document.activeElement, null)).toBe(true);
+});
+
 it("refocuses the composer on window return from a clicked area after a bare key press", async () => {
   const controller = createWorkspaceFocusController(document);
   const root = document.createElement("div");
