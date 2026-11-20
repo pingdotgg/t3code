@@ -22,6 +22,7 @@ import {
 } from "../cloud/pinnedRuntime.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import * as CliService from "./service.ts";
+import { awaitDetachedSpawn } from "../process/windowsVerbatimSpawn.ts";
 import { findWindowsShim } from "./update.ts";
 
 export class CliUninstallError extends Schema.TaggedError<CliUninstallError>()(
@@ -277,13 +278,13 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
     if (platform === "win32") {
       const runtimeDir = plan.runtimeDir;
       const comspec = environment["ComSpec"] ?? environment["COMSPEC"] ?? "cmd.exe";
-      yield* Effect.try({
-        try: () => spawnWindowsRemoval(comspec, runtimeDir).unref(),
-        catch: () =>
-          new CliUninstallError({
-            reason: `Could not schedule removal of ${runtimeDir}. Delete it yourself once this window is closed.`,
-          }),
-      });
+      const notScheduled = () =>
+        new CliUninstallError({
+          reason: `Could not schedule removal of ${runtimeDir}. Delete it yourself once this window is closed.`,
+        });
+      yield* awaitDetachedSpawn(() => spawnWindowsRemoval(comspec, runtimeDir)).pipe(
+        Effect.mapError(notScheduled),
+      );
       yield* Console.log(`${runtimeDir} will be removed once t3 exits.`);
     } else {
       yield* fs

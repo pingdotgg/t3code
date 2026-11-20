@@ -43,7 +43,7 @@ export function tokenizeCliArgs(args?: string): ReadonlyArray<string> {
     if (char === "'" || char === '"') {
       quote = char;
       quoted = true;
-    } else if (/\s/.test(char)) {
+    } else if (/[ \t\n\r\f\v]/.test(char)) {
       if (current || quoted) {
         tokens.push(current);
         current = "";
