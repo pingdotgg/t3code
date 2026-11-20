@@ -11,11 +11,14 @@ use crate::{
 use serde_json::{Value, json};
 pub mod actions;
 mod activity;
+pub mod checks;
 mod detail;
 pub mod diff;
 pub mod link_sync;
 pub mod listing;
+pub mod merge_message;
 pub mod normalize;
+pub mod run_action;
 mod stack;
 #[cfg(test)]
 mod tests;
@@ -180,6 +183,7 @@ impl Client {
             } else {
                 std::time::Duration::from_secs(60)
             },
+            follow_redirects: false,
         };
         let response = github::rest(
             github::RestRequest {

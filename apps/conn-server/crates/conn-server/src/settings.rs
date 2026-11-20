@@ -744,6 +744,21 @@ pub fn agent_browser_access(settings: &Map<String, Value>, project_id: Option<&s
         .unwrap_or(generated::DEFAULT_AGENT_BROWSER_ACCESS)
 }
 
+/// `resolveProjectSettings(settings, projectId).settings.removeAgentCreditsOnMerge`: the
+/// project's override when set, else the machine-wide value, else T3's default `false`.
+pub fn remove_agent_credits_on_merge(settings: &Map<String, Value>, project_id: &str) -> bool {
+    settings
+        .get("projectSettingsOverrides")
+        .and_then(|overrides| {
+            overrides
+                .get(project_id)?
+                .get("removeAgentCreditsOnMerge")?
+                .as_bool()
+        })
+        .or_else(|| settings.get("removeAgentCreditsOnMerge")?.as_bool())
+        .unwrap_or(false)
+}
+
 /// `resolveProjectSettings(settings, projectId).settings.responseStreamingMode`: the
 /// project's override when set, else the machine-wide value, else T3's default `paragraph`.
 pub fn response_streaming_mode(

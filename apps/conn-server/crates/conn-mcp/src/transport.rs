@@ -177,6 +177,7 @@ pub(crate) async fn handle(
         return Reply::empty(StatusCode::ACCEPTED).with(PROTOCOL_HEADER, PROTOCOL_VERSION.into());
     }
 
+    let forge = service.forge_shown(&caller).await;
     let mut changed = false;
     let body = match method_name {
         "ping" | "logging/setLevel" => {
@@ -191,10 +192,10 @@ pub(crate) async fn handle(
                     let exposure = crate::lock(&service.exposure);
                     catalog::list_filtered(|name| {
                         exposure.listed(&thread.provider_session_id, name)
-                            && catalog::offered_to(name, &caller, service.links_enabled())
+                            && catalog::offered_to(name, &caller, service.links_enabled(), forge)
                     })
                 }
-                _ => catalog::list_for(&caller, service.links_enabled()),
+                _ => catalog::list_for(&caller, service.links_enabled(), forge),
             }
         ),
         "tools/call" => {
@@ -202,7 +203,8 @@ pub(crate) async fn handle(
                 .get_mut("params")
                 .map(Value::take)
                 .unwrap_or_default();
-            let (result, list_changed) = call(service, &caller, &rpc_id, params, headers).await;
+            let (result, list_changed) =
+                call(service, &caller, &rpc_id, params, headers, forge).await;
             changed = list_changed;
             result
         }
@@ -231,6 +233,7 @@ async fn call(
     id: &Value,
     mut params: Value,
     headers: &HeaderMap,
+    forge: bool,
 ) -> (String, bool) {
     let invalid = |message: &str| (rpc_error(id, -32602, message), false);
     let mut arguments = match params["arguments"].take() {
@@ -241,8 +244,8 @@ async fn call(
     let Some(name) = params["name"].as_str() else {
         return invalid("Invalid method parameters");
     };
-    let found =
-        catalog::tool(name).filter(|_| catalog::offered_to(name, caller, service.links_enabled()));
+    let found = catalog::tool(name)
+        .filter(|_| catalog::offered_to(name, caller, service.links_enabled(), forge));
     let Some((tool, order)) = found else {
         return invalid(&format!("Tool '{name}' not found"));
     };

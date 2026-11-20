@@ -1,7 +1,7 @@
 //! GitHub panel writes and candidate reads, with fresh access checks for every operation.
 
 use super::normalize::{array, nodes, text, trimmed};
-use super::{Client, Error, Lookup, generated, pull_request};
+use super::{Client, Error, Lookup, generated};
 use crate::http::Method;
 use serde_json::{Value, json};
 
@@ -260,11 +260,11 @@ impl Client {
         Ok(Value::Null)
     }
 
-    async fn node_id(&self, lookup: &Lookup) -> Result<Value, Error> {
+    pub(super) async fn node_id(&self, lookup: &Lookup) -> Result<Value, Error> {
         let result = self
             .graphql(&generated::PULL_REQUEST_NODE_ID, lookup.variables())
             .await?;
-        pull_request(&result, lookup)?
+        super::run_action::found(&result)?
             .get("id")
             .filter(|id| id.is_string())
             .cloned()

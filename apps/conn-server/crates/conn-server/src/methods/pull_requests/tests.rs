@@ -166,14 +166,16 @@ fn panel_capabilities_follow_t3_except_the_explicitly_unserved_features() {
     ))
     .expect("T3 capabilities");
     let fields = expected.as_object_mut().expect("capabilities");
-    fields.insert("actions".into(), json!([]));
-    fields.insert("mergeMethods".into(), json!([]));
-    for key in [
-        "deleteBranch",
-        "updateMethods",
-        "stackActions",
-        "withheldFileDiff",
-    ] {
+    // Not built: deleting the source branch, approving fork workflows, stack actions.
+    let actions: Vec<Value> = fields["actions"]
+        .as_array()
+        .expect("actions")
+        .iter()
+        .filter(|a| !matches!(a.as_str(), Some("delete-branch" | "approve-workflows")))
+        .cloned()
+        .collect();
+    fields.insert("actions".into(), json!(actions));
+    for key in ["deleteBranch", "stackActions", "withheldFileDiff"] {
         fields.remove(key);
     }
     assert_eq!(
@@ -603,19 +605,7 @@ async fn unavailable_actions_and_guide_generation_return_typed_refusals() {
             "{error:?}"
         );
     }
-    for action in [
-        "merge",
-        "ready",
-        "draft",
-        "close",
-        "reopen",
-        "delete-branch",
-        "update-branch",
-        "enable-auto-merge",
-        "disable-auto-merge",
-        "revert",
-        "approve-workflows",
-    ] {
+    for action in ["delete-branch", "approve-workflows"] {
         let mut input = reference();
         input["action"] = json!(action);
         let error = call(&table, "pullRequests.runAction", input)
@@ -2651,6 +2641,78 @@ async fn a_failed_guide_run_reports_its_detail_and_keeps_the_stored_guide() {
         .expect_err("another repository");
     assert!(
         matches!(error, Failure::Fail(ref v) if v["detail"].as_str().is_some_and(|d| d.starts_with("Guides are written from this project's checkout"))),
+        "{error:?}"
+    );
+    task.abort();
+}
+
+#[tokio::test]
+async fn run_action_checks_access_and_the_pinned_head_then_acts() {
+    let dir = TestDir::new();
+    let (base, task, _) = api().await;
+    let panel = panel(shell(&dir.0), &dir, &base);
+    let head = "1111111111111111111111111111111111111111";
+    let run = |fields: Value| {
+        let mut input = reference();
+        input
+            .as_object_mut()
+            .expect("ref")
+            .extend(fields.as_object().expect("fields").clone());
+        let panel = panel.clone();
+        async move {
+            panel
+                .mcp_call("call", json!({"method": "runAction", "input": input}))
+                .await
+        }
+    };
+    let refused = |result: Result<Value, Failure>, detail: &str| {
+        assert!(
+            matches!(result, Err(Failure::Fail(ref value)) if value["operation"] == "runAction" && value["detail"] == detail),
+            "{detail}: {result:?}"
+        );
+    };
+    refused(
+        run(json!({"action": "merge", "mergeMethod": "fast"})).await,
+        "This host cannot merge with the fast strategy.",
+    );
+    refused(
+        run(json!({"action": "update-branch", "updateMethod": "squash"})).await,
+        "This host cannot update a branch by squash.",
+    );
+    refused(
+        run(json!({"action": "merge", "expectedHeadSha": "abc"})).await,
+        &format!("The head is now {head}, not abc. Review the new commits first."),
+    );
+    let before = *panel.refreshes.borrow();
+    assert_eq!(
+        run(json!({"action": "merge", "expectedHeadSha": head}))
+            .await
+            .expect("merge"),
+        Value::Null
+    );
+    assert_eq!(
+        run(json!({"action": "ready"})).await.expect("ready"),
+        Value::Null
+    );
+    assert_eq!(
+        *panel.refreshes.borrow(),
+        before + 2,
+        "each action refreshes"
+    );
+    let summary = run(json!({"action": "close", "replyWithSummary": true}))
+        .await
+        .expect("close");
+    assert_eq!(summary["projectId"], "p1", "a summary when asked for one");
+    let error = panel
+        .mcp_call("checkLogs", {
+            let mut input = reference();
+            input["check"] = json!("nope");
+            input
+        })
+        .await
+        .expect_err("no such check");
+    assert!(
+        matches!(error, Failure::Fail(ref value) if value["operation"] == "checkLogs" && value["detail"].as_str().is_some_and(|d| d.starts_with("No check is named nope. Checks: "))),
         "{error:?}"
     );
     task.abort();

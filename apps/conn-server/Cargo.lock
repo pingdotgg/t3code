@@ -413,6 +413,7 @@ dependencies = [
  "conn-contract",
  "conn-support",
  "conn-vcs",
+ "futures-util",
  "http-body-util",
  "hyper",
  "hyper-util",

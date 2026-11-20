@@ -271,6 +271,9 @@ pub struct McpService {
     endpoint: OnceLock<String>,
     upload_owners: Mutex<tools::attachments::UploadOwners>,
     handoffs: Mutex<std::collections::HashSet<String>>,
+    /// Whether each calling thread's project is on a forge (`forgeOfThread`): read per request,
+    /// kept a minute, at most 1,000 threads.
+    forges: Mutex<std::collections::HashMap<String, (bool, std::time::Instant)>>,
 }
 
 impl std::fmt::Debug for McpService {
@@ -307,6 +310,7 @@ impl McpService {
             endpoint: OnceLock::new(),
             upload_owners: Mutex::new(tools::attachments::UploadOwners::default()),
             handoffs: Mutex::new(std::collections::HashSet::new()),
+            forges: Mutex::new(std::collections::HashMap::new()),
         })
     }
 
@@ -383,6 +387,59 @@ impl McpService {
     }
 
     /// Whether Linked environments is on here, read per request.
+    /// `hiddenWithoutForge` for this caller: false only when a thread's project is on no forge
+    /// the server reads. Outside clients, unknown threads and failed reads keep the tools.
+    pub(crate) async fn forge_shown(&self, caller: &Caller) -> bool {
+        const TTL: std::time::Duration = std::time::Duration::from_secs(60);
+        const CAPACITY: usize = 1_000;
+        let Caller::Thread(thread) = caller else {
+            return true;
+        };
+        let now = std::time::Instant::now();
+        if let Some((shown, at)) = lock(&self.forges).get(&thread.thread_id)
+            && now.duration_since(*at) < TTL
+        {
+            return *shown;
+        }
+        let shown = self.read_forge(&thread.thread_id).await;
+        let mut forges = lock(&self.forges);
+        if forges.len() >= CAPACITY {
+            forges.retain(|_, (_, at)| now.duration_since(*at) < TTL);
+        }
+        if forges.len() >= CAPACITY
+            && let Some(oldest) = forges
+                .iter()
+                .min_by_key(|(_, (_, at))| *at)
+                .map(|(id, _)| id.clone())
+        {
+            forges.remove(&oldest);
+        }
+        forges.insert(thread.thread_id.clone(), (shown, now));
+        shown
+    }
+
+    async fn read_forge(&self, thread_id: &str) -> bool {
+        let Some(host) = self.config.pull_requests.clone() else {
+            return true;
+        };
+        let Ok(projection) = self
+            .config
+            .engine
+            .get_thread_projection(conn_contract::ThreadId::from(thread_id))
+            .await
+        else {
+            return true;
+        };
+        let project = projection["thread"]["projectId"].clone();
+        if project.is_null() {
+            return true;
+        }
+        match host("servesProject", serde_json::json!({"projectId": project})).await {
+            Ok(Value::Bool(shown)) => shown,
+            _ => true,
+        }
+    }
+
     pub(crate) fn links_enabled(&self) -> bool {
         self.config.peers.as_ref().is_some_and(|p| p.enabled())
     }

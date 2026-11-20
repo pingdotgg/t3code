@@ -414,6 +414,9 @@ pub struct RestOptions<'a> {
     pub accept: &'a str,
     pub limit: usize,
     pub timeout: std::time::Duration,
+    /// Follow redirects as `fetch` does, dropping the credential when one leaves the origin
+    /// (a check log is a redirect to storage).
+    pub follow_redirects: bool,
 }
 impl Default for RestOptions<'_> {
     fn default() -> Self {
@@ -421,6 +424,7 @@ impl Default for RestOptions<'_> {
             accept: "application/vnd.github+json",
             limit: http::DEFAULT_MAX_RESPONSE_BYTES,
             timeout: http::DEFAULT_TIMEOUT,
+            follow_redirects: false,
         }
     }
 }
@@ -453,11 +457,14 @@ pub async fn rest(
         // on `PUT user/starred`.
         http_request = http_request.body(Vec::new());
     }
-    let response = http::send(http_request)
-        .await
-        .map_err(|_| ApiError::Request {
-            host: request.host.to_owned(),
-        })?;
+    let response = if options.follow_redirects {
+        http::send_following_redirects(http_request).await
+    } else {
+        http::send(http_request).await
+    }
+    .map_err(|_| ApiError::Request {
+        host: request.host.to_owned(),
+    })?;
     if is_rate_limited(&response) {
         return Err(ApiError::RateLimit);
     }
@@ -465,8 +472,9 @@ pub async fn rest(
         401 => Err(ApiError::Authentication {
             host: request.host.to_owned(),
         }),
+        // T3's REST policy reports a 404 without GitHub's own text (`GitHubRequestPolicy.ts`).
         404 => Err(ApiError::NotFound {
-            messages: rest_error_messages(&response.text()),
+            messages: Vec::new(),
         }),
         200..=299 => Ok(response),
         status => Err(ApiError::Response {

@@ -122,6 +122,7 @@ const listed = (tool) => {
 // What each EnabledWhen filter says for a caller: run it with that caller in the fiber.
 // `outside` is a client with no calling thread (a paired device, `t3 auth session issue`);
 // the others are agents in a thread.
+// `no-forge` is an agent whose thread's project is on no forge T3 reads (`forge: false`).
 const scopeFor = (caller) => ({
   environmentId: "environment:gen",
   capabilities: new Set(),
@@ -138,6 +139,7 @@ const scopeFor = (caller) => ({
         },
   client: undefined,
   linkedEnvironments: caller !== "links-off",
+  ...(caller === "no-forge" ? { forge: false } : {}),
 });
 
 /** `$ref: "#/$defs/…"` replaced by its definition; an unknown or too deep reference fails. */
@@ -164,7 +166,7 @@ const tools = await Effect.runPromise(
       const enabledWhen = Context.getOption(annotations, McpSchema.EnabledWhen);
       const hiddenFor = [];
       if (enabledWhen._tag === "Some") {
-        for (const caller of ["outside", "subagent", "links-off"]) {
+        for (const caller of ["outside", "subagent", "links-off", "no-forge"]) {
           const shown = yield* Effect.sync(() => enabledWhen.value({})).pipe(
             Effect.provideService(McpInvocationContext.McpInvocationContext, scopeFor(caller)),
           );
@@ -198,23 +200,25 @@ if (missing.length > 0) {
   console.error(`apps/server no longer registers: ${missing.join(", ")}`);
   process.exit(1);
 }
-// conn-mcp knows three filters: tools that act as the calling thread are hidden from outside
+// conn-mcp knows four filters: tools that act as the calling thread are hidden from outside
 // clients (`hiddenFromOutsideClients`, src/outside-hidden.txt), tools a delegated child may
-// not call are hidden from it (`hiddenFromSubagents`, src/subagent-hidden.txt), and tools that
+// not call are hidden from it (`hiddenFromSubagents`, src/subagent-hidden.txt), tools that
 // only serve links are hidden while Linked environments is off (`hiddenWhileLinksOff`,
-// src/links-hidden.txt). Any other filter on one of ours would need a Rust check too.
+// src/links-hidden.txt), and forge tools are hidden from an agent whose project is on no forge
+// (`hiddenWithoutForge`, src/forge-hidden.txt). Any other filter needs a Rust check too.
 const outsideHidden = [];
 const subagentHidden = [];
 const linksHidden = [];
+const forgeHidden = [];
 const catalog = implemented.map((name) => {
   const { "x-conn-hiddenFor": hiddenFor, ...tool } = byName.get(name);
   if (hiddenFor !== undefined) {
     const [only] = hiddenFor;
-    if (hiddenFor.length !== 1 || !["outside", "subagent", "links-off"].includes(only)) {
+    if (hiddenFor.length !== 1 || !["outside", "subagent", "links-off", "no-forge"].includes(only)) {
       console.error(`${name} is hidden for ${hiddenFor.join(", ")}; teach conn-mcp that filter.`);
       process.exit(1);
     }
-    (only === "outside" ? outsideHidden : only === "subagent" ? subagentHidden : linksHidden).push(`${name}\n`);
+    ({ outside: outsideHidden, subagent: subagentHidden, "links-off": linksHidden, "no-forge": forgeHidden })[only].push(`${name}\n`);
   }
   return tool;
 });
@@ -323,6 +327,7 @@ const linksHiddenOut = NodePath.join(here, "..", "src", "links-hidden.txt");
 const nullArgumentsOut = NodePath.join(here, "..", "src", "null-arguments.txt");
 const outsideHiddenOut = NodePath.join(here, "..", "src", "outside-hidden.txt");
 const subagentHiddenOut = NodePath.join(here, "..", "src", "subagent-hidden.txt");
+const forgeHiddenOut = NodePath.join(here, "..", "src", "forge-hidden.txt");
 // Every tool apps/server registers, whoever may see it: the tests check the agent texts by it.
 const allNamesOut = NodePath.join(here, "..", "fixtures", "t3-tool-names.txt");
 const allNames = tools.map((tool) => `${tool.name}\n`).join("");
@@ -434,6 +439,7 @@ const outputs = [
   [linkedTargetsOut, linkedTargets.join(""), `${linkedTargets.length} tools that run in a linked environment`],
   [preferenceDefaultsOut, preferenceDefaults, "environment preference defaults"],
   [subagentHiddenOut, subagentHidden.join(""), `${subagentHidden.length} tools hidden from delegated children`],
+  [forgeHiddenOut, forgeHidden.join(""), `${forgeHidden.length} tools hidden without a forge`],
   [allNamesOut, allNames, `${tools.length} tool names`],
   [runningTaskNextOut, ORCHESTRATOR_MCP_RUNNING_TASK_NEXT, "running task next text"],
   [nullArgumentsOut, nullArguments.join(""), `${nullArguments.length} arguments that keep null`],

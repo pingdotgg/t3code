@@ -156,6 +156,63 @@ fn header_path(line: &str, prefix: &str) -> Option<String> {
     path.strip_prefix(prefix).map(str::to_owned)
 }
 
+/// `reviewPositionInPatch` (`pullRequestReviewPosition.ts`): where a line of `path` sits in a
+/// unified patch, `new` numbering the head and `old` the base; `None` when the patch omits it.
+pub fn review_position_in_patch(
+    patch: &str,
+    path: &str,
+    line: i64,
+    new_side: bool,
+) -> Option<Value> {
+    let mut old_path: Option<String> = None;
+    let mut in_file = false;
+    let mut in_hunks = false;
+    let mut old_line = 0_i64;
+    let mut new_line = 0_i64;
+    for text in patch.split('\n') {
+        if text.starts_with("diff --git ") {
+            old_path = None;
+            in_file = false;
+            in_hunks = false;
+        } else if !in_hunks && text.starts_with("--- ") {
+            old_path = header_path(text, "a/");
+        } else if !in_hunks && text.starts_with("+++ ") {
+            in_file = header_path(text, "b/")
+                .or_else(|| old_path.clone())
+                .as_deref()
+                == Some(path);
+        } else if text.starts_with("@@") {
+            // Every file's hunks count, so another file's `+++ ` source line is never a header.
+            let Some((old, new, _, _)) = hunk_header(text) else {
+                continue;
+            };
+            in_hunks = true;
+            old_line = old.start;
+            new_line = new.start;
+        } else if in_file && in_hunks {
+            if text.starts_with('+') {
+                if new_side && new_line == line {
+                    return Some(serde_json::json!({"kind": "added", "newLine": new_line}));
+                }
+                new_line += 1;
+            } else if text.starts_with('-') {
+                if !new_side && old_line == line {
+                    return Some(serde_json::json!({"kind": "deleted", "oldLine": old_line}));
+                }
+                old_line += 1;
+            } else if text.starts_with(' ') {
+                if (if new_side { new_line } else { old_line }) == line {
+                    return Some(serde_json::json!({"kind": "context", "oldLine": old_line,
+                        "newLine": new_line, "side": if new_side { "right" } else { "left" }}));
+                }
+                old_line += 1;
+                new_line += 1;
+            }
+        }
+    }
+    None
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct LineRange {
     start: i64,
@@ -527,6 +584,23 @@ pub fn normalize(guide: Generated, change: &Change) -> Generated {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// Expected values from T3's `reviewPositionInPatch` on the same patch.
+    #[test]
+    fn review_positions_as_t3_places_them() {
+        let patch = "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,3 +1,3 @@\n keep\n-old\n+new\n+++ not a header\n tail\ndiff --git a/gone.rs b/gone.rs\n--- a/gone.rs\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n";
+        let expected: Value = serde_json::from_str(r#"[["a.rs",1,"new",{"kind":"context","oldLine":1,"newLine":1,"side":"right"}],["a.rs",2,"new",{"kind":"added","newLine":2}],["a.rs",2,"old",{"kind":"deleted","oldLine":2}],["a.rs",3,"new",{"kind":"added","newLine":3}],["a.rs",4,"new",{"kind":"context","oldLine":3,"newLine":4,"side":"right"}],["a.rs",3,"old",{"kind":"context","oldLine":3,"newLine":4,"side":"left"}],["a.rs",9,"new",null],["gone.rs",1,"old",{"kind":"deleted","oldLine":1}],["b.rs",1,"new",null]]"#).expect("T3 positions");
+        for case in expected.as_array().expect("cases") {
+            let path = case[0].as_str().expect("path");
+            let line = case[1].as_i64().expect("line");
+            let new_side = case[2] == "new";
+            assert_eq!(
+                review_position_in_patch(patch, path, line, new_side).unwrap_or(Value::Null),
+                case[3],
+                "{case}"
+            );
+        }
+    }
 
     #[test]
     fn hunks_and_quoted_paths_are_read_as_git_writes_them() {

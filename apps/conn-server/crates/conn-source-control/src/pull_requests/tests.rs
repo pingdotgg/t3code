@@ -120,6 +120,20 @@ fn t3_characterizations_match_the_current_upstream_functions() {
             "checks" => json!(normalize::checks(input.as_array().expect("contexts"))),
             "breakdown" => normalize::breakdown(input),
             "patch" => diff::files_patch(input.as_array().expect("files")),
+            "mergeMessage" => json!(super::merge_message::remove_agent_credits(
+                input.as_str().expect("message")
+            )),
+            "jobId" => json!(super::checks::actions_job_id(input.as_str())),
+            "logTail" => {
+                let (log, truncated) = super::checks::tail_log_lines(
+                    text(input, "text"),
+                    input["lines"].as_u64().expect("lines") as usize,
+                );
+                json!({"log": log, "truncated": truncated})
+            }
+            "lightPermissions" => {
+                super::run_action::light_viewer_permissions(input).unwrap_or(Value::Null)
+            }
             "unavailable" => if input == "cli-missing" {
                 Error::Missing
             } else {
@@ -1221,4 +1235,109 @@ async fn head_lookups_keep_each_documents_answers_when_a_later_one_fails() {
         assert_eq!(nodes[0]["headRefName"], format!("b{index}"));
     }
     assert_eq!(answers[25], None, "the failed document's head");
+}
+
+/// T3's `runPullRequestAction`, `readCheckLogs` and `rerunChecks` traces
+/// (`tools/pr-action-recordings.mjs`), replayed on the same answers. Check reads and re-runs run
+/// concurrently in T3, so their requests compare as a set.
+#[tokio::test]
+async fn run_actions_and_ci_match_t3s_recorded_http_requests() {
+    let cases: Vec<Value> =
+        serde_json::from_str(include_str!("run-action-cases.json")).expect("T3 recordings");
+    for case in cases {
+        let responses = case["responses"].clone();
+        let server = crate::http::fake::serve(move |request| {
+            let body: Value = serde_json::from_str(&request.body).unwrap_or(Value::Null);
+            let operation = text(&body, "query")
+                .split_once(' ')
+                .and_then(|(_, rest)| rest.split(['(', '{']).next())
+                .map(str::to_owned);
+            let key = match (request.path.ends_with("/graphql"), &operation) {
+                (true, Some(name)) => format!("graphql {name}"),
+                _ => format!("{} {}", request.method, request.path),
+            };
+            let answer =
+                responses
+                    .get(&key)
+                    .cloned()
+                    .unwrap_or_else(|| match operation.as_deref() {
+                        Some("PullRequestNodeId") => {
+                            json!({"data": {"repository": {"pullRequest": {"id": "PR7"}}}})
+                        }
+                        Some(_) => json!({"data": {}}),
+                        None => json!({"status": 200, "body": {}}),
+                    });
+            let status = answer["status"].as_u64().unwrap_or(200) as u16;
+            let body = match (answer.get("text"), answer.get("body")) {
+                (Some(text), _) => text.as_str().unwrap_or_default().to_owned(),
+                (None, Some(body)) => body.to_string(),
+                (None, None) => answer.to_string(),
+            };
+            (status, body)
+        })
+        .await;
+        let stubs = StubDir::new("pr-run-action");
+        stubs.executable("gh", &[], "printf '%s\\n' fake-pr-token");
+        let client = connect(&stubs, &server.base).await;
+        let lookup = Lookup::new("a/b", 7).expect("lookup");
+        let input = &case["input"];
+        let empty = Vec::new();
+        let checks = input["checks"].as_array().unwrap_or(&empty);
+        let method = text(&case, "method");
+        let result: Result<Value, Error> = match method {
+            "runPullRequestAction" => client
+                .run_action(
+                    &lookup,
+                    input,
+                    input["removeAgentCreditsOnMerge"] == Value::Bool(true),
+                )
+                .await
+                .map(|()| Value::Null),
+            "readCheckLogs" => client
+                .check_logs(
+                    &lookup,
+                    checks,
+                    input["tailLines"].as_u64().expect("lines") as usize,
+                )
+                .await
+                .map(Value::from),
+            "rerunChecks" => client.rerun_checks(&lookup, checks).await.map(Value::from),
+            other => panic!("unknown recorded method {other}"),
+        };
+        match case.get("error") {
+            Some(expected) => {
+                let error = result.expect_err("T3 failed this case");
+                assert_eq!(
+                    json!(error.to_string()),
+                    expected["detail"],
+                    "T3 error for {method} {input}"
+                );
+            }
+            None => assert_eq!(
+                result.expect("T3 succeeded"),
+                case["result"],
+                "T3 result for {method} {input}"
+            ),
+        }
+        let mut actual: Vec<Value> = server
+            .requests
+            .lock()
+            .expect("requests")
+            .iter()
+            .map(|r| {
+                json!({"method": r.method, "path": r.path, "body": if r.body.is_empty() {
+                    Value::Null
+                } else {
+                    serde_json::from_str::<Value>(&r.body).expect("JSON")
+                }})
+            })
+            .collect();
+        let mut expected = case["requests"].as_array().cloned().unwrap_or_default();
+        if method != "runPullRequestAction" {
+            let order = |v: &Value| format!("{} {}", v["method"], v["path"]);
+            actual.sort_by_key(order);
+            expected.sort_by_key(order);
+        }
+        assert_eq!(actual, expected, "T3 API trace for {method} {input}");
+    }
 }

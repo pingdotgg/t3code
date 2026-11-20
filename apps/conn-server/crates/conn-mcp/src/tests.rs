@@ -1732,13 +1732,7 @@ async fn search_puts_titles_first_and_keeps_slots_for_messages() {
 /// Tools that a text we send to an agent names and that this server does not serve. An agent
 /// told to call one finds no such tool. Serve one, and this test makes you strike it here.
 /// `preview_*` in the orchestration text also names all 13 preview tools.
-const NAMED_NOT_SERVED: &[&str] = &[
-    "ci_logs",
-    "ci_rerun",
-    "fill_credential",
-    "link_issue",
-    "pull_request_create",
-];
+const NAMED_NOT_SERVED: &[&str] = &["fill_credential", "link_issue", "pull_request_create"];
 
 /// Every text we send to an agent that can name a tool: the orchestration text and Claude's
 /// texts (`conn-mcp`), the `next` text of a running task, the Codex additional context
@@ -3546,3 +3540,32 @@ async fn mcp_panel_actions_use_the_ninety_second_action_timeout() {
 }
 
 mod pull_request_watches;
+
+/// `hiddenWithoutForge`: an agent whose project is on no forge loses the forge tools; an
+/// outside client and an agent on a forge keep them.
+#[test]
+fn forge_tools_are_hidden_only_without_a_forge() {
+    let agent = Caller::Thread(ThreadCaller {
+        thread_id: "t".into(),
+        provider_session_id: "s".into(),
+        provider_instance_id: "claudeAgent".into(),
+        subagent: false,
+        preview: false,
+        device: false,
+    });
+    let forge: Vec<&str> = include_str!("forge-hidden.txt").lines().collect();
+    assert_eq!(forge.len(), 8);
+    for name in &forge {
+        assert!(catalog::offered_to(name, &agent, true, true), "{name}");
+        assert!(!catalog::offered_to(name, &agent, true, false), "{name}");
+    }
+    assert!(catalog::offered_to(
+        "link_pull_request",
+        &agent,
+        true,
+        false
+    ));
+    let listed = catalog::list_for(&agent, true, false);
+    assert!(!listed.contains("\"name\":\"ci_logs\""));
+    assert!(catalog::list_for(&agent, true, true).contains("\"name\":\"ci_logs\""));
+}

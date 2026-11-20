@@ -27,6 +27,7 @@ mod message;
 mod panels;
 mod preview;
 mod projects;
+mod pull_request_forge;
 mod pull_requests;
 mod scheduled;
 mod secrets;
@@ -136,6 +137,14 @@ pub(crate) const HANDLED: &[&str] = &[
     "unwatch_pull_request",
     "read_pull_request_guide",
     "write_pull_request_guides",
+    "pull_request_read",
+    "pull_request_list",
+    "pull_request_update",
+    "pull_request_respond",
+    "pull_request_review",
+    "pull_request_merge",
+    "ci_logs",
+    "ci_rerun",
     "annotations_list",
     "annotations_claim",
     "annotations_complete",
@@ -323,6 +332,14 @@ async fn call_in(cx: &Cx<'_>, name: &str, args: Args) -> ToolResult {
         "unwatch_pull_request" => pull_requests::set_watching(cx, &args, false).await,
         "read_pull_request_guide" => pull_requests::read_guide(cx, &args).await,
         "write_pull_request_guides" => pull_requests::write_guides(cx, &args).await,
+        "pull_request_read" => pull_request_forge::read(cx, &args).await,
+        "pull_request_list" => pull_request_forge::list(cx, &args).await,
+        "pull_request_update" => pull_request_forge::update(cx, &args).await,
+        "pull_request_respond" => pull_request_forge::respond(cx, &args).await,
+        "pull_request_review" => pull_request_forge::review(cx, &args).await,
+        "pull_request_merge" => pull_request_forge::merge(cx, &args).await,
+        "ci_logs" => pull_request_forge::ci_logs(cx, &args).await,
+        "ci_rerun" => pull_request_forge::ci_rerun(cx, &args).await,
         other => Err(fail(
             "capability_denied",
             format!("conn-server does not serve `{other}` yet."),

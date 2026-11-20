@@ -87,3 +87,101 @@ export async function recordActions() {
   }
   return cases;
 }
+
+// T3's `runPullRequestAction`, `readCheckLogs` and `rerunChecks` on an in-memory host that
+// answers each GraphQL operation (by name) and REST request (`METHOD /path?query`) from the
+// case's own table. The Rust test answers from the same table and compares the trace.
+export async function recordRunActions() {
+  const actionState = (fields = {}) => ({ data: { repository: { pullRequest: { id: "PR7", headRefOid: "head7", isMergeQueueEnabled: false, mergeStateStatus: "BLOCKED", baseRef: { compare: { behindBy: 2 } }, ...fields } } } });
+  const credited = "Change body\n\nCo-authored-by: Claude <noreply@anthropic.com>\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)";
+  const mergeMessage = (fields = {}) => ({ data: { repository: { pullRequest: { isMergeQueueEnabled: false, headRefOid: "head7", viewerMergeBodyText: credited, ...fields } } } });
+  const job = (id, run) => ({ status: 200, body: { id, run_id: run } });
+  const checks = [
+    { name: "build", url: "https://github.com/a/b/actions/runs/11/job/21" },
+    { name: "lint", url: "https://github.com/a/b/actions/runs/11/job/22" },
+    { name: "external", url: "https://ci.example.com/build/1" },
+    { name: "gone", url: "https://github.com/a/b/actions/runs/12/job/23" },
+    { name: "other run", url: "https://github.com/a/b/runs/24" },
+  ];
+  const cases = [
+    ...["ready", "draft", "close", "reopen", "disable-auto-merge"].map((action) => ({ method: "runPullRequestAction", input: { action }, responses: {} })),
+    { method: "runPullRequestAction", input: { action: "revert" }, responses: { "graphql RevertPullRequest": { data: { revertPullRequest: { revertPullRequest: { id: "PR8" } } } } } },
+    { method: "runPullRequestAction", input: { action: "ready" }, responses: { "graphql PullRequestNodeId": { data: { repository: { pullRequest: null } } } } },
+    { method: "runPullRequestAction", input: { action: "merge" }, responses: { "graphql PullRequestActionState": actionState() } },
+    { method: "runPullRequestAction", input: { action: "merge", mergeMethod: "squash", expectedHeadSha: "abc" }, responses: { "graphql PullRequestActionState": actionState() } },
+    { method: "runPullRequestAction", input: { action: "merge", mergeMethod: "rebase" }, responses: { "graphql PullRequestActionState": actionState({ isMergeQueueEnabled: true }) } },
+    { method: "runPullRequestAction", input: { action: "enable-auto-merge", mergeMethod: "squash" }, responses: { "graphql PullRequestActionState": actionState() } },
+    { method: "runPullRequestAction", input: { action: "enable-auto-merge" }, responses: { "graphql PullRequestActionState": actionState({ mergeStateStatus: "clean" }) } },
+    { method: "runPullRequestAction", input: { action: "merge", removeAgentCreditsOnMerge: true }, responses: { "graphql PullRequestActionState": actionState(), "graphql PullRequestMergeMessage": mergeMessage() } },
+    { method: "runPullRequestAction", input: { action: "merge", mergeMethod: "squash", removeAgentCreditsOnMerge: true, expectedHeadSha: "pinned" }, responses: { "graphql PullRequestActionState": actionState(), "graphql PullRequestMergeMessage": mergeMessage() } },
+    { method: "runPullRequestAction", input: { action: "merge", removeAgentCreditsOnMerge: true }, responses: { "graphql PullRequestActionState": actionState(), "graphql PullRequestMergeMessage": mergeMessage({ isMergeQueueEnabled: true }) } },
+    { method: "runPullRequestAction", input: { action: "merge", mergeMethod: "rebase", removeAgentCreditsOnMerge: true }, responses: { "graphql PullRequestActionState": actionState() } },
+    { method: "runPullRequestAction", input: { action: "merge", removeAgentCreditsOnMerge: true }, responses: { "graphql PullRequestActionState": actionState(), "graphql PullRequestMergeMessage": mergeMessage({ viewerMergeBodyText: "Plain body" }) } },
+    { method: "runPullRequestAction", input: { action: "update-branch" }, responses: { "graphql PullRequestActionState": actionState() } },
+    { method: "runPullRequestAction", input: { action: "update-branch", updateMethod: "rebase" }, responses: { "graphql PullRequestActionState": actionState() } },
+    { method: "runPullRequestAction", input: { action: "update-branch" }, responses: { "graphql PullRequestActionState": actionState({ baseRef: { compare: { behindBy: 0 } } }) } },
+    { method: "runPullRequestAction", input: { action: "merge" }, responses: { "graphql PullRequestActionState": { data: { repository: { pullRequest: null } } } } },
+    { method: "readCheckLogs", input: { checks: checks.slice(0, 4), tailLines: 2 }, responses: {
+      "GET /repos/a/b/actions/jobs/21/logs": { status: 200, text: "one\ntwo\nthree\n" },
+      "GET /repos/a/b/actions/jobs/22/logs": { status: 200, text: "only" },
+      "GET /repos/a/b/actions/jobs/23/logs": { status: 404, body: { message: "Not Found" } },
+    } },
+    { method: "readCheckLogs", input: { checks: checks.slice(0, 1), tailLines: 5 }, responses: {
+      "GET /repos/a/b/actions/jobs/21/logs": { status: 500, body: { message: "Server Error" } },
+    } },
+    { method: "rerunChecks", input: { checks }, responses: {
+      "GET /repos/a/b/actions/jobs/21": job(21, 11), "GET /repos/a/b/actions/jobs/22": job(22, 11),
+      "GET /repos/a/b/actions/jobs/23": { status: 404, body: { message: "Not Found" } },
+      "GET /repos/a/b/actions/jobs/24": job(24, 13),
+      "GET /repos/a/b/actions/runs/11/jobs?filter=latest&per_page=100": { status: 200, body: { total_count: 3, jobs: [{ id: 21, conclusion: "failure" }, { id: 22, conclusion: "cancelled" }, { id: 25, conclusion: "success" }] } },
+      "POST /repos/a/b/actions/jobs/24/rerun": { status: 403, body: { message: "Already running" } },
+    } },
+    { method: "rerunChecks", input: { checks: checks.slice(0, 2) }, responses: {
+      "GET /repos/a/b/actions/jobs/21": job(21, 11), "GET /repos/a/b/actions/jobs/22": job(22, 11),
+      "GET /repos/a/b/actions/runs/11/jobs?filter=latest&per_page=100": { status: 200, body: { total_count: 2, jobs: [{ id: 21, conclusion: "failure" }, { id: 22, conclusion: "timed_out" }] } },
+    } },
+    { method: "rerunChecks", input: { checks: checks.slice(0, 2) }, responses: {
+      "GET /repos/a/b/actions/jobs/21": job(21, 11), "GET /repos/a/b/actions/jobs/22": { status: 200, body: { id: 22 } },
+    } },
+  ];
+  const out = [];
+  for (const entry of cases) {
+    const requests = [];
+    const http = Layer.succeed(HttpClient.HttpClient, HttpClient.make((request) => Effect.sync(() => {
+      const url = new URL(request.url);
+      const path = url.pathname + url.search;
+      const body = request.body._tag === "Uint8Array" ? JSON.parse(new TextDecoder().decode(request.body.body)) : null;
+      requests.push({ method: request.method, path, body });
+      const operation = path.endsWith("/graphql") ? /^(?:query|mutation) (\w+)/.exec(body.query)?.[1] : undefined;
+      const key = operation === undefined ? `${request.method} ${path}` : `graphql ${operation}`;
+      const answer = entry.responses[key] ?? (operation === "PullRequestNodeId" ? { data: { repository: { pullRequest: { id: "PR7" } } } } : operation === undefined ? { status: 200, body: {} } : { data: {} });
+      const status = answer.status ?? 200;
+      const text = answer.text ?? JSON.stringify(answer.body ?? answer);
+      return HttpClientResponse.fromWeb(request, new Response(text, { status, headers: { "content-type": answer.text === undefined ? "application/json" : "text/plain" } }));
+    })));
+    const credentials = Layer.succeed(Credentials.GitHubCredentials, {
+      get: (host) => Effect.succeed({ host, token: Redacted.make("fake-pr-token"), source: "gh", fingerprint: "fixture" }),
+      saved: () => Effect.succeedNone, fingerprint: () => Effect.succeed("fixture"), invalidate: () => Effect.void,
+    });
+    const signedOut = Layer.mock(App.GitHubAppSignIn)({ enabled: false, token: () => Effect.succeedNone, invalidate: () => Effect.void });
+    const layer = Api.layer.pipe(
+      Layer.provideMerge(Access.layer),
+      Layer.provide(Rest.layer.pipe(
+        Layer.provideMerge(Layer.mergeAll(credentials, http, signedOut)),
+        Layer.provideMerge(Quota.layer), Layer.provideMerge(Limits.layer),
+      )), Layer.provide(Host.layer()), Layer.provide(NodeServices.layer),
+    );
+    const outcome = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const api = yield* Api.GitHubPullRequestApi;
+      return yield* Effect.result(api[entry.method]({ cwd: "/fixture", host: "github.com", repository: "a/b", number: 7, ...entry.input }));
+    }).pipe(Effect.provide(layer))));
+    out.push({
+      ...entry,
+      requests,
+      ...(outcome._tag === "Success"
+        ? { result: outcome.success ?? null }
+        : { error: { tag: outcome.failure._tag, detail: outcome.failure.message } }),
+    });
+  }
+  return out;
+}

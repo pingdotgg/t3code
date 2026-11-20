@@ -267,7 +267,10 @@ impl Cx<'_> {
             | "list_scheduled_tasks"
             | "list_thread_pull_requests"
             | "t3_worktree_list"
-            | "read_pull_request_guide" => true,
+            | "read_pull_request_guide"
+            | "pull_request_read"
+            | "pull_request_list"
+            | "ci_logs" => true,
             _ => false,
         };
         if reads {
