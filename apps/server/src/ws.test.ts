@@ -2370,6 +2370,30 @@ const acpStores = Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
   Layer.provideMerge(SqlitePersistence.layerMemory),
 );
 
+const acpRunUpdated = (threadId: ThreadId, now: DateTime.Utc): OrchestrationV2DomainEvent => ({
+  id: EventId.make(`${threadId}:run`),
+  type: "run.updated",
+  threadId,
+  occurredAt: now,
+  payload: {
+    id: RunId.make(`${threadId}:run`),
+    threadId,
+    ordinal: 1,
+    providerInstanceId: acpInstanceId,
+    modelSelection: { instanceId: acpInstanceId, model: "default" },
+    providerThreadId: null,
+    userMessageId: MessageId.make(`${threadId}:prompt`),
+    rootNodeId: null,
+    activeAttemptId: null,
+    status: "completed",
+    requestedAt: now,
+    startedAt: now,
+    completedAt: now,
+    checkpointId: null,
+    contextHandoffId: null,
+  },
+});
+
 const seedAcpThread = Effect.fn(function* (
   sessionId: string,
   state: { readonly imported: boolean; readonly ran: boolean; readonly nativeId?: string },
@@ -2436,31 +2460,7 @@ const seedAcpThread = Effect.fn(function* (
       },
     });
   }
-  if (state.ran) {
-    events.push({
-      id: EventId.make(`${threadId}:run`),
-      type: "run.updated",
-      threadId,
-      occurredAt: now,
-      payload: {
-        id: RunId.make(`${threadId}:run`),
-        threadId,
-        ordinal: 1,
-        providerInstanceId: acpInstanceId,
-        modelSelection: thread.modelSelection,
-        providerThreadId: null,
-        userMessageId: MessageId.make(`${threadId}:prompt`),
-        rootNodeId: null,
-        activeAttemptId: null,
-        status: "completed",
-        requestedAt: now,
-        startedAt: now,
-        completedAt: now,
-        checkpointId: null,
-        contextHandoffId: null,
-      },
-    });
-  }
+  if (state.ran) events.push(acpRunUpdated(threadId, now));
   yield* sink.write({ events });
   return threadId;
 });
@@ -2479,6 +2479,7 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
       nativeId: "owned-session",
     });
     const fresh = acpThreadId("new");
+    let runDuringHistoryRead = false;
     const repaired: Array<ThreadId> = [];
     const deleted: Array<string> = [];
     const session = (sessionId: string) => ({
@@ -2566,12 +2567,17 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
       Layer.mock(AgentSessionImporter.AgentSessionImporter)({
         importNativeHistory: ({ threadId }) =>
           threadId === fresh
-            ? Effect.fail(
-                new Orchestrator.OrchestratorProjectionError({
+            ? Effect.gen(function* () {
+                if (runDuringHistoryRead) {
+                  yield* sink
+                    .write({ events: [acpRunUpdated(threadId, yield* DateTime.now)] })
+                    .pipe(Effect.orDie);
+                }
+                return yield* new Orchestrator.OrchestratorProjectionError({
                   threadId,
                   cause: new Error("Native history unavailable"),
-                }),
-              )
+                });
+              })
             : Effect.sync(() => repaired.push(threadId)).pipe(Effect.as(1)),
       }),
       Layer.succeed(SqlClient.SqlClient, sql),
@@ -2636,6 +2642,15 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
         nativeHistoryPending: true,
       },
     );
+
+    runDuringHistoryRead = true;
+    const failedAfterRun = yield* client[WS_METHODS.serverImportAcpRegistrySession]({
+      instanceId: acpInstanceId,
+      projectId: acpProjectId,
+      sessionId: "new",
+    }).pipe(Effect.flip);
+    assert.propertyVal(failedAfterRun, "reason", "session_import_failed");
+    assert.notProperty(failedAfterRun, "pendingHistoryThreadId");
 
     const imported = yield* client[WS_METHODS.serverImportAcpRegistrySession]({
       instanceId: acpInstanceId,
