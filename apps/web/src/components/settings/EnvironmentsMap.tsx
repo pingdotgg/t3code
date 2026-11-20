@@ -18,11 +18,13 @@ import * as Option from "effect/Option";
 import { useGT, useMessages } from "gt-react";
 import {
   AppWindowIcon,
+  CheckIcon,
   CloudIcon,
   GlobeIcon,
   MaximizeIcon,
   MinusIcon,
   PlusIcon,
+  SearchIcon,
   UnfoldVerticalIcon,
   FoldVerticalIcon,
 } from "lucide-react";
@@ -30,6 +32,7 @@ import {
   memo,
   type FocusEvent,
   type KeyboardEvent,
+  type MouseEvent,
   type PointerEvent,
   type ReactNode,
   useContext,
@@ -61,6 +64,8 @@ import { accessConfig } from "../auth/ConnectAgentSurface";
 import { connectionPhaseDotClassName } from "../ConnectionStatusDot";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Button } from "../ui/button";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import {
   buildFleetGraph,
   fitFleetLayout,
@@ -68,8 +73,11 @@ import {
   FLEET_CLIENT_NODE_ID,
   fleetEnvironmentNodeId,
   fleetFocusRects,
-  fleetLinkOffer,
+  fleetLinkAction,
+  fleetMoreNodeId,
   fleetNeighborhood,
+  fleetNodesInBox,
+  fleetSearch,
   fleetShapeKey,
   fleetStacks,
   type FleetColumn,
@@ -77,10 +85,11 @@ import {
   type FleetEnvironmentInput,
   type FleetEnvironmentNode,
   type FleetFocus,
+  type FleetFoldGroup,
   type FleetGraph,
   type FleetLayout,
+  type FleetLinkAction,
   type FleetLinkEdge,
-  type FleetLinkOffer,
   type FleetNode,
   type FleetRect,
   type FleetRouteState,
@@ -102,6 +111,7 @@ import {
   healthTone,
 } from "./EnvironmentsMapDetails";
 import { LinkEnvironmentDialog, type LinkEnvironmentPrefill } from "./LinkedEnvironmentsSettings";
+import { LinkSeveralEnvironmentsDialog } from "./LinkSeveralEnvironments";
 import { savedBackendStatus } from "./SavedEnvironmentRows";
 import { SettingsSearchTarget } from "./settingsLayout";
 
@@ -119,6 +129,9 @@ const ARROW_ROVE: Record<string, FleetDirection> = {
   ArrowRight: "right",
 };
 const NO_STACKS: ReadonlySet<string> = new Set();
+const NO_SELECTION: ReadonlySet<string> = new Set();
+/** Search centres a machine at a scale it can be read at, however far out the map was. */
+const FOUND_MIN_SCALE = 0.85;
 
 /** Dashes repeat a link's health without colour, one pattern per kind of trouble. */
 function healthDash(health: PeerLinkHealth): string | undefined {
@@ -335,6 +348,13 @@ interface LinkRequest {
   readonly open: boolean;
 }
 
+interface BatchRequest {
+  readonly serial: number;
+  readonly environmentId: EnvironmentId;
+  readonly preset: ReadonlyArray<EnvironmentId>;
+  readonly open: boolean;
+}
+
 /**
  * Every machine this app knows about, how it reaches each one, and which of them are linked.
  * Selecting a machine shows the controls the list has for it.
@@ -350,7 +370,12 @@ export function EnvironmentsMap(
   const stacks = fleetStacks(graph, expanded);
   const { key, layout } = useFleetLayout(graph, stacks);
   const [picked, setPicked] = useState<FleetFocus | null>(null);
+  // Machines ticked for a batch link: apart from `picked`, which is what the details show.
+  const [ticked, setTicked] = useState(NO_SELECTION);
+  // The machine a search landed on inside a stack, for the stack's list to scroll to.
+  const [found, setFound] = useState<string | null>(null);
   const [linkRequest, setLinkRequest] = useState<LinkRequest | null>(null);
+  const [batchRequest, setBatchRequest] = useState<BatchRequest | null>(null);
   const selection =
     picked === null
       ? null
@@ -362,21 +387,43 @@ export function EnvironmentsMap(
           ).some((item) => item.id === picked.id)
         ? picked
         : null;
+  // A machine that left the map leaves the selection with it.
+  const selected =
+    ticked.size === 0
+      ? NO_SELECTION
+      : new Set(graph.nodes.filter((node) => ticked.has(node.id)).map((node) => node.id));
   const toggleStack = (stackId: string) =>
     setExpanded((current) => {
       const next = new Set(current);
       if (!next.delete(stackId)) next.add(stackId);
       return next;
     });
-  // One dialog for every way in: a drop names the target, the handle and the details do not.
+  const tick = (ids: ReadonlyArray<string>, mode: "toggle" | "add") =>
+    setTicked((current) => {
+      const next = new Set(current);
+      for (const id of ids) {
+        if (mode === "toggle" && next.delete(id)) continue;
+        next.add(id);
+      }
+      return next;
+    });
+  // One way in for every gesture: the handle, a drop, the details and the toolbar.
   const requestLink = (sourceId: string, targetId: string | null) => {
-    const source = graph.nodes.find((node) => node.id === sourceId);
-    if (source?.kind !== "environment" || source.linking !== "ready") return;
-    const offer = targetId === null ? null : fleetLinkOffer(graph, sourceId, targetId);
-    if (offer !== null && offer.kind !== "link") return;
+    const action = fleetLinkAction(graph, stacks, selected, sourceId, targetId);
+    if (action === null) return;
+    if (action.kind === "batch") {
+      setBatchRequest((current) => ({
+        serial: (current?.serial ?? 0) + 1,
+        environmentId: action.sourceEnvironmentId,
+        preset: action.environmentIds,
+        open: true,
+      }));
+      return;
+    }
+    const { offer } = action;
     setLinkRequest((current) => ({
       serial: (current?.serial ?? 0) + 1,
-      environmentId: source.environmentId,
+      environmentId: action.sourceEnvironmentId,
       open: true,
       prefill:
         offer === null
@@ -385,6 +432,21 @@ export function EnvironmentsMap(
             ? { choice: offer.target.environmentId }
             : { choice: ANOTHER_ADDRESS, address: offer.target.address ?? "" },
     }));
+  };
+  const requestBatch = (sourceId: string) => {
+    const source = graph.nodes.find((node) => node.id === sourceId);
+    if (source?.kind !== "environment" || source.linking !== "ready") return;
+    const action = fleetLinkAction(graph, stacks, selected, sourceId, null);
+    setBatchRequest((current) => ({
+      serial: (current?.serial ?? 0) + 1,
+      environmentId: source.environmentId,
+      preset: action?.kind === "batch" ? action.environmentIds : [],
+      open: true,
+    }));
+  };
+  const select = (focus: FleetFocus | null) => {
+    setPicked(focus);
+    setFound(null);
   };
   return (
     <>
@@ -395,9 +457,17 @@ export function EnvironmentsMap(
         shapeKey={key}
         environments={environments}
         selection={selection}
-        onSelect={setPicked}
+        selected={selected}
+        onSelect={select}
+        onTick={tick}
+        onClearTicked={() => setTicked(NO_SELECTION)}
         onLink={requestLink}
+        onLinkSeveral={requestBatch}
         onToggleStack={toggleStack}
+        onFind={(stackId, memberId) => {
+          setPicked({ kind: "stack", id: stackId });
+          setFound(memberId);
+        }}
       />
       <SettingsSearchTarget id={props.footerId}>
         <FleetDetails
@@ -407,7 +477,8 @@ export function EnvironmentsMap(
           environments={environments}
           connectProblem={connectProblem}
           selection={selection}
-          onSelect={setPicked}
+          found={found}
+          onSelect={select}
           onLinkFrom={(sourceId) => requestLink(sourceId, null)}
           onToggleStack={toggleStack}
         />
@@ -423,6 +494,17 @@ export function EnvironmentsMap(
           }
         />
       ) : null}
+      {batchRequest ? (
+        <LinkSeveralEnvironmentsDialog
+          key={batchRequest.serial}
+          environmentId={batchRequest.environmentId}
+          open={batchRequest.open}
+          preset={batchRequest.preset}
+          onOpenChange={(open) =>
+            setBatchRequest((current) => (current === null ? null : { ...current, open }))
+          }
+        />
+      ) : null}
     </>
   );
 }
@@ -433,16 +515,34 @@ interface FleetSceneProps {
   readonly layout: FleetLayout;
   readonly environments: ReadonlyArray<EnvironmentPresentation>;
   readonly selection: FleetFocus | null;
+  /** Machines ticked for a batch link. */
+  readonly selected: ReadonlySet<string>;
   readonly onSelect: (focus: FleetFocus | null) => void;
+  readonly onTick: (ids: ReadonlyArray<string>, mode: "toggle" | "add") => void;
   readonly onLink: (sourceId: string, targetId: string | null) => void;
   readonly onToggleStack: (stackId: string) => void;
 }
 
-function FleetCanvas({ shapeKey, ...scene }: FleetSceneProps & { readonly shapeKey: string }) {
+interface FleetCanvasProps extends FleetSceneProps {
+  readonly shapeKey: string;
+  readonly onClearTicked: () => void;
+  readonly onLinkSeveral: (sourceId: string) => void;
+  /** A search landed on a machine drawn only inside a stack. */
+  readonly onFind: (stackId: string, memberId: string) => void;
+}
+
+function FleetCanvas({
+  shapeKey,
+  onClearTicked,
+  onLinkSeveral,
+  onFind,
+  ...scene
+}: FleetCanvasProps) {
   const gt = useGT();
-  const { layout, onSelect } = scene;
+  const { graph, stacks, layout, selection, selected, onSelect, onTick } = scene;
   const [canvas, setCanvas] = useState<HTMLDivElement | null>(null);
   const [width, setWidth] = useState<number | null>(null);
+  const [query, setQuery] = useState("");
   // A view the user set by hand holds until the map's shape changes; otherwise it fits itself.
   const [manual, setManual] = useState<{
     readonly key: string;
@@ -451,11 +551,16 @@ function FleetCanvas({ shapeKey, ...scene }: FleetSceneProps & { readonly shapeK
     readonly glide: boolean;
   } | null>(null);
   const [dragging, setDragging] = useState(false);
+  // The selection box, in canvas pixels, while Shift is held through a drag on empty canvas.
+  const [box, setBox] = useState<FleetRect | null>(null);
   const drag = useRef<{
     readonly pointerId: number;
     readonly key: string;
+    readonly mode: "pan" | "box";
     readonly x: number;
     readonly y: number;
+    readonly left: number;
+    readonly top: number;
     readonly origin: FleetViewTransform;
     moved: boolean;
   } | null>(null);
@@ -538,21 +643,65 @@ function FleetCanvas({ shapeKey, ...scene }: FleetSceneProps & { readonly shapeK
       };
     });
   };
+  const centre = (rect: FleetRect) => {
+    if (size === null || view === null) return;
+    const scale = Math.max(view.scale, FOUND_MIN_SCALE);
+    setView(
+      {
+        scale,
+        x: size.width / 2 - (rect.x + rect.width / 2) * scale,
+        y: size.height / 2 - (rect.y + rect.height / 2) * scale,
+      },
+      true,
+    );
+  };
+
+  const matchIds = fleetSearch(graph, query);
+  const matches = query.trim() === "" ? null : new Set(matchIds);
+  const goToFirstMatch = () => {
+    const first = matchIds[0];
+    if (first === undefined) return;
+    const rect = layout.nodes.get(first);
+    if (rect !== undefined) {
+      onSelect({ kind: "node", id: first });
+      centre(rect);
+      canvas
+        ?.querySelector<HTMLElement>(`[data-fleet-node="${CSS.escape(first)}"]`)
+        ?.focus({ preventScroll: true });
+      return;
+    }
+    // Folded away: its stack's list in the details scrolls to it.
+    const stack = stacks.find((entry) => entry.memberIds.includes(first));
+    const face = stack === undefined ? undefined : layout.stacks.get(stack.id)?.face;
+    if (stack === undefined || face === undefined) return;
+    onFind(stack.id, first);
+    centre(face);
+  };
 
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     // One pointer owns a drag: a second finger neither restarts it nor ends it.
     if (event.button !== 0 || view === null || drag.current !== null) return;
     if ((event.target as Element).closest("[data-fleet-item]")) return;
+    const bounds = event.currentTarget.getBoundingClientRect();
     drag.current = {
       pointerId: event.pointerId,
       key: shapeKey,
+      mode: event.shiftKey ? "box" : "pan",
       x: event.clientX,
       y: event.clientY,
+      left: bounds.left,
+      top: bounds.top,
       origin: view,
       moved: false,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
   };
+  const boxAt = (current: NonNullable<typeof drag.current>, event: PointerEvent): FleetRect => ({
+    x: Math.min(current.x, event.clientX) - current.left,
+    y: Math.min(current.y, event.clientY) - current.top,
+    width: Math.abs(event.clientX - current.x),
+    height: Math.abs(event.clientY - current.y),
+  });
   const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
     const current = drag.current;
     if (current === null || current.pointerId !== event.pointerId) return;
@@ -560,13 +709,18 @@ function FleetCanvas({ shapeKey, ...scene }: FleetSceneProps & { readonly shapeK
     if (current.key !== shapeKey) {
       drag.current = null;
       setDragging(false);
+      setBox(null);
       return;
     }
     const dx = event.clientX - current.x;
     const dy = event.clientY - current.y;
     if (!current.moved && Math.hypot(dx, dy) < 4) return;
-    if (!current.moved) setDragging(true);
     current.moved = true;
+    if (current.mode === "box") {
+      setBox(boxAt(current, event));
+      return;
+    }
+    setDragging(true);
     setView({ ...current.origin, x: current.origin.x + dx, y: current.origin.y + dy }, false);
   };
   const endDrag = (event: PointerEvent<HTMLDivElement>, cancelled: boolean) => {
@@ -574,7 +728,24 @@ function FleetCanvas({ shapeKey, ...scene }: FleetSceneProps & { readonly shapeK
     if (current === null || current.pointerId !== event.pointerId) return;
     drag.current = null;
     setDragging(false);
-    if (!current.moved && !cancelled) onSelect(null);
+    setBox(null);
+    if (cancelled) return;
+    if (!current.moved) {
+      if (current.mode === "pan") onSelect(null);
+      return;
+    }
+    if (current.mode !== "box" || current.key !== shapeKey) return;
+    const drawn = boxAt(current, event);
+    const { origin } = current;
+    onTick(
+      fleetNodesInBox(layout, {
+        x: (drawn.x - origin.x) / origin.scale,
+        y: (drawn.y - origin.y) / origin.scale,
+        width: drawn.width / origin.scale,
+        height: drawn.height / origin.scale,
+      }),
+      "add",
+    );
   };
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.ctrlKey || event.metaKey || event.altKey) return;
@@ -586,13 +757,103 @@ function FleetCanvas({ shapeKey, ...scene }: FleetSceneProps & { readonly shapeK
     event.preventDefault();
   };
 
+  const sources = graph.nodes.filter(
+    (node): node is FleetEnvironmentNode => node.kind === "environment" && node.linking === "ready",
+  );
+  // The environment in the details is the one the user means; a lone one needs no asking.
+  const source =
+    sources.find((node) => selection?.kind === "node" && node.id === selection.id) ??
+    (sources.length === 1 ? sources[0] : undefined);
+
   return (
     <>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-t-xl border-b border-border/60 bg-background/50 px-3 py-1.5">
+        <div className="w-48">
+          <InputGroup>
+            <InputGroupAddon>
+              <SearchIcon aria-hidden />
+            </InputGroupAddon>
+            <InputGroupInput
+              size="sm"
+              type="search"
+              value={query}
+              aria-label={gt("Find a machine on the map")}
+              placeholder={gt("Find a machine")}
+              spellCheck={false}
+              autoComplete="off"
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  goToFirstMatch();
+                } else if (event.key === "Escape" && query !== "") {
+                  event.stopPropagation();
+                  setQuery("");
+                }
+              }}
+            />
+          </InputGroup>
+        </div>
+        <p role="status" className="min-w-0 text-2xs text-muted-foreground">
+          {matches === null
+            ? null
+            : matchIds.length === 0
+              ? gt("No machine by that name")
+              : gt(
+                  "{count, plural, one {# match. Enter goes to it} other {# matches. Enter goes to the first}}",
+                  { count: matchIds.length },
+                )}
+        </p>
+        <div className="ml-auto flex items-center gap-2">
+          {selected.size > 0 ? (
+            <span className="flex items-center gap-1 text-2xs text-foreground">
+              <span role="status" className="tabular-nums">
+                {gt("{count, plural, one {# selected} other {# selected}}", {
+                  count: selected.size,
+                  $context: "how many machines are selected on a map",
+                })}
+              </span>
+              <Button size="xs" variant="ghost-muted" onClick={onClearTicked}>
+                {gt("Clear", { $context: "clears the selection of machines" })}
+              </Button>
+            </span>
+          ) : (
+            <span className="hidden text-2xs text-muted-foreground lg:inline">
+              {gt("Shift-click or Shift-drag to select several")}
+            </span>
+          )}
+          {sources.length === 0 ? null : source !== undefined ? (
+            <Button size="xs" variant="outline" onClick={() => onLinkSeveral(source.id)}>
+              {gt("Link several…")}
+            </Button>
+          ) : (
+            <Menu>
+              <MenuTrigger
+                render={
+                  <Button size="xs" variant="outline">
+                    {gt("Link several…")}
+                  </Button>
+                }
+              />
+              <MenuPopup align="end">
+                {sources.map((node) => (
+                  <MenuItem key={node.id} onClick={() => onLinkSeveral(node.id)}>
+                    {gt("From {source}", {
+                      source: node.label,
+                      $context: "menu item: link several machines from this environment",
+                    })}
+                  </MenuItem>
+                ))}
+              </MenuPopup>
+            </Menu>
+          )}
+        </div>
+      </div>
       <div
         ref={setCanvas}
         data-dragging={dragging || undefined}
         data-glide={glide || undefined}
-        className="relative min-h-65 cursor-grab touch-none overflow-clip rounded-t-xl bg-background/50 select-none data-dragging:cursor-grabbing data-glide:transition-[background-size,background-position] data-glide:duration-200 data-glide:ease-out motion-reduce:transition-none"
+        className="relative min-h-65 cursor-grab touch-none overflow-clip bg-background/50 select-none data-dragging:cursor-grabbing data-glide:transition-[background-size,background-position] data-glide:duration-200 data-glide:ease-out motion-reduce:transition-none"
         style={
           view === null || size === null
             ? undefined
@@ -620,8 +881,15 @@ function FleetCanvas({ shapeKey, ...scene }: FleetSceneProps & { readonly shapeK
               transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})`,
             }}
           >
-            <FleetScene {...scene} onReveal={reveal} />
+            <FleetScene {...scene} matches={matches} onReveal={reveal} />
           </div>
+        )}
+        {box === null ? null : (
+          <div
+            aria-hidden
+            style={{ left: box.x, top: box.y, width: box.width, height: box.height }}
+            className="pointer-events-none absolute rounded-sm border border-primary bg-primary/10 forced-colors:border-2"
+          />
         )}
       </div>
       {/* Below the canvas, not over it: nothing on the map can end up under the controls. */}
@@ -774,8 +1042,16 @@ function linkSummary(edge: FleetLinkEdge, gt: GT, m: Messages): string {
   return `${m(accessConfig[edge.link.access].label)}, ${healthLabel(edge.health, gt)}`;
 }
 
-function offerText(offer: FleetLinkOffer, target: string, gt: GT): string {
-  if (offer.kind !== "link") return gt("Cannot link to this");
+function actionText(action: FleetLinkAction | null, target: string, gt: GT): string {
+  if (action === null) return gt("Cannot link to this");
+  if (action.kind === "batch") {
+    return gt(
+      "{count, plural, one {Link to # machine. Pick which in the next step} other {Link to # machines. Pick which in the next step}}",
+      { count: action.environmentIds.length },
+    );
+  }
+  const { offer } = action;
+  if (offer === null) return gt("Cannot link to this");
   if (offer.path === "code-less") {
     return offer.renews
       ? gt("Renew the link to {target}. No pairing code needed", { target })
@@ -784,6 +1060,21 @@ function offerText(offer: FleetLinkOffer, target: string, gt: GT): string {
   return offer.renews
     ? gt("Renew the link to {target}. Needs a pairing code from it", { target })
     : gt("Link to {target}. Needs a pairing code from it", { target });
+}
+
+function foldGroupLabel(group: FleetFoldGroup, gt: GT): string {
+  switch (group) {
+    case "offline":
+      return gt("Offline");
+    case "off":
+      return gt("Switched off", { $context: "environments the user has switched off in this app" });
+    case "update":
+      return gt("Need an update", {
+        $context: "environments running a version this app cannot talk to",
+      });
+    case "not-added":
+      return gt("Not added");
+  }
 }
 
 const COLUMN_TITLES = (gt: GT): Record<FleetColumn, string> => ({
@@ -805,11 +1096,18 @@ const FleetScene = memo(function FleetScene({
   layout,
   environments,
   selection,
+  selected,
+  matches,
   onSelect,
+  onTick,
   onLink,
   onToggleStack,
   onReveal,
-}: FleetSceneProps & { readonly onReveal: (rect: FleetRect) => void }) {
+}: FleetSceneProps & {
+  /** Machines a search names; the rest step back. Null when nothing is searched for. */
+  readonly matches: ReadonlySet<string> | null;
+  readonly onReveal: (rect: FleetRect) => void;
+}) {
   const gt = useGT();
   const m = useMessages();
   const [hover, setHover] = useState<FleetFocus | null>(null);
@@ -855,15 +1153,31 @@ const FleetScene = memo(function FleetScene({
     isSelected("edge", edge.id) || (lit?.edges.has(edge.id) ?? false);
   // Painted last, so the links in focus lie over the ones that are not.
   const paintOrder = lit === null ? links : links.toSorted((a, b) => +linkLit(a) - +linkLit(b));
-  const dragOffer = (targetId: string) =>
-    linkDrag === null ? null : fleetLinkOffer(graph, linkDrag.sourceId, targetId);
+  const dragAction = (targetId: string) =>
+    linkDrag === null
+      ? null
+      : fleetLinkAction(graph, stacks, selected, linkDrag.sourceId, targetId);
+  // A stack fades as a whole, by the links and machines it stands for.
   const nodeDimmed = (id: string) =>
-    linkDrag !== null
-      ? id !== linkDrag.sourceId && dragOffer(id)?.kind !== "link"
-      : lit !== null && !lit.nodes.has(id);
+    layout.stacks.has(id)
+      ? false
+      : linkDrag !== null
+        ? id !== linkDrag.sourceId && dragAction(id) === null
+        : (lit !== null && !lit.nodes.has(id)) || (matches !== null && !matches.has(id));
   // By the links it stands for: a host and a member can both be lit through other links.
   const stackLit = (stack: FleetStack) =>
     lit === null || stack.edgeIds.some((id) => lit.edges.has(id));
+  const stackDimmed = (stack: FleetStack) =>
+    linkDrag !== null
+      ? false
+      : !stackLit(stack) || (matches !== null && !stack.memberIds.some((id) => matches.has(id)));
+  // A machine drawn on its own can be ticked for a batch link; the client and stacks cannot.
+  const tickable = (id: string) => id !== FLEET_CLIENT_NODE_ID && layout.nodes.has(id);
+  // A machine shown in the details but folded into a stack marks the stack it is in.
+  const holdsSelection = (stack: FleetStack) =>
+    selection?.kind === "node" &&
+    !layout.nodes.has(selection.id) &&
+    stack.memberIds.includes(selection.id);
   const hoverProps = (target: FleetFocus) => ({
     onPointerEnter: () => setHover(target),
     onPointerLeave: () => setHover(null),
@@ -872,6 +1186,12 @@ const FleetScene = memo(function FleetScene({
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const direction = ARROW_ROVE[event.key];
     const from = (event.target as HTMLElement).closest<HTMLElement>("[data-fleet-node]");
+    if (event.key === " " && from !== null && tickable(from.dataset.fleetNode ?? "")) {
+      // Space ticks the machine for a batch link; Enter still opens its details.
+      event.preventDefault();
+      if (!event.repeat) onTick([from.dataset.fleetNode ?? ""], "toggle");
+      return;
+    }
     if (direction === undefined || from === null) return;
     event.preventDefault();
     const next = nextFleetNode(focusRects, from.dataset.fleetNode ?? "", direction);
@@ -887,11 +1207,23 @@ const FleetScene = memo(function FleetScene({
     type: "button" as const,
     "data-fleet-item": "",
     "data-fleet-node": target.id,
-    "aria-label": label,
+    "aria-label": selected.has(target.id)
+      ? gt("{label}, selected", { label, $context: "a machine ticked on a map" })
+      : label,
     "aria-pressed": isSelected(target.kind, target.id),
     tabIndex: target.id === tabStop ? 0 : -1,
     style: { left: rect.x, top: rect.y, width: rect.width, height: rect.height },
-    onClick: () => onSelect(isSelected(target.kind, target.id) ? null : target),
+    onClick: (event: MouseEvent<HTMLElement>) => {
+      if ((event.shiftKey || event.metaKey || event.ctrlKey) && tickable(target.id)) {
+        onTick([target.id], "toggle");
+        return;
+      }
+      onSelect(isSelected(target.kind, target.id) ? null : target);
+    },
+    // The keydown ticked the machine; without this the button would also click.
+    onKeyUp: (event: KeyboardEvent<HTMLElement>) => {
+      if (event.key === " " && tickable(target.id)) event.preventDefault();
+    },
     onFocus: (event: FocusEvent<HTMLElement>) => {
       setRoving(target.id);
       setHover(target);
@@ -918,7 +1250,7 @@ const FleetScene = memo(function FleetScene({
     const over = document
       .elementFromPoint(event.clientX, event.clientY)
       ?.closest<HTMLElement>("[data-fleet-node]")?.dataset.fleetNode;
-    return over !== undefined && fleetLinkOffer(graph, sourceId, over).kind === "link"
+    return over !== undefined && fleetLinkAction(graph, stacks, selected, sourceId, over) !== null
       ? over
       : null;
   };
@@ -971,14 +1303,14 @@ const FleetScene = memo(function FleetScene({
   });
 
   const dragSource = linkDrag === null ? undefined : layout.handles.get(linkDrag.sourceId);
-  const dragTarget = linkDrag?.overId ? nodeById.get(linkDrag.overId) : undefined;
+  const dragOver = linkDrag?.overId ?? null;
 
   return (
     <div
       role="group"
       aria-label={gt("Map of your machines")}
       aria-description={gt(
-        "Arrow keys move between machines. Enter opens a machine's details, with its routes and links. Tab from an environment reaches its link button. Plus and minus zoom, zero fits the map.",
+        "Arrow keys move between machines. Enter opens a machine's details, with its routes and links. Space selects a machine for linking several at once. Tab from an environment reaches its link button. Plus and minus zoom, zero fits the map.",
       )}
       onKeyDown={onKeyDown}
     >
@@ -1017,25 +1349,39 @@ const FleetScene = memo(function FleetScene({
         {stacks.map((stack) => {
           const geometry = layout.stacks.get(stack.id);
           if (geometry === undefined) return null;
-          const level = accessLevel(stack.access);
           const onPath = stackLit(stack);
-          return (
-            <g
-              key={stack.id}
-              className={cn("text-foreground", fadeLine(lit !== null && !onPath))}
-              opacity={lit !== null && onPath ? 1 : ACCESS_STROKE_OPACITIES[level]}
-            >
-              <path
-                d={geometry.d}
-                stroke="currentColor"
-                strokeWidth={ACCESS_STROKE_WIDTHS[level]}
-              />
-              <path
-                d={`M${geometry.arrow.x - 8} ${geometry.arrow.y - 4.5}L${geometry.arrow.x} ${geometry.arrow.y}L${geometry.arrow.x - 8} ${geometry.arrow.y + 4.5}Z`}
-                fill="currentColor"
-              />
-            </g>
-          );
+          return geometry.lines.map((line) => {
+            // A folded group of environments has one wire for all its routes, none in use.
+            if (line.access === null) {
+              return (
+                <path
+                  key={`${stack.id}:routes`}
+                  d={line.d}
+                  stroke="currentColor"
+                  strokeWidth={ROUTE_STYLES.idle.width}
+                  strokeDasharray={ROUTE_STYLES.idle.dash}
+                  className={cn(ROUTE_STYLES.idle.wire, fadeLine(lit !== null && !onPath))}
+                />
+              );
+            }
+            const level = accessLevel(line.access);
+            const mine = lit === null || lit.nodes.has(line.sourceId ?? "");
+            return (
+              <g
+                key={`${stack.id}:${line.sourceId}`}
+                className={cn("text-foreground", fadeLine(lit !== null && !(onPath && mine)))}
+                opacity={lit !== null && onPath && mine ? 1 : ACCESS_STROKE_OPACITIES[level]}
+              >
+                <path d={line.d} stroke="currentColor" strokeWidth={ACCESS_STROKE_WIDTHS[level]} />
+                {line.arrow === null ? null : (
+                  <path
+                    d={`M${line.arrow.x - 8} ${line.arrow.y - 4.5}L${line.arrow.x} ${line.arrow.y}L${line.arrow.x - 8} ${line.arrow.y + 4.5}Z`}
+                    fill="currentColor"
+                  />
+                )}
+              </g>
+            );
+          });
         })}
         {paintOrder.map((edge) => {
           const geometry = layout.links.get(edge.id);
@@ -1129,6 +1475,14 @@ const FleetScene = memo(function FleetScene({
         const badge = layout.links.get(edge.id)?.badge;
         if (!badge) return null;
         const target = { kind: "edge", id: edge.id } as const;
+        // With no clear place of its own, the name shows only while its link is the one in focus.
+        if (
+          badge.onDemand &&
+          !isSelected("edge", edge.id) &&
+          !(focus?.kind === "edge" && focus.id === edge.id)
+        ) {
+          return null;
+        }
         return (
           <button
             key={edge.id}
@@ -1153,6 +1507,7 @@ const FleetScene = memo(function FleetScene({
             className={cn(
               "absolute flex cursor-pointer items-center gap-1.5 rounded-full border border-border bg-card px-1.5 text-2xs leading-none outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset aria-pressed:border-primary aria-pressed:text-primary",
               healthTone(edge.health),
+              badge.onDemand && "z-10 shadow-sm/5",
               fadeLine(lit !== null && !lit.edges.has(edge.id)),
             )}
             onClick={() => onSelect(isSelected("edge", edge.id) ? null : target)}
@@ -1168,18 +1523,44 @@ const FleetScene = memo(function FleetScene({
       {stacks.map((stack) => {
         const geometry = layout.stacks.get(stack.id);
         if (geometry === undefined) return null;
-        const { face, rect } = geometry;
-        const access = m(accessConfig[stack.access].label);
+        const { face, rect, more } = geometry;
         const count = stack.memberIds.length;
-        const summary = gt("{access}. {reachable} of {count} reachable", {
-          access,
-          reachable: stack.reachable,
-          count,
-        });
-        const troubled = stack.reachable < count;
+        const range =
+          stack.firstLabel === stack.lastLabel
+            ? stack.firstLabel
+            : `${stack.firstLabel} … ${stack.lastLabel}`;
+        const group = stack.group === null ? null : foldGroupLabel(stack.group, gt);
+        const [only] = stack.sources;
+        const summary =
+          group !== null
+            ? range
+            : stack.sources.length === 1 && only !== undefined
+              ? gt("{access}. {reachable} of {count} reachable", {
+                  access: m(accessConfig[only.access].label),
+                  reachable: stack.reachable,
+                  count,
+                })
+              : gt("{reachable} of {count} reachable, from {sources} environments", {
+                  reachable: stack.reachable,
+                  count,
+                  sources: stack.sources.length,
+                });
+        const spoken =
+          group !== null
+            ? gt("{group}: {count} environments with no links, {range}", { group, count, range })
+            : gt("{range}, {count} machines linked from {sources}. {summary}", {
+                range,
+                count,
+                sources: stack.sources
+                  .map((source) => nodeById.get(source.sourceId)?.label ?? "")
+                  .join(", "),
+                summary,
+              });
+        const troubled = group === null && stack.reachable < count;
         const ToggleIcon = stack.expanded ? FoldVerticalIcon : UnfoldVerticalIcon;
+        const hidden = count - stack.shownIds.length;
         return (
-          <div key={stack.id} className={fade(!stackLit(stack))}>
+          <div key={stack.id} className={fade(stackDimmed(stack))}>
             {stack.expanded ? (
               <div
                 aria-hidden
@@ -1197,34 +1578,29 @@ const FleetScene = memo(function FleetScene({
                     width: face.width,
                     height: face.height,
                   }}
-                  className="absolute rounded-lg border border-border bg-card"
+                  className={cn(
+                    "absolute rounded-lg border border-border bg-card",
+                    group !== null && "border-dashed",
+                  )}
                 />
               ))
             )}
             <button
-              {...focusProps(
-                { kind: "stack", id: stack.id },
-                face,
-                gt("{first} to {last}, {count} machines linked from {source}. {summary}", {
-                  first: stack.firstLabel,
-                  last: stack.lastLabel,
-                  count,
-                  source: nodeById.get(stack.sourceId)?.label ?? "",
-                  summary,
-                }),
-              )}
+              {...focusProps({ kind: "stack", id: stack.id }, face, spoken)}
               className={cn(
                 nodeClass(stack.id),
                 "gap-2 px-2.5 pr-8",
                 stack.expanded
                   ? "rounded-t-xl"
                   : "rounded-lg border border-foreground/25 bg-card hover:border-foreground/50",
+                !stack.expanded && group !== null && "border-dashed",
+                holdsSelection(stack) && "ring-2 ring-primary ring-inset forced-colors:outline-2",
               )}
             >
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-1.5">
                   <span className="truncate text-xs leading-4 font-semibold text-foreground">
-                    {stack.firstLabel} … {stack.lastLabel}
+                    {group ?? range}
                   </span>
                   <span className="shrink-0 rounded-full bg-muted px-1.5 text-2xs leading-4 text-muted-foreground tabular-nums forced-colors:border">
                     {count}
@@ -1247,7 +1623,13 @@ const FleetScene = memo(function FleetScene({
               data-fleet-item=""
               tabIndex={stack.id === tabStop ? 0 : -1}
               aria-label={
-                stack.expanded ? gt("Collapse these machines") : gt("Show each machine on the map")
+                stack.expanded
+                  ? gt("Collapse these machines")
+                  : hidden > 0
+                    ? gt("Show the first {shown} machines on the map", {
+                        shown: stack.shownIds.length,
+                      })
+                    : gt("Show each machine on the map")
               }
               aria-expanded={stack.expanded}
               style={{ left: face.x + face.width - 28, top: face.y + face.height / 2 - 11 }}
@@ -1256,6 +1638,26 @@ const FleetScene = memo(function FleetScene({
             >
               <ToggleIcon aria-hidden className="size-3.5" />
             </button>
+            {more === null ? null : (
+              // The rest are never drawn: the details list every machine, and can be searched.
+              <button
+                type="button"
+                data-fleet-item=""
+                data-fleet-node={fleetMoreNodeId(stack.id)}
+                tabIndex={fleetMoreNodeId(stack.id) === tabStop ? 0 : -1}
+                style={{ left: more.x, top: more.y, width: more.width, height: more.height }}
+                className="absolute flex cursor-pointer items-center rounded-md border border-dashed border-foreground/30 px-2 text-2xs leading-none text-muted-foreground outline-none hover:border-foreground/55 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                onClick={() => onSelect({ kind: "stack", id: stack.id })}
+                onFocus={() => setRoving(fleetMoreNodeId(stack.id))}
+              >
+                <span className="truncate">
+                  {gt("and {count} more", {
+                    count: hidden,
+                    $context: "a card standing for the machines of a group that are not drawn",
+                  })}
+                </span>
+              </button>
+            )}
           </div>
         );
       })}
@@ -1348,6 +1750,34 @@ const FleetScene = memo(function FleetScene({
               {compact || !shown ? null : (
                 <AccessMeter access={shown.link.access} className="text-foreground/70" />
               )}
+            </button>
+          );
+        }
+        if (rect.height < 32) {
+          // Inside an open group of environments: its name and state; the details have the rest.
+          const state =
+            node.kind === "connect"
+              ? connectAvailabilityText(node.availability, gt)
+              : connectionStateText(node, environmentById.get(node.id), false, gt);
+          return (
+            <button
+              key={node.id}
+              {...focusProps(target, rect, `${node.label}, ${state}`)}
+              className={cn(
+                nodeClass(node.id),
+                "gap-1.5 rounded-md border border-dashed border-foreground/25 bg-card px-2 text-foreground/90 hover:border-foreground/50 hover:text-foreground",
+              )}
+            >
+              <span
+                aria-hidden
+                className={cn(
+                  "size-2 shrink-0 rounded-full",
+                  node.kind === "environment" && node.enabled
+                    ? connectionPhaseDotClassName(node.phase)
+                    : "bg-muted-foreground/40",
+                )}
+              />
+              <span className="truncate text-2xs leading-none">{node.label}</span>
             </button>
           );
         }
@@ -1479,10 +1909,31 @@ const FleetScene = memo(function FleetScene({
           </div>
         );
       })}
+      {[...selected].map((id) => {
+        const rect = layout.nodes.get(id);
+        if (rect === undefined) return null;
+        return (
+          <span
+            key={id}
+            aria-hidden
+            style={{
+              left: rect.x - 3,
+              top: rect.y - 3,
+              width: rect.width + 6,
+              height: rect.height + 6,
+            }}
+            className="pointer-events-none absolute rounded-2xl border-2 border-primary bg-primary/6"
+          >
+            <span className="absolute -top-2 -left-2 flex size-4 items-center justify-center rounded-full bg-primary text-primary-foreground forced-colors:border">
+              <CheckIcon className="size-2.5" strokeWidth={3} />
+            </span>
+          </span>
+        );
+      })}
       {linkDrag !== null ? (
         <DragHint x={linkDrag.x} y={linkDrag.y}>
-          {dragTarget
-            ? offerText(dragOffer(dragTarget.id)!, dragTarget.label, gt)
+          {dragOver !== null
+            ? actionText(dragAction(dragOver), nodeById.get(dragOver)?.label ?? "", gt)
             : gt("Drop on a machine to link {source} to it", {
                 source: nodeById.get(linkDrag.sourceId)?.label ?? "",
               })}

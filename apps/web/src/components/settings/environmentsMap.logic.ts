@@ -302,59 +302,156 @@ export const linkNeedsAttention = (health: PeerLinkHealth) =>
   health.kind !== "reachable" || health.expiresInDays !== null;
 
 const ACCESS_ORDER = AuthMcpClientAccess.literals;
+/** The least distance between two lines entering one card: an arrowhead plus the heaviest line. */
+export const FLEET_LANE_PITCH = 12;
 const labelOrder = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
 
+/** Why an environment with no links is folded away: what the client knows of it, never a probe. */
+export type FleetFoldGroup = "offline" | "off" | "update" | "not-added";
+
 /**
- * Machines only one environment links to, at one access level, drawn as a single node. Forty
- * VMs under one host cost one node and one line, and each link stays listed in the details.
+ * Machines drawn as a single node, each still listed in the details. `targets` are machines
+ * known only through links, all linked from the same environments at the same access levels:
+ * a thousand VMs under two hosts cost one node and two lines. `environments` are ones this app
+ * is not connected to and that take part in no link, grouped by why.
  */
 export interface FleetStack {
   readonly id: string;
-  readonly sourceId: string;
-  readonly access: AuthMcpClientAccess;
+  readonly kind: "targets" | "environments";
+  /** The environments linking to every member, uppermost first. Empty for `environments`. */
+  readonly sources: ReadonlyArray<{
+    readonly sourceId: string;
+    readonly access: AuthMcpClientAccess;
+  }>;
+  readonly group: FleetFoldGroup | null;
   /** In name order, so the first and last name the range. */
   readonly memberIds: ReadonlyArray<string>;
   readonly edgeIds: ReadonlyArray<string>;
+  /** Members every one of whose links answers. */
   readonly reachable: number;
   readonly firstLabel: string;
   readonly lastLabel: string;
   readonly expanded: boolean;
+  /** The members an open stack draws on the map; the rest are in the details only. */
+  readonly shownIds: ReadonlyArray<string>;
 }
 
-/** Below this many machines a group is clearer drawn one by one. */
+/** Below this many machines a group of link targets is clearer drawn one by one. */
 const FLEET_STACK_MIN = 5;
+/** Environments fold only once the client knows more than this many. */
+export const FLEET_FOLD_ENVIRONMENTS_OVER = 12;
+/** A folded group of environments needs at least this many; fewer stay as cards. */
+const FLEET_FOLD_MIN = 3;
+/** An open stack draws this many machines at most, then one card for the rest. */
+export const FLEET_STACK_SHOWN_MAX = 24;
+
+export const fleetMoreNodeId = (stackId: string) => `more:${stackId}`;
+
+function foldGroup(node: FleetNode): FleetFoldGroup | null {
+  if (node.kind === "connect") return "not-added";
+  if (node.kind !== "environment") return null;
+  if (node.phase === "unsupported") return "update";
+  if (!node.enabled) return "off";
+  // One still dialling stays a card: it is about to change, and the user is watching it.
+  return node.phase === "offline" || node.phase === "error" || node.phase === "available"
+    ? "offline"
+    : null;
+}
+
+const FOLD_ORDER: ReadonlyArray<FleetFoldGroup> = ["offline", "off", "update", "not-added"];
 
 export function fleetStacks(graph: FleetGraph, expanded: ReadonlySet<string>): FleetStack[] {
   const byId = new Map(graph.nodes.map((node) => [node.id, node]));
+  const order = new Map(graph.nodes.map((node, index) => [node.id, index]));
+  const label = (id: string) => byId.get(id)?.label ?? "";
+  const byLabel = (left: string, right: string) =>
+    labelOrder.compare(label(left), label(right)) || (left < right ? -1 : 1);
   const links = graph.edges.filter(isLinkEdge);
-  const incoming = new Map<string, number>();
-  for (const link of links) incoming.set(link.to, (incoming.get(link.to) ?? 0) + 1);
-  const groups = new Map<string, FleetLinkEdge[]>();
+  const incoming = new Map<string, FleetLinkEdge[]>();
   for (const link of links) {
-    if (byId.get(link.to)?.kind !== "target" || incoming.get(link.to) !== 1) continue;
-    const id = `stack:${link.from}:${link.link.access}`;
-    groups.set(id, [...(groups.get(id) ?? []), link]);
+    if (byId.get(link.to)?.kind !== "target") continue;
+    const into = incoming.get(link.to);
+    if (into === undefined) incoming.set(link.to, [link]);
+    else into.push(link);
   }
-  const label = (link: FleetLinkEdge) => byId.get(link.to)?.label ?? "";
-  return [...groups]
-    .filter(([, members]) => members.length >= FLEET_STACK_MIN)
-    .map(([id, unsorted]) => {
-      const members = unsorted.toSorted(
-        (left, right) =>
-          labelOrder.compare(label(left), label(right)) || (left.to < right.to ? -1 : 1),
-      );
-      return {
+  // Keyed by the exact set of (host, access) links in, so every member is drawn by the same lines.
+  const groups = new Map<string, Array<{ id: string; links: FleetLinkEdge[] }>>();
+  for (const [id, unsorted] of incoming) {
+    const into = unsorted.toSorted((a, b) => order.get(a.from)! - order.get(b.from)!);
+    const key = `stack:${into.map((link) => `${link.from}:${link.link.access}`).join("|")}`;
+    const group = groups.get(key);
+    if (group === undefined) groups.set(key, [{ id, links: into }]);
+    else group.push({ id, links: into });
+  }
+  const make = (
+    id: string,
+    kind: FleetStack["kind"],
+    memberIds: ReadonlyArray<string>,
+    rest: Pick<FleetStack, "sources" | "group" | "edgeIds" | "reachable">,
+  ): FleetStack => ({
+    id,
+    kind,
+    ...rest,
+    memberIds,
+    firstLabel: label(memberIds[0]!),
+    lastLabel: label(memberIds.at(-1)!),
+    expanded: expanded.has(id),
+    shownIds:
+      memberIds.length > FLEET_STACK_SHOWN_MAX
+        ? memberIds.slice(0, FLEET_STACK_SHOWN_MAX)
+        : memberIds,
+  });
+  const stacks: FleetStack[] = [];
+  for (const [id, unsorted] of groups) {
+    if (unsorted.length < FLEET_STACK_MIN) continue;
+    const members = unsorted.toSorted((left, right) => byLabel(left.id, right.id));
+    stacks.push(
+      make(
         id,
-        sourceId: members[0]!.from,
-        access: members[0]!.link.access,
-        memberIds: members.map((link) => link.to),
-        edgeIds: members.map((link) => link.id),
-        reachable: members.filter((link) => link.health.kind === "reachable").length,
-        firstLabel: label(members[0]!),
-        lastLabel: label(members.at(-1)!),
-        expanded: expanded.has(id),
-      };
-    });
+        "targets",
+        members.map((member) => member.id),
+        {
+          sources: members[0]!.links.map((link) => ({
+            sourceId: link.from,
+            access: link.link.access,
+          })),
+          group: null,
+          edgeIds: members.flatMap((member) => member.links.map((link) => link.id)),
+          reachable: members.filter((member) =>
+            member.links.every((link) => link.health.kind === "reachable"),
+          ).length,
+        },
+      ),
+    );
+  }
+  const hosts = graph.nodes.filter(
+    (node) => node.kind === "environment" || node.kind === "connect",
+  );
+  if (hosts.length <= FLEET_FOLD_ENVIRONMENTS_OVER) return stacks;
+  const linked = new Set(links.flatMap((link) => [link.from, link.to]));
+  const routesOf = new Map<string, string[]>();
+  for (const edge of graph.edges) {
+    if (edge.kind !== "route") continue;
+    const routes = routesOf.get(edge.to);
+    if (routes === undefined) routesOf.set(edge.to, [edge.id]);
+    else routes.push(edge.id);
+  }
+  for (const group of FOLD_ORDER) {
+    const memberIds = hosts
+      .filter((host) => !linked.has(host.id) && foldGroup(host) === group)
+      .map((host) => host.id)
+      .toSorted(byLabel);
+    if (memberIds.length < FLEET_FOLD_MIN) continue;
+    stacks.push(
+      make(`fold:${group}`, "environments", memberIds, {
+        sources: [],
+        group,
+        edgeIds: memberIds.flatMap((id) => routesOf.get(id) ?? []),
+        reachable: 0,
+      }),
+    );
+  }
+  return stacks;
 }
 
 export type FleetFocus =
@@ -478,7 +575,11 @@ export function fleetShapeKey(graph: FleetGraph, stacks: ReadonlyArray<FleetStac
     ...graph.edges.map((edge) =>
       edge.kind === "link" ? `${edge.id}\u0000${edge.link.access}` : edge.id,
     ),
-    ...stacks.map((stack) => `${stack.id}\u0000${stack.expanded}`),
+    // Which environments fold follows their state, which nothing above carries.
+    ...stacks.map(
+      (stack) =>
+        `${stack.id}\u0000${stack.expanded}\u0000${stack.kind === "environments" ? stack.memberIds.join() : ""}`,
+    ),
   ].join("\n");
 }
 
@@ -500,18 +601,26 @@ export interface FleetRouteGeometry {
   readonly pill: FleetRect;
 }
 
-/** Room for a link's access in words. `side` is the way it grows from the lane it sits on. */
-export type FleetLinkBadge = FleetRect & { readonly side: 1 | -1 };
+/**
+ * Room for a link's access in words. `side` is the way it grows from the lane it sits on.
+ * `onDemand` names one with no clear place: shown only while its link is in focus.
+ */
+export type FleetLinkBadge = FleetRect & { readonly side: 1 | -1; readonly onDemand: boolean };
 
 export interface FleetLinkGeometry {
   readonly d: string;
   /** Arrowhead tip and the horizontal direction it points. */
   readonly arrow: { readonly x: number; readonly y: number; readonly dir: 1 | -1 };
-  /**
-   * Where a link between two environments names its access; a target's card shows its own.
-   * Null too where so many links pass that a name would sit on another's.
-   */
+  /** Where a link between two environments names its access; a target's card shows its own. */
   readonly badge: FleetLinkBadge | null;
+}
+
+/** A line a stack draws for all its machines: one environment's links, or the client's routes. */
+export interface FleetStackLine {
+  readonly sourceId: string | null;
+  readonly access: AuthMcpClientAccess | null;
+  readonly d: string;
+  readonly arrow: FleetPoint | null;
 }
 
 export interface FleetStackGeometry {
@@ -519,8 +628,9 @@ export interface FleetStackGeometry {
   readonly rect: FleetRect;
   /** The part that is the stack's control: the front sheet, or an open stack's header. */
   readonly face: FleetRect;
-  readonly d: string;
-  readonly arrow: FleetPoint;
+  readonly lines: ReadonlyArray<FleetStackLine>;
+  /** In an open stack, the card standing for the machines it does not draw. */
+  readonly more: FleetRect | null;
 }
 
 export type FleetColumn = "client" | "environments" | "targets";
@@ -553,6 +663,8 @@ const CHIP = { width: 124, height: 26 };
 const CHIP_GAP = 6;
 const FRAME_PAD = 8;
 const FRAME_HEADER = 30;
+/** An open group of environments is two machines wide, and the column widens to hold it. */
+const FOLD_COLUMNS = 2;
 const GROUP_GAP = 28;
 const BAY_GAP = 12;
 const LANE_FIRST = 24;
@@ -564,8 +676,11 @@ const ARROW_LENGTH = 6;
 const ENTRY_PITCH = 14;
 /** The channel left of the cards that links between environments keep to themselves. */
 const BETWEEN = { first: 16, step: 14, last: 10 };
-/** Where those links meet a card's left edge: past its routes, the outermost lane innermost. */
-const LINK_PORT = { first: 4, pitch: 8, margin: 8 };
+/**
+ * Where those links meet a card's left edge: past its routes, the outermost lane innermost.
+ * The pitch clears an arrowhead and the heaviest line; a card grows to hold its ports.
+ */
+const LINK_PORT = { first: 6, pitch: FLEET_LANE_PITCH, margin: 8 };
 const CORNER = 8;
 const BADGE = { width: 120, height: 20, overhang: 5, gap: 4 };
 
@@ -596,14 +711,41 @@ const sCurve = (x0: number, y0: number, x1: number, y1: number, fanX = x0) => {
 
 const frameColumns = (count: number) => Math.max(2, Math.min(4, Math.ceil(Math.sqrt(count / 2.2))));
 
+/** What an open stack draws: its shown machines, and one more card when some are left out. */
+const frameCells = (stack: FleetStack) =>
+  stack.shownIds.length + Number(stack.memberIds.length > stack.shownIds.length);
+
+const frameHeight = (stack: FleetStack, columns: number, header: number) =>
+  header + Math.ceil(frameCells(stack) / columns) * (CHIP.height + CHIP_GAP) - CHIP_GAP + FRAME_PAD;
+
+/** One line into a machine or a stack, from the environment holding the link. */
+interface BayEntry {
+  readonly key: string;
+  readonly from: string;
+}
+
 type BayItem =
-  | { readonly kind: "target"; readonly targetId: string; readonly incoming: FleetLinkEdge[] }
-  | { readonly kind: "stack"; readonly stack: FleetStack };
+  | {
+      readonly kind: "target";
+      readonly targetId: string;
+      readonly label: string;
+      readonly access: AuthMcpClientAccess;
+      readonly entries: ReadonlyArray<BayEntry>;
+    }
+  | {
+      readonly kind: "stack";
+      readonly stack: FleetStack;
+      readonly label: string;
+      readonly access: AuthMcpClientAccess;
+      readonly entries: ReadonlyArray<BayEntry>;
+    };
+
+type ColumnEntry =
+  | { readonly kind: "host"; readonly id: string; readonly host: FleetNode }
+  | { readonly kind: "fold"; readonly id: string; readonly stack: FleetStack };
 
 interface FleetRow {
-  /** The host whose own machines these are; a row of shared machines has none. */
-  readonly hostId: string | null;
-  readonly hosts: FleetNode[];
+  readonly entries: ColumnEntry[];
   readonly items: ReadonlyArray<BayItem>;
 }
 
@@ -617,11 +759,18 @@ interface FleetLane {
   index: number;
 }
 
+const stackLineKey = (stackId: string, sourceId: string) => `${stackId}<${sourceId}`;
+
+const pushTo = <K, V>(into: Map<K, V[]>, key: K, value: V) => {
+  const list = into.get(key);
+  if (list === undefined) into.set(key, [value]);
+  else list.push(value);
+};
+
 /**
- * This client, the machines it knows, and those seen only through a link: beside the one host
- * linking to them, or in a row between the several that do. Links to those run right of the
- * environments and links between two environments run left of them, each on its own lane with
- * its own entry, so two hosts' links never share a stretch. Deterministic.
+ * Links to machines seen only through a link run right of the environments, links between two
+ * environments left of them, each on its own lane with its own entry. A stack takes one place
+ * whatever it holds, so the cost follows what is drawn. Deterministic.
  */
 export function layoutFleetGraph(
   graph: FleetGraph,
@@ -633,57 +782,72 @@ export function layoutFleetGraph(
   const linkGeometry = new Map<string, FleetLinkGeometry>();
   const handles = new Map<string, FleetPoint>();
   const links = graph.edges.filter(isLinkEdge);
-  const routeEdges = graph.edges.filter(isRouteEdge);
   const byId = new Map(graph.nodes.map((node) => [node.id, node]));
+  const folds = stacks.filter((stack) => stack.kind === "environments");
+  const folded = new Set(folds.flatMap((stack) => stack.memberIds));
   const hosts = graph.nodes.filter(
-    (node) => node.kind === "environment" || node.kind === "connect",
+    (node) => (node.kind === "environment" || node.kind === "connect") && !folded.has(node.id),
   );
   const hostIndex = new Map(hosts.map((host, index) => [host.id, index]));
   const indexOf = (hostId: string) => hostIndex.get(hostId) ?? 0;
+  const routesOf = new Map<string, FleetRouteEdge[]>();
+  for (const edge of graph.edges) if (edge.kind === "route") pushTo(routesOf, edge.to, edge);
   const accessRank = (access: AuthMcpClientAccess) => -ACCESS_ORDER.indexOf(access);
   const labelOf = (id: string) => byId.get(id)?.label ?? "";
-  const byLabel = (left: string, right: string) =>
-    labelOrder.compare(labelOf(left), labelOf(right)) || (left < right ? -1 : 1);
 
   const stacked = new Set(stacks.flatMap((stack) => stack.edgeIds));
   const incomingOf = new Map<string, FleetLinkEdge[]>();
   for (const link of links) {
     if (byId.get(link.to)?.kind !== "target" || stacked.has(link.id)) continue;
-    incomingOf.set(link.to, [...(incomingOf.get(link.to) ?? []), link]);
+    pushTo(incomingOf, link.to, link);
   }
+  const items: BayItem[] = [];
+  for (const stack of stacks) {
+    if (stack.kind !== "targets") continue;
+    items.push({
+      kind: "stack",
+      stack,
+      label: stack.firstLabel,
+      access: stack.sources[0]!.access,
+      entries: stack.sources.map((source) => ({
+        key: stackLineKey(stack.id, source.sourceId),
+        from: source.sourceId,
+      })),
+    });
+  }
+  for (const [targetId, unsorted] of incomingOf) {
+    // Top to bottom in the order of the hosts, so the upper line is the upper host's.
+    const incoming = unsorted.toSorted((left, right) => indexOf(left.from) - indexOf(right.from));
+    items.push({
+      kind: "target",
+      targetId,
+      label: labelOf(targetId),
+      access: incoming[0]!.link.access,
+      entries: incoming.map((link) => ({ key: link.id, from: link.from })),
+    });
+  }
+  const itemId = (item: BayItem) => (item.kind === "stack" ? item.stack.id : item.targetId);
+  const byName = (left: BayItem, right: BayItem) =>
+    labelOrder.compare(left.label, right.label) || (itemId(left) < itemId(right) ? -1 : 1);
   const bayOf = new Map<string, BayItem[]>();
   const bandOf = new Map<string, BayItem[]>();
-  const push = (into: Map<string, BayItem[]>, hostId: string, item: BayItem) =>
-    into.set(hostId, [...(into.get(hostId) ?? []), item]);
-  for (const stack of stacks.toSorted((a, b) => accessRank(a.access) - accessRank(b.access))) {
-    push(bayOf, stack.sourceId, { kind: "stack", stack });
-  }
-  const targets = [...incomingOf].map(([targetId, unsorted]) => ({
-    targetId,
-    // Top to bottom in the order of the hosts, so the upper line is the upper host's.
-    incoming: unsorted.toSorted((left, right) => indexOf(left.from) - indexOf(right.from)),
-  }));
-  for (const { targetId, incoming } of targets
-    .filter((target) => target.incoming.length === 1)
+  for (const item of items
+    .filter((entry) => entry.entries.length === 1)
     .toSorted(
       (left, right) =>
-        accessRank(left.incoming[0]!.link.access) - accessRank(right.incoming[0]!.link.access) ||
-        byLabel(left.targetId, right.targetId),
+        Number(right.kind === "stack") - Number(left.kind === "stack") ||
+        accessRank(left.access) - accessRank(right.access) ||
+        byName(left, right),
     )) {
-    push(bayOf, incoming[0]!.from, { kind: "target", targetId, incoming });
+    pushTo(bayOf, item.entries[0]!.from, item);
   }
   // Below the middle host of those linking to it: the shortest total reach, with ties going up.
-  const meanSource = (incoming: ReadonlyArray<FleetLinkEdge>) =>
-    incoming.reduce((sum, link) => sum + indexOf(link.from), 0) / incoming.length;
-  for (const { targetId, incoming } of targets
-    .filter((target) => target.incoming.length > 1)
-    .toSorted(
-      (left, right) =>
-        meanSource(left.incoming) - meanSource(right.incoming) ||
-        byLabel(left.targetId, right.targetId),
-    )) {
-    const anchor = incoming[Math.floor((incoming.length - 1) / 2)]!.from;
-    push(bandOf, anchor, { kind: "target", targetId, incoming });
+  const meanSource = (item: BayItem) =>
+    item.entries.reduce((sum, entry) => sum + indexOf(entry.from), 0) / item.entries.length;
+  for (const item of items
+    .filter((entry) => entry.entries.length > 1)
+    .toSorted((left, right) => meanSource(left) - meanSource(right) || byName(left, right))) {
+    pushTo(bandOf, item.entries[Math.floor((item.entries.length - 1) / 2)]!.from, item);
   }
 
   // A machine with no links rides beside a shared row instead of pushing the hosts further apart.
@@ -691,14 +855,20 @@ export function layoutFleetGraph(
   const rows: FleetRow[] = [];
   let shared: FleetRow | null = null;
   for (const host of hosts) {
+    const entry: ColumnEntry = { kind: "host", id: host.id, host };
     if (shared !== null && !linked.has(host.id)) {
-      shared.hosts.push(host);
+      shared.entries.push(entry);
       continue;
     }
-    rows.push({ hostId: host.id, hosts: [host], items: bayOf.get(host.id) ?? [] });
+    rows.push({ entries: [entry], items: bayOf.get(host.id) ?? [] });
     const band = bandOf.get(host.id);
-    shared = band === undefined ? null : { hostId: null, hosts: [], items: band };
+    shared = band === undefined ? null : { entries: [], items: band };
     if (shared !== null) rows.push(shared);
+  }
+  for (const stack of folds) {
+    const entry: ColumnEntry = { kind: "fold", id: stack.id, stack };
+    if (shared !== null) shared.entries.push(entry);
+    else rows.push({ entries: [entry], items: [] });
   }
 
   // Links between environments: shorter ones take the lanes nearer the cards, and two share a
@@ -729,52 +899,77 @@ export function layoutFleetGraph(
   const portsOf = new Map<string, FleetLinkEdge[]>();
   for (const link of between) {
     const down = Math.sign(indexOf(link.to) - indexOf(link.from));
-    for (const key of [`${link.from}:${down}`, `${link.to}:${-down}`]) {
-      portsOf.set(key, [...(portsOf.get(key) ?? []), link]);
-    }
+    pushTo(portsOf, `${link.from}:${down}`, link);
+    pushTo(portsOf, `${link.to}:${-down}`, link);
   }
   for (const ports of portsOf.values()) {
     ports.sort((left, right) => betweenLane.get(right.id)! - betweenLane.get(left.id)!);
   }
-  const routesInto = (hostId: string) => routeEdges.filter((edge) => edge.to === hostId).length;
+  const routesInto = (hostId: string) => routesOf.get(hostId)?.length ?? 0;
   const routesExtent = (hostId: string) =>
     ((Math.max(1, routesInto(hostId)) - 1) * PORT_PITCH + PILL.height) / 2;
-  const cardHeight = (host: FleetNode) => {
-    const ports = Math.max(
-      portsOf.get(`${host.id}:-1`)?.length ?? 0,
-      portsOf.get(`${host.id}:1`)?.length ?? 0,
-    );
+  // A card is as tall above and below its routes as the ports on that side need, so one with
+  // many links from one direction does not grow an empty half on the other.
+  const cardExtent = (host: FleetNode, side: 1 | -1) => {
+    const ports = portsOf.get(`${host.id}:${side}`)?.length ?? 0;
     const plain =
       host.kind === "connect"
-        ? OFFER.height
-        : Math.max(CARD.height, (routesInto(host.id) - 1) * PORT_PITCH + PILL.height + 20);
+        ? OFFER.height / 2
+        : Math.max(CARD.height, (routesInto(host.id) - 1) * PORT_PITCH + PILL.height + 20) / 2;
     return ports === 0
       ? plain
       : Math.max(
           plain,
-          2 *
-            (routesExtent(host.id) +
-              LINK_PORT.first +
-              (ports - 1) * LINK_PORT.pitch +
-              LINK_PORT.margin),
+          routesExtent(host.id) +
+            LINK_PORT.first +
+            (ports - 1) * LINK_PORT.pitch +
+            LINK_PORT.margin,
         );
   };
+  const hostWidth = folds.some((stack) => stack.expanded)
+    ? FRAME_PAD * 2 + FOLD_COLUMNS * (CHIP.width + CHIP_GAP) - CHIP_GAP
+    : CARD.width;
+  const entryHeight = (entry: ColumnEntry) =>
+    entry.kind === "host"
+      ? cardExtent(entry.host, -1) + cardExtent(entry.host, 1)
+      : entry.stack.expanded
+        ? frameHeight(entry.stack, FOLD_COLUMNS, FRAME_HEADER)
+        : STACK.height + STACK.lift;
+  /** Tall enough that each line in keeps its own entry. */
+  const faceHeight = (item: BayItem, least: number) =>
+    Math.max(least, 20 + (item.entries.length - 1) * ENTRY_PITCH);
   const itemSize = (item: BayItem) => {
     if (item.kind === "target") {
-      return {
-        width: TARGET.width,
-        height: Math.max(TARGET.height, 20 + (item.incoming.length - 1) * ENTRY_PITCH),
-      };
+      return { width: TARGET.width, height: faceHeight(item, TARGET.height) };
     }
     if (!item.stack.expanded) {
-      return { width: TARGET.width + STACK.lift, height: STACK.height + STACK.lift };
+      return {
+        width: TARGET.width + STACK.lift,
+        height: faceHeight(item, STACK.height) + STACK.lift,
+      };
     }
-    const columns = frameColumns(item.stack.memberIds.length);
-    const stackRows = Math.ceil(item.stack.memberIds.length / columns);
+    const columns = frameColumns(frameCells(item.stack));
     return {
       width: FRAME_PAD * 2 + columns * (CHIP.width + CHIP_GAP) - CHIP_GAP,
-      height: FRAME_HEADER + stackRows * (CHIP.height + CHIP_GAP) - CHIP_GAP + FRAME_PAD,
+      height: frameHeight(item.stack, columns, faceHeight(item, FRAME_HEADER)),
     };
+  };
+  /** Places an open stack's machines in its frame, and returns the card for the rest. */
+  const fillFrame = (
+    stack: FleetStack,
+    x: number,
+    top: number,
+    columns: number,
+    chipWidth: number,
+  ): FleetRect | null => {
+    const cell = (index: number): FleetRect => ({
+      x: x + FRAME_PAD + (index % columns) * (chipWidth + CHIP_GAP),
+      y: top + Math.floor(index / columns) * (CHIP.height + CHIP_GAP),
+      width: chipWidth,
+      height: CHIP.height,
+    });
+    stack.shownIds.forEach((memberId, index) => nodes.set(memberId, cell(index)));
+    return stack.memberIds.length > stack.shownIds.length ? cell(stack.shownIds.length) : null;
   };
 
   const pillX = CLIENT.width + WIRE;
@@ -784,54 +979,92 @@ export function layoutFleetGraph(
     (betweenLanes.length === 0
       ? PILL_GAP
       : BETWEEN.last + (betweenLanes.length - 1) * BETWEEN.step + BETWEEN.first);
-  const cardRight = cardX + CARD.width;
+  const cardRight = cardX + hostWidth;
 
   // Heights first: which lanes the channel needs, and so how wide it is, follows from them.
   const placed: Array<{
     readonly item: BayItem;
     readonly y: number;
     readonly size: { readonly width: number; readonly height: number };
-    readonly hostId: string | null;
   }> = [];
+  const column: Array<{ readonly entry: ColumnEntry; readonly center: number }> = [];
+  /** Where a card's routes arrive and its links leave: its middle, unless one side grew. */
+  const anchors = new Map<string, number>();
   let y = HEADER;
   for (const row of rows) {
-    const heights = row.hosts.map(cardHeight);
+    const heights = row.entries.map(entryHeight);
     const cardsHeight = heights.reduce((sum, height) => sum + height + GROUP_GAP, -GROUP_GAP);
     const sizes = row.items.map(itemSize);
     const bayHeight = sizes.reduce((sum, size) => sum + size.height + BAY_GAP, -BAY_GAP);
     const rowHeight = Math.max(cardsHeight, bayHeight);
     let cardY = y + (rowHeight - cardsHeight) / 2;
-    row.hosts.forEach((host, index) => {
+    row.entries.forEach((entry, index) => {
       const height = heights[index]!;
-      nodes.set(host.id, { x: cardX, y: cardY, width: CARD.width, height });
-      if (host.kind === "environment") {
-        handles.set(host.id, { x: cardRight, y: cardY + height / 2 });
+      if (entry.kind === "host") {
+        const anchor = cardY + cardExtent(entry.host, -1);
+        nodes.set(entry.id, { x: cardX, y: cardY, width: hostWidth, height });
+        anchors.set(entry.id, anchor);
+        if (entry.host.kind === "environment") handles.set(entry.id, { x: cardRight, y: anchor });
+        column.push({ entry, center: anchor });
+      } else if (entry.stack.expanded) {
+        const more = fillFrame(
+          entry.stack,
+          cardX,
+          cardY + FRAME_HEADER,
+          FOLD_COLUMNS,
+          (hostWidth - FRAME_PAD * 2 - (FOLD_COLUMNS - 1) * CHIP_GAP) / FOLD_COLUMNS,
+        );
+        stackGeometry.set(entry.id, {
+          rect: { x: cardX, y: cardY, width: hostWidth, height },
+          face: { x: cardX, y: cardY, width: hostWidth, height: FRAME_HEADER },
+          lines: [],
+          more,
+        });
+        column.push({ entry, center: cardY + FRAME_HEADER / 2 });
+      } else {
+        const face = {
+          x: cardX,
+          y: cardY + STACK.lift,
+          width: hostWidth - STACK.lift,
+          height: STACK.height,
+        };
+        stackGeometry.set(entry.id, {
+          rect: { x: cardX, y: cardY, width: hostWidth, height },
+          face,
+          lines: [],
+          more: null,
+        });
+        column.push({ entry, center: face.y + face.height / 2 });
       }
       cardY += height + GROUP_GAP;
     });
     let itemY = y + (rowHeight - bayHeight) / 2;
     row.items.forEach((item, index) => {
       const size = sizes[index]!;
-      placed.push({ item, y: itemY, size, hostId: row.hostId });
+      placed.push({ item, y: itemY, size });
       itemY += size.height + BAY_GAP;
     });
     y += rowHeight + GROUP_GAP;
   }
   const height = Math.max(HEADER + CLIENT.height, y - GROUP_GAP);
 
-  const centerOf = (id: string) => {
-    const rect = nodes.get(id)!;
-    return rect.y + rect.height / 2;
-  };
+  const centerOf = (id: string) => anchors.get(id)!;
 
-  /** Where each link into a machine several hosts link to arrives. */
+  /** The middle of what a line into the item points at: the machine, or the stack's control. */
+  const faceOf = (item: BayItem, itemY: number, size: { readonly height: number }) => {
+    if (item.kind === "target") return { top: itemY, height: size.height };
+    return item.stack.expanded
+      ? { top: itemY, height: faceHeight(item, FRAME_HEADER) }
+      : { top: itemY + STACK.lift, height: size.height - STACK.lift };
+  };
+  /** Where each line into the item arrives. */
   const entryY = new Map<string, number>();
-  for (const { item, y: itemY, size, hostId } of placed) {
-    if (item.kind !== "target" || hostId !== null) continue;
-    item.incoming.forEach((link, index) => {
+  for (const { item, y: itemY, size } of placed) {
+    const face = faceOf(item, itemY, size);
+    item.entries.forEach((entry, index) => {
       entryY.set(
-        link.id,
-        itemY + size.height / 2 + (index - (item.incoming.length - 1) / 2) * ENTRY_PITCH,
+        entry.key,
+        face.top + face.height / 2 + (index - (item.entries.length - 1) / 2) * ENTRY_PITCH,
       );
     });
   }
@@ -847,19 +1080,19 @@ export function layoutFleetGraph(
   const trunkOf = new Map<string, FleetLane>();
   const lanes: FleetLane[] = [];
   for (const [anchor, band] of bandOf) {
-    const incoming = band.flatMap((item) => (item.kind === "target" ? item.incoming : []));
-    for (const hostId of new Set(incoming.map((link) => link.from))) {
+    const byHost = new Map<string, BayEntry[]>();
+    for (const item of band) for (const entry of item.entries) pushTo(byHost, entry.from, entry);
+    for (const [hostId, mine] of byHost) {
       const from = centerOf(hostId);
-      const mine = incoming.filter((link) => link.from === hostId);
-      const branches = mine.map((link) => entryY.get(link.id)!);
+      const branches = mine.map((entry) => entryY.get(entry.key)!);
       const lane: FleetLane = {
         id: `${hostId}>${anchor}`,
         from,
-        to: branches.reduce((far, y) => (Math.abs(y - from) > Math.abs(far - from) ? y : far)),
+        to: branches.reduce((far, at) => (Math.abs(at - from) > Math.abs(far - from) ? at : far)),
         branches,
         index: 0,
       };
-      for (const link of mine) trunkOf.set(link.id, lane);
+      for (const entry of mine) trunkOf.set(entry.key, lane);
       lanes.push(lane);
     }
   }
@@ -893,86 +1126,112 @@ export function layoutFleetGraph(
   const fanX = taken.length === 0 ? cardRight : cardRight + LANE_FIRST + taken.length * LANE_STEP;
   const bayX = fanX + LINK_RUN;
   const endX = bayX - ARROW_LENGTH;
+  const lineInto = (entry: BayEntry) => {
+    const trunk = trunkOf.get(entry.key);
+    const targetY = entryY.get(entry.key)!;
+    return {
+      d:
+        trunk === undefined
+          ? sCurve(cardRight, centerOf(entry.from), endX, targetY, fanX)
+          : elbowPath(cardRight, trunk.from, laneX(trunk), endX, targetY),
+      arrow: { x: bayX, y: targetY },
+    };
+  };
 
   let width = fanX;
-  for (const { item, y: itemY, size, hostId } of placed) {
+  for (const { item, y: itemY, size } of placed) {
     width = Math.max(width, bayX + size.width);
     if (item.kind === "target") {
       nodes.set(item.targetId, { x: bayX, y: itemY, ...size });
-      for (const link of item.incoming) {
-        const trunk = trunkOf.get(link.id);
-        const targetY = entryY.get(link.id) ?? itemY + size.height / 2;
-        linkGeometry.set(link.id, {
-          d:
-            trunk === undefined
-              ? sCurve(cardRight, centerOf(link.from), endX, targetY, fanX)
-              : elbowPath(cardRight, trunk.from, laneX(trunk), endX, targetY),
-          arrow: { x: bayX, y: targetY, dir: 1 },
+      for (const entry of item.entries) {
+        const line = lineInto(entry);
+        linkGeometry.set(entry.key, {
+          d: line.d,
+          arrow: { ...line.arrow, dir: 1 },
           badge: null,
         });
       }
       continue;
     }
-    const originY = centerOf(hostId ?? item.stack.sourceId);
-    if (!item.stack.expanded) {
-      const face = { x: bayX, y: itemY + STACK.lift, width: TARGET.width, height: STACK.height };
-      const faceY = face.y + face.height / 2;
-      stackGeometry.set(item.stack.id, {
+    const { stack } = item;
+    const face = faceOf(item, itemY, size);
+    const lines = item.entries.map((entry, index) => ({
+      sourceId: entry.from,
+      access: stack.sources[index]!.access,
+      ...lineInto(entry),
+    }));
+    if (!stack.expanded) {
+      stackGeometry.set(stack.id, {
         rect: { x: bayX, y: itemY, ...size },
-        face,
-        d: sCurve(cardRight, originY, endX, faceY, fanX),
-        arrow: { x: bayX, y: faceY },
+        face: { x: bayX, y: face.top, width: TARGET.width, height: face.height },
+        lines,
+        more: null,
       });
       continue;
     }
-    const columns = frameColumns(item.stack.memberIds.length);
-    item.stack.memberIds.forEach((memberId, member) => {
-      nodes.set(memberId, {
-        x: bayX + FRAME_PAD + (member % columns) * (CHIP.width + CHIP_GAP),
-        y: itemY + FRAME_HEADER + Math.floor(member / columns) * (CHIP.height + CHIP_GAP),
-        ...CHIP,
-      });
-    });
-    const headerY = itemY + FRAME_HEADER / 2;
-    stackGeometry.set(item.stack.id, {
+    stackGeometry.set(stack.id, {
       rect: { x: bayX, y: itemY, ...size },
-      face: { x: bayX, y: itemY, width: size.width, height: FRAME_HEADER },
-      d: sCurve(cardRight, originY, endX, headerY, fanX),
-      arrow: { x: bayX, y: headerY },
+      face: { x: bayX, y: itemY, width: size.width, height: face.height },
+      lines,
+      more: fillFrame(
+        stack,
+        bayX,
+        itemY + face.height,
+        frameColumns(frameCells(stack)),
+        CHIP.width,
+      ),
     });
   }
 
-  const hostCenters = hosts.map((host) => centerOf(host.id));
   const clientCenterY =
-    hostCenters.length === 0
+    column.length === 0
       ? HEADER + CLIENT.height / 2
-      : (hostCenters[0]! + hostCenters.at(-1)!) / 2;
+      : (column[0]!.center + column.at(-1)!.center) / 2;
   nodes.set(FLEET_CLIENT_NODE_ID, {
     x: 0,
     y: clientCenterY - CLIENT.height / 2,
     ...CLIENT,
   });
 
-  // Wires leave the client a little apart, in the order they arrive, so they never cross.
-  const fan = Math.min(CLIENT.height - 20, (routeEdges.length - 1) * 4);
-  let wire = 0;
-  for (const host of hosts) {
-    const hostRoutes = routeEdges.filter((edge) => edge.to === host.id);
-    hostRoutes.forEach((edge, index) => {
-      const portY = centerOf(host.id) + (index - (hostRoutes.length - 1) / 2) * PORT_PITCH;
-      const startY =
-        clientCenterY + (routeEdges.length < 2 ? 0 : (wire / (routeEdges.length - 1) - 0.5) * fan);
-      wire += 1;
-      routes.set(edge.id, {
-        d: `${sCurve(CLIENT.width, startY, pillX, portY)}H${cardX}`,
-        pill: { x: pillX, y: portY - PILL.height / 2, ...PILL },
+  // Wires leave the client a little apart, in the order they arrive, so they never cross. A
+  // folded group of environments gets one wire, whatever its machines' routes are.
+  const wires = column.flatMap(
+    ({
+      entry,
+      center,
+    }): Array<{ entry: ColumnEntry; edge: FleetRouteEdge | null; portY: number }> => {
+      if (entry.kind === "fold") return [{ entry, edge: null, portY: center }];
+      const hostRoutes = routesOf.get(entry.id) ?? [];
+      return hostRoutes.map((edge, index) => ({
+        entry,
+        edge,
+        portY: center + (index - (hostRoutes.length - 1) / 2) * PORT_PITCH,
+      }));
+    },
+  );
+  const fan = Math.min(CLIENT.height - 20, (wires.length - 1) * 4);
+  wires.forEach((wire, index) => {
+    const startY =
+      clientCenterY + (wires.length < 2 ? 0 : (index / (wires.length - 1) - 0.5) * fan);
+    const d = `${sCurve(CLIENT.width, startY, pillX, wire.portY)}H${cardX}`;
+    if (wire.edge === null) {
+      const geometry = stackGeometry.get(wire.entry.id)!;
+      stackGeometry.set(wire.entry.id, {
+        ...geometry,
+        lines: [{ sourceId: null, access: null, d, arrow: null }],
       });
+      return;
+    }
+    routes.set(wire.edge.id, {
+      d,
+      pill: { x: pillX, y: wire.portY - PILL.height / 2, ...PILL },
     });
-  }
+  });
 
   // A link between environments names its access on its own lane, in a gap between two cards:
   // the one just past the environment it leaves, or the next one free. It grows away from the
-  // other lanes passing there; where it cannot, it may cover one, but never another name.
+  // other lanes passing there. Where no place is clear of every lane and every other name, the
+  // name is shown only while its link is in focus, so it never covers a line that is being read.
   const runs = between.map((link) => ({
     link,
     x: cardX - BETWEEN.first - betweenLane.get(link.id)! * BETWEEN.step,
@@ -990,12 +1249,13 @@ export function layoutFleetGraph(
       gaps.push(above.y + above.height + GROUP_GAP / 2, below.y - GROUP_GAP / 2);
     }
     if (!down) gaps.reverse();
-    const place = (y: number, side: 1 | -1): FleetLinkBadge => ({
+    const place = (at: number, side: 1 | -1): FleetLinkBadge => ({
       x: side === 1 ? x - BADGE.overhang : x + BADGE.overhang - BADGE.width,
-      y: y - BADGE.height / 2,
+      y: at - BADGE.height / 2,
       width: BADGE.width,
       height: BADGE.height,
       side,
+      onDemand: false,
     });
     const clearOfLanes = (badge: FleetLinkBadge) =>
       !runs.some(
@@ -1014,13 +1274,13 @@ export function layoutFleetGraph(
           other.y < badge.y + badge.height + BADGE.gap &&
           badge.y < other.y + other.height + BADGE.gap,
       );
-    const options = gaps.flatMap((y) => [place(y, 1), place(y, -1)]).filter(clearOfNames);
-    const badge = options.find(clearOfLanes) ?? options[0] ?? null;
-    if (badge !== null) badges.push(badge);
+    const options = gaps.flatMap((at) => [place(at, 1), place(at, -1)]);
+    const clear = options.find((option) => clearOfNames(option) && clearOfLanes(option));
+    if (clear !== undefined) badges.push(clear);
     linkGeometry.set(link.id, {
       d: elbowPath(cardX, run.from, x, cardX - ARROW_LENGTH, run.to),
       arrow: { x: cardX, y: run.to, dir: 1 },
-      badge,
+      badge: clear ?? { ...options[0]!, onDemand: true },
     });
   }
 
@@ -1032,7 +1292,7 @@ export function layoutFleetGraph(
     handles,
     columns: [
       { id: "client", x: 0 },
-      ...(hosts.length > 0 ? [{ id: "environments" as const, x: cardX }] : []),
+      ...(column.length > 0 ? [{ id: "environments" as const, x: cardX }] : []),
       ...(placed.length > 0 ? [{ id: "targets" as const, x: bayX }] : []),
     ],
     width,
@@ -1040,12 +1300,93 @@ export function layoutFleetGraph(
   };
 }
 
-/** What the arrow keys move between: every machine drawn, and each stack's control. */
+/** What the arrow keys move between: every machine drawn, and each stack's controls. */
 export function fleetFocusRects(layout: FleetLayout): ReadonlyMap<string, FleetRect> {
-  return new Map([
-    ...layout.nodes,
-    ...[...layout.stacks].map(([id, geometry]) => [id, geometry.face] as const),
-  ]);
+  const rects = new Map(layout.nodes);
+  for (const [id, geometry] of layout.stacks) {
+    rects.set(id, geometry.face);
+    if (geometry.more !== null) rects.set(fleetMoreNodeId(id), geometry.more);
+  }
+  return rects;
+}
+
+/** The machines drawn on their own that a selection box touches. */
+export function fleetNodesInBox(layout: FleetLayout, box: FleetRect): string[] {
+  const inside: string[] = [];
+  for (const [id, rect] of layout.nodes) {
+    if (
+      id !== FLEET_CLIENT_NODE_ID &&
+      rect.x < box.x + box.width &&
+      box.x < rect.x + rect.width &&
+      rect.y < box.y + box.height &&
+      box.y < rect.y + rect.height
+    ) {
+      inside.push(id);
+    }
+  }
+  return inside;
+}
+
+/** What pressing or dropping an environment's link handle starts. */
+export type FleetLinkAction =
+  /** The batch flow, opened on these machines. Which of them it can link is its own to say. */
+  | {
+      readonly kind: "batch";
+      readonly sourceEnvironmentId: EnvironmentId;
+      readonly environmentIds: ReadonlyArray<EnvironmentId>;
+    }
+  /** The single link flow; `offer` is null when no machine was named. */
+  | {
+      readonly kind: "single";
+      readonly sourceEnvironmentId: EnvironmentId;
+      readonly offer: Extract<FleetLinkOffer, { kind: "link" }> | null;
+    };
+
+/**
+ * A drop on a stack links to its machines; a drop on a selected machine, or a press of the
+ * handle while others are selected, links to the selection. Anything else is one link.
+ */
+export function fleetLinkAction(
+  graph: FleetGraph,
+  stacks: ReadonlyArray<FleetStack>,
+  selected: ReadonlySet<string>,
+  sourceId: string,
+  targetId: string | null,
+): FleetLinkAction | null {
+  const byId = new Map(graph.nodes.map((node) => [node.id, node]));
+  const source = byId.get(sourceId);
+  if (source?.kind !== "environment" || source.linking !== "ready") return null;
+  const sourceEnvironmentId = source.environmentId;
+  const batch = (picked: Iterable<string>): FleetLinkAction | null => {
+    const environmentIds = new Set<EnvironmentId>();
+    for (const id of picked) {
+      const node = byId.get(id);
+      if (node === undefined || node.kind === "client" || node.id === source.id) continue;
+      environmentIds.add(node.environmentId);
+    }
+    return environmentIds.size === 0
+      ? null
+      : { kind: "batch", sourceEnvironmentId, environmentIds: [...environmentIds] };
+  };
+  const stack = targetId === null ? undefined : stacks.find((entry) => entry.id === targetId);
+  if (stack !== undefined) return batch(stack.memberIds);
+  if (targetId === null || selected.has(targetId)) {
+    const picked = batch(selected);
+    if (picked !== null) return picked;
+  }
+  if (targetId === null) return { kind: "single", sourceEnvironmentId, offer: null };
+  const offer = fleetLinkOffer(graph, sourceId, targetId);
+  return offer.kind === "link" ? { kind: "single", sourceEnvironmentId, offer } : null;
+}
+
+/** Machines whose name holds the query, drawn or folded, in name order. */
+export function fleetSearch(graph: FleetGraph, query: string): string[] {
+  const needle = query.trim().toLocaleLowerCase();
+  if (needle === "") return [];
+  return graph.nodes
+    .filter((node) => node.kind !== "client" && node.label.toLocaleLowerCase().includes(needle))
+    .toSorted((left, right) => labelOrder.compare(left.label, right.label))
+    .map((node) => node.id);
 }
 
 export type FleetDirection = "up" | "down" | "left" | "right";

@@ -9,7 +9,8 @@ import {
 import * as DateTime from "effect/DateTime";
 import { T, useGT, useMessages } from "gt-react";
 import { ArrowRightIcon, ClockAlertIcon, PlusIcon, TriangleAlertIcon, XIcon } from "lucide-react";
-import { type ReactNode, useRef } from "react";
+import { LegendList } from "@legendapp/list/react";
+import { type ReactNode, useRef, useState } from "react";
 
 import { environmentCatalog } from "~/connection/catalog";
 import { cn } from "~/lib/utils";
@@ -18,6 +19,7 @@ import { peerLinkEnvironment } from "~/state/peerLinks";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { accessConfig } from "../auth/ConnectAgentSurface";
 import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import { formatAccessTimestamp } from "./ConnectionsSettings.logic";
 import { EnvironmentRow, EnvironmentTransportLabel } from "./EnvironmentRow";
 import {
@@ -113,6 +115,8 @@ export interface FleetDetailsProps {
   /** Why the account's T3 Connect machines are missing from the map, and how to ask again. */
   readonly connectProblem: { readonly message: string; readonly retry: () => void } | null;
   readonly selection: FleetFocus | null;
+  /** The machine a map search landed on inside the selected stack. */
+  readonly found: string | null;
   readonly onSelect: (focus: FleetFocus | null) => void;
   /** Opens the link flow from an environment, with no target picked yet. */
   readonly onLinkFrom: (sourceId: string) => void;
@@ -176,9 +180,12 @@ export function FleetDetails(props: FleetDetailsProps) {
         </div>
       ) : stack ? (
         <StackDetails
+          key={`${stack.id}:${props.found ?? ""}`}
           stack={stack}
+          graph={graph}
           links={links}
-          labelOf={labelOf}
+          environments={props.environments}
+          found={props.found}
           onSelect={selectWithin}
           onToggle={() => props.onToggleStack(stack.id)}
         />
@@ -238,7 +245,7 @@ function FleetSummary({
       <p className="max-w-2xl text-muted-foreground">
         {canLink
           ? gt(
-              "Select a machine to manage it. To link two machines, drag the plus on an environment onto another machine, or press it to pick one.",
+              "Select a machine to manage it. To link two machines, drag the plus on an environment onto another machine, or press it to pick one. To link several at once, Shift-click machines or Shift-drag a box around them, then drag the plus onto one of them.",
             )
           : gt("Select a machine to manage it.")}{" "}
         {gt(
@@ -296,48 +303,215 @@ function LinkButton({
   );
 }
 
+const MEMBER_ROW_HEIGHT = 28;
+const MEMBER_LIST_ROWS = 9;
+
+interface StackMember {
+  readonly id: string;
+  readonly label: string;
+  /** What the row says about the machine: its link's access, or why it is not connected. */
+  readonly detail: string;
+  readonly address: string | null;
+  /** The link that most wants attention, for a machine known through links. */
+  readonly worst: FleetLinkEdge | null;
+}
+
+/**
+ * Every machine a stack stands for, however many: the list mounts only the rows in view, and
+ * a machine's own details, with its actions, are one click away.
+ */
 function StackDetails({
   stack,
+  graph,
   links,
-  labelOf,
+  environments,
+  found,
   onSelect,
   onToggle,
 }: {
   readonly stack: FleetStack;
+  readonly graph: FleetGraph;
   readonly links: ReadonlyArray<FleetLinkEdge>;
-  readonly labelOf: (id: string) => string;
+  readonly environments: ReadonlyArray<EnvironmentPresentation>;
+  /** The machine a map search landed on: the list opens narrowed to it. */
+  readonly found: string | null;
   readonly onSelect: (focus: FleetFocus) => void;
   readonly onToggle: () => void;
 }) {
   const gt = useGT();
   const m = useMessages();
-  const members = stack.edgeIds.flatMap((id) => links.find((edge) => edge.id === id) ?? []);
+  const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const [query, setQuery] = useState(found === null ? "" : (nodeById.get(found)?.label ?? ""));
+  const memberIds = new Set(stack.memberIds);
+  const incoming = new Map<string, FleetLinkEdge[]>();
+  for (const edge of links) {
+    if (!memberIds.has(edge.to)) continue;
+    const into = incoming.get(edge.to);
+    if (into === undefined) incoming.set(edge.to, [edge]);
+    else into.push(edge);
+  }
+  const environmentById = new Map(
+    environments.map((environment) => [environment.environmentId, environment]),
+  );
+  const members = stack.memberIds.flatMap((id): StackMember[] => {
+    const node = nodeById.get(id);
+    if (node === undefined || node.kind === "client") return [];
+    if (node.kind === "target") {
+      const into = incoming.get(id) ?? [];
+      const worst = into.toSorted(
+        (left, right) =>
+          Number(linkNeedsAttention(right.health)) - Number(linkNeedsAttention(left.health)),
+      )[0];
+      return [
+        {
+          id,
+          label: node.label,
+          detail:
+            into.length === 1 && worst !== undefined
+              ? m(accessConfig[worst.link.access].label)
+              : gt("{count, plural, one {# link in} other {# links in}}", { count: into.length }),
+          address: node.address,
+          worst: worst ?? null,
+        },
+      ];
+    }
+    const environment = environmentById.get(node.environmentId);
+    return [
+      {
+        id,
+        label: node.label,
+        detail:
+          environment === undefined ? gt("Not added") : savedBackendStatus(environment, m).text,
+        address: null,
+        worst: null,
+      },
+    ];
+  });
+  const needle = query.trim().toLocaleLowerCase();
+  const shown =
+    needle === ""
+      ? members
+      : members.filter((member) => member.label.toLocaleLowerCase().includes(needle));
+  const range =
+    stack.firstLabel === stack.lastLabel
+      ? stack.firstLabel
+      : `${stack.firstLabel} … ${stack.lastLabel}`;
+  const sources = stack.sources.map((source) => nodeById.get(source.sourceId)?.label ?? "");
+  const [only] = stack.sources;
+  const hidden = stack.memberIds.length - stack.shownIds.length;
   return (
     <div className={SECTION}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <Heading
-          detail={gt(
-            "{count, plural, one {# machine} other {# machines}} linked from {source}, {access}, {reachable} reachable",
-            {
-              count: members.length,
-              source: labelOf(stack.sourceId),
-              access: m(accessConfig[stack.access].label),
-              reachable: stack.reachable,
-            },
-          )}
+          detail={
+            stack.kind === "environments"
+              ? gt(
+                  "{count, plural, one {# environment} other {# environments}} with no links, not connected",
+                  { count: members.length },
+                )
+              : stack.sources.length === 1 && only !== undefined
+                ? gt(
+                    "{count, plural, one {# machine} other {# machines}} linked from {source}, {access}, {reachable} reachable",
+                    {
+                      count: members.length,
+                      source: sources[0] ?? "",
+                      access: m(accessConfig[only.access].label),
+                      reachable: stack.reachable,
+                    },
+                  )
+                : gt(
+                    "{count, plural, one {# machine} other {# machines}} each linked from {sources}, {reachable} reachable",
+                    {
+                      count: members.length,
+                      sources: sources.join(", "),
+                      reachable: stack.reachable,
+                    },
+                  )
+          }
         >
-          {stack.firstLabel} … {stack.lastLabel}
+          {range}
         </Heading>
         <Button size="xs" variant="outline" onClick={onToggle}>
-          {stack.expanded ? gt("Collapse on the map") : gt("Show each on the map")}
+          {stack.expanded
+            ? gt("Collapse on the map")
+            : hidden > 0
+              ? gt("Show the first {shown} on the map", { shown: stack.shownIds.length })
+              : gt("Show each on the map")}
         </Button>
       </div>
-      <ul className="-mx-1.5 max-h-64 overflow-y-auto">
-        {members.map((edge) => (
-          <LinkButton key={edge.id} edge={edge} label={labelOf(edge.to)} onSelect={onSelect} />
-        ))}
-      </ul>
+      {members.length > MEMBER_LIST_ROWS ? (
+        <div className="mb-1.5 flex items-center gap-3">
+          <div className="w-56">
+            <Input
+              size="compact"
+              type="search"
+              value={query}
+              aria-label={gt("Filter these machines by name")}
+              placeholder={gt("Filter by name")}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          </div>
+          {needle === "" ? null : (
+            <span role="status" className="text-muted-foreground">
+              {gt("{shown} of {count}", { shown: shown.length, count: members.length })}
+            </span>
+          )}
+        </div>
+      ) : null}
+      <div
+        className="-mx-1.5"
+        style={{ height: Math.min(shown.length, MEMBER_LIST_ROWS) * MEMBER_ROW_HEIGHT }}
+      >
+        <LegendList<StackMember>
+          data={shown}
+          keyExtractor={(member) => member.id}
+          estimatedItemSize={MEMBER_ROW_HEIGHT}
+          drawDistance={MEMBER_ROW_HEIGHT * MEMBER_LIST_ROWS}
+          recycleItems
+          className="h-full overscroll-contain"
+          renderItem={({ item }) => <MemberButton member={item} onSelect={onSelect} />}
+        />
+      </div>
     </div>
+  );
+}
+
+function MemberButton({
+  member,
+  onSelect,
+}: {
+  readonly member: StackMember;
+  readonly onSelect: (focus: FleetFocus) => void;
+}) {
+  const gt = useGT();
+  const { worst } = member;
+  const attention = worst !== null && linkNeedsAttention(worst.health);
+  return (
+    <button
+      type="button"
+      style={{ height: MEMBER_ROW_HEIGHT }}
+      className="grid w-full cursor-pointer grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-x-3 rounded-md px-1.5 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset lg:grid-cols-[minmax(0,12rem)_minmax(0,10rem)_minmax(0,1fr)_auto]"
+      onClick={() => onSelect({ kind: "node", id: member.id })}
+    >
+      <span className="truncate font-medium text-foreground">{member.label}</span>
+      <span className="truncate text-foreground/80">{member.detail}</span>
+      <span className="hidden truncate font-mono text-2xs text-muted-foreground lg:block">
+        {member.address}
+      </span>
+      {worst === null ? (
+        <span />
+      ) : (
+        <span
+          className={cn(
+            "flex shrink-0 items-center gap-1.5",
+            attention ? healthTone(worst.health) : "text-muted-foreground",
+          )}
+        >
+          <HealthGlyph health={worst.health} />
+          {healthLabel(worst.health, gt)}
+        </span>
+      )}
+    </button>
   );
 }
 
@@ -448,7 +622,7 @@ function NodeDetails({
   renderSavedEnvironment,
   renderConnectMachine,
   onAddEnvironment,
-}: Omit<FleetDetailsProps, "selection" | "stacks" | "onToggleStack" | "onSelect"> & {
+}: Omit<FleetDetailsProps, "selection" | "found" | "stacks" | "onToggleStack" | "onSelect"> & {
   readonly node: FleetNode;
   readonly links: ReadonlyArray<FleetLinkEdge>;
   readonly onSelect: (focus: FleetFocus) => void;

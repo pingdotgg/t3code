@@ -17,6 +17,7 @@ import * as Result from "effect/Result";
 import { T, useGT, useMessages } from "gt-react";
 import { useId, useRef, useState } from "react";
 
+import { useEnvironments } from "~/state/environments";
 import { mintPairingCodeOn } from "~/state/peerPairingCode";
 import { peerLinkEnvironment, useLinkableMachines } from "~/state/peerLinks";
 import { useEnvironmentQuery } from "~/state/query";
@@ -34,27 +35,55 @@ import {
   DialogPanel,
   DialogPopup,
   DialogTitle,
-  DialogTrigger,
 } from "../ui/dialog";
 import { LinkAccessPicker } from "./LinkAccessPicker";
 
 const NO_MACHINES: ReadonlySet<EnvironmentId> = new Set();
 const NO_OUTCOMES: ReadonlyMap<EnvironmentId, LinkBatchOutcome> = new Map();
 
-/**
- * Links the machines this app already reaches in one go. Each pairing code is
- * minted on its machine and passed straight to the linking environment; none
- * is ever held in state, shown, or logged.
- */
 export function LinkSeveralEnvironmentsAction({
   environmentId,
 }: {
   readonly environmentId: EnvironmentId;
 }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Button size="xs" variant="outline" onClick={() => setOpen(true)}>
+        <T>Link several…</T>
+      </Button>
+      <LinkSeveralEnvironmentsDialog
+        environmentId={environmentId}
+        open={open}
+        onOpenChange={setOpen}
+      />
+    </>
+  );
+}
+
+/**
+ * Links the machines this app already reaches in one go. Each pairing code is
+ * minted on its machine and passed straight to the linking environment; none
+ * is ever held in state, shown, or logged.
+ */
+export function LinkSeveralEnvironmentsDialog({
+  environmentId,
+  open,
+  onOpenChange,
+  preset,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
+  /** Machines picked before the dialog opened. Those a batch cannot link stay unticked. */
+  readonly preset?: ReadonlyArray<EnvironmentId>;
+}) {
   const gt = useGT();
   const m = useMessages();
   const formId = useId();
-  const [open, setOpen] = useState(false);
+  const sourceLabel = useEnvironments().environments.find(
+    (environment) => environment.environmentId === environmentId,
+  )?.label;
   const machines = useLinkableMachines(environmentId, open);
   // The same shared list `useLinkableMachines` reads `linked` from.
   const links = useEnvironmentQuery(
@@ -62,7 +91,7 @@ export function LinkSeveralEnvironmentsAction({
   );
   const linksState = linkListState(links);
   const writable = useEnvironmentsWithScope(machines, AuthAccessWriteScope);
-  const [selected, setSelected] = useState(NO_MACHINES);
+  const [selected, setSelected] = useState<ReadonlySet<EnvironmentId>>(() => new Set(preset));
   const [access, setAccess] = useState<AuthMcpClientAccess>("approval-required");
   const [outcomes, setOutcomes] = useState(NO_OUTCOMES);
   const [linking, setLinking] = useState(NO_MACHINES);
@@ -81,9 +110,13 @@ export function LinkSeveralEnvironmentsAction({
   const chosen = selectable.filter((machine) => selected.has(machine.environmentId));
   const busy = linking.size > 0;
   const summary = linkBatchSummary(outcomes);
+  // Picked on the map, but only another machine's link names them: this app has no session there.
+  const unlisted = (preset ?? []).filter(
+    (id) => !candidates.some(({ machine }) => machine.environmentId === id),
+  ).length;
 
   const handleOpenChange = (next: boolean) => {
-    setOpen(next);
+    onOpenChange(next);
     if (!next) {
       setSelected(NO_MACHINES);
       setOutcomes(NO_OUTCOMES);
@@ -135,17 +168,12 @@ export function LinkSeveralEnvironmentsAction({
         handleOpenChange(next);
       }}
     >
-      <DialogTrigger
-        render={
-          <Button size="xs" variant="outline">
-            <T>Link several…</T>
-          </Button>
-        }
-      />
       <DialogPopup className="max-w-md">
         <DialogHeader>
           <DialogTitle>
-            <T>Link several environments</T>
+            {sourceLabel === undefined
+              ? gt("Link several environments")
+              : gt("Link several machines from {source}", { source: sourceLabel })}
           </DialogTitle>
           <DialogDescription>
             <T>
@@ -272,6 +300,14 @@ export function LinkSeveralEnvironmentsAction({
                 </ul>
               </div>
             )}
+            {unlisted > 0 ? (
+              <p className="text-xs text-muted-foreground">
+                {gt(
+                  "{count, plural, one {# machine you picked is known only through a link, so it needs a pairing code. Link it on its own.} other {# machines you picked are known only through a link, so they need a pairing code. Link them one at a time.}}",
+                  { count: unlisted },
+                )}
+              </p>
+            ) : null}
             {outcomes.size > 0 && !busy ? (
               <p role="status" className="text-xs text-muted-foreground">
                 {summary.failed.length === 0

@@ -476,6 +476,21 @@ highlighted), and the machines an environment links to. Select a machine to
 manage it, or switch to **List** for the same controls as rows. To link from
 the map, drag the plus on an environment onto another machine, or press it and
 pick one. If this app is connected to both machines it needs no pairing code.
+
+To link one environment to several machines at once, Shift-click the machines
+(or Shift-drag a box around them, or press Space on a focused machine), then
+drag the environment's plus onto any of them, or use **Link several…** above
+the map. Dropping the plus on a stack offers the stack's machines. The dialog
+ticks the machines it can link without a pairing code and says why for the
+rest.
+
+Large setups fold: machines known only through links that share the same
+linking environments and access levels become one stack, and once this app
+knows more than 12 environments, the ones that are not connected and have no
+links fold by state. Select a stack to list and filter every machine in it;
+opening a stack on the map draws its first 24. **Find a machine** above the map
+searches by name, and Enter goes to the first match.
+
 The map draws the links of the machines this app is connected to; a machine it
 is not connected to may hold links the map cannot show. A link reaches one
 machine and does not carry on through that machine's own links.

@@ -8,9 +8,16 @@ import {
   fleetCanvasHeight,
   FLEET_CLIENT_NODE_ID,
   fleetEnvironmentNodeId,
+  FLEET_FOLD_ENVIRONMENTS_OVER,
+  FLEET_LANE_PITCH,
+  FLEET_STACK_SHOWN_MAX,
   fleetFocusRects,
+  fleetLinkAction,
   fleetLinkOffer,
+  fleetMoreNodeId,
   fleetNeighborhood,
+  fleetNodesInBox,
+  fleetSearch,
   fleetShapeKey,
   fleetStacks,
   fleetSummary,
@@ -140,6 +147,24 @@ const sharedSetup = () =>
       link("fs-6", { access: "read-only" }),
       link("nucbox", { access: "auto" }),
     ]),
+  ]);
+
+/** Twenty environments, five of them folding by state, and 1000 machines two hosts both link to. */
+const hugeSetup = () =>
+  build([
+    environment("nucbox", [...vms(1000, "vm", { access: "full-access" }), link("cups")]),
+    environment("cups", vms(1000, "vm", { access: "full-access" })),
+    environment("mbp", [link("nucbox", { access: "auto" })]),
+    ...Array.from({ length: 5 }, (_, index) => environment(`gpu-${index + 1}`)),
+    ...Array.from({ length: 6 }, (_, index) =>
+      environment(`lab-${index + 1}`, "unknown", { phase: "offline" }),
+    ),
+    ...Array.from({ length: 4 }, (_, index) =>
+      environment(`old-${index + 1}`, "unknown", { enabled: false, phase: "available" }),
+    ),
+    ...Array.from({ length: 2 }, (_, index) =>
+      environment(`legacy-${index + 1}`, "unknown", { phase: "unsupported" }),
+    ),
   ]);
 
 /** Points along a path the layout wrote: absolute M, H, V, Q and C only. */
@@ -343,7 +368,73 @@ describe("fleetStacks", () => {
         stack.expanded,
       ]),
     ).toEqual([[`stack:${node("nucbox")}:full-access`, 41, 40, "fs-1", "fs-41", false]]);
-    expect(fleetStacks(graph, new Set([stacks[0]!.id]))[0]!.expanded).toBe(true);
+    const [open] = fleetStacks(graph, new Set([stacks[0]!.id]));
+    expect(open!.expanded).toBe(true);
+    // An open stack draws its first machines; the rest stay in the details.
+    expect(open!.shownIds).toEqual(open!.memberIds.slice(0, FLEET_STACK_SHOWN_MAX));
+  });
+
+  it("folds machines that share the exact set of links in, and keeps other sets apart", () => {
+    const graph = build([
+      environment("nucbox", [
+        ...vms(8, "vm", { access: "full-access" }),
+        ...vms(6, "ro", { access: "read-only" }),
+        ...vms(5, "solo"),
+      ]),
+      environment("cups", [
+        link("vm-1", { access: "full-access", status: "unreachable" }),
+        ...vms(8, "vm", { access: "full-access" }).slice(1),
+        // The same two hosts, but one at another access level: a set of its own.
+        ...vms(6, "ro", { access: "full-access" }),
+      ]),
+    ]);
+    const stacks = fleetStacks(graph, new Set());
+    expect(
+      stacks.map((stack) => [
+        stack.sources.map((source) => `${source.sourceId}:${source.access}`),
+        stack.memberIds.length,
+        stack.edgeIds.length,
+        stack.reachable,
+      ]),
+    ).toEqual([
+      [[`${node("nucbox")}:full-access`, `${node("cups")}:full-access`], 8, 16, 7],
+      [[`${node("nucbox")}:read-only`, `${node("cups")}:full-access`], 6, 12, 6],
+      [[`${node("nucbox")}:approval-required`], 5, 5, 5],
+    ]);
+  });
+
+  it("folds unlinked environments by state once there are many, and never a linked or connected one", () => {
+    const few = build(
+      Array.from({ length: FLEET_FOLD_ENVIRONMENTS_OVER }, (_, index) =>
+        environment(`lab-${index}`, "unknown", { phase: "offline" }),
+      ),
+    );
+    expect(fleetStacks(few, new Set())).toEqual([]);
+    const graph = build(
+      [
+        environment("nucbox", [link("linked-offline")]),
+        environment("linked-offline", "unknown", { phase: "offline" }),
+        environment("idle"),
+        environment("dialling", "unknown", { phase: "connecting" }),
+        ...Array.from({ length: 4 }, (_, index) =>
+          environment(`lab-${index + 1}`, "unknown", { phase: index === 0 ? "error" : "offline" }),
+        ),
+        ...Array.from({ length: 3 }, (_, index) =>
+          environment(`old-${index + 1}`, "unknown", { enabled: false, phase: "available" }),
+        ),
+        // Two is too few to be worth a stack.
+        environment("legacy-1", "unknown", { phase: "unsupported" }),
+        environment("legacy-2", "unknown", { phase: "unsupported" }),
+      ],
+      ["gpu-1", "gpu-2", "gpu-3"].map(connectMachine),
+    );
+    expect(
+      fleetStacks(graph, new Set()).map((stack) => [stack.kind, stack.group, stack.memberIds]),
+    ).toEqual([
+      ["environments", "offline", ["lab-1", "lab-2", "lab-3", "lab-4"].map(node)],
+      ["environments", "off", ["old-1", "old-2", "old-3"].map(node)],
+      ["environments", "not-added", ["gpu-1", "gpu-2", "gpu-3"].map(node)],
+    ]);
   });
 
   it("leaves out a machine a second host links to, and a machine the client knows", () => {
@@ -413,6 +504,83 @@ describe("fleetLinkOffer", () => {
   });
 });
 
+describe("fleetLinkAction", () => {
+  const graph = build([
+    environment("nucbox", [...vms(6, "fs")]),
+    environment("cups"),
+    environment("mbp", "unknown", { phase: "offline" }),
+    environment("vps", [], { canWriteAccess: false }),
+  ]);
+  const stacks = fleetStacks(graph, new Set());
+  const batch = (environmentIds: ReadonlyArray<string>) => ({
+    kind: "batch",
+    sourceEnvironmentId: id("nucbox"),
+    environmentIds: environmentIds.map(id),
+  });
+
+  it("links to the selection when the drop lands on it, or the handle is pressed with one", () => {
+    const selected = new Set([node("cups"), node("mbp"), node("nucbox"), FLEET_CLIENT_NODE_ID]);
+    // The source and the client are never among the machines to link.
+    expect(fleetLinkAction(graph, stacks, selected, node("nucbox"), node("cups"))).toEqual(
+      batch(["cups", "mbp"]),
+    );
+    expect(fleetLinkAction(graph, stacks, selected, node("nucbox"), null)).toEqual(
+      batch(["cups", "mbp"]),
+    );
+  });
+
+  it("links one machine when the drop lands outside the selection, or nothing is selected", () => {
+    const selected = new Set([node("mbp")]);
+    expect(fleetLinkAction(graph, stacks, selected, node("nucbox"), node("cups"))).toMatchObject({
+      kind: "single",
+      offer: { path: "code-less", target: { environmentId: id("cups") } },
+    });
+    expect(fleetLinkAction(graph, stacks, new Set(), node("nucbox"), null)).toEqual({
+      kind: "single",
+      sourceEnvironmentId: id("nucbox"),
+      offer: null,
+    });
+    // A selection of only the source is no batch.
+    expect(
+      fleetLinkAction(graph, stacks, new Set([node("nucbox")]), node("nucbox"), null),
+    ).toMatchObject({ kind: "single" });
+  });
+
+  it("links to every machine of a stack dropped on, and offers nothing from a host that cannot link", () => {
+    expect(fleetLinkAction(graph, stacks, new Set(), node("cups"), stacks[0]!.id)).toEqual({
+      ...batch(["fs-1", "fs-2", "fs-3", "fs-4", "fs-5", "fs-6"]),
+      sourceEnvironmentId: id("cups"),
+    });
+    for (const source of ["mbp", "vps"]) {
+      expect(fleetLinkAction(graph, stacks, new Set(), node(source), stacks[0]!.id)).toBeNull();
+      expect(fleetLinkAction(graph, stacks, new Set(), node(source), null)).toBeNull();
+    }
+    expect(fleetLinkAction(graph, stacks, new Set(), node("nucbox"), node("nucbox"))).toBeNull();
+  });
+});
+
+describe("selecting and finding machines", () => {
+  it("selects the machines a box touches, and never the client or a stack", () => {
+    const graph = largeSetup();
+    const layout = layoutFleetGraph(graph, fleetStacks(graph, new Set()));
+    const everything = { x: 0, y: 0, width: layout.width, height: layout.height };
+    expect(fleetNodesInBox(layout, everything).toSorted()).toEqual(
+      [...layout.nodes.keys()].filter((key) => key !== FLEET_CLIENT_NODE_ID).toSorted(),
+    );
+    const cups = layout.nodes.get(node("cups"))!;
+    expect(fleetNodesInBox(layout, { x: cups.x + 4, y: cups.y + 4, width: 2, height: 2 })).toEqual([
+      node("cups"),
+    ]);
+  });
+
+  it("finds machines by name wherever they are drawn, in name order", () => {
+    const graph = largeSetup();
+    expect(fleetSearch(graph, " FS-1 ").slice(0, 3)).toEqual(["fs-1", "fs-10", "fs-11"].map(node));
+    expect(fleetSearch(graph, "")).toEqual([]);
+    expect(fleetSearch(graph, "this browser")).toEqual([]);
+  });
+});
+
 describe("fleetNeighborhood", () => {
   const graph = build([
     environment("a", [link("b"), ...vms(5)]),
@@ -468,10 +636,12 @@ describe("layoutFleetGraph", () => {
     const open = fleetStacks(large, new Set([stackId]));
     const layout = layoutFleetGraph(large, open);
     expectNoOverlap(layout, membersOf(open));
-    expect(layout.nodes.size).toBe(53);
+    // Forty machines open to the first 24 and one card for the other 16, never forty cards.
+    expect(layout.nodes.size).toBe(13 + FLEET_STACK_SHOWN_MAX);
     const frame = layout.stacks.get(stackId)!.rect;
-    for (const member of open[0]!.memberIds) {
-      const rect = layout.nodes.get(member)!;
+    const more = fleetFocusRects(layout).get(fleetMoreNodeId(stackId))!;
+    expect(layout.nodes.has(open[0]!.memberIds[FLEET_STACK_SHOWN_MAX]!)).toBe(false);
+    for (const rect of [more, ...open[0]!.shownIds.map((member) => layout.nodes.get(member)!)]) {
       expect(rect.x).toBeGreaterThanOrEqual(frame.x);
       expect(rect.y).toBeGreaterThanOrEqual(frame.y);
       expect(rect.x + rect.width).toBeLessThanOrEqual(frame.x + frame.width);
@@ -549,7 +719,7 @@ describe("layoutFleetGraph", () => {
   });
 
   it("keeps two hosts' links into one machine apart, and every link clear of other boxes", () => {
-    for (const graph of [sharedSetup(), largeSetup()]) {
+    for (const graph of [sharedSetup(), largeSetup(), hugeSetup()]) {
       for (const expanded of [false, true]) {
         const closed = fleetStacks(graph, new Set());
         const stacks = expanded
@@ -560,7 +730,9 @@ describe("layoutFleetGraph", () => {
         const boxes = solidRects(layout);
         const drawn = [
           ...[...layout.links].map(([key, geometry]) => ({ key, d: geometry.d })),
-          ...[...layout.stacks].map(([key, geometry]) => ({ key, d: geometry.d })),
+          ...[...layout.stacks].flatMap(([key, geometry]) =>
+            geometry.lines.map((line) => ({ key, d: line.d })),
+          ),
         ];
         for (const { key, d } of drawn) {
           for (const point of samplePath(d)) {
@@ -584,6 +756,16 @@ describe("layoutFleetGraph", () => {
           expect(last!.y).toBe(geometry.arrow.y);
           arrivals.set(edge.to, [...(arrivals.get(edge.to) ?? []), geometry.arrow.y]);
         }
+        // A stack several hosts link to takes one line from each, each with its own entry.
+        for (const [stackId, geometry] of layout.stacks) {
+          for (const line of geometry.lines) {
+            if (line.arrow === null) continue;
+            if (geometry.lines.length > 1) {
+              expect(samplePath(line.d).at(-2)!.y).toBeCloseTo(line.arrow.y, 0);
+            }
+            arrivals.set(stackId, [...(arrivals.get(stackId) ?? []), line.arrow.y]);
+          }
+        }
         for (const [target, heights] of arrivals) {
           const sorted = heights.toSorted((left, right) => left - right);
           for (const [index, height] of sorted.entries()) {
@@ -593,6 +775,105 @@ describe("layoutFleetGraph", () => {
           }
         }
       }
+    }
+  });
+
+  it("draws 1000 shared machines and 20 environments as a few stacks, open or closed", () => {
+    const graph = hugeSetup();
+    const closed = fleetStacks(graph, new Set());
+    expect(closed.map((stack) => [stack.kind, stack.memberIds.length])).toEqual([
+      ["targets", 1000],
+      ["environments", 6],
+      ["environments", 4],
+    ]);
+    const layout = layoutFleetGraph(graph, closed);
+    expectNoOverlap(layout, membersOf(closed));
+    // The client and the ten environments that stay cards: nothing per folded machine.
+    expect(layout.nodes.size).toBe(11);
+    expect(layout.links.size).toBe(2);
+    expect(layout.routes.size).toBe(10);
+    expect(layout.stacks.get(closed[0]!.id)!.lines.map((line) => line.sourceId)).toEqual([
+      node("nucbox"),
+      node("cups"),
+    ]);
+    const open = fleetStacks(graph, new Set(closed.map((stack) => stack.id)));
+    const opened = layoutFleetGraph(graph, open);
+    expectNoOverlap(opened, membersOf(open));
+    expect(opened.nodes.size).toBe(11 + FLEET_STACK_SHOWN_MAX + 6 + 4);
+    expect(layoutFleetGraph(graph, open)).toEqual(opened);
+  });
+
+  it("keeps every link into a card a full lane apart, and grows the card to hold them", () => {
+    const fan = build([
+      ...["a", "b", "c", "d"].map((name) => environment(name, [link("e")])),
+      environment("e"),
+    ]);
+    const names = ["a", "b", "c", "d", "e"];
+    const mesh = build(
+      names.map((name) =>
+        environment(
+          name,
+          names.filter((other) => other !== name).map((other) => link(other)),
+        ),
+      ),
+    );
+    for (const graph of [fan, mesh]) {
+      const layout = layoutFleetGraph(graph);
+      expectNoOverlap(layout, new Map());
+      const ports = new Map<string, number[]>();
+      for (const edge of graph.edges) {
+        const geometry = edge.kind === "link" ? layout.links.get(edge.id) : undefined;
+        if (edge.kind !== "link" || geometry === undefined) continue;
+        const points = samplePath(geometry.d);
+        ports.set(edge.from, [...(ports.get(edge.from) ?? []), points[0]!.y]);
+        ports.set(edge.to, [...(ports.get(edge.to) ?? []), geometry.arrow.y]);
+      }
+      for (const [id, heights] of ports) {
+        const card = layout.nodes.get(id)!;
+        const sorted = heights.toSorted((left, right) => left - right);
+        expect(sorted[0]!).toBeGreaterThan(card.y);
+        expect(sorted.at(-1)!).toBeLessThan(card.y + card.height);
+        for (const [index, height] of sorted.entries()) {
+          if (index > 0) {
+            expect(height - sorted[index - 1]!, `at ${id}`).toBeGreaterThanOrEqual(
+              FLEET_LANE_PITCH,
+            );
+          }
+        }
+      }
+    }
+  });
+
+  it("shows a link's name only on demand where it has no clear place", () => {
+    const names = ["a", "b", "c", "d", "e"];
+    const graph = build(
+      names.map((name) =>
+        environment(
+          name,
+          names.filter((other) => other !== name).map((other) => link(other)),
+        ),
+      ),
+    );
+    const layout = layoutFleetGraph(graph);
+    const between = [...layout.links.values()];
+    const always = between.flatMap(({ badge }) => (badge && !badge.onDemand ? [badge] : []));
+    // Every link keeps a name; the ones always drawn sit on no other link's lane and no other name.
+    expect(between.every(({ badge }) => badge !== null)).toBe(true);
+    expect(always.length).toBeGreaterThan(0);
+    expect(always.length).toBeLessThan(between.length);
+    for (const [index, badge] of always.entries()) {
+      for (const other of always.slice(index + 1)) expect(overlaps(badge, other)).toBe(false);
+      const crossing = between.filter(({ badge: own, d }) => {
+        if (own === badge) return false;
+        return samplePath(d).some(
+          (point) =>
+            point.x > badge.x + 0.5 &&
+            point.x < badge.x + badge.width - 0.5 &&
+            point.y > badge.y + 0.5 &&
+            point.y < badge.y + badge.height - 0.5,
+        );
+      });
+      expect(crossing).toEqual([]);
     }
   });
 
@@ -629,6 +910,14 @@ describe("layoutFleetGraph", () => {
     expect(fleetShapeKey(before, fleetStacks(before, new Set([stacks[0]!.id])))).not.toBe(
       key(before),
     );
+    // An environment that comes back leaves its folded group, with the group's id unchanged.
+    const labs = (firstPhase: FleetEnvironmentInput["phase"]) =>
+      build(
+        Array.from({ length: 14 }, (_, index) =>
+          environment(`lab-${index}`, "unknown", { phase: index === 0 ? firstPhase : "offline" }),
+        ),
+      );
+    expect(key(labs("connecting"))).not.toBe(key(labs("offline")));
   });
 });
 
