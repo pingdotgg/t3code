@@ -55,6 +55,8 @@ import {
 const HUB_READY_TIMEOUT_MS = 30_000;
 const DAEMON_READY_TIMEOUT_MS = 30_000;
 const DAEMON_POLL_MS = 100;
+// `daemon stop` waits 10s after SIGTERM and 2s after SIGKILL before it retires the registration.
+const DAEMON_STOP_TIMEOUT_MS = 15_000;
 const HUB_RESTART_STABLE_UPTIME_MS = 60_000;
 const HUB_RESTART_MAX_DELAY_MS = 30_000;
 
@@ -530,6 +532,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const startAgentDeviceDaemon = Effect.fn("LocalDeviceHost.startAgentDeviceDaemon")(function* (
     agentTool: Pick<DeviceToolPaths, "entryPath">,
     nodePath: string,
+    currentEndpoint?: DeviceHost.AgentDaemonEndpoint,
   ): Effect.fn.Return<
     DeviceHost.AgentDeviceEndpoint,
     | DeviceHost.DeviceHostError
@@ -567,8 +570,28 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
           Effect.scoped,
           Effect.orElseSucceed(() => false),
         );
-      if (alive) return toEndpoint(existing.value);
-      yield* fs.remove(daemonFilePath(), { force: true }).pipe(Effect.ignore);
+      if (alive) {
+        const endpoint = toEndpoint(existing.value);
+        if (
+          currentEndpoint?.baseUrl === endpoint.baseUrl &&
+          currentEndpoint.token === endpoint.token
+        ) {
+          return endpoint;
+        }
+        // A previous server's in-memory device sessions cannot be recovered by this host.
+        yield* stopAgentDeviceDaemon;
+        if (yield* fs.exists(daemonFilePath()).pipe(Effect.orElseSucceed(() => true))) {
+          return yield* new DeviceHost.AgentDeviceStartError({
+            hostId,
+            stateDir,
+            exitCode: null,
+            reason: "daemon_retirement_unconfirmed",
+            cause: new Error("The previous agent-device daemon retained its registration."),
+          });
+        }
+      } else {
+        yield* fs.remove(daemonFilePath(), { force: true }).pipe(Effect.ignore);
+      }
     }
     // No `daemon start` exists; `devices` is the cheapest command that starts and awaits it.
     const runResult = yield* runner
@@ -661,7 +684,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
         agentDeviceStateDir(path, config.stateDir),
       ],
       env: { ...hostEnvironment, AGENT_DEVICE_NO_UPDATE_NOTIFIER: "1" },
-      timeout: Duration.seconds(10),
+      timeout: Duration.millis(DAEMON_STOP_TIMEOUT_MS),
       timeoutBehavior: "timedOutResult",
     });
   }).pipe(
@@ -758,6 +781,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
           const agentDevice = yield* startAgentDeviceDaemon(
             running.agentDevice,
             running.hub.nodePath,
+            running.agentDevice,
           );
           yield* Ref.set(runningRef, { ...running, agentDevice });
           return { ...toReady(running), agentDevice };
