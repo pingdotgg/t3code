@@ -2,7 +2,14 @@ import type { BoardBridge, EngineState, EngineTokenResult, FolderResult } from "
 
 type EngineBridge = Pick<
   BoardBridge,
-  "engineState" | "onEngineState" | "engineToken" | "answerPrompt" | "pickFolder" | "resolveFolder"
+  | "engineState"
+  | "onEngineState"
+  | "engineToken"
+  | "answerPrompt"
+  | "pickFolder"
+  | "resolveFolder"
+  | "readLocalState"
+  | "writeLocalState"
 >;
 
 // Without the main process there is no WSL to ask, so the engine rejects a folder that is missing.
@@ -18,6 +25,8 @@ function webFolder(text: string): FolderResult {
     ? { ok: true, path: path.replace(/\/+$/, "") || "/" }
     : { ok: false, reason: "Use an absolute WSL path, such as /home/me/project." };
 }
+
+const LOCAL_STATE_KEY = "board:local-state";
 
 // `dev:web` has no Electron main process, so the lane scripts pass the engine and a token directly.
 function webBridge(): EngineBridge {
@@ -43,6 +52,8 @@ function webBridge(): EngineBridge {
         reason: "The folder picker needs the desktop app. Type a WSL path instead.",
       }),
     resolveFolder: (text) => Promise.resolve(webFolder(text)),
+    readLocalState: () => Promise.resolve(localStorage.getItem(LOCAL_STATE_KEY) ?? ""),
+    writeLocalState: (text) => Promise.resolve(localStorage.setItem(LOCAL_STATE_KEY, text)),
   };
 }
 

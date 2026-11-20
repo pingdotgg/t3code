@@ -8,6 +8,7 @@ import { app, BrowserWindow, dialog, ipcMain, safeStorage } from "electron";
 
 import { runtimeSupportsClient } from "./runtimeCompatibility";
 import { createEngine, type EngineConfig, type TokenStore } from "./engine";
+import { createLocalStateFile } from "./localState";
 import { pickFolder, resolveFolder } from "./pickFolder";
 import {
   createLinuxHost,
@@ -157,6 +158,12 @@ export function registerEngineIpc(options: {
       Option.getOrElse(decodeText(text), () => ""),
     ),
   );
+  const localState = createLocalStateFile(NodePath.join(userData, "local-state.json"));
+  ipcMain.handle("board:local-state-read", () => localState.read());
+  ipcMain.handle("board:local-state-write", (_event, text) => {
+    const contents = Option.getOrUndefined(decodeText(text));
+    if (contents !== undefined) localState.write(contents);
+  });
   ipcMain.on("board:engine-connected", (_event, epochMs) => {
     if (isEpochMs(epochMs)) console.log(`board:engine-connected ${sinceStart(epochMs)} ms`);
   });
