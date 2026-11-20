@@ -113,6 +113,7 @@ const makeRequest = Effect.gen(function* () {
 function layerTest(input?: {
   readonly upsert?: EnvironmentLinks.EnvironmentLinks["Service"]["upsert"];
   readonly getForUser?: EnvironmentLinks.EnvironmentLinks["Service"]["getForUser"];
+  readonly prepareDeprovision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["prepareDeprovision"];
   readonly consume?: DpopProofs.DpopProofReplay["Service"]["consume"];
   readonly deprovision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["deprovision"];
 }) {
@@ -145,7 +146,7 @@ function layerTest(input?: {
         }),
         Layer.succeed(ManagedEndpointProvider.ManagedEndpointProvider, {
           reconcileOrigin: () => Effect.succeed("ready"),
-          prepareDeprovision: () => Effect.succeed(null),
+          prepareDeprovision: input?.prepareDeprovision ?? (() => Effect.succeed(null)),
           deprovision: input?.deprovision ?? (() => Effect.succeed(true)),
           release: () => Effect.succeed(true),
           provision: () =>
@@ -328,6 +329,48 @@ describe("EnvironmentLinker", () => {
           getForUser: () => Effect.succeed(activeLink(linkedKey)),
           upsert: () => Effect.sync(() => void touched.push("upsert")),
           deprovision: () => Effect.sync(() => touched.push("deprovision") > 0),
+        }),
+      ),
+    );
+  });
+
+  it.effect("finishes a failed unlink teardown before a new link takes the tunnel", () => {
+    const touched: Array<string> = [];
+    let tornDown = false;
+    return Effect.gen(function* () {
+      const linker = yield* EnvironmentLinker.EnvironmentLinker;
+      const link = Effect.gen(function* () {
+        const { request } = yield* makeRequest;
+        return yield* linker.link({
+          userId: "user_123",
+          request: { ...request, managedTunnelsEnabled: true },
+        });
+      });
+      expect((yield* link.pipe(Effect.flip))._tag).toBe("ManagedEndpointDeprovisioningFailed");
+      expect(touched).toEqual(["deprovision"]);
+
+      tornDown = true;
+      yield* link;
+      expect(touched).toEqual(["deprovision", "deprovision", "upsert"]);
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          prepareDeprovision: () =>
+            Effect.succeed({
+              userId: "user_123",
+              environmentId: "env-link-test",
+              hostname: "managed.example.test",
+              tunnelId: "left-behind-tunnel",
+              tunnelName: "left-behind",
+              dnsRecordId: null,
+              readyAt: null,
+              origin: null,
+              updatedAt: "2026-01-01T00:00:00.000Z",
+              generation: 1,
+              tunnelReleasedAt: null,
+            }),
+          deprovision: () => Effect.sync(() => touched.push("deprovision") > 0 && tornDown),
+          upsert: () => Effect.sync(() => void touched.push("upsert")),
         }),
       ),
     );

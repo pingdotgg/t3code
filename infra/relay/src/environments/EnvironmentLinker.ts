@@ -72,6 +72,7 @@ export type EnvironmentLinkError =
   | DpopProofs.DpopProofReplayPersistenceError
   | EnvironmentLinks.EnvironmentLinkUpsertPersistenceError
   | EnvironmentLinks.EnvironmentLinkLookupPersistenceError
+  | ManagedEndpointProvider.ManagedEndpointDeprovisioningFailed
   | EnvironmentCredentials.EnvironmentCredentialCreatePersistenceError
   | ManagedEndpointProvider.ManagedEndpointProviderError;
 
@@ -294,7 +295,7 @@ const make = Effect.gen(function* () {
         });
       }
       // The account bearer alone must not move an active link, its tunnel and its trusted key to
-      // another key. Unlinking first releases the tunnel, so nothing of the old link is handed over.
+      // another key. Unlinking first releases the tunnel.
       const existing = yield* links.getForUser({
         userId: input.userId,
         environmentId: verified.environmentId,
@@ -306,6 +307,22 @@ const make = Effect.gen(function* () {
           reason: "environment_key_mismatch",
           stage: "validate_existing_link",
         });
+      }
+      // An unlink whose teardown failed leaves its tunnel behind, and provisioning would reuse it by
+      // name. Finish the teardown first so a new link never inherits the old link's tunnel.
+      if (existing === null && input.request.managedTunnelsEnabled) {
+        const key = { userId: input.userId, environmentId: verified.environmentId };
+        const leftover = yield* managedEndpointProvider.prepareDeprovision(key);
+        if (
+          leftover !== null &&
+          !(yield* managedEndpointProvider.deprovision({ ...key, target: leftover }))
+        ) {
+          return yield* new ManagedEndpointProvider.ManagedEndpointDeprovisioningFailed({
+            ...key,
+            stage: "claim-deprovision",
+            cause: "an earlier tunnel for this environment is still being torn down",
+          });
+        }
       }
       // Non-tunnel links must release provisioned tunnel/DNS resources; best-effort deprovision is idempotent.
       if (!input.request.managedTunnelsEnabled) {

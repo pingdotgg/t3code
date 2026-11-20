@@ -897,6 +897,12 @@ export const layerClientApi = HttpApiBuilder.group(
                 reason: "origin_not_allowed",
                 traceId,
               }),
+            ManagedEndpointDeprovisioningFailed: (_error, traceId) =>
+              new RelayEnvironmentLinkUnavailableError({
+                code: "environment_link_unavailable",
+                reason: "managed_endpoint_provisioning_failed",
+                traceId,
+              }),
             ManagedTunnelLimitExceeded: (limitError, traceId) =>
               new RelayEnvironmentLinkLimitExceededError({
                 code: "environment_link_limit_exceeded",
