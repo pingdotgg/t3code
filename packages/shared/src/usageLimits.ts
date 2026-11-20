@@ -550,16 +550,21 @@ const CODEX_PLAN_CAPACITY: Record<string, number> = {
   "ChatGPT Pro 100 Subscription": 5,
   "ChatGPT Pro 200 Subscription": 20,
 };
-// Claude's published plan multipliers describe the session allowance only.
-const CLAUDE_SESSION_CAPACITY: Record<string, number> = { Pro: 1, Max: 5, Ultra: 20 };
+// Claude's pricing page: Max is 5x Pro every 5 hours and week; Ultra is 10x Pro weekly with no 5-hour limit.
+// Keyed by the auth label the Claude provider and hubs report.
+const CLAUDE_PLAN_CAPACITY: Record<string, number> = {
+  "Claude Pro Subscription": 1,
+  "Claude Max Subscription": 5,
+  "Claude Ultra Subscription": 10,
+};
 
 function planCapacity(account: LimitAccount, kind: ServerProviderUsageWindow["kind"]) {
   if (!account.plan) return undefined;
   if (account.driver === "codex" && (kind === "session" || kind === "weekly")) {
     return CODEX_PLAN_CAPACITY[account.plan];
   }
-  if (account.driver === "claudeAgent" && kind === "session") {
-    return CLAUDE_SESSION_CAPACITY[account.plan];
+  if (account.driver === "claudeAgent" && (kind === "session" || kind === "weekly")) {
+    return CLAUDE_PLAN_CAPACITY[account.plan];
   }
   return undefined;
 }

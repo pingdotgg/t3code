@@ -106,6 +106,16 @@ const ClaudeUsage = Schema.Struct({
     ),
   ),
 });
+const ClaudeProfile = Schema.Struct({
+  organization: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        organization_type: Schema.optional(Schema.NullOr(Schema.String)),
+        rate_limit_tier: Schema.optional(Schema.NullOr(Schema.String)),
+      }),
+    ),
+  ),
+});
 const CreditList = Schema.Struct({
   credits: Schema.Array(
     Schema.Struct({
@@ -123,9 +133,28 @@ const decodeApiResponse = Schema.decodeUnknownEffect(ApiResponse);
 const decodeCreditList = Schema.decodeUnknownEffect(Schema.fromJsonString(CreditList));
 const decodeClaudeUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeUsage));
 const decodeCodexUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(CodexUsage));
+const decodeClaudeProfile = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeProfile));
 const decodeGrokUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(GrokUsageResponse));
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const isUsageLimitSourceError = Schema.is(UsageLimitSourceError);
+
+/** Names the tier the way the native Claude provider does, so pools weight both alike. */
+function claudeHubPlanLabel(profile: typeof ClaudeProfile.Type | undefined): string {
+  const organization = profile?.organization;
+  if (organization?.rate_limit_tier?.includes("max_20x")) return "Claude Ultra Subscription";
+  switch (organization?.organization_type) {
+    case "claude_max":
+      return "Claude Max Subscription";
+    case "claude_pro":
+      return "Claude Pro Subscription";
+    case "claude_team":
+      return "Claude Team Subscription";
+    case "claude_enterprise":
+      return "Claude Enterprise Subscription";
+    default:
+      return "Claude Subscription";
+  }
+}
 
 // Extra CAs can fix untrusted chains; expiry/hostname failures report codes only.
 const UNTRUSTED_CERTIFICATE_CODES = new Set([
@@ -199,6 +228,8 @@ type HubCall = (
   url: string,
   data?: unknown,
 ) => Effect.Effect<string, UsageLimitSourceError | Schema.SchemaError>;
+/** Runs an optional request, or yields undefined once the refresh's shared budget is spent. */
+type HubOptional = <A, E>(effect: Effect.Effect<A, E>) => Effect.Effect<A | undefined>;
 type HubReading = Omit<UsageLimitSourceAccount, "id" | "driver">;
 interface HubProvider {
   readonly driver: ProviderDriverKind;
@@ -210,6 +241,7 @@ interface HubProvider {
   readonly read: (input: {
     readonly account: AuthFile;
     readonly call: HubCall;
+    readonly optional: HubOptional;
     readonly checkedAt: string;
   }) => Effect.Effect<HubReading, UsageLimitSourceError | Schema.SchemaError, Digest.Digest>;
 }
@@ -308,10 +340,20 @@ const HUB_PROVIDERS = new Map<string, HubProvider>([
         // The OAuth usage endpoint can return 429 without a Claude Code user agent.
         "User-Agent": "claude-code/2.1.273",
       }),
-      read: Effect.fnUntraced(function* ({ account, call, checkedAt }) {
-        const usage = yield* decodeClaudeUsage(
-          yield* call("https://api.anthropic.com/api/oauth/usage"),
+      read: Effect.fnUntraced(function* ({ account, call, optional, checkedAt }) {
+        const [body, profile] = yield* Effect.all(
+          [
+            call("https://api.anthropic.com/api/oauth/usage"),
+            // The tier only weights pools, so a failed read keeps the usage.
+            optional(
+              call("https://api.anthropic.com/api/oauth/profile").pipe(
+                Effect.flatMap(decodeClaudeProfile),
+              ),
+            ),
+          ],
+          { concurrency: 2 },
         );
+        const usage = yield* decodeClaudeUsage(body);
         const model_scoped = (usage.limits ?? []).flatMap((limit) =>
           limit.kind === "weekly_scoped" && limit.scope?.model && typeof limit.percent === "number"
             ? [
@@ -332,7 +374,7 @@ const HUB_PROVIDERS = new Map<string, HubProvider>([
         };
         return {
           ...listedIdentity(account),
-          plan: "Claude Subscription",
+          plan: claudeHubPlanLabel(profile),
           usageLimits: claudeUsageResponseToLimits({
             checkedAt,
             response: { rate_limits_available: true, rate_limits: rateLimits },
@@ -466,11 +508,22 @@ export const makeCliproxyApi = Effect.gen(function* () {
     hub: CliproxyHub,
     account: AuthFile,
     provider: HubProvider,
+    optionalUntil: number,
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
     const call: HubCall = (url, data) =>
       apiCall(hub, account, provider.header(account, platform, architecture), url, data);
-    const reading = yield* provider.read({ account, call, checkedAt }).pipe(
+    const optional: HubOptional = Effect.fn("CliproxyApi.optional")(function* <A, E>(
+      effect: Effect.Effect<A, E>,
+    ) {
+      const left = optionalUntil - DateTime.toEpochMillis(yield* DateTime.now);
+      if (left <= 0) return undefined;
+      return yield* effect.pipe(
+        Effect.timeout(left),
+        Effect.orElseSucceed(() => undefined),
+      );
+    });
+    const reading = yield* provider.read({ account, call, optional, checkedAt }).pipe(
       Effect.provideService(Digest.Digest, digest),
       Effect.orElseSucceed(() => ({
         ...listedIdentity(account),
@@ -494,12 +547,15 @@ export const makeCliproxyApi = Effect.gen(function* () {
           : new UsageLimitSourceError({ detail: "The hub could not list accounts." }),
       ),
     );
+    // One budget for the whole refresh: per-account timeouts would stack across batches
+    // and outlast the usage-limit reset fallback's deadline.
+    const optionalUntil = DateTime.toEpochMillis(yield* DateTime.now) + 3_000;
     return yield* Effect.forEach(
       accounts.flatMap((account) => {
         const provider = HUB_PROVIDERS.get(account.provider);
         return provider && !account.disabled ? [{ account, provider }] : [];
       }),
-      ({ account, provider }) => readAccount(hub, account, provider),
+      ({ account, provider }) => readAccount(hub, account, provider, optionalUntil),
       { concurrency: 4 },
     );
   });
