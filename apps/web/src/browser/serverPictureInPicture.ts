@@ -69,6 +69,8 @@ export async function openServerPictureInPicture(input: {
   readonly threadId: ThreadId;
   readonly tabId: string;
   readonly seed: HTMLCanvasElement | null;
+  /** The base the client loads asset PDFs through, so this closes for exactly those. */
+  readonly httpBaseUrl: string | null;
 }): Promise<void> {
   closeServerPictureInPicture();
   const canvas = document.createElement("canvas");
@@ -185,7 +187,7 @@ export async function openServerPictureInPicture(input: {
       const navigation = state.sessions[input.tabId]?.navStatus;
       if (
         navigation?._tag === "Success" &&
-        previewPdfAssetUrl(navigation.url, navigation.url) !== null
+        previewPdfAssetUrl(navigation.url, input.httpBaseUrl) !== null
       ) {
         onLeave();
       }
