@@ -417,6 +417,56 @@ export function resolveDiffReviewAnchor(
     : { position: last };
 }
 
+/** The file's diff lines in unified order, without markers or collapsed context. */
+export function buildDiffFileText(fileDiff: FileDiffMetadata): string {
+  return buildDiffReviewLines(fileDiff, false)
+    .map((line) => line.content)
+    .join("\n");
+}
+
+/** A character in a rendered diff row; `side` says which file's line number `line` is. */
+export interface DiffTextPoint {
+  readonly side: "old" | "new";
+  readonly line: number;
+  readonly offset: number;
+}
+
+/**
+ * The text between two diff rows as the browser copies it with every row
+ * mounted. `column` keeps one side of a split view; null keeps both, in unified order.
+ */
+export function buildDiffRangeText(
+  fileDiff: FileDiffMetadata,
+  a: DiffTextPoint,
+  b: DiffTextPoint,
+  column: "old" | "new" | null,
+): string | null {
+  const lines = buildDiffReviewLines(fileDiff, false);
+  const indexOf = (point: DiffTextPoint) =>
+    lines.findIndex((line) =>
+      point.side === "old"
+        ? line.change !== "add" && line.oldLineNumber === point.line
+        : line.change !== "delete" && line.newLineNumber === point.line,
+    );
+  const aIndex = indexOf(a);
+  const bIndex = indexOf(b);
+  if (aIndex < 0 || bIndex < 0) return null;
+  const forward = aIndex < bIndex || (aIndex === bIndex && a.offset <= b.offset);
+  const [start, end] = forward ? [a, b] : [b, a];
+  const skipped = column === "old" ? "add" : column === "new" ? "delete" : null;
+  const selected = lines
+    .slice(Math.min(aIndex, bIndex), Math.max(aIndex, bIndex) + 1)
+    .filter((line) => line.change !== skipped);
+  return selected
+    .map((line, index) =>
+      line.content.slice(
+        index === 0 ? start.offset : 0,
+        index === selected.length - 1 ? end.offset : line.content.length,
+      ),
+    )
+    .join("\n");
+}
+
 function getDiffRange(
   lines: ReadonlyArray<DiffReviewLine>,
   key: "oldLineNumber" | "newLineNumber",

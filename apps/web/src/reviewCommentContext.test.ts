@@ -3,6 +3,7 @@ import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  buildDiffRangeText,
   buildDiffReviewComment,
   buildFileReviewComment,
   buildReviewCommentRenderablePatch,
@@ -254,5 +255,29 @@ describe("review comment context parsing", () => {
     expect(
       resolveDiffReviewAnchor(fileDiff, { start: 2, side: "additions", end: 22 }, true),
     ).toEqual({ position: { kind: "added", newLine: 22 } });
+  });
+
+  it("rebuilds a copied diff range from partial end lines, in unified order or one split column", () => {
+    const [fileDiff] = parsePatchFiles(
+      [
+        "diff --git a/src/app.ts b/src/app.ts",
+        "--- a/src/app.ts",
+        "+++ b/src/app.ts",
+        "@@ -1,4 +1,4 @@",
+        " one",
+        "-two",
+        "+TWO",
+        " three",
+        " four",
+      ].join("\n"),
+    )[0]!.files;
+    const one = { side: "new", line: 1, offset: 1 } as const;
+    const three = { side: "new", line: 3, offset: 3 } as const;
+
+    expect(buildDiffRangeText(fileDiff!, three, one, null)).toBe("ne\ntwo\nTWO\nthr");
+    expect(buildDiffRangeText(fileDiff!, one, three, "new")).toBe("ne\nTWO\nthr");
+    expect(
+      buildDiffRangeText(fileDiff!, { side: "old", line: 1, offset: 0 }, { ...one, line: 9 }, null),
+    ).toBeNull();
   });
 });
