@@ -2558,12 +2558,10 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
           Effect.gen(function* () {
             assert.equal(threadId, fresh);
             assert.equal(importedNativeThread?.ref.nativeId, "new");
-            yield* seedAcpThread("new", { imported: false, ran: false, nativeId: "new" }).pipe(
-              Effect.orDie,
-            );
-            const projection = yield* projections.getThreadProjection(fresh).pipe(Effect.orDie);
+            yield* seedAcpThread("new", { imported: false, ran: false, nativeId: "new" });
+            const projection = yield* projections.getThreadProjection(fresh);
             return { threadId: fresh, projection, resumed: false };
-          }).pipe(Effect.provideService(EventSink.EventSinkV2, sink)),
+          }).pipe(Effect.provideService(EventSink.EventSinkV2, sink), Effect.orDie),
       }),
       Layer.mock(AgentSessionImporter.AgentSessionImporter)({
         importNativeHistory: ({ threadId }) =>
