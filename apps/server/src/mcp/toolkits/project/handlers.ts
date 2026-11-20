@@ -201,6 +201,11 @@ const withSavedProjectSettings = Effect.gen(function* () {
   };
 });
 
+// The project is already committed, so a failed Settings read must not report the create as failed.
+const withSavedProjectSettingsAfterCreate = withSavedProjectSettings.pipe(
+  Effect.orElseSucceed(() => (project: ProjectRecord) => project),
+);
+
 export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   t3_thread_launch: McpToolAccess.startsThreads(
     (input) => input,
@@ -524,7 +529,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               ),
             );
           return {
-            ...(yield* withSavedProjectSettings)(project),
+            ...(yield* withSavedProjectSettingsAfterCreate)(project),
             ...(created.commitError === undefined ? {} : { commitError: created.commitError }),
           };
         }
@@ -538,7 +543,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const created = yield* projects
           .create({ ...input, workspaceRoot, commandId, projectId: ProjectId.make(commandId) })
           .pipe(Effect.mapError(projectFailure));
-        return (yield* withSavedProjectSettings)(created);
+        return (yield* withSavedProjectSettingsAfterCreate)(created);
       }),
     // Linked work may bring the repository it works in; an existing
     // registered workspace is still refused.
