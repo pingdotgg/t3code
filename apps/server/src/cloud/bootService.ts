@@ -1212,6 +1212,30 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     return problems;
   });
 
+  const restartMarker = path.join(input.baseDir, "runtime", DESKTOP_UPDATE_RESTART_MARKER_FILE);
+  const markRestart = fs.writeFileString(restartMarker, "", { mode: 0o600 }).pipe(
+    Effect.as(true),
+    Effect.catch((cause) =>
+      Effect.logWarning("Could not mark the service restart to preserve its relay tunnel", {
+        cause,
+      }).pipe(Effect.as(false)),
+    ),
+  );
+  const clearRestartMarker = fs.remove(restartMarker, { force: true }).pipe(Effect.ignore);
+  const stopForRestart = (steps: ReadonlyArray<BootServiceStep>) =>
+    markRestart.pipe(
+      Effect.flatMap((marked) =>
+        runSteps(steps).pipe(Effect.ensuring(marked ? clearRestartMarker : Effect.void)),
+      ),
+    );
+  // The manager may return before shutdown. Let the server consume the marker.
+  const handOffRestart = (steps: ReadonlyArray<BootServiceStep>) =>
+    markRestart.pipe(
+      Effect.flatMap((marked) =>
+        runSteps(steps).pipe(Effect.tapError(() => (marked ? clearRestartMarker : Effect.void))),
+      ),
+    );
+
   const install = Effect.fn("cloud.boot_service.install")(function* (options?: {
     readonly allowDowngrade?: boolean;
     readonly start?: boolean;
@@ -1337,14 +1361,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     // restart while this launcher keeps running, then the restart is handed to the manager.
     const handOff = installed && start && runningInsideService && manager.kind === "schtasks";
     if (installed && start && !handOff) {
-      const marker = path.join(input.baseDir, "runtime", DESKTOP_UPDATE_RESTART_MARKER_FILE);
-      // The running server consumes this marker during shutdown to keep its relay tunnel.
-      yield* fs.writeFileString(marker, "", { mode: 0o600 }).pipe(
-        Effect.mapError((cause) => new BootServiceInstallError({ cause })),
-      );
-      yield* runSteps(manager.stop).pipe(
-        Effect.ensuring(fs.remove(marker, { force: true }).pipe(Effect.ignore)),
-      );
+      yield* stopForRestart(manager.stop);
     }
 
     // State first, then unit. The launcher acquires only one at a time, and a
@@ -1423,7 +1440,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       Effect.tap(
         Effect.gen(function* () {
           if (handOff) {
-            yield* runSteps(manager.handoff ?? []);
+            yield* handOffRestart(manager.handoff ?? []);
           } else if (start) {
             yield* runSteps(manager.activate);
             yield* withSelectionLock(
@@ -1465,10 +1482,10 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     // Writes no state, and the launcher lets an update transition in flight
     // finish before the queued stop tears it down.
     if (runningInsideService && manager.handoff !== undefined) {
-      yield* runSteps(manager.handoff);
+      yield* handOffRestart(manager.handoff);
       return "queued" as const;
     }
-    yield* runSteps(manager.stop);
+    yield* stopForRestart(manager.stop);
     yield* runSteps(manager.activate).pipe(
       Effect.tapError(() => runSteps(manager.restart).pipe(Effect.ignore)),
     );

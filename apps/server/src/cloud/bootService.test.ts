@@ -1,3 +1,4 @@
+import { DESKTOP_UPDATE_RESTART_MARKER_FILE } from "@t3tools/contracts";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Cross-process launcher contention uses real filesystem leases and IPC barriers.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeSqlite from "node:sqlite";
@@ -204,6 +205,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   yield* fs.writeFileString(runtime.entryPath, "#!/bin/sh\n");
   yield* fs.writeFileString(runtime.sentinelPath, "1.2.3\n");
 
+  const markersAtStop: boolean[] = [];
   const commands: string[] = [];
   const invocations: ProcessRunner.ProcessRunInput[] = [];
   const timeouts = new Map<string, unknown>();
@@ -240,6 +242,11 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     ) {
       const command = `${input.command} ${input.args.join(" ")}`;
       commands.push(command);
+      if (command === "systemctl --user stop t3code.service") {
+        markersAtStop.push(
+          yield* fs.exists(path.join(baseDir, "runtime", DESKTOP_UPDATE_RESTART_MARKER_FILE)),
+        );
+      }
       invocations.push(input);
       timeouts.set(command, input.timeout);
       if (command === "systemctl --user reset-failed t3code.service") control.startLimitHit = false;
@@ -403,12 +410,31 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     commands,
     invocations,
     timeouts,
+    markersAtStop,
     control,
     runtime,
   };
 });
 
 it.layer(NodeServices.layer)("boot service install", (it) => {
+  it.effect("keeps the relay marker through a service stop and cleans up after a failed stop", () =>
+    Effect.gen(function* () {
+      const { service, fs, baseDir, control, markersAtStop } = yield* makeHarness();
+      const path = yield* Path.Path;
+      const marker = path.join(baseDir, "runtime", DESKTOP_UPDATE_RESTART_MARKER_FILE);
+      yield* service.install();
+      yield* service.restart();
+      expect(markersAtStop.at(-1)).toBe(true);
+      expect(yield* fs.exists(marker)).toBe(false);
+
+      control.failCommand = "systemctl --user stop t3code.service";
+      const error = yield* service.restart().pipe(Effect.flip);
+      expect(error._tag).toBe("BootServiceCommandError");
+      expect(markersAtStop.slice(-2)).toEqual([true, true]);
+      expect(yield* fs.exists(marker)).toBe(false);
+    }),
+  );
+
   it.effect(
     "fails before installing files or validating a runtime when lingering needs an administrator",
     () =>
