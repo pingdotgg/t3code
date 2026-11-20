@@ -364,6 +364,7 @@ describe("WorktreeReclamation", () => {
           releaseUnlessBusy: () => Effect.succeed(true),
           otherWorkingThreads: () => Effect.succeed([]),
           detach: () => Effect.void,
+          forgetLoadedProviderThread: () => Effect.void,
           subscribePromptSuggestion: () => Stream.empty,
         });
         const { fixture, service, updateThread } = yield* setup({

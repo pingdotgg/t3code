@@ -14,12 +14,7 @@ import {
   ComputerObservation,
   ComputerQuestions,
 } from "./computer.ts";
-import {
-  EnvironmentId,
-  NonNegativeInt,
-  PortSchema,
-  TrimmedNonEmptyString,
-} from "./baseSchemas.ts";
+import { EnvironmentId, NonNegativeInt, PortSchema, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
 import type {
   BrowserImportResult,

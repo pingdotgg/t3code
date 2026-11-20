@@ -2696,14 +2696,28 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             ...preamble.slice(0, 3),
             {
               type: "expect_outbound",
+              label: "config/read",
+              frame: {
+                id: 2,
+                method: "config/read",
+                params: { cwd: "/workspace", includeLayers: false },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "config/read",
+              frame: { id: 2, result: { config: {}, origins: {} } },
+            },
+            {
+              type: "expect_outbound",
               label: "skills/list",
-              frame: { id: 2, method: "skills/list", params: { cwds: ["/workspace"] } },
+              frame: { id: 3, method: "skills/list", params: { cwds: ["/workspace"] } },
             },
             {
               type: "emit_inbound",
               label: "skills/list",
               frame: {
-                id: 2,
+                id: 3,
                 result: {
                   data: [
                     {
@@ -2724,7 +2738,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               type: "expect_outbound",
               label: "thread/start",
               frame: {
-                id: 3,
+                id: 4,
                 method: "thread/start",
                 params: {
                   config: {
@@ -2734,7 +2748,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 },
               },
             },
-            withReplayRequestId(preamble[4]!, 3),
+            withReplayRequestId(preamble[4]!, 4),
           ],
         }),
         () => Effect.void,

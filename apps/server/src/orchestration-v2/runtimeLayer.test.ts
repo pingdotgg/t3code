@@ -4391,14 +4391,14 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         branch: null,
         worktreePath: null,
       });
-      const key = { host: "github.com", repository: "pingdotgg/t3code", number: 11 };
+      const key = { host: "github.com", repository: "pingdotgg/t3code", number: 4411 };
       yield* orchestrator.dispatch({
         type: "thread.pull-request.watch",
         commandId: CommandId.make("pr-watch-settlement-start"),
         threadId,
         ...key,
         watching: true,
-        link: { url: "https://github.com/pingdotgg/t3code/pull/11", source: "agent" },
+        link: { url: "https://github.com/pingdotgg/t3code/pull/4411", source: "agent" },
       });
       const shell = Effect.map(orchestrator.getThreadShell(threadId), (thread) => {
         assert.isDefined(thread);
@@ -4424,8 +4424,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             NodeServices.layer,
             NodeCrypto.layer,
             Layer.mock(PullRequestService.PullRequestService)({
-              detail: () =>
-                Effect.sync(() => (reads += 1)).pipe(Effect.andThen(Effect.die("offline"))),
+              // Other tests' watches share this layer; count only this one.
+              detail: (input) =>
+                Effect.sync(() => {
+                  if (input.number === key.number) reads += 1;
+                }).pipe(Effect.andThen(Effect.die("offline"))),
               activity: () => Effect.die("offline"),
             }),
           ),
@@ -5099,7 +5102,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       fingerprint = { status: "OPEN settled", remarks: "1" };
       yield* reactor.sweep;
       assert.deepEqual(reads(), { detail: 4, activity: 2 });
-      assert.deepEqual(yield* summaries, ["#11: checks failed", "#11: new comments"]);
+      assert.deepEqual(yield* summaries, [
+        "#11: checks failed",
+        "#11: checks finished",
+        "#11: new comments",
+      ]);
 
       fingerprint = "rate-limited";
       yield* reactor.sweep;
@@ -5110,7 +5117,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* TestClock.adjust("30 minutes");
       yield* reactor.sweep;
       assert.deepEqual(reads(), { detail: 5, activity: 3 });
-      assert.deepEqual(yield* summaries, ["#11: checks failed", "#11: new comments"]);
+      assert.deepEqual(yield* summaries, [
+        "#11: checks failed",
+        "#11: checks finished",
+        "#11: new comments",
+      ]);
     }),
   );
 
@@ -6119,6 +6130,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           NodeServices.layer,
           NodeCrypto.layer,
           Layer.mock(PullRequestService.PullRequestService)({
+            requiredChecks: () => Effect.succeed([]),
             detail: (input) =>
               Effect.gen(function* () {
                 if (gate !== null) {

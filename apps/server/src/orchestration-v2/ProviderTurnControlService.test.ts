@@ -402,6 +402,7 @@ it.effect(
           getUnreadableThreadIds: () => Effect.die("unused getUnreadableThreadIds"),
           getThreadSnapshot: () => Effect.die("unused getThreadSnapshot"),
           getThreadSnapshotWindow: () => Effect.die("unused getThreadSnapshotWindow"),
+          getDelegatedChildControls: () => Effect.die("unused getDelegatedChildControls"),
           getPullRequestSnapshot: () => Effect.die("unused getPullRequestSnapshot"),
         }),
       );
