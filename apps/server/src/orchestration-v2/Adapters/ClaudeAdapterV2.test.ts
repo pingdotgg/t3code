@@ -17766,7 +17766,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect("settles a continuation turn immediately when no wake output is buffered", () =>
+  it.effect.each([
+    {
+      name: "settles a continuation turn immediately when no wake output is buffered",
+      nativeThreadHasTurns: true,
+      prompted: false,
+    },
+    {
+      name: "prompts with a continuation's text when it starts a new Claude session",
+      nativeThreadHasTurns: false,
+      prompted: true,
+    },
+  ])("$name", ({ nativeThreadHasTurns, prompted }) =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
       const now = yield* DateTime.now;
@@ -17777,13 +17788,22 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           providerThread: harness.providerThread,
           now,
           attemptId: RunAttemptId.make("attempt-claude-wake-3"),
-          text: "Background task completed.",
+          text: "Recovered history\n\nBackground task completed.",
           attachments: [],
+          nativeThreadHasTurns,
           messageCreatedBy: "agent",
           messageCreationSource: "provider",
         }),
       );
 
+      if (prompted) {
+        assert.lengthOf(harness.offeredMessages, 1);
+        assert.include(
+          JSON.stringify(harness.offeredMessages[0]?.message.content),
+          "Recovered history",
+        );
+        return;
+      }
       yield* harness.awaitTerminal(1);
       assert.equal(harness.terminalEvents()[0]?.status, "completed");
       assert.lengthOf(harness.offeredMessages, 0);
