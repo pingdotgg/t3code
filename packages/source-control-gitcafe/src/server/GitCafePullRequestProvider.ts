@@ -814,6 +814,13 @@ export const make = Effect.gen(function* () {
     listChangeRequests: Effect.fn("GitCafePullRequestProvider.listChangeRequests")(
       function* (input) {
         const base = yield* repositoryPath("listChangeRequests", input);
+        yield* Effect.annotateCurrentSpan({
+          "gitcafe.list.limit": input.limit,
+          "gitcafe.list.resumed": input.cursor?.resumeAfter !== undefined,
+          "gitcafe.list.state": input.state,
+          "gitcafe.list.query": Boolean(input.query?.trim()),
+          "gitcafe.list.involvement": input.involvement ?? "none",
+        });
         const involved = input.involvement === "authored" || input.involvement === "reviewing";
         let actorId: string | undefined;
         if (involved) {
@@ -845,6 +852,11 @@ export const make = Effect.gen(function* () {
           { ...input, authorNarrowed: actorId !== undefined && input.involvement === "authored" },
           base,
         );
+        yield* Effect.annotateCurrentSpan({
+          "gitcafe.list.filtered": filterParams.length > 0,
+          "gitcafe.list.actor_narrowed": actorId !== undefined,
+          "gitcafe.list.author_discovery": unresolvedAuthor !== null,
+        });
         const readPage = Effect.fn("readPage")(function (rows: number, after: string | null) {
           const query = new URLSearchParams({ limit: String(rows), sort: "newest" });
           if (input.state !== "all") query.set("state", input.state);
@@ -861,7 +873,15 @@ export const make = Effect.gen(function* () {
             input,
             { path: `${base}/pulls?${query}` },
             Json.GitCafePulls,
-          ).pipe(Effect.tap((page) => Effect.sync(() => learnAuthors(input.host, page.items))));
+          ).pipe(
+            Effect.tap((page) => Effect.sync(() => learnAuthors(input.host, page.items))),
+            Effect.tap((page) =>
+              Effect.annotateCurrentSpan({
+                "gitcafe.page.rows_requested": rows,
+                "gitcafe.page.rows_returned": page.items.length,
+              }),
+            ),
+          );
         });
         if (unresolvedAuthor !== null) {
           // Rows are only ever handed out narrowed by actor, so a continuation always carries on
@@ -874,6 +894,7 @@ export const make = Effect.gen(function* () {
             pages += 1;
             after = page.items.length === 0 ? null : page.next;
           } while (!knownAuthors.has(key) && after !== null && pages < AUTHOR_DISCOVERY_PAGES);
+          yield* Effect.annotateCurrentSpan("gitcafe.list.author_discovery_pages", pages);
           const found = knownAuthors.get(key);
           if (found === undefined)
             return { items: [], truncated: after !== null, continues: false };
@@ -893,16 +914,24 @@ export const make = Effect.gen(function* () {
           );
         };
         let next: string | null = null;
+        let listingPages = 0;
         do {
           const page: typeof Json.GitCafePulls.Type = yield* readPage(
             resume === null ? Math.min(PAGE_SIZE, limit - items.length) : PAGE_SIZE,
             next,
           );
+          listingPages += 1;
           items.push(...page.items.filter(isNew));
           next = page.items.length === 0 ? null : page.next;
         } while (next !== null && items.length < limit);
         const delivered = items.slice(0, limit);
         const last = delivered.at(-1);
+        const truncated = next !== null || items.length > limit;
+        yield* Effect.annotateCurrentSpan({
+          "gitcafe.list.pages": listingPages,
+          "gitcafe.list.rows": delivered.length,
+          "gitcafe.list.truncated": truncated,
+        });
         return {
           ...(last === undefined ? {} : { resumeAfter: `${last.createdAt}~${last.number}` }),
           items: delivered.map((pull) => {
@@ -914,7 +943,7 @@ export const make = Effect.gen(function* () {
                 }
               : item;
           }),
-          truncated: next !== null || items.length > limit,
+          truncated,
           continues: true,
         };
       },
