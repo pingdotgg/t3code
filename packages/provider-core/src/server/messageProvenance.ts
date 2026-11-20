@@ -1,5 +1,7 @@
 import type {
   OrchestrationV2AppThread,
+  OrchestrationV2HistoricalMessage,
+  ScheduledTaskId,
   OrchestrationV2MessageProvenance,
 } from "@t3tools/contracts";
 
@@ -78,12 +80,25 @@ export function messageProvenance(
   };
 }
 
-export function messageProvenanceLabel(provenance: OrchestrationV2MessageProvenance): string {
+export function historicalMessageProvenance(
+  message: MessageSource & { readonly scheduledTaskId?: ScheduledTaskId | undefined },
+): OrchestrationV2HistoricalMessage["provenance"] {
+  const provenance = messageProvenance(message);
+  return provenance !== undefined && message.scheduledTaskId !== undefined
+    ? { ...provenance, scheduledTaskId: message.scheduledTaskId }
+    : provenance;
+}
+
+export function messageProvenanceLabel(
+  provenance: NonNullable<OrchestrationV2HistoricalMessage["provenance"]>,
+): string {
   const linked = provenance.linkedSender;
   if (linked !== undefined)
     return `agent ${JSON.stringify(linked.title)} (thread ${JSON.stringify(linked.threadId)}, environment ${JSON.stringify(linked.environmentId)})`;
   if (provenance.senderThreadId !== undefined)
     return `agent (thread ${JSON.stringify(provenance.senderThreadId)})`;
+  if (provenance.scheduledTaskId !== undefined)
+    return `scheduled task ${JSON.stringify(provenance.scheduledTaskId)} (${provenance.creationSource})`;
   return provenance.createdBy === "system"
     ? `system event (${provenance.creationSource})`
     : `agent (${provenance.creationSource}; sender thread unavailable)`;

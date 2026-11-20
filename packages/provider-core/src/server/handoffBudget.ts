@@ -13,6 +13,7 @@ import * as Config from "effect/Config";
 import {
   formatMessageWithProvenance,
   liveMessagePurpose,
+  historicalMessageProvenance,
   messageProvenance,
   messageProvenanceLabel,
 } from "./messageProvenance.ts";
@@ -322,7 +323,7 @@ export function historicalMessage(
     }
   }
   const speaker = item.type === "assistant_message" ? item.speaker : undefined;
-  const provenance = item.type === "user_message" ? messageProvenance(item) : undefined;
+  const provenance = item.type === "user_message" ? historicalMessageProvenance(item) : undefined;
   return {
     // A peer's words are input to this model, never its own, so it cannot claim them.
     role: item.type === "user_message" || speaker !== undefined ? "user" : "assistant",

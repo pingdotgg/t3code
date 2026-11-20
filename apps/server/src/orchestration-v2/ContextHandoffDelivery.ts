@@ -13,7 +13,7 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 import type { HandoffSummary } from "../project/conversationSummaries/conversationSummarySchedule.ts";
 import { ContextHandoffBudgetError } from "@t3tools/provider-core/server/failure";
 import { conversationEvidenceText } from "@t3tools/provider-core/server/conversationEvidence";
-import { messageProvenance } from "@t3tools/provider-core/server/messageProvenance";
+import { historicalMessageProvenance } from "@t3tools/provider-core/server/messageProvenance";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -99,7 +99,10 @@ export const refreshHistoricalMessageSources = Effect.fn(
         source.role === "user" &&
         conversationEvidenceText(source.text) === historical.text
       ) {
-        const provenance = messageProvenance(source);
+        const provenance = historicalMessageProvenance({
+          ...source,
+          scheduledTaskId: source.scheduledTaskId ?? item.scheduledTaskId,
+        });
         const { provenance: _provenance, ...rest } = historical;
         canonical.set(key(threadId, item.id), {
           history: { ...rest, ...(provenance === undefined ? {} : { provenance }) },

@@ -443,6 +443,7 @@ it.effect("an agent here works on a linked environment's threads within its own 
       expect(sent.structuredContent).toMatchObject({ threadId: boxThread, delivery: "started" });
       // The box records which thread here sent it.
       expect((yield* Ref.get(seen)).sends[0]?.linkedSender).toEqual({
+        fromOriginatingLink: true,
         environmentId: laptop.environmentId,
         threadId: "thread:laptop-full",
         title: "thread:laptop-full",
