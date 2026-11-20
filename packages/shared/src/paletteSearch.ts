@@ -142,6 +142,19 @@ export function foldSearchQuery(query: string): string {
     .join(" ");
 }
 
+/** Whether `foldedQuery`, from `foldSearchQuery`, begins a word of `text`. */
+export function startsSearchWord(text: string, foldedQuery: string): boolean {
+  const field = prepareSearchField(text);
+  for (
+    let index = field.text.indexOf(foldedQuery);
+    index !== -1;
+    index = field.text.indexOf(foldedQuery, index + 1)
+  ) {
+    if (field.wordStarts[index]) return true;
+  }
+  return false;
+}
+
 function wordEnd(field: SearchField, index: number): number {
   let end = index + 1;
   while (end < field.text.length && !field.wordStarts[end] && ALPHANUMERIC.test(field.text[end]!)) {
