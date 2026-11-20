@@ -77,7 +77,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     refreshToken?: string;
     userId?: string;
     userInfoAt?: number;
-    /** The CLI is signed out: no keyring sign-in. */
+    /** The CLI is signed out: no antigravity-oauth-token file. */
     missingToken?: boolean;
     /** An acp_token.json left in the profile by a runtime below 1.5 or an earlier account. */
     leftoverAcpToken?: boolean;
@@ -91,7 +91,6 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
   const path = yield* Path.Path;
   const profileDirectory = yield* fs.makeTempDirectoryScoped();
   yield* fs.makeDirectory(path.join(profileDirectory, "antigravity-acp"));
-  const cliTokenPath = path.join(profileDirectory, "antigravity-acp", "antigravity-oauth-token");
   if (options.leftoverAcpToken) {
     yield* fs.writeFileString(
       path.join(profileDirectory, "antigravity-acp", "acp_token.json"),
@@ -103,9 +102,10 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
       }),
     );
   }
-  const keyringSecret = options.missingToken
-    ? undefined
-    : (options.keyringSecret ?? cliToken(options.refreshToken ?? "refresh-a"));
+  const cliTokenPath = path.join(profileDirectory, "antigravity-acp", "antigravity-oauth-token");
+  if (!options.missingToken) {
+    yield* fs.writeFileString(cliTokenPath, cliToken(options.refreshToken ?? "refresh-a"));
+  }
   const requests: Array<{ url: string; body: string }> = [];
   const http = HttpClient.make((request, url, _signal, fiber) =>
     Effect.sync(() => {
@@ -145,7 +145,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
   const usage = yield* makeAntigravityUsageProbe({
     profileDirectory,
     authMethod: options.authMethod ?? "oauth-personal",
-    ...(options.nativeKeyring ? {} : { readKeyringSecret: Effect.succeed(keyringSecret) }),
+    ...(options.nativeKeyring ? {} : { readKeyringSecret: Effect.succeed(options.keyringSecret) }),
   }).pipe(Effect.provideService(HttpClient.HttpClient, http));
   return { ...usage, requests, cliTokenPath };
 });
@@ -682,27 +682,45 @@ describe("Antigravity subscription limits", () => {
   it.effect("ignores a leftover acp_token.json for the CLI's sign-in", () =>
     Effect.gen(function* () {
       // The CLI never writes or updates acp_token.json, so any copy is another account's.
-      const keyring = yield* fixture({ leftoverAcpToken: true, refreshToken: "refresh-b" });
-      const limits = yield* keyring.probe;
+      const file = yield* fixture({ leftoverAcpToken: true, refreshToken: "refresh-b" });
+      const limits = yield* file.probe;
       expect(limits.unavailable).toBeUndefined();
       expect(limits.windows).toHaveLength(4);
-      expect(keyring.requests.map((request) => request.body).join("\n")).not.toContain(
+      expect(file.requests.map((request) => request.body).join("\n")).not.toContain(
         "stale-refresh",
       );
 
-      const fs = yield* FileSystem.FileSystem;
-      const file = yield* fixture({ leftoverAcpToken: true, missingToken: true });
-      yield* fs.writeFileString(file.cliTokenPath, cliToken("refresh-b"));
-      expect((yield* file.probe).unavailable).toBeUndefined();
+      const keyring = yield* fixture({
+        authMethod: "oauth-business",
+        leftoverAcpToken: true,
+        missingToken: true,
+        keyringSecret: cliToken("refresh-b"),
+      });
+      expect((yield* keyring.probe).unavailable).toBeUndefined();
+      expect(keyring.requests.map((request) => request.body).join("\n")).not.toContain(
+        "stale-refresh",
+      );
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  it.effect("reads the native CLI's keyring sign-in and reports when it has expired", () =>
+  it.effect("reads a Gemini Enterprise keyring sign-in and reports when it has expired", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-09T12:00:00Z")));
       const keyringSecret = (expiry: string) =>
         JSON.stringify({ token: { access_token: "access-token", refresh_token: "r", expiry } });
+      // Google account instances keep their own sign-in; the shared entry belongs to another app.
+      const personal = yield* fixture({
+        missingToken: true,
+        keyringSecret: keyringSecret("2026-10-09T14:00:00Z"),
+      });
+      expect((yield* personal.probe).unavailable?.message).toBe(
+        "Sign in with Google to see Antigravity limits.",
+      );
+      expect(personal.requests).toEqual([]);
+
       const signedIn = yield* fixture({
+        authMethod: "oauth-business",
+        missingToken: true,
         userId: "google-user-1",
         keyringSecret: keyringSecret("2026-10-09T14:00:00.123456789+01:00"),
       });
@@ -712,6 +730,8 @@ describe("Antigravity subscription limits", () => {
       expect(signedIn.requests.some((request) => request.url.endsWith("/token"))).toBe(false);
 
       const expired = yield* fixture({
+        authMethod: "oauth-business",
+        missingToken: true,
         keyringSecret: keyringSecret("2026-10-09T12:00:30Z"),
       });
       expect((yield* expired.probe).unavailable?.reason).toBe("probeFailed");
@@ -740,7 +760,11 @@ describe("Antigravity subscription limits", () => {
           Effect.promise(() => target.setSecret(stored)),
           () => Effect.promise(() => target.deleteCredential()),
         );
-        const { probe } = yield* fixture({ missingToken: true, nativeKeyring: true });
+        const { probe } = yield* fixture({
+          authMethod: "oauth-business",
+          missingToken: true,
+          nativeKeyring: true,
+        });
         const limits = yield* probe;
         expect(limits.unavailable).toBeUndefined();
         expect(limits.windows).toHaveLength(4);

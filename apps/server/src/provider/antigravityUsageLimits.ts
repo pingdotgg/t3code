@@ -35,8 +35,8 @@ const SUMMARY_WINDOW_MINS = new Map([
 ]);
 const MANUAL_REDIRECT: RequestInit = { redirect: "manual" };
 // Runtimes below 1.5 are refused, so an acp_token.json in the profile is always a leftover. The
-// CLI keeps its sign-in in the OS keyring, or in antigravity-oauth-token without one. It stores
-// no OAuth client, so T3 cannot refresh it.
+// CLI keeps its sign-in in the OS keyring, or in antigravity-oauth-token without one or when T3
+// bypasses the keyring. It stores no OAuth client, so T3 cannot refresh it.
 const CliToken = Schema.Struct({
   token: Schema.Struct({
     access_token: Schema.NonEmptyString,
@@ -337,9 +337,12 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
     }
     const now = yield* Clock.currentTimeMillis;
+    // Google account instances bypass the keyring, whose one entry every profile shares.
     const stored = (yield* fs.exists(cliTokenPath))
       ? yield* fs.readFileString(cliTokenPath)
-      : yield* readKeyringSecret;
+      : input.authMethod === "oauth-business"
+        ? yield* readKeyringSecret
+        : undefined;
     if (stored === undefined) {
       return makeUnavailableUsageLimits({
         checkedAt,
