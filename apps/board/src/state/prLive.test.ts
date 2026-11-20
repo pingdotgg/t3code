@@ -53,7 +53,12 @@ const ticket = (fields: Partial<Ticket> = {}): Ticket => ({
 const checks = (
   entries: ReadonlyArray<readonly [string, PullRequestChecks["checks"][number]["status"]]>,
 ): PullRequestChecks["checks"] =>
-  entries.map(([name, status]) => ({ name, status, description: null, url: null }));
+  entries.map(([name, status]) => ({
+    name,
+    status,
+    description: null,
+    url: `https://ci.example/run/1/${name}`,
+  }));
 
 describe("a ticket's pull request", () => {
   it("Given a bare number that a thread of the ticket links, when it is resolved, then the link's repository is used", () => {
@@ -94,6 +99,25 @@ describe("running checks", () => {
     runs(seen, [["test", "pending"]], 1_000);
     runs(seen, [["test", "failure"]], 2_000);
     expect(runs(seen, [["test", "pending"]], 3_000)[0]?.runningSince).toBe(3_000);
+  });
+
+  it("Given a running check whose link names a new run, when it is read, then its clock starts over", () => {
+    const seen = new Map<string, number>();
+    runs(seen, [["test", "pending"]], 1_000);
+    const next = trackRunning(
+      seen,
+      "pr",
+      [
+        {
+          name: "test",
+          status: "pending",
+          description: null,
+          url: "https://ci.example/run/2/test",
+        },
+      ],
+      61_000,
+    );
+    expect(next[0]?.runningSince).toBe(61_000);
   });
 
   it("Given a finished check, when it is read, then it is not marked running", () => {

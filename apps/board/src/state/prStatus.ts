@@ -116,12 +116,7 @@ export const prLiveAtom = Atom.family((key: string) => {
       syncedAt = synced;
       if (!first) queueMicrotask(() => get.registry.refresh(checksAtom));
     }
-    const runs = trackRunning(
-      runningSince,
-      `${key}\n${summary?.headSha ?? link?.watch?.headSha ?? ""}`,
-      checks?.checks ?? [],
-      Date.now(),
-    );
+    const runs = trackRunning(runningSince, key, checks?.checks ?? [], Date.now());
     saveRunning();
     const next = buildLive({ link, summary, checks, runs });
     if (JSON.stringify(next) === JSON.stringify(last)) return last;

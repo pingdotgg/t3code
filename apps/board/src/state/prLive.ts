@@ -72,7 +72,8 @@ export const sameRef = (
 /**
  * Marks each running check with when it was first seen running, in `seen`, which the caller
  * keeps between reads. The host reports no start time, so a check already running when the
- * board opened reads as shorter than it is. A new head starts its checks over.
+ * board opened reads as shorter than it is. A check's link names its run, so a new push, which
+ * starts a new run, starts the clock over even when the old run was still going.
  */
 export function trackRunning(
   seen: Map<string, number>,
@@ -82,7 +83,7 @@ export function trackRunning(
 ): ReadonlyArray<CheckRun> {
   const running = new Set<string>();
   const runs = checks.map((check): CheckRun => {
-    const key = `${scope}\n${check.name}`;
+    const key = `${scope}\n${check.name}\n${check.url ?? ""}`;
     const isRunning = check.status === "pending";
     if (isRunning) {
       running.add(key);
