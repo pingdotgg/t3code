@@ -485,9 +485,14 @@ const expandInlinePluginDirectory = Effect.fn("expandInlinePluginDirectory")(fun
   );
 });
 
-/** Plugin folders Claude Code loads inline from CLAUDE_CODE_PLUGIN_DIRS, and their plugin names. */
+/**
+ * Plugin folders Claude Code loads inline, from --plugin-dir launch arguments and then
+ * CLAUDE_CODE_PLUGIN_DIRS, and their plugin names.
+ */
 const discoverInlinePluginSkillRoots = Effect.fn("discoverInlinePluginSkillRoots")(function* (
-  pluginDirectories: string | undefined,
+  launchArgPluginDirectories: ReadonlyArray<string>,
+  environmentPluginDirectories: string | undefined,
+  cwd: string | undefined,
   enabledPlugins: ReadonlyMap<string, boolean>,
   managedPluginNames: ReadonlySet<string>,
 ) {
@@ -497,11 +502,20 @@ const discoverInlinePluginSkillRoots = Effect.fn("discoverInlinePluginSkillRoots
   const roots: Array<ClaudeSkillRoot> = [];
   const names = new Set<string>();
   const seen = new Set<string>();
-  for (const entry of (pluginDirectories ?? "").split(platform === "win32" ? ";" : ":")) {
-    const directory = expandHomePath(entry.trim(), home);
-    // Claude skips relative entries rather than resolving them against its cwd.
-    if (!directory || !path.isAbsolute(directory)) continue;
-    for (const installPath of yield* expandInlinePluginDirectory(path.resolve(directory))) {
+  const directories = [
+    // Claude resolves a relative --plugin-dir against its cwd and expands no `~` in it.
+    ...launchArgPluginDirectories
+      .filter((directory) => directory && (cwd || path.isAbsolute(directory)))
+      .map((directory) => path.resolve(cwd ?? ".", directory)),
+    // Claude skips relative CLAUDE_CODE_PLUGIN_DIRS entries rather than resolving them.
+    ...(environmentPluginDirectories ?? "")
+      .split(platform === "win32" ? ";" : ":")
+      .map((entry) => expandHomePath(entry.trim(), home))
+      .filter((directory) => directory && path.isAbsolute(directory))
+      .map((directory) => path.resolve(directory)),
+  ];
+  for (const directory of directories) {
+    for (const installPath of yield* expandInlinePluginDirectory(directory)) {
       if (seen.has(installPath)) continue;
       seen.add(installPath);
       const manifest = yield* readPluginManifest(installPath);
@@ -717,6 +731,30 @@ export function claudeLaunchArgDirectories(launchArgs?: string): ReadonlyArray<s
   return directories;
 }
 
+// The Claude CLI takes the next token as this flag's value even when it starts with `--`.
+export const claudeLaunchArgParseOptions = { valueFlags: ["append-system-prompt"] };
+
+// Claude's --plugin-dir is repeatable; parseCliArgs keeps only the last one.
+export function claudeLaunchArgPluginDirectories(launchArgs?: string): ReadonlyArray<string> {
+  const tokens = tokenizeCliArgs(launchArgs);
+  const directories: string[] = [];
+  for (let index = 0; index < tokens.length && tokens[index] !== "--"; index++) {
+    const token = tokens[index]!;
+    if (!token.startsWith("--") || token.includes("=")) {
+      if (token.startsWith("--plugin-dir=")) directories.push(token.slice("--plugin-dir=".length));
+      continue;
+    }
+    const next = tokens[index + 1];
+    const takesNext =
+      next !== undefined &&
+      (!next.startsWith("--") || claudeLaunchArgParseOptions.valueFlags.includes(token.slice(2)));
+    if (!takesNext) continue;
+    if (token === "--plugin-dir") directories.push(next);
+    index++;
+  }
+  return directories;
+}
+
 /** First name wins: managed skills, then user skills, then project skills. */
 export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* (
   config: Pick<ClaudeSettings, "homePath"> & Partial<Pick<ClaudeSettings, "launchArgs">>,
@@ -744,7 +782,9 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
     (yield* readClaudeSettingsEnv(config, cwd, env)).CLAUDE_CODE_PLUGIN_DIRS ??
     env.CLAUDE_CODE_PLUGIN_DIRS;
   const inlinePlugins = yield* discoverInlinePluginSkillRoots(
+    claudeLaunchArgPluginDirectories(config.launchArgs),
     inlinePluginDirectories,
+    cwd,
     enabledPlugins,
     managedPluginNames,
   );
