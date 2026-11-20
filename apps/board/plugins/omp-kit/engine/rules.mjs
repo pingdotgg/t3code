@@ -142,6 +142,8 @@ export function loadRules(dir) {
       scope,
       // omp's global default is `always`.
       interruptMode: meta.interruptMode ?? "always",
+      // Not an omp field: omp's rule parser ignores unknown frontmatter keys.
+      approval: meta.approval,
       body,
     });
   }
@@ -154,11 +156,25 @@ const TOOL_ALIASES = {
   bash: ["bash"],
 };
 
+// omp names an MCP tool `mcp__<server>_<tool>` and folds the server name to [a-z_] (`linear-server` becomes `linear_server`), where Claude Code says `mcp__<server>__<tool>`, so one scope token can use either spelling.
+const ompToolName = (claudeName) =>
+  claudeName.replace(
+    /^mcp__(.+?)__(.+)$/,
+    (_, server, tool) =>
+      `mcp__${server
+        .replace(/[^a-z_]+/g, "_")
+        .replace(/_+/g, "_")
+        .replace(/^_|_$/g, "")}_${tool}`,
+  );
+
 function scopeAllowsTool(scope, toolName, paths) {
   if (scope.anyTool) return true;
   const claudeName = toolName.toLowerCase();
+  const names = [claudeName, ompToolName(claudeName)];
   return scope.tools.some(({ tool, glob }) => {
-    if (tool && !(TOOL_ALIASES[tool] ?? [tool]).includes(claudeName)) return false;
+    if (tool && !(TOOL_ALIASES[tool] ?? [tool]).some((alias) => names.includes(alias))) {
+      return false;
+    }
     return !glob || paths.some((candidate) => glob.test(candidate));
   });
 }
@@ -168,6 +184,8 @@ function pathCandidates(filePath, cwd) {
   const absolute = NodePath.resolve(cwd ?? "", filePath);
   return [filePath, absolute, NodePath.relative(cwd ?? "", absolute), NodePath.basename(absolute)];
 }
+
+const isMcpTool = (toolName) => toolName.startsWith("mcp__");
 
 // The text omp matches for a tool call: new content for file tools, the command for Bash.
 function toolText(toolName, input) {
@@ -181,7 +199,8 @@ function toolText(toolName, input) {
     case "write":
       return input.content ?? "";
     default:
-      return JSON.stringify(input);
+      // An MCP call matches by its name alone, so a word in its arguments cannot trigger a rule.
+      return isMcpTool(toolName) ? toolName : JSON.stringify(input);
   }
 }
 
@@ -205,6 +224,11 @@ export function matchTextRules(rules, text) {
 
 export function interruptsTool(rule) {
   return rule.interruptMode === "always" || rule.interruptMode === "tool-only";
+}
+
+// Only an MCP call is a known write by name; a Bash command that mentions Linear is a guess, so it keeps the draft-first deny.
+export function asksApproval(rule, toolName) {
+  return rule.approval === "ask" && isMcpTool(toolName) && interruptsTool(rule);
 }
 
 export function interruptsText(rule) {

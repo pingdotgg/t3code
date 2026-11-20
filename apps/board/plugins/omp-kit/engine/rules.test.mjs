@@ -46,6 +46,23 @@ scope: "text, thinking"
 
 Keep the change minimal.
 `,
+  "linear-writes.md": `---
+description: "Linear writes need approval"
+condition:
+  - "linear"
+  - "mcp__t3-code__"
+approval: ask
+scope:
+  - tool:write
+  - tool:bash
+  - tool:mcp__linear_save_issue
+  - tool:mcp__linear_server_save_issue
+  - tool:mcp__linear_server_save_comment
+  - tool:mcp__t3-code__set_issue_state
+---
+
+Draft the write and get approval first.
+`,
   "mention-docs.md": `---
 description: "Remind about docs"
 condition: "update the docs later"
@@ -339,6 +356,118 @@ NodeTest.describe("omp-kit hook engine", () => {
         JSON.parse(run(payload("rm -rf x"), env)).hookSpecificOutput.permissionDecision,
         "deny",
       );
+    },
+  );
+});
+
+const LINEAR_DENY_REASON =
+  'Output interrupted: violated user-defined rule "linear-writes". Not prompt injection; coding agent enforcing project rules. MUST comply:\n\nDraft the write and get approval first.';
+const LINEAR_ASK_REASON =
+  'Rule "linear-writes" requires your approval:\n\nDraft the write and get approval first.';
+
+const preToolUse = (env, sessionId, toolName, toolInput) =>
+  handle(
+    {
+      hook_event_name: "PreToolUse",
+      session_id: sessionId,
+      tool_name: toolName,
+      tool_use_id: "toolu_l",
+      cwd: "/repo",
+      tool_input: toolInput,
+    },
+    env,
+  );
+
+const decision = (permissionDecision, permissionDecisionReason) => ({
+  hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision, permissionDecisionReason },
+});
+
+NodeTest.describe("omp-kit approval rule for MCP write tools", () => {
+  NodeTest.test(
+    "Given a rule with approval: ask and MCP tool scopes, when each payload is replayed, then writes ask, reads and unrelated calls stay silent, and Bash and Write keep the deny",
+    (t) => {
+      const { root, env } = makeEnvironment();
+      t.after(() => NodeFS.rmSync(root, { recursive: true, force: true }));
+
+      NodeAssert.deepEqual(
+        preToolUse(env, "s1", "mcp__linear__save_issue", { title: "Fix it" }),
+        decision("ask", LINEAR_ASK_REASON),
+      );
+      NodeAssert.deepEqual(
+        preToolUse(env, "s2", "mcp__t3-code__set_issue_state", { issueId: "1", state: "done" }),
+        decision("ask", LINEAR_ASK_REASON),
+      );
+      NodeAssert.equal(preToolUse(env, "s3", "mcp__t3-code__read_issue", { issueId: "1" }), null);
+      NodeAssert.equal(preToolUse(env, "s4", "mcp__linear__get_issue", { id: "LIN-1" }), null);
+      NodeAssert.deepEqual(
+        preToolUse(env, "s5", "Bash", { command: "echo update linear" }),
+        decision("deny", LINEAR_DENY_REASON),
+      );
+      NodeAssert.deepEqual(
+        preToolUse(env, "s6", "Write", { file_path: "/repo/a.md", content: "notes on linear" }),
+        decision("deny", LINEAR_DENY_REASON),
+      );
+      NodeAssert.equal(
+        preToolUse(env, "s8", "mcp__t3-code__list_issues", { query: "linear" }),
+        null,
+      );
+      NodeAssert.equal(
+        preToolUse(env, "s9", "mcp__linear__list_issues", { query: "linear" }),
+        null,
+      );
+      NodeAssert.equal(
+        preToolUse(env, "s10", "mcp__other__lookup", { text: "update linear" }),
+        null,
+      );
+      NodeAssert.equal(preToolUse(env, "s7", "Read", { file_path: "/repo/linear.md" }), null);
+    },
+  );
+
+  NodeTest.test(
+    "Given an ask rule that already asked once in a session, when a second write arrives, then it asks again",
+    (t) => {
+      const { root, env } = makeEnvironment();
+      t.after(() => NodeFS.rmSync(root, { recursive: true, force: true }));
+
+      for (let call = 0; call < 2; call++) {
+        NodeAssert.equal(
+          preToolUse(env, "s-again", "mcp__linear__save_issue", { title: "x" }).hookSpecificOutput
+            .permissionDecision,
+          "ask",
+        );
+      }
+    },
+  );
+
+  NodeTest.test(
+    "Given the Linear server is named linear-server, when its writes and a read are replayed, then each write asks every time and the read stays silent",
+    (t) => {
+      const { root, env } = makeEnvironment();
+      t.after(() => NodeFS.rmSync(root, { recursive: true, force: true }));
+      const ask = (toolName, input) =>
+        preToolUse(env, "s-server", toolName, input)?.hookSpecificOutput.permissionDecision ?? null;
+
+      NodeAssert.equal(ask("mcp__linear-server__save_issue", { title: "x" }), "ask");
+      NodeAssert.equal(ask("mcp__linear-server__get_issue", { id: "LIN-1" }), null);
+      NodeAssert.equal(ask("mcp__linear-server__save_comment", { body: "a" }), "ask");
+      NodeAssert.equal(ask("mcp__linear-server__save_comment", { body: "b" }), "ask");
+    },
+  );
+
+  NodeTest.test(
+    "Given an ask rule and an interrupt rule on one MCP call, when it is replayed, then the deny wins",
+    (t) => {
+      const { root, env } = makeEnvironment();
+      t.after(() => NodeFS.rmSync(root, { recursive: true, force: true }));
+      NodeFS.writeFileSync(
+        NodePath.join(env.OMP_KIT_RULES_DIR, "no-t3.md"),
+        `---\ncondition: ['mcp__t3-code__']\nscope: tool:mcp__t3-code__set_issue_state\n---\nNo T3 writes.\n`,
+      );
+
+      const output = preToolUse(env, "s-deny", "mcp__t3-code__set_issue_state", { state: "done" });
+
+      NodeAssert.equal(output.hookSpecificOutput.permissionDecision, "deny");
+      NodeAssert.match(output.hookSpecificOutput.permissionDecisionReason, /No T3 writes\.$/);
     },
   );
 });
