@@ -373,7 +373,9 @@ export function McpAppFrame(props: {
           return;
         }
         // The tracker read outlasted the click's activation, so the browser would block the tab;
-        // the toast's button is a fresh click.
+        // the toast's button is a fresh click. Full screen is a top-layer popover that would cover
+        // the toast, so the app returns inline first.
+        setDisplayMode("inline");
         const id = toastManager.add({
           title: url,
           timeout: 15_000,
