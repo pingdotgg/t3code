@@ -435,6 +435,21 @@ from that machine's **Settings → Sharing & access**. An address you type alway
 needs a pasted code. From a terminal, use
 `t3 environment link <address> --pairing-code <code> --access <mode>`.
 
+To link many machines at once, choose **Link several…** (it appears once this
+app has two other machines saved). Tick the machines, pick one access level for
+all of them, and confirm once. A machine can be ticked when this app is
+connected to it with a session that manages access there and has an address
+another machine can reach; the list says why when it cannot. Each machine
+reports its own result, and the ones that failed stay ticked so you can try
+only those again. Machines already linked are left as they are.
+
+For machines no app is connected to, put one `<address> <pairing-code>` per
+line in a file (make each code with `t3 pair` on that machine) and run
+`t3 environment link --from <file> --access <mode>`, or `--from -` to read
+standard input. It prints a result per line, leaves machines already linked as
+they are, and exits non-zero if any line failed, so the same file can be run
+again with fresh codes for the failures.
+
 You can also ask an agent to link a machine by name, such as "delegate this to
 my vps". It shows a card in the thread where you pick the machine the same way
 and the access, then approve. An address the agent gives that this app does

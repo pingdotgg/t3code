@@ -817,6 +817,7 @@ it.effect("linking a picked machine that answers nowhere names it and links noth
         })
         .pipe(Effect.flip);
       expect(failed.reason).toBe("unreachable");
+      expect(failed.answeredAs).toBe("Impostor");
       expect(failed.message).toBe(
         `This environment could not reach Box: ${new URL(impostor.url).origin} answered as another environment, Impostor. http://192.168.1.20:3773 is plain http, which would send the link's credentials unencrypted. Use its https address, or its Tailscale address.`,
       );
