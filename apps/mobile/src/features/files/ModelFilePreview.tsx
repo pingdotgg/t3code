@@ -1,16 +1,16 @@
+import { useNavigation } from "@react-navigation/native";
 import {
   formatModelSize,
   formatModelViewHash,
   MAX_MODEL_BYTES,
   modelAnnotationPayload,
   modelViewFromHash,
-  reconcileModelNotes,
   rememberModelPreview,
+  restoreModelPins,
   type ModelCameraView,
-  type ModelCapture,
   type ModelNote,
+  type ModelPinCapture,
   type ModelPreviewMemory,
-  type Vec3,
 } from "@t3tools/client-runtime/model-preview/annotations";
 import type { ModelPreviewErrorCode } from "@t3tools/client-runtime/model-preview/error";
 import type { ModelViewPreset } from "@t3tools/client-runtime/model-preview/scene";
@@ -18,7 +18,16 @@ import type { ModelPreviewKind } from "@t3tools/shared/filePreview";
 import { fetch } from "expo/fetch";
 import { File } from "expo-file-system";
 import { useGT } from "gt-react-native";
-import { useEffect, useEffectEvent, useImperativeHandle, useRef, useState, type Ref } from "react";
+import {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type Ref,
+} from "react";
 import { Platform, Pressable, TextInput, View } from "react-native";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -46,6 +55,7 @@ import {
   modelViewerInjection,
 } from "./model-viewer-document";
 import {
+  createModelViewerRequests,
   isModelTooLargeError,
   ModelTooLargeError,
   modelTransferChunks,
@@ -61,13 +71,15 @@ interface ModelFilePreviewHandle {
 interface DraftPin {
   /** The note being edited, or null for a new pin at `hit`. */
   readonly id: string | null;
-  readonly hit: { readonly point: Vec3; readonly normal: Vec3; readonly face: number } | null;
+  readonly hit:
+    | (Extract<ModelViewerEvent, { type: "pick" }>["hit"] & { readonly number: number })
+    | null;
   readonly text: string;
 }
 
 type Failure = "too-large" | "unavailable" | "crashed" | ModelPreviewErrorCode;
 
-type CaptureResult = Extract<ModelViewerEvent, { type: "captured" }>;
+type ViewerRequests = ReturnType<typeof createModelViewerRequests>;
 
 // Notes and camera per model for this app session, so leaving and reopening a file keeps them.
 let rememberedModels: Readonly<Record<string, ModelPreviewMemory>> = {};
@@ -77,11 +89,14 @@ const isLocalUri = (uri: string) => /^(file|content):/.test(uri);
 async function openModelReader(uri: string, signal: AbortSignal) {
   if (isLocalUri(uri)) return new File(uri).readableStream().getReader();
   const response = await fetch(uri, { signal });
-  if (Number(response.headers.get("content-length")) > MAX_MODEL_BYTES) {
+  if (!response.ok || !response.body) {
     void response.body?.cancel().catch(() => undefined);
+    throw new Error(`Model request failed (${response.status}).`);
+  }
+  if (Number(response.headers.get("content-length")) > MAX_MODEL_BYTES) {
+    void response.body.cancel().catch(() => undefined);
     throw new ModelTooLargeError();
   }
-  if (!response.ok || !response.body) throw new Error(`Model request failed (${response.status}).`);
   return response.body.getReader();
 }
 
@@ -125,8 +140,9 @@ export function useModelViewerControls() {
 /** Adds model notes to the end of a composer draft; false when the draft has no room. */
 function stageModelAnnotation(
   draftKey: string,
-  annotation: Parameters<typeof modelAnnotationComposerContent>[0],
+  input: Omit<Parameters<typeof modelAnnotationPayload>[0], "createdAt">,
 ) {
+  const annotation = modelAnnotationPayload({ ...input, createdAt: new Date().toISOString() });
   const content = modelAnnotationComposerContent(annotation, uuidv4);
   if (!content) return false;
   const { text } = getComposerDraftSnapshot(draftKey);
@@ -173,6 +189,7 @@ export function ModelFilePreview({
   readonly onRetry: () => void;
 }) {
   const gt = useGT();
+  const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const headerInset = useContentTopInset();
   const theme = useUniwindTheme();
@@ -195,7 +212,7 @@ export function ModelFilePreview({
   const [draft, setDraft] = useState<DraftPin | null>(null);
   const [annotating, setAnnotating] = useState(false);
   const [activePreset, setActivePreset] = useState<ModelViewPreset | "fit" | null>(null);
-  const [sending, setSending] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [inputFocused, setInputFocused] = useState(false);
   const loadKey = JSON.stringify([uri, format, page.attempt]);
   const failure: Failure | null = page.crashed
@@ -204,31 +221,31 @@ export function ModelFilePreview({
       ? settled.failure
       : null;
   const loading = failure === null && settled?.key !== loadKey;
-  const generation = useRef({ id: 0, key: "" });
-  const acks = useRef(new Map<number, () => void>());
-  // A null result means the page went away before it answered.
-  const captures = useRef(new Map<number, (result: CaptureResult | null) => void>());
-  const nextCapture = useRef(0);
+  const activePage = useRef<number | null>(0);
+  const generation = useRef<{ key: string; requests: ViewerRequests } | null>(null);
+  const nextLoadId = useRef(0);
+  const busyRef = useRef(false);
   // Read by bridge callbacks and the unmount save, which run outside renders.
   const summaryRef = useRef<ModelSummary | null>(null);
   const viewRef = useRef<ModelCameraView | null>(null);
   const notesRef = useRef(notes);
   const wireframeRef = useRef(wireframe);
-  const evidenceRef = useRef<ModelPreviewMemory["capture"]>(null);
+  const captureRef = useRef<ModelPinCapture | null>(null);
+  const earlierCaptureRef = useRef<ModelPinCapture | null>(null);
+  const lastPinNumber = useRef(0);
   const initialViewHash = initialView ? formatModelViewHash(initialView) : null;
 
-  const send = (command: ModelViewerCommand) =>
-    webView.current?.injectJavaScript(modelViewerInjection(command));
-
-  const requestCapture = (captured: ReadonlyArray<ModelNote>) =>
-    new Promise<CaptureResult | null>((resolve) => {
-      const requestId = ++nextCapture.current;
-      captures.current.set(requestId, resolve);
-      send({ type: "capture", requestId, notes: captured });
-    });
+  const send = useCallback((command: ModelViewerCommand) => {
+    if (!webView.current) return false;
+    try {
+      webView.current.injectJavaScript(modelViewerInjection(command));
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
 
   const post = useEffectEvent(send);
-  const captureEvidence = useEffectEvent(requestCapture);
   const startView = useEffectEvent(
     () => viewRef.current ?? initialView ?? rememberedModels[memoryKey]?.view ?? null,
   );
@@ -238,51 +255,54 @@ export function ModelFilePreview({
   }));
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- streams the file's bytes into the WebView page, cancelling on unmount, source change or retry
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!page.ready || uri === null) return;
-    const id = generation.current.id + 1;
-    generation.current = { id, key: loadKey };
-    const controller = new AbortController();
+    const id = ++nextLoadId.current;
+    const requests = createModelViewerRequests(id, send);
+    generation.current = { key: loadKey, requests };
+    busyRef.current = false;
+    const { signal } = requests;
     let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+    const cancelReader = () => void reader?.cancel().catch(() => undefined);
+    signal.addEventListener("abort", cancelReader, { once: true });
     void (async () => {
-      reader = await openModelReader(uri, controller.signal);
-      controller.signal.throwIfAborted();
-      post({ type: "begin", id });
-      await streamModelChunks(reader, controller.signal, (data) => {
-        return new Promise<void>((resolve, reject) => {
-          const signal = controller.signal;
-          const abort = () => reject(signal.reason);
-          signal.addEventListener("abort", abort, { once: true });
-          acks.current.set(id, () => {
-            signal.removeEventListener("abort", abort);
-            resolve();
-          });
-          post({ type: "chunk", id, data });
+      if (!post({ type: "begin", id })) throw new Error("The model viewer is unavailable.");
+      reader = await openModelReader(uri, signal);
+      signal.throwIfAborted();
+      await streamModelChunks(reader, signal, requests.sendChunk);
+      signal.throwIfAborted();
+      if (!post({ type: "end", id, format, view: startView(), wireframe: wireframeRef.current })) {
+        throw new Error("The model viewer is unavailable.");
+      }
+    })()
+      .catch((cause: unknown) => {
+        if (signal.aborted) return;
+        requests.close();
+        post({ type: "cancel", id });
+        setBusy(false);
+        setDraft(null);
+        setSettled({
+          key: loadKey,
+          failure: isModelTooLargeError(cause) ? "too-large" : "unavailable",
         });
+      })
+      .finally(() => {
+        signal.removeEventListener("abort", cancelReader);
+        cancelReader();
       });
-      controller.signal.throwIfAborted();
-      post({ type: "end", id, format, view: startView(), wireframe: wireframeRef.current });
-    })().catch((cause: unknown) => {
-      if (controller.signal.aborted) return;
-      post({ type: "cancel", id });
-      setSettled({
-        key: loadKey,
-        failure: isModelTooLargeError(cause) ? "too-large" : "unavailable",
-      });
-    });
     return () => {
-      controller.abort();
-      acks.current.delete(id);
-      const open: ReadableStreamDefaultReader<Uint8Array> | null = reader;
-      void open?.cancel().catch(() => undefined);
-      post({ type: "cancel", id });
+      requests.close();
+      if (generation.current?.requests === requests) generation.current = null;
+      if (activePage.current === page.attempt) post({ type: "cancel", id });
     };
-  }, [page.ready, uri, format, loadKey]);
+  }, [page.attempt, page.ready, uri, format, loadKey, send]);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a link opened while this model shows moves the WebView camera to its view; the first load starts there instead
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- an explicit link moves the camera even while the WebView is loading the model
   useEffect(() => {
     const view = initialViewHash ? modelViewFromHash(initialViewHash) : null;
-    if (view && summaryRef.current) post({ type: "view", view });
+    if (!view) return;
+    viewRef.current = view;
+    post({ type: "view", view });
   }, [initialViewHash]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the WebView page draws its background and pins in the current theme
@@ -304,35 +324,17 @@ export function ModelFilePreview({
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the WebView draws the pins, so it gets the notes and the open draft after each change
   useEffect(() => {
-    notesRef.current = notes;
     if (!page.ready || summary === null) return;
     post({
       type: "notes",
       notes,
       activeId: draft?.id ?? null,
-      draft: draft?.hit ? { point: draft.hit.point, normal: draft.hit.normal } : null,
+      draft: draft?.hit ?? null,
     });
   }, [page.ready, summary, notes, draft]);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a capture of the pinned view, which stays the evidence if the file changes under the notes
-  useEffect(() => {
-    if (summary === null || !notes.some((note) => !note.stale)) return;
-    let current = true;
-    const timer = setTimeout(() => {
-      void captureEvidence(notes).then((result) => {
-        if (current && result?.capture) {
-          evidenceRef.current = { screenshot: result.capture, view: result.view };
-        }
-      });
-    }, 500);
-    return () => {
-      current = false;
-      clearTimeout(timer);
-    };
-  }, [summary, notes]);
-
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- remembers notes and camera when the file closes, so reopening it restores them
-  useEffect(
+  useLayoutEffect(
     () => () => {
       const loaded = summaryRef.current;
       const view = viewRef.current;
@@ -342,69 +344,104 @@ export function ModelFilePreview({
         notes: notesRef.current,
         view,
         wireframe: wireframeRef.current,
-        capture: evidenceRef.current,
+        lastPinNumber: lastPinNumber.current,
+        capture: captureRef.current,
+        earlierCapture: earlierCaptureRef.current,
       });
     },
     [memoryKey],
   );
 
+  const stopPage = () => {
+    activePage.current = null;
+    generation.current?.requests.close();
+    generation.current = null;
+    busyRef.current = false;
+    setBusy(false);
+  };
+
   const handleEvent = (event: ModelViewerEvent) => {
+    if (activePage.current !== page.attempt) return;
+    const current = generation.current;
     switch (event.type) {
       case "ready":
         setPage((current) => ({ ...current, ready: true }));
         return;
       case "crashed":
-        for (const resolve of captures.current.values()) resolve(null);
-        captures.current.clear();
+        stopPage();
         setPage((current) => ({ ...current, ready: false, crashed: true }));
         return;
       case "ack":
-        acks.current.get(event.id)?.();
-        acks.current.delete(event.id);
+      case "captured":
+        current?.requests.receive(event);
         return;
       case "failed":
-        if (event.id !== generation.current.id) return;
-        setSettled({ key: generation.current.key, failure: event.code });
+        if (event.id !== current?.requests.id) return;
+        current.requests.close();
+        setBusy(false);
+        setDraft(null);
+        setSettled({ key: current.key, failure: event.code });
         return;
       case "loaded": {
-        if (event.id !== generation.current.id) return;
+        if (event.id !== current?.requests.id || current.requests.signal.aborted) return;
         const previous = summaryRef.current;
         const remembered = rememberedModels[memoryKey];
-        if (!previous) evidenceRef.current = remembered?.capture ?? null;
-        const restored = reconcileModelNotes(
-          previous ? { fingerprint: previous.fingerprint, notes: notesRef.current } : remembered,
+        const restored = restoreModelPins(
+          previous
+            ? {
+                fingerprint: previous.fingerprint,
+                notes: notesRef.current,
+                capture: captureRef.current,
+                earlierCapture: earlierCaptureRef.current,
+              }
+            : remembered,
           event.summary.fingerprint,
         );
         summaryRef.current = event.summary;
         viewRef.current = event.view;
+        notesRef.current = restored.notes;
+        captureRef.current = restored.capture;
+        earlierCaptureRef.current = restored.earlierCapture;
         setSummary(event.summary);
-        setNotes(restored);
-        if (!previous) setActivePreset(initialView || remembered ? null : "iso");
-        setSettled({ key: generation.current.key, failure: null });
+        setNotes(restored.notes);
+        setBusy(false);
+        setDraft(null);
+        if (!previous) {
+          lastPinNumber.current = remembered?.lastPinNumber ?? 0;
+          setActivePreset(initialView || remembered ? null : "iso");
+        }
+        setSettled({ key: current.key, failure: null });
         return;
       }
       case "view":
+        if (!current) return;
         viewRef.current = event.view;
         if (event.moved) setActivePreset(null);
         return;
       case "pick":
-        if (annotating && !sending) setDraft({ id: null, hit: event.hit, text: "" });
+        if (annotating && !busyRef.current && !loading && !failure) {
+          setDraft({
+            id: null,
+            hit: { ...event.hit, number: lastPinNumber.current + 1 },
+            text: "",
+          });
+        }
         return;
       case "pin": {
-        const note = notes.find((entry) => entry.id === event.id);
-        if (note && !sending) setDraft({ id: note.id, hit: null, text: note.text });
+        const note = notesRef.current.find((entry) => entry.id === event.id);
+        if (note && !busyRef.current && !loading && !failure) {
+          setDraft({ id: note.id, hit: null, text: note.text });
+        }
         return;
       }
-      case "captured":
-        captures.current.get(event.requestId)?.(event);
-        captures.current.delete(event.requestId);
-        return;
     }
   };
 
   // A fresh page and a freshly minted URL; the load waits for the new page's `ready`.
   const retry = () => {
-    setPage((current) => ({ attempt: current.attempt + 1, ready: false, crashed: false }));
+    stopPage();
+    activePage.current = page.attempt + 1;
+    setPage({ attempt: activePage.current, ready: false, crashed: false });
     onRetry();
   };
 
@@ -413,64 +450,101 @@ export function ModelFilePreview({
     send({ type: "preset", preset });
   };
 
+  const updateNotes = (next: ReadonlyArray<ModelNote>) => {
+    lastPinNumber.current =
+      next.length > 0 ? Math.max(lastPinNumber.current, next.at(-1)!.number) : 0;
+    if (!next.some((note) => note.stale)) earlierCaptureRef.current = null;
+    if (!next.some((note) => !note.stale)) captureRef.current = null;
+    notesRef.current = next;
+    setNotes(next);
+    setDraft(null);
+  };
+
+  const availableRequests = () => {
+    const current = generation.current;
+    return current?.key === loadKey &&
+      !current.requests.signal.aborted &&
+      !loading &&
+      !failure &&
+      !busyRef.current
+      ? current.requests
+      : null;
+  };
+
+  const setCaptureBusy = (value: boolean) => {
+    busyRef.current = value;
+    setBusy(value);
+  };
+
+  const savePins = async (next: ReadonlyArray<ModelNote>) => {
+    const requests = availableRequests();
+    if (!requests) return;
+    if (next.some((note) => !note.stale)) {
+      setCaptureBusy(true);
+      const captured = await requests.capture(next);
+      if (requests.signal.aborted) return;
+      setCaptureBusy(false);
+      if (captured === null) {
+        Dialog.alert(gt("Preview unavailable"), gt("Try again."));
+        return;
+      }
+      captureRef.current = captured;
+    }
+    updateNotes(next);
+  };
+
   const saveDraft = () => {
-    if (!draft) return;
+    if (!draft || !availableRequests()) return;
     const text = draft.text.trim();
     if (!text) return;
     if (draft.id === null && draft.hit) {
-      const { point, normal } = draft.hit;
-      setNotes([...notes, { id: uuidv4(), text, point, normal, stale: false }]);
+      const { number, point, normal } = draft.hit;
+      void savePins([
+        ...notesRef.current,
+        { id: uuidv4(), number, text, point, normal, stale: false },
+      ]);
     } else {
-      setNotes(notes.map((note) => (note.id === draft.id ? { ...note, text } : note)));
+      updateNotes(
+        notesRef.current.map((note) => (note.id === draft.id ? { ...note, text } : note)),
+      );
     }
-    setDraft(null);
   };
 
   const deleteNote = (id: string) => {
-    // Removing a note invalidates the numbering in its saved screenshot.
-    evidenceRef.current = null;
-    setNotes(notes.filter((note) => note.id !== id));
-    setDraft(null);
+    void savePins(notesRef.current.filter((note) => note.id !== id));
   };
 
   const sendToChat = async () => {
-    if (draftKey === null || summary === null || sending || notes.length === 0) return;
-    setSending(true);
-    const sent = notes;
-    const earlier = sent.every((note) => note.stale) ? evidenceRef.current : null;
-    const captured = earlier
-      ? { capture: earlier.screenshot, view: earlier.view }
-      : await requestCapture(sent);
-    const capture: ModelCapture | null = captured?.capture ?? null;
+    const requests = availableRequests();
+    const sent = notesRef.current;
+    if (draftKey === null || !requests || sent.length === 0 || !navigation.isFocused()) return;
+    setCaptureBusy(true);
+    const earlier = sent.some((note) => note.stale) ? earlierCaptureRef.current : null;
+    const captured = earlier ?? (await requests.capture(sent));
+    if (requests.signal.aborted) return;
+    setCaptureBusy(false);
+    if (!navigation.isFocused()) return;
     const staged =
       captured !== null &&
-      capture !== null &&
-      stageModelAnnotation(
-        draftKey,
-        modelAnnotationPayload({
-          id: uuidv4(),
-          name,
-          linkPath,
-          view: captured.view,
-          notes: sent,
-          screenshot: { ...capture, earlier: earlier !== null },
-          createdAt: new Date().toISOString(),
-        }),
-      );
-    setSending(false);
+      stageModelAnnotation(draftKey, {
+        id: uuidv4(),
+        name,
+        linkPath,
+        view: captured.view,
+        notes: sent,
+        screenshot: { ...captured.screenshot, earlier: earlier !== null },
+      });
     if (!staged) {
       Dialog.alert(
         gt("Unable to add to chat"),
-        capture === null
+        captured === null
           ? gt("Try again.")
           : gt("Remove some attachments or context items from the draft, then try again."),
       );
       return;
     }
-    evidenceRef.current = null;
-    setNotes(notesRef.current.filter((note) => !sent.includes(note)));
+    updateNotes([]);
     setAnnotating(false);
-    setDraft(null);
     onSent();
   };
 
@@ -491,9 +565,9 @@ export function ModelFilePreview({
         ? gt("{size} model units", { size: formatModelSize(summary.size) })
         : gt("{size} m", { size: formatModelSize(summary.size) })
     : null;
-  const staleNotes = notes.flatMap((note, index) => (note.stale ? [{ note, index }] : []));
-  const editingIndex = draft?.id ? notes.findIndex((note) => note.id === draft.id) : -1;
-  const draftNumber = editingIndex >= 0 ? editingIndex + 1 : notes.length + 1;
+  const staleNotes = notes.filter((note) => note.stale);
+  const editingNote = notes.find((note) => note.id === draft?.id);
+  const draftNumber = editingNote?.number ?? draft?.hit?.number ?? 1;
   const canAnnotate = draftKey !== null && summary !== null;
   const presets = [
     ["top", gt("Top", { $context: "3D view preset" })],
@@ -512,7 +586,7 @@ export function ModelFilePreview({
           {notes.length > 0 ? (
             <Pressable
               accessibilityRole="button"
-              disabled={sending}
+              disabled={busy || loading || failure !== null}
               onPress={() => void sendToChat()}
               className="h-8 items-center justify-center rounded-full bg-foreground px-3"
             >
@@ -525,6 +599,7 @@ export function ModelFilePreview({
           ) : null}
           <Pressable
             accessibilityRole="button"
+            disabled={busy}
             onPress={() => {
               setAnnotating(false);
               setDraft(null);
@@ -553,13 +628,14 @@ export function ModelFilePreview({
               { count: staleNotes.length },
             )}
           </Text>
-          {staleNotes.map(({ note, index }) => (
+          {staleNotes.map((note) => (
             <View key={note.id} className="min-h-9 flex-row items-center gap-2">
               <Text className="min-w-0 flex-1 text-xs text-warning-foreground" numberOfLines={1}>
-                {index + 1}. {note.text}
+                {note.number}. {note.text}
               </Text>
               <Pressable
                 accessibilityRole="button"
+                disabled={busy || loading || failure !== null}
                 onPress={() => deleteNote(note.id)}
                 className="h-9 justify-center px-2"
               >
@@ -596,6 +672,7 @@ export function ModelFilePreview({
           }}
           onContentProcessDidTerminate={() => handleEvent({ type: "crashed" })}
           onRenderProcessGone={() => handleEvent({ type: "crashed" })}
+          onError={() => handleEvent({ type: "crashed" })}
         />
         {failure ? (
           <View className="absolute inset-0 items-center justify-center bg-sheet px-6">
@@ -714,21 +791,27 @@ export function ModelFilePreview({
               style={{ textAlignVertical: "top" }}
             />
             <View className="flex-row items-center gap-2">
-              {editingIndex >= 0 && draft.id !== null ? (
+              {editingNote ? (
                 <Button
                   label={gt("Delete")}
                   tone="text"
+                  disabled={busy}
                   onPress={() => {
                     if (draft.id !== null) deleteNote(draft.id);
                   }}
                 />
               ) : null}
               <View className="flex-1" />
-              <Button label={gt("Cancel")} tone="text" onPress={() => setDraft(null)} />
+              <Button
+                label={gt("Cancel")}
+                tone="text"
+                disabled={busy}
+                onPress={() => setDraft(null)}
+              />
               <Button
                 label={draft.id === null ? gt("Pin") : gt("Save")}
                 tone="primary"
-                disabled={!draft.text.trim()}
+                disabled={busy || !draft.text.trim()}
                 onPress={saveDraft}
               />
             </View>

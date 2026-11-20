@@ -10,14 +10,16 @@ import {
   modelViewFromHref,
   reconcileModelNotes,
   rememberModelPreview,
+  restoreModelPins,
   type ModelNote,
   type ModelPreviewMemory,
 } from "./annotations.ts";
 
 const view = { position: [120, 80.5, -40] as const, target: [0, 0.25, 0] as const };
 
-const note = (id: string, text: string, stale = false): ModelNote => ({
-  id,
+const note = (number: number, text: string, stale = false): ModelNote => ({
+  id: `n${number}`,
+  number,
   text,
   point: [1.5, 2, -3],
   normal: [0, 1, 0],
@@ -73,7 +75,7 @@ describe("model camera links", () => {
 
 describe("model notes after the geometry changes", () => {
   it("keeps notes placed on the same geometry", () => {
-    const notes = [note("a", "Widen")];
+    const notes = [note(1, "Widen")];
     expect(reconcileModelNotes({ fingerprint: "g1", notes }, "g1")).toBe(notes);
     expect(reconcileModelNotes(undefined, "g1")).toEqual([]);
   });
@@ -84,7 +86,9 @@ describe("model notes after the geometry changes", () => {
       notes: [],
       view,
       wireframe: false,
+      lastPinNumber: 0,
       capture: null,
+      earlierCapture: null,
     });
     let memory: Readonly<Record<string, ModelPreviewMemory>> = {};
     for (let index = 0; index < 21; index++) {
@@ -98,11 +102,52 @@ describe("model notes after the geometry changes", () => {
   });
 
   it("marks every note stale instead of moving it onto changed geometry", () => {
-    const notes = [note("a", "Widen"), note("b", "Keep", true)];
+    const notes = [note(1, "Widen"), note(2, "Keep", true)];
     expect(reconcileModelNotes({ fingerprint: "g1", notes }, "g2")).toEqual([
-      note("a", "Widen", true),
-      note("b", "Keep", true),
+      note(1, "Widen", true),
+      note(2, "Keep", true),
     ]);
+  });
+
+  it("preserves the original capture alongside evidence for new pins after a reload", () => {
+    const original = {
+      screenshot: { dataUrl: "data:image/png;base64,AA==", width: 800, height: 600 },
+      view,
+    };
+    const revised = {
+      screenshot: { dataUrl: "data:image/png;base64,AQ==", width: 800, height: 600 },
+      view,
+    };
+    const first = restoreModelPins(
+      {
+        fingerprint: "g1",
+        notes: [note(1, "First pin")],
+        capture: original,
+        earlierCapture: null,
+      },
+      "g2",
+    );
+    expect(first).toEqual({
+      notes: [note(1, "First pin", true)],
+      capture: null,
+      earlierCapture: original,
+    });
+    const saved = {
+      fingerprint: "g2",
+      ...first,
+      capture: revised,
+      notes: [...first.notes, note(2, "Second pin")],
+    };
+    expect(restoreModelPins(saved, "g2")).toEqual({
+      notes: [note(1, "First pin", true), note(2, "Second pin")],
+      capture: revised,
+      earlierCapture: original,
+    });
+    expect(restoreModelPins(saved, "g3")).toEqual({
+      notes: [note(1, "First pin", true), note(2, "Second pin", true)],
+      capture: null,
+      earlierCapture: original,
+    });
   });
 });
 
@@ -114,7 +159,7 @@ describe("model notes as a chat annotation", () => {
       name: "hinge (v3).stl",
       linkPath: "out/hinge (v3).stl",
       view,
-      notes: [note("a", "Pin hole looks tight.\n  Open it to 3.2 mm."), note("b", "Keep it")],
+      notes: [note(1, "Pin hole looks tight.\n  Open it to 3.2 mm."), note(2, "Keep it")],
       screenshot: { ...screenshot, earlier: false },
       createdAt: "2026-11-20T12:00:00.000Z",
       ...overrides,
@@ -124,7 +169,7 @@ describe("model notes as a chat annotation", () => {
     const annotation = payload({});
     expect(annotation).toMatchObject({
       pageTitle: "hinge (v3).stl",
-      pageUrl: "out/hinge%20%28v3%29.stl#view=120,80.5,-40,0,0.25,0",
+      pageUrl: "./out/hinge%20%28v3%29.stl#view=120,80.5,-40,0,0.25,0",
       comment: [
         "1. Pin hole looks tight. Open it to 3.2 mm. (surface point 1.5, 2, -3)",
         "2. Keep it (surface point 1.5, 2, -3)",
@@ -137,24 +182,31 @@ describe("model notes as a chat annotation", () => {
     });
   });
 
-  it.each(["out/bracket#2.stl", "out/bracket?.stl", "bracket%23.glb"])(
-    "reopens a model with the literal filename %s",
-    (linkPath) => {
-      const { pageUrl } = payload({ linkPath });
-      expect(modelAnnotationFileTarget(pageUrl)).toEqual({ path: linkPath, view });
-    },
-  );
+  it.each([
+    "out/bracket#2.stl",
+    "out/bracket?.stl",
+    "bracket%23.glb",
+    "🧩 models/a:b (v3) & draft.3mf",
+    "example.com/arm.stl",
+    "../arm.stl",
+    "/tmp/arm.stl",
+    "C:\\Models\\arm.stl",
+  ])("reopens a model with the literal filename %s", (linkPath) => {
+    const { pageUrl } = payload({ linkPath });
+    expect(modelAnnotationFileTarget(pageUrl)).toEqual({ path: linkPath, view });
+  });
 
   it("says when notes and the screenshot predate the current geometry", () => {
     expect(
       payload({
-        notes: [note("a", "Countersink [M3]", true)],
+        notes: [note(1, "Countersink [M3]", true)],
         screenshot: { ...screenshot, earlier: true },
       }).comment,
     ).toBe(
       [
         "1. Countersink [M3] (placed on an earlier version of the model, so its point may no longer match)",
         "The screenshot shows the model before it last changed.",
+        "The original screenshot shows one saved revision. Pins added on other revisions may be absent, and removed pins may still appear.",
       ].join("\n"),
     );
   });
@@ -163,14 +215,14 @@ describe("model notes as a chat annotation", () => {
     expect(
       modelAnnotationNotes(
         payload({
-          notes: [note("a", "Fillet (2 mm) here"), note("b", "Countersink", true)],
+          notes: [note(1, "Fillet (2 mm) here"), note(3, "Countersink", true)],
           screenshot: { ...screenshot, earlier: true },
         }).comment,
       ),
     ).toEqual({
       notes: [
-        { text: "Fillet (2 mm) here", stale: false },
-        { text: "Countersink", stale: true },
+        { number: 1, text: "Fillet (2 mm) here", stale: false },
+        { number: 3, text: "Countersink", stale: true },
       ],
       earlier: true,
     });

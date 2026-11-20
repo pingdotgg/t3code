@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { modelViewerEvent } from "./model-viewer-document";
 import {
   createModelByteSink,
+  createModelViewerRequests,
   ModelTooLargeError,
   modelTransferChunks,
 } from "./model-viewer-protocol";
@@ -74,4 +75,27 @@ describe("viewer page messages", () => {
   ])("ignores %s", (data) => {
     expect(modelViewerEvent(data)).toBeNull();
   });
+});
+
+it("settles outstanding work when a page is replaced and ignores its late replies", async () => {
+  const first = createModelViewerRequests(1, () => true);
+  const ack = first.sendChunk("YQ==");
+  const capture = first.capture([]);
+  first.close();
+  await expect(ack).rejects.toMatchObject({ name: "AbortError" });
+  await expect(capture).resolves.toBeNull();
+
+  const second = createModelViewerRequests(2, () => true);
+  const nextAck = second.sendChunk("Yg==");
+  const nextCapture = second.capture([]);
+  const result = {
+    screenshot: { dataUrl: "data:image/png;base64,AA==", width: 5, height: 6 },
+    view: { position: [1, 2, 3], target: [0, 0, 0] },
+  } as const;
+  second.receive({ type: "ack", id: 1 });
+  second.receive({ type: "captured", id: 1, requestId: 1, result });
+  second.receive({ type: "ack", id: 2 });
+  second.receive({ type: "captured", id: 2, requestId: 1, result: null });
+  await expect(nextAck).resolves.toBeUndefined();
+  await expect(nextCapture).resolves.toBeNull();
 });

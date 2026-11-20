@@ -85,9 +85,15 @@ export function modelAnnotationComposerContent(
 /** A context record's notes on a 3D model and the file and camera they reopen, or null for other records. */
 export function modelAnnotationOf(record: ComposerContextRecord | undefined) {
   if (!record || record.kind !== "preview-annotation" || "payload" in record) return null;
+  if ((record.elements?.length ?? 0) > 0) return null;
+  const target = modelAnnotationFileTarget(record.pageUrl);
   const parsed = modelAnnotationNotes(record.comment);
-  if (!parsed || (record.elements?.length ?? 0) > 0) return null;
-  return { record, notes: parsed.notes, target: modelAnnotationFileTarget(record.pageUrl) };
+  if (!parsed && !target) return null;
+  return {
+    record,
+    notes: parsed?.notes ?? [{ number: 1, text: record.comment, stale: false }],
+    target,
+  };
 }
 
 /** The model annotations a draft holds, each with the attachment of its screenshot. */

@@ -1,10 +1,9 @@
 import {
   formatModelSize,
   modelAnnotationPayload,
-  reconcileModelNotes,
-  type ModelCameraView,
-  type ModelCapture,
+  restoreModelPins,
   type ModelNote,
+  type ModelPinCapture,
 } from "@t3tools/client-runtime/model-preview/annotations";
 import type {
   ModelHit,
@@ -72,7 +71,7 @@ function placeOverlays(scene: ModelScene, overlays: Overlays) {
     : notes.find((note) => note.id === editing?.id);
   const editor = overlays.editor.current;
   if (editor && anchor) {
-    const [pin] = scene.project([{ ...anchor, id: "", text: "", stale: false }]);
+    const [pin] = scene.project([anchor]);
     if (pin && editor.parentElement) {
       const x = Math.max(
         0,
@@ -122,9 +121,9 @@ export default function ModelViewer(props: {
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [notes, setNotes] = useState<ReadonlyArray<ModelNote>>([]);
-  const rememberedCapture = useRef<{ screenshot: ModelCapture; view: ModelCameraView } | null>(
-    null,
-  );
+  const captureRef = useRef<ModelPinCapture | null>(null);
+  const earlierCaptureRef = useRef<ModelPinCapture | null>(null);
+  const lastPinNumber = useRef(0);
   const loadController = useRef<AbortController | null>(null);
   const [sending, setSending] = useState(false);
   const [annotating, setAnnotating] = useState(false);
@@ -167,10 +166,12 @@ export default function ModelViewer(props: {
         const restoredWireframe = memory?.wireframe ?? false;
         loaded.setWireframe(restoredWireframe);
         setWireframe(restoredWireframe);
-        const restored = reconcileModelNotes(memory, loaded.summary.fingerprint);
-        notesRef.current = restored;
-        setNotes(restored);
-        rememberedCapture.current = memory?.capture ?? null;
+        const restored = restoreModelPins(memory, loaded.summary.fingerprint);
+        notesRef.current = restored.notes;
+        setNotes(restored.notes);
+        captureRef.current = restored.capture;
+        earlierCaptureRef.current = restored.earlierCapture;
+        lastPinNumber.current = memory?.lastPinNumber ?? 0;
         const request = viewRequestKey === null ? undefined : store.viewRequests[viewRequestKey];
         if (request && viewRequestKey !== null) {
           loaded.setView(request);
@@ -196,23 +197,14 @@ export default function ModelViewer(props: {
     return () => {
       controller.abort();
       if (!mounted) return;
-      const currentNotes = notesRef.current;
-      const view = mounted.view;
-      let capture = rememberedCapture.current;
-      // Save the previous view before disposal in case the next model revision makes the pins stale.
-      if (currentNotes.some((note) => !note.stale)) {
-        try {
-          capture = { screenshot: mounted.capture(currentNotes), view };
-        } catch {
-          capture = null;
-        }
-      }
       useModelPreviewStore.getState().remember(props.memoryKey, {
         fingerprint: mounted.summary.fingerprint,
-        notes: currentNotes,
-        view,
+        notes: notesRef.current,
+        view: mounted.view,
         wireframe: readWireframe(),
-        capture,
+        lastPinNumber: lastPinNumber.current,
+        capture: captureRef.current,
+        earlierCapture: earlierCaptureRef.current,
       });
       mounted.dispose();
       setScene(null);
@@ -226,12 +218,11 @@ export default function ModelViewer(props: {
     useModelPreviewStore.getState().consumeView(viewRequestKey);
   }, [scene, viewRequest, viewRequestKey]);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- notes and the open editor are DOM overlays the scene positions, so it reads them and draws a frame after they change
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves the open editor when its pinned point changes
   useEffect(() => {
-    notesRef.current = notes;
     draftRef.current = draft;
     scene?.requestRender();
-  }, [scene, notes, draft]);
+  }, [scene, draft]);
 
   const onCancelDraft = useEffectEvent(() => setDraft(null));
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Escape closes the open note editor from anywhere in the window
@@ -262,17 +253,34 @@ export default function ModelViewer(props: {
     if (!text) return;
     if (draft.id === null && draft.hit) {
       const { point, normal } = draft.hit;
-      setNotes([...notes, { id: randomUUID(), text, point, normal, stale: false }]);
+      const number = ++lastPinNumber.current;
+      const next = [...notes, { id: randomUUID(), number, text, point, normal, stale: false }];
+      updatePins(next);
     } else {
-      setNotes(notes.map((note) => (note.id === draft.id ? { ...note, text } : note)));
+      const next = notes.map((note) => (note.id === draft.id ? { ...note, text } : note));
+      notesRef.current = next;
+      setNotes(next);
     }
     setDraft(null);
   };
-  const deleteNote = (id: string) => {
-    // Removing a note invalidates the numbering in its saved screenshot.
-    const next = notes.filter((note) => note.id !== id);
-    rememberedCapture.current = null;
+  const updatePins = (next: ReadonlyArray<ModelNote>) => {
+    if (next.length === 0) lastPinNumber.current = 0;
+    if (!next.some((note) => note.stale)) earlierCaptureRef.current = null;
+    if (scene && next.some((note) => !note.stale)) {
+      try {
+        captureRef.current = { screenshot: scene.capture(next), view: scene.view };
+      } catch {
+        // Keep the last captured view if the renderer is unavailable.
+      }
+    } else {
+      captureRef.current = null;
+    }
+    notesRef.current = next;
     setNotes(next);
+    scene?.requestRender();
+  };
+  const deleteNote = (id: string) => {
+    updatePins(notes.filter((note) => note.id !== id));
     setDraft(null);
   };
 
@@ -297,7 +305,7 @@ export default function ModelViewer(props: {
     };
     setSending(true);
     try {
-      const earlier = notes.every((note) => note.stale) ? rememberedCapture.current : null;
+      const earlier = notes.some((note) => note.stale) ? earlierCaptureRef.current : null;
       const capture = earlier?.screenshot ?? scene.capture(notes);
       const annotation = modelAnnotationPayload({
         id: randomUUID(),
@@ -315,8 +323,7 @@ export default function ModelViewer(props: {
       if (signal.aborted) return;
       if (staged) {
         const next = notesRef.current.filter((note) => !notes.includes(note));
-        rememberedCapture.current = null;
-        setNotes(next);
+        updatePins(next);
         if (next.length === 0) setAnnotating(false);
       } else {
         showSendError();
@@ -441,7 +448,7 @@ export default function ModelViewer(props: {
         ) : scene ? null : (
           <FileSurfaceLoading className="absolute inset-0" />
         )}
-        {notes.map((note, index) =>
+        {notes.map((note) =>
           note.stale ? null : (
             <button
               key={note.id}
@@ -450,13 +457,13 @@ export default function ModelViewer(props: {
                 if (element) pinsRef.current.set(note.id, element);
                 else pinsRef.current.delete(note.id);
               }}
-              aria-label={gt("Note {number}: {text}", { number: index + 1, text: note.text })}
+              aria-label={gt("Note {number}: {text}", { number: note.number, text: note.text })}
               className="absolute top-0 left-0 flex size-5 items-center justify-center rounded-full border-2 border-background bg-primary text-3xs font-semibold text-primary-foreground data-[behind=true]:opacity-45"
               onPointerDown={(event) => event.stopPropagation()}
               onPointerUp={(event) => event.stopPropagation()}
               onClick={() => setDraft({ id: note.id, hit: null, text: note.text })}
             >
-              {index + 1}
+              {note.number}
             </button>
           ),
         )}
@@ -506,11 +513,11 @@ export default function ModelViewer(props: {
       </div>
       {staleCount > 0 ? (
         <ol className="max-h-28 shrink-0 overflow-y-auto border-t border-border/60 px-3 py-1.5 text-2xs text-muted-foreground">
-          {notes.map((note, index) =>
+          {notes.map((note) =>
             note.stale ? (
               <li key={note.id} className="flex items-center gap-2">
                 <span className="min-w-0 flex-1 truncate">
-                  {index + 1}. {note.text}
+                  {note.number}. {note.text}
                 </span>
                 <Button
                   size="micro"

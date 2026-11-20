@@ -49,7 +49,14 @@ it("marks a note stale when a triangle changes shape within the same bounds", as
   const first = await loadTriangle(0);
   const second = await loadTriangle(1);
   const notes = [
-    { id: "pin", text: "Keep this face", point: [0.2, 0.5, 0], normal: [0, 0, 1], stale: false },
+    {
+      id: "pin",
+      number: 1,
+      text: "Keep this face",
+      point: [0.2, 0.5, 0],
+      normal: [0, 0, 1],
+      stale: false,
+    },
   ] as const;
   expect(first.summary.size).toEqual(second.summary.size);
   expect(first.summary.triangles).toEqual(second.summary.triangles);
@@ -177,14 +184,14 @@ it.each([
 });
 
 it("previews embedded GLB data and refuses a reference to a separate file", async () => {
-  const vertices = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+  const vertices = new Float32Array([0, 0, 0, 1, 0, 1, 0, 1, 0]);
   function modelBytes(uri?: string) {
     const json = new TextEncoder().encode(
       JSON.stringify({
         asset: { version: "2.0" },
         scene: 0,
         scenes: [{ nodes: [0] }],
-        nodes: [{ mesh: 0 }],
+        nodes: [{ mesh: 0, scale: [2, 1, 1] }],
         meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }],
         buffers: [{ byteLength: vertices.byteLength, uri }],
         bufferViews: [{ buffer: 0, byteLength: vertices.byteLength }],
@@ -195,7 +202,7 @@ it("previews embedded GLB data and refuses a reference to a separate file", asyn
             count: 3,
             type: "VEC3",
             min: [0, 0, 0],
-            max: [1, 1, 0],
+            max: [1, 1, 1],
           },
         ],
       }),
@@ -219,30 +226,56 @@ it("previews embedded GLB data and refuses a reference to a separate file", asyn
 
   using resources = new DisposableStack();
   const container = document.createElement("div");
+  container.style.cssText = "width: 320px; height: 320px";
   document.body.append(container);
   resources.defer(() => container.remove());
-  const load = (uri?: string) => {
+  const load = (uri?: string, signal = new AbortController().signal) => {
     const src = URL.createObjectURL(new Blob([modelBytes(uri)]));
     resources.defer(() => URL.revokeObjectURL(src));
-    return loadModelScene({ container, src, format: "glb", signal: new AbortController().signal });
+    return loadModelScene({ container, src, format: "glb", signal });
   };
   const scene = await load();
   resources.defer(() => scene.dispose());
   expect(scene.summary.triangles).toBe(1);
+  scene.setPreset("front");
+  const [center] = scene.project([{ point: [2 / 3, 1 / 3, 1 / 3], normal: [0, 0, 1] }]);
+  const rect = container.getBoundingClientRect();
+  const normal = scene.pick(rect.left + center!.x, rect.top + center!.y)?.normal;
+  // The scaled face rises one unit over two, so its normal tilts half as far as its depth.
+  expect(normal?.[0]).toBeCloseTo(-1 / Math.sqrt(5));
+  expect(normal?.[2]).toBeCloseTo(2 / Math.sqrt(5));
   const fetchResource = globalThis.fetch;
+  const waitingForBuffer = Promise.withResolvers<Request>();
+  let holdBuffer = false;
   using _fetch = stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input);
     // Match desktop's connect-src policy, which permits blob: but not data:.
     if (url.startsWith("data:")) return Promise.reject(new TypeError("Failed to fetch"));
+    if (holdBuffer && input instanceof Request && url.startsWith("blob:")) {
+      waitingForBuffer.resolve(input);
+      return new Promise<Response>((_resolve, reject) => {
+        input.signal.addEventListener("abort", () => reject(input.signal.reason), { once: true });
+      });
+    }
     return fetchResource(input, init);
   });
   const payload = btoa(String.fromCharCode(...new Uint8Array(vertices.buffer)));
-  const inline = await load(`data:application/octet-stream;base64,${payload}`);
+  const uri = `data:application/octet-stream;base64,${payload}`;
+  const inline = await load(uri);
   resources.defer(() => inline.dispose());
   expect(inline.summary.triangles).toBe(1);
   await expect(load("separate-buffer.bin")).rejects.toMatchObject({
     code: "model-invalid",
   });
+
+  holdBuffer = true;
+  const controller = new AbortController();
+  const canceled = load(uri, controller.signal);
+  const loadingBuffer = await waitingForBuffer.promise;
+  controller.abort();
+  expect(loadingBuffer.signal.aborted).toBe(true);
+  await expect(canceled).rejects.toBe(controller.signal.reason);
+  await expect(fetchResource(loadingBuffer.url)).rejects.toThrow();
 });
 
 it("captures colours the file supplies over a transparent background", async () => {

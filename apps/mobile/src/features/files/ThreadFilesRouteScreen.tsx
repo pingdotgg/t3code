@@ -705,7 +705,6 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   } | null>(null);
   const [textSelectionPath, setTextSelectionPath] = useState<string | null>(null);
   const [previewRevision, setPreviewRevision] = useState(0);
-  const previewKey = JSON.stringify([environmentId, cwd, relativePath, previewRevision]);
   const [fullScreenPreview, setFullScreenPreview] = useState<FilePreviewSource | null>(null);
   const isVideoFile = relativePath !== null && isVideoPreviewFile(relativePath);
   const isAudioFile = relativePath !== null && !isVideoFile && isAudioPreviewFile(relativePath);
@@ -714,6 +713,13 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const isImageFile =
     relativePath !== null && !isVideoFile && isWorkspaceImagePreviewPath(relativePath);
   const isModelFile = relativePath !== null && modelPreviewKind({ name: relativePath }) !== null;
+  const previewKey = JSON.stringify([
+    environmentId,
+    threadId,
+    cwd,
+    relativePath,
+    isModelFile ? null : previewRevision,
+  ]);
   const canPreview =
     relativePath !== null &&
     (isMarkdownPreviewFile(relativePath) ||
@@ -782,7 +788,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     assetPreviewUri === null || previewRevision === 0
       ? assetPreviewUri
       : `${assetPreviewUri}${assetPreviewUri.includes("?") ? "&" : "?"}revision=${previewRevision}`;
-  // Remounting the preview after a re-mint is what makes a failed asset URL retryable.
+  // Reloads media with the new authorization. Models keep the same viewer and camera.
   const handleRetryPreview = () => {
     void assetPreview.refresh().finally(() => setPreviewRevision((current) => current + 1));
   };
@@ -986,7 +992,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
             icon: "arrow.clockwise",
             inline: false,
             onPress: async () => {
-              if (isVideoFile || isAudioFile) await assetPreview.refresh();
+              if (isVideoFile || isAudioFile || isModelFile) await assetPreview.refresh();
               setPreviewRevision((current) => current + 1);
             },
           } as const)

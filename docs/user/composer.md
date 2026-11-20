@@ -438,10 +438,14 @@ Android opens a compatible installed file viewer.
 
 On web, desktop, and mobile, STL, 3MF, and GLB files open as 3D views from the workspace, a
 file link, or an attachment. Drag to orbit, Shift-drag to pan, and scroll to zoom. On mobile,
-drag one finger to orbit, use two fingers to pan, pinch to zoom, and double-tap to fit. Use **Top**,
-**Front**, **Iso**, or **Fit** to reset the camera. STL files carry no units, so their size
-assumes millimeters. The viewer accepts STL and self-contained GLB files up to 128 MiB.
-3MF previews have a 50 MiB archive limit and a 10 MiB limit per entry, and omit print settings.
+drag one finger to orbit, use two fingers to pan, pinch to zoom, and double-tap to fit. Choose
+**Top**, **Front**, or **Iso** for a preset, or **Fit** to frame the model at the current angle.
+STL previews assume millimeters and display colors stored with the Magics extension. The viewer
+accepts STL and self-contained GLB files up to 128 MiB.
+
+3MF previews omit print settings. They accept up to 2,048 archive entries, with limits of
+50 MiB for the archive and its expanded contents and 10 MiB per entry. The expanded contents
+can be up to 200 times the archive size.
 
 Choose **Annotate** and click or tap the model to pin numbered notes. **Send to chat** adds them to
 your draft as one preview annotation with a screenshot. For a workspace model, **Open view**

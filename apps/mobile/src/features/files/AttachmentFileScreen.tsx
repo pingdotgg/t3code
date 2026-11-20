@@ -236,7 +236,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     environmentId && params.threadId
       ? scopedThreadKey(environmentId, ThreadId.make(params.threadId))
       : null;
-  if (document.kind === "archive" && isZipFile(params) && !document.error) {
+  if (!modelKind && document.kind === "archive" && isZipFile(params) && !document.error) {
     return (
       <ZipArchiveView
         name={params.name}
@@ -258,21 +258,23 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
       />
     );
   }
+  const modelMemoryKey = JSON.stringify(
+    draftKey
+      ? ["draft-attachment", params.attachmentId]
+      : ["attachment", environmentId, params.attachmentId],
+  );
 
   return (
     <View className="flex-1 bg-sheet">
       <AppBar title={params.name} subtitle={subtitle} onBack={handleBack} menus={[fileMenu]} />
       {modelKind && !document.error ? (
         <ModelFilePreview
+          key={modelMemoryKey}
           {...modelControls.viewer}
           name={params.name}
           format={modelKind}
           uri={document.uri}
-          memoryKey={JSON.stringify(
-            draftKey
-              ? ["draft-attachment", params.attachmentId]
-              : ["attachment", environmentId, params.attachmentId],
-          )}
+          memoryKey={modelMemoryKey}
           linkPath={null}
           initialView={null}
           // Notes go to the thread's chat composer, also from a question-answer draft.

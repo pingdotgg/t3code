@@ -92,10 +92,9 @@ export function ModelAnnotationDraftCard(props: {
         </Pressable>
       </View>
       <View className="gap-1 px-1">
-        {draft.notes.map((note, index) => (
-          // oxlint-disable-next-line react/no-array-index-key -- the numbers are the notes' identity in an annotation
-          <Text key={index} className="text-sm text-foreground" numberOfLines={2}>
-            <Text className="text-sm font-t3-bold text-primary-text">{index + 1} </Text>
+        {draft.notes.map((note) => (
+          <Text key={note.number} className="text-sm text-foreground" numberOfLines={2}>
+            <Text className="text-sm font-t3-bold text-primary-text">{note.number} </Text>
             {note.text}
           </Text>
         ))}

@@ -140,6 +140,12 @@ vi.mock("./SourceFileSurface", () => ({
   SourceFileSurface: (props: { readonly contents: string }) => <pre>{props.contents}</pre>,
 }));
 vi.mock("./AudioFilePreview", () => ({ AudioFilePreview: () => null }));
+vi.mock("./ModelFilePreview", () => ({
+  ModelFilePreview: (props: { readonly name: string; readonly format: string }) => (
+    <div aria-label={`3D view of ${props.name}`}>{props.format}</div>
+  ),
+  useModelViewerControls: () => ({ viewer: {}, menuActions: [] }),
+}));
 vi.mock("./FileMarkdownPreview", () => ({ FileMarkdownPreview: () => null }));
 vi.mock("./WorkspaceFileWebPreview", () => ({ WorkspaceFileWebPreview: () => null }));
 vi.mock("../threads/HtmlRenderWebView", () => ({ HtmlRenderWebView: () => null }));
@@ -209,7 +215,10 @@ function setup() {
   };
 }
 
-it("opens a ZIP chat attachment as a browsable archive on the attachment file screen", async () => {
+it.each([
+  ["archive.zip", null],
+  ["model.3mf", "3mf"],
+])("opens a chat attachment named %s in its file viewer", async (name, modelFormat) => {
   const screen = setup();
   server.capabilities = {
     repositoryIdentity: false,
@@ -229,7 +238,7 @@ it("opens a ZIP chat attachment as a browsable archive on the attachment file sc
             environmentId: "environment-1",
             threadId: "thread-1",
             attachmentId: "attachment-1",
-            name: "archive.zip",
+            name,
             mimeType: "application/zip",
             sizeBytes: "200",
           },
@@ -237,6 +246,12 @@ it("opens a ZIP chat attachment as a browsable archive on the attachment file sc
       />,
     ),
   );
+  if (modelFormat !== null) {
+    expect(screen.container.querySelector(`[aria-label="3D view of ${name}"]`)?.textContent).toBe(
+      modelFormat,
+    );
+    return;
+  }
   await screen.settle(() =>
     expect(screen.container.querySelector('[aria-label="first.txt"]')).not.toBeNull(),
   );

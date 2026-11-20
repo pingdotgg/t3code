@@ -86,9 +86,8 @@ function ModelAnnotationDetails(props: {
         <Text className="text-xs text-foreground-muted">
           {gt("Notes", { $context: "notes pinned to a 3D model" })}
         </Text>
-        {props.notes.map((note, index) => (
-          // oxlint-disable-next-line react/no-array-index-key -- the numbers are the notes' identity in a sent annotation
-          <View key={index} className="flex-row gap-3">
+        {props.notes.map((note) => (
+          <View key={note.number} className="flex-row gap-3">
             <View
               className={cn(
                 "mt-0.5 size-[22px] items-center justify-center rounded-full",
@@ -101,7 +100,7 @@ function ModelAnnotationDetails(props: {
                   note.stale ? "text-foreground-muted" : "text-primary-foreground",
                 )}
               >
-                {index + 1}
+                {note.number}
               </Text>
             </View>
             <View className="min-w-0 flex-1 gap-0.5">

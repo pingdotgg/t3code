@@ -14,7 +14,9 @@ const annotation = (comment: string) => ({
     name: "hinge.stl",
     linkPath: "out/hinge.stl",
     view: { position: [1, 2, 3], target: [0, 0, 0] },
-    notes: [{ id: "n1", text: comment, point: [0, 0, 0], normal: [0, 1, 0], stale: false }],
+    notes: [
+      { id: "n1", number: 1, text: comment, point: [0, 0, 0], normal: [0, 1, 0], stale: false },
+    ],
     screenshot: {
       dataUrl: "data:image/png;base64,iVBORw0KGgo=",
       width: 4,
@@ -42,7 +44,7 @@ describe("model notes staged in a mobile draft", () => {
     ]);
     expect(context.records[0]).toMatchObject({
       kind: "preview-annotation",
-      pageUrl: "out/hinge.stl#view=1,2,3,0,0,0",
+      pageUrl: "./out/hinge.stl#view=1,2,3,0,0,0",
       comment: "1. Widen the slot (surface point 0, 0, 0)",
       screenshotContextId: context.records[1]!.contextId,
     });
@@ -50,15 +52,22 @@ describe("model notes staged in a mobile draft", () => {
     expect(modelAnnotationDrafts(context, attachments)).toEqual([
       {
         record: context.records[0],
-        notes: [{ text: "Widen the slot", stale: false }],
+        notes: [{ number: 1, text: "Widen the slot", stale: false }],
         target: { path: "out/hinge.stl", view: { position: [1, 2, 3], target: [0, 0, 0] } },
         screenshotId: "s1",
       },
     ]);
   });
 
-  it("keeps a long note within the context limit", () => {
+  it("keeps a long note readable on a draft card with a saved view", () => {
     const content = modelAnnotationComposerContent(annotation("x".repeat(9_000)), () => "s1");
     expect(() => decodeContext(content!.context)).not.toThrow();
+    expect(modelAnnotationDrafts(content!.context, content!.attachments)).toEqual([
+      expect.objectContaining({
+        notes: [{ number: 1, text: expect.stringMatching(/^x+…$/), stale: false }],
+        target: { path: "out/hinge.stl", view: { position: [1, 2, 3], target: [0, 0, 0] } },
+        screenshotId: "s1",
+      }),
+    ]);
   });
 });

@@ -11,6 +11,7 @@ import {
   HemisphereLight,
   LoadingManager,
   Material,
+  Matrix3,
   Matrix4,
   Mesh,
   MeshStandardMaterial,
@@ -75,6 +76,7 @@ async function parseModel(
   switch (format) {
     case "stl": {
       const { STLLoader } = await import("three/examples/jsm/loaders/STLLoader.js");
+      signal.throwIfAborted();
       const geometry = new STLLoader().parse(bytes);
       // Many exporters write zero face normals, which light as black; derive them instead.
       geometry.computeVertexNormals();
@@ -123,18 +125,23 @@ async function parseModel(
     }
     case "glb": {
       const { GLTFLoader } = await import("three/examples/jsm/loaders/GLTFLoader.js");
+      signal.throwIfAborted();
       const inlineResources = new Map<string, string>();
       const manager = new LoadingManager().setURLModifier((url) => {
+        signal.throwIfAborted();
         if (/^blob:/i.test(url)) return url;
         const objectUrl = inlineResources.get(url);
         if (objectUrl) return objectUrl;
         throw new ModelPreviewError({ code: "model-invalid" });
       });
+      const abort = () => manager.abort();
+      signal.addEventListener("abort", abort, { once: true });
       try {
         const gltf = await new GLTFLoader(manager)
           .register((parser) => ({
             name: "self-contained-preview",
             beforeRoot: () => {
+              signal.throwIfAborted();
               const manifest: {
                 buffers?: ReadonlyArray<{ uri?: unknown }>;
                 images?: ReadonlyArray<{ uri?: unknown }>;
@@ -156,6 +163,7 @@ async function parseModel(
           .parseAsync(bytes, "");
         return gltf.scene;
       } finally {
+        signal.removeEventListener("abort", abort);
         for (const url of inlineResources.values()) URL.revokeObjectURL(url);
       }
     }
@@ -405,10 +413,10 @@ export class ModelScene {
     const hit = raycaster.intersectObject(this.content, true)[0];
     if (!hit?.face) return null;
     const toContent = new Matrix4().copy(this.content.matrixWorld).invert();
+    const meshToContent = new Matrix4().multiplyMatrices(toContent, hit.object.matrixWorld);
     const normal = hit.face.normal
       .clone()
-      .transformDirection(hit.object.matrixWorld)
-      .transformDirection(toContent);
+      .applyNormalMatrix(new Matrix3().getNormalMatrix(meshToContent));
     return {
       point: toVec3(hit.point.clone().applyMatrix4(toContent)),
       normal: toVec3(normal),
@@ -417,11 +425,12 @@ export class ModelScene {
   }
 
   /** Where each note sits on the canvas, in CSS pixels from its top left corner. */
-  project(notes: ReadonlyArray<ModelNote>): ProjectedPin[] {
+  project(notes: ReadonlyArray<Pick<ModelNote, "point" | "normal">>): ProjectedPin[] {
     const { width, height } = this.renderer.getSize(new Vector2());
+    const normalMatrix = new Matrix3().getNormalMatrix(this.content.matrixWorld);
     return notes.map((note) => {
       const world = new Vector3(...note.point).applyMatrix4(this.content.matrixWorld);
-      const normal = new Vector3(...note.normal).transformDirection(this.content.matrixWorld);
+      const normal = new Vector3(...note.normal).applyNormalMatrix(normalMatrix);
       const toCamera = this.camera.position.clone().sub(world);
       const screen = world.clone().project(this.camera);
       return {
@@ -440,12 +449,14 @@ export class ModelScene {
     this.renderer.render(this.scene, this.camera);
     const source = this.renderer.domElement;
     const canvas = document.createElement("canvas");
-    canvas.width = source.width;
-    canvas.height = source.height;
+    // Pin evidence is retained across visits, even on high-DPI screens.
+    const downscale = Math.min(1, 1280 / Math.max(source.width, source.height));
+    canvas.width = Math.max(1, Math.round(source.width * downscale));
+    canvas.height = Math.max(1, Math.round(source.height * downscale));
     const context = canvas.getContext("2d");
     if (!context) throw new ModelPreviewError({ code: "model-invalid" });
-    context.drawImage(source, 0, 0);
-    const scale = this.renderer.getPixelRatio();
+    context.drawImage(source, 0, 0, canvas.width, canvas.height);
+    const scale = this.renderer.getPixelRatio() * downscale;
     const pins = this.project(notes);
     context.font = `600 ${11 * scale}px Inter, system-ui, sans-serif`;
     context.textAlign = "center";
@@ -464,7 +475,7 @@ export class ModelScene {
       context.strokeStyle = "#fff";
       context.stroke();
       context.fillStyle = "#fff";
-      context.fillText(String(index + 1), x, y + 0.5 * scale);
+      context.fillText(String(note.number), x, y + 0.5 * scale);
     });
     context.globalAlpha = 1;
     return { dataUrl: canvas.toDataURL("image/png"), width: canvas.width, height: canvas.height };

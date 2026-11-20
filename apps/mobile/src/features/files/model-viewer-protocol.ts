@@ -1,8 +1,8 @@
 import * as Schema from "effect/Schema";
 import type {
   ModelCameraView,
-  ModelCapture,
   ModelNote,
+  ModelPinCapture,
   Vec3,
 } from "@t3tools/client-runtime/model-preview/annotations";
 import type { ModelPreviewErrorCode } from "@t3tools/client-runtime/model-preview/error";
@@ -49,10 +49,11 @@ export type ModelViewerCommand =
       readonly notes: ReadonlyArray<ModelNote>;
       readonly activeId: string | null;
       /** A pin placed but not saved yet, shown with the next number. */
-      readonly draft: { readonly point: Vec3; readonly normal: Vec3 } | null;
+      readonly draft: Pick<ModelNote, "point" | "normal" | "number"> | null;
     }
   | {
       readonly type: "capture";
+      readonly id: number;
       readonly requestId: number;
       readonly notes: ReadonlyArray<ModelNote>;
     };
@@ -78,10 +79,68 @@ export type ModelViewerEvent =
   | { readonly type: "pin"; readonly id: string }
   | {
       readonly type: "captured";
+      readonly id: number;
       readonly requestId: number;
-      readonly capture: ModelCapture | null;
-      readonly view: ModelCameraView;
+      readonly result: ModelPinCapture | null;
     };
+
+/** One load owns its replies. Closing it cancels byte transfer and settles any pending capture. */
+export function createModelViewerRequests(
+  id: number,
+  post: (input: ModelViewerCommand) => boolean,
+) {
+  const controller = new AbortController();
+  let ack: { resolve: () => void; reject: (reason: unknown) => void } | null = null;
+  let nextCaptureId = 0;
+  let pendingCapture: {
+    requestId: number;
+    resolve: (result: ModelPinCapture | null) => void;
+  } | null = null;
+  return {
+    id,
+    signal: controller.signal,
+    sendChunk(data: string) {
+      return new Promise<void>((resolve, reject) => {
+        controller.signal.throwIfAborted();
+        if (ack) throw new Error("The model viewer has not acknowledged the previous chunk.");
+        ack = { resolve, reject };
+        if (post({ type: "chunk", id, data })) return;
+        ack = null;
+        reject(new Error("The model viewer is unavailable."));
+      });
+    },
+    capture(notes: ReadonlyArray<ModelNote>) {
+      return new Promise<ModelPinCapture | null>((resolve) => {
+        if (controller.signal.aborted || pendingCapture) {
+          resolve(null);
+          return;
+        }
+        const requestId = ++nextCaptureId;
+        pendingCapture = { requestId, resolve };
+        if (post({ type: "capture", id, requestId, notes })) return;
+        pendingCapture = null;
+        resolve(null);
+      });
+    },
+    receive(event: Extract<ModelViewerEvent, { type: "ack" | "captured" }>) {
+      if (event.id !== id) return;
+      if (event.type === "ack") {
+        ack?.resolve();
+        ack = null;
+      } else if (pendingCapture?.requestId === event.requestId) {
+        pendingCapture.resolve(event.result);
+        pendingCapture = null;
+      }
+    },
+    close() {
+      controller.abort();
+      ack?.reject(controller.signal.reason);
+      ack = null;
+      pendingCapture?.resolve(null);
+      pendingCapture = null;
+    },
+  };
+}
 
 /** Raw bytes per bridge message; base64 makes each a third larger. */
 const MODEL_TRANSFER_CHUNK_BYTES = 256 * 1024;

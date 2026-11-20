@@ -36,12 +36,14 @@ export function start() {
   document.body.append(viewport, pinLayer);
 
   let scene: ModelScene | null = null;
+  let sceneId: number | null = null;
+  let requestedView: Extract<ModelViewerCommand, { type: "view" }>["view"] | null = null;
   let loading: { id: number; controller: AbortController } | null = null;
   let sink: { id: number; sink: ReturnType<typeof createModelByteSink> } | null = null;
   let annotating = false;
   let notes: ReadonlyArray<ModelNote> = [];
   let activeId: string | null = null;
-  let draft: { point: ModelNote["point"]; normal: ModelNote["normal"] } | null = null;
+  let draft: Extract<ModelViewerCommand, { type: "notes" }>["draft"] = null;
   let colors: ModelViewerColors | null = null;
   const pins = new Map<string, HTMLButtonElement>();
 
@@ -55,16 +57,13 @@ export function start() {
 
   const placePins = () => {
     if (!scene) return;
-    const shown = notes.flatMap((note, index) =>
-      note.stale ? [] : [{ ...note, label: String(index + 1) }],
-    );
+    const shown = notes.filter((note) => !note.stale);
     if (draft) {
       shown.push({
         ...draft,
         id: "draft",
         text: "",
         stale: false,
-        label: String(notes.length + 1),
       });
     }
     const placed = scene.project(shown);
@@ -88,7 +87,7 @@ export function start() {
         pins.set(note.id, element);
       }
       const dot = element.firstElementChild as HTMLElement;
-      dot.textContent = note.label;
+      dot.textContent = String(note.number);
       pinStyle(element, note.id === activeId || note.id === "draft");
       const pin = placed[index];
       if (!pin) return;
@@ -151,6 +150,7 @@ export function start() {
   const disposeScene = () => {
     scene?.dispose();
     scene = null;
+    sceneId = null;
     for (const element of pins.values()) element.remove();
     pins.clear();
   };
@@ -173,10 +173,17 @@ export function start() {
         loaded.dispose();
         return;
       }
+      const view = requestedView ?? scene?.view ?? command.view;
+      requestedView = null;
+      if (scene?.summary.fingerprint !== loaded.summary.fingerprint) {
+        notes = [];
+        draft = null;
+      }
       disposeScene();
       scene = loaded;
+      sceneId = command.id;
       loaded.setWireframe(command.wireframe);
-      if (command.view) loaded.setView(command.view);
+      if (view) loaded.setView(view);
       loaded.setFrameListener(placePins);
       post({ type: "loaded", id: command.id, summary: loaded.summary, view: loaded.view });
     } catch (cause) {
@@ -206,7 +213,10 @@ export function start() {
         sink = { id: input.id, sink: createModelByteSink(MAX_MODEL_BYTES) };
         return;
       case "chunk":
-        if (sink?.id !== input.id) return;
+        if (sink?.id !== input.id) {
+          post({ type: "failed", id: input.id, code: "model-invalid" });
+          return;
+        }
         try {
           sink.sink.push(input.data);
         } catch {
@@ -229,7 +239,10 @@ export function start() {
         post({ type: "view", view: scene.view, moved: false });
         return;
       case "view":
-        if (!scene) return;
+        if (!scene) {
+          requestedView = input.view;
+          return;
+        }
         scene.setView(input.view);
         post({ type: "view", view: scene.view, moved: false });
         return;
@@ -247,12 +260,13 @@ export function start() {
         scene?.requestRender();
         return;
       case "capture": {
-        if (!scene) return;
-        let capture = null;
+        let result = null;
         try {
-          capture = scene.capture(input.notes);
+          if (scene && sceneId === input.id) {
+            result = { screenshot: scene.capture(input.notes), view: scene.view };
+          }
         } catch {}
-        post({ type: "captured", requestId: input.requestId, capture, view: scene.view });
+        post({ type: "captured", id: input.id, requestId: input.requestId, result });
         return;
       }
     }

@@ -1,7 +1,11 @@
-import type { PreviewAnnotationPayload } from "@t3tools/contracts";
+import {
+  COMPOSER_CONTEXT_PREVIEW_COMMENT_MAX_CHARS,
+  type PreviewAnnotationPayload,
+} from "@t3tools/contracts";
 import { modelPreviewKind } from "@t3tools/shared/filePreview";
 import {
   encodeMarkdownLinkDestination,
+  isRelativeFilePath,
   normalizeMarkdownLinkDestination,
   parseMarkdownFileLink,
   safeDecodeURIComponent,
@@ -31,9 +35,16 @@ export interface ModelCapture {
   readonly height: number;
 }
 
+export interface ModelPinCapture {
+  readonly screenshot: ModelCapture;
+  readonly view: ModelCameraView;
+}
+
 /** A numbered note pinned to a surface point, in the model's own coordinates. */
 export interface ModelNote {
   readonly id: string;
+  /** Kept after deletion so earlier screenshots still label the same pins. */
+  readonly number: number;
   readonly text: string;
   readonly point: Vec3;
   readonly normal: Vec3;
@@ -88,8 +99,10 @@ export interface ModelPreviewMemory {
   readonly notes: ReadonlyArray<ModelNote>;
   readonly view: ModelCameraView;
   readonly wireframe: boolean;
-  /** The annotated view captured before the geometry changed under stale notes. */
-  readonly capture: { readonly screenshot: ModelCapture; readonly view: ModelCameraView } | null;
+  readonly lastPinNumber: number;
+  /** The pinned view on this geometry, taken when the pins were saved. */
+  readonly capture: ModelPinCapture | null;
+  readonly earlierCapture: ModelPinCapture | null;
 }
 
 // Bounds what a long session keeps; the oldest model drops out first.
@@ -125,25 +138,49 @@ export function reconcileModelNotes(
   return saved.notes.map((note) => (note.stale ? note : { ...note, stale: true }));
 }
 
+/** Retains the original screenshot when the loaded model no longer matches its pins. */
+export function restoreModelPins(
+  saved:
+    | Pick<ModelPreviewMemory, "fingerprint" | "notes" | "capture" | "earlierCapture">
+    | undefined,
+  fingerprint: string,
+) {
+  const sameGeometry = saved?.fingerprint === fingerprint;
+  return {
+    notes: reconcileModelNotes(saved, fingerprint),
+    capture: sameGeometry ? (saved?.capture ?? null) : null,
+    earlierCapture: saved?.earlierCapture ?? (sameGeometry ? null : (saved?.capture ?? null)),
+  };
+}
+
 const STALE_NOTE_PLACE =
   "placed on an earlier version of the model, so its point may no longer match";
 const EARLIER_SCREENSHOT_LINE = "The screenshot shows the model before it last changed.";
-const NOTE_LINE = /^\d+\. (.*) \((surface point [-\d., e+]+|[^()]*earlier version[^()]*)\)$/;
+const EARLIER_SCREENSHOT_DETAIL =
+  "The original screenshot shows one saved revision. Pins added on other revisions may be absent, and removed pins may still appear.";
+const NOTE_LINE = /^(\d+)\. (.*) \((surface point [-\d., e+]+|[^()]*earlier version[^()]*)\)$/;
 
 /**
  * The numbered notes a model annotation's comment holds, as `modelAnnotationPayload` wrote them,
  * so a client can list them. Null when the comment is not a model annotation's.
  */
 export function modelAnnotationNotes(comment: string): {
-  readonly notes: ReadonlyArray<{ readonly text: string; readonly stale: boolean }>;
+  readonly notes: ReadonlyArray<Pick<ModelNote, "number" | "text" | "stale">>;
   /** The screenshot shows the model before its geometry last changed. */
   readonly earlier: boolean;
 } | null {
   const lines = comment.split("\n");
+  const detail = lines.at(-1) === EARLIER_SCREENSHOT_DETAIL;
+  if (detail) lines.pop();
   const earlier = lines.at(-1) === EARLIER_SCREENSHOT_LINE;
-  const notes = (earlier ? lines.slice(0, -1) : lines).map((line) => {
+  if (earlier) lines.pop();
+  const notes = lines.map((line) => {
     const match = NOTE_LINE.exec(line);
-    return match ? { text: match[1]!, stale: match[2] === STALE_NOTE_PLACE } : null;
+    if (!match) return null;
+    const number = Number(match[1]);
+    return Number.isSafeInteger(number) && number > 0
+      ? { number, text: match[2]!, stale: match[3] === STALE_NOTE_PLACE }
+      : null;
   });
   if (notes.length === 0 || notes.some((note) => note === null)) return null;
   return { notes: notes.filter((note) => note !== null), earlier };
@@ -171,21 +208,40 @@ export function modelAnnotationPayload(input: {
   readonly createdAt: string;
 }): PreviewAnnotationPayload {
   const { dataUrl, width, height, earlier } = input.screenshot;
-  const notes = input.notes.map((note, index) => {
-    const text = note.text.trim().replace(/\s*\n\s*/g, " ");
+  const footer = earlier ? `\n${EARLIER_SCREENSHOT_LINE}\n${EARLIER_SCREENSHOT_DETAIL}` : "";
+  let remaining = COMPOSER_CONTEXT_PREVIEW_COMMENT_MAX_CHARS - footer.length;
+  const lines: Array<{ prefix: string; text: string; suffix: string }> = [];
+  for (const [index, note] of input.notes.entries()) {
+    const prefix = `${note.number}. `;
     const where = note.stale
       ? STALE_NOTE_PLACE
       : `surface point ${note.point.map(formatNumber).join(", ")}`;
-    return `${index + 1}. ${text} (${where})`;
+    const suffix = ` (${where})`;
+    const overhead = prefix.length + suffix.length + Number(index > 0) + 1;
+    if (overhead > remaining) break;
+    remaining -= overhead;
+    lines.push({ prefix, text: note.text.trim().replace(/\s*[\r\n]+\s*/g, " "), suffix });
+  }
+  const notes = lines.map(({ prefix, text, suffix }, index) => {
+    const limit = 1 + Math.floor(remaining / (lines.length - index));
+    const bounded =
+      text.length <= limit ? text : `${text.slice(0, limit - 1).replace(/[\uD800-\uDBFF]$/, "")}…`;
+    remaining += 1 - bounded.length;
+    return prefix + bounded + suffix;
   });
+  const path = input.linkPath;
+  const explicitPath =
+    path !== null && isRelativeFilePath(path) && !/^(?:\.{1,2}|~)\//.test(path)
+      ? `./${path}`
+      : path;
   return {
     id: input.id,
     pageUrl:
-      input.linkPath === null
+      explicitPath === null
         ? ATTACHMENT_URL_PREFIX + input.name
-        : encodeMarkdownLinkDestination(input.linkPath) + formatModelViewHash(input.view),
+        : encodeMarkdownLinkDestination(explicitPath) + formatModelViewHash(input.view),
     pageTitle: input.name,
-    comment: [...notes, ...(earlier ? [EARLIER_SCREENSHOT_LINE] : [])].join("\n"),
+    comment: notes.join("\n") + footer,
     elements: [],
     regions: [],
     strokes: [],
@@ -203,6 +259,6 @@ export function modelAnnotationFileTarget(
   const view = modelViewFromHash(splitMarkdownLinkSearchAndHash(href).hash);
   const target = view ? parseMarkdownFileLink(href) : null;
   return target && view && modelPreviewKind({ name: target.path })
-    ? { path: target.path, view }
+    ? { path: target.path.replace(/^\.\//, ""), view }
     : null;
 }

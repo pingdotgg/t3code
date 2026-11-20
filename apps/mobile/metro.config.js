@@ -111,6 +111,9 @@ async function prepareStreamScripts() {
         ["scene.ts", "annotations.ts", "archive.ts", "error.ts"],
         generateModelViewerScript,
       ],
+      ["packages/client-runtime/src", ["dataUrl.ts"], generateModelViewerScript],
+      ["packages/client-runtime/src/three", ["disposeObject.ts"], generateModelViewerScript],
+      ["packages/client-runtime/src/zip", ["boundedZip.ts"], generateModelViewerScript],
     ]) {
       fs.watch(path.join(workspaceRoot, directory), { persistent: false }, (_event, filename) => {
         if (filename && !files.includes(String(filename))) return;

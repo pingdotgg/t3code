@@ -20,7 +20,7 @@ const triangle = [
   "endsolid panel",
 ].join("\n");
 
-it("keeps a draft attachment pin isolated and sends its earlier screenshot after an edit", async () => {
+it("keeps earlier screenshot labels after deleting a stale pin and adding a live pin", async () => {
   const target = {
     environmentId: EnvironmentId.make("model-attachment-test"),
     threadId: ThreadId.make("model-attachment-test"),
@@ -42,12 +42,15 @@ it("keeps a draft attachment pin isolated and sends its earlier screenshot after
   );
   await using screen = await render(dialog("local-panel", file));
   const viewer = page.getByRole("application", { name: "3D view of panel.stl" });
+  const pick = (x: number) =>
+    userEvent.click(viewer, {
+      position: { x: viewer.element().clientWidth / 2 + x, y: viewer.element().clientHeight / 2 },
+    });
+  const pin = page.getByRole("button", { name: "Pin", exact: true });
   await expect.element(page.getByRole("button", { name: "Top" })).toBeEnabled();
   await userEvent.click(page.getByRole("button", { name: "Top" }));
   await userEvent.click(page.getByRole("button", { name: "Annotate" }));
-  await userEvent.click(viewer, {
-    position: { x: viewer.element().clientWidth / 2 + 12, y: viewer.element().clientHeight / 2 },
-  });
+  await pick(12);
   const note = page.getByRole("textbox", { name: "Note", exact: true });
   await userEvent.fill(note, "Round this edge");
   note
@@ -56,8 +59,12 @@ it("keeps a draft attachment pin isolated and sends its earlier screenshot after
       new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true }),
     );
   await expect.element(note).toHaveValue("Round this edge");
-  await userEvent.click(page.getByRole("button", { name: "Pin", exact: true }));
+  await userEvent.click(pin);
   await expect.element(page.getByRole("button", { name: "Note 1: Round this edge" })).toBeVisible();
+  await pick(40);
+  await userEvent.fill(note, "Keep this face");
+  await userEvent.click(pin);
+  await expect.element(page.getByRole("button", { name: "Note 2: Keep this face" })).toBeVisible();
   await screen.rerender(dialog("other-panel", file));
   await expect.element(page.getByRole("button", { name: "Top" })).toBeEnabled();
   await expect
@@ -68,17 +75,35 @@ it("keeps a draft attachment pin isolated and sends its earlier screenshot after
     type: file.type,
   });
   await screen.rerender(dialog("local-panel", revised));
+  await expect.element(page.getByText(/The model changed after 2 notes/)).toBeVisible();
+  await userEvent.click(
+    page
+      .getByRole("listitem")
+      .filter({ hasText: "Round this edge" })
+      .getByRole("button", { name: "Remove" }),
+  );
   await expect.element(page.getByText(/The model changed after 1 note/)).toBeVisible();
+  await expect.element(page.getByText("2. Keep this face")).toBeVisible();
   await userEvent.click(page.getByRole("button", { name: "Annotate" }));
-  await userEvent.click(page.getByRole("button", { name: "Send 1 to chat" }));
-  await expect
-    .element(page.getByRole("button", { name: "Send 1 to chat" }))
-    .not.toBeInTheDocument();
+  await pick(-16);
+  await userEvent.fill(note, "Keep this new pin");
+  await userEvent.click(pin);
+  const livePin = page.getByRole("button", { name: "Note 3: Keep this new pin" });
+  await expect.element(livePin).toBeVisible();
+  const refreshed = new File([revised], name, { type: revised.type });
+  await screen.rerender(dialog("local-panel", refreshed));
+  await expect.element(livePin).toBeVisible();
+  await expect.element(page.getByText("2. Keep this face")).toBeVisible();
+  const send = page.getByRole("button", { name: "Send 2 to chat" });
+  await userEvent.click(send);
+  await expect.element(send).not.toBeInTheDocument();
   const draft = useComposerDraftStore.getState().getComposerDraft(target);
   expect(draft?.previewAnnotations).toEqual([
     expect.objectContaining({
       pageUrl: "attachment:panel.stl",
-      comment: expect.stringContaining("The screenshot shows the model before it last changed."),
+      comment: expect.stringMatching(
+        /2\. Keep this face \(placed on an earlier version[^\n]*\n3\. Keep this new pin \(surface point[^\n]*\nThe screenshot shows the model before it last changed\./,
+      ),
     }),
   ]);
   expect(draft?.images).toEqual([

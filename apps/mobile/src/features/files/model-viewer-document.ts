@@ -32,11 +32,18 @@ const ModelViewerEventSchema = Schema.Union([
   Schema.Struct({ type: Schema.Literal("pin"), id: Schema.String }),
   Schema.Struct({
     type: Schema.Literal("captured"),
+    id: Schema.Number,
     requestId: Schema.Number,
-    capture: Schema.NullOr(
-      Schema.Struct({ dataUrl: Schema.String, width: Schema.Number, height: Schema.Number }),
+    result: Schema.NullOr(
+      Schema.Struct({
+        screenshot: Schema.Struct({
+          dataUrl: Schema.String,
+          width: Schema.Number,
+          height: Schema.Number,
+        }),
+        view: View,
+      }),
     ),
-    view: View,
   }),
 ]);
 
