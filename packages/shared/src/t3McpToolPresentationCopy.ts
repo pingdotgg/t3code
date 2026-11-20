@@ -82,6 +82,7 @@ const DISPLAY_NAMES: ReadonlyMap<string, string> = new Map([
   ["Read a queued message", msg("Read a queued message")],
   ["Edit a queued message", msg("Edit a queued message")],
   ["Cancel a queued run", msg("Cancel a queued run")],
+  ["Resume a held queue", msg("Resume a held queue")],
   ["Reorder a queued run", msg("Reorder a queued run")],
   ["Steer with a queued message", msg("Steer with a queued message")],
   ["List pending questions", msg("List pending questions")],

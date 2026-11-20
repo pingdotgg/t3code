@@ -578,6 +578,14 @@ const T3_TOOL_SENTENCES: ReadonlyMap<string, T3ToolSentence> = new Map<string, T
     },
   ],
   [
+    "Resume\nResuming\nResumed\na held queue",
+    {
+      detail: msg(
+        "{status, select, inProgress {Resuming a held queue} completed {Resumed a held queue} failed {Failed to resume a held queue} declined {Declined to resume a held queue} stopped {Stopped resuming a held queue} other {Resuming a held queue}}",
+      ),
+    },
+  ],
+  [
     "Reorder\nReordering\nReordered\na queued run",
     {
       detail: msg(

@@ -361,6 +361,23 @@ export function summarizeT3ToolCalls(
           );
       break;
     }
+    case "queue-resume": {
+      const count = countEntities(threadIds);
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Resumed {count} held queue} other {Resumed {count} held queues}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to resume {count} held queue} other {Tried to resume {count} held queues}}",
+              { count },
+            ),
+          );
+      break;
+    }
     case "queue-reorder": {
       const count = countEntities(entityIds("queuedRunId"));
       label = done
