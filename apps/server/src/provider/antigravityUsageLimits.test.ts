@@ -523,6 +523,46 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.effect("reports an exhausted daily quota instead of the prod host's untouched reading", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-11-18T12:00:00Z")));
+      // Proto3 JSON omits remainingFraction when it is 0.
+      const { probe } = yield* fixture({
+        authMethod: "oauth-personal",
+        summaryByHost: {
+          "daily-cloudcode-pa.googleapis.com": {
+            groups: [
+              {
+                displayName: "Gemini Models",
+                buckets: [
+                  { bucketId: "gemini-5h", window: "5h", resetTime: "2026-11-18T14:00:00Z" },
+                ],
+              },
+            ],
+          },
+          "cloudcode-pa.googleapis.com": {
+            groups: [
+              {
+                displayName: "Gemini Models",
+                buckets: [
+                  {
+                    bucketId: "gemini-5h",
+                    window: "5h",
+                    remainingFraction: 1,
+                    resetTime: "2026-11-18T17:00:00Z",
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      });
+      expect((yield* probe).windows).toEqual([
+        expect.objectContaining({ id: "gemini-5h", usedPercent: 100 }),
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect("labels Argon and Carbon quotas apart from the default Gemini quota", () =>
     Effect.gen(function* () {
       const { probe } = yield* fixture({
@@ -688,6 +728,33 @@ describe("Antigravity subscription limits", () => {
         "Sign in with Google to see Antigravity limits.",
       );
       expect(limits.unavailable?.reason).not.toBe("unsupported");
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("reads the native CLI's current sign-in over a leftover acp_token.json", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { probe, requests, tokenPath } = yield* fixture({ missingToken: true });
+      // Left by an earlier sign-in with another Google account.
+      yield* fs.writeFileString(
+        tokenPath,
+        JSON.stringify({
+          client_id: "client-id",
+          client_secret: "client-secret",
+          refresh_token: "previous-account",
+        }),
+      );
+      yield* fs.writeFileString(
+        path.join(path.dirname(tokenPath), "antigravity-oauth-token"),
+        JSON.stringify({
+          token: { access_token: "access-token", expiry: "2099-01-01T00:00:00Z" },
+        }),
+      );
+      yield* probe;
+      expect(requests.map((request) => request.body)).not.toContainEqual(
+        expect.stringContaining("previous-account"),
+      );
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
