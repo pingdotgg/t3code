@@ -116,6 +116,11 @@ on:
       relay_url:
         required: true
         type: string
+      # A fork's standalone build (see docs/operations/standalone-migration.md).
+      standalone:
+        required: false
+        default: false
+        type: boolean
 
 # electron-builder leaves the default arch (x64) out of the unpacked app's
 # directory name.
@@ -140,6 +145,22 @@ jobs:
       T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ inputs.clerk_cli_oauth_client_id }}
       T3CODE_RELAY_URL: ${{ inputs.relay_url }}
     steps:
+      # Exported only for a standalone build, so official builds see none of these, not even empty.
+      - name: Configure standalone build
+        if: inputs.standalone
+        shell: bash
+        env:
+          APP_NAME: ${{ vars.T3CODE_APP_NAME }}
+          APP_SCHEME: ${{ vars.T3CODE_APP_SCHEME }}
+          UPDATE_REPOSITORY: ${{ github.repository }}
+        run: |
+          {
+            echo "T3CODE_STANDALONE=1"
+            echo "T3CODE_APP_NAME=$APP_NAME"
+            echo "T3CODE_APP_SCHEME=$APP_SCHEME"
+            echo "T3CODE_DESKTOP_UPDATE_REPOSITORY=$UPDATE_REPOSITORY"
+          } >> "$GITHUB_ENV"
+
       # The launch check and the CLI archive smoke test both run the bundle.
       - name: Reject running an untrusted bundle
         if: inputs.untrusted_bundle && (inputs.launch_check || inputs.cli_archive)

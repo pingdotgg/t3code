@@ -6,7 +6,7 @@ import { fromYaml } from "@t3tools/shared/schemaYaml";
 import * as Schema from "effect/Schema";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { appSchemeDefine, loadRepoEnv } from "./public-config.ts";
+import { appSchemeDefine, isStandaloneBuild, loadRepoEnv } from "./public-config.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -60,6 +60,7 @@ describe("loadRepoEnv in a standalone build", () => {
     T3CODE_STANDALONE: "true",
     GITHUB_REPOSITORY: "fork-owner/t3code",
     T3CODE_APP_SCHEME: "forkcode",
+    T3CODE_APP_NAME: "Fork Code",
   };
 
   it("passes the fork's own config through and normalizes the switch", () => {
@@ -74,6 +75,20 @@ describe("loadRepoEnv in a standalone build", () => {
     });
   });
 
+  it("turns standalone from .env alone, as brand artwork and the app UI both read it", () => {
+    const repoRoot = makeTemporaryDirectory();
+    NodeFS.writeFileSync(
+      NodePath.join(repoRoot, ".env"),
+      Object.entries(fork)
+        .map(([key, value]) => `${key}=${value}`)
+        .join("\n"),
+    );
+    const env = loadRepoEnv({ baseEnv: {}, repoRoot });
+    expect(env.T3CODE_STANDALONE).toBe("1");
+    expect(isStandaloneBuild(env)).toBe(true);
+    expect(isStandaloneBuild({ T3CODE_STANDALONE: "0" })).toBe(false);
+  });
+
   it.each([
     [{ T3CODE_RELAY_URL: "https://relay.t3.codes" }, "T3CODE_RELAY_URL"],
     [{ VITE_HOSTED_APP_URL: "https://app.t3.codes" }, "T3CODE_HOSTED_APP_URL"],
@@ -84,6 +99,9 @@ describe("loadRepoEnv in a standalone build", () => {
     [{ GITHUB_REPOSITORY: "" }, "owner/repo"],
     [{ T3CODE_APP_SCHEME: "" }, "T3CODE_APP_SCHEME"],
     [{ T3CODE_APP_SCHEME: "t3code-dev" }, "T3CODE_APP_SCHEME"],
+    [{ T3CODE_APP_NAME: "" }, "T3CODE_APP_NAME"],
+    [{ T3CODE_APP_NAME: "T3 Code" }, "T3CODE_APP_NAME"],
+    [{ T3CODE_APP_NAME: "<b>Fork</b>" }, "T3CODE_APP_NAME"],
   ])("refuses T3-operated config %j", (override, message) => {
     expect(() =>
       loadRepoEnv({ baseEnv: { ...fork, ...override }, repoRoot: makeTemporaryDirectory() }),

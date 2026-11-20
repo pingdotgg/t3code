@@ -7,6 +7,7 @@ import {
   VcsProcessSpawnError,
 } from "@t3tools/contracts";
 import { foldLatinDiacritics, newProjectFolderName } from "@t3tools/shared/path";
+import { IS_STANDALONE_BUILD } from "@t3tools/shared/standalone";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -199,8 +200,7 @@ function namedProjectReadme(name: string): string {
     "",
     `# ${name}`,
     "",
-    "Created in [T3 Code](https://t3.codes).",
-    "",
+    ...(IS_STANDALONE_BUILD ? [] : ["Created in [T3 Code](https://t3.codes).", ""]),
   ].join("\n");
 }
 

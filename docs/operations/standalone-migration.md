@@ -125,11 +125,14 @@ merge threads from two environments. Start the copied installation with another 
 
 ## Publish and update a forked Linux service
 
-Configure the fork's `T3CODE_APP_SCHEME` build value before tagging; use the same scheme for the
-server and client builds. After reviewing and merging a tested commit, push a `vX.Y.Z` tag on that
+Configure the fork's `T3CODE_APP_SCHEME` and `T3CODE_APP_NAME` build values before tagging; use the
+same values for the server and client builds. After reviewing and merging a tested commit, push a `vX.Y.Z` tag on that
 commit. The fork's `fork-release.yml` builds Linux x64 and arm64 CLI archives, smoke-tests them,
-and attaches them with `SHA256SUMS` to a **draft** GitHub Release. Verify the workflow, archive
-names, checksums, and tested commit before publishing the draft. Drafts are invisible to installed
+and attaches them with `SHA256SUMS` to a **draft** GitHub Release, together with the desktop Linux
+AppImages and their `latest-linux*.yml` update feeds. macOS DMG and zip builds and the merged
+`latest-mac.yml` join once the Apple signing secrets are set; until then the workflow skips them,
+because macOS refuses unsigned updates. Verify the workflow, archive names, checksums, and tested
+commit before publishing the draft. Drafts are invisible to installed
 clients; publishing makes the version available. Do not use the official npm package for this
 service.
 
@@ -152,14 +155,15 @@ t3 service install
 t3 service status
 ```
 
-After the first fork release and backup have been verified, put `T3CODE_AUTO_UPDATE=1` in the new
-service's `service.env` and restart it. The service checks published releases on its selected stable
-or nightly channel after five minutes and then hourly. It waits while agents are running, verifies
+A standalone build's background service updates itself by default. Until the first fork release
+and backup have been verified, put `T3CODE_AUTO_UPDATE=0` in the new service's `service.env` and
+restart it; remove the line, or set it to `1`, to turn updates back on. The service checks published
+releases on its selected stable or nightly channel after five minutes and then hourly. It waits while agents are running, verifies
 the archive checksum and database preflight, and tests the new service before keeping it. A failed
 start restores the previous version and database backup; the same failed version is not retried
 automatically. Check the service log and `t3 service status` after publishing the next release.
-To pause automatic updates, remove the setting and restart the service. A foreground `serve`
-process does not use this scheduler.
+To pause automatic updates, set `T3CODE_AUTO_UPDATE=0` and restart the service. A foreground
+`serve` process does not use this scheduler.
 The automatic rollback covers startup failure, not a defect discovered after a healthy start.
 An update also closes open terminals; finish terminal work before publishing a release that the
 service will install.
@@ -174,14 +178,18 @@ an upstream release repository. Use the same switch for server builds. A build m
 switch retains the official defaults. Set `T3CODE_APP_SCHEME` to a lower-case scheme owned by the
 fork; a standalone build rejects the official `t3code` scheme. Changing it gives the desktop a new
 browser-storage origin, so keep drafts and saved connections in mind before replacing an older build.
+Set `T3CODE_APP_NAME` to the fork's product name. The build renames "T3 Code" and the brand's other
+"T3 ..." phrases in the bundles, every locale's catalog, and the desktop and mobile packaging; T3
+Connect, T3 Chat, and the license text keep their names.
 
 - **Web:** host the fork's static app at an HTTPS origin you control. Set
   `T3CODE_HOSTED_APP_URL` (also read as `VITE_HOSTED_APP_URL`) in the build and server only when
   you host it. With no hosted app, clients use direct pairing and native thread links. Leave
   relay, Clerk, and browser tracing values unset for direct-only use.
 - **Desktop:** build and sign the fork's app under an identity you control. Set the fork release
-  repository at build time. Disable automatic updates with `T3CODE_DISABLE_AUTO_UPDATE=true`
-  until your feed is ready, or point the managed `updates.feedUrl` at your feed. The bundled
+  repository at build time; the app then follows that repository's published GitHub releases.
+  `T3CODE_DISABLE_AUTO_UPDATE=true` turns the desktop updater off until your feed is ready, or
+  point the managed `updates.feedUrl` at your feed. It does not affect the background service. The bundled
   server inherits the standalone build's safe telemetry and model-catalog defaults. Verify them
   in the packaged app, not only in a source-run server.
 - **CLI and SSH hosts:** distribute the fork's server/CLI archive with its checksums.

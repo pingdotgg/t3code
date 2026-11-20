@@ -5,6 +5,9 @@ import Security
 import UIKit
 import UniformTypeIdentifiers
 
+let photosPermissionMessage =
+  "Allow \(Bundle.main.object(forInfoDictionaryKey: "T3ProductName") as? String ?? "T3 Code") to add photos in Settings."
+
 @ExpoModule("T3NativeControls")
 public final class T3NativeControlsModule: Module {
   private let presentationSources = T3PresentationSources()
@@ -348,7 +351,7 @@ public final class T3NativeControlsModule: Module {
         promise.reject(NSError(
           domain: "T3NativePhotos",
           code: 1,
-          userInfo: [NSLocalizedDescriptionKey: "Allow T3 Code to add photos in Settings."]
+          userInfo: [NSLocalizedDescriptionKey: photosPermissionMessage]
         ))
         return
       }

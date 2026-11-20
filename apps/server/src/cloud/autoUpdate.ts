@@ -3,6 +3,7 @@ import { cliReleaseChannelOf } from "@t3tools/shared/cliRelease";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -11,6 +12,7 @@ import { resolveMirrorVersion, resolveNewestVersion } from "../cli/update.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { managedUpdateMirror } from "../policy/managedUpdates.ts";
 import { forkParked } from "../serverActivation.ts";
+import { standaloneConfig } from "../standalone.ts";
 import { ServerSelfUpdate } from "./selfUpdate.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
 import { compareExactServiceVersions } from "./serviceProtocol.ts";
@@ -68,16 +70,29 @@ export const autoUpdateCheck = Effect.fn("cloud.auto_update.check")(
   Effect.catchCause((cause) => Effect.logWarning("Automatic update check failed.", { cause })),
 );
 
+/** An explicit setting wins; when unset, standalone builds update themselves and others do not. */
+export const autoUpdateSetting = Config.all({
+  explicit: Config.Boolean(AUTO_UPDATE_ENV).pipe(Config.option),
+  standalone: standaloneConfig,
+}).pipe(
+  Config.map(({ explicit, standalone }) => ({
+    enabled: Option.getOrElse(explicit, () => standalone),
+    explicit: Option.isSome(explicit),
+  })),
+);
+
 /**
- * Opt-in for the background service: moves to the newest published release on this build's channel
+ * For the background service: moves to the newest published release on this build's channel
  * through the same self-update a client starts, so the launcher's trial commits or rolls it back.
  */
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
-    if (!(yield* Config.Boolean(AUTO_UPDATE_ENV).pipe(Config.withDefault(false)))) return;
+    const setting = yield* autoUpdateSetting;
+    if (!setting.enabled) return;
     const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
     const channel = cliReleaseChannelOf(packageJson.version);
     if (!launcher.managed || channel === "preview") {
+      if (!setting.explicit) return;
       yield* Effect.logWarning(
         `${AUTO_UPDATE_ENV} is set but only a stable or nightly background service updates itself.`,
       );

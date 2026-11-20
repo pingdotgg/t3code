@@ -65,3 +65,15 @@ is instead rendered from the same Icon Composer SVG sources by `vp run icons:exp
 
 Rerun the export after changing a layer SVG. `android-icon-mark.png` remains a flat silhouette for
 Android's monochrome themed icon.
+
+## Standalone (EasyDev) artwork
+
+`easydev/` holds the fork's artwork. `T3CODE_STANDALONE=1` points the production and nightly
+entries of `scripts/lib/brand-assets.ts` at it; development keeps the upstream blueprint set.
+
+- `mark.svg`, `wordmark.svg` and `icon.svg` are the masters; the `-small` variants carry the heavier
+  stroke used at 16-32px. `app-icon-small.icon` is picked up by the export for those renditions.
+- `T3CODE_STANDALONE=1 node scripts/export-brand-icons.ts` regenerates the iOS, Linux, Windows and
+  web exports; `vp run icons:export:android` also writes the `easydev/android-*` files.
+- `easydev-macos-1024.png` is a scaled fallback. Replace it with an Icon Composer export of
+  `easydev/app-icon.icon` using the macOS settings above.

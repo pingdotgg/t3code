@@ -1,7 +1,15 @@
 import type { ExpoConfig } from "expo/config";
 
-import { BRAND_ASSET_PATHS } from "../../scripts/lib/brand-assets.ts";
-import { loadRepoEnv, resolveAppScheme } from "../../scripts/lib/public-config.ts";
+import {
+  resolveBrandAssetPaths,
+  STANDALONE_ANDROID_ASSETS,
+} from "../../scripts/lib/brand-assets.ts";
+import {
+  isStandaloneBuild as isRepoStandaloneBuild,
+  loadRepoEnv,
+  resolveAppScheme,
+} from "../../scripts/lib/public-config.ts";
+import { rebrandName, rebrandStrings } from "../../scripts/lib/rebrand.ts";
 
 type AppVariant = "development" | "preview" | "production";
 
@@ -14,7 +22,7 @@ const APP_VARIANT = resolveAppVariant(repoEnv.APP_VARIANT);
 // iOS URL types and Android intent filters claim it; a fork's own keeps official links out.
 const appScheme = resolveAppScheme(repoEnv);
 // Standalone builds use only the fork's own Expo project and hosted app; unset means none.
-const isStandaloneBuild = repoEnv.T3CODE_STANDALONE === "1";
+const isStandaloneBuild = isRepoStandaloneBuild(repoEnv);
 const easProjectId =
   repoEnv.T3CODE_EAS_PROJECT_ID?.trim() ||
   (isStandaloneBuild ? undefined : "d763fcb8-d37c-41ea-a773-b54a0ab4a454");
@@ -43,6 +51,7 @@ const observeEndpointUrl = repoEnv.T3CODE_RELAY_URL?.trim()
   : "https://observe.invalid";
 
 const fromRepoRoot = (relativePath: string) => `../../${relativePath}`;
+const BRAND_ASSET_PATHS = resolveBrandAssetPaths(repoEnv);
 const androidAdaptiveForeground = "./assets/android-icon-foreground.png";
 
 if (
@@ -100,6 +109,19 @@ const RELEASE_ASSETS = {
   androidNotificationColor: "#FFFFFF",
 } as const;
 
+const STANDALONE_ASSETS = {
+  appIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIosIconPng),
+  iosIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIconComposerProject),
+  splashIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIosIconPng),
+  androidAdaptiveForeground: fromRepoRoot(STANDALONE_ANDROID_ASSETS.adaptiveForeground),
+  androidAdaptiveBackgroundColor: STANDALONE_ANDROID_ASSETS.adaptiveBackgroundColor,
+  androidAdaptiveBackgroundImage: fromRepoRoot(STANDALONE_ANDROID_ASSETS.adaptiveBackgroundImage),
+  androidSplashIcon: fromRepoRoot(STANDALONE_ANDROID_ASSETS.splashIcon),
+  androidMonochromeIcon: fromRepoRoot(STANDALONE_ANDROID_ASSETS.monochromeIcon),
+  androidNotificationIcon: fromRepoRoot(STANDALONE_ANDROID_ASSETS.notificationIcon),
+  androidNotificationColor: STANDALONE_ANDROID_ASSETS.notificationColor,
+} as const;
+
 const VARIANT_CONFIG = {
   development: {
     appName: "T3 Code Dev",
@@ -113,14 +135,14 @@ const VARIANT_CONFIG = {
     scheme: `${appScheme}-preview`,
     bundleIdSuffix: ".preview",
     relyingParty: "clerk.t3.codes",
-    assets: PREVIEW_ASSETS,
+    assets: isStandaloneBuild ? STANDALONE_ASSETS : PREVIEW_ASSETS,
   },
   production: {
     appName: "T3 Code",
     scheme: appScheme,
     bundleIdSuffix: "",
     relyingParty: "clerk.t3.codes",
-    assets: RELEASE_ASSETS,
+    assets: isStandaloneBuild ? STANDALONE_ASSETS : RELEASE_ASSETS,
   },
 } as const;
 
@@ -480,6 +502,7 @@ const config: ExpoConfig = {
     ...(!isIosPersonalTeamBuild ? ["./plugins/withWidgetLogoAsset.cjs", widgetsPlugin] : []),
     "./plugins/withAndroidNetworkSecurityConfig.cjs",
     "./plugins/withAndroidGradleHeap.cjs",
+    ...(isStandaloneBuild ? ["./plugins/withStandaloneNotificationMark.cjs"] : []),
     "./plugins/withAndroidInputBackground.cjs",
     "./plugins/withAndroidModernPopupMenu.cjs",
     "./plugins/withAndroidModernAlertDialog.cjs",
@@ -487,6 +510,7 @@ const config: ExpoConfig = {
     // MainActivity mods run in reverse order; extend the tablet-orientation override.
     "./plugins/withAndroidWindowDisplayMetrics.cjs",
     "./plugins/withAndroidTabletOrientation.cjs",
+    ["./plugins/withProductName.cjs", "T3 Code"],
     ...(isIosPersonalTeamBuild ? ["./plugins/withoutIosPersonalTeamCapabilities.cjs"] : []),
   ],
   extra: {
@@ -529,4 +553,6 @@ const config: ExpoConfig = {
   },
 };
 
-export default config;
+const appName = rebrandName(repoEnv);
+
+export default appName ? rebrandStrings(config, appName) : config;

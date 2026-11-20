@@ -1,0 +1,11 @@
+<!-- The EasyDev mark for the Android status bar; copied over the module's T3 mark in standalone builds. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="330" android:viewportHeight="330">
+    <group android:translateX="-90.5" android:translateY="-91">
+        <path android:strokeColor="#FFFFFFFF" android:strokeWidth="30" android:strokeMiterLimit="10"
+            android:pathData="M119.5,232L119.5,178L256,99L391.5,178L391.5,334L352,357Z" />
+        <path android:strokeColor="#FFFFFFFF" android:strokeWidth="30" android:strokeMiterLimit="10"
+            android:pathData="M119.5,282L119.5,334L256,413L302.4,385.9Z" />
+    </group>
+</vector>

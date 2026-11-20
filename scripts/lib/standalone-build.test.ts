@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { standaloneBuildDefine } from "./standalone-build.ts";
+import { standaloneBuildDefine, standaloneWellKnownFiles } from "./standalone-build.ts";
 
 describe("standaloneBuildDefine", () => {
   it("leaves default builds untouched, even in a fork's CI", () => {
@@ -37,4 +37,24 @@ describe("standaloneBuildDefine", () => {
       expect(() => standaloneBuildDefine({ T3CODE_STANDALONE: "true", ...env })).toThrow();
     },
   );
+});
+
+describe("standaloneWellKnownFiles", () => {
+  it("claims the fork's links for the fork's apps only", () => {
+    expect(standaloneWellKnownFiles({ T3CODE_IOS_TEAM_ID: "TEAM" })).toBeNull();
+    const files = standaloneWellKnownFiles({
+      T3CODE_STANDALONE: "1",
+      T3CODE_IOS_TEAM_ID: "TEAM",
+      T3CODE_MOBILE_BUNDLE_ID: "com.fork.app",
+    })!;
+    expect(files[".well-known/assetlinks.json"]).toBeNull();
+    expect(
+      JSON.parse(files[".well-known/apple-app-site-association.json"]!).applinks.details[0].appIDs,
+    ).toEqual(["TEAM.com.fork.app", "TEAM.com.fork.app.preview", "TEAM.com.fork.app.dev"]);
+    expect(
+      standaloneWellKnownFiles({ T3CODE_STANDALONE: "1" })![
+        ".well-known/apple-app-site-association.json"
+      ],
+    ).toBeNull();
+  });
 });

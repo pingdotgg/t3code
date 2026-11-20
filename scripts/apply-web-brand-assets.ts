@@ -6,19 +6,42 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import { Argument, Command, Flag } from "effect/cli";
+import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import {
   resolveWebAssetBrandForChannel,
   resolveWebIconOverrides,
   WEB_ASSET_CHANNELS,
   type WebAssetBrand,
 } from "./lib/brand-assets.ts";
+import { loadRepoEnv } from "./lib/public-config.ts";
+import { rebrandName } from "./lib/rebrand.ts";
 
 const WEB_ASSET_BRANDS = [
   "development",
   "nightly",
   "production",
 ] as const satisfies ReadonlyArray<WebAssetBrand>;
+
+const WebManifestJson = fromJsonStringPretty(Schema.Record(Schema.String, Schema.Unknown));
+const decodeWebManifest = Schema.decodeUnknownEffect(WebManifestJson);
+const encodeWebManifest = Schema.encodeEffect(WebManifestJson);
+
+// Standalone builds name the installable web app after the fork; other builds keep the file as is.
+export const applyStandaloneWebManifest = Effect.fn("applyStandaloneWebManifest")(function* (
+  targetDirectory: string,
+) {
+  const appName = rebrandName(loadRepoEnv());
+  if (!appName) return;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const manifestPath = path.join(targetDirectory, "manifest.webmanifest");
+  if (!(yield* fs.exists(manifestPath))) return;
+  const manifest = yield* decodeWebManifest(yield* fs.readFileString(manifestPath));
+  const contents = yield* encodeWebManifest({ ...manifest, name: appName, short_name: appName });
+  yield* fs.writeFileString(manifestPath, `${contents}\n`);
+});
 
 export const applyWebBrandAssets = Effect.fn("applyWebBrandAssets")(function* (
   brand: WebAssetBrand,
@@ -34,6 +57,7 @@ export const applyWebBrandAssets = Effect.fn("applyWebBrandAssets")(function* (
       fs.copyFile(path.join(repoRoot, override.sourceRelativePath), override.targetRelativePath),
     { concurrency: "unbounded" },
   );
+  yield* applyStandaloneWebManifest(path.resolve(repoRoot, targetDirectory));
 });
 
 export const applyWebBrandAssetsCommand = Command.make(

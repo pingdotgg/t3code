@@ -33,6 +33,7 @@ import {
   parseAntigravityAuthorizationUrl,
   prepareAntigravityProfile,
   resolveAntigravityInstanceDirectories,
+  startAntigravityCliLogin,
 } from "./antigravityAuthSupport.ts";
 
 const authorizationUrl =
@@ -127,6 +128,24 @@ describe("Antigravity process environment", () => {
     ]);
     expect(spawn.env).not.toHaveProperty("ANTIGRAVITY_HARNESS_PATH");
     expect(spawn.env).toMatchObject({ GEMINI_HOME: profile.geminiHome, PATH: "/usr/bin" });
+  });
+
+  it("runs `agy acp --login` and hides the display only from headless profiles", () => {
+    const baseEnv = { PATH: "/usr/bin", DISPLAY: ":0", wayland_display: "wayland-0" };
+    const installation = { executablePath: "/usr/bin/agy", harnessPath: null };
+    const login = buildAntigravityAcpSpawnInput({
+      installation,
+      profile: { ...profile, headless: true },
+      cwd: "/project",
+      baseEnv,
+      login: true,
+    });
+    expect(login.args.slice(0, 3)).toEqual(["acp", "--login", "--gemini-dir"]);
+    expect(login.env).not.toHaveProperty("DISPLAY");
+    expect(login.env).not.toHaveProperty("wayland_display");
+    expect(
+      buildAntigravityAcpSpawnInput({ installation, profile, cwd: "/project", baseEnv }).env,
+    ).toMatchObject({ DISPLAY: ":0", wayland_display: "wayland-0" });
   });
 
   it("passes only the configured method's credential and keeps the GCP pair out of the environment", () => {
@@ -237,7 +256,74 @@ describe("Antigravity process environment", () => {
   );
 });
 
+const cliLoginUrl =
+  "https://accounts.google.com/o/oauth2/auth?response_type=code&client_id=test-client" +
+  "&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&state=cli-state";
+
 describe("Antigravity authorization URL", () => {
+  it.effect("accepts the agy code-page redirect only for `--login`", () =>
+    Effect.gen(function* () {
+      expect(yield* parseAntigravityAuthorizationUrl(cliLoginUrl, { cliLogin: true })).toEqual({
+        authorizationUrl: cliLoginUrl,
+        redirectUri: "https://antigravity.google/oauth-callback",
+        state: "cli-state",
+      });
+      for (const [url, cliLogin] of [
+        [cliLoginUrl, false],
+        [authorizationUrl, true],
+        [cliLoginUrl.replace("antigravity.google", "evil.example"), true],
+      ] as const) {
+        const result = yield* parseAntigravityAuthorizationUrl(url, { cliLogin }).pipe(
+          Effect.result,
+        );
+        expect(Result.isFailure(result)).toBe(true);
+      }
+    }),
+  );
+
+  it.effect("forwards the agy `--login` link and answers its prompt on stdin", () =>
+    Effect.gen(function* () {
+      const written = yield* Deferred.make<string>();
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          expect(command).toMatchObject({ command: "/usr/bin/agy", args: ["acp", "--login"] });
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Deferred.await(written).pipe(
+              Effect.map((input) => ChildProcessSpawner.ExitCode(input === "4/0Ab\n" ? 0 : 1)),
+            ),
+            isRunning: Effect.succeed(true),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.forEach((chunk: Uint8Array) =>
+              Deferred.succeed(written, new TextDecoder().decode(chunk)),
+            ),
+            stdout: Stream.encodeText(
+              Stream.make(
+                "Open this link in a browser to log in with Google:\n",
+                `${cliLoginUrl}\n`,
+                "Then paste the authorization code, or the full URL of the page you land on, and press Enter:\n",
+              ),
+            ),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          });
+        }),
+      );
+      const urls: string[] = [];
+      const login = yield* startAntigravityCliLogin({
+        spawn: { command: "/usr/bin/agy", args: ["acp", "--login"] },
+        onAuthorizationUrl: (url) => Effect.sync(() => void urls.push(url)),
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+      const finished = yield* Effect.forkChild(login.finished);
+      yield* login.submit("4/0Ab");
+      yield* Fiber.join(finished);
+      expect(urls).toEqual([cliLoginUrl]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect(
     "rejects other origins, ambiguous state, and non-loopback redirects without retaining them",
     () =>
