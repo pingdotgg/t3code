@@ -485,12 +485,6 @@ if [ -z "$T3_ARCHIVE_VERSION" ]; then
   printf 'No t3 release version was provided for the remote runtime.\\n' >&2
   exit 1
 fi
-T3_SYSTEM_EXECUTABLE="$(command -v t3 2>/dev/null || true)"
-if [ -n "$T3_SYSTEM_EXECUTABLE" ] && T3_SYSTEM_VERSION="$("$T3_SYSTEM_EXECUTABLE" --version 2>/dev/null)" && [ "$T3_SYSTEM_VERSION" = "t3 v$T3_ARCHIVE_VERSION" ]; then
-  # A matching host-provided runtime supports platforms such as musl Linux,
-  # where the portable release archive cannot run.
-  exec "$T3_SYSTEM_EXECUTABLE" "$@"
-fi
 # Self-contained release archive: no Node, npm, or compiler on the remote.
 # Unpacked into the pinned-runtime layout so \`t3 service install\` reuses it.
 T3_RELEASE_BASE_URL=@@T3_RELEASE_BASE_URL@@
@@ -514,28 +508,27 @@ t3_probe() {
     kill -KILL "$T3_PROBE_PID" 2>/dev/null
   ) >/dev/null 2>&1 &
   T3_PROBE_DOG=$!
-  wait "$T3_PROBE_PID" 2>/dev/null
-  T3_PROBE_RC=$?
-  kill "$T3_PROBE_DOG" 2>/dev/null
-  wait "$T3_PROBE_DOG" 2>/dev/null
+  T3_PROBE_RC=0
+  wait "$T3_PROBE_PID" 2>/dev/null || T3_PROBE_RC=$?
+  kill "$T3_PROBE_DOG" 2>/dev/null || true
+  wait "$T3_PROBE_DOG" 2>/dev/null || true
   cat "$T3_PROBE_OUT"
   rm -f "$T3_PROBE_OUT"
   return "$T3_PROBE_RC"
 }
 # Reuse only an exact-release CLI from the shell or the standard install locations.
-if ! t3_runtime_ready; then
-  for T3_INSTALLED in "$(command -v t3 2>/dev/null || true)" "$HOME/.local/bin/t3" "$HOME/.t3/bin/t3"; do
-    [ -n "$T3_INSTALLED" ] && [ -f "$T3_INSTALLED" ] && [ -x "$T3_INSTALLED" ] || continue
-    T3_INSTALLED_VERSION="$(t3_probe "$T3_INSTALLED" --version 2>/dev/null || true)"
-    case "$T3_INSTALLED_VERSION" in
-      "t3 v$T3_ARCHIVE_VERSION")
-        if t3_probe "$T3_INSTALLED" __ssh-helper --help >/dev/null 2>&1; then
-          exec "$T3_INSTALLED" "$@"
-        fi
-        ;;
-    esac
-  done
-fi
+T3_SYSTEM_EXECUTABLE="$(command -v t3 2>/dev/null || true)"
+for T3_INSTALLED in "$T3_SYSTEM_EXECUTABLE" "$HOME/.local/bin/t3" "$HOME/.t3/bin/t3"; do
+  if [ "$T3_INSTALLED" != "$T3_SYSTEM_EXECUTABLE" ] && t3_runtime_ready; then
+    break
+  fi
+  [ -f "$T3_INSTALLED" ] && [ -x "$T3_INSTALLED" ] || continue
+  if T3_INSTALLED_VERSION="$(t3_probe "$T3_INSTALLED" --version 2>/dev/null)" &&
+    [ "$T3_INSTALLED_VERSION" = "t3 v$T3_ARCHIVE_VERSION" ] &&
+    t3_probe "$T3_INSTALLED" __ssh-helper --help >/dev/null 2>&1; then
+    exec "$T3_INSTALLED" "$@"
+  fi
+done
 if ! t3_runtime_ready; then
   mkdir -p "$HOME/.t3/runtime/versions"
   T3_LOCK="$HOME/.t3/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"

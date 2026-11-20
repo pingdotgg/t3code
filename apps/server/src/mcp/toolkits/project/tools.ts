@@ -130,7 +130,7 @@ const ProjectCloneTool = Tool.make("t3_project_clone", {
 const ThreadLaunchTool = Tool.make("t3_thread_launch", {
   ...shared,
   description:
-    "Create one new top-level thread, bound to its workspace before the agent starts. Task in `message`. Omit `projectId`, model and modes to inherit yours (outside a thread, pass `projectId` or `scratch`); modes cannot exceed yours. After an error or lost reply, retry with the same `clientRequestId`. Follow it with `t3_thread_read` or `t3_thread_wait`. Mention it with its `link`.",
+    "Create one top-level thread, binding workspace before its first turn. Task in message. Inherit project/model/modes if omitted (outside threads give projectId or scratch); modes cannot exceed yours. Retry lost/failed calls with same clientRequestId. Follow via t3_thread_read or t3_thread_wait; cite its link.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     projectId: Schema.optional(ProjectId),
@@ -147,7 +147,7 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
     workspaceStrategy: Schema.optional(
       OrchestrationV2ThreadLaunchWorkspaceStrategy.annotate({
         description:
-          "'worktree': new checkout from `baseRef`. Honor a requested base. Otherwise, independent work uses the default branch as `remote/branch` (e.g. `origin/main`) with `startFromOrigin: true`; with no remote, use the local default branch. Required unpublished commits and dependent or stacked work use their local base with `startFromOrigin: false`. 'existing_worktree': bind `worktreePath`, a project worktree. 'root': project checkout, the default, not your worktree. Uncommitted edits are not copied.",
+          "worktree: new checkout from baseRef. Honor requested base. Else independent work uses remote default (e.g. origin/main), startFromOrigin=true; no remote: local default. For unpublished commits or dependent/stacked work use local base, startFromOrigin=false. existing_worktree binds project's worktreePath. root (default): project checkout, not yours. No uncommitted edits copied.",
       }),
     ),
     message: Schema.optional(

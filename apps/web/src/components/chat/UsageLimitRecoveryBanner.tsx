@@ -162,6 +162,7 @@ function ResetCreditAction({
   environmentId: EnvironmentId;
   input: ProviderConsumeResetCreditInput;
 }) {
+  const gt = useGT();
   const { canManageProviders, confirming, setConfirming, busy, redeem } = useResetCredit(
     environmentId,
     input,
@@ -171,8 +172,8 @@ function ResetCreditAction({
     if (result === undefined) return;
     toastManager.add({
       type: result.reset ? "success" : "error",
-      title: result.reset ? "Usage reset" : "Could not reset usage",
-      description: result.reset ? "Send a message to continue." : result.message,
+      title: result.reset ? m(msg("Usage reset")) : m(msg("Could not reset usage")),
+      description: result.reset ? m(msg("Send a message to continue.")) : result.message,
     });
   }
   return (
@@ -184,7 +185,7 @@ function ResetCreditAction({
           if (readEnvironmentScope(environmentId, AuthProvidersManageScope)) setConfirming(true);
         }}
       >
-        {busy ? "Resetting..." : "Reset usage"}
+        {busy ? gt("Resetting...") : gt("Reset usage")}
       </InlineButton>
       <ResetCreditDialog
         open={confirming}

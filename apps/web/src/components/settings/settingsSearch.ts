@@ -499,7 +499,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "blind-model-evaluations",
-    title: "Blind model evaluations",
+    title: msg("Blind model evaluations"),
     to: "/settings/labs",
     scope: "environment",
     searchTerms: [
@@ -508,7 +508,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "model-evaluation-judge",
-    title: "Judge model",
+    title: msg("Judge model"),
     to: "/settings/labs",
     scope: "environment",
     searchTerms: ["zack blind evaluation evaluate scorer assessor model provider"],
@@ -567,7 +567,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "auto-code-index",
-    title: "Automatic code indexing",
+    title: msg("Automatic code indexing"),
     to: "/settings/labs",
     scope: "environment",
     searchTerms: ["beta code graph index worktree automatic settle cleanup background"],
@@ -892,7 +892,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "assisted-learning",
-    title: "Save facts from finished runs",
+    title: msg("Save facts from finished runs"),
     to: "/settings/labs",
     scope: "project-defaults",
     searchTerms: [
@@ -901,7 +901,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "memory-curation",
-    title: "Curate project memories",
+    title: msg("Curate project memories"),
     to: "/settings/labs",
     scope: "project-defaults",
     searchTerms: [
@@ -910,7 +910,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "conversation-summaries",
-    title: "Summarize older messages",
+    title: msg("Summarize older messages"),
     to: "/settings/labs",
     scope: "project-defaults",
     searchTerms: [
@@ -919,7 +919,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "context-restart",
-    title: "Restart large threads from summaries",
+    title: msg("Restart large threads from summaries"),
     to: "/settings/labs",
     scope: "project-defaults",
     searchTerms: [
@@ -928,7 +928,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "external-history",
-    title: "External history",
+    title: msg("External history"),
     to: "/settings/labs",
     scope: "environment",
     searchTerms: [
@@ -937,7 +937,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "group-conversations",
-    title: "Group conversations",
+    title: msg("Group conversations"),
     to: "/settings/labs",
     scope: "environment",
     searchTerms: [
@@ -1070,13 +1070,13 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "legacy-plan-mode",
-    title: "Plan mode (legacy)",
+    title: msg("Plan mode (legacy)"),
     to: "/settings/labs",
     searchTerms: ["build plan composer old"],
   },
   {
     id: "legacy-context-window-indicator",
-    title: "Context window indicator (legacy)",
+    title: msg("Context window indicator (legacy)"),
     to: "/settings/labs",
     searchTerms: ["composer meter usage tokens circle old"],
   },
@@ -1138,7 +1138,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "inference",
-    title: "Inference accounts",
+    title: msg("Inference accounts"),
     to: "/settings/inference",
     searchTerms: [
       "cliproxyapi tailscale inference route provider host account pools zack labs load balance load balancing failover multiple accounts pool usage limit quota rotate switch claude codex",
@@ -1147,7 +1147,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "provider-account-sync",
-    title: "Sync provider accounts",
+    title: msg("Sync provider accounts"),
     to: "/settings/providers",
     searchTerms: ["copy transfer accounts api keys another device machine environment remote"],
     providerSettingsOnly: true,
@@ -1165,7 +1165,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "skills-library",
-    title: "Skills library",
+    title: msg("Skills library"),
     to: "/settings/labs",
     scope: "environment-defaults",
     searchTerms: [
@@ -1334,7 +1334,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "agent-github-reads",
-    title: "Send agents' GitHub reads through T3",
+    title: msg("Send agents' GitHub reads through T3"),
     to: "/settings/labs",
     scope: "environment-defaults",
     searchTerms: [

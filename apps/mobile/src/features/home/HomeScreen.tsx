@@ -733,8 +733,10 @@ export function HomeScreen(props: HomeScreenProps) {
       props.selectedEnvironmentId === null &&
       v2ScopedProjectGroup === null ? (
       <EmptyState
-        title="No visible threads"
-        detail="Turn off Hide offline environments in Settings → Labs → Zack settings, or choose another filter."
+        title={gt("No visible threads")}
+        detail={gt(
+          "Turn off Hide offline environments in Settings → Labs → Zack settings, or choose another filter.",
+        )}
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
     ) : v2ScopedProjectGroup !== null ? (

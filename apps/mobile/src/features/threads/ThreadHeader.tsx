@@ -51,18 +51,18 @@ export function ThreadHeader(props: {
       ? [
           {
             id: "conversation-summaries",
-            title: "Conversation summaries",
+            title: gt("Conversation summaries"),
             onPress: props.onOpenConversationSummaries,
           },
         ]
       : []),
     ...(props.onOpenProjectMemory
-      ? [{ id: "project-memory", title: "Project memory", onPress: props.onOpenProjectMemory }]
+      ? [{ id: "project-memory", title: gt("Project memory"), onPress: props.onOpenProjectMemory }]
       : []),
   ];
   const threadMenu: AppBarMenu | null =
     threadActions.length > 0
-      ? { title: "Thread actions", icon: "ellipsis", items: threadActions }
+      ? { title: gt("Thread actions"), icon: "ellipsis", items: threadActions }
       : null;
   const menus = [gitMenu, terminalMenu, threadMenu].filter(
     (menu): menu is AppBarMenu => menu !== null,

@@ -1178,7 +1178,7 @@ function OnboardingCodexSetup({
   return mode === "cli" ? (
     <ProviderAuthenticationSection
       environmentId={environmentId}
-      environmentLabel="this environment"
+      environmentLabel={gt("this environment")}
       instanceId={instanceId}
       provider={provider}
       readOnly={!canManageProviders}

@@ -6,7 +6,7 @@ import {
   type UnifiedSettings,
 } from "@t3tools/contracts";
 import { isModelEvaluationJudge } from "@t3tools/client-runtime/modelEvaluations";
-import { useGT } from "gt-react";
+import { msg, useGT, useMessages } from "gt-react";
 
 import { mergeEnvironmentSettings } from "../../hooks/useSettings";
 import {
@@ -22,17 +22,17 @@ import { useEnvironmentProviders, useEnvironments } from "../../state/environmen
 import { useSettingsScope } from "./SettingsScopeContext";
 
 const OPERATION_LABELS: Record<TextGenerationOperation, string> = {
-  generateCommitMessage: "commit messages",
-  generatePrContent: "pull request descriptions",
-  generateBranchName: "branch names",
-  generateThreadTitle: "thread titles",
-  generateReviewGuide: "review guides",
-  generateTranscriptionPostProcessing: "dictation cleanup",
-  generateKnowledgeCandidates: "project knowledge",
-  generateConversationSummary: "conversation summaries",
-  generateModelEvaluation: "model evaluations",
-  checkFactStanding: "project knowledge checks",
-  curateProjectMemory: "project memory curation",
+  generateCommitMessage: msg("commit messages"),
+  generatePrContent: msg("pull request descriptions"),
+  generateBranchName: msg("branch names"),
+  generateThreadTitle: msg("thread titles"),
+  generateReviewGuide: msg("review guides"),
+  generateTranscriptionPostProcessing: msg("dictation cleanup"),
+  generateKnowledgeCandidates: msg("project knowledge"),
+  generateConversationSummary: msg("conversation summaries"),
+  generateModelEvaluation: msg("model evaluations"),
+  checkFactStanding: msg("project knowledge checks"),
+  curateProjectMemory: msg("project memory curation"),
 };
 
 export function useScopedModelDisabledReason(
@@ -41,6 +41,7 @@ export function useScopedModelDisabledReason(
   requiredOperations: readonly TextGenerationOperation[] = [],
 ) {
   const gt = useGT();
+  const messages = useMessages();
   const { targets } = useSettingsScope();
   const { environments } = useEnvironments();
   const providersByEnvironment = useEnvironmentProviders();
@@ -62,7 +63,7 @@ export function useScopedModelDisabledReason(
       const generator = textGeneratorForSelection(candidate.settings, instanceId);
       if (shownGenerator !== undefined || generator !== undefined) {
         if (requiredOperations.includes("generateReviewGuide"))
-          return "Choose a coding agent for this setting.";
+          return gt("Choose a coding agent for this setting.");
         // Only the shown environment's model list is loaded; elsewhere it must reach the same API.
         if (
           !generator?.enabled ||
@@ -94,11 +95,11 @@ export function useScopedModelDisabledReason(
         entry.driverKind !== sourceEntry?.driverKind ||
         !options?.some((option) => option.slug === model && !option.isUnavailable)
       ) {
-        const next =
-          targets.length > 1
-            ? "Select that environment to choose its model separately."
-            : "Choose another model.";
-        return `This model is unavailable on ${environment?.label ?? "a selected environment"}. ${next}`;
+        return targets.length > 1
+          ? unavailable
+          : gt("This model is unavailable on {environment}. Choose another model.", {
+              environment: environment.label,
+            });
       }
       const provider = providers.find((provider) => provider.instanceId === instanceId);
       const unsupported = requiredOperations.find((operation) =>
@@ -107,7 +108,10 @@ export function useScopedModelDisabledReason(
           : provider !== undefined && !isProviderTextGenerationCapable(provider, operation),
       );
       if (unsupported) {
-        return `This provider cannot generate ${OPERATION_LABELS[unsupported]} on ${environment.label}. Choose another provider for this setting.`;
+        return gt(
+          "This provider cannot generate {operation} on {environment}. Choose another provider for this setting.",
+          { operation: messages(OPERATION_LABELS[unsupported]), environment: environment.label },
+        );
       }
     }
     return null;

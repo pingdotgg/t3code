@@ -36,7 +36,7 @@ export const KnowledgeToolkit = Toolkit.make(
   Tool.make("t3_knowledge_search", {
     ...shared,
     description:
-      "Use when a task depends on prior project decisions, conventions, constraints, or agent observations. Thread agents can access only their current project's memory on their current environment. Directly connected outside clients can select a project with t3_project_list and t3_project_read. Read returned message citations with t3_knowledge_read_source in that same environment before relying on them. Facts use holographic and lexical ranking. Unavailable ranking is explicit. Superseded and set-aside facts are excluded unless includeSuperseded or includeSetAside is explicitly set for inspection. Reuse requestId for retries so retrieval is counted once.",
+      "Find prior project decisions, conventions, constraints or observations. Thread agents access only their project on this environment. Outside clients select via t3_project_list and t3_project_read. Verify message citations locally with t3_knowledge_read_source. Holographic and lexical ranking; reports when unavailable. Only include superseded/set-aside facts with includeSuperseded/includeSetAside for inspection. Reuse requestId on retry to count once.",
     parameters: Schema.Struct({
       ...ProjectKnowledgeSearchInput.fields,
       environmentId: OrchestratorMcpEnvironmentTarget,
@@ -48,7 +48,7 @@ export const KnowledgeToolkit = Toolkit.make(
   Tool.make("t3_knowledge_list", {
     ...shared,
     description:
-      "List facts within the calling project, or an explicitly selected project for an outside client. Set-aside facts are excluded unless verdict is set_aside. Forgotten facts are listed when requested. Superseded facts are excluded unless includeSuperseded is set; sourceState unavailable lists only facts whose citations no longer resolve. This works independently of the retrieval kernel.",
+      "List this project's facts (outside clients select a project), independent of retrieval ranking. verdict=set_aside includes set-aside facts; status=forgotten lists forgotten facts. includeSuperseded includes superseded facts; sourceState=unavailable selects broken citations.",
     parameters: Schema.Struct({
       ...ProjectKnowledgeListInput.fields,
       environmentId: OrchestratorMcpEnvironmentTarget,
@@ -60,7 +60,7 @@ export const KnowledgeToolkit = Toolkit.make(
   Tool.make("t3_knowledge_read_fact", {
     ...shared,
     description:
-      "Read one project fact with its recent revision, feedback and supersession history, linked superseding facts, and possible duplicates or conflicts found by lexical similarity.",
+      "Read a fact, recent revisions, feedback and supersession history, linked replacements and lexical duplicate/conflict hints.",
     parameters: Schema.Struct({
       ...ProjectKnowledgeReadFactInput.fields,
       environmentId: OrchestratorMcpEnvironmentTarget,
@@ -72,7 +72,7 @@ export const KnowledgeToolkit = Toolkit.make(
   Tool.make("t3_knowledge_status", {
     ...shared,
     description:
-      "Summarize project memory health: fact counts by status, trust bands, facts below the default recall threshold, retrieval and feedback totals, and facts whose sources are unavailable.",
+      "Project memory health: counts by status/trust, facts below recall threshold, retrieval/feedback totals and unavailable sources.",
     parameters: Schema.Struct({
       ...ProjectKnowledgeStatusInput.fields,
       environmentId: OrchestratorMcpEnvironmentTarget,
@@ -109,7 +109,7 @@ export const KnowledgeToolkit = Toolkit.make(
     ...shared,
     description:
       MEMORY_WRITING_RULES.join(" ") +
-      " Search for an existing fact before adding or correcting one. Create or edit project knowledge, supersede a fact with a replacement, forget a fact, or give trust feedback. Create, edit and supersede require content, kind, entities, tags and sources (arrays may be empty); create also needs a new factId. When a fact comes from a conversation message, attach that exact message citation. Leave sources empty only for an agent observation with no message source; its origin is recorded from this authenticated caller. Facts are saved immediately. Search finds them, and related ones are sent with later user messages. Saving records a claim with its origin, not proof that it is true. Agents cannot claim direct user assertions. Reuse commandId when retrying. Updates require the current revision. Supersede creates replacementFactId and keeps the old fact's content but removes it from recall; prefer it over forget when knowledge changed. Created, edited and replacement facts return hints naming possible duplicates or conflicts to review. Restoring a set-aside or superseded fact to recall requires a direct user action; agents cannot restore it. Forgotten facts cannot be restored.",
+      " Search before adding/correcting. Create/edit/supersede require content, kind, entities, tags and sources (arrays may be empty); create needs a fresh factId. Cite the exact source message; only unsourced agent observations may omit citations (caller origin is recorded). Agents cannot claim direct user assertions. Saves immediately; facts are searchable and related ones appear with later user messages. Origin is not proof. Retry with the same commandId; updates need current revision. Prefer supersede to forget for changed facts: replacementFactId preserves the old content but excludes it from recall. Writes return duplicate/conflict hints. Users alone may restore set-aside or superseded facts; forgotten ones are irrecoverable. Use feedback for trust.",
     parameters: Schema.Struct({
       mutation: ProjectKnowledgeMutation,
       environmentId: OrchestratorMcpEnvironmentTarget,

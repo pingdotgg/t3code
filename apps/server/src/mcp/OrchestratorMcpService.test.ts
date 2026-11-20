@@ -2776,6 +2776,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     Effect.gen(function* () {
       const opencodeInstanceId = ProviderInstanceId.make("opencode");
       const workspaceRoot = "/work/uni";
+      let scanned = false;
       const model = "uni/medium-local";
       const coolingDown = "uni/cooling-down-local";
       const machineModels = [
@@ -2824,6 +2825,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           hasReceipt: () => Effect.succeed(false),
           assertProviderInstanceEnabled: () => Effect.void,
+          isProviderInstanceEnabledForProject: () => Effect.succeed(true),
           getThreadRecords: (threadId) =>
             Effect.succeed(
               threadId === parentThreadId
@@ -2843,9 +2845,15 @@ describe("OrchestratorMcpService provider resolution", () => {
           providerInstances: { [opencodeInstanceId]: { driver: "opencode", enabled: true } },
         }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
-          getProviders: Effect.succeed([opencode]),
+          getProviders: Effect.sync(() => [
+            scanned ? opencode : { ...opencode, workspaceSnapshots: [] },
+          ]),
           refreshInstance: () => Effect.succeed([opencode]),
-          refreshWorkspaceSnapshot: () => Effect.succeed([opencode]),
+          refreshWorkspaceSnapshot: () =>
+            Effect.sync(() => {
+              scanned = true;
+              return [opencode];
+            }),
         }),
         adapterRegistryLayer([opencodeInstanceId]),
         Layer.mock(ProjectService.ProjectService)({
@@ -2858,6 +2866,17 @@ describe("OrchestratorMcpService provider resolution", () => {
       );
       yield* Effect.gen(function* () {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const result = yield* service.delegateTask(scope, {
+          task: "Review the change.",
+          target: { driverKind: opencode.driver, model },
+          mode: "async",
+          clientRequestId: "folder-scoped-model",
+        });
+        assert.equal(result.model, model);
+        assert.deepEqual((commands[0] as { modelSelection: unknown }).modelSelection, {
+          instanceId: opencodeInstanceId,
+          model,
+        });
         const capabilities = yield* service.capabilities(scope, { search: "local" });
         assert.deepEqual(
           capabilities.providers
@@ -2874,18 +2893,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           })
           .pipe(Effect.flip);
         assert.equal(unavailable.code, "model_unavailable");
-        assert.deepEqual(commands, []);
-        const result = yield* service.delegateTask(scope, {
-          task: "Review the change.",
-          target: { providerInstanceId: opencodeInstanceId, model },
-          mode: "async",
-          clientRequestId: "folder-scoped-model",
-        });
-        assert.equal(result.model, model);
-        assert.deepEqual((commands[0] as { modelSelection: unknown }).modelSelection, {
-          instanceId: opencodeInstanceId,
-          model,
-        });
+        assert.lengthOf(commands, 1);
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
     }),
   );

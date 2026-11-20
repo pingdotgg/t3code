@@ -1,9 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { skillsLibraryIssueSummary } from "@t3tools/client-runtime/skills-library-issues";
 import { SkillsLibraryIssuesDialog } from "./SkillsLibraryIssuesDialog";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
-import { useGT } from "gt-react";
+import { T, useGT } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 
 import { useEnvironmentQuery } from "../../state/query";
@@ -81,25 +80,43 @@ function SkillsLibraryRow({
 
   const setting = useSearchableSetting();
   const searchable = setting("skills-library");
-  const issueSummary = status.data ? skillsLibraryIssueSummary(status.data) : null;
+  const conflicts = status.data?.conflicts.length ?? 0;
+  const mismatches = status.data?.nameMismatches.length ?? 0;
+  const issueSummary = [
+    conflicts > 0
+      ? gt("{count, plural, one {{count} conflict} other {{count} conflicts}}", {
+          count: conflicts,
+        })
+      : null,
+    mismatches > 0
+      ? gt("{count, plural, one {{count} name mismatch} other {{count} name mismatches}}", {
+          count: mismatches,
+        })
+      : null,
+  ]
+    .filter((part) => part !== null)
+    .join(" · ");
+  const title = label ? gt("Skills library on {label}", { label }) : searchable.title;
   return (
     <SettingsRow
       serverScoped
       settingKeys={["skillsLibraryEnabled"]}
       {...(isSearchTarget ? { id: searchable.id } : {})}
-      title={label ? `${searchable.title} on ${label}` : searchable.title}
-      description="Share skills across providers and accounts on this environment. Turning it off restores separate skill folders."
+      title={title}
+      description={gt(
+        "Share skills across providers and accounts on this environment. Turning it off restores separate skill folders.",
+      )}
       status={
         <>
           {issueSummary ? (
             <Button size="xs" variant="outline" onClick={() => setShowIssues(true)}>
-              Review {issueSummary}
+              {gt("Review {issueSummary}", { issueSummary })}
             </Button>
           ) : null}
           {showIssues && status.data ? (
             <SkillsLibraryIssuesDialog
               status={status.data}
-              environmentLabel={label ?? "This environment"}
+              environmentLabel={label ?? gt("This environment")}
               onClose={() => setShowIssues(false)}
             />
           ) : null}
@@ -126,7 +143,7 @@ function SkillsLibraryRow({
               disabled={refreshing}
               onClick={() => void refresh()}
             >
-              Refresh
+              <T>Refresh</T>
             </Button>
           ) : null}
           <ScopedSwitch
@@ -135,7 +152,7 @@ function SkillsLibraryRow({
             onCheckedChange={(checked) =>
               updateSettings({ skillsLibraryEnabled: Boolean(checked) })
             }
-            aria-label={label ? `Skills library on ${label}` : "Skills library"}
+            aria-label={title}
           />
         </>
       }

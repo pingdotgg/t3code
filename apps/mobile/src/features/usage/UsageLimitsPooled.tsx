@@ -719,14 +719,14 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
             </View>
             {account.instances.length > 1 ? (
               <View className="gap-2 rounded-[24px] border-continuous bg-grouped-card p-4">
-                <Text className="text-sm font-t3-medium text-foreground">Signed in on</Text>
+                <Text className="text-sm font-t3-medium text-foreground">{gt("Signed in on")}</Text>
                 <Text className="text-sm text-foreground-muted">
                   {[...new Set(account.instances.map((instance) => instance.displayName))].join(
                     ", ",
                   )}
                 </Text>
                 <Text className="text-sm text-foreground-muted">
-                  One login, one quota: these instances share this limit.
+                  <T>One login, one quota: these instances share this limit.</T>
                 </Text>
               </View>
             ) : null}

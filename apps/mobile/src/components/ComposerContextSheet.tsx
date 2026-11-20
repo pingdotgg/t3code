@@ -101,6 +101,7 @@ function DeliveredProjectKnowledge(props: {
   readonly record: ProjectKnowledgeContextRecord;
   readonly sent: { readonly threadId: ThreadId; readonly messageId: MessageId };
 }) {
+  const gt = useGT();
   const config = useAtomValue(
     serverEnvironment.configValueAtom(props.record.knowledge.environmentId),
   );
@@ -118,21 +119,27 @@ function DeliveredProjectKnowledge(props: {
     : null;
   if (!supportsDeliveries)
     return (
-      <Text className="text-sm text-foreground-muted">This server can't show what was sent</Text>
+      <Text className="text-sm text-foreground-muted">
+        <T>This server can't show what was sent</T>
+      </Text>
     );
   if (query.error) return <Text className="text-sm text-foreground-muted">{query.error}</Text>;
   if (query.data === null)
-    return <Text className="text-sm text-foreground-muted">Reading delivery record…</Text>;
+    return (
+      <Text className="text-sm text-foreground-muted">
+        <T>Reading delivery record…</T>
+      </Text>
+    );
   if (snapshot === null)
     return (
       <Text className="text-sm text-foreground-muted">
-        No delivery was recorded for this reference.
+        <T>No delivery was recorded for this reference.</T>
       </Text>
     );
   return (
     <View className="gap-2">
       <Text className="text-sm text-foreground-muted">
-        The copy T3 delivered with this message. It does not show whether the agent used it.
+        <T>The copy T3 delivered with this message. It does not show whether the agent used it.</T>
       </Text>
       {deliveredKnowledgeNotes(snapshot).map((note) => (
         <Text key={note} className="text-sm text-foreground-muted">
@@ -141,10 +148,12 @@ function DeliveredProjectKnowledge(props: {
       ))}
       {snapshot.omission ? (
         <Text className="text-sm text-foreground">
-          Not sent: {KNOWLEDGE_DELIVERY_OMISSION_LABEL[snapshot.omission.reason]}
+          {gt("Not sent: {reason}", {
+            reason: KNOWLEDGE_DELIVERY_OMISSION_LABEL[snapshot.omission.reason],
+          })}
         </Text>
       ) : snapshot.item.contentRemoved ? null : (
-        <ContextField label="As sent" value={snapshot.item.text} code />
+        <ContextField label={gt("As sent")} value={snapshot.item.text} code />
       )}
     </View>
   );
@@ -458,17 +467,23 @@ export function ComposerContextSheet(props: {
             ) : null}
             {record.kind === "project-knowledge" ? (
               <View className="gap-2">
-                <ContextField label="Project" value={record.knowledge.projectId} code />
-                <ContextField label="Environment" value={record.knowledge.environmentId} code />
+                <ContextField label={gt("Project")} value={record.knowledge.projectId} code />
                 <ContextField
-                  label="Selected evidence"
-                  value={`${record.knowledge.selections.length} reference${record.knowledge.selections.length === 1 ? "" : "s"}`}
+                  label={gt("Environment")}
+                  value={record.knowledge.environmentId}
+                  code
+                />
+                <ContextField
+                  label={gt("Selected evidence")}
+                  value={gt("{count, plural, one {{count} reference} other {{count} references}}", {
+                    count: record.knowledge.selections.length,
+                  })}
                 />
                 {props.sent && "knowledge" in record ? (
                   <DeliveredProjectKnowledge record={record} sent={props.sent} />
                 ) : (
                   <Text className="text-sm text-foreground-muted">
-                    The current evidence is loaded when this message is sent.
+                    <T>The current evidence is loaded when this message is sent.</T>
                   </Text>
                 )}
               </View>

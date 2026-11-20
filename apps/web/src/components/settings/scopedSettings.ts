@@ -28,7 +28,7 @@ import * as Cause from "effect/Cause";
 import { Atom } from "effect/reactivity";
 import { msg } from "gt-react";
 
-import { m } from "../../i18n/messages";
+import { m, type MessageResolver } from "../../i18n/messages";
 
 import type { ResolvedSettingsScope } from "./settingsScope";
 
@@ -216,6 +216,7 @@ export function scopedSettingsAreMixed(
 
 export function scopedAssistedLearningUnavailableReason(
   environments: readonly Pick<ScopedSettingsEnvironment, "label" | "serverConfig">[],
+  resolve: MessageResolver = m,
 ): string | null {
   const unsupported = environments.filter(
     (environment) =>
@@ -224,12 +225,23 @@ export function scopedAssistedLearningUnavailableReason(
   if (unsupported.length === 0) return null;
   const labels = unsupported.map((environment) => environment.label).join(", ");
   return unsupported.length < environments.length
-    ? `Automatic memory is supported on only some selected environments. Update T3 Code on ${labels}, or select a supported environment.`
-    : `Automatic memory is not supported on ${labels}. Update T3 Code on ${unsupported.length === 1 ? "that environment" : "those environments"}.`;
+    ? resolve(
+        msg(
+          "Automatic memory is supported on only some selected environments. Update T3 Code on {labels}, or select a supported environment.",
+        ),
+        { labels },
+      )
+    : resolve(
+        msg(
+          "{count, plural, =1 {Automatic memory is not supported on {labels}. Update T3 Code on that environment.} other {Automatic memory is not supported on {labels}. Update T3 Code on those environments.}}",
+        ),
+        { count: unsupported.length, labels },
+      );
 }
 
 export function scopedMemoryCurationUnavailableReason(
   environments: readonly Pick<ScopedSettingsEnvironment, "label" | "serverConfig">[],
+  resolve: MessageResolver = m,
 ): string | null {
   const unsupported = environments.filter(
     (environment) =>
@@ -237,7 +249,9 @@ export function scopedMemoryCurationUnavailableReason(
   );
   return unsupported.length === 0
     ? null
-    : `Memory curation needs a newer T3 Code server on ${unsupported.map((environment) => environment.label).join(", ")}.`;
+    : resolve(msg("Memory curation needs a newer T3 Code server on {labels}."), {
+        labels: unsupported.map((environment) => environment.label).join(", "),
+      });
 }
 
 /**

@@ -309,7 +309,7 @@ export function formatDesktopSshConnectionError(
 ): string {
   const fallback = resolve(msg("Failed to connect SSH host."));
   const rawMessage =
-    error instanceof Error ? (thrownErrorMessage(error, m) ?? error.message) : fallback;
+    error instanceof Error ? (thrownErrorMessage(error, resolve) ?? error.message) : fallback;
   const withoutIpcPrefix = rawMessage.replace(
     /^Error invoking remote method 'desktop:ensure-ssh-environment':\s*/u,
     "",
@@ -317,7 +317,11 @@ export function formatDesktopSshConnectionError(
   const withoutTaggedErrorPrefix = withoutIpcPrefix.replace(/^Ssh[A-Za-z]+Error:\s*/u, "");
   const message = withoutTaggedErrorPrefix.trim() || fallback;
   return /no route to host|network is unreachable|operation not permitted/iu.test(message)
-    ? `${message} On macOS, check System Settings > Privacy & Security > Local Network and allow T3 Code, then retry. Also check that the host is awake and on the same network.`
+    ? `${message} ${resolve(
+        msg(
+          "On macOS, check System Settings > Privacy & Security > Local Network and allow T3 Code, then retry. Also check that the host is awake and on the same network.",
+        ),
+      )}`
     : message;
 }
 

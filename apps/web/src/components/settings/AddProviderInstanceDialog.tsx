@@ -13,7 +13,7 @@ import {
 import { Link } from "@tanstack/react-router";
 import { useServerConfigs } from "../../state/entities";
 import { useState } from "react";
-import { T, useGT, useMessages, Var } from "gt-react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import {
   deriveAvailableInstanceId,
   deriveInstanceId,
@@ -83,13 +83,14 @@ import { useEnableInferenceRouting } from "./useEnableInferenceRouting";
 
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
 const TRAEX_BRIDGE_PRESET = "traexBridge";
+const TRAEX_LABEL = "Traex";
 const ACP_REGISTRY_DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
 const DEFAULT_DRIVER_OPTION = providerClients.definitions[0]!;
 const PROVIDER_OPTIONS = [
   ...providerClients.definitions
     .filter((option) => option.driverKind !== ACP_REGISTRY_DRIVER_KIND)
     .map((option) => ({ ...option, value: option.driverKind })),
-  { ...DEFAULT_DRIVER_OPTION, value: TRAEX_BRIDGE_PRESET, label: "Traex" },
+  { ...DEFAULT_DRIVER_OPTION, value: TRAEX_BRIDGE_PRESET, label: TRAEX_LABEL },
 ];
 const FEATURED_PROVIDER_OPTIONS = PROVIDER_OPTIONS.filter((option) => option.featured !== false);
 const MORE_PROVIDER_OPTIONS = PROVIDER_OPTIONS.filter((option) => option.featured === false);
@@ -149,22 +150,22 @@ function ProviderOptionGrid({
 type ConnectionChoice = "inference" | "existing" | "managed";
 const inferenceConnection = {
   value: "inference",
-  label: "Use inference accounts",
-  description: "Use accounts hosted on this environment or a paired machine.",
+  label: msg("Use inference accounts"),
+  description: msg("Use accounts hosted on this environment or a paired machine."),
   icon: NetworkIcon,
 } as const;
 const CODEX_CONNECTION_OPTIONS = [
   inferenceConnection,
   {
     value: "existing",
-    label: "Use existing Codex CLI",
-    description: "Use the CLI account and settings on this environment.",
+    label: msg("Use existing Codex CLI"),
+    description: msg("Use the CLI account and settings on this environment."),
     icon: HardDriveIcon,
   },
   {
     value: "managed",
-    label: "Use ChatGPT sharing",
-    description: "Use your ChatGPT plan. Some Codex features are unavailable.",
+    label: msg("Use ChatGPT sharing"),
+    description: msg("Use your ChatGPT plan. Some Codex features are unavailable."),
     icon: MessageCircleIcon,
   },
 ] as const;
@@ -174,8 +175,8 @@ const CONNECTION_OPTIONS = {
     inferenceConnection,
     {
       value: "existing",
-      label: "Use existing Claude Code",
-      description: "Use the CLI account and settings on this environment.",
+      label: msg("Use existing Claude Code"),
+      description: msg("Use the CLI account and settings on this environment."),
       icon: HardDriveIcon,
     },
   ],
@@ -287,7 +288,7 @@ export function AddProviderInstanceDialog({
   const registry = useAcpRegistrySearch(environmentId, showRegistrySearch);
   const isPreparingRegistryAgent = registry.preparingId !== null;
   const defaultIdentity: ProviderIdentityDraft = {
-    label: selection === TRAEX_BRIDGE_PRESET ? "Traex" : driverOption.label,
+    label: selection === TRAEX_BRIDGE_PRESET ? TRAEX_LABEL : driverOption.label,
     accentColor: "",
     instanceIdOverride: null,
   };
@@ -553,11 +554,11 @@ export function AddProviderInstanceDialog({
       <Dialog open={open} onOpenChange={onOpenChange}>
         <WizardPopup>
           <WizardHeader
-            title={`Add ${driverOption.label} account`}
+            title={gt("Add {provider} account", { provider: driverOption.label })}
             description={
               routedHost
-                ? `Using ${routedHost.label} for inference.`
-                : "CLIProxyAPI manages accounts on the inference host."
+                ? gt("Using {host} for inference.", { host: routedHost.label })
+                : gt("CLIProxyAPI manages accounts on the inference host.")
             }
           />
           <WizardPanel>
@@ -576,10 +577,10 @@ export function AddProviderInstanceDialog({
                 setProviderView("catalog");
               }}
             >
-              Back
+              <T>Back</T>
             </Button>
             <Button size="sm" onClick={() => onOpenChange(false)}>
-              Done
+              <T>Done</T>
             </Button>
           </WizardFooter>
         </WizardPopup>
@@ -681,7 +682,7 @@ export function AddProviderInstanceDialog({
                     id="add-provider-connection-label"
                     className="text-sm font-medium text-foreground"
                   >
-                    Connection method
+                    <T>Connection method</T>
                   </div>
                   <RadioGroup
                     disabled={inference.pending}
@@ -701,16 +702,16 @@ export function AddProviderInstanceDialog({
                           <RadioPrimitive.Root
                             key={option.value}
                             value={option.value}
-                            aria-label={`${option.label}. ${option.description}`}
+                            aria-label={`${m(option.label)}. ${m(option.description)}`}
                             className="flex min-w-0 cursor-pointer items-center gap-3 rounded-lg bg-card px-3 py-2.5 text-left outline-none ring-1 ring-black/5 hover:bg-muted focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-checked:bg-primary/8 data-checked:ring-2 data-checked:ring-inset data-checked:ring-primary dark:bg-white/3 dark:ring-white/5 dark:hover:bg-white/5 dark:data-checked:bg-primary/15 dark:data-checked:ring-primary"
                           >
                             <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
                             <span className="min-w-0 flex-1">
                               <span className="block truncate text-sm font-medium text-foreground">
-                                {option.label}
+                                {m(option.label)}
                               </span>
                               <span className="block text-xs text-muted-foreground">
-                                {option.description}
+                                {m(option.description)}
                               </span>
                             </span>
                             <span aria-hidden className="size-4.5 shrink-0">
@@ -738,7 +739,7 @@ export function AddProviderInstanceDialog({
                       <div className="flex flex-wrap items-center gap-2">
                         {!localSetup && (
                           <Button size="sm" variant="outline" onClick={() => setLocalSetup(true)}>
-                            Set up accounts here
+                            <T>Set up accounts here</T>
                           </Button>
                         )}
                         <Link
@@ -747,7 +748,7 @@ export function AddProviderInstanceDialog({
                           search={{ machine: environmentId }}
                           onClick={() => onOpenChange(false)}
                         >
-                          Choose another host
+                          <T>Choose another host</T>
                         </Link>
                       </div>
                     </div>

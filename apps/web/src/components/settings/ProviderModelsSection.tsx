@@ -585,7 +585,9 @@ const ProviderModelRow = memo(function ProviderModelRow({
           </span>
         ) : null}
         {model.isUnavailable ? (
-          <span className="shrink-0 text-2xs text-muted-foreground/70">Unavailable</span>
+          <span className="shrink-0 text-2xs text-muted-foreground/70">
+            <T context="badge on a model that cannot be selected">Unavailable</T>
+          </span>
         ) : null}
       </span>
       <span className="text-2xs text-muted-foreground/70">

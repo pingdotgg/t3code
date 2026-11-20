@@ -54,7 +54,7 @@ import * as Duration from "effect/Duration";
 import * as Result from "effect/Result";
 import { PlusIcon } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
-import { msg, T, useGT, useMessages, Var } from "gt-react";
+import { msg, T, useGT, useLocale, useMessages, Var } from "gt-react";
 import { m as resolveNow, type MessageResolver } from "../../i18n/messages";
 
 import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
@@ -151,9 +151,6 @@ import {
   resolveRemoteOperateAccess,
   resolveSelectedProviderEnvironmentId,
 } from "./ProviderSettingsPanel.logic";
-
-const formatList = (names: ReadonlyArray<string>) =>
-  new Intl.ListFormat("en", { type: "conjunction" }).format(names);
 
 function providerInstanceName(instance: ProviderInstanceConfig): string {
   return (
@@ -1662,6 +1659,8 @@ function InferenceProxySetting({
   readonly hiddenNames: ReadonlyArray<string>;
   readonly disabled: boolean;
 }) {
+  const gt = useGT();
+  const locale = useLocale();
   const route = isInferenceProviderConfig(config) ? config : null;
   const managedPolicy = useManagedPolicy(environmentId);
   const locked = isManagedSettingPath(
@@ -1687,32 +1686,44 @@ function InferenceProxySetting({
   }
   const host = accountHostId === environmentId ? environmentLabel : route?.inferenceHostLabel;
   const accountBehavior = !INFERENCE_HARNESSES[driver].replacesAccounts
-    ? "Its own logins keep working."
+    ? gt("Its own logins keep working.")
     : hiddenNames.length > 0
-      ? `${formatList(hiddenNames)} ${hiddenNames.length === 1 ? "is" : "are"} hidden while the proxy is on and return${hiddenNames.length === 1 ? "s" : ""} when you turn it off.`
-      : "Your standalone CLI keeps its own settings.";
+      ? gt(
+          "{count, plural, one {{names} is hidden while the proxy is on and returns when you turn it off.} other {{names} are hidden while the proxy is on and return when you turn it off.}}",
+          {
+            count: hiddenNames.length,
+            names: new Intl.ListFormat(locale, { type: "conjunction" }).format(hiddenNames),
+          },
+        )
+      : gt("Your standalone CLI keeps its own settings.");
 
   return (
     <>
       <SettingsRow
-        title="Inference routing"
+        title={gt("Inference routing")}
         description={
-          usingProxy
-            ? route
-              ? `Using ${host || "the inference host"} for inference via the CLI proxy. ${accountBehavior}`
-              : "This inference route is incomplete. Turn it off to use the native provider."
-            : `Use the CLI proxy on this environment or a paired host. ${accountBehavior}`
+          usingProxy && !route
+            ? gt("This inference route is incomplete. Turn it off to use the native provider.")
+            : `${
+                usingProxy
+                  ? host
+                    ? gt("Using {host} for inference via the CLI proxy.", { host })
+                    : gt("Using the inference host for inference via the CLI proxy.")
+                  : gt("Use the CLI proxy on this environment or a paired host.")
+              } ${accountBehavior}`
         }
         status={
           pending ? (
-            <span role="status">Connecting to an inference host…</span>
+            <span role="status">
+              <T>Connecting to an inference host…</T>
+            </span>
           ) : !usingProxy && error ? (
             <>
               <span role="status">{error}</span>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 {!localSetup && (
                   <Button size="sm" variant="outline" onClick={() => setLocalSetup(true)}>
-                    Set up accounts here
+                    <T>Set up accounts here</T>
                   </Button>
                 )}
                 <Link
@@ -1720,7 +1731,7 @@ function InferenceProxySetting({
                   to="/settings/inference"
                   search={{ machine: environmentId }}
                 >
-                  Choose another host
+                  <T>Choose another host</T>
                 </Link>
               </div>
             </>
@@ -1730,7 +1741,7 @@ function InferenceProxySetting({
         }
         control={
           <Switch
-            aria-label="Inference routing"
+            aria-label={gt("Inference routing")}
             checked={usingProxy}
             disabled={
               disabled || locked || (usingProxy ? !canManage : !canConnect) || pending || disabling

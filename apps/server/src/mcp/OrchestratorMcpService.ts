@@ -1581,7 +1581,40 @@ const make = Effect.gen(function* () {
       ...input,
       providers: withWorkspaceModels(input.providers, input.cwd),
     });
-    if (instanceId === undefined) return resolved;
+    if (instanceId === undefined) {
+      const cwd = input.cwd;
+      if (cwd === undefined || input.target?.model === undefined) return resolved;
+      return resolved.pipe(
+        Effect.catchIf(
+          (error) => error.code === "model_unavailable",
+          (error) =>
+            Effect.gen(function* () {
+              const candidates = input.providers.filter(
+                (provider) => provider.enabled && provider.driver === input.target?.driverKind,
+              );
+              const eligible = yield* Effect.filter(candidates, (provider) =>
+                threadManagement.isProviderInstanceEnabledForProject({
+                  projectId: input.parent.thread.projectId,
+                  instanceId: provider.instanceId,
+                }),
+              );
+              if (eligible.length === 0) return yield* error;
+              yield* Effect.forEach(
+                eligible,
+                (provider) => scanWorkspace(provider.instanceId, cwd),
+                {
+                  concurrency: 4,
+                  discard: true,
+                },
+              );
+              return yield* resolveTarget({
+                ...input,
+                providers: withWorkspaceModels(yield* loadProviders, cwd),
+              });
+            }),
+        ),
+      );
+    }
     return resolved.pipe(
       Effect.catchIf(
         (error) => error.code === "provider_unavailable" || error.code === "model_unavailable",

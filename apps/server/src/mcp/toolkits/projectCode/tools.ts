@@ -23,7 +23,7 @@ export const ProjectCodeToolkit = Toolkit.make(
       McpInvocationContext.McpInvocationContext,
     ],
     description:
-      "Query the registered project's multilingual code graph for symbol, caller, callee, reference, dependency, or impact questions before broad repository-reading loops. Resolve projectId with t3_project_list and t3_project_read. Pass threadId when querying that thread's registered worktree. Supports bounded search, symbol lookup, callers, callees, references, dependencies, impact, tests (usages walked to test files), affected (changed declarations in a file with their callers and reaching tests), index status, and freshness (compares the existing index to the checkout without indexing). Results include source digests, coverage, unresolved references, and edge evidence grades. Relations may be static candidates rather than compiler-resolved facts; inspect source when coverage is partial or stale, a selection is ambiguous, or evidence is heuristic. Project and optional thread IDs select an enrolled project and its exact registered worktree.",
+      "Query the project's multilingual code graph before broad reads. Resolve projectId with t3_project_list and t3_project_read; threadId selects its registered worktree. Operations: bounded search, symbols, callers/callees, references, dependencies, impact, tests (reaching test files), affected (changed declarations, callers, reaching tests), status and freshness (compare checkout without indexing). Check digests, coverage, unresolved refs and edge evidence. Inspect source for partial/stale coverage, ambiguous selections or heuristic edges: static candidates aren't runtime proof.",
     parameters: Schema.Struct({
       ...ProjectCodeQueryInput.fields,
       environmentId: OrchestratorMcpEnvironmentTarget,
@@ -41,7 +41,7 @@ export const ProjectCodeToolkit = Toolkit.make(
       McpInvocationContext.McpInvocationContext,
     ],
     description:
-      "List threads whose turn checkpoints included a project-relative file path, newest first. A checkpoint records every file that changed in its workspace since the previous checkpoint, including changes made by people or other threads sharing that workspace, so an entry means the file was present at that thread's checkpoint, not that the thread authored the change.",
+      "List threads with this project-relative path in a turn checkpoint, newest first. Checkpoints include all workspace changes since the last checkpoint, even from people or other threads; presence is not authorship.",
     parameters: Schema.Struct({
       ...ProjectFileHistoryInput.fields,
       environmentId: OrchestratorMcpEnvironmentTarget,

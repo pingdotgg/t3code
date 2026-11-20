@@ -609,12 +609,13 @@ esac
   );
 
   it.each([
-    { installed: ARCHIVE.archiveVersion, status: 0, reuses: true },
-    { installed: ARCHIVE.archiveVersion, status: 1, reuses: false },
-    { installed: "9.9.9", status: 0, reuses: false },
+    { installed: ARCHIVE.archiveVersion, status: 0, helperStatus: 0, reuses: true },
+    { installed: ARCHIVE.archiveVersion, status: 1, helperStatus: 0, reuses: false },
+    { installed: ARCHIVE.archiveVersion, status: 0, helperStatus: 1, reuses: false },
+    { installed: "9.9.9", status: 0, helperStatus: 0, reuses: false },
   ])(
-    "reuses a host t3 only at exactly the requested version: installed $installed, status $status",
-    ({ installed, status, reuses }) => {
+    "reuses a host t3 only after both probes pass: installed $installed, version status $status, helper status $helperStatus",
+    ({ installed, status, helperStatus, reuses }) => {
       const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-ssh-runner-"));
       try {
         const bin = NodePath.join(root, "bin");
@@ -628,7 +629,7 @@ esac
         );
         NodeFS.writeFileSync(
           NodePath.join(bin, "t3"),
-          `#!/bin/sh\ncase "$1" in --version) echo "t3 v${installed}"; exit ${status} ;; *) echo "host t3 $*" ;; esac\n`,
+          `#!/bin/sh\ncase "$1" in --version) echo "t3 v${installed}"; exit ${status} ;; __ssh-helper) exit ${helperStatus} ;; *) echo "host t3 $*" ;; esac\n`,
           { mode: 0o755 },
         );
         const runner = NodePath.join(root, "run-t3.sh");
