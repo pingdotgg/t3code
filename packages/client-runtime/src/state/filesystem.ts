@@ -190,6 +190,12 @@ export function createFilesystemEnvironmentAtoms<R, E>(
       label: "environment-data:filesystem:get-metadata",
       tag: WS_METHODS.filesystemGetMetadata,
     }),
+    // The machine's desktop apps, for `@` app mentions. Running state changes as the user works.
+    listLocalApps: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:local-apps:list",
+      tag: WS_METHODS.localAppsList,
+      staleTimeMs: 15_000,
+    }),
     browse: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:filesystem:browse",
       tag: WS_METHODS.filesystemBrowse,

@@ -118,6 +118,13 @@ const knownRecords: Record<(typeof COMPOSER_CONTEXT_KINDS)[number], Record<strin
     label: "vps",
     environmentId: "environment-vps",
   },
+  app: {
+    ...base,
+    kind: "app",
+    label: "Slack",
+    appPath: "/Applications/Slack.app",
+    bundleId: "com.tinyspeck.slackmacgap",
+  },
   response: {
     ...base,
     kind: "response",

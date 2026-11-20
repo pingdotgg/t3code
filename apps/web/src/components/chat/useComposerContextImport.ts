@@ -124,6 +124,7 @@ export function useComposerContextImport(input: {
   const addComposerDraftEnvironmentContexts = useComposerDraftStore(
     (store) => store.addEnvironmentContexts,
   );
+  const addComposerDraftAppContexts = useComposerDraftStore((store) => store.addAppContexts);
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
   const loadThreadTranscript = useAtomCommand(orchestrationEnvironment.threadTranscript, {
     reportFailure: false,
@@ -339,7 +340,9 @@ export function useComposerContextImport(input: {
                     ? existing.record.id
                     : undefined,
                 })
-              : existing?.kind === "thread" || existing?.kind === "environment"
+              : existing?.kind === "thread" ||
+                  existing?.kind === "environment" ||
+                  existing?.kind === "app"
                 ? existing.record
                 : existing
                   ? (uploadedContextRecordFromDraft(existing) ?? undefined)
@@ -424,6 +427,13 @@ export function useComposerContextImport(input: {
           addComposerDraftEnvironmentContexts(composerDraftTarget, [record], {
             appendReference: false,
           });
+          rewritten.set(record.contextId, record.contextId);
+          break;
+        }
+        case "app": {
+          // An app lives on one machine; a pasted mention keeps naming it, like a machine does.
+          if (questionAttachmentTarget !== null) break;
+          addComposerDraftAppContexts(composerDraftTarget, [record], { appendReference: false });
           rewritten.set(record.contextId, record.contextId);
           break;
         }

@@ -41,6 +41,7 @@ import {
   usePullRequestList,
   type EnvironmentQueryTarget,
 } from "~/state/pullRequests";
+import { filesystemEnvironment } from "~/state/filesystem";
 import { useEnvironmentQuery } from "~/state/query";
 import { useComposerPathSearch, useDebouncedValue, useThreadSearch } from "~/state/queries";
 import {
@@ -48,6 +49,7 @@ import {
   rankPullRequestMatches,
 } from "../pullRequest/pullRequestList.logic";
 import type { ComposerCommandItem } from "./ComposerCommandMenu";
+import { matchComposerAppItems } from "./composerAppMentions";
 import { matchComposerModelItems } from "./composerModelMentions";
 import type { ModelEsque } from "./providerIconUtils";
 import type { ProviderInstanceEntry } from "../../providerInstances";
@@ -138,6 +140,12 @@ export function useComposerMenuItems({
     ...identity,
     machine: environmentMachines.get(identity.environmentId) ?? ("server" as const),
   }));
+  // Desktop apps the agent can drive with computer use; only fetched once `@` has a query.
+  const localApps = useEnvironmentQuery(
+    isPathTrigger && pathTriggerQuery.trim().length > 0 && questionAttachmentTarget === null
+      ? filesystemEnvironment.listLocalApps({ environmentId, input: {} })
+      : null,
+  );
   const workspaceEntries = useComposerPathSearch({
     environmentId,
     cwd: isPathTrigger ? gitCwd : null,
@@ -218,6 +226,13 @@ export function useComposerMenuItems({
         ...(questionAttachmentTarget === null && offersMachines
           ? matchComposerEnvironmentItems({
               environments: mentionableEnvironments,
+              environmentId,
+              query: composerTrigger.query,
+            })
+          : []),
+        ...(questionAttachmentTarget === null
+          ? matchComposerAppItems({
+              apps: localApps.data?.apps ?? [],
               environmentId,
               query: composerTrigger.query,
             })

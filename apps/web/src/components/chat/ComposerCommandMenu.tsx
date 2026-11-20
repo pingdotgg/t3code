@@ -7,6 +7,7 @@ import {
 import {
   type EnvironmentId,
   type EnvironmentMachineKind,
+  type LocalApp,
   type ProjectEntry,
   type ProviderDriverKind,
   type ProviderInstanceId,
@@ -31,6 +32,7 @@ import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { Command, CommandGroup, CommandItem, CommandList } from "../ui/command";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { LocalAppIcon } from "../AppContextChip";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
@@ -89,6 +91,14 @@ export type ComposerCommandItem =
       type: "environment";
       environmentId: EnvironmentId;
       machine: EnvironmentMachineKind;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "app";
+      app: LocalApp;
+      environmentId: EnvironmentId;
       label: string;
       description: string;
     }
@@ -242,6 +252,13 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         <EnvironmentMachineIcon
           kind={props.item.machine}
           aria-hidden="true"
+          className="size-4 shrink-0 text-secondary-label"
+        />
+      ) : null}
+      {props.item.type === "app" ? (
+        <LocalAppIcon
+          environmentId={props.item.environmentId}
+          appPath={props.item.app.path}
           className="size-4 shrink-0 text-secondary-label"
         />
       ) : null}

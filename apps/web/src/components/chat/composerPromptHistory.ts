@@ -1,5 +1,6 @@
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import {
+  AppContextRecord,
   EnvironmentContextRecord,
   type OrchestrationMessageContext,
   ThreadContextRecord,
@@ -18,6 +19,7 @@ const TRAILING_LEGACY_CONTEXT =
 
 const isThreadContextRecord = Schema.is(ThreadContextRecord);
 const isEnvironmentContextRecord = Schema.is(EnvironmentContextRecord);
+const isAppContextRecord = Schema.is(AppContextRecord);
 
 type ComposerPromptHistoryMessage = Parameters<typeof resolveUserMessagePresentation>[0] & {
   readonly id: string;
@@ -28,9 +30,14 @@ type ComposerPromptHistoryMessage = Parameters<typeof resolveUserMessagePresenta
 export interface ComposerPromptHistoryMentions {
   readonly threadContexts: ReadonlyArray<ThreadContextRecord>;
   readonly environmentContexts: ReadonlyArray<EnvironmentContextRecord>;
+  readonly appContexts: ReadonlyArray<AppContextRecord>;
 }
 
-const NO_MENTIONS: ComposerPromptHistoryMentions = { threadContexts: [], environmentContexts: [] };
+const NO_MENTIONS: ComposerPromptHistoryMentions = {
+  threadContexts: [],
+  environmentContexts: [],
+  appContexts: [],
+};
 
 interface ComposerPromptHistoryEntry {
   readonly id: string;
@@ -148,9 +155,12 @@ export function recallComposerMessage(
   const records = message.context?.records ?? [];
   const threadRecords = records.filter(isThreadContextRecord);
   const environmentRecords = records.filter(isEnvironmentContextRecord);
+  const appRecords = records.filter(isAppContextRecord);
   const prompt = recallableComposerPrompt(
     message.text,
-    new Set([...threadRecords, ...environmentRecords].map((record) => record.contextId)),
+    new Set(
+      [...threadRecords, ...environmentRecords, ...appRecords].map((record) => record.contextId),
+    ),
   );
   // A record whose chip is gone from the text would put the chip back when written to the draft.
   const referenced = new Set<string>(
@@ -161,6 +171,7 @@ export function recallComposerMessage(
     mentions: {
       threadContexts: threadRecords.filter((record) => referenced.has(record.contextId)),
       environmentContexts: environmentRecords.filter((record) => referenced.has(record.contextId)),
+      appContexts: appRecords.filter((record) => referenced.has(record.contextId)),
     },
   };
 }

@@ -234,6 +234,7 @@ export async function rewindToMessage(input: {
     store.addEnvironmentContexts(draftTarget, mentions.environmentContexts, {
       appendReference: false,
     });
+    store.addAppContexts(draftTarget, mentions.appContexts, { appendReference: false });
     const images: ComposerImageAttachment[] = [];
     const restoredFiles: ComposerFileAttachment[] = [];
     files.forEach((file, index) => {
@@ -278,6 +279,7 @@ export function restoreComposerDraft(
   store.setReviewComments(draftTarget, snapshot.reviewComments);
   store.setThreadContexts(draftTarget, snapshot.threadContexts);
   store.setEnvironmentContexts(draftTarget, snapshot.environmentContexts);
+  store.setAppContexts(draftTarget, snapshot.appContexts);
   return images;
 }
 

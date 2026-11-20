@@ -374,6 +374,13 @@ function formatComposerContextProviderPayload(record: KnownComposerContextRecord
         `environmentId: ${record.environmentId}`,
         "The user means this machine. Not linked here yet: call t3_environment_link with this environmentId. Linked: pass it as environmentId, or target.environmentId for delegate_task.",
       ].join("\n");
+    case "app":
+      return [
+        `app: ${record.label}`,
+        `path: ${record.appPath}`,
+        ...(record.bundleId ? [`bundleId: ${record.bundleId}`] : []),
+        `The user means this app on this machine. Drive it with the open-computer-use MCP server's tools: start with get_app_state(${JSON.stringify({ app: record.bundleId ?? record.label })}), then act on what it returns. If those tools are not available, say so instead of scripting the app another way.`,
+      ].join("\n");
   }
 }
 

@@ -11,11 +11,13 @@ import {
 import type {
   ComposerContextId,
   ComposerContextRecord,
+  AppContextRecord,
   EnvironmentContextRecord,
   EnvironmentId,
   FileContextRecord,
   ImageContextRecord,
   KnownComposerContextRecord,
+  LocalApp,
   MessageId,
   OrchestrationMessageContext,
   PreviewAnnotationContextRecord,
@@ -235,6 +237,22 @@ export function environmentContextRecord(
   };
 }
 
+/** One record per app bundle: mentioning the same app twice reuses the chip. */
+export function appContextReference(record: AppContextRecord): ComposerContextReference {
+  return { kind: "app", contextId: record.contextId, label: record.label };
+}
+
+export function appContextRecord(app: LocalApp): AppContextRecord {
+  return {
+    version: 1,
+    kind: "app",
+    contextId: toKindScopedComposerContextId("app", app.path),
+    label: sanitizeComposerContextLabel(app.name, "app"),
+    appPath: app.path,
+    ...(app.bundleId ? { bundleId: app.bundleId } : {}),
+  };
+}
+
 export function terminalContextRecord(context: TerminalContextDraft): TerminalContextRecord {
   return {
     version: 1,
@@ -382,6 +400,7 @@ export function buildMessageContext(input: {
   previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
   threadContexts?: ReadonlyArray<ThreadContextRecord>;
   environmentContexts?: ReadonlyArray<EnvironmentContextRecord>;
+  appContexts?: ReadonlyArray<AppContextRecord>;
   replyTo?: ResponseContextRecord | null;
   attachments?: ReadonlyArray<BoundComposerAttachment>;
 }): OrchestrationMessageContext | undefined {
@@ -395,6 +414,7 @@ export function buildMessageContext(input: {
     ...input.reviewComments.map(reviewCommentContextRecord),
     ...(input.threadContexts ?? []),
     ...(input.environmentContexts ?? []),
+    ...(input.appContexts ?? []),
     ...(input.replyTo ? [input.replyTo] : []),
     ...input.previewAnnotations.map((annotation) =>
       previewAnnotationContextRecord(annotation, {

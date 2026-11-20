@@ -92,6 +92,7 @@ import {
   FilesystemBrowseResult,
   FilesystemBrowseError,
 } from "./filesystem.ts";
+import { LocalAppsListInput, LocalAppsListResult } from "./localApps.ts";
 import {
   AgentSessionImportInput,
   AgentSessionImportProjectChangedError,
@@ -430,6 +431,7 @@ export const WS_METHODS = {
 
   filesystemBrowse: "filesystem.browse",
   filesystemGetMetadata: "filesystem.getMetadata",
+  localAppsList: "localApps.list",
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
   assetsCreateUrl: "assets.createUrl",
@@ -1443,6 +1445,12 @@ const WsFilesystemGetMetadataRpc = Rpc.make(WS_METHODS.filesystemGetMetadata, {
   error: EnvironmentAuthorizationError,
 });
 
+const WsLocalAppsListRpc = Rpc.make(WS_METHODS.localAppsList, {
+  payload: LocalAppsListInput,
+  success: LocalAppsListResult,
+  error: EnvironmentAuthorizationError,
+});
+
 const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
   payload: FilesystemBrowseInput,
   success: FilesystemBrowseResult,
@@ -2245,6 +2253,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsFilesystemGetMetadataRpc,
+  WsLocalAppsListRpc,
   WsAgentSessionsScanRpc,
   WsAgentSessionsImportRpc,
   WsAssetsCreateUrlRpc,

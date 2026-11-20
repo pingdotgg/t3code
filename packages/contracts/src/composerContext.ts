@@ -27,6 +27,7 @@ export const COMPOSER_CONTEXT_KINDS = [
   "skill",
   "thread",
   "environment",
+  "app",
   "response",
 ] as const;
 export type KnownComposerContextKind = (typeof COMPOSER_CONTEXT_KINDS)[number];
@@ -228,6 +229,18 @@ export const EnvironmentContextRecord = Schema.Struct({
 export type EnvironmentContextRecord = typeof EnvironmentContextRecord.Type;
 
 /**
+ * A desktop app on the thread's machine, mentioned so the agent drives it with computer use.
+ * The label is the app's name; the path and bundle id let the agent address it unambiguously.
+ */
+export const AppContextRecord = Schema.Struct({
+  ...recordBase,
+  kind: Schema.Literal("app"),
+  appPath: TrimmedNonEmptyString.check(Schema.isMaxLength(1024)),
+  bundleId: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(512))),
+});
+export type AppContextRecord = typeof AppContextRecord.Type;
+
+/**
  * An earlier assistant response the user is replying to. Only its identity and opening travel:
  * the agent rereads the rest by item id, so a reply costs the same however long the response is.
  */
@@ -282,6 +295,7 @@ export const KnownComposerContextRecord = Schema.Union([
   SkillContextRecord,
   ThreadContextRecord,
   EnvironmentContextRecord,
+  AppContextRecord,
   ResponseContextRecord,
 ]);
 export type KnownComposerContextRecord = typeof KnownComposerContextRecord.Type;

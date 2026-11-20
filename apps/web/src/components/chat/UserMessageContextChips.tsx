@@ -22,6 +22,7 @@ import {
 } from "../../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown from "../ChatMarkdown";
+import { AppContextChip } from "../AppContextChip";
 import { EnvironmentContextChip } from "../EnvironmentContextChip";
 import { ThreadContextChip } from "../ThreadContextChip";
 import { ResponseReplyCard } from "./AssistantCitationChip";
@@ -345,6 +346,20 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
       render: (record, context) =>
         record.kind === "environment" ? (
           <EnvironmentContextChip record={record} copyMarkdown={context.copyMarkdown} />
+        ) : (
+          <UnavailableUserMessageContextChip {...context} />
+        ),
+    },
+    {
+      kind: "app",
+      canRender: (record) => record.kind === "app",
+      render: (record, context) =>
+        record.kind === "app" ? (
+          <AppContextChip
+            record={record}
+            environmentId={context.environmentId}
+            copyMarkdown={context.copyMarkdown}
+          />
         ) : (
           <UnavailableUserMessageContextChip {...context} />
         ),

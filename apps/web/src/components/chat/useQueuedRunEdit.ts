@@ -8,6 +8,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type ChatAttachment,
   type ComposerContextRecord,
+  type AppContextRecord,
   type EnvironmentContextRecord,
   type ResponseContextRecord,
   type EnvironmentId,
@@ -95,6 +96,7 @@ interface QueuedRunEditContent {
   readonly previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
   readonly threadContexts: ReadonlyArray<ThreadContextRecord>;
   readonly environmentContexts: ReadonlyArray<EnvironmentContextRecord>;
+  readonly appContexts: ReadonlyArray<AppContextRecord>;
   readonly replyTo?: ResponseContextRecord | null;
 }
 
@@ -159,6 +161,7 @@ async function submitQueuedRunEdit(input: {
         previewAnnotations: content.previewAnnotations,
         threadContexts: content.threadContexts,
         environmentContexts: content.environmentContexts,
+        appContexts: content.appContexts,
         replyTo: content.replyTo ?? null,
         attachments: newAttachments.map((attachment, index) => ({
           attachment,
@@ -273,6 +276,10 @@ export function useQueuedRunEdit(input: {
     store.setEnvironmentContexts(
       target,
       records.filter((record): record is EnvironmentContextRecord => record.kind === "environment"),
+    );
+    store.setAppContexts(
+      target,
+      records.filter((record): record is AppContextRecord => record.kind === "app"),
     );
     if (reply) store.setReplyTo(target, reply);
     const threadRef = { environmentId, threadId: activeThreadId };

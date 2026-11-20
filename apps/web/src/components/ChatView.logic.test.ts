@@ -1,6 +1,8 @@
 import { rewindToMessage } from "./chat/chatViewSend";
 import * as session from "../state/session";
 import {
+  appContextRecord,
+  appContextReference,
   environmentContextRecord,
   environmentContextReference,
   threadContextReference,
@@ -931,11 +933,13 @@ describe("waitForRevertedMessage", () => {
     const drafted = thread("drafted-thread", "Drafted thread");
     const mentioned = thread("referenced-thread", "Other thread");
     const machine = environmentContextRecord(EnvironmentId.make("env-2"), "Build box");
+    const app = appContextRecord({ name: "Slack", path: "/Applications/Slack.app", running: true });
     useComposerDraftStore.getState().addThreadContexts(threadRef, [drafted]);
     const draftPrompt = useComposerDraftStore.getState().getComposerDraft(threadRef)!.prompt;
     const sentPrompt = ensureInlineContextReferences("Review", [
       threadContextReference(mentioned),
       environmentContextReference(machine),
+      appContextReference(app),
     ]).trim();
 
     const result = await rewindToMessage({
@@ -947,7 +951,7 @@ describe("waitForRevertedMessage", () => {
         createdAt: "2026-03-29T00:00:10.000Z",
         updatedAt: "2026-03-29T00:00:10.000Z",
         text: sentPrompt,
-        context: { version: 1, records: [mentioned, machine] },
+        context: { version: 1, records: [mentioned, machine, app] },
       },
       environmentId: threadRef.environmentId,
       routeThreadRef: threadRef,
@@ -983,6 +987,7 @@ describe("waitForRevertedMessage", () => {
       prompt,
       threadContexts: [drafted, mentioned],
       environmentContexts: [machine],
+      appContexts: [app],
     });
   });
 
@@ -1245,6 +1250,7 @@ describe("snapshotComposerSend", () => {
       reviewComments: [],
       threadContexts: [],
       environmentContexts: [],
+      appContexts: [],
       replyTo: null,
     });
 
@@ -1281,6 +1287,7 @@ describe("snapshotComposerSend", () => {
       reviewComments: [],
       threadContexts: [],
       environmentContexts: [],
+      appContexts: [],
       replyTo,
     });
 

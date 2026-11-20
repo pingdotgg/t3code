@@ -430,6 +430,29 @@ describe("provider projection", () => {
     expect(projected).not.toMatch(/https?:/);
   });
 
+  it("projects a mentioned app as its identity and the computer-use tool to drive it", () => {
+    const app = {
+      version: 1 as const,
+      kind: "app" as const,
+      contextId: ctx("app_slack"),
+      label: "Slack",
+      appPath: "/Applications/Slack.app",
+    };
+    const withBundleId = projectComposerContextForProvider({
+      text: "Reply in [Slack](t3-context://v1/app/app_slack)",
+      records: [{ ...app, bundleId: "com.tinyspeck.slackmacgap" }],
+    });
+    expect(withBundleId.startsWith("Reply in [App: Slack; ref=app_slack]")).toBe(true);
+    expect(withBundleId).toContain("path: /Applications/Slack.app");
+    expect(withBundleId).toContain('get_app_state({"app":"com.tinyspeck.slackmacgap"})');
+    const nameOnly = projectComposerContextForProvider({
+      text: "Reply in [Slack](t3-context://v1/app/app_slack)",
+      records: [app],
+    });
+    expect(nameOnly).not.toContain("bundleId:");
+    expect(nameOnly).toContain('get_app_state({"app":"Slack"})');
+  });
+
   it("marks duplicate identities unavailable instead of choosing one payload", () => {
     const projected = projectComposerContextForProvider({
       text: "[log](t3-context://v1/terminal/ctx_t)",
