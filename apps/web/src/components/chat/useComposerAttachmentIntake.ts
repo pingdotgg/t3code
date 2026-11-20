@@ -325,17 +325,8 @@ export function useComposerAttachmentIntake(input: {
     pendingInsertion?.dispose();
     const movedThread = preparingImages.map(movedPreparingImageThread).find(Boolean);
     const completionTargetKey = movedThread ? composerTargetKey(movedThread) : attachmentTargetKey;
-    // Same tick as the draft insert below, so the strip swaps placeholders for
-    // real tiles in one render. A placeholder removed meanwhile stays removed.
-    const stillPreparingIds = removePreparingComposerImages(
-      completionTargetKey,
-      new Set(preparingImages.map((image) => image.id)),
-      { cancelSubmission: compressionErrors.size > 0 },
-    );
-    if (questionAttachmentTarget && !movedThread)
-      changeQuestionAttachmentPreparation(questionAttachmentTarget, -stillPreparingIds.size);
     const nextImages: ComposerImageAttachment[] = compressed
-      .filter(({ id }) => stillPreparingIds.has(id))
+      .filter(({ id }) => isPreparingComposerImage(completionTargetKey, id))
       .map(({ id, file }) => ({
         type: "image",
         id,
@@ -358,6 +349,15 @@ export function useComposerAttachmentIntake(input: {
             ? addComposerImagesToDraft(nextImages)
             : [],
     );
+    // Keep the placeholders until the draft decides whether the recovered images fit,
+    // so a held send can be cancelled before the last placeholder disappears.
+    const stillPreparingIds = removePreparingComposerImages(
+      completionTargetKey,
+      new Set(preparingImages.map((image) => image.id)),
+      { cancelSubmission: compressionErrors.size > 0 || unrestoredImageNames.length > 0 },
+    );
+    if (questionAttachmentTarget && !movedThread)
+      changeQuestionAttachmentPreparation(questionAttachmentTarget, -stillPreparingIds.size);
     const storedImages = nextImages.filter((image) => storedImageIds.has(image.id));
     // The draft may be gone by now; revoking a URL the store already revoked is harmless.
     for (const image of nextImages) {

@@ -22,7 +22,10 @@ import { showThreadUndoNotice } from "../../hooks/showThreadUndoNotice";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
 import { questionAttachmentDraftId } from "../../questionAttachments";
 import { readComposerImageBytes } from "./composerAttachmentFiles";
-import { getPreparingComposerImages } from "./preparingComposerImages";
+import {
+  getPreparingComposerImages,
+  useSubmitAfterPreparingImages,
+} from "./preparingComposerImages";
 import { useComposerAttachmentIntake } from "./useComposerAttachmentIntake";
 
 const compression = vi.hoisted(() => ({ prepare: vi.fn() }));
@@ -38,6 +41,15 @@ type Intake = ReturnType<typeof useComposerAttachmentIntake>;
 function Harness({ input, ready }: { input: IntakeInput; ready: (value: Intake) => void }) {
   const intake = useComposerAttachmentIntake(input);
   useEffect(() => ready(intake));
+  return null;
+}
+
+function SendProbe(props: {
+  target: string;
+  ready: (holdSend: ReturnType<typeof useSubmitAfterPreparingImages>) => void;
+}) {
+  const holdSend = useSubmitAfterPreparingImages(props.target);
+  useEffect(() => props.ready(holdSend));
   return null;
 }
 
@@ -66,7 +78,7 @@ const visiblePreparing = (targetKey: string) =>
   getPreparingComposerImages(targetKey).filter((image) => !image.hidden);
 
 it.each(["available", "full", "duplicate"] as const)(
-  "finishes a cancelled question's screenshot with an offscreen thread draft (%s)",
+  "finishes a cancelled question's screenshot and handles a waiting send (%s)",
   async (capacity) => {
     const store = useComposerDraftStore.getState();
     const environmentId = EnvironmentId.make(`intake-recovery-${capacity}`);
@@ -116,54 +128,71 @@ it.each(["available", "full", "duplicate"] as const)(
     });
     const setThreadError = vi.fn();
     let intake!: Intake;
+    let holdSend!: ReturnType<typeof useSubmitAfterPreparingImages>;
+    const send = vi.fn();
     await using _screen = await render(
-      <Harness
-        input={{
-          activeThreadId: threadId,
-          activePendingProgress: null,
-          activePendingIsResponding: false,
-          pendingUserInputs: [],
-          supportsQuestionAttachments: true,
-          isLiteralPendingAnswer: true,
-          projectSelectionRequired: false,
-          questionAttachmentTarget: question,
-          attachmentTargetKey: question,
-          fileStagingLimit: null,
-          promptRef: { current: "" },
-          composerImagesRef: { current: [] },
-          composerFilesRef: { current: [] },
-          composerEditorRef: { current: null },
-          isRevertingCheckpointRef: { current: false },
-          setThreadError,
-          countReservedAttachments: () => 0,
-          addComposerImage: (image) => store.addImages(question, [image]),
-          addComposerImagesToDraft: (images) => store.addImages(question, images),
-          addComposerFilesToDraft: () => [],
-          removeComposerImageFromDraft: () => {},
-          insertAttachmentReferences: () => false,
-        }}
-        ready={(value) => {
-          intake = value;
-        }}
-      />,
+      <>
+        <Harness
+          input={{
+            activeThreadId: threadId,
+            activePendingProgress: null,
+            activePendingIsResponding: false,
+            pendingUserInputs: [],
+            supportsQuestionAttachments: true,
+            isLiteralPendingAnswer: true,
+            projectSelectionRequired: false,
+            questionAttachmentTarget: question,
+            attachmentTargetKey: question,
+            fileStagingLimit: null,
+            promptRef: { current: "" },
+            composerImagesRef: { current: [] },
+            composerFilesRef: { current: [] },
+            composerEditorRef: { current: null },
+            isRevertingCheckpointRef: { current: false },
+            setThreadError,
+            countReservedAttachments: () => 0,
+            addComposerImage: (image) => store.addImages(question, [image]),
+            addComposerImagesToDraft: (images) => store.addImages(question, images),
+            addComposerFilesToDraft: () => [],
+            removeComposerImageFromDraft: () => {},
+            insertAttachmentReferences: () => false,
+          }}
+          ready={(value) => {
+            intake = value;
+          }}
+        />
+        {capacity !== "available" && (
+          <SendProbe
+            target={composerTargetKey(target)}
+            ready={(value) => {
+              holdSend = value;
+            }}
+          />
+        )}
+      </>,
     );
     const attaching = intake.addComposerAttachments([pastedImage()]);
     makeThreadRequestsResolvedAnnouncer(
       environmentId,
       threadId,
     )([{ id: requestId, status: "cancelled" }]);
+    if (capacity !== "available") {
+      expect(holdSend(send)).toBe(true);
+    }
     await act(async () => {
       resumeCompression.resolve();
       await attaching;
     });
 
     if (capacity === "full") {
+      expect(send).not.toHaveBeenCalled();
       expect(store.getComposerDraft(target)?.images).toEqual([]);
       expect(setThreadError).toHaveBeenLastCalledWith(
         threadId,
         expect.stringContaining("image.png could not be restored"),
       );
     } else if (capacity === "duplicate") {
+      expect(send).toHaveBeenCalledOnce();
       expect(store.getComposerDraft(target)?.images.map(({ id }) => id)).toEqual([
         "existing-image",
       ]);
