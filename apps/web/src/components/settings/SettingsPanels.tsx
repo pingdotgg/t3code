@@ -583,7 +583,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       ? [gt("Tool calls in chat")]
       : []),
     ...(settings.toolCallDetailsExpanded !== DEFAULT_UNIFIED_SETTINGS.toolCallDetailsExpanded
-      ? ["Tool call details"]
+      ? [gt("Tool call details")]
       : []),
     ...(settings.screenReaderAnnouncements !== DEFAULT_UNIFIED_SETTINGS.screenReaderAnnouncements
       ? [gt("Screen reader announcements")]
@@ -1466,17 +1466,28 @@ function ToolCallVisibilityRow() {
   );
 }
 
+const TOOL_CALL_DETAILS_LABELS = {
+  collapsed: msg("Collapsed", { $context: "tool call details start closed" }),
+  expanded: msg("Expanded", { $context: "tool call details start open" }),
+} as const;
+
 function ToolCallDetailsRow() {
+  const messages = useMessages();
+  const setting = useSearchableSetting();
+  const gt = useGT();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
+  const selected = settings.toolCallDetailsExpanded ? "expanded" : "collapsed";
   return (
     <SettingsRow
-      {...searchableSetting("tool-call-details")}
-      description="Start tool calls and thoughts in chat open or closed. A row you open or close keeps that until you reload."
+      {...setting("tool-call-details")}
+      description={gt(
+        "Start tool calls and thoughts in chat open or closed. A row you open or close keeps that until you reload.",
+      )}
       resetAction={
         settings.toolCallDetailsExpanded !== DEFAULT_UNIFIED_SETTINGS.toolCallDetailsExpanded ? (
           <SettingResetButton
-            label="tool call details"
+            ariaLabel={gt("Reset tool call details to default")}
             onClick={() =>
               updateSettings({
                 toolCallDetailsExpanded: DEFAULT_UNIFIED_SETTINGS.toolCallDetailsExpanded,
@@ -1486,26 +1497,28 @@ function ToolCallDetailsRow() {
         ) : null
       }
       control={
-        <Select
-          value={settings.toolCallDetailsExpanded ? "expanded" : "collapsed"}
-          onValueChange={(value) => {
-            if (value === "expanded" || value === "collapsed") {
-              updateSettings({ toolCallDetailsExpanded: value === "expanded" });
-            }
-          }}
-        >
-          <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Tool call details">
-            <SelectValue>{settings.toolCallDetailsExpanded ? "Expanded" : "Collapsed"}</SelectValue>
-          </SelectTrigger>
-          <SelectPopup align="end" alignItemWithTrigger={false}>
-            <SelectItem hideIndicator value="collapsed">
-              Collapsed
-            </SelectItem>
-            <SelectItem hideIndicator value="expanded">
-              Expanded
-            </SelectItem>
-          </SelectPopup>
-        </Select>
+        <div className="w-full sm:w-40">
+          <Select
+            value={selected}
+            onValueChange={(value) => {
+              if (value === "expanded" || value === "collapsed") {
+                updateSettings({ toolCallDetailsExpanded: value === "expanded" });
+              }
+            }}
+          >
+            <SelectTrigger size="sm" aria-label={gt("Tool call details")}>
+              <SelectValue>{messages(TOOL_CALL_DETAILS_LABELS[selected])}</SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              <SelectItem hideIndicator value="collapsed">
+                {messages(TOOL_CALL_DETAILS_LABELS.collapsed)}
+              </SelectItem>
+              <SelectItem hideIndicator value="expanded">
+                {messages(TOOL_CALL_DETAILS_LABELS.expanded)}
+              </SelectItem>
+            </SelectPopup>
+          </Select>
+        </div>
       }
     />
   );

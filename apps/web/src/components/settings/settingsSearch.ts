@@ -513,10 +513,12 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "tool-call-details",
-    title: "Tool call details",
+    title: msg("Tool call details"),
     to: "/settings/chat",
     searchTerms: [
-      "expand collapse open closed tool calls commands output thoughts reasoning details by default work log activity",
+      msg(
+        "expand collapse open closed tool calls commands output thoughts reasoning details by default work log activity",
+      ),
     ],
   },
   {
