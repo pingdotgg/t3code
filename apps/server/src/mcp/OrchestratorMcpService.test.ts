@@ -4299,35 +4299,30 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
     );
 
-    it.effect(
-      "refuses unbinding into fresh sessions in one call, which would keep the thread",
-      () =>
-        Effect.gen(function* () {
-          const inputs = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
-          const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
-            Effect.provide(
-              service(
-                masterRepository,
-                yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]),
-                {
-                  ...existing,
-                  threadId: ThreadId.make("thread:scheduled-base"),
-                  threadMode: "continue",
-                },
-                inputs,
-              ),
+    it.effect("moves a bound task to fresh sessions in a first-run thread", () =>
+      Effect.gen(function* () {
+        const inputs = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
+        const threadId = ThreadId.make("thread:scheduled-base");
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(
+            service(
+              masterRepository,
+              yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]),
+              { ...existing, threadId, threadMode: "continue" },
+              inputs,
             ),
-          );
-          const refused = yield* mcp
-            .updateScheduledTask(client, {
-              scheduledTaskId: existing.id,
-              bindToCurrentThread: false,
-              freshSession: true,
-            })
-            .pipe(Effect.flip);
-          assert.include(refused.message, "first unbind it");
-          assert.deepEqual(yield* Ref.get(inputs), []);
-        }),
+          ),
+        );
+        yield* mcp.updateScheduledTask(client, {
+          scheduledTaskId: existing.id,
+          bindToCurrentThread: false,
+          freshSession: true,
+        });
+        const [input] = yield* Ref.get(inputs);
+        assert.equal(input?.threadId, null);
+        assert.equal(input?.detachFromThreadId, threadId);
+        assert.equal(input?.threadMode, "fresh_session");
+      }),
     );
 
     it.effect("follows the default branch when a task is unbound from its thread", () =>

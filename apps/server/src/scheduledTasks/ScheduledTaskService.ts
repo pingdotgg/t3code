@@ -636,6 +636,7 @@ export const layer = Layer.effect(
     const saveTask = (
       task: ScheduledTask,
       requireExisting: boolean,
+      detachFromThreadId: ThreadId | null,
       /** The schedule this save read, when it left the schedule unchanged. */
       keptSchedule: ScheduledTask["schedule"] | null,
       webhook: {
@@ -703,11 +704,11 @@ export const layer = Layer.effect(
           enabled = excluded.enabled,
           schedule_json = excluded.schedule_json,
           project_id = excluded.project_id,
-          -- A first run may bind the thread while this save is in flight; only a
-          -- switch to new threads unbinds.
+          -- A first run can bind a thread during a save. Detach only the observed binding.
           thread_id = CASE
             WHEN excluded.thread_mode = 'new_thread' THEN NULL
             WHEN excluded.project_id != scheduled_tasks.project_id THEN excluded.thread_id
+            WHEN ${detachFromThreadId} IS NOT NULL THEN NULLIF(scheduled_tasks.thread_id, ${detachFromThreadId})
             ELSE COALESCE(excluded.thread_id, scheduled_tasks.thread_id)
           END,
           thread_mode = excluded.thread_mode,
@@ -1484,7 +1485,12 @@ export const layer = Layer.effect(
         existingTask !== null &&
         existingTask.projectId !== input.projectId &&
         keptThreadId === existingTask.threadId;
-      const threadId = threadMode === "new_thread" || movedOffThread ? null : keptThreadId;
+      const detachFromThreadId =
+        input.threadId === null ? (input.detachFromThreadId ?? null) : null;
+      const threadId =
+        threadMode === "new_thread" || movedOffThread || keptThreadId === detachFromThreadId
+          ? null
+          : keptThreadId;
       // An unchanged destination is not rechecked, so a task on an archived thread stays editable.
       if (threadId !== null && threadId !== existingTask?.threadId) {
         yield* requireDestinationThread(threadId, input.projectId, id);
@@ -1609,6 +1615,7 @@ export const layer = Layer.effect(
       yield* saveTask(
         task,
         input.requireExisting === true,
+        detachFromThreadId,
         scheduleUnchanged ? existingTask.schedule : null,
         webhook,
       );

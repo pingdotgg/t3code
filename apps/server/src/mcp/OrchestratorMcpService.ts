@@ -2456,18 +2456,6 @@ const make = Effect.gen(function* () {
               : "bindToCurrentThread binds to this thread, which belongs to a different project.",
           );
         }
-        // A save keeps a bound thread unless the task goes back to new threads, so this pair
-        // would leave runs in the old thread.
-        if (
-          input.bindToCurrentThread === false &&
-          input.freshSession === true &&
-          existing.threadId !== null
-        ) {
-          return yield* failure(
-            "invalid_request",
-            "To move this task to a new thread with fresh sessions, first unbind it with bindToCurrentThread: false, then set freshSession: true in a second call.",
-          );
-        }
         const threadId =
           input.bindToCurrentThread === undefined
             ? existing.threadId
@@ -2487,6 +2475,9 @@ const make = Effect.gen(function* () {
           schedule: input.schedule ?? existing.schedule,
           projectId: existing.projectId,
           threadId,
+          ...(input.bindToCurrentThread === false && existing.threadId !== null
+            ? { detachFromThreadId: existing.threadId }
+            : {}),
           threadMode:
             input.freshSession === undefined && input.bindToCurrentThread === undefined
               ? scheduledTaskThreadMode(existing)
