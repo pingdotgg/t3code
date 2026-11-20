@@ -1644,6 +1644,7 @@ export function PullRequestsPage() {
       />
     ),
     rightPanelOpen: rightPanelState.isOpen,
+
     maximizedAway: rightPanelMaximized,
     listBody,
     scrollRef: attachScroller,

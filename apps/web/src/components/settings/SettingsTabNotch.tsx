@@ -81,7 +81,7 @@ export function SettingsPaneHeader({
   className,
   children,
 }: {
-  trailingEdge?: boolean;
+  trailingEdge?: boolean | undefined;
   transparent?: boolean;
   className?: string;
   children: ReactNode;

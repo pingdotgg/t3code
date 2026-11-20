@@ -277,11 +277,13 @@ it("keeps the panes in place when the sidebar reopens before it has closed", asy
 
 const secondPaneStrip = () => inSecondPane("[data-layout-tab-strip]");
 const joinOffset = (strip: HTMLElement) =>
-  strip.querySelector<HTMLElement>("[data-pane-join]")!.style.getPropertyValue("--jx");
+  Number.parseFloat(
+    strip.querySelector<HTMLElement>("[data-pane-join]")!.style.getPropertyValue("--jx"),
+  );
 const tabOffset = (strip: HTMLElement, tabId: string) => {
   const tab = strip.querySelector<HTMLElement>(`[data-layout-pane-tab="${tabId}"]`)!;
   const left = tab.getBoundingClientRect().left - strip.getBoundingClientRect().left;
-  return `${Math.round(left + strip.scrollLeft)}px`;
+  return left + strip.scrollLeft;
 };
 
 it("scrolls overflowing pane tabs from the add button without moving the workspace", async () => {
@@ -306,7 +308,9 @@ it("scrolls overflowing pane tabs from the add button without moving the workspa
   await vi.waitFor(() => expect(strip.scrollLeft).toBe(140));
   expect(workspace.scrollLeft).toBe(before);
   const active = strip.querySelector<HTMLElement>("[data-joined]")!;
-  expect(joinOffset(strip)).toBe(tabOffset(strip, active.dataset.layoutPaneTab!));
+  expect(
+    Math.abs(joinOffset(strip) - tabOffset(strip, active.dataset.layoutPaneTab!)),
+  ).toBeLessThanOrEqual(1);
 
   const closed = strip.querySelector<HTMLElement>("[data-layout-pane-tab]")!;
   const joinedAt = joinOffset(strip);
@@ -327,8 +331,10 @@ it("scrolls overflowing pane tabs from the add button without moving the workspa
   );
   const middle = tabIds[Math.floor(tabIds.length / 2)]!;
   useLayoutStore.getState().focusTab(middle);
-  await vi.waitFor(() => expect(joinOffset(strip)).toBe(tabOffset(strip, middle)));
-  const held = Number.parseFloat(tabOffset(strip, middle)) - 100;
+  await vi.waitFor(() =>
+    expect(Math.abs(joinOffset(strip) - tabOffset(strip, middle))).toBeLessThanOrEqual(1),
+  );
+  const held = Math.round(tabOffset(strip, middle)) - 100;
   strip.scrollLeft = held;
   await vi.waitFor(() =>
     expect(strip.style.getPropertyValue("--strip-overflow-start")).toBe(`${held}px`),
@@ -337,7 +343,7 @@ it("scrolls overflowing pane tabs from the add button without moving the workspa
   await vi.waitFor(() => {
     const next = focusedTabId()!;
     expect(next).not.toBe(middle);
-    expect(joinOffset(strip)).toBe(tabOffset(strip, next));
+    expect(Math.abs(joinOffset(strip) - tabOffset(strip, next))).toBeLessThanOrEqual(1);
   });
   expect(strip.scrollLeft).toBe(held);
 
@@ -362,14 +368,19 @@ it("keeps a pane's tab strip and moves its joined tab when the pane switches tab
   const pane = useLayoutStore.getState().layout.workspaces[0]!.columns[1]!.panes[0]!;
   const first = pane.tabs.find((tab) => tab.id !== tabs.second.id)!;
   useLayoutStore.getState().focusTab(first.id);
+  // Chromium rounds layout pixels separately from transformed bounding boxes.
   await vi.waitFor(() =>
-    expect(joinOffset(secondPaneStrip())).toBe(tabOffset(secondPaneStrip(), first.id)),
+    expect(
+      Math.abs(joinOffset(secondPaneStrip()) - tabOffset(secondPaneStrip(), first.id)),
+    ).toBeLessThanOrEqual(1),
   );
   const strip = secondPaneStrip();
 
   useLayoutStore.getState().focusTab(tabs.second.id);
   await vi.waitFor(() => expect(focusedTabId()).toBe(tabs.second.id));
-  await vi.waitFor(() => expect(joinOffset(strip)).toBe(tabOffset(strip, tabs.second.id)));
+  await vi.waitFor(() =>
+    expect(Math.abs(joinOffset(strip) - tabOffset(strip, tabs.second.id))).toBeLessThanOrEqual(1),
+  );
   // The label under the landed shape reads as the active one, and only that one.
   await vi.waitFor(() =>
     expect(
