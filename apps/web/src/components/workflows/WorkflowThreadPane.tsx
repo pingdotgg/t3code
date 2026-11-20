@@ -30,7 +30,11 @@ export default function WorkflowThreadPane({
   const openFull = () =>
     void navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(threadRef) });
   // The diff panel and the terminal drawer belong to the full thread view, so both lead there.
-  const panel: SideChatParentPanel = { openToolDiff: openFull, runShellCommand: openFull };
+  const panel: SideChatParentPanel = {
+    hostRef: threadRef,
+    openToolDiff: openFull,
+    runShellCommand: openFull,
+  };
   return (
     // The attribute is how the embedded chat knows the keyboard is meant for it.
     <div data-side-chat-pane className="flex h-full min-h-0 flex-col">
