@@ -200,6 +200,8 @@ describe("KiroProvider", () => {
       // The version advisory is what the compatibility check and update UI read.
       assert.equal(snapshot.versionAdvisory?.currentVersion, "2.27.0");
       assert.isFalse(snapshot.versionAdvisory?.canUpdate);
+      // Kiro rejects app text generation; the dispatcher falls back only when the snapshot says so.
+      assert.isFalse(snapshot.supportsTextGeneration);
     }),
   );
 
