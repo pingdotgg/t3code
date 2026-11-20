@@ -34,8 +34,16 @@ fresh token for the same session. The session itself must still be unexpired
 and unrevoked, so a device idle past the window pairs again. Renewal stays in place rather than issuing a
 successor, so live sockets keep their session, Sharing & access shows one row
 per device for its whole renewal window, and one revoke ends it. T3 Connect,
-CLI, desktop and peer sessions never renew, so unlinking Connect or rotating
+CLI and desktop sessions never renew, so unlinking Connect or rotating
 their credential still cuts a device off.
+
+A [peer link](remote.md#peer-links)'s session renews on use instead: its
+bearer token is never reissued, so the session row alone holds its deadline and
+the token's own expiry is ignored. Authenticating a call from it moves the
+row 30 days out, at most once a day so a busy link does not write on every
+call. Only an unexpired, unrevoked row moves, so an idle link still ends after
+30 days and a revoke is final. Other MCP clients keep the fixed 30 days their
+token carries.
 
 ### Guest links are not sessions
 
@@ -69,7 +77,9 @@ The result is an ordinary session with subject `mcp-client`. A read-only
 grant holds `orchestration:read` alone. On `/mcp` it passes only tools
 declared as reads in [McpToolAccess](../../apps/server/src/mcp/McpToolAccess.ts),
 where every tool must declare who may call it to compile. Any other grant adds
-`orchestration:operate` and a signed ceiling. Only `/mcp` accepts these sessions. Every other HTTP and WebSocket
+`orchestration:operate` and a signed ceiling. Only `/mcp` accepts these sessions, and for a
+[peer link](remote.md#peer-links)'s session alone the thread routes in
+[linkThreadHttp](../../apps/server/src/peer/linkThreadHttp.ts), which only read. Every other HTTP and WebSocket
 path rejects that subject, because the RPC surface would let the agent act
 above its ceiling. Inside MCP the credential sets the limits and tool
 parameters only pick targets; see

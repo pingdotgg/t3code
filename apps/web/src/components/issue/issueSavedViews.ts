@@ -15,7 +15,11 @@ export function issueViewMatches(
 ): boolean {
   const key = (value: IssueListPreferences) => {
     const normalized = issueListPreferences(value);
-    return JSON.stringify({ ...normalized, label: normalized.label?.toSorted() });
+    return JSON.stringify({
+      ...normalized,
+      label: normalized.label?.toSorted(),
+      hideProjects: normalized.hideProjects?.map((pair) => JSON.stringify(pair)).toSorted(),
+    });
   };
   return key(issueListPreferences(view.preferences)) === key(preferences);
 }

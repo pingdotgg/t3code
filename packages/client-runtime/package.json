@@ -59,6 +59,10 @@
       "types": "./src/imageAttachmentSize.ts",
       "default": "./src/imageAttachmentSize.ts"
     },
+    "./diff-file-order": {
+      "types": "./src/diffFileOrder.ts",
+      "default": "./src/diffFileOrder.ts"
+    },
     "./handoff": {
       "types": "./src/handoff.ts",
       "default": "./src/handoff.ts"
@@ -99,6 +103,10 @@
       "types": "./src/secretRequest.ts",
       "default": "./src/secretRequest.ts"
     },
+    "./link-batch": {
+      "types": "./src/linkBatch.ts",
+      "default": "./src/linkBatch.ts"
+    },
     "./link-request": {
       "types": "./src/linkRequest.ts",
       "default": "./src/linkRequest.ts"
@@ -106,6 +114,10 @@
     "./scheduled-task-destination": {
       "types": "./src/scheduledTaskDestination.ts",
       "default": "./src/scheduledTaskDestination.ts"
+    },
+    "./linked-thread": {
+      "types": "./src/linkedThread.ts",
+      "default": "./src/linkedThread.ts"
     },
     "./scheduled-task-webhook": {
       "types": "./src/scheduledTaskWebhook.ts",
@@ -258,6 +270,10 @@
     "./state/orchestration": {
       "types": "./src/state/orchestration.ts",
       "default": "./src/state/orchestration.ts"
+    },
+    "./state/thread-stream": {
+      "types": "./src/state/threadStream.ts",
+      "default": "./src/state/threadStream.ts"
     },
     "./state/thread-history-merge": {
       "types": "./src/state/threadHistoryMerge.ts",

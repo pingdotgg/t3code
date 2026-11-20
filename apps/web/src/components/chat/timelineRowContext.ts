@@ -37,7 +37,8 @@ import { type HandoffTimelineRun } from "./V2LifecycleRow";
  */
 export interface TurnItemSource {
   readonly detail: TurnItemDetailSource;
-  readonly commandOutput: (target: {
+  /** Unset where output does not stream: a command row then shows the output its detail holds. */
+  readonly commandOutput?: (target: {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
   }) => Atom.Atom<AsyncResult.AsyncResult<CommandOutputView, unknown>>;

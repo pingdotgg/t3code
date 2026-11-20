@@ -2,7 +2,7 @@ import * as Schema from "effect/Schema";
 import type { PreviewCaptureFailureEncoded } from "./previewCapture.ts";
 
 import { SnapShotSource } from "./chatAttachment.ts";
-import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { EnvironmentId, PortSchema, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
 import type {
   BrowserImportResult,
@@ -1002,6 +1002,22 @@ export const DesktopPreviewTunnelAccessResolutionInputSchema = Schema.Struct({
   url: Schema.NullOr(Schema.String),
 });
 
+/** A loopback port of another environment, reachable on this machine's 127.0.0.1. */
+export const DesktopPortForwardSchema = Schema.Struct({
+  environmentId: EnvironmentId,
+  remotePort: PortSchema,
+  /** The same as `remotePort` unless that port was taken here. */
+  localPort: PortSchema,
+});
+export type DesktopPortForward = typeof DesktopPortForwardSchema.Type;
+
+export const DesktopSharesLoopbackInputSchema = Schema.Struct({ environmentId: EnvironmentId });
+
+export const DesktopPortForwardInputSchema = Schema.Struct({
+  environmentId: EnvironmentId,
+  remotePort: PortSchema,
+});
+
 export const DesktopPreviewClearDataInputSchema = Schema.Struct({
   environmentId: EnvironmentId,
   /** Omit to clear every profile; otherwise only this profile's partition. */
@@ -1324,6 +1340,13 @@ export interface DesktopPreviewBridge {
     listener: (request: DesktopPreviewTunnelAccessRequest) => void,
   ) => () => void;
   resolveTunnelAccess: (requestId: string, url: string | null) => Promise<void>;
+  /** Forwards an environment's loopback port to this machine until stopped or the app quits. */
+  forwardPort: (environmentId: EnvironmentId, remotePort: number) => Promise<DesktopPortForward>;
+  stopPortForward: (environmentId: EnvironmentId, remotePort: number) => Promise<void>;
+  listPortForwards: () => Promise<ReadonlyArray<DesktopPortForward>>;
+  /** Whether the environment runs on this machine, where its ports need no forward. */
+  sharesLoopback: (environmentId: EnvironmentId) => Promise<boolean>;
+  onPortForwards: (listener: (forwards: ReadonlyArray<DesktopPortForward>) => void) => () => void;
   listBrowserImportSources: () => Promise<ReadonlyArray<BrowserImportSource>>;
   importBrowserCookies: (input: {
     readonly environmentId: EnvironmentId;
