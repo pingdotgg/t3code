@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -12,7 +13,7 @@ import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderL
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { piUsageReader } from "./usage.ts";
 import { makePiTextGeneration } from "./textGeneration.ts";
-import { PiAdapterV2Driver, type PiAdapterV2DriverEnv } from "./adapter.ts";
+import { createPiAdapterV2, type PiAdapterV2DriverEnv } from "./adapter.ts";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import {
   buildInitialPiProviderSnapshot,
@@ -20,6 +21,7 @@ import {
   discoverPiCommandsForCwd,
   enrichPiSnapshot,
 } from "./status.ts";
+import { readPiAnthropicUsageLimits, supportsPiAnthropicUsageLimits } from "./usageLimits.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import {
   defaultProviderContinuationIdentity,
@@ -122,40 +124,34 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv, Path.Path> = {
       ),
     );
 
-    const orchestrationAdapter = yield* PiAdapterV2Driver.create({
-      instanceId,
-      displayName,
-      accentColor,
-      environment,
-      enabled,
-      config,
-    }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ProviderDriverError({
-            driver: DRIVER_KIND,
-            instanceId,
-            detail: "Failed to build Pi orchestration adapter.",
-            cause,
-          }),
-      ),
-    );
     const textGeneration = yield* makePiTextGeneration(
       effectiveConfig,
       processEnv,
       host.compatibility,
     );
 
-    const checkProvider = fileSystem
-      .makeDirectory(probeCwd, { recursive: true })
-      .pipe(
-        Effect.ignore,
-        Effect.andThen(
-          checkPiProviderStatus(effectiveConfig, processEnv, probeCwd, host.compatibility),
-        ),
-        Effect.map(stampIdentity),
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      );
+    const readUsageLimits = readPiAnthropicUsageLimits(effectiveConfig, processEnv).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+    );
+    const checkProvider = fileSystem.makeDirectory(probeCwd, { recursive: true }).pipe(
+      Effect.ignore,
+      Effect.andThen(
+        checkPiProviderStatus(effectiveConfig, processEnv, probeCwd, host.compatibility),
+      ),
+      Effect.map(stampIdentity),
+      Effect.filterOrElse(
+        (probed) =>
+          !probed.enabled ||
+          probed.status === "error" ||
+          !supportsPiAnthropicUsageLimits(probed.version),
+        (probed) =>
+          readUsageLimits.pipe(
+            Effect.map((usageLimits) => (usageLimits ? { ...probed, usageLimits } : probed)),
+          ),
+      ),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
 
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
     const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<PiSettings>>({
@@ -166,6 +162,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv, Path.Path> = {
       initialSnapshot: (settings) =>
         buildInitialPiProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
       checkProvider,
+      checkUsageLimits: readUsageLimits,
       enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
         resolveMaintenance().pipe(
           Effect.flatMap((maintenanceCapabilities) =>
@@ -186,6 +183,47 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv, Path.Path> = {
             driver: DRIVER_KIND,
             instanceId,
             detail: "Failed to build Pi snapshot.",
+            cause,
+          }),
+      ),
+    );
+
+    // Claude's live rate-limit events have no Pi equivalent, so reread limits as each turn ends.
+    const usageRefresh = yield* Semaphore.make(1);
+    const refreshUsageLimits = snapshot.getSnapshot.pipe(
+      Effect.flatMap((current) =>
+        current.usageLimits === undefined
+          ? Effect.void
+          : readUsageLimits.pipe(
+              Effect.flatMap((usageLimits) =>
+                usageLimits === undefined || usageLimits.unavailable
+                  ? Effect.void
+                  : snapshot.applyUsageLimits({
+                      checkedAt: usageLimits.checkedAt,
+                      windows: usageLimits.windows,
+                      complete: true,
+                    }),
+              ),
+            ),
+      ),
+      usageRefresh.withPermitsIfAvailable(1),
+      Effect.asVoid,
+    );
+    const orchestrationAdapter = yield* createPiAdapterV2({
+      instanceId,
+      displayName,
+      accentColor,
+      environment,
+      enabled,
+      config,
+      onTurnEnded: refreshUsageLimits,
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProviderDriverError({
+            driver: DRIVER_KIND,
+            instanceId,
+            detail: "Failed to build Pi orchestration adapter.",
             cause,
           }),
       ),

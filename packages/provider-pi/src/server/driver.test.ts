@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -45,7 +46,12 @@ const personalSkill = {
 };
 
 const makePiSpawner = Effect.fnUntraced(function* (
-  discovery: { readonly state?: unknown; readonly models?: ReadonlyArray<unknown> } = {},
+  discovery: {
+    readonly state?: unknown;
+    readonly models?: ReadonlyArray<unknown>;
+    /** Pi's Anthropic OAuth token; without one Pi reports no subscription sign-in. */
+    readonly anthropicToken?: string;
+  } = {},
 ) {
   const pendingCommand = yield* Deferred.make<void>();
   const launches: Array<ChildProcess.StandardCommand> = [];
@@ -55,13 +61,19 @@ const makePiSpawner = Effect.fnUntraced(function* (
       if (!ChildProcess.isStandardCommand(command)) return yield* Effect.die("Unexpected pipeline");
       launches.push(command);
       const version = command.args.includes("--version");
+      const bearer = command.args[0] === "auth" && command.args[1] === "print-bearer-token";
       const stdout = yield* Queue.unbounded<Uint8Array>();
       const cwd = command.options.cwd;
+      const exit = (output: string, code = 0) => ({
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(code)),
+        isRunning: Effect.succeed(false),
+        stdout: Stream.succeed(encoder.encode(output)),
+      });
       return ChildProcessSpawner.makeHandle({
         // Outside the valid PID range, so transport cleanup cannot signal a real process.
         pid: ChildProcessSpawner.ProcessId(999_999_999),
-        exitCode: version ? Effect.succeed(ChildProcessSpawner.ExitCode(0)) : Effect.never,
-        isRunning: Effect.succeed(!version),
+        exitCode: Effect.never,
+        isRunning: Effect.succeed(true),
         kill: () => Effect.void,
         unref: Effect.succeed(Effect.void),
         stdin: Sink.forEach((chunk: Uint8Array) => {
@@ -102,11 +114,22 @@ const makePiSpawner = Effect.fnUntraced(function* (
             ),
           ).pipe(Effect.asVoid);
         }),
-        stdout: version ? Stream.succeed(encoder.encode("pi 1.0.2\n")) : Stream.fromQueue(stdout),
-        stderr: Stream.empty,
+        stdout: Stream.fromQueue(stdout),
+        stderr:
+          bearer && discovery.anthropicToken === undefined
+            ? Stream.succeed(
+                encoder.encode(
+                  'Error: Provider "anthropic" is not configured with an OAuth bearer token\n',
+                ),
+              )
+            : Stream.empty,
         all: Stream.empty,
         getInputFd: () => Sink.drain,
         getOutputFd: () => Stream.empty,
+        ...(version ? exit("pi 1.0.2\n") : {}),
+        ...(bearer
+          ? exit(`${discovery.anthropicToken ?? ""}\n`, discovery.anthropicToken ? 0 : 1)
+          : {}),
       });
     }),
   );
@@ -157,6 +180,8 @@ it.layer(layerTest)("PiDriver workspace discovery", (it) => {
         machine.slashCommands.map((command) => command.name),
         ["compact"],
       );
+      // Pi has no Anthropic subscription sign-in, so there is no usage section or request.
+      assert.isUndefined(machine.usageLimits);
       assert.equal(first.instanceId, instance.instanceId);
       assert.equal(first.displayName, "My Pi");
       assert.equal(first.accentColor, "#abcdef");
@@ -184,6 +209,66 @@ it.layer(layerTest)("PiDriver workspace discovery", (it) => {
           ["--offline"],
         );
       }
+    }),
+  );
+
+  it.effect("publishes the Claude limits behind Pi's Anthropic sign-in for Anthropic models", () =>
+    Effect.gen(function* () {
+      const { spawner, launches } = yield* makePiSpawner({ anthropicToken: "pi-oauth-token" });
+      const requests: Array<{ readonly url: string; readonly authorization: string | undefined }> =
+        [];
+      const httpClient = HttpClient.make((request) => {
+        requests.push({ url: request.url, authorization: request.headers["authorization"] });
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(
+              JSON.stringify({
+                five_hour: { utilization: 34, resets_at: "2026-11-20T14:30:00.276840+00:00" },
+                seven_day: { utilization: 53, resets_at: "2026-11-22T04:00:00.276862+00:00" },
+                seven_day_opus: null,
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+        );
+      });
+      const instance = yield* create().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+      );
+      yield* instance.snapshot.refresh;
+      const snapshot = yield* instance.snapshot.getSnapshot;
+      assert.deepEqual(snapshot.usageLimits?.windows, [
+        {
+          id: "anthropic_five_hour",
+          kind: "session",
+          label: "Claude · Session",
+          windowDurationMins: 300,
+          providerIds: ["anthropic"],
+          usedPercent: 34,
+          resetsAt: "2026-11-20T14:30:00.276Z",
+        },
+        {
+          id: "anthropic_seven_day",
+          kind: "weekly",
+          label: "Claude · Weekly",
+          windowDurationMins: 10080,
+          providerIds: ["anthropic"],
+          usedPercent: 53,
+          resetsAt: "2026-11-22T04:00:00.276Z",
+        },
+      ]);
+      assert.isUndefined(snapshot.usageLimits?.unavailable);
+      assert.deepEqual(requests, [
+        {
+          url: "https://api.anthropic.com/api/oauth/usage",
+          authorization: "Bearer pi-oauth-token",
+        },
+      ]);
+      const tokenLaunch = launches.find((launch) => launch.args[0] === "auth");
+      assert.equal(tokenLaunch?.command, "custom-pi");
+      assert.equal(tokenLaunch?.options.env?.PI_CODING_AGENT_DIR, "/isolated-pi");
     }),
   );
 
