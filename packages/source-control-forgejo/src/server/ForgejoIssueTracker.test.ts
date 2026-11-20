@@ -22,6 +22,9 @@ const ISSUE = {
   labels: [{ id: 3, name: "bug", color: "d73a4a" }],
   comments: 1,
   is_locked: true,
+  milestone: { id: 2, title: "v1.2" },
+  due_date: "2026-07-10T23:59:59+02:00",
+  ref: "",
 };
 
 /** Every endpoint the detail read touches, answered by path; stderr carries the `Link` header. */
@@ -195,6 +198,15 @@ describe("ForgejoIssueTracker", () => {
         // `/comments` answered with everything it has, so nothing is left to page.
         commentsCursor: null,
       });
+      // The due date in UTC like every other timestamp; an empty branch is no branch.
+      expect(issue.properties).toEqual(
+        expect.arrayContaining([
+          { id: "milestone", label: "Milestone", value: "v1.2" },
+          { id: "due_date", label: "Due date", value: "2026-07-10T21:59:59.000Z" },
+          { id: "ref", label: "Branch", value: null },
+          { id: "is_locked", label: "Locked", value: true },
+        ]),
+      );
       expect(issue.comments).toEqual([
         {
           id: "7",

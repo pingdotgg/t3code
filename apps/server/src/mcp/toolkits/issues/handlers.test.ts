@@ -127,6 +127,12 @@ const detail: IssueDetail = {
   viewerPermissions: { setState: true, comment: true, edit: true, labels: true, assignees: true },
   viewer: null,
   body: "",
+  properties: [
+    { id: "estimate", label: "Estimate", value: 0 },
+    { id: "customerReplied", label: "Customer replied", value: false },
+    { id: "dueDate", label: "Due date", value: null },
+    { id: "labels", label: "Labels", value: [] },
+  ],
   comments: [],
   commentsCursor: null,
   events: [],
@@ -198,6 +204,18 @@ const makeHarness = Effect.fn("makeIssuesToolkitHarness")(function* (
 });
 
 describe("issue toolkit handlers", () => {
+  it.effect("reads an issue's fields, leaving out the unset ones", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const result = yield* harness.call("read_issue", { projectId: PROJECT_ID, key: "7" });
+      // Unset fields are left out; zero and false are answers.
+      expect(result.properties).toEqual([
+        { id: "estimate", label: "Estimate", value: 0 },
+        { id: "customerReplied", label: "Customer replied", value: false },
+      ]);
+    }),
+  );
+
   it.effect("refuses a credential without the issues capability", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();

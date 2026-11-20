@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import {
   IssueTrackerError,
+  issueProperties,
   type IssueTrackerApi,
 } from "@t3tools/source-control-core/server/IssueTracker";
 
@@ -279,7 +280,8 @@ export const make = Effect.gen(function* () {
           );
         }
       }
-      return { ...detail, labels: allLabels, assignees: allAssignees };
+      const complete = { ...detail, labels: allLabels, assignees: allAssignees };
+      return { ...complete, properties: issueProperties(complete) };
     }),
 
     getComments: (input) =>
