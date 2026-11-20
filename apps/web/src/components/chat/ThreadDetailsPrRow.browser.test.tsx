@@ -1,3 +1,4 @@
+import { ThreadDetailsIssueRows } from "./ThreadDetailsIssueRows";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   EnvironmentId,
@@ -7,12 +8,14 @@ import {
   ThreadId,
   type PullRequestCheck,
   type ScopedThreadRef,
+  type ThreadIssueLink,
 } from "@t3tools/contracts";
 import { DraftId } from "~/composerDraftStore";
 import { AsyncResult } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
+  issuesSupported: false,
   isDraft: false,
   status: "success" as PullRequestCheck["status"],
   extraStatus: null as PullRequestCheck["status"] | null,
@@ -39,13 +42,15 @@ vi.mock(import("~/state/entities"), async (importOriginal) => ({
     new Map([
       [
         EnvironmentId.make("environment"),
-        { environment: { capabilities: { pullRequests: true } } },
+        { environment: { capabilities: { pullRequests: true, issues: state.issuesSupported } } },
       ],
     ])) as never,
   useProjects: (() => state.projects) as never,
   useQuietThreadShell: ((ref: unknown) =>
     ref === null ? null : { branch: null, pullRequests: state.pullRequests }) as never,
 }));
+vi.mock(import("~/state/issues"), () => ({ useLinkedIssueDetail: () => null }));
+
 const queryData = () => ({
   projectId: ProjectId.make("project"),
   workspaceRoot: "/workspace",
@@ -125,7 +130,6 @@ import { act, render as renderUi } from "../../../test/render";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useUiStateStore } from "~/uiStateStore";
 import { ThreadDetailsPrRow } from "./ThreadDetailsPrRow";
-import { ThreadDetailsIssueRows } from "./ThreadDetailsIssueRows";
 import { ThreadDetailsThreadPrRows } from "./ThreadDetailsPrRows";
 
 const threadRef: ScopedThreadRef = {
@@ -255,6 +259,7 @@ async function setup() {
   state.addToast.mockReset().mockReturnValue("checkout-toast");
   state.updateToast.mockReset();
 
+  state.issuesSupported = false;
   state.isDraft = false;
   state.status = "success";
   state.extraStatus = null;
@@ -383,37 +388,63 @@ it("names a linked pull request row by its kind, number and title, not its URL",
   expect(exposedNumbers).toHaveLength(0);
 });
 
-it("names a linked issue row by its kind, number and title, not its URL", async () => {
+it("names the first linked issue and reveals more issues on demand", async () => {
   await using screen = await setup();
+  const issue: ThreadIssueLink = {
+    tracker: IssueTrackerKind.make("github"),
+    host: "github.com",
+    scope: "owner/repo",
+    key: "123",
+    projectId: ProjectId.make("repository"),
+    url: "https://github.com/owner/repo/issues/123",
+    source: "manual",
+    linkedAt: "2026-10-30T00:00:00.000Z",
+    displayKey: "#123",
+    title: "Sidebar flickers on resize",
+  };
   await act(async () => {
     await screen.rerender(
       <ThreadDetailsIssueRows
         links={[
+          issue,
           {
-            tracker: IssueTrackerKind.make("github"),
-            host: "github.com",
-            scope: "owner/repo",
-            key: "123",
-            projectId: ProjectId.make("repository"),
-            url: "https://github.com/owner/repo/issues/123",
-            source: "manual",
-            linkedAt: "2026-10-30T00:00:00.000Z",
-            displayKey: "#123",
-            title: "Sidebar flickers on resize",
+            ...issue,
+            key: "124",
+            displayKey: "#124",
+            url: "https://github.com/owner/repo/issues/124",
+            title: "Tab list jumps",
           },
         ]}
-        onOpenLink={vi.fn()}
+        threadRef={threadRef}
       />,
     );
   });
-  const row = [...screen.container.querySelectorAll("button")].find((button) =>
-    button.textContent?.includes("Sidebar flickers on resize"),
+  const row = [...screen.container.querySelectorAll("a")].find((anchor) =>
+    anchor.textContent?.includes("Sidebar flickers on resize"),
   )!;
   const name = row.getAttribute("aria-label") ?? row.textContent ?? "";
   expect(name).not.toContain("https://");
   expect(name).toMatch(/issue/i);
   expect(name).toContain("#123");
   expect(name).toContain("Sidebar flickers on resize");
+  const exposedKeys = [...screen.container.querySelectorAll("span")].filter(
+    (span) =>
+      span.textContent?.trim() === "#123" &&
+      span.closest("a") === null &&
+      span.closest('[aria-hidden="true"]') === null,
+  );
+  expect(exposedKeys).toHaveLength(0);
+  const externalClick = new MouseEvent("click", { bubbles: true, cancelable: true });
+  await act(async () => {
+    row.dispatchEvent(externalClick);
+  });
+  expect(externalClick.defaultPrevented).toBe(false);
+  const extra = screen.getByRole("link", { name: "Issue #124: Tab list jumps" });
+  await expect.element(extra).not.toBeInTheDocument();
+  await screen.getByRole("button", { name: "Show 1 more" }).click();
+  await expect.element(extra).toBeVisible();
+  await screen.getByRole("button", { name: "Show less" }).click();
+  await expect.element(extra).not.toBeInTheDocument();
 });
 
 it("keeps Ready pending when refreshed detail becomes mergeable before the action settles", async () => {
