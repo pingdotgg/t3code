@@ -4,7 +4,14 @@
   "ignorePatterns": [".repos/**"],
   // Exported types are part of our contracts even before they have consumers.
   // Effect schemas count as types: a schema without a consumer is not reported.
-  "rules": { "unused-types": "off", "unused-dev-dependencies": "error" },
+  "rules": {
+    "unused-types": "off",
+    // Fallow warns for these by default. The gate must fail on them.
+    "unused-dev-dependencies": "error",
+    "unused-optional-dependencies": "error",
+    "unused-namespace-members": "error",
+    "duplicate-export-aliases": "error",
+  },
   "effect": { "schemaExportsAsTypes": true },
   // Files that run in production and that no import or package manifest reaches.
   "entry": [
@@ -27,6 +34,7 @@
     "scripts/sign-macos.ts",
     // e2e loads the scenarios by path.
     "scripts/scenarios/*.ts",
+    // Developers run these scripts directly, and tests load the fixtures by path.
     "apps/server/scripts/probe-claude-fork-local-rollback-replay.ts",
     "apps/server/scripts/update-test-shard-weights.ts",
     "apps/server/scripts/verify-background-live.ts",
@@ -56,7 +64,10 @@
       // The export check is not clean in these workspaces yet, so `fallow:check`
       // does not gate it there. Remove a path when its workspace is clean.
       "files": ["apps/marketing/**", "apps/mobile/**", "evals/**", "infra/**", "scripts/**"],
-      "rules": { "unused-exports": "off" },
+      "rules": {
+        "unused-exports": "off",
+        "duplicate-export-aliases": "off",
+      },
     },
     {
       // Generated GraphQL operations export every selection's class.
@@ -65,12 +76,13 @@
         "packages/issue-tracker-linear/**/*.graphql.ts",
         "packages/source-control-github/**/*.graphql.ts",
       ],
-      "rules": { "unused-exports": "off", "unused-namespace-members": "off" },
+      "rules": { "unused-exports": "off" },
     },
   ],
   "workspaces": {
     "settings": {
       "scripts": {
+        // release-desktop.yml bundles a script with esbuild.
         "ignoreDependencies": ["esbuild"],
       },
       "apps/server": {
@@ -95,8 +107,6 @@
       // These workspace packages are private to this monorepo, so an export of a
       // package entry file needs a consumer too.
       "packages/*": { "includeEntryExports": true },
-      "packages/issue-tracker-linear": { "includeEntryExports": false },
-      "packages/source-control-github": { "includeEntryExports": false },
     },
   },
 }

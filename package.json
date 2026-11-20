@@ -34,7 +34,7 @@
     "lint": "vp lint --report-unused-disable-directives",
     "i18n:untranslated": "node scripts/i18n-untranslated.ts",
     "fallow": "fallow dead-code",
-    "fallow:check": "fallow dead-code --unused-files --unused-deps --unused-exports --unused-enum-members",
+    "fallow:check": "fallow dead-code --unused-files --unused-deps --unused-exports --unused-enum-members --unused-namespace-members --duplicate-export-aliases",
     "fallow:production": "fallow dead-code --production",
     "lint:mobile": "node scripts/mobile-native-static-check.ts",
     "mobile:install": "node scripts/mobile-native-client.ts ensure",

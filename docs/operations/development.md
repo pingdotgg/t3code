@@ -261,13 +261,13 @@ Windows investigation while that suite is not a required gate.
 `vp run fallow:check` runs [fallow](https://fallow.tools) in one pass. It checks unused files and
 dependencies across the repo, and unused runtime exports in every workspace except
 `apps/marketing`, `apps/mobile`, `evals`, `infra/*`, and `scripts`. CI enforces it.
-Exported types and Effect schemas are allowed without consumers. fallow recognizes schema
+Exported types and Effect schemas are allowed without consumers. Fallow recognizes schema
 declarations, including aliases and schema classes; functions that create or decode schemas remain
 checked. Canonical Effect service construction APIs stay exported with an explicit `@public`
 annotation, which fallow recognizes. Completely unused files remain checked too.
-Named exports in web UI component modules are kept as complete component sets. fallow ignores
+Named exports in web UI component modules are kept as complete component sets. Fallow ignores
 unused exports in `apps/web/src/components/ui/*.tsx`, while still reporting an entire unused file.
-Use `vp run fallow --workspace apps/web` to audit one workspace with every check that fallow has,
+Use `vp run fallow --workspace apps/web` to audit one workspace with every dead-code check,
 or `vp run fallow:production --workspace apps/web` to find code kept alive only by tests.
 The export check still has findings in the workspaces listed above, so an override in
 [.fallowrc.jsonc](../../.fallowrc.jsonc) turns it off there. Remove a path from that override when
@@ -275,6 +275,10 @@ its workspace is clean. Review callers before deleting code; production mode can
 development scripts and test fixtures.
 Runtime-discovered entrypoints and dependency exceptions belong in
 [.fallowrc.jsonc](../../.fallowrc.jsonc).
+
+When the check reports an export, remove the `export` keyword or the code. If a module outside the
+import graph uses the export, add `/** @public */` above it. For a single exception, put
+`// fallow-ignore-next-line unused-export` on the line above.
 
 ## Desktop artifacts
 
