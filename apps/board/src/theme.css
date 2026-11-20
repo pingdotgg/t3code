@@ -48,3 +48,7 @@
     outline-offset: 2px;
   }
 }
+
+@utility scrollbar-gutter-both {
+  scrollbar-gutter: stable both-edges;
+}
