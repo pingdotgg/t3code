@@ -43,7 +43,7 @@ function compareByName(a: { name: string }, b: { name: string }): number {
 }
 
 function readStat(file: TurnDiffFileChange): TurnDiffStat | null {
-  if (typeof file.additions !== "number" || typeof file.deletions !== "number") {
+  if (file.binary || typeof file.additions !== "number" || typeof file.deletions !== "number") {
     return null;
   }
   return {

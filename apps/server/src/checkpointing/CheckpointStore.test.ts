@@ -291,6 +291,7 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
           expect(parseTurnDiffFilesFromNumstat(numstat)).toEqual([
             {
               path: "Component.tsx",
+              kind: "modified",
               additions: ignoreWhitespace ? 4 : 6,
               deletions: ignoreWhitespace ? 0 : 2,
             },
@@ -325,7 +326,7 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
         });
 
         expect(parseTurnDiffFilesFromNumstat(numstat)).toEqual([
-          { path: "README.md", additions: lineCount, deletions: lineCount },
+          { path: "README.md", kind: "modified", additions: lineCount, deletions: lineCount },
         ]);
         expect(numstat.length).toBeLessThan(100);
       }),
@@ -386,13 +387,25 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
           yield* checkpointStore.diffCheckpoints(input),
         );
         const expectedFiles = [
-          { path: "binary.bin", additions: 0, deletions: 0 },
-          { path: "copied.txt", previousPath: "copy-source.txt", additions: 0, deletions: 0 },
-          { path: "copy-source.txt", additions: 1, deletions: 0 },
-          { path: "deleted.txt", additions: 0, deletions: 1 },
-          { path: "empty.txt", additions: 0, deletions: 0 },
-          { path: addedPath, additions: 2, deletions: 0 },
-          { path: renamedPath, previousPath: "rename-old.txt", additions: 1, deletions: 1 },
+          { path: "binary.bin", kind: "modified", additions: 0, deletions: 0, binary: true },
+          {
+            path: "copied.txt",
+            previousPath: "copy-source.txt",
+            kind: "added",
+            additions: 0,
+            deletions: 0,
+          },
+          { path: "copy-source.txt", kind: "modified", additions: 1, deletions: 0 },
+          { path: "deleted.txt", kind: "deleted", additions: 0, deletions: 1 },
+          { path: "empty.txt", kind: "added", additions: 0, deletions: 0 },
+          { path: addedPath, kind: "added", additions: 2, deletions: 0 },
+          {
+            path: renamedPath,
+            previousPath: "rename-old.txt",
+            kind: "renamed",
+            additions: 1,
+            deletions: 1,
+          },
         ].toSorted((left, right) => left.path.localeCompare(right.path));
         expect(firstSummary).toEqual(expectedFiles);
 
@@ -407,8 +420,8 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
           }),
         );
         expect(secondSummary).toEqual([
-          { path: "copy-source.txt", additions: 1, deletions: 21 },
-          { path: "empty.txt", additions: 0, deletions: 0 },
+          { path: "copy-source.txt", kind: "modified", additions: 1, deletions: 21 },
+          { path: "empty.txt", kind: "deleted", additions: 0, deletions: 0 },
         ]);
 
         const inclusiveSummary = parseTurnDiffFilesFromNumstat(
@@ -453,7 +466,7 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
           fallbackFromToHead: true,
         });
         expect(parseTurnDiffFilesFromNumstat(numstat)).toEqual([
-          { path: "README.md", additions: 1, deletions: 1 },
+          { path: "README.md", kind: "modified", additions: 1, deletions: 1 },
         ]);
       }),
     );
