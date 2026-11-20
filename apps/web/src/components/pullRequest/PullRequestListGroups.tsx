@@ -1,13 +1,7 @@
 import type { EnvironmentId, PullRequestAction } from "@t3tools/contracts";
 import { EyeIcon, LayersIcon, PenLineIcon, UsersIcon, type LucideIcon } from "lucide-react";
 import { useMessages } from "gt-react";
-import {
-  Fragment,
-  useDeferredValue,
-  type ElementType,
-  type ReactNode,
-  type RefCallback,
-} from "react";
+import { type ElementType, type ReactNode, type RefCallback } from "react";
 
 import { cn } from "~/lib/utils";
 import { Separator } from "../ui/separator";
@@ -18,6 +12,7 @@ import {
   type EnvironmentPullRequestEntry,
   type PullRequestGroup,
 } from "./pullRequestList.logic";
+import { WorkItemWindowedList, type WorkItemListItem } from "../workItem/WorkItemWindowedList";
 import { PullRequestStackGroup } from "./PullRequestStackGroup";
 import { PullRequestRow, type PullRequestRowTarget } from "./PullRequestRow";
 import {
@@ -32,18 +27,6 @@ const GROUP_ICONS: Record<string, LucideIcon> = {
 };
 
 const MATCHED_ELSEWHERE_SCORE = 10;
-const FIRST_PAINT_ROWS = 24;
-
-function firstPaintGroups<Group extends { entries: ReadonlyArray<unknown> }>(
-  groups: ReadonlyArray<Group>,
-): ReadonlyArray<Group> {
-  let left = FIRST_PAINT_ROWS;
-  return groups.flatMap((group) => {
-    const entries = group.entries.slice(0, left);
-    left -= entries.length;
-    return entries.length === 0 ? [] : [{ ...group, entries }];
-  });
-}
 
 /** A page list's group heading, shared by the pull request and issue lists. */
 export function WorkItemGroupHeader({
@@ -100,6 +83,7 @@ export function PullRequestListGroups({
   closingKeys,
   sweepingKeys,
   onCloseSweepStart,
+  scrollElement,
 }: {
   groups: ReadonlyArray<PullRequestGroup<EnvironmentPullRequestEntry>>;
   /** Only when rows come from more than one server, so each says which. */
@@ -120,10 +104,9 @@ export function PullRequestListGroups({
   closingKeys: ReadonlySet<string>;
   sweepingKeys: ReadonlySet<string>;
   onCloseSweepStart: (entry: EnvironmentPullRequestEntry, event: PointerEvent) => void;
+  /** The page's scroller, which the windowed rows follow. */
+  scrollElement: HTMLElement | null;
 }) {
-  // Every row mounts tooltips and actions; painting a first screenful before the rest keeps
-  // opening the page from blocking on the whole list.
-  const shownGroups = useDeferredValue(groups, firstPaintGroups(groups));
   const counts = new Map(groups.map((group) => [group.key, group.entries.length]));
   const isSelectedEntry = (entry: EnvironmentPullRequestEntry) =>
     selected?.environmentId === entry.environmentId &&
@@ -153,37 +136,52 @@ export function PullRequestListGroups({
     };
   };
 
+  // Flat, so only the rows near the view mount; a group's gap rides on its heading.
+  const items: WorkItemListItem[] = groups.flatMap((group, groupIndex) => [
+    ...(group.label
+      ? [
+          {
+            key: `group:${group.key}`,
+            type: "header",
+            node: (
+              <div className={groupIndex > 0 ? "pt-3" : undefined}>
+                <PullRequestGroupHeader
+                  group={group}
+                  count={counts.get(group.key) ?? group.entries.length}
+                />
+              </div>
+            ),
+          },
+        ]
+      : []),
+    ...clusterPullRequestStacks(group.entries).map((item, index) => ({
+      key: `${group.key}:${item.kind === "row" ? pullRequestEntryKey(item.entry) : `stack:${item.key}`}`,
+      type: item.kind,
+      node: (
+        <div className={index === 0 && !group.label && groupIndex > 0 ? "pt-3" : undefined}>
+          {index > 0 ? <Separator /> : null}
+          {item.kind === "row" ? (
+            <PullRequestRow
+              {...rowPropsFor(item.entry)}
+              entry={item.entry}
+              selected={isSelectedEntry(item.entry)}
+            />
+          ) : (
+            <PullRequestStackGroup
+              entries={item.entries}
+              isSelected={isSelectedEntry}
+              rowProps={rowPropsFor}
+            />
+          )}
+        </div>
+      ),
+    })),
+  ]);
+
   return (
     <PullRequestSpeedModeProvider>
-      <div className={cn("flex flex-col gap-3", sweepingKeys.size > 0 && "**:pointer-events-none")}>
-        {shownGroups.map((group) => (
-          <div key={group.key} className="flex flex-col">
-            {group.label ? (
-              <PullRequestGroupHeader
-                group={group}
-                count={counts.get(group.key) ?? group.entries.length}
-              />
-            ) : null}
-            {clusterPullRequestStacks(group.entries).map((item, index) => (
-              <Fragment key={item.kind === "row" ? pullRequestEntryKey(item.entry) : item.key}>
-                {index > 0 ? <Separator /> : null}
-                {item.kind === "row" ? (
-                  <PullRequestRow
-                    {...rowPropsFor(item.entry)}
-                    entry={item.entry}
-                    selected={isSelectedEntry(item.entry)}
-                  />
-                ) : (
-                  <PullRequestStackGroup
-                    entries={item.entries}
-                    isSelected={isSelectedEntry}
-                    rowProps={rowPropsFor}
-                  />
-                )}
-              </Fragment>
-            ))}
-          </div>
-        ))}
+      <div className={cn(sweepingKeys.size > 0 && "**:pointer-events-none")}>
+        <WorkItemWindowedList items={items} scrollElement={scrollElement} estimatedItemSize={61} />
       </div>
     </PullRequestSpeedModeProvider>
   );
