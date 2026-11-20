@@ -3926,6 +3926,39 @@ it.effect("preview_open reports a hidden desktop tab it reveals as visible", () 
   ).pipe(Effect.provide(layer)),
 );
 
+it.effect("browser automation stays available without an open tab", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const emptyScope = {
+        ...scope,
+        thread: { ...scope.thread, threadId: ThreadId.make("empty-browser-thread") },
+      };
+      const empty = yield* broker.invoke<PreviewAutomationStatus>({
+        scope: emptyScope,
+        operation: "status",
+        input: {},
+      });
+      expect(empty).toMatchObject({ available: true, visible: false, tabId: null });
+      yield* broker.invoke({ scope, tabId, operation: "close", input: {} });
+      const closed = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "status",
+        input: {},
+      });
+      expect(closed).toMatchObject({ available: true, visible: false, tabId: null });
+      expect(contexts).toHaveLength(1);
+      const reopened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { open: false },
+      });
+      expect(reopened.available).toBe(true);
+      expect(reopened.tabId).not.toBeNull();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect("a session's own tab stays its default while other sessions' tabs are listed", () =>
   Effect.scoped(
     Effect.gen(function* () {
