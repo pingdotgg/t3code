@@ -44,6 +44,8 @@ import {
   resolveMacPasskeySigningConfiguration,
   resolveMergedStageDependencies,
   resolveBuildOptions,
+  resolveDesktopPublisher,
+  standaloneLinuxMetainfo,
   stageWslRuntimeArchive,
   ancestorNodeModulesPaths,
   copyDirectoryPreservingSymlinks,
@@ -591,6 +593,57 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         ConfigProvider.layer(
           ConfigProvider.fromEnv({
             env: { GITHUB_REPOSITORY: "fork-owner/t3code", T3CODE_APP_SCHEME: "forkcode" },
+          }),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("names the fork as the publisher of standalone Linux packages", () =>
+    Effect.gen(function* () {
+      const linux = yield* createBuildConfig(
+        "linux",
+        "AppImage",
+        "0.0.33",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+      const publisher = yield* resolveDesktopPublisher();
+      const fs = yield* FileSystem.FileSystem;
+      const metainfo = standaloneLinuxMetainfo(
+        yield* fs.readFileString(
+          NodePath.join(
+            import.meta.dirname,
+            "../apps/desktop/resources/linux/com.t3tools.t3code.metainfo.xml",
+          ),
+        ),
+        publisher,
+      );
+
+      assert.nestedPropertyVal(
+        linux,
+        "linux.maintainer",
+        "EasyDev Soluções Digitais <contato@easydevsolucoes.com.br>",
+      );
+      assert.include(metainfo, "<id>com.t3tools.t3code</id>");
+      assert.include(metainfo, "<name>EasyDev Code</name>");
+      assert.include(metainfo, '<developer id="br.com.easydevsolucoes">');
+      assert.include(
+        metainfo,
+        '<url type="bugtracker">https://github.com/fork-owner/t3code/issues</url>',
+      );
+      assert.notMatch(metainfo, /t3\.codes|pingdotgg|T3 Tools/);
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({
+            env: {
+              T3CODE_STANDALONE: "1",
+              T3CODE_APP_NAME: "EasyDev Code",
+              GITHUB_REPOSITORY: "fork-owner/t3code",
+            },
           }),
         ),
       ),

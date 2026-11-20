@@ -19,6 +19,7 @@ import { fromYaml } from "@t3tools/shared/schemaYaml";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/relayAuth";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { STANDALONE_VENDOR } from "@t3tools/shared/standalone";
 import rootPackageJson from "../package.json" with { type: "json" };
 import desktopPackageJson from "../apps/desktop/package.json" with { type: "json" };
 import gnomeCaptureBundle from "../apps/desktop/gnome-extension/bundle.json" with { type: "json" };
@@ -1101,6 +1102,8 @@ export const DESKTOP_EXTRA_RESOURCES = [
     to: "resource-monitor",
   },
 ] as const;
+const LINUX_METAINFO_RESOURCE = "apps/desktop/resources/linux/com.t3tools.t3code.metainfo.xml";
+
 export const LINUX_CAPTURE_EXTRA_RESOURCES = [
   {
     from: "apps/desktop/prod-resources/hyprland-capture",
@@ -2696,6 +2699,81 @@ export function resolveDesktopRuntimeDependencies(
   );
 }
 
+export interface DesktopPublisher {
+  readonly appName: string;
+  readonly author: string;
+  readonly homepage: string;
+  readonly maintainer: string;
+  /** The fork's owner/repo; undefined for T3 Code's own builds. */
+  readonly repository: string | undefined;
+}
+
+const T3_DESKTOP_PUBLISHER: DesktopPublisher = {
+  appName: "T3 Code",
+  author: "T3 Tools",
+  homepage: "https://t3.codes",
+  maintainer: "T3 Tools <hello@t3.codes>",
+  repository: undefined,
+};
+
+/** Who the package names as its publisher: T3, or the fork for `T3CODE_STANDALONE=1` builds. */
+export const resolveDesktopPublisher = Effect.fn("resolveDesktopPublisher")(function* () {
+  const env = yield* Config.all({
+    standalone: Config.String("T3CODE_STANDALONE").pipe(Config.withDefault("")),
+    appName: Config.String("T3CODE_APP_NAME").pipe(Config.withDefault("")),
+    updateRepository: Config.String("T3CODE_DESKTOP_UPDATE_REPOSITORY").pipe(
+      Config.withDefault(""),
+    ),
+    githubRepository: Config.String("GITHUB_REPOSITORY").pipe(Config.withDefault("")),
+  });
+  if (!/^(1|true)$/i.test(env.standalone.trim())) return T3_DESKTOP_PUBLISHER;
+  return {
+    appName: env.appName.trim() || T3_DESKTOP_PUBLISHER.appName,
+    author: STANDALONE_VENDOR.name,
+    homepage: STANDALONE_VENDOR.homepage,
+    maintainer: `${STANDALONE_VENDOR.name} <${STANDALONE_VENDOR.email}>`,
+    repository: env.updateRepository.trim() || env.githubRepository.trim() || undefined,
+  } satisfies DesktopPublisher;
+});
+
+export function desktopPackageDescription(appName: string): string {
+  return `${appName} is an open-source desktop app for coding agents. Work with your existing agent subscriptions, review code changes, and run commands in your projects. Connect from desktop, web, or mobile to continue working remotely.`;
+}
+
+/** The AppStream metainfo with T3's name, developer, and links swapped for the fork's. */
+export function standaloneLinuxMetainfo(xml: string, publisher: DesktopPublisher): string {
+  const repositoryUrl = `https://github.com/${publisher.repository}`;
+  const hostname = new URL(publisher.homepage).hostname.split(".").toReversed().join(".");
+  return xml
+    .replace(/<name>T3 Code<\/name>/, `<name>${escapeXml(publisher.appName)}</name>`)
+    .replace(
+      /<developer id="[^"]*">\s*<name>[^<]*<\/name>/,
+      `<developer id="${hostname}">\n    <name>${escapeXml(publisher.author)}</name>`,
+    )
+    .replace(/T3 Code is an/, `${escapeXml(publisher.appName)} is an`)
+    .replace(/(<url type="homepage">)[^<]*/, `$1${publisher.homepage}`)
+    .replace(/(<url type="bugtracker">)[^<]*/, `$1${repositoryUrl}/issues`)
+    .replace(/(<url type="vcs-browser">)[^<]*/, `$1${repositoryUrl}`);
+}
+
+/** The GNOME extension's visible name and links, keeping its uuid so installs still match. */
+export function standaloneGnomeExtensionMetadata(
+  json: string,
+  publisher: DesktopPublisher,
+): string {
+  const metadata = JSON.parse(json) as Record<string, unknown>;
+  return `${JSON.stringify(
+    {
+      ...metadata,
+      name: `${publisher.appName} SnapShots`,
+      description: String(metadata.description).replaceAll("T3 Code", publisher.appName),
+      url: `https://github.com/${publisher.repository}`,
+    },
+    null,
+    2,
+  )}\n`;
+}
+
 export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig")(function* (
   updateChannel: "latest" | "nightly",
 ) {
@@ -2786,6 +2864,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     | undefined,
   wslRuntimeBundled = false,
   arch?: typeof BuildArch.Type,
+  linuxMetainfoPath?: string,
 ) {
   const buildConfig: Record<string, unknown> = {
     afterPack: (yield* Path.Path).join(yield* RepoRoot, "scripts/prepare-server-compile-cache.cjs"),
@@ -2922,7 +3001,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       icon: "icons",
       category: "Development",
       synopsis: "Desktop GUI for coding agents",
-      maintainer: "T3 Tools <hello@t3.codes>",
+      maintainer: (yield* resolveDesktopPublisher()).maintainer,
       protocols: [appProtocol],
       desktop: {
         entry: {
@@ -2941,7 +3020,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     buildConfig.deb = {
       // FPM runs outside the staged app directory, so source paths must be absolute.
       fpm: [
-        `${path.join(repoRoot, "apps/desktop/resources/linux/com.t3tools.t3code.metainfo.xml")}=/usr/share/metainfo/com.t3tools.t3code.metainfo.xml`,
+        `${linuxMetainfoPath ?? path.join(repoRoot, LINUX_METAINFO_RESOURCE)}=/usr/share/metainfo/com.t3tools.t3code.metainfo.xml`,
         `${path.join(repoRoot, "LICENSE")}=/usr/share/doc/t3code/copyright`,
       ],
       // Debian 13 and Ubuntu 24.04 use 64-bit-time names; retain old-name fallbacks.
@@ -3793,6 +3872,8 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   yield* Effect.log("[desktop-artifact] Staging release app...");
   yield* fs.copy(distDirs.desktopDist, path.join(stageAppDir, "apps/desktop/dist-electron"));
   yield* fs.copy(distDirs.desktopResources, stageResourcesDir);
+  const publisher = yield* resolveDesktopPublisher();
+  let linuxMetainfoPath: string | undefined;
   if (options.platform === "linux") {
     const extensionDir = path.join(stageAppDir, "apps/desktop/gnome-extension");
     yield* fs.makeDirectory(extensionDir, { recursive: true });
@@ -3800,6 +3881,24 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       yield* fs.copyFile(
         path.join(repoRoot, "apps/desktop/gnome-extension", file),
         path.join(extensionDir, file),
+      );
+    }
+    if (publisher.repository !== undefined) {
+      const extensionMetadataPath = path.join(extensionDir, "metadata.json");
+      yield* fs.writeFileString(
+        extensionMetadataPath,
+        standaloneGnomeExtensionMetadata(
+          yield* fs.readFileString(extensionMetadataPath),
+          publisher,
+        ),
+      );
+      linuxMetainfoPath = path.join(stageRoot, path.basename(LINUX_METAINFO_RESOURCE));
+      yield* fs.writeFileString(
+        linuxMetainfoPath,
+        standaloneLinuxMetainfo(
+          yield* fs.readFileString(path.join(repoRoot, LINUX_METAINFO_RESOURCE)),
+          publisher,
+        ),
       );
     }
   }
@@ -3919,11 +4018,10 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     ...(macWebAuthn ? { t3codeWebAuthn: macWebAuthn } : {}),
     private: true,
     packageManager: rootPackageJson.packageManager,
-    description:
-      "T3 Code is an open-source desktop app for coding agents. Work with your existing agent subscriptions, review code changes, and run commands in your projects. Connect from desktop, web, or mobile to continue working remotely.",
+    description: desktopPackageDescription(publisher.appName),
     license: "MIT",
-    homepage: "https://t3.codes",
-    author: "T3 Tools",
+    homepage: publisher.homepage,
+    author: publisher.author,
     main: "apps/desktop/dist-electron/boot.cjs",
     build: yield* createBuildConfig(
       options.platform,
@@ -3940,6 +4038,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
         : undefined,
       bundlesWslRuntime({ platform: options.platform, runtimeArchivePath: options.wslRuntime }),
       options.arch,
+      linuxMetainfoPath,
     ),
     dependencies: stageDependencies,
     devDependencies: {
