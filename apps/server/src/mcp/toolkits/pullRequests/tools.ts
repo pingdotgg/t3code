@@ -186,7 +186,6 @@ export const PullRequestToolError = Schema.Union([
   PullRequestListFailedError,
   PullRequestWatchService.PullRequestWatchFailedError,
   PullRequestUnavailableError,
-  PullRequestWatchService.PullRequestNotOpenError,
   PullRequestWatchService.PullRequestWatchFromSubagentError,
   PullRequestProjectNotFoundError,
   PullRequestGuideFailedError,
@@ -258,8 +257,17 @@ export const WatchPullRequestResult = Schema.Struct({
   ...PullRequestIdentity,
   watching: Schema.Boolean,
   wasWatching: Schema.Boolean,
+  state: Schema.optional(
+    Schema.Literals(["merged", "closed"]).annotate({
+      description: "The PR already ended, so nothing was watched.",
+    }),
+  ),
+  next: Schema.optional(Schema.String),
 });
 export type WatchPullRequestResult = typeof WatchPullRequestResult.Type;
+
+export const alreadyEndedWatchNext = (state: "merged" | "closed") =>
+  `This PR is already ${state}, so there is nothing to watch. Report that and end your turn.`;
 
 export const ThreadPullRequestEntry = Schema.Struct({
   ...PullRequestIdentity,
