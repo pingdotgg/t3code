@@ -286,6 +286,9 @@ describe("formatGuestExpiry", () => {
     expect(formatGuestExpiry("2026-10-23T00:00:30.000Z", now)).toBe("1m left");
     expect(formatGuestExpiry("2026-10-23T00:00:00.000Z", now)).toBe("Expired");
   });
+  it("returns empty for an unparseable expiry", () => {
+    expect(formatGuestExpiry("not-a-date", now)).toBe("");
+  });
 });
 
 describe("inviteShareId", () => {
