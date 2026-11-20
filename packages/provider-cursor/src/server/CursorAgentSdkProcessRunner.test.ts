@@ -603,4 +603,48 @@ describe("CursorAgentSdkProcessRunner", () => {
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.live(
+    "settles active runs on a closed session without disrupting peer sessions on the shared worker",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const scriptPath = yield* writeFakeWorker;
+          const executable = yield* HostProcess.ExecutablePath;
+          const registeredPids: Array<number> = [];
+
+          const runner = yield* CursorAgentSdkProcessRunner.makeCursorAgentSdkProcessRunner({
+            resolveLaunch: Effect.succeed({
+              command: executable,
+              args: [scriptPath],
+              env: { FAKE_WORKER_MODE: "cancel" },
+              registerProcess: (pid) => {
+                registeredPids.push(pid);
+                return () => {};
+              },
+            }),
+            protocolLoggerFor: () => undefined,
+          });
+
+          const sessionA = yield* runner.open(openInput);
+          const sessionB = yield* runner.open({
+            ...openInput,
+            threadId: ThreadId.make("thread-worker-test-peer"),
+            providerSessionId: ProviderSessionId.make("provider-session-worker-test-peer"),
+          });
+          assert.lengthOf(registeredPids, 1);
+
+          // Start a run on sessionA that stays pending, then close sessionA while sessionB keeps the worker alive.
+          const runA = yield* sessionA.send({ message: "hi" });
+          const waitA = yield* Effect.forkChild(Effect.flip(runA.wait));
+          yield* sessionA.close;
+          const errorA = yield* Fiber.join(waitA);
+          assert.include(CursorAgentSdk.cursorSdkFailureMessage(errorA), "closed");
+          assert.isFalse(sessionA.isAlive?.());
+          assert.isTrue(sessionB.isAlive?.());
+          assert.lengthOf(yield* sessionB.listMessages, 1);
+          yield* sessionB.close;
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
 });

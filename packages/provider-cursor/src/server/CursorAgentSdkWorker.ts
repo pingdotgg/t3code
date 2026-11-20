@@ -83,9 +83,16 @@ export async function runCursorSdkWorker(
   let activeSendStarts = 0;
   // One worker hosts every Cursor session; each session is keyed by its open request id.
   const sessions = new Map<number, CursorAgentSdk.CursorAgentSdkSession>();
+  const openingSessionIds = new Set<number>();
+  const pendingClosedSessionIds = new Set<number>();
   // Other sessions keep the worker alive, so an abandoned generation must be interrupted here.
   const textGenerations = new Map<number, AbortController>();
-  const activeRuns = new Map<number, CursorAgentSdk.CursorAgentSdkRun>();
+  const activeRuns = new Map<
+    number,
+    { readonly sessionId: number; readonly run: CursorAgentSdk.CursorAgentSdkRun }
+  >();
+  const startingSendIds = new Set<number>();
+  const pendingCancelledSendIds = new Set<number>();
   let shuttingDown = false;
   let exitCode = 0;
 
@@ -107,8 +114,19 @@ export async function runCursorSdkWorker(
   const closeSession = async (
     sessionId: number,
   ): Promise<Exit.Exit<void, CursorAgentSdk.CursorAgentSdkRunnerError>> => {
+    if (openingSessionIds.has(sessionId)) {
+      pendingClosedSessionIds.add(sessionId);
+    }
     const current = sessions.get(sessionId);
     sessions.delete(sessionId);
+    for (const [sendId, entry] of activeRuns.entries()) {
+      if (entry.sessionId === sessionId) {
+        activeRuns.delete(sendId);
+        void runtime.runPromiseExit(
+          entry.run.cancel.pipe(Effect.timeoutOption(`${CLOSE_GRACE_MS} millis`), Effect.ignore),
+        );
+      }
+    }
     if (current === undefined) {
       return Exit.void;
     }
@@ -158,22 +176,47 @@ export async function runCursorSdkWorker(
 
     switch (req.type) {
       case "open": {
-        const exit = await runtime.runPromiseExit(
-          runner.open({
-            operation: req.operation,
-            ...(req.agentId === undefined ? {} : { agentId: req.agentId }),
-            ...(req.storeCwd === undefined ? {} : { storeCwd: req.storeCwd }),
-            options: req.options,
-            threadId: req.threadId,
-            providerSessionId: req.providerSessionId,
-          }),
-        );
+        openingSessionIds.add(req.id);
+        let exit: Exit.Exit<
+          CursorAgentSdk.CursorAgentSdkSession,
+          CursorAgentSdk.CursorAgentSdkRunnerError
+        >;
+        try {
+          exit = await runtime.runPromiseExit(
+            runner.open({
+              operation: req.operation,
+              ...(req.agentId === undefined ? {} : { agentId: req.agentId }),
+              ...(req.storeCwd === undefined ? {} : { storeCwd: req.storeCwd }),
+              options: req.options,
+              threadId: req.threadId,
+              providerSessionId: req.providerSessionId,
+            }),
+          );
+        } finally {
+          openingSessionIds.delete(req.id);
+        }
         if (Exit.isFailure(exit)) {
+          pendingClosedSessionIds.delete(req.id);
           writeMessage({
             type: "response",
             id: req.id,
             ok: false,
             error: exitFailure("open", exit),
+          });
+          return;
+        }
+        if (pendingClosedSessionIds.delete(req.id)) {
+          await runtime.runPromiseExit(
+            exit.value.close.pipe(Effect.timeoutOption(`${CLOSE_GRACE_MS} millis`), Effect.ignore),
+          );
+          const aborted = Object.assign(new Error("Cursor session was closed while opening."), {
+            name: "AbortError",
+          });
+          writeMessage({
+            type: "response",
+            id: req.id,
+            ok: false,
+            error: toRunnerFailure("open", aborted),
           });
           return;
         }
@@ -198,6 +241,7 @@ export async function runCursorSdkWorker(
           });
           return;
         }
+        startingSendIds.add(req.id);
         activeSendStarts += 1;
         let exit: Exit.Exit<
           CursorAgentSdk.CursorAgentSdkRun,
@@ -212,14 +256,18 @@ export async function runCursorSdkWorker(
               ...(req.resume === undefined ? {} : { resume: req.resume }),
               onDelta: (update) =>
                 Effect.sync(() => {
-                  writeMessage({ type: "delta", sendId: req.id, update });
+                  if (sessions.has(req.sessionId) && !pendingCancelledSendIds.has(req.id)) {
+                    writeMessage({ type: "delta", sendId: req.id, update });
+                  }
                 }),
             }),
           );
         } finally {
+          startingSendIds.delete(req.id);
           activeSendStarts -= 1;
         }
         if (Exit.isFailure(exit)) {
+          pendingCancelledSendIds.delete(req.id);
           writeMessage({
             type: "response",
             id: req.id,
@@ -229,7 +277,23 @@ export async function runCursorSdkWorker(
           return;
         }
         const run = exit.value;
-        activeRuns.set(req.id, run);
+        // Session closed or cancel arrived while send was starting: stop the run immediately.
+        if (!sessions.has(req.sessionId) || pendingCancelledSendIds.delete(req.id)) {
+          await runtime.runPromiseExit(
+            run.cancel.pipe(Effect.timeoutOption(`${CLOSE_GRACE_MS} millis`), Effect.ignore),
+          );
+          const aborted = Object.assign(new Error("Cursor run was cancelled while starting."), {
+            name: "AbortError",
+          });
+          writeMessage({
+            type: "response",
+            id: req.id,
+            ok: false,
+            error: toRunnerFailure(req.resume === true ? "run.resume" : "run.start", aborted),
+          });
+          return;
+        }
+        activeRuns.set(req.id, { sessionId: req.sessionId, run });
         writeMessage({
           type: "response",
           id: req.id,
@@ -258,8 +322,8 @@ export async function runCursorSdkWorker(
       }
 
       case "steer": {
-        const run = activeRuns.get(req.sendId);
-        if (run?.steer === undefined) {
+        const entry = activeRuns.get(req.sendId);
+        if (entry?.run.steer === undefined) {
           writeMessage({
             type: "response",
             id: req.id,
@@ -268,7 +332,7 @@ export async function runCursorSdkWorker(
           });
           return;
         }
-        const exit = await runtime.runPromiseExit(run.steer(req.text));
+        const exit = await runtime.runPromiseExit(entry.run.steer(req.text));
         if (Exit.isFailure(exit)) {
           writeMessage({
             type: "response",
@@ -283,12 +347,15 @@ export async function runCursorSdkWorker(
       }
 
       case "cancel": {
-        const run = activeRuns.get(req.sendId);
-        if (run === undefined) {
+        const entry = activeRuns.get(req.sendId);
+        if (entry === undefined) {
+          if (startingSendIds.has(req.sendId)) {
+            pendingCancelledSendIds.add(req.sendId);
+          }
           writeMessage({ type: "response", id: req.id, ok: true, result: null });
           return;
         }
-        const exit = await runtime.runPromiseExit(run.cancel);
+        const exit = await runtime.runPromiseExit(entry.run.cancel);
         if (Exit.isFailure(exit)) {
           writeMessage({
             type: "response",
