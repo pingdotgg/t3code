@@ -8694,18 +8694,22 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             !context.interrupted &&
             context.backgroundFinalizeGeneration === generation &&
             !hasDeferredBackgroundWork(context);
+          const readDetachedWork = Effect.fn("AcpAdapterV2.readDetachedWork")(function* () {
+            if (flavor.detachedWorkOutlivingPrompt === undefined) return true;
+            const pending = yield* flavor.detachedWorkOutlivingPrompt(context.nativeThreadId);
+            if (!canFinalize()) return false;
+            context.detachedWorkPending = pending;
+            return true;
+          });
+          if (!(yield* readDetachedWork())) return;
           yield* Effect.gen(function* () {
-            while (true) {
+            yield* Effect.sleep(debounce);
+            if (!canFinalize()) return;
+            // Wait one more debounce after the work stops, for the last worker's wake.
+            while (context.detachedWorkPending) {
+              if (!(yield* readDetachedWork())) return;
               yield* Effect.sleep(debounce);
               if (!canFinalize()) return;
-              const wasPending = context.detachedWorkPending;
-              if (flavor.detachedWorkOutlivingPrompt !== undefined) {
-                const pending = yield* flavor.detachedWorkOutlivingPrompt(context.nativeThreadId);
-                if (!canFinalize()) return;
-                context.detachedWorkPending = pending;
-              }
-              // Allow the last worker's wake to arrive after its native work has stopped.
-              if (!context.detachedWorkPending && !wasPending) break;
             }
             const status = context.promptSettledStatus ?? "completed";
             yield* finalizeTurn(context, status);

@@ -1213,7 +1213,8 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
 });
 
 describe("AntigravityAdapterV2 work after the prompt ends", () => {
-  it.live("keeps the run open for swarm workers after the launch tool completes", () =>
+  // A swarm launch completes at once; only the board and the worker's transcript show the work.
+  it.effect("keeps the run open for swarm workers after the launch tool completes", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -1249,6 +1250,7 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
 
       yield* startTurn(1, false);
       yield* throughPromptSettled;
+      yield* TestClock.adjust("10 minutes");
       yield* fs.writeFileString(
         transcript,
         [
@@ -1268,6 +1270,7 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
         content: { type: "text", text: "The swarm checked the chart." },
       });
       yield* send(usage);
+      yield* TestClock.adjust("3 seconds");
       const events = yield* throughTerminal;
       assert.include(JSON.stringify(events), "The swarm checked the chart.");
       assert.lengthOf(offers, 0, "the worker report stays in the original run");
