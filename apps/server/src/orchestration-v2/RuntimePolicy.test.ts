@@ -216,11 +216,12 @@ const limitedProviderInstanceFor = (usedPercent: number) =>
 const usedPercentByInstance = new Map<ProviderInstanceId, number>([
   [providerInstanceId, 62],
   [grokInstanceId, 40],
+  [antigravityInstanceId, 100],
 ]);
 
-it.layer(
+const layerWithUsageLimitStop = (usageLimitStopPercent: number | null) =>
   RuntimePolicy.layerFromProjectStore.pipe(
-    Layer.provide(ServerSettings.layerTest({ usageLimitStopPercent: 50 })),
+    Layer.provide(ServerSettings.layerTest({ usageLimitStopPercent })),
     Layer.provide(
       Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
         getInstance: (instanceId) =>
@@ -253,19 +254,24 @@ it.layer(
           }),
       }),
     ),
-  ),
-)("RuntimePolicyV2 with a usage limit stop", (it) => {
+  );
+
+it.layer(layerWithUsageLimitStop(50))("RuntimePolicyV2 with a usage limit stop", (it) => {
   it.effect("refuses a turn whose provider window is past the stop", () =>
     Effect.gen(function* () {
       const policy = yield* RuntimePolicy.RuntimePolicyV2;
       const now = yield* DateTime.now;
       const refused = yield* policy
-        .resolve({ thread: makeThread({ now, worktreePath: null }), modelSelection })
+        .resolve({
+          thread: makeThread({ now, worktreePath: null }),
+          modelSelection,
+          admission: "turn-start",
+        })
         .pipe(Effect.flip);
       assert.equal(refused._tag, "UsageLimitThresholdReachedError");
       assert.equal(
         refused.message,
-        "Session usage is at 62%, past your 50% usage stop. The turn did not start; resume to continue anyway.",
+        "Session usage is at 62%, at or past your 50% usage stop. The turn did not start; raise or clear usageLimitStopPercent in settings, or switch this thread to another provider or model.",
       );
     }),
   );
@@ -277,8 +283,42 @@ it.layer(
       const resolved = yield* policy.resolve({
         thread: makeThread({ now, worktreePath: null }),
         modelSelection: { instanceId: grokInstanceId, model: "test-model" },
+        admission: "turn-start",
       });
       assert.equal(resolved.runtimeMode, "full-access");
+    }),
+  );
+
+  it.effect("allows non-turn-start resolution when usage is past the stop", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const now = yield* DateTime.now;
+      const resolved = yield* policy.resolve({
+        thread: makeThread({ now, worktreePath: null }),
+        modelSelection,
+      });
+      assert.equal(resolved.runtimeMode, "full-access");
+    }),
+  );
+});
+
+it.layer(layerWithUsageLimitStop(100))("RuntimePolicyV2 with a 100% usage limit stop", (it) => {
+  it.effect("refuses a turn when the provider window is at 100%", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const now = yield* DateTime.now;
+      const refused = yield* policy
+        .resolve({
+          thread: makeThread({ now, worktreePath: null }),
+          modelSelection: { instanceId: antigravityInstanceId, model: "test-model" },
+          admission: "turn-start",
+        })
+        .pipe(Effect.flip);
+      if (refused._tag !== "UsageLimitThresholdReachedError") {
+        return assert.fail(`Expected UsageLimitThresholdReachedError, got ${refused._tag}`);
+      }
+      assert.equal(refused.stopPercent, 100);
+      assert.equal(refused.usedPercent, 100);
     }),
   );
 });

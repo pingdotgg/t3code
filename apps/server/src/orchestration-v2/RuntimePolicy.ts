@@ -71,7 +71,7 @@ export class UsageLimitThresholdReachedError extends Schema.TaggedError<UsageLim
   },
 ) {
   override get message(): string {
-    return `${this.windowLabel} usage is at ${Math.round(this.usedPercent)}%, past your ${this.stopPercent}% usage stop. The turn did not start; resume to continue anyway.`;
+    return `${this.windowLabel} usage is at ${Math.round(this.usedPercent)}%, at or past your ${this.stopPercent}% usage stop. The turn did not start; raise or clear usageLimitStopPercent in settings, or switch this thread to another provider or model.`;
   }
 }
 
@@ -94,6 +94,7 @@ export interface RuntimePolicyV2Shape {
   readonly resolve: (input: {
     readonly thread: OrchestrationV2AppThread;
     readonly modelSelection: ModelSelection;
+    readonly admission?: "turn-start";
   }) => Effect.Effect<ProviderAdapter.ProviderAdapterV2RuntimePolicy, RuntimePolicyV2Error>;
 }
 
@@ -179,32 +180,31 @@ export const layerFromProjectStore: Layer.Layer<
       resolve: Effect.fn("RuntimePolicyV2.resolve")(function* (input) {
         yield* refuseAboveCeiling(managedPolicy, input.thread);
         const instance = yield* providerInstances.getInstance(input.modelSelection.instanceId);
-        const stopPercent = (yield* serverSettings.getSettings.pipe(Effect.orDie))
-          .usageLimitStopPercent;
-        if (stopPercent !== null && stopPercent < 100 && instance !== undefined) {
-          const snapshot = yield* instance.snapshot.getSnapshot;
-          const now = DateTime.toEpochMillis(yield* DateTime.now);
-          const window = exhaustedUsageWindow(
-            snapshot,
-            now,
-            input.modelSelection.model,
-            stopPercent,
-          );
-          if (window !== undefined) {
-            return yield* new UsageLimitThresholdReachedError({
-              threadId: input.thread.id,
-              providerInstanceId: input.modelSelection.instanceId,
-              model: input.modelSelection.model,
-              usedPercent: window.usedPercent ?? stopPercent,
-              windowLabel: window.label,
+        const snapshot = instance === undefined ? undefined : yield* instance.snapshot.getSnapshot;
+        if (input.admission === "turn-start" && snapshot !== undefined) {
+          const stopPercent = (yield* serverSettings.getSettings.pipe(Effect.orDie))
+            .usageLimitStopPercent;
+          if (stopPercent !== null) {
+            const now = DateTime.toEpochMillis(yield* DateTime.now);
+            const window = exhaustedUsageWindow(
+              snapshot,
+              now,
+              input.modelSelection.model,
               stopPercent,
-            });
+            );
+            if (window !== undefined) {
+              return yield* new UsageLimitThresholdReachedError({
+                threadId: input.thread.id,
+                providerInstanceId: input.modelSelection.instanceId,
+                model: input.modelSelection.model,
+                usedPercent: window.usedPercent ?? stopPercent,
+                windowLabel: window.label,
+                stopPercent,
+              });
+            }
           }
         }
-        const supportedRuntimeModes =
-          instance === undefined
-            ? undefined
-            : (yield* instance.snapshot.getSnapshot).supportedRuntimeModes;
+        const supportedRuntimeModes = snapshot?.supportedRuntimeModes;
         const cwd =
           input.thread.worktreePath ??
           (yield* projects.get(input.thread.projectId).pipe(
