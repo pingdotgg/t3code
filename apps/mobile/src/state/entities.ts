@@ -8,6 +8,7 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import {
+  allowsPreviewTunnel,
   EnvironmentId,
   ThreadId,
   type ComposerContextRecord,
@@ -20,14 +21,14 @@ import {
   guessThreadLinkRef,
   hasThreadLinks,
   parseThreadLinkHref,
-  relabelThreadLinks,
   threadLinkCandidates,
   threadLinkRefs,
   type ThreadLink,
 } from "@t3tools/shared/threadLinks";
+import { relabelThreadLinks } from "@t3tools/shared/threadLinksCopy";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { msg, useMessages } from "gt-react-native";
+import { msg, useGT, useMessages } from "gt-react-native";
 
 import { threadChipTargets } from "../lib/enrichedLinkPresentation";
 import { resolveProjectChipIcon } from "../lib/projectIcon";
@@ -239,19 +240,36 @@ export function useSideChats(ref: ScopedThreadRef) {
   return useAtomValue(environmentThreadShells.sideChatsAtom(ref));
 }
 
-export function useLiveThreadLinkLabels(markdown: string, environmentId: EnvironmentId): string {
+const NO_LINKED_ENVIRONMENTS: ReadonlyMap<EnvironmentId, string> = new Map();
+
+/** `linked` names the machines `environmentId` links to, whose threads open read-only. */
+export function useLiveThreadLinkLabels(
+  markdown: string,
+  environmentId: EnvironmentId,
+  linked = NO_LINKED_ENVIRONMENTS,
+): string {
   const resolve = useMessages();
+  const gt = useGT();
   const titles = useAtomValue(
     hasThreadLinks(markdown)
       ? threadLinkTitlesAtom(JSON.stringify(threadLinkRefs(markdown, environmentId).map(threadKey)))
       : EMPTY_THREAD_LINK_TITLES_ATOM,
   );
-  return relabelThreadLinks(markdown, environmentId, (ref) => {
-    const title = titles.get(threadKey(ref));
-    return title === FALLBACK_THREAD_TITLE
-      ? resolve(msg("Thread", { $context: "fallback title of a linked thread" }))
-      : title;
-  });
+  return relabelThreadLinks(
+    markdown,
+    environmentId,
+    (ref, label) => {
+      const title = titles.get(threadKey(ref));
+      if (typeof title === "string") return title;
+      // A thread only the message's environment can reach keeps its written name.
+      const machine = linked.get(ref.environmentId);
+      if (machine !== undefined) {
+        return label?.trim() || gt("Thread on {label}", { label: machine });
+      }
+      return title && resolve(msg("Thread", { $context: "fallback title of a linked thread" }));
+    },
+    resolve,
+  );
 }
 
 /** Keyed reads; every thread is read only to place a v1 link its message's environment lacks. */
@@ -297,6 +315,12 @@ export function useEnvironmentServerConfig(
       ? EMPTY_SERVER_CONFIG_ATOM
       : serverEnvironment.configValueAtom(environmentId),
   );
+}
+
+/** Whether the environment turned its preview tunnel off; false until its config loads. */
+export function useEnvironmentPreviewTunnelOff(environmentId: EnvironmentId | null): boolean {
+  const config = useEnvironmentServerConfig(environmentId);
+  return config !== null && !allowsPreviewTunnel(config);
 }
 
 export function useServerConfigs(): ReadonlyMap<EnvironmentId, ServerConfig> {

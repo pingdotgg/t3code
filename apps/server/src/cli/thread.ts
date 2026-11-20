@@ -8,6 +8,7 @@ import {
   RunId,
   ThreadId,
   TrimmedNonEmptyString,
+  type OrchestratorMcpThreadDetail,
   type OrchestratorMcpThreadListItem,
   type OrchestratorMcpThreadRun,
   type OrchestratorMcpThreadStatus,
@@ -511,6 +512,17 @@ const runResultText = Effect.fn("cli.thread.runResultText")(function* (
   return item === undefined ? null : yield* readFullText(tools, threadId, item);
 });
 
+/** The latest run's last error once it ended without completing, else null. */
+export const latestRunError = Effect.fn("cli.thread.latestRunError")(function* (
+  tools: ThreadTools,
+  thread: Pick<OrchestratorMcpThreadDetail, "threadId" | "status" | "latestRunId">,
+) {
+  const { status, latestRunId } = thread;
+  if (latestRunId === null || status === "idle" || status === "completed") return null;
+  if (!TERMINAL_RUN_STATUSES.has(status)) return null;
+  return yield* runResultText(tools, thread.threadId, latestRunId, "error");
+});
+
 type WaitOutcome =
   | {
       readonly type: "ended";
@@ -962,8 +974,9 @@ const threadShowCommand = Command.make("show", {
               })),
             ),
           );
+          const error = yield* latestRunError(tools, thread);
           if (flags.json) {
-            return yield* printJson({ thread, messages });
+            return yield* printJson({ thread, messages, error });
           }
           yield* Console.log(thread.title);
           yield* Console.log(
@@ -976,6 +989,9 @@ const threadShowCommand = Command.make("show", {
           }
           if (thread.pendingRequestCount > 0) {
             yield* Console.log(`Waiting for ${thread.pendingRequestCount} answer(s).`);
+          }
+          if (error !== null) {
+            yield* Console.log(`Error: ${error}`);
           }
           for (const entry of messages) {
             yield* Console.log(`\n[${entry.role}]\n${entry.text}`);

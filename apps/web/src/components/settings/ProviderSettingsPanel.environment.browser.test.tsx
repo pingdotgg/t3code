@@ -483,6 +483,34 @@ describe("EnvironmentProviderSettings provider list", () => {
   });
 });
 
+describe("EnvironmentProviderSettings account email", () => {
+  it("keeps the real email until the hide blur finishes", async () => {
+    await setup();
+    const email = "developer@example.com";
+    await setProviders([{ ...provider(), auth: { status: "authenticated", email } }]);
+    await using _screen = await render(panel({ targetInstanceId: codexId }));
+    const toggle = page.getByRole("button", { name: "Toggle account email visibility" });
+    const button = toggle.element() as HTMLButtonElement;
+
+    await act(() => button.click());
+    for (const animation of button.getAnimations()) animation.finish();
+    await expect.element(toggle).toHaveTextContent(email);
+
+    await act(() => button.click());
+    const blur = button
+      .getAnimations()
+      .find(
+        (animation) =>
+          animation instanceof CSSTransition && animation.transitionProperty === "filter",
+      )!;
+    blur.pause();
+    expect(button.textContent).toBe(email);
+
+    await act(() => blur.finish());
+    await expect.element(toggle).not.toHaveTextContent(email);
+  });
+});
+
 describe("EnvironmentProviderSettings instance removal", () => {
   it("resets a configured default instance only once the user confirms", async () => {
     await setup();

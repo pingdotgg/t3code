@@ -206,7 +206,7 @@ function stopNotice(
 type MonitorNotice = Pick<OrchestrationV2ConversationMessage, "runId" | "notification">;
 
 /** Runs that only acknowledge a monitor update are never a task's work. */
-function monitorUpdateRunIds(messages: ReadonlyArray<MonitorNotice>) {
+export function monitorUpdateRunIds(messages: ReadonlyArray<MonitorNotice>) {
   return new Set(
     messages
       .filter(
