@@ -41,6 +41,7 @@ import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as SourceControlProviderRegistry from "../../../sourceControl/SourceControlProviderRegistry.ts";
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
+import * as MultiRepoWorkspaces from "../../../vcs/MultiRepoWorkspaces.ts";
 import * as VcsProcess from "../../../vcs/VcsProcess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -67,6 +68,8 @@ const clientLaunchHarness = (input: {
   readonly caller?: Partial<OrchestrationV2ThreadShell>;
   /** What the default profile makes of a selection that may take its model. */
   readonly defaultProfile?: ModelSelection;
+  /** Makes the workspace root a multi-repo group with these members. */
+  readonly multiRepoMembers?: ReadonlyArray<string>;
 }) => {
   const callerThreadId = ThreadId.make("thread:caller");
   const projectId = ProjectId.make("project:client-target");
@@ -211,6 +214,11 @@ const clientLaunchHarness = (input: {
       isScratchProject: () => Effect.succeed(false),
     }),
     DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
+    input.multiRepoMembers === undefined
+      ? Layer.empty
+      : Layer.mock(MultiRepoWorkspaces.MultiRepoWorkspaces)({
+          members: () => Effect.succeed(input.multiRepoMembers ?? null),
+        }),
   ).pipe(
     Layer.provideMerge(GitVcsDriver.layer),
     Layer.provideMerge(VcsProcess.layer),
@@ -867,6 +875,7 @@ it.effect("a defaulted worktree launch stays shared only when Git says HEAD has 
     const commitArgs = ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty"];
     for (const [checkout, expected] of [
       ["not a repository", "root"],
+      ["multi-repo group", "worktree"],
       ["no commit yet", "root"],
       ["branch tip object missing", "worktree"],
       ["git refuses the repository", "refused"],
@@ -878,9 +887,10 @@ it.effect("a defaulted worktree launch stays shared only when Git says HEAD has 
         launched,
         workspaceRoot: repo,
         defaultThreadEnvMode: "worktree",
+        ...(checkout === "multi-repo group" ? { multiRepoMembers: ["api", "web"] } : {}),
       });
       const git = yield* GitVcsDriver.GitVcsDriver.pipe(Effect.provide(dependencies));
-      if (checkout !== "not a repository")
+      if (checkout !== "not a repository" && checkout !== "multi-repo group")
         yield* git.execute({
           operation: "test.setupRepo",
           cwd: repo,

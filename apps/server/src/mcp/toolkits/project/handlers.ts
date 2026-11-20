@@ -25,6 +25,7 @@ import { mutateProjectWithClone } from "../../../project/ProjectMutation.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
+import * as MultiRepoWorkspaces from "../../../vcs/MultiRepoWorkspaces.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as DateTime from "effect/DateTime";
@@ -128,6 +129,10 @@ const defaultWorktreeStrategy = Effect.fn("mcp.defaultWorktreeStrategy")(functio
   OrchestratorMcpFailure,
   GitVcsDriver.GitVcsDriver
 > {
+  // A multi-repo group root is no repository; each member branches from its own HEAD.
+  const multiRepo = yield* Effect.serviceOption(MultiRepoWorkspaces.MultiRepoWorkspaces);
+  if (Option.isSome(multiRepo) && (yield* multiRepo.value.members(workspaceRoot)) !== null)
+    return { type: "worktree" as const, baseRef: "HEAD" };
   const git = yield* GitVcsDriver.GitVcsDriver;
   const unreadable = new OrchestratorMcpFailure({
     code: "orchestration_error",
