@@ -1826,7 +1826,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                     ),
                   ),
                 ),
-            { discard: true },
+            // Each submodule has its own Git dir, index and object store; process spawns dominate.
+            { concurrency: 4, discard: true },
           ),
         ),
         Effect.catch((cause) =>
