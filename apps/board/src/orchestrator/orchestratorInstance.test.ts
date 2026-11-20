@@ -1,4 +1,5 @@
 import { ProviderDriverKind, ProviderInstanceId, type ServerSettings } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -6,6 +7,7 @@ import {
   isOrchestratorInstance,
   orchestratorInstanceId,
   planOrchestratorInstance,
+  standingInstructions,
 } from "./orchestratorInstance";
 
 const RULES = 'Rule one.\nUse "quotes", $HOME, `ticks`, and a \\ backslash.\n';
@@ -26,27 +28,46 @@ const written = (plan: ReturnType<typeof planOrchestratorInstance>) => {
   return plan.mutation.instance;
 };
 
+const decodeLaunchArgs = Schema.decodeUnknownSync(Schema.Struct({ launchArgs: Schema.String }));
+const launchArgsOf = (instance: { readonly config?: unknown }) =>
+  decodeLaunchArgs(instance.config).launchArgs;
+
 describe("the orchestrator instance", () => {
-  it("Given fixed rules and no instance yet, when it is planned, then the launch arguments are the literal rules and the disallowed tools", () => {
+  it("Given fixed rules and no instance yet, when it is planned, then the launch arguments carry poteto-mode, the adapter, and the rules in that order, then the disallowed tools", () => {
     const plan = planOrchestratorInstance({
       providerInstances: instances({}),
       base: claude,
       rules: RULES,
     });
     expect(plan.instanceId).toBe("board-orchestrator-claudeAgent");
-    expect(plan.mutation).toEqual({
-      operation: "upsert",
-      instanceId: "board-orchestrator-claudeAgent",
-      instance: {
-        driver: "claudeAgent",
-        displayName: "claudeAgent (board orchestrator)",
-        enabled: true,
-        config: {
-          launchArgs:
-            '--append-system-prompt "Rule one.\nUse \\"quotes\\", \\$HOME, \\`ticks\\`, and a \\\\ backslash.\n" --disallowedTools "Task,Agent"',
-        },
-      },
+    const instance = written(plan);
+    expect(instance).toMatchObject({
+      driver: "claudeAgent",
+      displayName: "claudeAgent (board orchestrator)",
+      enabled: true,
     });
+    const launchArgs = launchArgsOf(instance);
+    expect(launchArgs.startsWith('--append-system-prompt "# Poteto mode\n')).toBe(true);
+    expect(
+      launchArgs.endsWith(
+        'Rule one.\nUse \\"quotes\\", \\$HOME, \\`ticks\\`, and a \\\\ backslash.\n" --disallowedTools "Task,Agent"',
+      ),
+    ).toBe(true);
+    const at = (marker: string) => launchArgs.indexOf(marker);
+    expect(at("# Poteto mode")).toBeLessThan(at("# pstack on T3"));
+    expect(at("# pstack on T3")).toBeLessThan(at("Rule one."));
+  });
+
+  it("Given the standing instructions, when they are read, then each part is whole, front matter is gone, and the rules come last", () => {
+    const text = standingInstructions("THE RULES");
+    expect(text.startsWith("# Poteto mode\n")).toBe(true);
+    expect(text).not.toContain("disable-model-invocation");
+    expect(text).toContain("## Playbooks");
+    expect(text).toContain("Start every child with `delegate_task`.");
+    expect(text.endsWith("\n\nTHE RULES")).toBe(true);
+    for (const omp of ["skill://", "agent://", "proc://", "history://", "OMP"]) {
+      expect(text).not.toContain(omp);
+    }
   });
 
   it("Given a Codex instance, when it is planned, then the rules ride in developer_instructions as a TOML string", () => {
@@ -55,12 +76,11 @@ describe("the orchestrator instance", () => {
       base: { instanceId: "codex", driver: "codex" },
       rules: 'Say "hi".\nBye.',
     });
-    expect(plan.mutation).toMatchObject({
-      instance: {
-        driver: "codex",
-        config: { launchArgs: '-c "developer_instructions=\\"Say \\\\\\"hi\\\\\\".\\\\nBye.\\""' },
-      },
-    });
+    const instance = written(plan);
+    expect(instance.driver).toBe("codex");
+    const launchArgs = launchArgsOf(instance);
+    expect(launchArgs.startsWith('-c "developer_instructions=\\"# Poteto mode\\\\n')).toBe(true);
+    expect(launchArgs.endsWith('Say \\\\\\"hi\\\\\\".\\\\nBye.\\""')).toBe(true);
   });
 
   it("Given an orchestrator instance that already holds these rules, when it is planned, then nothing is written", () => {
@@ -120,12 +140,12 @@ describe("the orchestrator instance", () => {
       instance: {
         displayName: "Work (board orchestrator)",
         environment: [{ name: "A", value: "1", sensitive: false }],
-        config: {
-          homePath: "/home/me/.claude-work",
-          launchArgs: '--chrome --append-system-prompt "R" --disallowedTools "Task,Agent"',
-        },
+        config: { homePath: "/home/me/.claude-work" },
       },
     });
+    const launchArgs = launchArgsOf(written(plan));
+    expect(launchArgs.startsWith('--chrome --append-system-prompt "# Poteto mode\n')).toBe(true);
+    expect(launchArgs.endsWith('\n\nR" --disallowedTools "Task,Agent"')).toBe(true);
     expect(providerInstances).toEqual(before);
   });
 

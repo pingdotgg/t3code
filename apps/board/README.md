@@ -40,6 +40,17 @@ A rule with `approval: ask` in its frontmatter makes the plugin answer a matchin
 
 The plugin loads in place from this checkout, so install from a checkout that stays. The language server needs `typescript` installed in the project it opens.
 
+## pstack skills
+
+The private repo `13kparkin/pstack-t3` holds Lauren Tan's pstack skills ported to T3, with an `upstream` branch that tracks cursor/plugins. `scripts/install-skills.mjs` adds it as a Claude Code marketplace, installs `pstack-t3@pstack-t3` at user scope, links each skill folder into the Codex skills folder, and turns on Codex memories (`[features] memories = true` and `[memories] disable_on_external_context = false`) without touching any other key. A step that is already done is skipped, and a Codex skill link that points elsewhere is reported and left alone.
+
+```sh
+node apps/board/scripts/install-skills.mjs                                      # ~/.claude and ~/.codex
+node apps/board/scripts/install-skills.mjs --config-dir /tmp/c --codex-home /tmp/x  # isolated homes
+```
+
+Every orchestrator starts with poteto-mode and the `pstack-t3` adapter ahead of its rules in the instance's appended system prompt. `pstack/poteto-mode.md` and `pstack/pstack-t3.md` are copies of those two skills without their front matter. After a change in `pstack-t3`, run `node apps/board/scripts/vendor-pstack.mjs <pstack-t3 checkout>` and `vp fmt apps/board/pstack`, and commit the result. Every other skill loads on demand from the installed plugin or the Codex skills folder.
+
 ## The engine
 
 The app uses T3's own engine, the background service in WSL that `t3 service install` sets up and `t3 update` keeps current. It never runs an engine of its own and never stops one. It finds the engine in this order and shows each step in the sidebar footer.
