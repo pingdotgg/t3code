@@ -959,6 +959,20 @@ describe("source control tools", () => {
     }),
   );
 
+  it.effect("names the parts a rate-limited host did not answer", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          detail: () =>
+            Effect.succeed({ ...detail, changedFiles: 0, checks: [], unavailable: ["checks"] }),
+        },
+      });
+      const result = yield* harness.call("pull_request_read", { sections: ["checks"] });
+      expect(result).toMatchObject({ checks: [], unavailable: ["checks"] });
+    }),
+  );
+
   it.effect("reads the PR this thread opened before status sync reports it", () =>
     Effect.gen(function* () {
       const asked: Array<PullRequestRef> = [];

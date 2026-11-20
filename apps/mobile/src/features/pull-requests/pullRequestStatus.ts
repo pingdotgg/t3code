@@ -123,9 +123,19 @@ export function isFailingCheck(check: PullRequestCheck) {
 }
 
 export function pullRequestChecksSummary(
-  pr: Pick<PullRequestDetail, "checks">,
+  pr: Pick<PullRequestDetail, "checks" | "unavailable">,
   resolve: MessageResolver = m,
 ) {
+  if (pr.checks.length === 0 && pr.unavailable?.includes("checks")) {
+    const unavailable = resolve(msg("Checks unavailable"));
+    return {
+      label: unavailable,
+      title: unavailable,
+      count: undefined,
+      icon: "minus",
+      tint: "accent-icon-muted",
+    } as const;
+  }
   const failed = pr.checks.filter(isFailingCheck).length;
   const required = pr.checks.filter((check) => check.status === "action-required").length;
   const pending = pr.checks.filter((check) => check.status === "pending").length;

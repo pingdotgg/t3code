@@ -1,4 +1,4 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { isPullRequestDetailPartMissing, SourceControlProviderKind } from "@t3tools/contracts";
 import {
   GitCommandError,
   ProjectId,
@@ -51,7 +51,6 @@ import {
   checkoutFailureDescription,
   readPullRequestDetailSnapshot,
   fillUnavailablePullRequestDetail,
-  isPullRequestDetailPartMissing,
   resolveDisplayedPullRequestDetail,
   resolvePullRequestReferenceHost,
   resolvePullRequestPrimaryControl,

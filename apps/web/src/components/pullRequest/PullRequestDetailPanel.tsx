@@ -27,6 +27,7 @@ import {
   type PullRequestSummary,
   resolveEnvironmentMachineKind,
   type ScopedThreadRef,
+  isPullRequestDetailPartMissing,
 } from "@t3tools/contracts";
 import {
   ArrowDownUpIcon,
@@ -145,7 +146,6 @@ import {
   allowsSinglePullRequestMerge,
   canDeletePullRequestBranch,
   isPullRequestConflicting,
-  isPullRequestDetailPartMissing,
   resolveBaseFreshness,
   resolvePullRequestMergeMethod,
   type PullRequestChatSubject,

@@ -66,6 +66,7 @@ import {
   type PullRequestDetail,
   type PullRequestListEntry,
   type PullRequestSummary,
+  isPullRequestDetailPartMissing,
 } from "@t3tools/contracts";
 import { PullRequestOverviewLoading } from "./PullRequestOverviewLoading";
 import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
@@ -216,6 +217,8 @@ function PullRequestIdentity(props: {
   const gt = useGT();
   const messages = useMessages();
   const status = pullRequestStatus({ state: pr.state, isDraft: pr.isDraft === true }, messages);
+  const unavailable = "capabilities" in pr ? (pr.unavailable ?? []) : [];
+  const diffStatMissing = "capabilities" in pr && isPullRequestDetailPartMissing(pr, "diffStat");
   return (
     <View className="gap-3">
       <View className="flex-row flex-wrap items-center gap-2">
@@ -227,8 +230,16 @@ function PullRequestIdentity(props: {
             <Text className={`text-xs font-t3-medium ${status.text}`}>{status.label}</Text>
           </View>
         )}
-        <PullRequestDiffStats additions={pr.additions ?? 0} deletions={pr.deletions ?? 0} compact />
-        {"changedFiles" in pr && pr.changedFiles !== undefined ? (
+        {diffStatMissing ? null : (
+          <PullRequestDiffStats
+            additions={pr.additions ?? 0}
+            deletions={pr.deletions ?? 0}
+            compact
+          />
+        )}
+        {diffStatMissing ? (
+          <Text className="text-2xs text-foreground-muted">{gt("Changed files unavailable")}</Text>
+        ) : "changedFiles" in pr && pr.changedFiles !== undefined ? (
           <Text className="text-2xs text-foreground-muted">
             {gt("{count, plural, one {{count} file} other {{count} files}}", {
               count: pr.changedFiles,
@@ -238,6 +249,23 @@ function PullRequestIdentity(props: {
           <View className="h-3 w-12 rounded bg-subtle-strong" />
         )}
       </View>
+      {unavailable.length === 0 ? null : (
+        <Text className="text-xs text-foreground-muted">
+          {gt("The host is limiting requests, so these may be missing or out of date: {parts}.", {
+            parts: unavailable
+              .map((part) =>
+                part === "diffStat"
+                  ? gt("changed files")
+                  : part === "mergeability"
+                    ? gt("merge conflicts")
+                    : part === "checks"
+                      ? gt("checks", { $context: "CI checks, in a list" })
+                      : gt("merge permission"),
+              )
+              .join(", "),
+          })}
+        </Text>
+      )}
       <Text selectable className="text-xl font-t3-bold leading-7">
         {pr.title}
       </Text>

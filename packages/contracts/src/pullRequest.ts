@@ -716,6 +716,20 @@ export const pullRequestDetailReadings = (
   ...(detail.unavailable?.includes("mergeability") ? {} : { mergeability: detail.mergeability }),
 });
 
+/** Whether a part the host did not answer still holds its placeholder, with no earlier reading. */
+export function isPullRequestDetailPartMissing(
+  detail: Pick<
+    PullRequestDetail,
+    "unavailable" | "additions" | "deletions" | "changedFiles" | "checks"
+  >,
+  part: "diffStat" | "checks",
+): boolean {
+  if (detail.unavailable?.includes(part) !== true) return false;
+  return part === "checks"
+    ? detail.checks.length === 0
+    : detail.changedFiles === 0 && detail.additions === 0 && detail.deletions === 0;
+}
+
 /**
  * Fills the parts the host did not answer from an earlier reading of the same head. The parts stay
  * listed as unavailable: the values are the last known ones, not this reading's.

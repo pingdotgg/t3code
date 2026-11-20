@@ -20,6 +20,7 @@ import {
   ThreadPullRequestLinkSource,
   TrimmedNonEmptyString,
   ThreadId,
+  PullRequestDetailPart,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as McpSchema from "effect/ai/McpSchema";
@@ -526,6 +527,12 @@ export const ReadPullRequestResult = Schema.Struct({
     }),
   ),
   checks: Schema.optional(Schema.Array(PullRequestCheck)),
+  unavailable: Schema.optional(
+    Schema.Array(PullRequestDetailPart).annotate({
+      description:
+        "Parts the host did not answer, usually because it is rate limiting. Their values are placeholders or an earlier reading, not current: diffStat is additions, deletions and changedFiles; mergeability; checks; viewerPermissions is whether you may merge. Read again later before relying on them.",
+    }),
+  ),
   conversation: Schema.optional(
     Schema.Struct({
       comments: Schema.Array(

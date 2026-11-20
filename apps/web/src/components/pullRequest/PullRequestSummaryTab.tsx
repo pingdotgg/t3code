@@ -12,6 +12,7 @@ import {
   type PullRequestConversationThread,
   type ScopedThreadRef,
   pullRequestConversationThreads,
+  isPullRequestDetailPartMissing,
 } from "@t3tools/contracts";
 import {
   ArrowDownUpIcon,
@@ -78,7 +79,6 @@ import {
   type PullRequestChatSubject,
   type PullRequestConversationItem,
   type PullRequestFinding,
-  isPullRequestDetailPartMissing,
 } from "./pullRequestDetail.logic";
 import {
   canEditPullRequestChangeRequest,
