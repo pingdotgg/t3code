@@ -1418,7 +1418,7 @@ function PullRequestCodeTab({
           <DropdownMenu>
             <DropdownMenuTrigger
               render={<Button size="xs" variant="secondary" />}
-              className="min-w-0 max-w-64"
+              className="min-w-0 max-w-64 shrink"
               aria-label={gt("Diff scope: {scope}", { scope: scopeLabel })}
             >
               <span className="truncate">{scopeLabel}</span>
@@ -1466,7 +1466,7 @@ function PullRequestCodeTab({
             </DropdownMenuContent>
           </DropdownMenu>
         ) : null}
-        <PullRequestMetaLine>
+        <PullRequestMetaLine className="shrink-0">
           <span className="shrink-0 tabular-nums">
             {gt("{count, plural, one {{count} file} other {{count} files}}", {
               count: files.length,
