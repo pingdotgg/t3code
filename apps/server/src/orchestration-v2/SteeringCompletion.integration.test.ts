@@ -33,6 +33,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -523,6 +524,7 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
     turn: ProviderAdapter.ProviderAdapterV2SteerInput,
   ) => Effect.Effect<void, ProviderAdapter.ProviderAdapterV2Error> = () => Effect.void,
   extraAdapters: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]> = [],
+  activeSteeringInterruptsTools?: boolean,
 ) {
   const driver = ProviderDriverKind.make(nativeGoals === undefined ? "codex" : "opencode");
   const cwd = yield* checkpointWorkspace(name);
@@ -539,6 +541,7 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
       supportsSteeringByInterruptRestart: canRestart,
       activeSteeringAcceptsAttachments: steeringAcceptsAttachments,
       ...(nativeGoals === undefined ? {} : { supportsNativeGoals: nativeGoals }),
+      ...(activeSteeringInterruptsTools === undefined ? {} : { activeSteeringInterruptsTools }),
     },
   };
   const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
@@ -710,15 +713,28 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
 });
 
 it.effect.each([
-  { notice: "delegated task question", goal: null, steers: true },
-  { notice: "background command", goal: "active", steers: true },
-  { notice: "background command", goal: null, steers: false },
+  { notice: "delegated task question", goal: null, steers: true, provider: "codex" },
+  { notice: "background command", goal: "active", steers: true, provider: "codex" },
+  { notice: "background command", goal: null, steers: false, provider: "codex" },
+  // Claude now reads steers at the tool boundary, so notices must not wait for the turn end.
+  { notice: "delegated task question", goal: null, steers: true, provider: "claude" },
+  { notice: "background command", goal: "active", steers: true, provider: "claude" },
 ] as const)(
-  "a $notice notice steers into the running turn: $steers (goal $goal)",
-  ({ notice, goal, steers }) =>
+  "a $notice notice steers into the running $provider turn: $steers (goal $goal)",
+  ({ notice, goal, steers, provider }) =>
     Effect.gen(function* () {
       const { started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
-        `notice-steer-${notice.replaceAll(" ", "-")}-${goal ?? "none"}`,
+        `notice-steer-${provider}-${notice.replaceAll(" ", "-")}-${goal ?? "none"}`,
+        false,
+        true,
+        Effect.void,
+        true,
+        undefined,
+        undefined,
+        [],
+        provider === "claude"
+          ? ClaudeProviderCapabilitiesV2.turns.activeSteeringInterruptsTools
+          : undefined,
       );
       yield* Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
