@@ -218,44 +218,170 @@ describe("readAntigravityRunningCommands", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("matches duplicate commands newest-first and preserves long truncated commands", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const profileDirectory = yield* fs.makeTempDirectoryScoped();
-      const longCommand = `python3 -c "${"x".repeat(5_000)}"`;
-      const meta = commandStepMetadata({
-        callId: "call_second",
-        args: { CommandLine: longCommand, Cwd: "/repo" },
-      });
-      yield* writeSessionDb({
-        profileDirectory,
-        rows: [
-          {
-            idx: 10,
-            stepType: RUN_COMMAND_STEP_TYPE,
-            status: STATUS_CANCELED,
-            metadata: meta,
-            payload: commandStepPayload({ metadata: meta, commandLine: longCommand, cwd: "/repo" }),
-          },
-          {
-            idx: 20,
-            stepType: RUN_COMMAND_STEP_TYPE,
-            status: STATUS_RUNNING,
-            metadata: meta,
-            payload: commandStepPayload({ metadata: meta, commandLine: longCommand, cwd: "/repo" }),
-          },
-        ],
-      });
-      const result = yield* readAntigravityRunningCommands({
-        profileDirectory,
-        sessionId: SESSION_ID,
-        tools: [
-          makeToolCall({ toolCallId: `${SESSION_ID}:10`, commandLine: longCommand, cwd: "/repo" }),
-          makeToolCall({ toolCallId: `${SESSION_ID}:20`, commandLine: longCommand, cwd: "/repo" }),
-        ],
-      });
-      assert.deepEqual(result, [`${SESSION_ID}:20`]);
-    }).pipe(Effect.provide(NodeServices.layer)),
+  it.effect(
+    "preserves long truncated commands and distinguishes duplicates by cwd or exact callId",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const profileDirectory = yield* fs.makeTempDirectoryScoped();
+        const longCommand = `python3 -c "${"x".repeat(5_000)}"`;
+        const meta = commandStepMetadata({
+          callId: "call_native_20",
+          args: { CommandLine: longCommand, Cwd: "/repo-b" },
+        });
+        yield* writeSessionDb({
+          profileDirectory,
+          rows: [
+            {
+              idx: 10,
+              stepType: RUN_COMMAND_STEP_TYPE,
+              status: STATUS_CANCELED,
+              metadata: commandStepMetadata({
+                callId: "call_native_10",
+                args: { CommandLine: longCommand, Cwd: "/repo-a" },
+              }),
+              payload: null,
+            },
+            {
+              idx: 20,
+              stepType: RUN_COMMAND_STEP_TYPE,
+              status: STATUS_RUNNING,
+              metadata: meta,
+              payload: commandStepPayload({
+                metadata: meta,
+                commandLine: longCommand,
+                cwd: "/repo-b",
+              }),
+            },
+          ],
+        });
+        const result = yield* readAntigravityRunningCommands({
+          profileDirectory,
+          sessionId: SESSION_ID,
+          tools: [
+            makeToolCall({
+              toolCallId: `${SESSION_ID}:10`,
+              commandLine: longCommand,
+              cwd: "/repo-a",
+            }),
+            makeToolCall({
+              toolCallId: `${SESSION_ID}:20`,
+              commandLine: longCommand,
+              cwd: "/repo-b",
+            }),
+          ],
+        });
+        assert.deepEqual(result, [`${SESSION_ID}:20`]);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "returns undefined instead of guessing when identical commands cannot be distinguished",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const profileDirectory = yield* fs.makeTempDirectoryScoped();
+        const runningMeta = commandStepMetadata({
+          callId: "call_native_older",
+          args: { CommandLine: "pytest -q tests/", Cwd: "/repo" },
+        });
+        yield* writeSessionDb({
+          profileDirectory,
+          rows: [
+            {
+              idx: 10,
+              stepType: RUN_COMMAND_STEP_TYPE,
+              status: STATUS_RUNNING,
+              metadata: runningMeta,
+              payload: commandStepPayload({
+                metadata: runningMeta,
+                commandLine: "pytest -q tests/",
+                cwd: "/repo",
+              }),
+            },
+            {
+              idx: 20,
+              stepType: RUN_COMMAND_STEP_TYPE,
+              status: STATUS_CANCELED,
+              metadata: commandStepMetadata({
+                callId: "call_native_newer",
+                args: { CommandLine: "pytest -q tests/", Cwd: "/repo" },
+              }),
+              payload: null,
+            },
+          ],
+        });
+        const result = yield* readAntigravityRunningCommands({
+          profileDirectory,
+          sessionId: SESSION_ID,
+          tools: [
+            makeToolCall({
+              toolCallId: `${SESSION_ID}:10`,
+              commandLine: "pytest -q tests/",
+              cwd: "/repo",
+            }),
+            makeToolCall({
+              toolCallId: `${SESSION_ID}:20`,
+              commandLine: "pytest -q tests/",
+              cwd: "/repo",
+            }),
+          ],
+        });
+        assert.isUndefined(result);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "returns undefined for an active row lacking command text unless callId matches exactly",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const profileDirectory = yield* fs.makeTempDirectoryScoped();
+        const idOnlyMeta = proto(
+          field(4, proto(field(1, "call_native_only"), field(2, "run_command"))),
+        );
+        yield* writeSessionDb({
+          profileDirectory,
+          rows: [
+            {
+              idx: 10,
+              stepType: RUN_COMMAND_STEP_TYPE,
+              status: STATUS_RUNNING,
+              metadata: idOnlyMeta,
+              payload: null,
+            },
+          ],
+        });
+        // Different ACP id + active row without command text -> inconclusive (do not kill live tool).
+        assert.isUndefined(
+          yield* readAntigravityRunningCommands({
+            profileDirectory,
+            sessionId: SESSION_ID,
+            tools: [
+              makeToolCall({
+                toolCallId: `${SESSION_ID}:10`,
+                commandLine: "node fetch_throughput.mjs",
+                cwd: "/repo",
+              }),
+            ],
+          }),
+        );
+        // Exact callId match still succeeds even without command text on the DB row.
+        assert.deepEqual(
+          yield* readAntigravityRunningCommands({
+            profileDirectory,
+            sessionId: SESSION_ID,
+            tools: [
+              makeToolCall({
+                toolCallId: "call_native_only",
+                commandLine: "node fetch_throughput.mjs",
+                cwd: "/repo",
+              }),
+            ],
+          }),
+          ["call_native_only"],
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("ignores active daemon commands when reconciling non-daemon commands", () =>

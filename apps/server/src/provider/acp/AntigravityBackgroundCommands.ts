@@ -206,29 +206,53 @@ export const readAntigravityRunningCommands = Effect.fn("readAntigravityRunningC
           active.push(decoded);
         }
         if (active.length === 0) return [];
-        const available = [...active];
+        const remainingActive = [...active];
         const stillRunning: Array<string> = [];
-        // Match newest-first so a retried identical command consumes its live row first.
-        for (let index = input.tools.length - 1; index >= 0; index -= 1) {
-          const tool = input.tools[index]!;
-          const identity = toolCommandIdentity(tool);
-          let matchIndex = available.findIndex((entry) => entry.callId === tool.toolCallId);
-          if (matchIndex === -1 && identity.command !== undefined) {
-            matchIndex = available.findIndex(
-              (entry) =>
-                entry.command === identity.command &&
-                (identity.cwd === undefined ||
-                  entry.cwd === undefined ||
-                  entry.cwd === identity.cwd),
-            );
-          }
-          if (matchIndex !== -1) {
-            available.splice(matchIndex, 1);
+        const unmatchedTools: Array<{
+          readonly tool: AcpToolCallState;
+          readonly identity: ReturnType<typeof toolCommandIdentity>;
+        }> = [];
+        // Pass 1: exact callId matches are unambiguous even when command text is absent.
+        for (const tool of input.tools) {
+          const exactIndex = remainingActive.findIndex(
+            (entry) => entry.callId !== undefined && entry.callId === tool.toolCallId,
+          );
+          if (exactIndex !== -1) {
+            remainingActive.splice(exactIndex, 1);
             stillRunning.push(tool.toolCallId);
-          } else if (identity.command === undefined) {
-            // Active commands exist, and this tool lacks command text to prove it is not one.
-            stillRunning.push(tool.toolCallId);
+          } else {
+            unmatchedTools.push({ tool, identity: toolCommandIdentity(tool) });
           }
+        }
+        if (unmatchedTools.length === 0 || remainingActive.length === 0) {
+          return stillRunning;
+        }
+        // Any remaining active row or open tool without command text cannot be attributed safely.
+        if (
+          remainingActive.some((entry) => entry.command === undefined) ||
+          unmatchedTools.some((entry) => entry.identity.command === undefined)
+        ) {
+          return undefined;
+        }
+        const matchesCommand = (
+          entry: ActiveNativeCommand,
+          identity: ReturnType<typeof toolCommandIdentity>,
+        ) =>
+          entry.command === identity.command &&
+          (identity.cwd === undefined || entry.cwd === undefined || entry.cwd === identity.cwd);
+        for (const candidate of unmatchedTools) {
+          const matchingActive = remainingActive.filter((entry) =>
+            matchesCommand(entry, candidate.identity),
+          );
+          if (matchingActive.length === 0) continue;
+          const competingTools = unmatchedTools.filter((other) =>
+            matchingActive.some((entry) => matchesCommand(entry, other.identity)),
+          );
+          // Do not guess which duplicate command is live when fewer active rows exist than tools.
+          if (competingTools.length > matchingActive.length) {
+            return undefined;
+          }
+          stillRunning.push(candidate.tool.toolCallId);
         }
         return stillRunning;
       } finally {
