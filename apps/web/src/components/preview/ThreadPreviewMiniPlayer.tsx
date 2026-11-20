@@ -251,7 +251,6 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
             ...threadRef,
             tabId,
             seed: serverSurfaceRef.current?.canvas() ?? null,
-            httpBaseUrl,
           });
       } else if (previewBridge) {
         const operation = desktopOverlay?.pictureInPicture

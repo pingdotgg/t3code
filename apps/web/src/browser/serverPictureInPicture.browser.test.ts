@@ -25,7 +25,6 @@ it("cancels pending playback without reporting a failed popout", async () => {
     threadId: ThreadId.make("thread"),
     tabId: "tab",
     seed: null,
-    httpBaseUrl: null,
   });
   const video = document.querySelector("video")!;
   const tracks = (video.srcObject as MediaStream).getTracks();
@@ -46,7 +45,6 @@ it("still reports playback failures for an active popout", async () => {
     threadId: ThreadId.make("thread"),
     tabId: "tab",
     seed: null,
-    httpBaseUrl: null,
   });
   const video = document.querySelector("video")!;
   const tracks = (video.srcObject as MediaStream).getTracks();

@@ -9,6 +9,7 @@ import { previewPdfAssetUrl } from "@t3tools/shared/preview";
 import { useSyncExternalStore } from "react";
 
 import { readPreviewStreamAccess } from "~/state/previewStream";
+import { readPreparedConnection } from "~/state/session";
 import { previewStateAtom, type ThreadPreviewState } from "~/previewStateStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 
@@ -69,8 +70,6 @@ export async function openServerPictureInPicture(input: {
   readonly threadId: ThreadId;
   readonly tabId: string;
   readonly seed: HTMLCanvasElement | null;
-  /** The base the client loads asset PDFs through, so this closes for exactly those. */
-  readonly httpBaseUrl: string | null;
 }): Promise<void> {
   closeServerPictureInPicture();
   const canvas = document.createElement("canvas");
@@ -187,7 +186,11 @@ export async function openServerPictureInPicture(input: {
       const navigation = state.sessions[input.tabId]?.navStatus;
       if (
         navigation?._tag === "Success" &&
-        previewPdfAssetUrl(navigation.url, input.httpBaseUrl) !== null
+        // The base the client loads asset PDFs through now; a connection can change route.
+        previewPdfAssetUrl(
+          navigation.url,
+          readPreparedConnection(input.environmentId)?.httpBaseUrl ?? null,
+        ) !== null
       ) {
         onLeave();
       }
