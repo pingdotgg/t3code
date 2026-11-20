@@ -170,6 +170,18 @@ export const make = Effect.gen(function* () {
     });
   };
 
+  // The pull request itself carries the detail, so a rate-limited secondary read degrades it.
+  const recoverDetailRead = <A>(
+    read: Effect.Effect<A, BitbucketPullRequestApi.BitbucketPullRequestApiError>,
+    fallback: A,
+  ) =>
+    recoverRead(read, fallback).pipe(
+      Effect.catchIf(
+        (error) => bitbucketProviderFailure(error).reason === "rate-limited",
+        () => Effect.succeed(fallback),
+      ),
+    );
+
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("bitbucket"),
     capabilities: CAPABILITIES,
@@ -227,10 +239,14 @@ export const make = Effect.gen(function* () {
       return Effect.all(
         [
           api.getPullRequest(target),
-          api.getDiffStat(target),
-          recoverRead(api.getMergeability(target), "unknown" as const),
-          recoverRead(api.listChecks(target), []),
-          recoverRead(api.getRepositoryPermission(target), true),
+          recoverDetailRead(api.getDiffStat(target), {
+            additions: 0,
+            deletions: 0,
+            changedFiles: 0,
+          }),
+          recoverDetailRead(api.getMergeability(target), "unknown" as const),
+          recoverDetailRead(api.listChecks(target), []),
+          recoverDetailRead(api.getRepositoryPermission(target), true),
         ],
         { concurrency: 5 },
       ).pipe(

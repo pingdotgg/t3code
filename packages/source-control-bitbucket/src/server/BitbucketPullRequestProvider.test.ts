@@ -69,8 +69,9 @@ for (const operation of [
   "listComments",
   "listCommits",
 ] as const) {
+  const isActivityRead = operation === "listComments" || operation === "listCommits";
   it.effect.each(["response", "body read"])(
-    `preserves rate limits from ${operation} on %s errors while recovering other optional-read failures`,
+    `${isActivityRead ? "preserves" : "recovers"} rate limits from ${operation} on %s errors and recovers other optional-read failures`,
     (variant) =>
       Effect.gen(function* () {
         const pullRequest = Result.getOrThrow(
@@ -119,10 +120,10 @@ for (const operation of [
             number: 1,
             host: "bitbucket.org",
           };
-          const result = yield* operation === "listComments" || operation === "listCommits"
+          const result = yield* isActivityRead
             ? Effect.result(provider.getChangeRequestActivity(reference))
             : Effect.result(provider.getChangeRequest(reference));
-          if (status === 429) {
+          if (status === 429 && isActivityRead) {
             expect(result).toMatchObject({
               _tag: "Failure",
               failure: { reason: "rate-limited", retryAt: 120_000 },
