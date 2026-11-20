@@ -85,6 +85,9 @@ function acceptAttachmentUploads(): Disposable {
   };
 }
 
+// One input event, where typing a key at a time takes seconds on a loaded CI runner.
+const insertText = (text: string) => cdp().send("Input.insertText", { text });
+
 /** Holds every call to `method` until `release`, then ends it with `end`, until disposed. */
 function holdRpc<Input>(method: string, end: Effect.Effect<never, Error>) {
   let release = () => {};
@@ -136,15 +139,30 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
     displayKey: issueRef.key,
     title: "Add keyboard support",
   };
-  using _environment = installFakeEnvironment([first, { ...linked, issues: [issue] }]);
+  const completed = {
+    ...issue,
+    key: "WEB-124",
+    displayKey: "WEB-124",
+    url: "https://linear.app/example/issue/WEB-124/keep-tabs-visible",
+    title: "Keep tabs visible",
+  };
+  const grouped = threadWithHistory("issue-grouped", 1);
+  using _environment = installFakeEnvironment([
+    first,
+    { ...linked, issues: [issue] },
+    { ...grouped, issues: [completed, issue] },
+  ]);
   const liveTitle = "Add keyboard shortcuts to the sidebar";
   using _detail = answerRpc(WS_METHODS.issuesDetail, (input: IssueRef) => {
-    expect(input).toEqual(issueRef);
+    const isCompleted = input.key === completed.key;
+    expect(input).toEqual({ ...issueRef, key: isCompleted ? completed.key : issue.key });
     return Effect.succeed({
-      ...issue,
-      title: liveTitle,
+      ...(isCompleted ? completed : issue),
+      title: isCompleted ? completed.title : liveTitle,
       author: { login: "sam", name: null, avatarUrl: null },
-      state: { category: "open", name: "Open" },
+      state: isCompleted
+        ? { category: "closed", closeReason: "completed", name: "Done" }
+        : { category: "open", name: "Open" },
       createdAt: issue.linkedAt,
       updatedAt: issue.linkedAt,
       closedAt: null,
@@ -199,6 +217,10 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
   });
   await expect.element(badge).toBeVisible();
   expect(badge.element().querySelector("svg")).toHaveClass(/text-emerald-600/);
+  const groupedBadge = page.getByRole("button", { name: "2 linked issues" });
+  await vi.waitFor(() =>
+    expect(groupedBadge.element().querySelector("svg")).toHaveClass(/text-emerald-600/),
+  );
   await userEvent.hover(badge);
   const issueName = `Issue ${issue.displayKey}: ${liveTitle}`;
   const previewLink = page.getByRole("link", { name: issueName });
@@ -818,7 +840,8 @@ it("/side sends the draft's attachments and context, and keeps them when it does
         new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }),
       );
     await expect.element(image).toBeVisible();
-    await userEvent.keyboard("/side what is this?{Enter}");
+    await insertText("/side what is this?");
+    await userEvent.keyboard("{Enter}");
     await expect.element(image).not.toBeInTheDocument();
   };
   // The tab opens once the start finished; until then `/side` refuses another side chat.
@@ -848,7 +871,8 @@ it("/side sends the draft's attachments and context, and keeps them when it does
   // A reply alone is enough to send.
   await page.getByRole("button", { name: "Reply to this response" }).first().click();
   await userEvent.click(editor);
-  await userEvent.keyboard("/side {Enter}");
+  await insertText("/side ");
+  await userEvent.keyboard("{Enter}");
   await sentMessage(
     {
       context: expect.objectContaining({
@@ -861,7 +885,7 @@ it("/side sends the draft's attachments and context, and keeps them when it does
   // A failed start puts the message back after the draft typed meanwhile.
   holdFork = true;
   await sendImageToSideChat();
-  await userEvent.keyboard("next draft");
+  await insertText("next draft");
   await vi.waitFor(() =>
     expect(dispatchedCommands().filter((command) => command.type === "thread.fork")).toHaveLength(
       3,

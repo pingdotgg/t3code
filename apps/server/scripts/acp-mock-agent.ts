@@ -70,6 +70,11 @@ const failLoadSession = process.env.T3_ACP_FAIL_LOAD_SESSION === "1";
 const failLoadSessionAfterConfigReplay =
   process.env.T3_ACP_FAIL_LOAD_SESSION_AFTER_CONFIG_REPLAY === "1";
 const emitLoadReplay = process.env.T3_ACP_EMIT_LOAD_REPLAY === "1";
+const delayLoadSessionAfterReplay = process.env.T3_ACP_DELAY_LOAD_SESSION_AFTER_REPLAY === "1";
+const loadSessionDelayMs = Number(process.env.T3_ACP_LOAD_SESSION_DELAY_MS ?? "5000");
+const modeNotifiedBeforeDelayedLoadReply = process.env.T3_ACP_NOTIFY_MODE_BEFORE_LOAD_REPLY;
+const holdSetConfigOptionUntilLoadReply =
+  process.env.T3_ACP_HOLD_SET_CONFIG_OPTION_UNTIL_LOAD_REPLY === "1";
 const loadReplyDelayMs = Number(process.env.T3_ACP_LOAD_REPLY_DELAY_MS ?? "0");
 const loadNeverReplies = process.env.T3_ACP_LOAD_NEVER_REPLIES === "1";
 const rejectPromptUntilLoaded = process.env.T3_ACP_REJECT_PROMPT_UNTIL_LOADED === "1";
@@ -503,6 +508,7 @@ const program = Effect.gen(function* () {
   const agent = yield* EffectAcpAgent.AcpAgent;
   const nativeCancelRequested = yield* Deferred.make<void>();
   const nativeCancelRelease = yield* Deferred.make<void>();
+  const delayedLoadReplied = yield* Deferred.make<void>();
   const publishAntigravityCommands = (targetSessionId: string) =>
     agent.client.sessionUpdate({
       sessionId: targetSessionId,
@@ -723,6 +729,33 @@ const program = Effect.gen(function* () {
           "Mock load session failure after config replay",
         );
       }
+      if (delayLoadSessionAfterReplay) {
+        emitLoadReplayNotifications(requestedSessionId);
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "user_message_chunk",
+            messageId: "mock-user-message",
+            content: { type: "text", text: "replay-tail" },
+          },
+        });
+        // Answer with the configuration as of the load, like an agent whose
+        // response was built before later selections landed.
+        const loadedConfigOptions = configOptions();
+        if (modeNotifiedBeforeDelayedLoadReply !== undefined) {
+          yield* Effect.sleep(loadSessionDelayMs / 2);
+          currentModeId = modeNotifiedBeforeDelayedLoadReply;
+          yield* agent.client.sessionUpdate({
+            sessionId: requestedSessionId,
+            update: { sessionUpdate: "current_mode_update", currentModeId },
+          });
+        }
+        yield* Effect.sleep(loadSessionDelayMs);
+        yield* Deferred.succeed(delayedLoadReplied, undefined);
+        return {
+          configOptions: loadedConfigOptions,
+        };
+      }
       if (emitLoadReplay) {
         emitLoadReplayNotifications(requestedSessionId);
       }
@@ -827,6 +860,12 @@ const program = Effect.gen(function* () {
 
   yield* agent.handleSetSessionConfigOption((request) =>
     Effect.gen(function* () {
+      if (holdSetConfigOptionUntilLoadReply) {
+        // Like an agent that serves requests in order: the delayed load reply
+        // goes out first, then this one.
+        yield* Deferred.await(delayedLoadReplied);
+        yield* Effect.sleep(100);
+      }
       if (failSetModeConfigOption && request.configId === "mode") {
         return yield* AcpError.AcpRequestError.invalidParams(
           "Mock invalid params for session/set_config_option",
@@ -1005,7 +1044,6 @@ const program = Effect.gen(function* () {
         );
         return {};
       }
-
       if (clientFsProbePath !== undefined && clientFsProbeLogPath !== undefined) {
         const probes = [
           [
@@ -1260,6 +1298,16 @@ const program = Effect.gen(function* () {
             rawInput: { path: "src/env.ts" },
             locations: [{ path: "src/env.ts" }],
           },
+          // Antigravity reports an image read with only a text result, never the image bytes.
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "structured-image-read",
+            title: "Read `mockup.png`",
+            kind: "read",
+            status: "completed",
+            rawInput: { file_path: "/workspace/mockup.png", start_line: 0, end_line: 799 },
+            rawOutput: "View mockup.png",
+          },
           {
             sessionUpdate: "tool_call_update",
             toolCallId: "structured-search",
@@ -1267,6 +1315,33 @@ const program = Effect.gen(function* () {
             kind: "search",
             status: "completed",
             rawInput: { query: "TODO", path: "apps/web" },
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "structured-search-explicit-location",
+            title: "Grep",
+            kind: "search",
+            status: "completed",
+            rawInput: { query: "  README.md  " },
+            locations: [{ path: "README.md" }],
+            rawOutput: "# Title",
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "structured-search-query-only",
+            title: "Grep",
+            kind: "search",
+            status: "completed",
+            rawInput: { query: "TODO" },
+            rawOutput: "src/a.ts: TODO",
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "structured-search-query-no-output",
+            title: "Grep",
+            kind: "search",
+            status: "completed",
+            rawInput: { query: "FIXME" },
           },
           // Grok backend searches: the query only arrives in the completed rawOutput.
           {
@@ -1331,6 +1406,43 @@ const program = Effect.gen(function* () {
             status: "completed",
             rawInput: { command: "cat probe.txt" },
             rawOutput: { commandLine: "cat probe.txt", exitCode: 0, combinedOutput: "after\n" },
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "antigravity-web-search",
+            title: "Web search",
+            kind: "search",
+            status: "completed",
+            rawInput: { query: "  top story on Hacker News today  " },
+            rawOutput:
+              "Sources:\n<https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGYNzfz>.",
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "antigravity-run-search-web",
+            title: "Running search_web",
+            kind: "search",
+            status: "completed",
+            rawInput: { query: "top story on Hacker News today" },
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "antigravity-web-search-streamed",
+            title: "Web search",
+            kind: "search",
+            status: "in_progress",
+            rawInput: { query: "streamed citations" },
+            rawOutput: "Sources: https://example.com/streamed_(detail)",
+          },
+          {
+            sessionUpdate: "tool_call_content_chunk",
+            toolCallId: "antigravity-web-search-streamed",
+            content: { type: "content", content: { type: "text", text: " (updated)" } },
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "antigravity-web-search-streamed",
+            status: "completed",
           },
           {
             sessionUpdate: "compaction_update",
