@@ -31,6 +31,10 @@ export const freePort = () =>
     });
   });
 
+const FAKE_CLAUDE = NodePath.join(
+  NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
+  "fake-claude.mjs",
+);
 const NO_MODEL = `#!/bin/sh\necho 'staging runs no model' >&2\nexit 1\n`;
 
 // What the server and its CLI call this machine, instead of the real host's name and kind.
@@ -42,33 +46,37 @@ const identityEnv = (home) => {
 };
 
 /**
- * A fresh T3 home whose server calls itself `label` on a `machine` (laptop, desktop, cloud,
- * linux, mac-mini, mac-studio). `settings` merge into settings.json.
+ * A fresh T3 home whose server calls itself `label` on a `machine`. `settings` merge into
+ * settings.json. With `claude` (scripted turns) the real Claude provider runs fake-claude.mjs
+ * and `model` is a Claude model id; without it `model` is a replay-agent scenario.
  */
-export function prepareHome(
-  home,
-  { label, machine = "laptop", settings = {}, model = "showcase" },
-) {
+export function prepareHome(home, { label, machine = "laptop", settings = {}, model, claude }) {
   NodeFS.rmSync(home, { recursive: true, force: true });
   NodeFS.mkdirSync(NodePath.join(home, "userdata"), { recursive: true });
   NodeFS.mkdirSync(NodePath.join(home, "bin"));
   NodeFS.mkdirSync(NodePath.join(home, "workspaces"));
   NodeFS.writeFileSync(NodePath.join(home, "bin/no-model"), NO_MODEL, { mode: 0o755 });
   NodeFS.writeFileSync(NodePath.join(home, "identity.json"), JSON.stringify({ label, machine }));
+  if (claude)
+    NodeFS.writeFileSync(NodePath.join(home, "claude-script.json"), JSON.stringify(claude));
   NodeFS.writeFileSync(
     NodePath.join(home, "userdata/settings.json"),
     JSON.stringify({
-      defaultModelSelection: { instanceId: "devReplay", model },
+      defaultModelSelection: claude
+        ? { instanceId: "claudeAgent", model: model ?? "claude-opus-5-5" }
+        : { instanceId: "devReplay", model: model ?? "showcase" },
       providerInstances: Object.fromEntries(
         REAL_PROVIDERS.map((driver) => [
           driver,
-          {
-            driver,
-            enabled: false,
-            ...(driver === "codex"
-              ? { config: { binaryPath: NodePath.join(home, "bin/no-model") } }
-              : {}),
-          },
+          driver === "claudeAgent" && claude
+            ? { driver, enabled: true, config: { binaryPath: FAKE_CLAUDE } }
+            : {
+                driver,
+                enabled: false,
+                ...(driver === "codex"
+                  ? { config: { binaryPath: NodePath.join(home, "bin/no-model") } }
+                  : {}),
+              },
         ]),
       ),
       ...settings,
@@ -118,6 +126,12 @@ export async function startEnvironment(
     HOME: process.env.HOME,
     TMPDIR: process.env.TMPDIR ?? "/tmp",
     ...identityEnv(home),
+    ...(NodeFS.existsSync(NodePath.join(home, "claude-script.json"))
+      ? {
+          FAKE_CLAUDE_SCRIPT: NodePath.join(home, "claude-script.json"),
+          FAKE_CLAUDE_LOG: NodePath.join(home, "fake-claude.log"),
+        }
+      : {}),
     T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "0",
     T3CODE_PORT_OFFSET: String(webPort - BASE_WEB_PORT),
     ...env,

@@ -261,9 +261,6 @@
         );
 
       window.setup = () => {
-        // Dev-only label of the free replay agent; a real thread shows the user's model here.
-        Kit.text("* >> [data-chat-provider-model-picker-label]", "Opus 5.5");
-
         Kit.beats([
           ["ask-empty", 0],
           ["ask-typed", 1.2],
@@ -350,8 +347,8 @@
               ease: "cubic-bezier(.3,1.2,.4,1)",
             },
             { t: 3.2, on: "ask-typed >> [data-chat-composer-form]", s: 1.75 },
-            { t: 3.75, on: "delegated >> [data-assistant-citation-source]", s: 1.65, y: 360 },
-            { t: 6.4, on: "delegated >> [data-assistant-citation-source]", s: 1.65, y: 360 },
+            { t: 3.75, on: "delegated >> button[data-v2-item-type=subagent]", s: 1.65, y: 400 },
+            { t: 6.4, on: "delegated >> button[data-v2-item-type=subagent]", s: 1.65, y: 400 },
             { t: 7.1, on: "watch-install >> [data-workspace-area=panel]", s: 1.6, y: 560 },
             { t: 12.5, on: "watch-done >> [data-workspace-area=panel]", s: 1.6, y: 560 },
             {

@@ -34,10 +34,15 @@ There are two ways to build one:
    - `drive.mjs` opens the web client with `openBrowser()` (1440×720, dark, release
      branding) and walks the flow. It calls `beat(name)` at each moment the video needs.
      Re-run it as often as you like against the same servers.
-   - Agent turns come from recordings in `apps/server/scripts/dev-replay/`, one `SCENARIOS`
-     entry each in `dev-replay-agent.ts`. A `t3/mcp_call` frame makes the agent call a real
-     T3 tool (e.g. `delegate_task`). `<var:name>` in a frame is filled from the JSON file at
-     `T3_DEV_REPLAY_VARS`, for ids that change every run.
+   - Agent turns: pass `claude: [turns]` to `prepareHome` and the real Claude provider runs
+     `scripts/fake-claude.mjs` as its CLI, so the video shows Claude's logo, models, thinking
+     and tool rows. Each turn is `{ match, steps }`: `think`, `text`, `bash` (+ `output`, `ms`),
+     `wait`, and `tool` (+ `input`), which calls that T3 MCP tool for real, e.g.
+     `delegate_task`. Match generated titles with a `{ match: "title", repeat: true }` turn.
+     `<var:name>` is filled from the JSON file at `T3_DEV_REPLAY_VARS`, for ids that change
+     every run. `fake-claude.log` in the home records the protocol, for debugging.
+   - The free replay agent (`apps/server/scripts/dev-replay-agent.ts`) still works without
+     `claude`, but it shows as an ACP provider.
 4. **Create the story:** `scripts/new.sh ~/launch-videos/<slug>`, then copy the beats in, or
    pass that directory as the staging's `<out>`. Add one `<iframe data-beat>` per beat and
    write `setup()` and `placeCursor()` (see Anatomy).
