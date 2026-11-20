@@ -2,6 +2,7 @@ package expo.modules.t3voicetranscription
 
 import android.content.res.Resources
 import android.os.Build
+import com.google.mlkit.genai.speechrecognition.SpeechRecognizerOptions
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
@@ -31,14 +32,20 @@ class T3VoiceTranscriptionModule : Module() {
 
     defineDecodeRecording()
 
-    AsyncFunction("checkAvailability").Coroutine<Boolean> {
+    AsyncFunction("checkAvailability").Coroutine<Map<String, Any>?> {
       if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-        false
+        null
       } else {
         withContext(Dispatchers.IO) {
           val context = requireNotNull(appContext.reactContext)
           val locale = speechLocale(Resources.getSystem().configuration.locales[0])
-          isGoogleVoiceTranscriptionSupported { MlKitSpeechClient(context, locale, it) }
+          probeGoogleVoiceTranscription { MlKitSpeechClient(context, locale, it) }?.let {
+            mapOf(
+              "language" to locale.displayName,
+              "advanced" to (it.mode == SpeechRecognizerOptions.Mode.MODE_ADVANCED),
+              "downloaded" to it.downloaded
+            )
+          }
         }
       }
     }

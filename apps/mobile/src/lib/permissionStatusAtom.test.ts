@@ -78,6 +78,9 @@ describe("makePermissionStatusAtom", () => {
     const { registry, flush } = makeRegistry();
     const unmount = registry.mount(atom);
 
+    await reads.resolveNext("available");
+    registry.refresh(atom);
+    expect(registry.get(atom)).toBe("available");
     for (const listener of native.listeners) listener("active");
     await reads.resolveLast("available");
     await reads.resolveNext("unavailable");

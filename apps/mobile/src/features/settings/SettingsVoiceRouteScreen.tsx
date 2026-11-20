@@ -1,9 +1,9 @@
 import { msg, useGT, useMessages } from "gt-react-native";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { getRecordingPermissionsAsync, requestRecordingPermissionsAsync } from "expo-audio";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Linking, Platform, useWindowDimensions, View } from "react-native";
 import Reanimated, { ReduceMotion, useAnimatedStyle, withTiming } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -11,7 +11,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
-import { m } from "../../i18n/messages";
+import { m, type MessageResolver } from "../../i18n/messages";
 import { makePermissionStatusAtom } from "../../lib/permissionStatusAtom";
 import {
   isMicrophoneDevice,
@@ -36,6 +36,7 @@ import { LocalModelChoice } from "./VoiceModelSection";
 import { CloudVoiceChoice } from "./CloudVoiceSection";
 import type { VoiceGrant } from "../voice-input/voiceGrantStorage";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { type LocalVoiceEngine } from "../../native/voiceTranscription";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import { SettingsDragHandle } from "./components/SettingsDragHandle";
@@ -120,6 +121,24 @@ const UNAVAILABLE_EXPLANATION =
     : msg(
         "Dictation on this device needs iOS 26 or later, a supported device, and a supported language. Your keyboard’s dictation is separate.",
       );
+
+const LOCAL_ENGINE_EXPLANATION =
+  Platform.OS === "android"
+    ? msg(
+        "Basic is Google’s standard speech model. Advanced uses Gemini Nano on supported phones and is usually more accurate. Your keyboard’s voice typing is separate.",
+      )
+    : msg("Your keyboard’s dictation is separate.");
+
+function localEngineLabel(engine: LocalVoiceEngine, resolve: MessageResolver) {
+  if (engine.kind === "apple") return resolve(msg("Apple on-device speech"));
+  const language = engine.downloaded ? engine.language : resolve(msg("Downloads on first use"));
+  return resolve(
+    msg("Google on-device speech · {mode} · {language}", {
+      mode: engine.advanced ? resolve(msg("Advanced")) : resolve(msg("Basic")),
+      language,
+    }),
+  );
+}
 
 function saveDestination(id: EnvironmentId | null) {
   try {
@@ -223,6 +242,13 @@ export function SettingsVoiceRouteScreen() {
   const gt = useGT();
   const m = useMessages();
   const transcriber = useAtomValue(localVoiceTranscriberAtom);
+  const refreshTranscriber = useAtomRefresh(localVoiceTranscriberAtom);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- dictation can download a model, so re-probe the native engine without a "checking" flash
+  useEffect(() => {
+    refreshTranscriber();
+  }, [refreshTranscriber]);
+  const localEngine =
+    transcriber === null || transcriber === "checking" ? null : transcriber.engine;
   const grant = useAtomValue(voiceGrantAtom);
   const { environments, isReady } = useEnvironments();
   const grantEnvironment = grant
@@ -296,10 +322,25 @@ export function SettingsVoiceRouteScreen() {
         contentContainerClassName="gap-3 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
-        <SettingsSection title={gt("Transcribe on")}>
+        <SettingsSection
+          title={gt("Transcribe on")}
+          footer={localEngine ? m(LOCAL_ENGINE_EXPLANATION) : undefined}
+        >
           <ListChoiceRow
             label={gt("This device")}
+            accessibilityLabel={
+              localEngine
+                ? gt("This device, {engine}", { engine: localEngineLabel(localEngine, m) })
+                : undefined
+            }
             description={gt("Audio stays on this device and is transcribed here.")}
+            meta={
+              localEngine ? (
+                <Text textRole="footnote" className="text-foreground">
+                  {localEngineLabel(localEngine, m)}
+                </Text>
+              ) : undefined
+            }
             selected={!grant && !sheetEnvironment}
             onPress={() => {
               setCloudSheet(null);

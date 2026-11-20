@@ -1,3 +1,4 @@
+import { Option } from "effect";
 import { Atom } from "effect/reactivity";
 
 import { subscribeAppActive } from "./appState";
@@ -25,7 +26,7 @@ export function makePermissionStatusAtom<S>(options: {
       };
       refresh();
       get.addFinalizer(subscribeAppActive(refresh));
-      return options.initial;
+      return Option.getOrElse(get.self<S>(), () => options.initial);
     },
     (ctx, status: S) => ctx.setSelf(status),
   ).pipe(Atom.withLabel(options.label));

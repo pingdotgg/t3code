@@ -10,6 +10,8 @@ import { RowPressable } from "./RowPressable";
 
 export function ListChoiceRow(props: {
   readonly label: string;
+  /** Defaults to `label`; set it when `meta` carries information a screen reader needs. */
+  readonly accessibilityLabel?: string;
   readonly leading?: ReactNode;
   readonly description?: string;
   readonly meta?: ReactNode;
@@ -22,7 +24,7 @@ export function ListChoiceRow(props: {
   return (
     <RowPressable
       accessibilityRole="radio"
-      accessibilityLabel={props.label}
+      accessibilityLabel={props.accessibilityLabel ?? props.label}
       accessibilityHint={props.description}
       accessibilityState={{ checked: props.selected, disabled: Boolean(props.disabled) }}
       disabled={props.disabled}
