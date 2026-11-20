@@ -116,7 +116,8 @@ export const prLiveAtom = Atom.family((key: string) => {
       syncedAt = synced;
       if (!first) queueMicrotask(() => get.registry.refresh(checksAtom));
     }
-    const runs = trackRunning(runningSince, key, checks?.checks ?? [], Date.now());
+    // Until the list is read, nothing says which checks stopped, so the clocks stay as they are.
+    const runs = checks === null ? [] : trackRunning(runningSince, key, checks.checks, Date.now());
     saveRunning();
     const next = buildLive({ link, summary, checks, runs });
     if (JSON.stringify(next) === JSON.stringify(last)) return last;
