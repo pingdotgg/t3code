@@ -44,6 +44,7 @@ const USED_WORKBENCH_COLORS = new Set([
   "badge.background",
   "button.background",
   "button.foreground",
+  "chat.requestBubbleBackground",
   "contrastBorder",
   "descriptionForeground",
   "disabledForeground",

@@ -1,3 +1,4 @@
+import { converter } from "culori/fn";
 import { parse, type ParseError } from "jsonc-parser";
 import { msg } from "gt-react";
 
@@ -21,6 +22,7 @@ import {
 
 // The standard dark bubble stands about 1.26 off its canvas, the light one about 1.19.
 const MESSAGE_SURFACE_CONTRAST = 1.2;
+const toOklch = converter("oklch");
 
 type VsCodeRgba = { r: number; g: number; b: number; a: number };
 type VsCodeRgb = { r: number; g: number; b: number };
@@ -132,6 +134,19 @@ function contrastRatio(first: VsCodeRgb, second: VsCodeRgb): number {
 
 function hexToRgb(value: string): VsCodeRgb {
   return parseVsCodeColor(themeColorToHex(value) ?? value) ?? { r: 0, g: 0, b: 0, a: 1 };
+}
+
+function resolveMessageSurface(tint: VsCodeRgba, canvas: VsCodeRgb, canvasHex: string): string {
+  const blended = flattenOver(tint, canvas);
+  if (contrastRatio(hexToRgb(blended), hexToRgb(canvasHex)) >= MESSAGE_SURFACE_CONTRAST) {
+    return blended;
+  }
+
+  // On a colored canvas, a faint blend can take on the canvas's hue.
+  const { l } = toOklch(blended)!;
+  const { c, h } = toOklch(toHex(tint))!;
+  const seed = `oklch(${l} ${c * 0.3} ${h ?? 0})`;
+  return readableThemeColorOn(seed, canvasHex, MESSAGE_SURFACE_CONTRAST);
 }
 
 export function isVsCodeThemeFile(value: unknown): boolean {
@@ -313,9 +328,8 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
   const selection = pick("editor.selectionBackground");
   const bubble =
     pick("chat.requestBubbleBackground") ?? (selection && { ...selection, a: selection.a * 0.3 });
-  // Most themes paint it faintly, so lift it along its hue to stand apart like the standard bubble.
   const messageSurfaceHex = bubble
-    ? readableThemeColorOn(flattenOver(bubble, canvas), canvasHex, MESSAGE_SURFACE_CONTRAST)
+    ? resolveMessageSurface(bubble, canvas, canvasHex)
     : derived.messageSurface;
   const searchMatchBackground =
     solidOver(canvas, "editor.findMatchHighlightBackground") ?? derived.searchMatchBackground;

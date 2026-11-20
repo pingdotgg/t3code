@@ -442,6 +442,13 @@ describe("VS Code theme import", () => {
       colors: { "editor.selectionBackground": "#cb4b1633" },
       source: "#cb4b16",
     },
+    {
+      case: "a faint amber selection on a teal canvas",
+      type: "dark",
+      canvas: "#002b36",
+      colors: { "editor.selectionBackground": "#b5890033" },
+      source: "#b58900",
+    },
   ])("paints the user's message bubble from $case", ({ type, canvas, colors, source }) => {
     const theme = parseVsCodeThemeFile({
       name: "Bubble",
