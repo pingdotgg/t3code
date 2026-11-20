@@ -37,7 +37,7 @@ import {
 import { useAtomCommand } from "./use-atom-command";
 import { showGitActionResult } from "./use-vcs-action-state";
 import { useThreadSelection } from "./use-thread-selection";
-import { useSelectedThreadWorktree } from "./use-selected-thread-worktree";
+import { useSelectedThreadGitCheckout } from "./use-selected-thread-worktree";
 
 function refreshFailureMessage(cause: Cause.Cause<unknown>): string {
   const error = Cause.squash(cause);
@@ -75,7 +75,7 @@ export function useSelectedThreadGitActions() {
     AuthOrchestrationOperateScope,
   );
   const canChangeThreadBranch = canWriteSourceControl && canOperateThread;
-  const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
+  const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadGitCheckout();
   const runStackedAction = useAtomCommand(
     vcsActionManager.runStackedAction({
       environmentId: selectedThread?.environmentId ?? null,

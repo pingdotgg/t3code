@@ -5,6 +5,7 @@ import { expect, it, vi } from "vite-plus/test";
 const checkout = vi.hoisted(() => ({
   projectRoot: "",
   worktreePath: null as string | null,
+  removedPath: null as string | null,
   branches: [] as Array<{ name: string; worktreePath: string | null }>,
 }));
 
@@ -41,18 +42,34 @@ vi.mock("../../../state/use-thread-selection", () => ({
 vi.mock("../../../state/use-thread-detail", () => ({
   useSelectedThreadWorktreePath: () => checkout.worktreePath,
 }));
-vi.mock("../../../state/use-selected-thread-git-state", () => ({
-  useSelectedThreadGitState: () => ({
-    selectedThreadBranches: checkout.branches,
-    selectedThreadBranchesLoading: false,
-    gitOperationLabel: null,
+// A removed checkout is not a repository, so listing refs there finds none.
+vi.mock("../../../state/queries", () => ({
+  useBranches: ({ cwd }: { cwd: string | null }) => ({
+    data: { refs: cwd === checkout.removedPath ? [] : checkout.branches },
+    isPending: false,
   }),
+}));
+vi.mock("../../../state/use-vcs-action-state", () => ({
+  useVcsActionState: () => ({ currentLabel: null, hookName: null }),
+}));
+vi.mock("../../../state/sourceControl", () => ({
+  sourceControlEnvironment: { discovery: () => null },
 }));
 vi.mock("../../../state/use-selected-thread-git-actions", () => ({
   useSelectedThreadGitActions: () => ({ canChangeThreadBranch: true }),
 }));
-vi.mock("../../../state/query", () => ({ useEnvironmentQuery: () => ({ data: null }) }));
-vi.mock("../../../state/vcs", () => ({ vcsEnvironment: { branch: () => null } }));
+vi.mock("../../../state/query", () => ({
+  useEnvironmentQuery: (query: { statusCwd?: string } | null) => ({
+    data:
+      query?.statusCwd === undefined ? null : { isRepo: query.statusCwd !== checkout.removedPath },
+  }),
+}));
+vi.mock("../../../state/vcs", () => ({
+  vcsEnvironment: {
+    branch: () => null,
+    status: ({ input }: { input: { cwd: string } }) => ({ statusCwd: input.cwd }),
+  },
+}));
 
 import { GitBranchesSheet } from "./GitBranchesSheet";
 
@@ -95,6 +112,14 @@ it("recognizes both the main checkout and a linked worktree as this thread's che
       { name: "feature/available", subtitle: "Local branch", disabled: false },
       { name: "feature/linked", subtitle: "Checked out in this thread", disabled: false },
       { name: "main", subtitle: "Checked out in another worktree", disabled: true },
+    ]);
+
+    // A removed worktree leaves the project checkout as the one the thread can move to.
+    checkout.removedPath = linked;
+    expect(rows()).toEqual([
+      { name: "feature/available", subtitle: "Local branch", disabled: false },
+      { name: "feature/linked", subtitle: "Checked out in another worktree", disabled: true },
+      { name: "main", subtitle: "Checked out in this thread", disabled: false },
     ]);
   } finally {
     act(() => root.unmount());

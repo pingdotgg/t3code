@@ -33,7 +33,10 @@ import { useEnvironmentQuery } from "../../../state/query";
 import { useThreadSelection } from "../../../state/use-thread-selection";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
-import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-worktree";
+import {
+  useSelectedThreadGitCheckout,
+  useSelectedThreadWorktree,
+} from "../../../state/use-selected-thread-worktree";
 import { vcsEnvironment } from "../../../state/vcs";
 import { menuItemIconName, statusSummary } from "./gitSheetComponents";
 import {
@@ -81,6 +84,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     context: selectedThread ?? undefined,
   });
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
+  const { checkoutMissing } = useSelectedThreadGitCheckout();
   const linkedPrLines = useLinkedPullRequestLines(selectedThread, selectedEnvironmentRuntime);
   const linkedPrActions = useLinkedPullRequestActions({
     thread: selectedThread,
@@ -331,7 +335,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
               ? gt("Switch branch, create branch, or move to a worktree")
               : gt("View branches and worktrees")
           }
-          disabled={busy || !isRepo}
+          disabled={busy || (!isRepo && !checkoutMissing)}
           onPress={() =>
             presentRoute(() =>
               navigation.navigate("GitBranches", {

@@ -1,3 +1,4 @@
+import { isThreadCheckoutMissing } from "@t3tools/client-runtime/thread-checkout";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
@@ -174,7 +175,7 @@ export function BranchToolbarBranchSelector({
       ? serverThread.worktreePath
       : (draftThread?.worktreePath ?? null);
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
-  const branchCwd = activeWorktreePath ?? activeProjectCwd;
+  const statusCwd = activeWorktreePath ?? activeProjectCwd;
   const hasServerThread = serverThread !== null;
   const canUpdateThreadBranch = !hasServerThread || canOperateThread;
   const canChangeThreadBranch = canWriteSourceControl && canUpdateThreadBranch;
@@ -258,11 +259,11 @@ export function BranchToolbarBranchSelector({
   const [branchQuery, setBranchQuery] = useState("");
 
   const branchStatusQuery = useEnvironmentQuery(
-    branchCwd === null
+    statusCwd === null
       ? null
       : vcsEnvironment.status({
           environmentId,
-          input: { cwd: branchCwd },
+          input: { cwd: statusCwd },
         }),
   );
   const projectStatusQuery = useEnvironmentQuery(
@@ -270,6 +271,15 @@ export function BranchToolbarBranchSelector({
       ? null
       : vcsEnvironment.status({ environmentId, input: { cwd: activeProjectCwd } }),
   );
+  const checkoutMissing = isThreadCheckoutMissing({
+    worktreePath: activeWorktreePath,
+    worktreeIsRepo: branchStatusQuery.data?.isRepo,
+    projectIsRepo: projectStatusQuery.data?.isRepo,
+  });
+  const branchCwd = checkoutMissing ? activeProjectCwd : statusCwd;
+  // Refs resolve against the checkout the thread can move to, not one that is gone.
+  const selectableWorktreePath = (worktreePath: string | null) =>
+    checkoutMissing ? null : worktreePath;
   const activeProjectCheckoutRoot = projectStatusQuery.data?.workingTree.rootPath;
   const trimmedBranchQuery = branchQuery.trim();
   const branchRefState = usePaginatedBranches(
@@ -298,7 +308,7 @@ export function BranchToolbarBranchSelector({
         : resolveBranchSelectionTarget({
             activeProjectCwd,
             activeProjectCheckoutRoot,
-            activeWorktreePath,
+            activeWorktreePath: selectableWorktreePath(activeWorktreePath),
             refName,
           }).nextWorktreePath,
     });
@@ -482,7 +492,7 @@ export function BranchToolbarBranchSelector({
     const selectionTarget = resolveBranchSelectionTarget({
       activeProjectCwd,
       activeProjectCheckoutRoot,
-      activeWorktreePath: latest.worktreePath,
+      activeWorktreePath: selectableWorktreePath(latest.worktreePath),
       refName,
     });
 
@@ -571,6 +581,20 @@ export function BranchToolbarBranchSelector({
     if (!canChangeThreadBranch) return;
     const name = sanitizeNewRefName(rawName);
     if (!branchCwd || !name || isBranchActionPending) return;
+    const latest = readLatestThreadState();
+    // Refuse before switching the checkout, or a running thread stays bound to the missing one.
+    if (
+      isWorktreeChangeBlocked({
+        runtime: latest.runtime,
+        currentWorktreePath: latest.worktreePath,
+        nextWorktreePath: selectableWorktreePath(activeWorktreePath),
+      })
+    ) {
+      toastManager.add(
+        stackedThreadToast({ type: "warning", title: messages(WORKTREE_CHANGE_BLOCKED_MESSAGE) }),
+      );
+      return;
+    }
     latestSelectionIdRef.current++;
 
     setIsBranchMenuOpen(false);
@@ -589,7 +613,7 @@ export function BranchToolbarBranchSelector({
       });
       if (createBranchResult._tag === "Success") {
         const nextBranchName = createBranchResult.value.refName;
-        const applied = setThreadBranch(nextBranchName, activeWorktreePath);
+        const applied = setThreadBranch(nextBranchName, selectableWorktreePath(activeWorktreePath));
         if (applied) {
           setBranchHold({
             branch: nextBranchName,
@@ -794,7 +818,7 @@ export function BranchToolbarBranchSelector({
               !resolveBranchSelectionTarget({
                 activeProjectCwd,
                 activeProjectCheckoutRoot,
-                activeWorktreePath,
+                activeWorktreePath: selectableWorktreePath(activeWorktreePath),
                 refName,
               }).reuseExistingWorktree)) ||
           isWorktreeChangeBlockedForRef(refName)
