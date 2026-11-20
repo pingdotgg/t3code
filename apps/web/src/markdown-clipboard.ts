@@ -14,6 +14,7 @@ const SANITIZED_HTML_SELECTOR = [
 
 const ALERT_ATTRIBUTE = "data-markdown-alert";
 const ALERT_LABEL = "data-markdown-alert-label";
+const LIST_ITEM_CHECKBOX = ':scope > input[type="checkbox"], :scope > p > input[type="checkbox"]';
 
 export interface MarkdownClipboardPayload {
   text: string;
@@ -131,10 +132,8 @@ function serializeListItem(
   index: number,
   inTableCell: boolean,
 ): string {
-  const checkbox = item.querySelector(
-    ':scope > input[type="checkbox"], :scope > p > input[type="checkbox"]',
-  );
-  const task = checkbox ? `[${(checkbox as HTMLInputElement).checked ? "x" : " "}] ` : "";
+  const checkbox = item.querySelector<HTMLInputElement>(LIST_ITEM_CHECKBOX);
+  const task = checkbox ? `[${checkbox.checked ? "x" : " "}] ` : "";
   const bullet = ordered ? `${index}. ` : "- ";
   const marker = `${bullet}${task}`;
   let content = outsideCode(serializeChildren(item, inTableCell), (prose) =>
@@ -152,17 +151,24 @@ function serializeListItem(
   ].join("\n");
 }
 
-function serializeList(list: Element, ordered: boolean, inTableCell: boolean): string {
+/** A list's items with the numbers an ordered list shows: from `start`, reset by each `value`. */
+function numberedListItems(list: Element): { item: Element; number: number }[] {
   const start = Number.parseInt(list.getAttribute("start") ?? "1", 10);
-  const items = [...list.children].filter((child) => child.tagName === "LI");
-  if (items.length === 0) return "";
   let next = Number.isNaN(start) ? 1 : start;
-  return `${items
+  return [...list.children]
+    .filter((child) => child.tagName === "LI")
     .map((item) => {
       const value = Number.parseInt(item.getAttribute("value") ?? "", 10);
-      if (ordered && !Number.isNaN(value)) next = value;
-      return serializeListItem(item, ordered, next++, inTableCell);
-    })
+      if (!Number.isNaN(value)) next = value;
+      return { item, number: next++ };
+    });
+}
+
+function serializeList(list: Element, ordered: boolean, inTableCell: boolean): string {
+  const items = numberedListItems(list);
+  if (items.length === 0) return "";
+  return `${items
+    .map(({ item, number }) => serializeListItem(item, ordered, number, inTableCell))
     .join("\n")}\n\n`;
 }
 
@@ -191,6 +197,7 @@ function serializeBlockquote(quote: Element, inTableCell: boolean, marker = ""):
 
 function serializeInsight(insight: Element, inTableCell: boolean): string {
   const body = serializeQuoteBody(insight, inTableCell);
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- markdown written to the clipboard
   return `★ Insight ${"─".repeat(37)}\n${body ? `${body}\n` : ""}${"─".repeat(49)}\n\n`;
 }
 
@@ -497,6 +504,103 @@ function sanitizedHtmlFrom(container: Element): string {
   return `<meta charset="utf-8">${container.innerHTML}`;
 }
 
+function isList(node: Node): node is HTMLOListElement | HTMLUListElement {
+  return node instanceof Element && (node.tagName === "OL" || node.tagName === "UL");
+}
+
+// An endpoint can clone empty item wrappers at any nesting depth.
+function emptyListBoundary(
+  ancestor: Node,
+  node: Node,
+  offset: number,
+  side: "start" | "end",
+): Element | null {
+  const next = (node: Node) => (side === "start" ? node.nextSibling : node.previousSibling);
+  if (node instanceof Text && offset !== (side === "start" ? node.length : 0)) return null;
+
+  let boundary: Element | null = null;
+  let remaining = node.childNodes[side === "start" ? offset : offset - 1] ?? null;
+  while (node !== ancestor && node.parentNode) {
+    for (let sibling = remaining; sibling; sibling = next(sibling)) {
+      if (sibling instanceof Text && !sibling.data.trim()) continue;
+      if (
+        sibling instanceof Element &&
+        isSkippedElement(sibling) &&
+        !sibling.hasAttribute("data-markdown-copy") &&
+        !sibling.hasAttribute("data-markdown-details")
+      ) {
+        continue;
+      }
+      return boundary;
+    }
+    if (node instanceof Element && node.tagName === "LI" && isList(node.parentNode)) {
+      boundary = node;
+    } else if (boundary && isList(node)) {
+      boundary = node;
+    }
+    remaining = next(node);
+    node = node.parentNode;
+  }
+  return boundary;
+}
+
+/** Clones the selection and restores the markers shown for its copied list items. */
+function cloneWithListMarkers(range: Range, container: Element): void {
+  const originalAncestor = range.commonAncestorContainer;
+  const start = emptyListBoundary(
+    originalAncestor,
+    range.startContainer,
+    range.startOffset,
+    "start",
+  );
+  const end = emptyListBoundary(originalAncestor, range.endContainer, range.endOffset, "end");
+  if (start || end) {
+    range = range.cloneRange();
+    if (start) range.setStartAfter(start);
+    if (end) range.setEndBefore(end);
+  }
+  const ancestor = range.commonAncestorContainer;
+  const withinList = isList(ancestor);
+  container.appendChild(range.cloneContents());
+  if (withinList) {
+    // Items copied within one list clone without the list around them.
+    const list = ancestor.cloneNode(false) as Element;
+    list.append(...container.childNodes);
+    container.replaceChildren(list);
+  }
+  // The start's ancestors below the cloned top clone as the fragment's first-child chain.
+  const top = withinList ? ancestor.parentNode : ancestor;
+  const chain: Node[] = [];
+  for (let node: Node | null = range.startContainer; node && node !== top; node = node.parentNode) {
+    chain.unshift(node);
+  }
+  let clone: Node | null = container;
+  for (const [depth, source] of chain.entries()) {
+    clone = clone?.firstChild ?? null;
+    if (!(clone instanceof Element) || !(source instanceof Element)) continue;
+    if (source.tagName === "LI" && clone.tagName === "LI") {
+      const checkbox = source.querySelector(LIST_ITEM_CHECKBOX);
+      if (checkbox && !clone.querySelector(LIST_ITEM_CHECKBOX)) {
+        // Keep the first-child chain intact for nested items.
+        clone.append(checkbox.cloneNode(false));
+      }
+      continue;
+    }
+    if (source.tagName !== "OL") continue;
+    const firstCopied = chain[depth + 1] ?? source.childNodes[range.startOffset];
+    if (!firstCopied) continue;
+    const shown = numberedListItems(source).find(
+      ({ item }) =>
+        item === firstCopied ||
+        firstCopied.compareDocumentPosition(item) & Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    const cloned = numberedListItems(clone)[0];
+    if (shown && cloned && shown.number !== cloned.number) {
+      clone.setAttribute("start", String(shown.number));
+    }
+  }
+}
+
 export function chatMarkdownClipboardPayload(
   selection: Selection,
 ): MarkdownClipboardPayload | null {
@@ -506,7 +610,11 @@ export function chatMarkdownClipboardPayload(
     const range = selection.getRangeAt(index);
     if (range.collapsed) continue;
     const container = document.createElement("div");
-    container.appendChild(range.cloneContents());
+    cloneWithListMarkers(range, container);
+    // The indentation typed at a line start only shows; pasted, it would turn lines into code.
+    for (const indentation of container.querySelectorAll("[data-leading-whitespace]")) {
+      indentation.remove();
+    }
     const ancestor = range.commonAncestorContainer;
     const ancestorElement =
       ancestor.nodeType === Node.ELEMENT_NODE ? (ancestor as Element) : ancestor.parentElement;

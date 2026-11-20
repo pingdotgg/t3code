@@ -2,6 +2,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   EnvironmentThemeFile,
   ServerSettingsError,
+  THEME_CSS_MAX_LENGTH,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -20,6 +21,12 @@ import { ServerSettingsService } from "./serverSettings.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const encodeThemeFile = Schema.encodeSync(Schema.fromJsonString(EnvironmentThemeFile));
+/** Writes non-ASCII characters as `\uXXXX` escapes, as encoders such as Python's json.dumps do. */
+const encodeThemeFileEscaped = (theme: EnvironmentThemeFile) =>
+  encodeThemeFile(theme).replace(
+    /[\u0080-\uffff]/g,
+    (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
 
 const NIGHTFALL_THEME: EnvironmentThemeFile = {
   name: "Nightfall",
@@ -190,7 +197,10 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
   );
 
   it.effect("does not replace a theme file it could not put back", () => {
-    const oversized = JSON.stringify({ ...NIGHTFALL_THEME, padding: "x".repeat(40_000) });
+    const oversized = JSON.stringify({
+      ...NIGHTFALL_THEME,
+      padding: "x".repeat(EnvironmentTheme.MAX_THEME_FILE_BYTES),
+    });
     return withEnvironmentThemes(
       { [`${REFUSED_THEME_ID}.json`]: oversized },
       Effect.gen(function* () {
@@ -294,18 +304,61 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
     );
   });
 
+  it.effect("switches back to the stock theme after selecting another", () => {
+    const selected: Array<{ readonly theme?: string; readonly appearance?: string }> = [];
+    return withEnvironmentThemes(
+      {},
+      Effect.gen(function* () {
+        const themes = yield* EnvironmentTheme.EnvironmentThemeService;
+        yield* themes.apply({ themeId: "agent-look", theme: NIGHTFALL_THEME });
+        yield* themes.apply({ themeId: "t3-code" });
+        assert.deepEqual(selected, [{ theme: "agent-look" }, { theme: "" }]);
+      }),
+      selected,
+    );
+  });
+
+  it.effect(
+    "reports the image beside a theme as its background, with a new revision per file",
+    () =>
+      withEnvironmentThemes(
+        { "look.json": encodeThemeFile(NIGHTFALL_THEME), "look.png": "first" },
+        Effect.gen(function* () {
+          const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const background = Effect.map(currentThemes, (themes) => themes[0]?.background);
+          const image = path.join(environmentThemesDir, "look.png");
+
+          const first = yield* background;
+          assert.isDefined(first);
+          yield* fs.writeFileString(image, "a longer second image");
+          assert.notStrictEqual(yield* background, first);
+
+          yield* fs.remove(image);
+          assert.isUndefined(yield* background);
+          if (symlinksSupported) {
+            const outside = path.join(environmentThemesDir, "..", "outside.png");
+            yield* fs.writeFileString(outside, "outside");
+            yield* fs.symlink(outside, image);
+            assert.isUndefined(yield* background);
+          }
+        }),
+      ),
+  );
+
   it.effect("keeps the served theme when an update does not fit the size limit", () => {
     const large = (name: string): EnvironmentThemeFile => ({
       ...NIGHTFALL_THEME,
       name,
-      css: `/* ${"x".repeat(19_900)} */`,
+      css: `/* ${"界".repeat(THEME_CSS_MAX_LENGTH - 6)} */`,
     });
     return withEnvironmentThemes(
       {
         ...Object.fromEntries(
-          Array.from({ length: 9 }, (_, index) => [
+          Array.from({ length: 3 }, (_, index) => [
             `aa-${index}.json`,
-            encodeThemeFile(large(`Large ${index}`)),
+            encodeThemeFileEscaped(large(`Large ${index}`)),
           ]),
         ),
         "zz-look.json": encodeThemeFile(NIGHTFALL_THEME),
@@ -341,7 +394,10 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
     withEnvironmentThemes(
       {
         ...Object.fromEntries(
-          Array.from({ length: 7 }, (_, index) => [`junk-${index}.json`, "{".repeat(30_000)]),
+          Array.from({ length: 7 }, (_, index) => [
+            `junk-${index}.json`,
+            "{".repeat(EnvironmentTheme.MAX_THEME_FILE_BYTES),
+          ]),
         ),
         "zz-valid.json": encodeThemeFile(NIGHTFALL_THEME),
       },
