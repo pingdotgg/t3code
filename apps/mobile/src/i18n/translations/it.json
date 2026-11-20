@@ -1334,9 +1334,9 @@
   "c0d3dd0975eb2f22": "Descrizione",
   "9ff9f24d1568fbaf": "Nessuna descrizione disponibile per questa skill.",
   "e9df5a486f8ea01b": "Visualizza le istruzioni",
-  "b132114d6e839a2e": "{term, select, mr {merge request} cr {richiesta di modifica} other {pull request}}",
+  "b132114d6e839a2e": "Impossibile aprire la {term, select, mr {merge request} cr {richiesta di modifica} other {pull request}}",
   "eca94e6557931eae": "Riprova quando la connessione è attiva.",
-  "be3fcbc1324d5f38": "{term, select, mr {merge request} cr {richiesta di modifica} other {pull request}}",
+  "be3fcbc1324d5f38": "Apri la {term, select, mr {merge request} cr {richiesta di modifica} other {pull request}}",
   "19f953915a468edd": "Apri allegato",
   "13559139cab80bd6": [
     "Righe ",
