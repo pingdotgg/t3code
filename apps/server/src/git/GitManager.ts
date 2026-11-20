@@ -2688,19 +2688,35 @@ export const make = Effect.gen(function* () {
           ),
         )
       : null;
-    const result = yield* openPrFromBranch(
-      input.cwd,
-      null,
-      () => Effect.void,
-      push && "pushRemote" in push && push.pushRemote && push.upstreamBranch
-        ? { remoteName: push.pushRemote, upstreamRef: push.upstreamBranch }
-        : undefined,
-      input.baseBranch,
-      input.draft === true,
-      () => Effect.succeed({ title: input.title, body: input.body }),
+    const result = yield* Effect.gen(function* () {
+      // Publishing records the upstream, which the PR step needs to find the head branch.
+      if (!status.hasUpstream && push?.status === "pushed" && push.setUpstream === false) {
+        return yield* new GitManagerError({
+          operation: "createPullRequest",
+          cwd: input.cwd,
+          detail: `Pushed ${status.branch} to ${push.upstreamBranch}, but could not record it as the branch's upstream. Set the upstream, then try again.`,
+        });
+      }
+      return yield* openPrFromBranch(
+        input.cwd,
+        null,
+        () => Effect.void,
+        push && "pushRemote" in push && push.pushRemote && push.upstreamBranch
+          ? { remoteName: push.pushRemote, upstreamRef: push.upstreamBranch }
+          : undefined,
+        input.baseBranch,
+        input.draft === true,
+        () => Effect.succeed({ title: input.title, body: input.body }),
+      );
+    }).pipe(
+      // A push changes the ahead count, and a new PR changes the branch's PR lookup, so
+      // both leave cached status stale whatever the PR step does next.
+      Effect.onExit((exit) =>
+        push?.status === "pushed" || (Exit.isSuccess(exit) && exit.value.status === "created")
+          ? invalidateStatus(input.cwd)
+          : Effect.void,
+      ),
     );
-    // The thread's branch PR comes from status, which may hold the lookup from before.
-    if (result.status === "created") yield* invalidateStatus(input.cwd);
     const openedAsDraft =
       result.status === "created" &&
       (yield* sourceControlProvider(input.cwd)).createsDraftChangeRequests === true;

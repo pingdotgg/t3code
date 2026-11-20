@@ -4500,6 +4500,28 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* runGit(repoDir, ["fetch", "origin"]);
       yield* runGit(repoDir, ["reset", "--hard", "origin/feature/unpushed"]);
 
+      // A publish whose upstream cannot be recorded says so instead of claiming nothing was pushed.
+      yield* runGit(repoDir, ["checkout", "-b", "feature/locked"]);
+      const lockPath = NodePath.join(repoDir, ".git", "config.lock");
+      NodeFS.writeFileSync(lockPath, "");
+      const locked = yield* makeManager({ providerScenario: { prListSequence: [[], []] } });
+      // The upstream write retries on the real clock before giving up.
+      const lockedError = yield* Effect.flip(
+        TestClock.withLive(
+          locked.manager.createPullRequest({
+            cwd: repoDir,
+            projectId: ProjectId.make("project-1"),
+            title: "Feature",
+            body: "Body",
+          }),
+        ),
+      );
+      NodeFS.rmSync(lockPath);
+      expect(lockedError.message).toContain("could not record it as the branch's upstream");
+      expect(yield* remoteHead("feature/locked")).toBe(yield* localHead());
+      expect(created(locked.providerCalls)).toEqual([]);
+      yield* runGit(repoDir, ["checkout", "feature/unpushed"]);
+
       const open = {
         number: 7,
         title: "Feature",
@@ -4507,7 +4529,14 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         baseRefName: "main",
         headRefName: "feature/unpushed",
       };
-      const existing = yield* makeManager({ providerScenario: { prListSequence: [[open]] } });
+      // Pushing into an open PR returns it, and status no longer reports the pushed commit.
+      NodeFS.writeFileSync(NodePath.join(repoDir, "into-open.txt"), "into open\n");
+      yield* runGit(repoDir, ["add", "into-open.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Into open PR"]);
+      const existing = yield* makeManager({
+        providerScenario: { prListSequence: [[open], [open], [open], [open]] },
+      });
+      expect((yield* existing.manager.status({ cwd: repoDir })).aheadCount).toBe(1);
       const found = yield* existing.manager.createPullRequest({
         cwd: repoDir,
         projectId: ProjectId.make("project-1"),
@@ -4515,6 +4544,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         body: "Body",
       });
       expect(found).toMatchObject({ status: "opened_existing", number: 7 });
+      expect((yield* existing.manager.status({ cwd: repoDir })).aheadCount).toBe(0);
 
       // A retry after a failed draft finds the open PR and still drafts it.
       const actions: Array<PullRequestActionInput> = [];
