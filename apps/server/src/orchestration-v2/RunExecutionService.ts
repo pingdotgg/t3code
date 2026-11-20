@@ -1365,7 +1365,7 @@ export const layer: Layer.Layer<
               ...[...open.nodes.values(), ...open.subagents.values()]
                 .filter((record) => record.threadId === threadId)
                 .map((record) => record.id),
-              ...toolCallNodeIds,
+              ...(threadId === input.run.threadId ? toolCallNodeIds : []),
             ]);
             for (const subagent of stored.subagents) {
               if (open.subagents.has(subagent.id) && !isSettledSubagentStatus(subagent.status)) {
