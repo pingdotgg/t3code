@@ -1,7 +1,9 @@
-import { useAtomMount } from "@effect/atom-react";
+import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import { useState } from "react";
 
 import { OpenBoard } from "./board/OpenBoard";
+import { BrowserPanel } from "./browser/BrowserPanel";
+import { panelAtom } from "./browser/panel";
 import { EngineStatus } from "./sidebar/EngineStatus";
 import { EngineVersion } from "./sidebar/EngineVersion";
 import { SettingsScreen } from "./settings/SettingsScreen";
@@ -13,6 +15,7 @@ import { UsageBar } from "./usage/UsageBar";
 
 export function App() {
   const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
+  const browserOpen = useAtomValue(panelAtom).open;
   useAtomMount(updateWatcherAtom);
   return (
     <div className="grid h-full grid-rows-[var(--topbar-height)_minmax(0,1fr)_auto]">
@@ -22,7 +25,7 @@ export function App() {
         className={
           settingsPage !== null
             ? "hidden"
-            : "grid min-h-0 grid-cols-[240px_minmax(0,1fr)] grid-rows-[minmax(0,1fr)]"
+            : "grid min-h-0 grid-cols-[240px_minmax(0,1fr)_auto] grid-rows-[minmax(0,1fr)]"
         }
       >
         <Sidebar
@@ -40,6 +43,7 @@ export function App() {
         <main className="min-h-0 min-w-0">
           <OpenBoard />
         </main>
+        {browserOpen && <BrowserPanel />}
       </div>
       {settingsPage !== null && (
         <SettingsScreen

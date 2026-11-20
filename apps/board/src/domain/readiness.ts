@@ -35,6 +35,8 @@ export interface PrLive {
   /** The commit the checks ran on, when the host or the engine's watch reports it. */
   readonly headSha: string | null;
   readonly checks: ReadonlyArray<CheckRun>;
+  /** The pull request's page, which the chip opens. */
+  readonly url: string | null;
 }
 
 export interface ConditionState {

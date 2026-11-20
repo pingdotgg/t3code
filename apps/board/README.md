@@ -135,6 +135,16 @@ A merge approval card shows the same six, each with the orchestrator's claim fro
 
 The chip marks `board:pr-event` when a pull request's live state changes and `board:pr-painted` after the commit that shows a new reading.
 
+## Browser panel
+
+The sidebar's **Browser** row shows a panel beside the board. It is the app's one right-side host, which `App.tsx` lays out as the grid's last column, and a drag handle or the arrow keys on its left edge set its width.
+
+Inside Electron the panel holds the user's tabs. `electron/browserView.ts` gives each tab its own `WebContentsView` in a persistent `persist:agent-board-browser` session, shows only the active one, and places it over the rectangle the renderer reports with `board:browser-bounds`. Every message is decoded with a schema before it is used, a page can only navigate to http(s) URLs, and the session denies every permission request. `src/browser/tabs.ts` keeps the tab list in a reducer, and `openInPanel(url)` in `src/browser/panel.ts` is the one entry point that opens a link in a new tab. A ticket's pull request chip, the links an orchestrator names as evidence on a merge approval card, and a link in a markdown document, such as an artifact or a local preview URL, all go through it. Without Electron, as in `dev:web`, it opens the system browser instead.
+
+The **Agents** button lists the browser tabs the open board's orchestrator and agents hold in the engine. It reads `preview.list` for each thread of the board's family, reads it again when `subscribePreviewEvents` reports a change, and shows the tab you pick through the engine's `/api/preview-stream/ws` stream, authorized by a media ticket from `resolveDeviceHubAccess`. The view is watch-only. The engine keeps an agent's tabs whether or not the board is open, so they are there when the panel first opens.
+
+Pressing **Browser** marks `board:browser-click`, and the panel marks `board:browser-painted` after its first paint.
+
 ## Engine probe
 
 `scripts/engine-probe.ts` checks ten engine behaviors the board depends on, each against a real Claude Code session, and writes the results to [docs/engine-findings.md](docs/engine-findings.md). It starts its own T3 engine in `/tmp/engine-probe/run-<id>/t3`, never touches `~/.t3`, and stops that engine and its provider sessions when it ends. It reads `~/.claude/settings.json` without changing it, and deletes the Claude Code project folders its scratch projects created. Build the engine once with `vp run --filter t3 build`, then run it from a checkout.

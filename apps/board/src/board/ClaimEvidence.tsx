@@ -1,3 +1,4 @@
+import { openInPanel } from "../browser/panel";
 import type { MergeCondition } from "../domain/forYou";
 
 const isLink = (evidence: string) => /^https?:\/\//.test(evidence);
@@ -23,6 +24,10 @@ export function ClaimEvidence({ condition }: { condition: MergeCondition }) {
               rel="noreferrer"
               // A press on a link is a click, not the start of a pan.
               onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.preventDefault();
+                openInPanel(evidence);
+              }}
               className={`${chip} text-sky-300 hover:underline`}
             >
               {evidence}

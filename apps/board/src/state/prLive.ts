@@ -134,5 +134,6 @@ export function buildLive(input: {
       : (summary?.mergeability ?? snapshot?.mergeability ?? "unknown"),
     headSha: summary?.headSha ?? link?.watch?.headSha ?? null,
     checks: runs,
+    url: summary?.url ?? link?.url ?? null,
   };
 }

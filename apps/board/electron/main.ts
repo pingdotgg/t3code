@@ -4,6 +4,7 @@ import * as NodeURL from "node:url";
 
 import { app, BrowserWindow, Menu, nativeTheme, net, protocol, shell } from "electron";
 
+import { registerBrowserViews } from "./browserView";
 import { registerEngineIpc } from "./ipc";
 
 const SCHEME = "agentboard";
@@ -89,6 +90,7 @@ void app.whenReady().then(() => {
   // macOS keeps its menu for the standard Cmd shortcuts.
   if (platform !== "darwin") Menu.setApplicationMenu(null);
   protocol.handle(SCHEME, serveRenderer);
+  registerBrowserViews();
   engine.start();
   openWindow();
 });

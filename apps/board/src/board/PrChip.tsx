@@ -1,6 +1,7 @@
 import { Check, CircleDashed, TriangleAlert, X } from "lucide-react";
 import { useCallback, useRef } from "react";
 
+import { openInPanel } from "../browser/panel";
 import { isStuck, type PrLive, rollupChecks } from "../domain/readiness";
 import type { TicketView } from "../state/boardModel";
 import { useTicketPr } from "../state/prStatus";
@@ -74,14 +75,24 @@ export function PrChip({ view }: { view: TicketView }) {
   const checks = CHECKS[reading];
   const settled = live.state !== "open";
   return (
-    <span
+    <a
+      href={live.url ?? undefined}
+      target="_blank"
+      rel="noopener noreferrer"
       ref={mark}
       data-testid="pr-chip"
       data-state={live.state}
       data-checks={reading}
       data-mergeability={live.mergeability}
       aria-label={`Pull request ${label}, ${state.label.toLowerCase()}${settled ? "" : `, checks ${checks.label.toLowerCase()}, ${live.mergeability}`}`}
-      className="inline-flex min-w-0 items-center gap-1.5 rounded border border-line px-1.5 text-[10px] leading-4 text-muted"
+      className={`inline-flex min-w-0 items-center gap-1.5 rounded border border-line px-1.5 text-[10px] leading-4 text-muted ${live.url === null ? "" : "hover:border-focus"}`}
+      // A press on the chip is a click, not the start of a ticket drag.
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => {
+        if (live.url === null) return;
+        event.preventDefault();
+        openInPanel(live.url);
+      }}
     >
       <span className="text-fg">PR {label}</span>
       <span className={state.tone}>{state.label}</span>
@@ -98,6 +109,6 @@ export function PrChip({ view }: { view: TicketView }) {
           )}
         </>
       )}
-    </span>
+    </a>
   );
 }
