@@ -33,7 +33,7 @@ const MAX_MODEL_BYTES = 128 * 1024 * 1024;
 
 export type ModelViewPreset = "top" | "front" | "iso";
 
-export interface ModelSummary {
+interface ModelSummary {
   readonly format: ModelPreviewKind;
   readonly triangles: number;
   /** Bounding box size in the file's own units. */
@@ -48,17 +48,11 @@ export interface ModelHit {
   readonly face: number;
 }
 
-export interface ProjectedPin {
+interface ProjectedPin {
   readonly x: number;
   readonly y: number;
   /** The pinned surface faces away from the camera. */
   readonly behind: boolean;
-}
-
-export interface ModelCameraStatus {
-  readonly azimuth: number;
-  readonly elevation: number;
-  readonly distance: number;
 }
 
 /** Reads a model file with a byte cap; aborting cancels the transfer. */
@@ -322,14 +316,13 @@ export class ModelScene {
     this.requestRender();
   }
 
-  get cameraStatus(): ModelCameraStatus {
+  get cameraStatus() {
     const offset = this.camera.position.clone().sub(this.controls.target);
     const spherical = new Spherical().setFromVector3(offset);
     const degrees = (radians: number) => Math.round((radians * 180) / Math.PI);
     return {
       azimuth: degrees(spherical.theta),
       elevation: degrees(Math.PI / 2 - spherical.phi),
-      distance: spherical.radius,
     };
   }
 
