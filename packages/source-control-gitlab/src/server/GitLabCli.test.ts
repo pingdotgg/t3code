@@ -325,16 +325,19 @@ layer("GitLabCli.layer", (it) => {
   );
 
   it.effect.each([
-    { repository: "group/project", args: ["api", "projects/group%2Fproject"] },
+    { repository: "group/project", args: ["api", "projects/group%2Fproject"], env: {} },
     {
       repository: "https://gitlab.example.com:8443/group/sub/project.git",
       args: ["api", "--hostname", "gitlab.example.com:8443", "projects/group%2Fsub%2Fproject"],
+      // The environment token is the default host's login, not this host's.
+      env: { GITLAB_TOKEN: "", GITLAB_ACCESS_TOKEN: "", OAUTH_TOKEN: "" },
     },
     {
       repository: "https://gitlab.com/group/project/-/tree/main",
       args: ["api", "--hostname", "gitlab.com", "projects/group%2Fproject"],
+      env: {},
     },
-  ])("looks up $repository by its project path", ({ repository, args }) =>
+  ])("looks up $repository by its project path", ({ repository, args, env }) =>
     Effect.gen(function* () {
       mockedRun.mockReturnValueOnce(
         Effect.succeed(
@@ -352,7 +355,9 @@ layer("GitLabCli.layer", (it) => {
       const glab = yield* GitLabCli.GitLabCli;
       yield* glab.getRepositoryCloneUrls({ cwd: "/repo", repository });
 
-      expect(mockedRun).toHaveBeenCalledWith(expect.objectContaining({ command: "glab", args }));
+      expect(mockedRun).toHaveBeenCalledWith(
+        expect.objectContaining({ command: "glab", args, env }),
+      );
     }),
   );
 
