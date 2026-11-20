@@ -303,7 +303,7 @@ jobs:
     name: Release web tests ${{ matrix.shard }}
     needs: [preflight]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -782,7 +782,7 @@ jobs:
       clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
       label: Windows arm64
-      runner: blacksmith-16vcpu-ubuntu-2404
+      runner: ubuntu-24.04
       verify_runner: windows-11-arm
       platform: win
       target: nsis
