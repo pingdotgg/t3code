@@ -100,9 +100,7 @@ const taskCacheConfig = {
 export default defineConfig({
   run: {
     cache: taskCacheConfig,
-    tasks: {
-      ...cachedTestTasks(process.env.T3_CACHED_TESTS),
-    },
+    tasks: cachedTestTasks(process.env.T3_CACHED_TESTS),
   },
   resolve: {
     alias: {
