@@ -562,6 +562,39 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "openshell-fleet",
+    title: msg("OpenShell fleet"),
+    to: "/settings/labs",
+    scope: "environment",
+    searchTerms: [
+      msg("beta openshell fleet workers sandbox gateway spawn drain managing instance"),
+    ],
+  },
+  {
+    id: "openshell-gateway-url",
+    title: msg("OpenShell gateway URL"),
+    targetId: "openshell-fleet",
+    to: "/settings/labs",
+    scope: "environment",
+    searchTerms: [msg("beta openshell gateway control plane url address")],
+  },
+  {
+    id: "openshell-managing",
+    title: msg("OpenShell managing instance"),
+    targetId: "openshell-fleet",
+    to: "/settings/labs",
+    scope: "environment",
+    searchTerms: [msg("beta openshell managing instance role spawn drain")],
+  },
+  {
+    id: "openshell-template",
+    title: msg("OpenShell default sandbox template"),
+    targetId: "openshell-fleet",
+    to: "/settings/labs",
+    scope: "environment",
+    searchTerms: [msg("beta openshell worker sandbox template default")],
+  },
+  {
     id: "worktree-fast-checkout",
     title: msg("Fast worktree checkout"),
     to: "/settings/labs",
@@ -1612,9 +1645,12 @@ export function isSettingsSearchScopeAvailable(
 function searchableSetting(id: SettingsSearchItemId): {
   readonly id: string;
   readonly title: string;
+  readonly targetId?: string;
 } {
-  const { id: anchorId, title } = SEARCH_ITEMS_BY_ID.get(id)!;
-  return { id: anchorId, title };
+  const item = SEARCH_ITEMS_BY_ID.get(id)!;
+  const { id: anchorId, title } = item;
+  const targetId = (item as { readonly targetId?: string }).targetId;
+  return { id: anchorId, title, ...(targetId === undefined ? {} : { targetId }) };
 }
 
 /** `searchableSetting` with its title in the active language, for spreading onto a row. */

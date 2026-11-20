@@ -107,6 +107,7 @@ import {
   scheduleFromDraft,
   scheduleLabel,
   scheduledTaskDefaultModel,
+  leavesSandboxWorkspace,
   weekdayShortLabel,
   taskToDraft,
   unbindDraftFromThread,
@@ -172,6 +173,7 @@ const WORKSPACE_MODE_LABELS: Record<WorkspaceMode, string> = {
   worktree: msg("Create a new worktree"),
   root: msg("Use the project checkout"),
   existing_worktree: msg("Use a specific checkout"),
+  sandbox: msg("Fleet worker sandbox"),
 };
 
 const SCOPE_SUMMARY_TEMPLATES: Record<string, string> = {
@@ -197,6 +199,7 @@ const EMPTY_DRAFT: DraftState = {
   savedThreadId: "",
   threadMode: "new_thread",
   workspaceMode: "worktree",
+  storedSandbox: false,
   baseRef: "",
   startFromOrigin: true,
   existingWorktreePath: "",
@@ -1667,11 +1670,13 @@ function ScheduledTaskEditorForm({
         ? { type: "root" }
         : draft.workspaceMode === "existing_worktree"
           ? { type: "existing_worktree", worktreePath: draft.existingWorktreePath.trim() }
-          : {
-              type: "worktree",
-              baseRef: worktreeBaseRef,
-              startFromOrigin: draft.startFromOrigin,
-            };
+          : draft.workspaceMode === "sandbox"
+            ? { type: "sandbox" }
+            : {
+                type: "worktree",
+                baseRef: worktreeBaseRef,
+                startFromOrigin: draft.startFromOrigin,
+              };
     const input: ScheduledTaskUpsertInput = {
       ...(draft.editingId ? { id: draft.editingId as ScheduledTaskId, requireExisting: true } : {}),
       title: draft.title.trim(),
@@ -1869,14 +1874,45 @@ function ScheduledTaskEditorForm({
             <Field label={gt("Workspace")} htmlFor="scheduled-task-workspace">
               <Select
                 value={draft.workspaceMode}
-                onValueChange={(value) =>
-                  setDraft((current) => ({ ...current, workspaceMode: value as WorkspaceMode }))
-                }
+                onValueChange={(value) => {
+                  const next = value as WorkspaceMode;
+                  if (
+                    !leavesSandboxWorkspace({
+                      storedSandbox: draft.storedSandbox,
+                      workspaceMode: next,
+                    })
+                  ) {
+                    setDraft((current) => ({ ...current, workspaceMode: next }));
+                    return;
+                  }
+                  // Leaving the fleet worker on an existing sandbox task is explicit.
+                  void (async () => {
+                    const confirmed =
+                      (await requestConfirmDialog(
+                        gt(
+                          "Stop running in the fleet worker sandbox?\nFuture runs will no longer use the fleet worker this task is paired with.",
+                        ),
+                        { variant: "destructive" },
+                      )) ??
+                      window.confirm(
+                        gt(
+                          "Stop running in the fleet worker sandbox? Future runs will no longer use it.",
+                        ),
+                      );
+                    if (!confirmed) return;
+                    setDraft((current) => ({ ...current, workspaceMode: next }));
+                  })();
+                }}
               >
                 <SelectTrigger size="sm" id="scheduled-task-workspace">
                   <SelectValue>{messages(WORKSPACE_MODE_LABELS[draft.workspaceMode])}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
+                  {draft.storedSandbox ? (
+                    <SelectItem value="sandbox">
+                      <T>Fleet worker sandbox</T>
+                    </SelectItem>
+                  ) : null}
                   <SelectItem value="worktree">
                     <T>Create a new worktree</T>
                   </SelectItem>

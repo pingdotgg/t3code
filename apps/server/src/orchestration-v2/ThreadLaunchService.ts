@@ -5,6 +5,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
   type ChatAttachment,
+  EnvironmentId,
   type MessageId,
   type ModelSelection,
   type OrchestrationV2Actor,
@@ -83,6 +84,12 @@ export type ThreadLaunchWorkspaceStrategy =
       readonly branch?: string | undefined;
       readonly startFromOrigin?: boolean | undefined;
       readonly repositories?: ReadonlyArray<{ readonly path: string }> | undefined;
+    }
+  /** A fleet worker's workspace. Only delegation provisions it, so a local launch fails its run. */
+  | {
+      readonly type: "sandbox";
+      readonly workerClass?: "ephemeral" | "persistent" | undefined;
+      readonly branch?: string | undefined;
     };
 
 export interface ThreadLaunchInitialMessage {
@@ -117,6 +124,10 @@ export interface ThreadLaunchInput {
     readonly metadata?: OrchestrationV2ProviderThreadNativeMetadata;
   };
   readonly createdBy: OrchestrationV2Actor;
+  /** Transport-supplied self id; the launch service owns the local-only rule. */
+  readonly currentEnvironmentId?: EnvironmentId;
+  /** Requested launch target; `undefined` means this environment. */
+  readonly environmentId?: EnvironmentId;
   readonly creationSource: OrchestrationV2CreationSource;
   /** The linked environment this launch is for, if one asked for it. */
   readonly linkOrigin?: OrchestrationV2LinkOrigin;
@@ -556,6 +567,19 @@ const make = Effect.gen(function* () {
       ),
     );
 
+    // A sandbox workspace belongs to a fleet worker, which is created by a
+    // delegation. Launching it here would quietly run in the project root.
+    if (input.workspaceStrategy.type === "sandbox") {
+      return yield* new ThreadLaunchError({
+        operation: "provision-worktree",
+        commandId: input.commandId,
+        projectId: input.projectId,
+        ...(threadId === undefined ? {} : { threadId }),
+        cause: new Error(
+          "A sandbox workspace runs in a fleet worker, so delegate the work with isolation 'openshell-auto' instead of launching it here.",
+        ),
+      });
+    }
     const reused = input.reusedWorktree;
     const tracked = input.workspaceStrategy.type === "worktree" || reused !== undefined;
     let createdWorktreePath: string | null = null;
@@ -1338,6 +1362,16 @@ const make = Effect.gen(function* () {
         (yield* managedFolders.isScratchProject(request.projectId))
           ? { ...request, workspaceStrategy: { type: "root" } }
           : request;
+      // A foreign launch has no local projection to return; delegate_task owns
+      // remote dispatch. Keep the rule here rather than in WebSocket transport.
+      if (input.environmentId !== undefined && input.environmentId !== input.currentEnvironmentId) {
+        return yield* mapError(
+          input,
+          "create-thread",
+        )(
+          "A thread launches in this environment. To run work in another environment, use delegate_task with target.environmentId; its result arrives when the task settles.",
+        );
+      }
       yield* ProjectCloneTracker.rejectCommandsDuringClone(cloneTracker, {
         type: "thread.create",
         projectId: input.projectId,
@@ -1359,6 +1393,17 @@ const make = Effect.gen(function* () {
       }
 
       const launchReceipt = yield* readReceipt(input, input.commandId);
+      // A sandbox workspace belongs to a fleet worker, which only a delegation
+      // provisions. Refuse before any id or thread mutation; an accepted
+      // launch still replays through its receipt.
+      if (input.workspaceStrategy.type === "sandbox" && Option.isNone(launchReceipt)) {
+        return yield* mapError(
+          input,
+          "create-thread",
+        )(
+          "A sandbox workspace runs in a fleet worker, so delegate the work with isolation 'openshell-auto' instead of launching it here.",
+        );
+      }
       yield* threads.assertProviderInstanceEnabled({
         projectId: input.projectId,
         commandId: input.commandId,
@@ -1570,15 +1615,17 @@ const make = Effect.gen(function* () {
               Option.isSome(launchReceipt) &&
               (accepted?.type === "worktree" || accepted?.type === "existing_worktree")
                 ? accepted
-                : Option.isSome(launchReceipt) &&
-                    workspaceStrategy.type === "root" &&
-                    boundWorktreePath !== null
-                  ? {
-                      type: "existing_worktree",
-                      worktreePath: boundWorktreePath,
-                      branch: workspaceStrategy.branch,
-                    }
-                  : workspaceStrategy;
+                : Option.isSome(launchReceipt) && accepted?.type === "root"
+                  ? accepted
+                  : Option.isSome(launchReceipt) &&
+                      workspaceStrategy.type === "root" &&
+                      boundWorktreePath !== null
+                    ? {
+                        type: "existing_worktree",
+                        worktreePath: boundWorktreePath,
+                        branch: workspaceStrategy.branch,
+                      }
+                    : workspaceStrategy;
             yield* schedulePreparation(
               { ...input, workspaceStrategy: preparationStrategy },
               threadId,

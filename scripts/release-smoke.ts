@@ -26,6 +26,7 @@ const workspaceFiles = [
   "oxlint-plugin-t3code/package.json",
   "packages/client-runtime/package.json",
   "packages/contracts/package.json",
+  "packages/openshell/package.json",
   "packages/shared/package.json",
   "packages/ssh/package.json",
   "packages/tailscale/package.json",
@@ -78,6 +79,15 @@ function copyWorkspaceManifestFixture(targetRoot: string): void {
   const patchesDirectory = NodePath.resolve(repoRoot, "patches");
   if (NodeFS.existsSync(patchesDirectory)) {
     NodeFS.cpSync(patchesDirectory, NodePath.resolve(targetRoot, "patches"), { recursive: true });
+  }
+
+  const openshellVendorDirectory = NodePath.resolve(repoRoot, "packages/openshell/vendor");
+  if (NodeFS.existsSync(openshellVendorDirectory)) {
+    NodeFS.cpSync(
+      openshellVendorDirectory,
+      NodePath.resolve(targetRoot, "packages/openshell/vendor"),
+      { recursive: true },
+    );
   }
 }
 

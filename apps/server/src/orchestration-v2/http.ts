@@ -84,13 +84,14 @@ export const layer = HttpApiBuilder.group(
       function* (options: {
         readonly omitIdleSubagents: boolean;
         readonly omitOlderSettled: boolean;
+        readonly includeArchived: boolean;
       }) {
         const { snapshot } = yield* loadSubscriberShellSnapshot({
           sql,
           listShellIndex: threadManagement.listActiveShellIndex(),
           readThreads: (threadIds) =>
             threadManagement.readShellSnapshot({
-              location: "active",
+              location: options.includeArchived ? "all" : "active",
               ...(threadIds === undefined ? {} : { threadIds }),
             }),
           listProjects: projectStore.listShells(),
@@ -106,15 +107,21 @@ export const layer = HttpApiBuilder.group(
     const answerShellSnapshot = Effect.fn("http.orchestration.answerShellSnapshot")((query: {
       readonly omitIdleSubagents?: string;
       readonly omitOlderSettled?: string;
+      readonly includeArchived?: string;
       readonly resumeFrom?: string;
     }) => {
       const resumeFrom = query.resumeFrom === undefined ? Number.NaN : Number(query.resumeFrom);
+      // Archive-inclusive replay is not fully reconstructed by the active-only
+      // event replay yet, so always send a complete archive-inclusive snapshot.
+      const canResume = query.includeArchived !== "1";
       return loadShellUnlessResumable({
         events: applicationEvents,
-        resumeFrom: Number.isSafeInteger(resumeFrom) && resumeFrom >= 0 ? resumeFrom : undefined,
+        resumeFrom:
+          canResume && Number.isSafeInteger(resumeFrom) && resumeFrom >= 0 ? resumeFrom : undefined,
         loadSnapshot: loadShellSnapshot({
           omitIdleSubagents: query.omitIdleSubagents === "1",
           omitOlderSettled: query.omitOlderSettled === "1",
+          includeArchived: query.includeArchived === "1",
         }),
       });
     });

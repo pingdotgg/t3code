@@ -95,9 +95,12 @@ import * as RemoteDelegation from "./peer/RemoteDelegation.ts";
 import * as PeerClientPairing from "./peer/PeerClientPairing.ts";
 import * as PeerClientPairingHttp from "./peer/http.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
+import * as PeerEnvironmentRegistry from "./peer/PeerEnvironmentRegistry.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
 import * as PeerMcpClient from "./peer/PeerMcpClient.ts";
 import * as PeerThreadRelay from "./peer/PeerThreadRelay.ts";
+import * as OpenShellFleetStore from "./environment/OpenShellFleetStore.ts";
+import * as OpenShellFleetService from "./environment/OpenShellFleetService.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
@@ -461,6 +464,18 @@ const layerIssueService = Layer.merge(IssueService.layer, IssueTrackerConnection
 
 // One instance serves MCP link calls and refreshes snapshots on thread events.
 const layerThreadIssueService = ThreadIssueService.layer;
+
+// One fleet service instance is shared by the environment routes and sweep.
+const layerConfiguredOpenShellFleetService = OpenShellFleetService.layer.pipe(
+  Layer.provide(PeerEnvironmentRegistry.layer),
+  Layer.provide(OpenShellFleetStore.layer),
+  Layer.provide(PeerLinks.layer),
+  Layer.provide(NodeServices.layer),
+  // Post-drain bundle imports write through the orchestration event sink;
+  // shared layer references keep one instance across the app.
+  Layer.provideMerge(RuntimeLayer.layerEventSink),
+  Layer.provideMerge(SqlitePersistence.layerConfig),
+);
 
 const layerGitManager = GitManager.layer.pipe(
   Layer.provide(Layer.merge(ProjectionStoreV2.layer, ProjectStore.layer)),
@@ -922,12 +937,23 @@ const layerMakeRoutes = Layer.mergeAll(
     ),
   ),
   Layer.provide(PreviewBrowser.layer),
-  // Links to other environments, shared by clients (WebSocket) and agents (/mcp).
+  // Links to other environments, shared by Settings (WebSocket) and agents (/mcp).
+  // The fleet registry answers for registered workers, so the same bridge reaches them.
+  // Built here so the fleet state store re-reads what a restart interrupted at startup.
   Layer.provide(
     Layer.mergeAll(PeerForwarding.layer, PeerThreadRelay.layer, PeerClientPairing.layer).pipe(
       Layer.provideMerge(PeerMcpClient.layer),
       Layer.provideMerge(PeerLinks.layer),
+      Layer.provideMerge(PeerEnvironmentRegistry.layer),
+      Layer.provide(OpenShellFleetStore.layer),
     ),
+  ),
+  // Fleet worker lifecycle behind the environment MCP tools (spec section 5).
+  Layer.provide(layerConfiguredOpenShellFleetService),
+  // Ephemeral workers self-retire: the periodic sweep shares the service
+  // instance above through layer memoization.
+  Layer.provide(
+    OpenShellFleetService.layerSweep.pipe(Layer.provide(layerConfiguredOpenShellFleetService)),
   ),
   Layer.provide(
     SpeechService.layer.pipe(

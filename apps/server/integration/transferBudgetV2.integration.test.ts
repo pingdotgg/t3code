@@ -109,7 +109,9 @@ const CLIENT_HISTORY_OPT_INS = { compactIds: "1", deferWork: "1" } satisfies Req
 const CLIENT_SHELL_OPT_INS = {
   omitIdleSubagents: "1",
   omitOlderSettled: "1",
-} satisfies Required<Omit<typeof EnvironmentOrchestrationShellSnapshotQuery.Type, "resumeFrom">>;
+} satisfies Required<
+  Omit<typeof EnvironmentOrchestrationShellSnapshotQuery.Type, "resumeFrom" | "includeArchived">
+>;
 const CLIENT_THREAD_SUBSCRIPTION = {
   requestCompletionMarker: true,
   acceptBoundedSnapshot: true,
@@ -133,7 +135,9 @@ const clientShellResumeQuery = (resumeFrom: number) =>
   query({
     ...CLIENT_SHELL_OPT_INS,
     resumeFrom: String(resumeFrom),
-  } satisfies Required<typeof EnvironmentOrchestrationShellSnapshotQuery.Type>);
+  } satisfies Required<
+    Omit<typeof EnvironmentOrchestrationShellSnapshotQuery.Type, "includeArchived">
+  >);
 
 const decodeThreadSnapshot = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadDetailSnapshot)),

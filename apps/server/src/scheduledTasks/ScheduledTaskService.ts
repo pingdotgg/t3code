@@ -1479,6 +1479,18 @@ export const layer = Layer.effect(
       // keep their run history, and so real load failures propagate instead
       // of silently resetting an existing row.
       const existingTask = yield* findTask(id);
+      // A sandbox workspace belongs to a fleet worker; a scheduled launch would
+      // run in the project root. Existing sandbox tasks stay editable, but a
+      // new task or a strategy change to sandbox is still refused.
+      if (
+        input.workspaceStrategy.type === "sandbox" &&
+        existingTask?.workspaceStrategy.type !== "sandbox"
+      ) {
+        return yield* taskError(
+          "A sandbox workspace runs in a fleet worker, so delegate the work with isolation 'openshell-auto' instead of scheduling it here.",
+          input.id === undefined ? {} : { taskId: input.id },
+        );
+      }
       const threadMode = resolveThreadMode(input, existingTask);
       const keptThreadId =
         input.threadId ?? (input.unbindThread === true ? null : (existingTask?.threadId ?? null));

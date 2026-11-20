@@ -1,16 +1,18 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   DEFAULT_SERVER_SETTINGS,
+  type ScheduledTask,
   type ServerConfig,
   ProviderDriverKind,
   ProviderInstanceId,
   ProjectId,
   ScheduledTaskId,
-  type ScheduledTask,
 } from "@t3tools/contracts";
 import {
   createDraft,
   editDraft,
+  hasScheduledTaskDraftChanges,
+  leavesSandboxWorkspace,
   scheduledTaskDefaultModel,
   DEFAULT_SCHEDULE,
   scheduleDraftForTask,
@@ -243,5 +245,54 @@ describe("scheduled task worktree base", () => {
       editDraft({ ...rootTask, workspaceStrategy: { type: "worktree", baseRef: "release" } })
         .baseRef,
     ).toBe("release");
+  });
+});
+
+describe("sandbox workspace retention", () => {
+  const task = (workspaceStrategy: ScheduledTask["workspaceStrategy"]): ScheduledTask => ({
+    id: ScheduledTaskId.make("task"),
+    title: "Nightly review",
+    prompt: "Review open issues",
+    enabled: true,
+    schedule: { type: "interval", everyMs: 60_000 },
+    projectId: ProjectId.make("project"),
+    threadId: null,
+    workspaceStrategy,
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    createdBy: "user",
+    creationSource: "mobile",
+    createdAt: "2026-09-17T00:00:00.000Z",
+    updatedAt: "2026-09-17T00:00:00.000Z",
+    nextRunAt: null,
+    lastRunAt: null,
+    lastRunStatus: "never",
+    lastRunError: null,
+    runCount: 0,
+  });
+
+  it("keeps a stored sandbox strategy when editing an unrelated field", () => {
+    const initial = editDraft(task({ type: "sandbox" }));
+    expect(initial.workspace).toBe("sandbox");
+    expect(initial.storedSandbox).toBe(true);
+    expect(leavesSandboxWorkspace(initial)).toBe(false);
+    // Renaming the task does not move it off its fleet worker.
+    const renamed = { ...initial, title: "Renamed" };
+    expect(hasScheduledTaskDraftChanges(initial, renamed)).toBe(true);
+    expect(leavesSandboxWorkspace(renamed)).toBe(false);
+  });
+
+  it("surfaces a warning only when the workspace control leaves the sandbox", () => {
+    const initial = editDraft(task({ type: "sandbox" }));
+    const moved = { ...initial, workspace: "worktree" as const };
+    expect(leavesSandboxWorkspace(moved)).toBe(true);
+    expect(hasScheduledTaskDraftChanges(initial, moved)).toBe(true);
+    // A task that never ran in a sandbox is never flagged.
+    const worktreeDraft = editDraft(
+      task({ type: "worktree", baseRef: "release", startFromOrigin: false }),
+    );
+    expect(worktreeDraft.storedSandbox).toBe(false);
+    expect(leavesSandboxWorkspace({ ...worktreeDraft, workspace: "root" as const })).toBe(false);
   });
 });
