@@ -22,6 +22,7 @@ import {
   AppWindowIcon,
   ArrowUpDownIcon,
   CheckIcon,
+  CircleHelpIcon,
   CloudIcon,
   GlobeIcon,
   MaximizeIcon,
@@ -71,8 +72,11 @@ import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   buildFleetGraph,
+  anchorFleetView,
   fitFleetLayout,
   fleetCanvasHeight,
   FLEET_CLIENT_NODE_ID,
@@ -98,6 +102,7 @@ import {
   type FleetFocus,
   type FleetFoldGroup,
   type FleetGraph,
+  type FleetHeldView,
   type FleetLayout,
   type FleetLinkAction,
   type FleetLinkEdge,
@@ -137,7 +142,7 @@ type Messages = ReturnType<typeof useMessages>;
 /** One ordinal scale for access, read only to full access: a link's line gets heavier and darker. */
 const ACCESS_STROKE_WIDTHS = [1.25, 1.75, 2.25, 2.75, 3.5];
 const ACCESS_STROKE_OPACITIES = [0.4, 0.5, 0.62, 0.76, 0.9];
-/** Short maps get a short canvas; a tall one grows to this before the fit shrinks it. */
+/** Short maps get a short canvas; a tall one grows to this, then the fit shrinks it or it pans. */
 const CANVAS_HEIGHT = { min: 180, max: 840 };
 const ARROW_ROVE: Record<string, FleetDirection> = {
   ArrowUp: "up",
@@ -149,6 +154,10 @@ const NO_STACKS: ReadonlySet<string> = new Set();
 const NO_SELECTION: ReadonlySet<string> = new Set();
 /** Search centres a machine at a scale it can be read at, however far out the map was. */
 const FOUND_MIN_SCALE = 0.85;
+
+/** What an opened stack adds fades in over the same time the view takes to make room for it. */
+const APPEAR =
+  "transition-opacity duration-200 ease-out starting:opacity-0 motion-reduce:transition-none";
 
 /** Dashes repeat a link's health without colour, one pattern per kind of trouble. */
 function healthDash(health: PeerLinkHealth): string | undefined {
@@ -602,16 +611,12 @@ function FleetCanvas({
   const { graph, stacks, selection, selected, onSelect, onTick } = scene;
   const [canvas, setCanvas] = useState<HTMLDivElement | null>(null);
   const [width, setWidth] = useState<number | null>(null);
-  // A new width is a new layout, so a view held by hand goes with it as with any other shape.
-  const { key: shapeKey, layout } = useFleetLayout(graph, stacks, graphKey, width);
+  const { key: layoutKey, layout } = useFleetLayout(graph, stacks, graphKey, width);
   const [query, setQuery] = useState("");
-  // A view the user set by hand holds until the map's shape changes; otherwise it fits itself.
-  const [manual, setManual] = useState<{
-    readonly key: string;
-    readonly view: FleetViewTransform;
-    /** Set by the buttons and keys, whose jump is eased; a drag or pinch tracks the hand. */
-    readonly glide: boolean;
-  } | null>(null);
+  // A held view lasts while the map keeps its shape, whatever the width; otherwise it fits itself.
+  const [manual, setManual] = useState<FleetHeldView | null>(null);
+  // What was last drawn, to tell a stack opening or closing from any other change of shape.
+  const [drawn, setDrawn] = useState({ graphKey, layoutKey, layout, stacks });
   const [dragging, setDragging] = useState(false);
   // The selection box, in canvas pixels, while Shift is held through a drag on empty canvas.
   const [box, setBox] = useState<FleetRect | null>(null);
@@ -626,19 +631,55 @@ function FleetCanvas({
     readonly origin: FleetViewTransform;
     moved: boolean;
   } | null>(null);
-  // The canvas is as tall as the fitted map wants, so the height never feeds back into the fit.
-  const size =
-    width === null ? null : { width, height: fleetCanvasHeight(layout, width, CANVAS_HEIGHT) };
-  // A new shape drops the held view for good: returning to an old shape must fit, not restore
-  // a pan made before the map changed.
-  if (manual !== null && manual.key !== "" && manual.key !== shapeKey) {
-    setManual({ ...manual, key: "" });
+  if (drawn.layoutKey !== layoutKey) {
+    setDrawn({ graphKey, layoutKey, layout, stacks });
+    if (drawn.graphKey !== graphKey) {
+      const toggled = stacks.find((stack) =>
+        drawn.stacks.some((was) => was.id === stack.id && was.expanded !== stack.expanded),
+      );
+      const before = toggled === undefined ? undefined : drawn.layout.stacks.get(toggled.id);
+      const after = toggled === undefined ? undefined : layout.stacks.get(toggled.id);
+      if (width !== null && before !== undefined && after !== undefined) {
+        // The stack stays where it is and the rest makes room, in the one render that opens it.
+        const was = manual?.key === drawn.graphKey ? manual : null;
+        const from = {
+          width,
+          height: was?.height ?? fleetCanvasHeight(drawn.layout, width, CANVAS_HEIGHT),
+        };
+        setManual(
+          anchorFleetView({
+            key: graphKey,
+            from: {
+              key: drawn.graphKey,
+              held: was,
+              view: was?.view ?? fitFleetLayout(drawn.layout, from),
+              size: from,
+              face: before.face,
+            },
+            stack: after,
+            layout,
+            bounds: CANVAS_HEIGHT,
+          }),
+        );
+      } else if (manual !== null && manual.key !== "") {
+        // Any other new shape drops the held view for good: returning to an old shape must
+        // fit, not restore a pan made before the map changed.
+        setManual({ ...manual, key: "" });
+      }
+    }
   }
-  const held = manual?.key === shapeKey ? manual : null;
+  const held = manual?.key === graphKey ? manual : null;
+  // Not measured: the height follows from the layout and the view, so it never feeds back.
+  const size =
+    width === null
+      ? null
+      : { width, height: held?.height ?? fleetCanvasHeight(layout, width, CANVAS_HEIGHT) };
   const view = held?.view ?? (size === null ? null : fitFleetLayout(layout, size));
   const glide = manual !== null && (held === null || held.glide);
-  const setView = (next: FleetViewTransform, eased: boolean) =>
-    setManual({ key: shapeKey, view: next, glide: eased });
+  const setView = (next: FleetViewTransform, eased: boolean) => {
+    if (size === null) return;
+    setManual({ key: graphKey, view: next, height: size.height, glide: eased, undo: null });
+  };
   const zoom = (
     factor: number,
     anchor?: { readonly x: number; readonly y: number },
@@ -685,7 +726,7 @@ function FleetCanvas({
   const reveal = (rect: FleetRect) => {
     if (size === null) return;
     setManual((current) => {
-      const shown = current?.key === shapeKey ? current.view : fitFleetLayout(layout, size);
+      const shown = current?.key === graphKey ? current.view : fitFleetLayout(layout, size);
       const left = rect.x * shown.scale + shown.x;
       const top = rect.y * shown.scale + shown.y;
       const inside =
@@ -695,8 +736,10 @@ function FleetCanvas({
         top + rect.height * shown.scale <= size.height;
       if (inside) return current;
       return {
-        key: shapeKey,
+        key: graphKey,
+        height: size.height,
         glide: true,
+        undo: null,
         view: {
           scale: shown.scale,
           x: size.width / 2 - (rect.x + rect.width / 2) * shown.scale,
@@ -747,7 +790,7 @@ function FleetCanvas({
     const bounds = event.currentTarget.getBoundingClientRect();
     drag.current = {
       pointerId: event.pointerId,
-      key: shapeKey,
+      key: layoutKey,
       mode: event.shiftKey ? "box" : "pan",
       x: event.clientX,
       y: event.clientY,
@@ -768,7 +811,7 @@ function FleetCanvas({
     const current = drag.current;
     if (current === null || current.pointerId !== event.pointerId) return;
     // The map was laid out again mid-drag, so the origin belongs to a view that is gone.
-    if (current.key !== shapeKey) {
+    if (current.key !== layoutKey) {
       drag.current = null;
       setDragging(false);
       setBox(null);
@@ -796,7 +839,7 @@ function FleetCanvas({
       if (current.mode === "pan") onSelect(null);
       return;
     }
-    if (current.mode !== "box" || current.key !== shapeKey) return;
+    if (current.mode !== "box" || current.key !== layoutKey) return;
     const drawn = boxAt(current, event);
     const { origin } = current;
     onTick(
@@ -826,6 +869,7 @@ function FleetCanvas({
   const source =
     sources.find((node) => selection?.kind === "node" && node.id === selection.id) ??
     (sources.length === 1 ? sources[0] : undefined);
+  const selectSeveral = gt("Shift-click or Shift-drag to select several");
 
   return (
     <>
@@ -861,10 +905,10 @@ function FleetCanvas({
             ? null
             : matchIds.length === 0
               ? gt("No machine by that name")
-              : gt(
-                  "{count, plural, one {# match. Enter goes to it} other {# matches. Enter goes to the first}}",
-                  { count: matchIds.length },
-                )}
+              : gt("{count, plural, one {# match} other {# matches}}", {
+                  count: matchIds.length,
+                  $context: "how many machines a search by name found",
+                })}
         </p>
         <div className="ml-auto flex items-center gap-2">
           {selected.size > 0 ? (
@@ -879,24 +923,34 @@ function FleetCanvas({
                 {gt("Clear", { $context: "clears the selection of machines" })}
               </Button>
             </span>
-          ) : (
-            <span className="hidden text-2xs text-muted-foreground lg:inline">
-              {gt("Shift-click or Shift-drag to select several")}
-            </span>
-          )}
+          ) : null}
           {sources.length === 0 ? null : source !== undefined ? (
-            <Button size="xs" variant="outline" onClick={() => onLinkSeveral(source.id)}>
-              {gt("Link several…")}
-            </Button>
-          ) : (
-            <Menu>
-              <MenuTrigger
+            <Tooltip>
+              <TooltipTrigger
                 render={
-                  <Button size="xs" variant="outline">
+                  <Button size="xs" variant="outline" onClick={() => onLinkSeveral(source.id)}>
                     {gt("Link several…")}
                   </Button>
                 }
               />
+              <TooltipPopup>{selectSeveral}</TooltipPopup>
+            </Tooltip>
+          ) : (
+            <Menu>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <MenuTrigger
+                      render={
+                        <Button size="xs" variant="outline">
+                          {gt("Link several…")}
+                        </Button>
+                      }
+                    />
+                  }
+                />
+                <TooltipPopup>{selectSeveral}</TooltipPopup>
+              </Tooltip>
               <MenuPopup align="end">
                 {sources.map((node) => (
                   <MenuItem key={node.id} onClick={() => onLinkSeveral(node.id)}>
@@ -909,6 +963,27 @@ function FleetCanvas({
               </MenuPopup>
             </Menu>
           )}
+          <Popover>
+            <PopoverTrigger
+              render={
+                <Button size="icon-xs" variant="ghost" aria-label={gt("How to use the map")}>
+                  <CircleHelpIcon />
+                </Button>
+              }
+            />
+            <PopoverPopup align="end" width="sm" padding="compact">
+              <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">
+                <li>{gt("Select a machine to manage it.")}</li>
+                {sources.length === 0 ? null : (
+                  <>
+                    <li>{gt("Drag a plus onto a machine to link them.")}</li>
+                    <li>{selectSeveral}</li>
+                  </>
+                )}
+                <li>{gt("A link reaches one machine and stops there.")}</li>
+              </ul>
+            </PopoverPopup>
+          </Popover>
         </div>
       </div>
       {dropped === null ? null : (
@@ -923,7 +998,7 @@ function FleetCanvas({
         ref={setCanvas}
         data-dragging={dragging || undefined}
         data-glide={glide || undefined}
-        className="relative min-h-45 cursor-grab touch-none overflow-clip bg-background/50 select-none data-dragging:cursor-grabbing data-glide:transition-[background-size,background-position] data-glide:duration-200 data-glide:ease-out motion-reduce:transition-none"
+        className="relative min-h-45 cursor-grab touch-none overflow-clip bg-background/50 select-none data-dragging:cursor-grabbing data-glide:transition-[height,background-size,background-position] data-glide:duration-200 data-glide:ease-out motion-reduce:transition-none"
         style={
           view === null || size === null
             ? undefined
@@ -1013,11 +1088,11 @@ function FleetLegend({ twoWay }: { readonly twoWay: boolean }) {
   return (
     <ul
       aria-label={gt("How to read the lines")}
-      className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 pb-1 text-2xs text-muted-foreground"
+      className="flex min-w-0 items-center gap-x-3 overflow-clip pb-1 text-2xs whitespace-nowrap text-muted-foreground"
     >
       <li className="flex items-center gap-1.5">
         {sample("in-use")}
-        {gt("Route in use")}
+        {routeStateLabel("in-use", gt)}
       </li>
       <li className="flex items-center gap-1.5">
         {sample("standby")}
@@ -1025,13 +1100,13 @@ function FleetLegend({ twoWay }: { readonly twoWay: boolean }) {
       </li>
       <li className="flex items-center gap-1.5">
         {sample("down")}
-        {routeStateLabel("down", gt)}
+        {gt("Offline")}
       </li>
       <li className="flex items-center gap-1.5">
         <svg aria-hidden viewBox="0 0 22 6" className="h-1.5 w-5.5 text-foreground/70">
           <path d="M0 3L22 0.5V5.5Z" fill="currentColor" />
         </svg>
-        {gt("Link, heavier with more access")}
+        {gt("Link", { $context: "noun, in a map legend: a line joining two linked machines" })}
       </li>
       {twoWay ? (
         <li className="flex items-center gap-1.5">
@@ -1039,7 +1114,7 @@ function FleetLegend({ twoWay }: { readonly twoWay: boolean }) {
             <path d="M5 4H17" stroke="currentColor" strokeWidth="1.75" />
             <path d="M0 4L6 0.5V7.5ZM22 4L16 0.5V7.5Z" fill="currentColor" />
           </svg>
-          {gt("Two links, one each way")}
+          {gt("Two-way", { $context: "in a map legend: a link that goes both ways" })}
         </li>
       ) : null}
     </ul>
@@ -1175,16 +1250,7 @@ function CodeOnlyNotice({
       className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-border/60 bg-background/50 px-3 py-2 text-xs"
     >
       <p className="min-w-0 flex-1 basis-64 text-muted-foreground">
-        <span className="font-medium text-foreground">
-          {gt(
-            "{count, plural, one {{source} was not linked to # machine.} other {{source} was not linked to # machines.}}",
-            { count: machines.length, source: source.label },
-          )}
-        </span>{" "}
-        {gt(
-          "{count, plural, one {This app is not connected to it, so it needs a pairing code.} other {This app is not connected to them, so each needs a pairing code. Link them one at a time.}}",
-          { count: machines.length },
-        )}
+        {needsCodeText(machines.length, gt)}
       </p>
       {/* Linking through an environment that already reaches these machines would be offered here. */}
       <Menu>
@@ -1210,30 +1276,30 @@ function CodeOnlyNotice({
   );
 }
 
+const needsCodeText = (count: number, gt: GT) =>
+  gt(
+    "{count, plural, one {# machine needs a pairing code} other {# machines each need a pairing code}}",
+    { count },
+  );
+
 function actionText(action: FleetLinkAction | null, target: string, gt: GT): string {
   if (action === null) return gt("Cannot link to this");
-  if (action.kind === "code-only") {
-    return gt(
-      "{count, plural, one {This app is not connected to # machine here. It needs a pairing code} other {This app is not connected to these # machines. Each needs a pairing code}}",
-      { count: action.machineIds.length },
-    );
-  }
+  if (action.kind === "code-only") return needsCodeText(action.machineIds.length, gt);
   if (action.kind === "batch") {
-    return gt(
-      "{count, plural, one {Link to # machine. Pick which in the next step} other {Link to # machines. Pick which in the next step}}",
-      { count: action.environmentIds.length },
-    );
+    return gt("{count, plural, one {Link to # machine} other {Link to # machines}}", {
+      count: action.environmentIds.length,
+    });
   }
   const { offer } = action;
   if (offer === null) return gt("Cannot link to this");
   if (offer.path === "code-less") {
     return offer.renews
-      ? gt("Renew the link to {target}. No pairing code needed", { target })
-      : gt("Link to {target}. No pairing code needed", { target });
+      ? gt("Renew link to {target}", { target })
+      : gt("Link to {target}", { target });
   }
   return offer.renews
-    ? gt("Renew the link to {target}. Needs a pairing code from it", { target })
-    : gt("Link to {target}. Needs a pairing code from it", { target });
+    ? gt("Renew link to {target} with a pairing code", { target })
+    : gt("Link to {target} with a pairing code", { target });
 }
 
 function foldGroupLabel(group: FleetFoldGroup, gt: GT): string {
@@ -1253,8 +1319,8 @@ function foldGroupLabel(group: FleetFoldGroup, gt: GT): string {
 
 const COLUMN_TITLES = (gt: GT): Record<FleetColumn, string> => ({
   client: gt("This app"),
-  environments: gt("Your environments"),
-  targets: gt("Reached through a link"),
+  environments: gt("Environments"),
+  targets: gt("Linked machines"),
 });
 
 interface LinkDrag {
@@ -1731,7 +1797,7 @@ const FleetScene = memo(function FleetScene({
       {stacks.map((stack) => {
         const geometry = layout.stacks.get(stack.id);
         if (geometry === undefined) return null;
-        const { face, rect, more } = geometry;
+        const { face, tray, more } = geometry;
         const count = stack.memberIds.length;
         const range =
           stack.firstLabel === stack.lastLabel
@@ -1765,46 +1831,47 @@ const FleetScene = memo(function FleetScene({
                 summary,
               });
         const partial = fleetStackPartial(stack);
-        // The room a closed stack's card adds below its name when some machines do not answer.
-        const partialBand = partial && !stack.expanded ? 20 : 0;
+        // The room the card adds below its name when some machines do not answer.
+        const partialBand = partial ? 20 : 0;
         const ToggleIcon = stack.expanded ? FoldVerticalIcon : UnfoldVerticalIcon;
         const hidden = count - stack.shownIds.length;
         return (
           <div key={stack.id} className={fade(stackDimmed(stack))}>
-            {stack.expanded ? (
+            {/* The card is the same open or closed, so it does not change under the pointer. */}
+            {[8, 4].map((lift) => (
+              <div
+                key={lift}
+                aria-hidden
+                style={{
+                  left: face.x + lift,
+                  top: face.y - lift,
+                  width: face.width,
+                  height: face.height,
+                }}
+                className={cn(
+                  "absolute rounded-lg border border-border bg-card transition-opacity duration-200 ease-out motion-reduce:transition-none",
+                  group !== null && "border-dashed",
+                  stack.expanded && "opacity-0",
+                )}
+              />
+            ))}
+            {tray === null ? null : (
               <div
                 aria-hidden
-                style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}
-                className="absolute rounded-xl border border-border/70 bg-foreground/3"
+                style={{ left: tray.x, top: tray.y, width: tray.width, height: tray.height }}
+                className={cn(
+                  "absolute rounded-xl border border-border/70 bg-foreground/3",
+                  APPEAR,
+                )}
               />
-            ) : (
-              [8, 4].map((lift) => (
-                <div
-                  key={lift}
-                  aria-hidden
-                  style={{
-                    left: face.x + lift,
-                    top: face.y - lift,
-                    width: face.width,
-                    height: face.height,
-                  }}
-                  className={cn(
-                    "absolute rounded-lg border border-border bg-card",
-                    group !== null && "border-dashed",
-                  )}
-                />
-              ))
             )}
             <button
               {...focusProps({ kind: "stack", id: stack.id }, face, spoken)}
               className={cn(
                 nodeClass(stack.id),
-                "flex-col items-stretch overflow-clip",
-                stack.expanded
-                  ? "rounded-t-xl"
-                  : "rounded-lg border bg-card hover:border-foreground/50",
-                !stack.expanded && (partial ? "border-warning/60" : "border-foreground/25"),
-                !stack.expanded && group !== null && "border-dashed",
+                "flex-col items-stretch overflow-clip rounded-lg border bg-card hover:border-foreground/50",
+                partialBand > 0 ? "border-warning/60" : "border-foreground/25",
+                group !== null && "border-dashed",
                 holdsSelection(stack) && "ring-2 ring-primary ring-inset forced-colors:outline-2",
               )}
             >
@@ -1813,13 +1880,13 @@ const FleetScene = memo(function FleetScene({
                   <span className="truncate text-xs leading-4 font-semibold text-foreground">
                     {group ?? range}
                   </span>
-                  {group === null && !stack.expanded ? null : (
+                  {group === null ? null : (
                     <span className="shrink-0 rounded-full bg-muted px-1.5 text-2xs leading-4 text-muted-foreground tabular-nums forced-colors:border">
                       {count}
                     </span>
                   )}
                 </span>
-                {stack.expanded ? null : group !== null ? (
+                {group !== null ? (
                   <span className="block truncate text-2xs leading-4 text-muted-foreground">
                     {range}
                   </span>
@@ -1890,7 +1957,10 @@ const FleetScene = memo(function FleetScene({
                 data-fleet-node={fleetMoreNodeId(stack.id)}
                 tabIndex={fleetMoreNodeId(stack.id) === tabStop ? 0 : -1}
                 style={{ left: more.x, top: more.y, width: more.width, height: more.height }}
-                className="absolute flex cursor-pointer items-center rounded-md border border-dashed border-foreground/30 px-2 text-2xs leading-none text-muted-foreground outline-none hover:border-foreground/55 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                className={cn(
+                  "absolute flex cursor-pointer items-center rounded-md border border-dashed border-foreground/30 px-2 text-2xs leading-none text-muted-foreground outline-none hover:border-foreground/55 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+                  APPEAR,
+                )}
                 onClick={() => onSelect({ kind: "stack", id: stack.id })}
                 onFocus={() => setRoving(fleetMoreNodeId(stack.id))}
               >
@@ -1954,7 +2024,7 @@ const FleetScene = memo(function FleetScene({
               className={cn(
                 nodeClass(node.id),
                 "gap-2 border bg-card text-foreground/90 hover:border-foreground/50 hover:text-foreground",
-                compact ? "rounded-md px-2" : "rounded-lg px-2.5",
+                compact ? cn("rounded-md px-2", APPEAR) : "rounded-lg px-2.5",
                 first ? healthBorder(first.health) : "border-border",
               )}
             >
@@ -2010,6 +2080,7 @@ const FleetScene = memo(function FleetScene({
               className={cn(
                 nodeClass(node.id),
                 "gap-1.5 rounded-md border border-dashed border-foreground/25 bg-card px-2 text-foreground/90 hover:border-foreground/50 hover:text-foreground",
+                APPEAR,
               )}
             >
               <span
@@ -2180,9 +2251,7 @@ const FleetScene = memo(function FleetScene({
         <DragHint x={linkDrag.x} y={linkDrag.y}>
           {dragOver !== null
             ? actionText(dragAction(dragOver), nodeById.get(dragOver)?.label ?? "", gt)
-            : gt("Drop on a machine to link {source} to it", {
-                source: nodeById.get(linkDrag.sourceId)?.label ?? "",
-              })}
+            : gt("Drop on a machine to link")}
         </DragHint>
       ) : null}
     </div>

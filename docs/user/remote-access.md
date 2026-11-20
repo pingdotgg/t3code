@@ -495,9 +495,11 @@ so the map says so and offers to link one at a time instead.
 Large setups fold: machines known only through links that share the same
 linking environments and access levels become one stack, and once this app
 knows more than 12 environments, the ones that are not connected and have no
-links fold by state. Select a stack to list and filter every machine in it;
-opening a stack on the map draws its first 24. **Find a machine** above the map
-searches by name, and Enter goes to the first match.
+links fold by state. Select a stack to list and filter every machine in it.
+Opening a stack on the map draws its first 24 below its card: the rest of the
+map stays where it is and the map grows taller, so pan or press the fit button
+to see all of it. **Find a machine** above the map searches by name, and Enter
+goes to the first match. The **?** button above the map lists these gestures.
 
 The map draws the links of the machines this app is connected to; a machine it
 is not connected to may hold links the map cannot show. A link reaches one

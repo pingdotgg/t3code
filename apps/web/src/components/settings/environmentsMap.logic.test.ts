@@ -3,6 +3,7 @@ import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  anchorFleetView,
   buildFleetGraph,
   FLEET_FIT_LEGIBLE_SCALE,
   fitFleetLayout,
@@ -707,22 +708,64 @@ describe("layoutFleetGraph", () => {
     ]);
   });
 
-  it("opens a stack in place, each machine inside its frame", () => {
+  it("opens a stack where its card is, each machine in the tray below it", () => {
     const large = largeSetup();
-    const stackId = fleetStacks(large, new Set())[0]!.id;
+    const closed = fleetStacks(large, new Set());
+    const stackId = closed[0]!.id;
     const open = fleetStacks(large, new Set([stackId]));
-    const layout = layoutFleetGraph(large, open);
-    expectNoOverlap(layout, membersOf(open));
-    // Forty machines open to the first 24 and one card for the other 16, never forty cards.
-    expect(layout.nodes.size).toBe(13 + FLEET_STACK_SHOWN_MAX);
-    const frame = layout.stacks.get(stackId)!.rect;
-    const more = fleetFocusRects(layout).get(fleetMoreNodeId(stackId))!;
-    expect(layout.nodes.has(open[0]!.memberIds[FLEET_STACK_SHOWN_MAX]!)).toBe(false);
-    for (const rect of [more, ...open[0]!.shownIds.map((member) => layout.nodes.get(member)!)]) {
-      expect(rect.x).toBeGreaterThanOrEqual(frame.x);
-      expect(rect.y).toBeGreaterThanOrEqual(frame.y);
-      expect(rect.x + rect.width).toBeLessThanOrEqual(frame.x + frame.width);
-      expect(rect.y + rect.height).toBeLessThanOrEqual(frame.y + frame.height);
+    for (const width of [undefined, 560, 900, 1400]) {
+      const before = layoutFleetGraph(large, closed, width);
+      const layout = layoutFleetGraph(large, open, width);
+      expectNoOverlap(layout, membersOf(open));
+      // Forty machines open to the first 24 and one card for the other 16, never forty cards.
+      expect(layout.nodes.size).toBe(13 + FLEET_STACK_SHOWN_MAX);
+      const { face, tray } = layout.stacks.get(stackId)!;
+      const more = fleetFocusRects(layout).get(fleetMoreNodeId(stackId))!;
+      expect(layout.nodes.has(open[0]!.memberIds[FLEET_STACK_SHOWN_MAX]!)).toBe(false);
+      for (const rect of [more, ...open[0]!.shownIds.map((member) => layout.nodes.get(member)!)]) {
+        expect(rect.x).toBeGreaterThanOrEqual(tray!.x);
+        expect(rect.y).toBeGreaterThanOrEqual(tray!.y);
+        expect(rect.x + rect.width).toBeLessThanOrEqual(tray!.x + tray!.width);
+        expect(rect.y + rect.height).toBeLessThanOrEqual(tray!.y + tray!.height);
+      }
+      // The card, its lines, every route and every column stay put: the width's measures are
+      // those of the closed map, so opening never closes the columns up.
+      expect(face).toEqual(before.stacks.get(stackId)!.face);
+      expect(layout.stacks.get(stackId)!.lines.map((line) => line.arrow)).toEqual(
+        before.stacks.get(stackId)!.lines.map((line) => line.arrow),
+      );
+      expect(layout.routes).toEqual(before.routes);
+      expect(layout.columns).toEqual(before.columns);
+      expect(tray!.y).toBeGreaterThanOrEqual(face.y + face.height);
+      // Only machines the tray would cover move, and only down.
+      for (const [nodeId, rect] of before.nodes) {
+        const now = layout.nodes.get(nodeId)!;
+        if (rect.x === face.x && rect.y > face.y) {
+          expect(now.y, nodeId).toBeGreaterThanOrEqual(tray!.y + tray!.height);
+          expect({ ...now, y: rect.y }, nodeId).toEqual(rect);
+        } else {
+          expect(now, nodeId).toEqual(rect);
+        }
+      }
+    }
+  });
+
+  it("opens a group of environments where its card is, moving only the cards below it", () => {
+    const graph = hugeSetup();
+    const closed = fleetStacks(graph, new Set());
+    const fold = closed.find((stack) => stack.kind === "environments")!;
+    const open = fleetStacks(graph, new Set([fold.id]));
+    for (const width of [560, 1400]) {
+      const before = layoutFleetGraph(graph, closed, width);
+      const layout = layoutFleetGraph(graph, open, width);
+      expectNoOverlap(layout, membersOf(open));
+      const { face } = layout.stacks.get(fold.id)!;
+      expect(face).toEqual(before.stacks.get(fold.id)!.face);
+      for (const [nodeId, rect] of before.nodes) {
+        const now = layout.nodes.get(nodeId)!;
+        if (rect.y < face.y) expect(now, nodeId).toEqual(rect);
+        else expect({ ...now, y: rect.y }, nodeId).toEqual(rect);
+      }
     }
   });
 
@@ -830,7 +873,8 @@ describe("layoutFleetGraph", () => {
           const geometry = edge.kind === "link" ? layout.links.get(edge.id) : undefined;
           if (geometry === undefined) continue;
           const [before, last] = samplePath(geometry.d).slice(-2);
-          expect(before!.y).toBeCloseTo(geometry.arrow.y, 0);
+          // A machine an open stack pushed far down is reached by a steeper curve.
+          expect(Math.abs(before!.y - geometry.arrow.y)).toBeLessThan(1);
           expect(last!.y).toBe(geometry.arrow.y);
           arrivals.set(edge.to, [...(arrivals.get(edge.to) ?? []), geometry.arrow.y]);
         }
@@ -1227,6 +1271,121 @@ describe("fitting the view", () => {
     expect(fleetCanvasHeight({ width: 800, height: 300 }, 900, bounds)).toBe(
       Math.ceil(300 * ((900 - 56) / 800) + 56),
     );
+  });
+
+  it("keeps a stack where it is on screen when it opens, and returns when it closes", () => {
+    const graph = largeSetup();
+    const closed = fleetStacks(graph, new Set());
+    const stackId = closed[0]!.id;
+    const open = fleetStacks(graph, new Set([stackId]));
+    const bounds = { min: 180, max: 840 };
+    const onScreen = (view: { x: number; y: number; scale: number }, rect: FleetRect) => ({
+      x: rect.x * view.scale + view.x,
+      y: rect.y * view.scale + view.y,
+    });
+    for (const width of [560, 640, 1400]) {
+      const before = layoutFleetGraph(graph, closed, width);
+      const after = layoutFleetGraph(graph, open, width);
+      const size = { width, height: fleetCanvasHeight(before, width, bounds) };
+      const fit = fitFleetLayout(before, size);
+      const face = before.stacks.get(stackId)!.face;
+      const opened = anchorFleetView({
+        key: "open",
+        from: { key: "closed", held: null, view: fit, size, face },
+        stack: after.stacks.get(stackId)!,
+        layout: after,
+        bounds,
+      });
+      expect(opened.key).toBe("open");
+      expect(opened.glide).toBe(true);
+      // The canvas only grows, to show what opened, and never past its bound.
+      expect(opened.height).toBeGreaterThanOrEqual(size.height);
+      expect(opened.height).toBeLessThanOrEqual(bounds.max);
+      // The scale holds, and the card and every machine beside it stay where they were.
+      expect(opened.view).toEqual(fit);
+      expect(onScreen(opened.view, after.nodes.get(node("nucbox"))!)).toEqual(
+        onScreen(fit, before.nodes.get(node("nucbox"))!),
+      );
+      const tray = after.stacks.get(stackId)!.rect;
+      expect(onScreen(opened.view, tray).x + tray.width * opened.view.scale).toBeLessThanOrEqual(
+        width,
+      );
+
+      // Zoomed in until the stack is wider than the canvas, the view shrinks to its width, once.
+      const close = { x: fit.x - 600, y: fit.y, scale: 6 };
+      const shrunk = anchorFleetView({
+        key: "open",
+        from: { key: "closed", held: null, view: close, size, face },
+        stack: after.stacks.get(stackId)!,
+        layout: after,
+        bounds,
+      });
+      expect(shrunk.view.scale).toBeLessThan(6);
+      expect(onScreen(shrunk.view, tray).x).toBeGreaterThanOrEqual(0);
+      expect(onScreen(shrunk.view, tray).x + tray.width * shrunk.view.scale).toBeLessThanOrEqual(
+        width,
+      );
+      expect(onScreen(shrunk.view, face).y).toBeCloseTo(onScreen(close, face).y);
+
+      // Closing it again goes back to the fit it came from.
+      const back = anchorFleetView({
+        key: "closed",
+        from: { key: "open", held: opened, view: opened.view, size, face },
+        stack: before.stacks.get(stackId)!,
+        layout: before,
+        bounds,
+      });
+      expect(back.key).toBe("");
+      expect(back.glide).toBe(true);
+
+      // After a pan the view is the user's: closing keeps the card under the pointer instead.
+      const panned = { ...opened, view: { ...opened.view, x: opened.view.x - 40 }, undo: null };
+      const closedAgain = anchorFleetView({
+        key: "closed",
+        from: { key: "open", held: panned, view: panned.view, size, face },
+        stack: before.stacks.get(stackId)!,
+        layout: before,
+        bounds,
+      });
+      expect(closedAgain.key).toBe("closed");
+      expect(closedAgain.view.scale).toBe(panned.view.scale);
+      expect(onScreen(closedAgain.view, face)).toEqual(onScreen(panned.view, face));
+      expect(closedAgain.height).toBeLessThanOrEqual(size.height);
+    }
+  });
+
+  it("returns to a view set by hand before the stack opened", () => {
+    const graph = largeSetup();
+    const closed = fleetStacks(graph, new Set());
+    const stackId = closed[0]!.id;
+    const before = layoutFleetGraph(graph, closed, 1400);
+    const after = layoutFleetGraph(graph, fleetStacks(graph, new Set([stackId])), 1400);
+    const bounds = { min: 180, max: 840 };
+    const size = { width: 1400, height: 500 };
+    const held = {
+      key: "closed",
+      view: { x: -120, y: 30, scale: 1.4 },
+      height: 500,
+      glide: false,
+      undo: null,
+    };
+    const face = before.stacks.get(stackId)!.face;
+    const opened = anchorFleetView({
+      key: "open",
+      from: { key: "closed", held, view: held.view, size, face },
+      stack: after.stacks.get(stackId)!,
+      layout: after,
+      bounds,
+    });
+    expect(opened.view.scale).toBe(1.4);
+    const back = anchorFleetView({
+      key: "closed",
+      from: { key: "open", held: opened, view: opened.view, size, face },
+      stack: before.stacks.get(stackId)!,
+      layout: before,
+      bounds,
+    });
+    expect(back).toEqual({ ...held, glide: true });
   });
 
   it("zooms around the anchor", () => {

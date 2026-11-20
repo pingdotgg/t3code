@@ -734,11 +734,13 @@ export interface FleetStackLine {
 }
 
 export interface FleetStackGeometry {
-  /** The whole footprint: the sheets of a closed stack, or the frame of an open one. */
+  /** The whole footprint: the sheets of a closed stack, or an open one's card and its tray. */
   readonly rect: FleetRect;
-  /** The part that is the stack's control: the front sheet, or an open stack's header. */
+  /** The stack's card. Opening the stack leaves it where it is, and the tray grows out below. */
   readonly face: FleetRect;
   readonly lines: ReadonlyArray<FleetStackLine>;
+  /** The panel an open stack draws its machines in, below its card. */
+  readonly tray: FleetRect | null;
   /** In an open stack, the card standing for the machines it does not draw. */
   readonly more: FleetRect | null;
 }
@@ -853,14 +855,17 @@ const mixMetrics = (from: FleetMetrics, to: FleetMetrics, t: number): FleetMetri
 const CHIP = { width: 124, height: 26 };
 const CHIP_GAP = 6;
 const FRAME_PAD = 8;
-const FRAME_HEADER = 30;
-/** An open group of environments is two machines wide, and the column widens to hold it. */
-const FOLD_COLUMNS = 2;
+/** Between a stack's card and the tray it opens. */
+const TRAY_GAP = 4;
+/** Narrower than this a machine's name no longer reads, so a tray gives up a column instead. */
+const CHIP_MIN_WIDTH = 60;
 const GROUP_GAP = 28;
 const BAY_GAP = 12;
 const LANE_STEP = 14;
 const LANE_CLEARANCE = 10;
 const ARROW_LENGTH = 6;
+/** The least run a link keeps from the last lane to a machine: its turn and its arrowhead. */
+const LINK_RUN_MIN = 20;
 /** How far apart two hosts' links enter one machine, so each keeps its own last stretch. */
 const ENTRY_PITCH = 14;
 /** The channel left of the cards that links between environments keep to themselves. */
@@ -919,8 +924,29 @@ const frameColumns = (count: number) => Math.max(2, Math.min(4, Math.ceil(Math.s
 const frameCells = (stack: FleetStack) =>
   stack.shownIds.length + Number(stack.memberIds.length > stack.shownIds.length);
 
-const frameHeight = (stack: FleetStack, columns: number, header: number) =>
-  header + Math.ceil(frameCells(stack) / columns) * (CHIP.height + CHIP_GAP) - CHIP_GAP + FRAME_PAD;
+const trayWidth = (columns: number) => FRAME_PAD * 2 + columns * (CHIP.width + CHIP_GAP) - CHIP_GAP;
+
+/** What an open stack adds below its card. */
+const trayHeight = (stack: FleetStack, columns: number) =>
+  TRAY_GAP +
+  FRAME_PAD * 2 +
+  Math.ceil(frameCells(stack) / columns) * (CHIP.height + CHIP_GAP) -
+  CHIP_GAP;
+
+/**
+ * What an open stack of link targets has to stay within, both read off the map with every stack
+ * closed: the width its tray can take without the view shrinking to show it, and where its
+ * column stood, so opening one neither rescales the map nor moves a column.
+ */
+interface FleetTrayRoom {
+  readonly width: number;
+  readonly bayX: number | null;
+}
+
+const closedStacks = (stacks: ReadonlyArray<FleetStack>) =>
+  stacks.some((stack) => stack.expanded)
+    ? stacks.map((stack) => (stack.expanded ? { ...stack, expanded: false } : stack))
+    : stacks;
 
 /** One line into a machine or a stack, from the environment holding the link. */
 interface BayEntry {
@@ -981,19 +1007,40 @@ export function layoutFleetGraph(
   stacks: ReadonlyArray<FleetStack> = [],
   canvasWidth?: number,
 ): FleetLayout {
+  // The measures follow the map with every stack closed, so opening one moves no column.
+  const closed = closedStacks(stacks);
+  const { metrics, layout } = fitFleetMetrics(graph, closed, canvasWidth);
+  if (closed === stacks) return layout;
+  if (canvasWidth === undefined) {
+    const bayX = layout.columns.find((column) => column.id === "targets")?.x ?? null;
+    return layoutFleetGraphAt(graph, stacks, metrics, { width: Infinity, bayX });
+  }
+  const bayX = layout.columns.find((column) => column.id === "targets")?.x ?? null;
+  // How much of the map the closed fit shows across: the room a tray has at that same scale.
+  const room = canvasWidth - fleetFitPadding(canvasWidth) * 2;
+  const shown = room / Math.min(FLEET_FIT_MAX_SCALE, room / layout.width);
+  return layoutFleetGraphAt(graph, stacks, metrics, { width: shown - (bayX ?? 0), bayX });
+}
+
+function fitFleetMetrics(
+  graph: FleetGraph,
+  stacks: ReadonlyArray<FleetStack>,
+  canvasWidth: number | undefined,
+): { readonly metrics: FleetMetrics; readonly layout: FleetLayout } {
   const regular = layoutFleetGraphAt(graph, stacks, REGULAR);
-  if (canvasWidth === undefined) return regular;
+  if (canvasWidth === undefined) return { metrics: REGULAR, layout: regular };
   const room = canvasWidth - fleetFitPadding(canvasWidth) * 2;
   const narrow = room < regular.width;
   // Narrower than regular, the map fits at full size. Wider, it is enlarged first.
   const wanted = narrow ? room : room / FLEET_FIT_MAX_SCALE;
-  if (!narrow && wanted <= regular.width) return regular;
+  if (!narrow && wanted <= regular.width) return { metrics: REGULAR, layout: regular };
   const limit = narrow ? COMPACT : ROOMY;
   const end = layoutFleetGraphAt(graph, stacks, limit);
-  if (narrow ? end.width >= wanted : end.width <= wanted) return end;
+  if (narrow ? end.width >= wanted : end.width <= wanted) return { metrics: limit, layout: end };
   // Width is a maximum of sums of the measures, so it never exceeds this straight-line estimate.
   const t = (wanted - regular.width) / (end.width - regular.width);
-  return layoutFleetGraphAt(graph, stacks, mixMetrics(REGULAR, limit, t));
+  const metrics = mixMetrics(REGULAR, limit, t);
+  return { metrics, layout: layoutFleetGraphAt(graph, stacks, metrics) };
 }
 
 /**
@@ -1005,6 +1052,7 @@ function layoutFleetGraphAt(
   graph: FleetGraph,
   stacks: ReadonlyArray<FleetStack>,
   metrics: FleetMetrics,
+  room: FleetTrayRoom = { width: Infinity, bayX: null },
 ): FleetLayout {
   const CLIENT_SIZE = { width: metrics.app, height: CLIENT.height };
   const PILL_SIZE = { width: metrics.pill, height: PILL.height };
@@ -1171,53 +1219,87 @@ function layoutFleetGraphAt(
   };
   const pillsHeight = (hostId: string) =>
     (Math.max(1, routesInto(hostId)) - 1) * FLEET_ROUTE_PITCH + PILL.height;
-  const hostWidth = folds.some((stack) => stack.expanded)
-    ? FRAME_PAD * 2 + FOLD_COLUMNS * (CHIP.width + CHIP_GAP) - CHIP_GAP
-    : metrics.card;
-  const entryHeight = (entry: ColumnEntry) =>
+  const foldFace = { width: metrics.card - STACK.lift, height: STACK.height };
+  const closedWidth = metrics.target + STACK.lift;
+  /**
+   * A group of environments opens one machine wide, under its card. Link targets take the
+   * columns there is room for, and with no room to spare two narrow ones under the closed stack.
+   */
+  const trayShape = (stack: FleetStack) => {
+    if (stack.kind === "environments") return { columns: 1, width: metrics.card };
+    const wanted = frameColumns(frameCells(stack));
+    const fitting = Math.floor((room.width - FRAME_PAD * 2 + CHIP_GAP) / (CHIP.width + CHIP_GAP));
+    if (fitting >= 2) {
+      const columns = Math.min(wanted, fitting);
+      return { columns, width: Math.max(closedWidth, trayWidth(columns)) };
+    }
+    const width = Math.max(closedWidth, Math.min(room.width, trayWidth(2)));
+    return {
+      columns: (width - FRAME_PAD * 2 - CHIP_GAP) / 2 < CHIP_MIN_WIDTH ? 1 : 2,
+      width,
+    };
+  };
+  /** `open` false is the place an entry takes with its stack closed, which is where it starts. */
+  const entryHeight = (entry: ColumnEntry, open: boolean) =>
     entry.kind === "host"
       ? // The place a card takes in the column: its own height, or what its route names need.
         Math.max(cardHeight(entry.host), pillsHeight(entry.id) - PILL_OVERHANG * 2)
-      : entry.stack.expanded
-        ? frameHeight(entry.stack, FOLD_COLUMNS, FRAME_HEADER)
-        : STACK.height + STACK.lift;
+      : STACK.height +
+        STACK.lift +
+        (open && entry.stack.expanded
+          ? trayHeight(entry.stack, trayShape(entry.stack).columns)
+          : 0);
   /** Tall enough that each line in keeps its own entry. */
   const faceHeight = (item: BayItem, least: number) =>
     Math.max(least, 20 + (item.entries.length - 1) * ENTRY_PITCH);
-  const itemSize = (item: BayItem) => {
+  const itemSize = (item: BayItem, open: boolean) => {
     if (item.kind === "target") {
       return { width: metrics.target, height: faceHeight(item, TARGET.height) };
     }
-    if (!item.stack.expanded) {
-      return {
-        width: metrics.target + STACK.lift,
-        height:
-          faceHeight(item, STACK.height + (fleetStackPartial(item.stack) ? STACK.partial : 0)) +
-          STACK.lift,
-      };
-    }
-    const columns = frameColumns(frameCells(item.stack));
+    const closed = {
+      width: closedWidth,
+      height:
+        faceHeight(item, STACK.height + (fleetStackPartial(item.stack) ? STACK.partial : 0)) +
+        STACK.lift,
+    };
+    if (!open || !item.stack.expanded) return closed;
+    const shape = trayShape(item.stack);
     return {
-      width: FRAME_PAD * 2 + columns * (CHIP.width + CHIP_GAP) - CHIP_GAP,
-      height: frameHeight(item.stack, columns, faceHeight(item, FRAME_HEADER)),
+      width: shape.width,
+      height: closed.height + trayHeight(item.stack, shape.columns),
     };
   };
-  /** Places an open stack's machines in its frame, and returns the card for the rest. */
-  const fillFrame = (
-    stack: FleetStack,
-    x: number,
-    top: number,
-    columns: number,
-    chipWidth: number,
-  ): FleetRect | null => {
+  /** Places an open stack's machines in the tray below its card, and returns the card for the rest. */
+  const fillTray = (stack: FleetStack, face: FleetRect): FleetRect | null => {
+    const { columns, width } = trayShape(stack);
+    const chipWidth = (width - FRAME_PAD * 2 - (columns - 1) * CHIP_GAP) / columns;
     const cell = (index: number): FleetRect => ({
-      x: x + FRAME_PAD + (index % columns) * (chipWidth + CHIP_GAP),
-      y: top + Math.floor(index / columns) * (CHIP.height + CHIP_GAP),
+      x: face.x + FRAME_PAD + (index % columns) * (chipWidth + CHIP_GAP),
+      y:
+        face.y +
+        face.height +
+        TRAY_GAP +
+        FRAME_PAD +
+        Math.floor(index / columns) * (CHIP.height + CHIP_GAP),
       width: chipWidth,
       height: CHIP.height,
     });
     stack.shownIds.forEach((memberId, index) => nodes.set(memberId, cell(index)));
     return stack.memberIds.length > stack.shownIds.length ? cell(stack.shownIds.length) : null;
+  };
+  /** An open stack's footprint, its card and tray, and the tray alone. */
+  const openRects = (stack: FleetStack, face: FleetRect) => {
+    const { columns, width } = trayShape(stack);
+    const height = trayHeight(stack, columns);
+    return {
+      rect: { x: face.x, y: face.y, width, height: face.height + height },
+      tray: {
+        x: face.x,
+        y: face.y + face.height + TRAY_GAP,
+        width,
+        height: height - TRAY_GAP,
+      },
+    };
   };
 
   const pillX = metrics.app + metrics.wire;
@@ -1228,89 +1310,88 @@ function layoutFleetGraphAt(
     (betweenLanes.length === 0
       ? 0
       : metrics.betweenLast + (betweenLanes.length - 1) * BETWEEN.step + metrics.betweenFirst);
-  const cardRight = cardX + hostWidth;
+  const cardRight = cardX + metrics.card;
 
   // Heights first: which lanes the channel needs, and so how wide it is, follows from them.
+  // Rows are spaced as if every stack were closed, so an open one grows down from where its
+  // card was and moves only what its tray would otherwise cover.
   const placed: Array<{
     readonly item: BayItem;
     readonly y: number;
     readonly size: { readonly width: number; readonly height: number };
+    /** The item's height with its stack closed: where its card ends. */
+    readonly closedHeight: number;
   }> = [];
   const column: Array<{ readonly entry: ColumnEntry; readonly center: number }> = [];
+  /** Where each entry's middle is with every stack closed: this app's card is set by these. */
+  const restCenters: number[] = [];
   /** Where a card's routes arrive and its links leave: its middle. */
   const anchors = new Map<string, number>();
   let y = HEADER;
+  let cardFloor = -Infinity;
+  let bayFloor = -Infinity;
   for (const row of rows) {
-    const heights = row.entries.map(entryHeight);
+    const heights = row.entries.map((entry) => entryHeight(entry, false));
     const cardsHeight = heights.reduce((sum, height) => sum + height + GROUP_GAP, -GROUP_GAP);
-    const sizes = row.items.map(itemSize);
+    const sizes = row.items.map((item) => itemSize(item, false));
     const bayHeight = sizes.reduce((sum, size) => sum + size.height + BAY_GAP, -BAY_GAP);
     const rowHeight = Math.max(cardsHeight, bayHeight);
-    let cardY = y + (rowHeight - cardsHeight) / 2;
+    let restY = y + (rowHeight - cardsHeight) / 2;
     row.entries.forEach((entry, index) => {
-      const height = heights[index]!;
+      const rest = heights[index]!;
+      const cardY = Math.max(restY, cardFloor);
       if (entry.kind === "host") {
-        const anchor = cardY + height / 2;
+        const anchor = cardY + rest / 2;
         const own = cardHeight(entry.host);
-        nodes.set(entry.id, { x: cardX, y: anchor - own / 2, width: hostWidth, height: own });
+        nodes.set(entry.id, { x: cardX, y: anchor - own / 2, width: metrics.card, height: own });
         anchors.set(entry.id, anchor);
         if (entry.host.kind === "environment") handles.set(entry.id, { x: cardRight, y: anchor });
         column.push({ entry, center: anchor });
-      } else if (entry.stack.expanded) {
-        const more = fillFrame(
-          entry.stack,
-          cardX,
-          cardY + FRAME_HEADER,
-          FOLD_COLUMNS,
-          (hostWidth - FRAME_PAD * 2 - (FOLD_COLUMNS - 1) * CHIP_GAP) / FOLD_COLUMNS,
-        );
-        stackGeometry.set(entry.id, {
-          rect: { x: cardX, y: cardY, width: hostWidth, height },
-          face: { x: cardX, y: cardY, width: hostWidth, height: FRAME_HEADER },
-          lines: [],
-          more,
-        });
-        column.push({ entry, center: cardY + FRAME_HEADER / 2 });
+        restCenters.push(restY + rest / 2);
       } else {
-        const face = {
-          x: cardX,
-          y: cardY + STACK.lift,
-          width: hostWidth - STACK.lift,
-          height: STACK.height,
-        };
+        const face = { x: cardX, y: cardY + STACK.lift, ...foldFace };
         stackGeometry.set(entry.id, {
-          rect: { x: cardX, y: cardY, width: hostWidth, height },
+          ...(entry.stack.expanded
+            ? openRects(entry.stack, face)
+            : { rect: { x: cardX, y: cardY, width: metrics.card, height: rest }, tray: null }),
           face,
           lines: [],
-          more: null,
+          more: entry.stack.expanded ? fillTray(entry.stack, face) : null,
         });
         column.push({ entry, center: face.y + face.height / 2 });
+        restCenters.push(restY + STACK.lift + face.height / 2);
       }
-      cardY += height + GROUP_GAP;
+      cardFloor = cardY + entryHeight(entry, true) + GROUP_GAP;
+      restY += rest + GROUP_GAP;
     });
-    let itemY = y + (rowHeight - bayHeight) / 2;
+    let restItemY = y + (rowHeight - bayHeight) / 2;
     row.items.forEach((item, index) => {
-      const size = sizes[index]!;
-      placed.push({ item, y: itemY, size });
-      itemY += size.height + BAY_GAP;
+      const itemY = Math.max(restItemY, bayFloor);
+      const size = itemSize(item, true);
+      placed.push({ item, y: itemY, size, closedHeight: sizes[index]!.height });
+      bayFloor = itemY + size.height + BAY_GAP;
+      restItemY += sizes[index]!.height + BAY_GAP;
     });
     y += rowHeight + GROUP_GAP;
   }
-  let height = Math.max(HEADER + CLIENT.height, y - GROUP_GAP);
+  let height = Math.max(
+    HEADER + CLIENT.height,
+    y - GROUP_GAP,
+    cardFloor - GROUP_GAP,
+    bayFloor - BAY_GAP,
+  );
 
   const centerOf = (id: string) => anchors.get(id)!;
 
-  /** The middle of what a line into the item points at: the machine, or the stack's control. */
-  const faceOf = (item: BayItem, itemY: number, size: { readonly height: number }) => {
-    if (item.kind === "target") return { top: itemY, height: size.height };
-    return item.stack.expanded
-      ? { top: itemY, height: faceHeight(item, FRAME_HEADER) }
-      : { top: itemY + STACK.lift, height: size.height - STACK.lift };
-  };
+  /** What a line into the item points at: the machine, or the stack's card, open or closed. */
+  const faceOf = (item: BayItem, itemY: number, closedHeight: number) =>
+    item.kind === "target"
+      ? { top: itemY, height: closedHeight }
+      : { top: itemY + STACK.lift, height: closedHeight - STACK.lift };
   /** Where each line into the item arrives. */
   const entryY = new Map<string, number>();
-  for (const { item, y: itemY, size } of placed) {
-    const face = faceOf(item, itemY, size);
+  for (const { item, y: itemY, closedHeight } of placed) {
+    const face = faceOf(item, itemY, closedHeight);
     item.entries.forEach((entry, index) => {
       entryY.set(
         entry.key,
@@ -1381,7 +1462,12 @@ function layoutFleetGraphAt(
   const laneX = (lane: FleetLane) => cardRight + metrics.laneFirst + lane.index * LANE_STEP;
   const fanX =
     taken.length === 0 ? cardRight : cardRight + metrics.laneFirst + taken.length * LANE_STEP;
-  const bayX = fanX + metrics.linkRun;
+  // Machines an open stack pushed down can need a lane more. It comes out of the run to their
+  // column while that has any to give, so the column stays where it stood.
+  const bayX =
+    room.bayX === null
+      ? fanX + metrics.linkRun
+      : Math.max(room.bayX, fanX + Math.min(metrics.linkRun, LINK_RUN_MIN));
   const endX = bayX - ARROW_LENGTH;
   const lineInto = (entry: BayEntry) => {
     const trunk = trunkOf.get(entry.key);
@@ -1396,7 +1482,7 @@ function layoutFleetGraphAt(
   };
 
   let width = fanX;
-  for (const { item, y: itemY, size } of placed) {
+  for (const { item, y: itemY, size, closedHeight } of placed) {
     width = Math.max(width, bayX + size.width);
     if (item.kind === "target") {
       nodes.set(item.targetId, { x: bayX, y: itemY, ...size });
@@ -1412,39 +1498,26 @@ function layoutFleetGraphAt(
       continue;
     }
     const { stack } = item;
-    const face = faceOf(item, itemY, size);
-    const lines = item.entries.map((entry, index) => ({
-      sourceId: entry.from,
-      access: stack.sources[index]!.access,
-      ...lineInto(entry),
-    }));
-    if (!stack.expanded) {
-      stackGeometry.set(stack.id, {
-        rect: { x: bayX, y: itemY, ...size },
-        face: { x: bayX, y: face.top, width: metrics.target, height: face.height },
-        lines,
-        more: null,
-      });
-      continue;
-    }
+    const { top, height: faceHeight } = faceOf(item, itemY, closedHeight);
+    const face = { x: bayX, y: top, width: metrics.target, height: faceHeight };
     stackGeometry.set(stack.id, {
-      rect: { x: bayX, y: itemY, ...size },
-      face: { x: bayX, y: itemY, width: size.width, height: face.height },
-      lines,
-      more: fillFrame(
-        stack,
-        bayX,
-        itemY + face.height,
-        frameColumns(frameCells(stack)),
-        CHIP.width,
-      ),
+      ...(stack.expanded
+        ? openRects(stack, face)
+        : { rect: { x: bayX, y: itemY, ...size }, tray: null }),
+      face,
+      lines: item.entries.map((entry, index) => ({
+        sourceId: entry.from,
+        access: stack.sources[index]!.access,
+        ...lineInto(entry),
+      })),
+      more: stack.expanded ? fillTray(stack, face) : null,
     });
   }
 
   const clientCenterY =
-    column.length === 0
+    restCenters.length === 0
       ? HEADER + CLIENT.height / 2
-      : (column[0]!.center + column.at(-1)!.center) / 2;
+      : (restCenters[0]! + restCenters.at(-1)!) / 2;
   nodes.set(FLEET_CLIENT_NODE_ID, {
     x: 0,
     y: clientCenterY - CLIENT.height / 2,
@@ -1792,5 +1865,72 @@ export function zoomFleetView(
     scale,
     x: anchor.x - (anchor.x - view.x) * ratio,
     y: anchor.y - (anchor.y - view.y) * ratio,
+  };
+}
+
+/** A view that is not the fit: set by hand, or kept in place while a stack opened or closed. */
+export interface FleetHeldView {
+  /** The shape it was set on. It holds while the map keeps that shape. */
+  readonly key: string;
+  readonly view: FleetViewTransform;
+  readonly height: number;
+  /** Eased into; a drag or pinch tracks the hand instead. */
+  readonly glide: boolean;
+  /** What closing the stack again returns to, while nothing else has moved the view since. */
+  readonly undo: { readonly key: string; readonly held: FleetHeldView | null } | null;
+}
+
+/**
+ * The view after a stack opened or closed. Its card stays where it was on screen and the scale
+ * holds, so nothing is fitted again. The canvas grows to show what the stack added, up to its
+ * bound; past that the user pans. Only a stack wider than the canvas at this scale shrinks the
+ * view, and then just to its width. Toggling it back returns the view it had before.
+ */
+export function anchorFleetView(input: {
+  readonly key: string;
+  /** The shape, the view held on it and the canvas before the change. */
+  readonly from: {
+    readonly key: string;
+    readonly held: FleetHeldView | null;
+    readonly view: FleetViewTransform;
+    readonly size: { readonly width: number; readonly height: number };
+    readonly face: FleetPoint;
+  };
+  /** The stack and the map after it. */
+  readonly stack: Pick<FleetStackGeometry, "rect" | "face">;
+  readonly layout: Pick<FleetLayout, "width" | "height">;
+  readonly bounds: { readonly min: number; readonly max: number };
+}): FleetHeldView {
+  const { from, stack, layout, bounds } = input;
+  const { size } = from;
+  if (from.held?.undo?.key === input.key) {
+    const { held } = from.held.undo;
+    // With no view held before, a stale entry eases the scene back to the fit.
+    return held === null
+      ? { key: "", view: from.view, height: size.height, glide: true, undo: null }
+      : { ...held, glide: true };
+  }
+  const padding = fleetFitPadding(size.width);
+  const top = from.face.y * from.view.scale + from.view.y;
+  const scale = Math.min(from.view.scale, fitScale(size.width, stack.rect.width, padding));
+  const view =
+    scale < from.view.scale
+      ? { scale, x: padding - stack.face.x * scale, y: top - stack.face.y * scale }
+      : {
+          scale,
+          x: from.view.x + (from.face.x - stack.face.x) * scale,
+          y: from.view.y + (from.face.y - stack.face.y) * scale,
+        };
+  const wanted = Math.ceil(view.y + layout.height * scale + padding);
+  const opened = stack.rect.height > stack.face.height;
+  return {
+    key: input.key,
+    view,
+    height: Math.max(
+      bounds.min,
+      Math.min(bounds.max, opened ? Math.max(size.height, wanted) : Math.min(size.height, wanted)),
+    ),
+    glide: true,
+    undo: { key: from.key, held: from.held },
   };
 }

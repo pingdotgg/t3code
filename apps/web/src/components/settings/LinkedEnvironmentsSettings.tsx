@@ -496,10 +496,10 @@ export function LinkEnvironmentDialog({
                     })}
                   </span>
                   <span className="block text-xs text-muted-foreground">
-                    {gt(
-                      "Agents on {target} can then work on {source} too, with the same access. This is a second link, made on {target}.",
-                      { source: source.label, target: machine.label },
-                    )}
+                    {gt("Agents on {target} can then work on {source} too.", {
+                      source: source.label,
+                      target: machine.label,
+                    })}
                   </span>
                 </span>
               </label>

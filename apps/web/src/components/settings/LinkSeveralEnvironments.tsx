@@ -365,7 +365,7 @@ export function LinkSeveralEnvironmentsDialog({
             {unlisted > 0 ? (
               <p className="text-xs text-muted-foreground">
                 {gt(
-                  "{count, plural, one {# machine you picked is known only through a link, so it needs a pairing code. Link it on its own.} other {# machines you picked are known only through a link, so they need a pairing code. Link them one at a time.}}",
+                  "{count, plural, one {# machine needs a pairing code, so it is not listed.} other {# machines need a pairing code, so they are not listed.}}",
                   { count: unlisted },
                 )}
               </p>
@@ -382,7 +382,7 @@ export function LinkSeveralEnvironmentsDialog({
                     )}
                 {backFailed > 0
                   ? ` ${gt(
-                      "{count, plural, one {# machine could not link back. Select the link on the map to try again.} other {# machines could not link back. Select each link on the map to try again.}}",
+                      "{count, plural, one {# machine could not link back.} other {# machines could not link back.}}",
                       { count: backFailed },
                     )}`
                   : null}
@@ -401,13 +401,10 @@ export function LinkSeveralEnvironmentsDialog({
                     {gt("Also link each machine back to {source}", { source: sourceLabel })}
                   </span>
                   <span className="block text-xs text-muted-foreground">
-                    {gt(
-                      "Agents on each machine can then work on {source} too, with the same access. Each is a second link, made on that machine.",
-                      { source: sourceLabel },
-                    )}
+                    {gt("Agents there can then work on {source} too.", { source: sourceLabel })}
                     {alsoLinkBack && oneWayOnly > 0
                       ? ` ${gt(
-                          "{count, plural, one {# machine you picked cannot link back, or already does: it is linked one way.} other {# machines you picked cannot link back, or already do: they are linked one way.}}",
+                          "{count, plural, one {# machine stays one-way.} other {# machines stay one-way.}}",
                           { count: oneWayOnly },
                         )}`
                       : null}

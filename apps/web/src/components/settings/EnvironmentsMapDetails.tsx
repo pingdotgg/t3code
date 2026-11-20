@@ -175,12 +175,7 @@ export function FleetDetails(props: FleetDetailsProps) {
       ) : null}
       {pair ? (
         <div className={SECTION}>
-          <p className="mb-3 max-w-2xl text-muted-foreground">
-            {gt(
-              "{source} and {target} link to each other with the same access, so the map draws both links as one line. Each is its own link, and is forgotten on its own.",
-              { source: labelOf(pair.forward.from), target: labelOf(pair.forward.to) },
-            )}
-          </p>
+          <p className="mb-3 text-muted-foreground">{gt("Two links, one each way.")}</p>
           <div className="space-y-4">
             {[pair.forward, pair.back].map((link) => (
               <LinkDetails
@@ -246,9 +241,6 @@ function FleetSummary({
   const summary = fleetSummary(graph);
   const attention = links.filter((edge) => linkNeedsAttention(edge.health)).length;
   const { machines } = summary;
-  const canLink = graph.nodes.some(
-    (entry) => entry.kind === "environment" && entry.linking === "ready",
-  );
   return (
     <div className={SECTION}>
       <Heading
@@ -256,10 +248,10 @@ function FleetSummary({
           summary.loading
             ? gt("Loading links…")
             : attention > 0
-              ? gt(
-                  "{count, plural, one {# link needs attention.} other {# links need attention.}}",
-                  { count: attention },
-                )
+              ? gt("{count, plural, one {# needs attention} other {# need attention}}", {
+                  count: attention,
+                  $context: "after a count of links: how many of those links have a problem",
+                })
               : null
         }
       >
@@ -270,16 +262,6 @@ function FleetSummary({
             )
           : gt("{machines, plural, one {# machine} other {# machines}}", { machines })}
       </Heading>
-      <p className="max-w-2xl text-muted-foreground">
-        {canLink
-          ? gt(
-              "Select a machine to manage it. To link two machines, drag the plus on an environment onto another machine, or press it to pick one. To link several at once, Shift-click machines or Shift-drag a box around them, then drag the plus onto one of them.",
-            )
-          : gt("Select a machine to manage it.")}{" "}
-        {gt(
-          "A link reaches one machine and stops there. It does not pass on to the machines that one links to.",
-        )}
-      </p>
     </div>
   );
 }
@@ -426,45 +408,39 @@ function StackDetails({
       : `${stack.firstLabel} … ${stack.lastLabel}`;
   const sources = stack.sources.map((source) => nodeById.get(source.sourceId)?.label ?? "");
   const [only] = stack.sources;
-  const hidden = stack.memberIds.length - stack.shownIds.length;
   return (
     <div className={SECTION}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <Heading
-          detail={
-            stack.kind === "environments"
-              ? gt(
-                  "{count, plural, one {# environment} other {# environments}} with no links, not connected",
-                  { count: members.length },
-                )
-              : stack.sources.length === 1 && only !== undefined
-                ? gt(
-                    "{count, plural, one {# machine} other {# machines}} linked from {source}, {access}, {reachable} reachable",
-                    {
-                      count: members.length,
-                      source: sources[0] ?? "",
-                      access: m(accessConfig[only.access].label),
-                      reachable: stack.reachable,
-                    },
-                  )
-                : gt(
-                    "{count, plural, one {# machine} other {# machines}} each linked from {sources}, {reachable} reachable",
-                    {
-                      count: members.length,
-                      sources: sources.join(", "),
-                      reachable: stack.reachable,
-                    },
-                  )
-          }
+          detail={(stack.kind === "environments"
+            ? [
+                gt("{count, plural, one {# environment} other {# environments}}", {
+                  count: members.length,
+                }),
+                gt("No links", { $context: "these environments take part in no link" }),
+              ]
+            : [
+                gt("{machines, plural, one {# machine} other {# machines}}", {
+                  machines: members.length,
+                }),
+                sources.join(", "),
+                ...(stack.sources.length === 1 && only !== undefined
+                  ? [m(accessConfig[only.access].label)]
+                  : []),
+                gt("{reachable, plural, =0 {None reachable} other {# reachable}}", {
+                  reachable: stack.reachable,
+                  $context:
+                    "on a card for a group of linked machines: how many of them answer right now",
+                }),
+              ]
+          ).join(" · ")}
         >
           {range}
         </Heading>
         <Button size="xs" variant="outline" onClick={onToggle}>
           {stack.expanded
-            ? gt("Collapse on the map")
-            : hidden > 0
-              ? gt("Show the first {shown} on the map", { shown: stack.shownIds.length })
-              : gt("Show each on the map")}
+            ? gt("Collapse", { $context: "button: folds a group of machines back into one card" })
+            : gt("Show on map")}
         </Button>
       </div>
       {members.length > MEMBER_LIST_ROWS ? (
@@ -585,17 +561,13 @@ function Reconnect({ environment }: { readonly environment: EnvironmentPresentat
 
 function linksNote(node: FleetEnvironmentNode, gt: GT): string | null {
   if (node.phase !== "connected") {
-    return gt(
-      "This app is not connected to {label} right now, so any links it holds to other machines are not shown.",
-      { label: node.label },
-    );
+    return gt("Not connected, so its links are not shown.");
   }
   switch (node.outgoing) {
     case "off":
-      return gt(
-        "Linked environments is off on {label}. Turn it on in its Settings, under Labs, to link from it.",
-        { label: node.label },
-      );
+      return gt("To link from {label}, turn on Linked environments in its Labs settings.", {
+        label: node.label,
+      });
     case "unknown":
       return gt("This app may not read the links {label} holds.", { label: node.label });
     case "error":
@@ -663,17 +635,15 @@ function NodeDetails({
     return (
       <div className={SECTION}>
         <Heading
-          detail={gt("Connected to {connected} of {total} environments", {
+          detail={gt("{connected} of {total} connected", {
             connected: hosts.filter((entry) => entry.phase === "connected").length,
             total: hosts.length,
           })}
         >
           {node.label}
         </Heading>
-        <p className="max-w-2xl text-muted-foreground">
-          {gt(
-            "Each line from here is a saved route to an environment. The map shows the links of the environments this app is connected to; one it cannot reach may hold links that are not drawn.",
-          )}
+        <p className="text-muted-foreground">
+          {gt("Each line from here is a saved route to an environment.")}
         </p>
       </div>
     );
@@ -697,10 +667,7 @@ function NodeDetails({
         {renderConnectMachine(node.environmentId)}
         <div className={cn(SECTION, "space-y-3 border-t border-border/60")}>
           <p className="max-w-2xl text-muted-foreground">
-            {gt(
-              "{label} is on your T3 Connect account but not added to this app. Add it to connect, and to see the links it holds.",
-              { label: node.label },
-            )}
+            {gt("Add {label} to this app to connect to it.", { label: node.label })}
           </p>
           {incoming.length > 0 ? linkedFrom : null}
         </div>
@@ -734,10 +701,7 @@ function NodeDetails({
           ))}
         </div>
         <p className="mt-3 max-w-2xl text-muted-foreground">
-          {gt(
-            "This app is not connected to {label}, so any links it holds to other machines are not shown.",
-            { label: node.label },
-          )}
+          {gt("Not connected, so its links are not shown.")}
         </p>
       </div>
     );
