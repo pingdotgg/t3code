@@ -64,6 +64,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
@@ -147,6 +148,8 @@ const ACP_DEFERRED_FINALIZE_DEBOUNCE: Duration.Input = "3000 millis";
 // A model can stay silent this long before the first token of a reply the agent started itself.
 const ACP_OPEN_REPLY_QUIET_LIMIT: Duration.Input = "2 minutes";
 const ACP_BUSY_PROMPT_RETRY_INTERVAL: Duration.Input = "1 second";
+// Agents such as omp advertise a loaded session's commands shortly after answering session/load.
+const ACP_LOADED_COMMANDS_WAIT: Duration.Input = "2 seconds";
 const ACP_PROMPT_INACTIVITY_SLICE_MILLIS = 60_000;
 const ACP_HOST_SLEEP_TOLERANCE_MILLIS = 10_000;
 
@@ -368,6 +371,8 @@ export function acpPerTurnPromptUsage(
 interface AcpPromptOutcomeFailure {
   readonly failure: OrchestrationV2ProviderFailure;
   readonly threadDisposition: "reusable" | "broken";
+  /** The native session can carry on: the turn resends this prompt once before failing. */
+  readonly resumeWith?: string;
 }
 
 export interface AcpAdapterV2Flavor {
@@ -1670,6 +1675,8 @@ interface ActiveAcpTurn {
   foregroundIdle: Deferred.Deferred<void>;
   /** Counts the turn's prompts; only the latest one settles the turn. */
   promptSequence: number;
+  /** The turn already resent a prompt after a resumable outcome failure. */
+  outcomeResumed: boolean;
   /** Clock millis just before `session/prompt` was handed to the runtime. */
   promptSentAt: number | null;
   /** Completed when an update after dispatch matches `cancelAfterPromptStarts.isStart`. */
@@ -2278,7 +2285,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             new Map(current).set(sessionId, Symbol()),
           );
         });
-        const advertisedCommandNames = yield* Ref.make(new Map<string, ReadonlySet<string>>());
+        const advertisedCommandNames = yield* SubscriptionRef.make(
+          new Map<string, ReadonlySet<string>>(),
+        );
         const compactsContext =
           flavor.supportsCompaction === true ||
           flavor.compactSession !== undefined ||
@@ -4801,7 +4810,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 turnItem = {
                   ...base,
                   type: "command_execution",
-                  input: toolCall.command ?? monitorCommand ?? toolCall.title ?? "Command",
+                  input: toolCall.command ?? monitorCommand ?? "",
                   ...(textFromUnknown(rawOutput) === undefined
                     ? {}
                     : { output: textFromUnknown(rawOutput) }),
@@ -4850,11 +4859,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   turnItem = {
                     ...base,
                     type: "command_execution",
-                    input:
-                      toolCall.command ??
-                      monitorCommand ??
-                      toolCall.title ??
-                      (inputVariant === "monitor" ? "Monitor" : "Command"),
+                    input: toolCall.command ?? monitorCommand ?? "",
                     ...(textFromUnknown(rawOutput) === undefined
                       ? {}
                       : { output: textFromUnknown(rawOutput) }),
@@ -6989,7 +6994,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               if (notification.update.sessionUpdate === "available_commands_update") {
                 const sessionId = rawNotification.sessionId;
                 const advertisedCommands = notification.update.availableCommands;
-                yield* Ref.update(advertisedCommandNames, (current) => {
+                yield* SubscriptionRef.update(advertisedCommandNames, (current) => {
                   const updated = new Map(current);
                   updated.set(
                     sessionId,
@@ -8967,7 +8972,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             readonly promptParts: Effect.Success<ReturnType<typeof resolvePromptParts>> | null;
             readonly compactSession: AcpAdapterV2Flavor["compactSession"];
           },
-        ) => {
+        ): Effect.Effect<void> => {
           const sequence = ++context.promptSequence;
           const superseded = () => context.promptSequence !== sequence;
           return prompt(superseded).pipe(
@@ -9034,6 +9039,43 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     result.stopReason === "cancelled"
                       ? undefined
                       : yield* settle.checkPromptOutcome(result);
+                  const resumeWith = hiddenFailure?.resumeWith;
+                  if (
+                    hiddenFailure !== undefined &&
+                    resumeWith !== undefined &&
+                    steersWithPrompt &&
+                    !context.outcomeResumed
+                  ) {
+                    context.outcomeResumed = true;
+                    yield* reportProviderRetry({
+                      sessionId: context.nativeThreadId,
+                      failure: hiddenFailure.failure,
+                    });
+                    yield* steerWithPrompt({
+                      threadId: context.input.threadId,
+                      runId: context.input.runId,
+                      providerThread: context.input.providerThread,
+                      providerTurnId: context.providerTurnId,
+                      message: { ...context.input.message, text: resumeWith, attachments: [] },
+                    }).pipe(
+                      Effect.catchCause(() =>
+                        runRuntimeCallbackAtGeneration(
+                          settle.generation,
+                          Effect.gen(function* () {
+                            if (context.finalized || context.interrupted) return;
+                            yield* Ref.set(runtimeRestartRequired, true);
+                            yield* terminalizeOpenForegroundTools(context, "failed");
+                            yield* finalizeTurn(context, "failed", hiddenFailure.failure, {
+                              childTurnsContinue: hasSurvivingBackgroundWork(context),
+                              threadDisposition: hiddenFailure.threadDisposition,
+                            });
+                          }),
+                        ),
+                      ),
+                      Effect.forkIn(sessionScope),
+                    );
+                    return;
+                  }
                   if (hiddenFailure !== undefined) {
                     yield* Ref.set(runtimeRestartRequired, true);
                   }
@@ -9104,7 +9146,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       error.success._tag === "AcpRequestError" &&
                       error.success.code === -32800);
                   const failure = Cause.squash(cause);
-                  if (!interrupted && flavor.restartRuntimeAfterPromptError?.(failure) === true) {
+                  // A resumed prompt stands in for an outcome failure, which always restarts.
+                  if (
+                    !interrupted &&
+                    (context.outcomeResumed ||
+                      flavor.restartRuntimeAfterPromptError?.(failure) === true)
+                  ) {
                     yield* Ref.set(runtimeRestartRequired, true);
                   }
                   // An agent that answered with an error may still finish tools it started,
@@ -9196,11 +9243,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
             // Checked after activation: a loaded session advertises its own commands.
             const compactionSetup = yield* Ref.get(activeSessionSetup);
+            const sessionCommandNames =
+              flavor.compactViaAdvertisedCommand === true && isCompactionMessage(turnInput.message)
+                ? yield* SubscriptionRef.changes(advertisedCommandNames).pipe(
+                    Stream.map((names) => names.get(requestedSessionId)),
+                    Stream.filter((names) => names !== undefined),
+                    Stream.runHead,
+                    Effect.timeoutOption(ACP_LOADED_COMMANDS_WAIT),
+                    Effect.map(Option.flatten),
+                  )
+                : Option.none<ReadonlySet<string>>();
             if (
               isCompactionMessage(turnInput.message) &&
               ((flavor.compactViaAdvertisedCommand === true &&
-                (yield* Ref.get(advertisedCommandNames)).get(requestedSessionId)?.has("compact") !==
-                  true) ||
+                !Option.exists(sessionCommandNames, (names) => names.has("compact"))) ||
                 (flavor.compactSession !== undefined &&
                   (compactionSetup === null ||
                     !flavor.compactSession.supported(compactionSetup.initializeResult))))
@@ -9312,6 +9368,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               promptDispatched,
               foregroundIdle: yield* Deferred.make<void>(),
               promptSequence: 0,
+              outcomeResumed: false,
               promptSentAt: null,
               promptStarted,
               promptUsage: undefined,
