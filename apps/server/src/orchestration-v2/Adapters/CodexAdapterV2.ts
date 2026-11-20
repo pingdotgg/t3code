@@ -1526,6 +1526,11 @@ const CODEX_T3_MCP_TOOL_TIMEOUT_SEC = 65 * 60;
 const CODEX_T3_DIRECT_MCP_SERVER = "t3-code-direct";
 const CODEX_DIRECT_ONLY_T3_TOOLS = ["t3_thread_wait", "delegate_task"];
 
+const isJsonObject = (
+  value: Schema.Json | undefined,
+): value is { readonly [key: string]: Schema.Json } =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
 /** Names of the stdio MCP servers in a `config/read` config, the ones Codex starts per thread. */
 function codexStdioMcpServerNames(mcpServers: unknown): ReadonlyArray<string> {
   if (mcpServers === null || typeof mcpServers !== "object") return [];
@@ -1562,11 +1567,28 @@ function codexThreadRuntimeParams(input: {
           tool_timeout_sec: CODEX_T3_MCP_TOOL_TIMEOUT_SEC,
           http_headers: { Authorization: mcpSession.authorizationHeader },
         };
+  const threadId = input.threadId;
+  // A profile's stdio servers are whole tables here, so the thread id goes into their env.
+  const profileConfig =
+    threadId === null || input.profileConfig === undefined
+      ? input.profileConfig
+      : Object.fromEntries(
+          Object.entries(input.profileConfig).map(([key, value]) => {
+            if (
+              !/^mcp_servers\.[^.]+$/.test(key) ||
+              !isJsonObject(value) ||
+              typeof value.command !== "string"
+            )
+              return [key, value];
+            const env = isJsonObject(value.env) ? value.env : {};
+            return [key, { ...value, env: { ...env, [PortScanner.AGENT_THREAD_ENV]: threadId } }];
+          }),
+        );
   return {
     ...(input.runtimePolicy?.cwd == null ? {} : { cwd: input.runtimePolicy.cwd }),
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
     config: {
-      ...input.profileConfig,
+      ...profileConfig,
       ...CODEX_THREAD_CONFIG,
       // One app-server serves many threads, so the id goes in per-thread shell config, not its env.
       ...(input.threadId === null

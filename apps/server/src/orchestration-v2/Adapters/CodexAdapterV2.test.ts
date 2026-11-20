@@ -1553,6 +1553,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     onNotification: (method: string) => Effect.Effect<void> = () => Effect.void,
     models?: CodexAdapterV2.CodexAdapterV2Options["models"],
     providerSettings?: ProviderAdapter.ProviderAdapterV2OpenSessionInput["providerSettings"],
+    profileMcpServers?: ProviderAdapter.ProviderAdapterV2OpenSessionInput["profileMcpServers"],
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1640,6 +1641,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
         promptSuggestions,
         ...(providerSettings === undefined ? {} : { providerSettings }),
+        ...(profileMcpServers === undefined ? {} : { profileMcpServers }),
       });
       const providerThread = yield* runtime.ensureThread({
         threadId,
@@ -2504,12 +2506,26 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           Effect.sync(() => {
             if (method === "thread/start") requests.push(params);
           }),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { local: { type: "stdio", command: "npx", args: ["local"], env: { A: "b" } } },
       );
       assert.deepEqual(requests, [
         {
           cwd: "/workspace",
           model: "gpt-5.4",
           config: {
+            // A profile's server is a whole table, so the thread id joins its env.
+            "mcp_servers.local": {
+              command: "npx",
+              args: ["local"],
+              env: { A: "b", T3CODE_THREAD_ID: `thread-${scenario}` },
+            },
             "tools.update_plan.enabled": true,
             mcp_optional_startup_grace_ms: 10_000,
             "features.concurrent_reasoning_summaries": true,
