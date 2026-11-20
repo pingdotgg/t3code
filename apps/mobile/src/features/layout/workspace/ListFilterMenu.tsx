@@ -24,6 +24,7 @@ export function ListFilterMenu(props: {
         accessibilityLabel={props.accessibilityLabel}
         accessibilityState={{ selected: Boolean(props.active) }}
         hitSlop={6}
+        className="min-h-[44px] min-w-[44px] justify-center android:min-h-[48px] android:min-w-[48px]"
       >
         <Chip
           label={props.label}

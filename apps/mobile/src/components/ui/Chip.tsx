@@ -80,7 +80,10 @@ export function Chip(props: {
       disabled={props.disabled}
       onPress={props.onPress}
       hitSlop={6}
-      className={props.disabled ? "opacity-45" : "active:opacity-70"}
+      className={cn(
+        "min-h-[44px] min-w-[44px] justify-center android:min-h-[48px] android:min-w-[48px]",
+        props.disabled ? "opacity-45" : "active:opacity-70",
+      )}
     >
       {body}
     </Pressable>

@@ -58,15 +58,17 @@ export function PullRequestCardRow(props: {
       accessibilityState={props.expanded === undefined ? undefined : { expanded: props.expanded }}
       onPress={props.onPress}
       disabled={!props.onPress && !props.menu}
-      className={`${props.compact ? "min-h-11 py-2.5" : "min-h-13 py-3"} flex-row items-center gap-3 px-4 ${props.last || props.compact ? "" : "border-b border-border-subtle"} ${props.onPress ? "active:opacity-70" : ""}`}
+      className={`${props.compact ? "min-h-[44px] py-2.5 android:min-h-[48px]" : "min-h-[46px] py-3 android:min-h-[48px]"} flex-row items-center gap-3 px-4 ${props.last || props.compact ? "" : "border-b border-border-subtle"} ${props.onPress ? "active:opacity-70" : ""}`}
     >
-      <SymbolView
-        name={props.icon}
-        size={18}
-        tintColorClassName={
-          props.destructive ? "accent-danger-foreground" : (props.tint ?? "accent-icon-muted")
-        }
-      />
+      <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+        <SymbolView
+          name={props.icon}
+          size={18}
+          tintColorClassName={
+            props.destructive ? "accent-danger-foreground" : (props.tint ?? "accent-icon-muted")
+          }
+        />
+      </View>
       <View className="min-w-0 flex-1 gap-0.5">
         <Text
           className={
@@ -93,17 +95,19 @@ export function PullRequestCardRow(props: {
           </Text>
         ) : null)}
       {props.onPress || props.menu ? (
-        <SymbolView
-          name={
-            props.expanded === undefined
-              ? "chevron.right"
-              : props.expanded
-                ? "chevron.up"
-                : "chevron.down"
-          }
-          size={11}
-          tintColorClassName="accent-icon-muted"
-        />
+        <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+          <SymbolView
+            name={
+              props.expanded === undefined
+                ? "chevron.right"
+                : props.expanded
+                  ? "chevron.up"
+                  : "chevron.down"
+            }
+            size={11}
+            tintColorClassName="accent-icon-muted"
+          />
+        </View>
       ) : null}
     </Pressable>
   );
