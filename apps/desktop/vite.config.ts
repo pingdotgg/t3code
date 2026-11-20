@@ -5,6 +5,7 @@ import { defaultInclude, defineConfig } from "vite-plus";
 
 import { isDesktopRuntimeExternalDependency } from "../../scripts/lib/desktop-external-packages.ts";
 import { appSchemeDefine, loadRepoEnv } from "../../scripts/lib/public-config.ts";
+import { rebrandPlugin } from "../../scripts/lib/rebrand.ts";
 import { standaloneBuildDefine } from "../../scripts/lib/standalone-build.ts";
 
 const repoEnv = loadRepoEnv();
@@ -83,6 +84,7 @@ export default defineConfig({
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
       define: publicConfigDefine,
+      plugins: [rebrandPlugin(repoEnv)],
       outputOptions: { codeSplitting: false },
       entry: ["src/main.ts"],
       clean: true,
@@ -100,6 +102,7 @@ export default defineConfig({
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
       define: publicConfigDefine,
+      plugins: [rebrandPlugin(repoEnv)],
       entry: [
         "src/electron/WindowsForegroundFocusWorker.ts",
         "src/snapShot/GlobalShiftShortcutWorker.ts",
@@ -133,6 +136,7 @@ export default defineConfig({
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
       define: publicConfigDefine,
+      plugins: [rebrandPlugin(repoEnv)],
       entry: ["src/preload.ts"],
       deps: {
         // Sandboxed preloads cannot resolve imports inside ASAR; bundle Clerk's bridge.

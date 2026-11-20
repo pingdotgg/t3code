@@ -2,6 +2,7 @@ import type { ExpoConfig } from "expo/config";
 
 import { BRAND_ASSET_PATHS } from "../../scripts/lib/brand-assets.ts";
 import { loadRepoEnv, resolveAppScheme } from "../../scripts/lib/public-config.ts";
+import { rebrandName, rebrandStrings } from "../../scripts/lib/rebrand.ts";
 
 type AppVariant = "development" | "preview" | "production";
 
@@ -487,6 +488,7 @@ const config: ExpoConfig = {
     // MainActivity mods run in reverse order; extend the tablet-orientation override.
     "./plugins/withAndroidWindowDisplayMetrics.cjs",
     "./plugins/withAndroidTabletOrientation.cjs",
+    ["./plugins/withProductName.cjs", "T3 Code"],
     ...(isIosPersonalTeamBuild ? ["./plugins/withoutIosPersonalTeamCapabilities.cjs"] : []),
   ],
   extra: {
@@ -529,4 +531,6 @@ const config: ExpoConfig = {
   },
 };
 
-export default config;
+const appName = rebrandName(repoEnv);
+
+export default appName ? rebrandStrings(config, appName) : config;

@@ -18,6 +18,7 @@ const licenseGeneratorSource = path.join(
 const escapedWorkspaceRoot = workspaceRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const generatedDeviceStreamRoot = path.join(__dirname, ".generated", "device-stream");
 const generatedPreviewStreamRoot = path.join(__dirname, ".generated", "preview-stream");
+const rebrandedTranslationsRoot = path.join(__dirname, ".generated", "rebrand", "translations");
 
 config.watchFolders = [...new Set([...(config.watchFolders ?? []), workspaceRoot])];
 config.resolver = {
@@ -110,11 +111,48 @@ async function prepareStreamScripts() {
   }
 }
 
-module.exports = Promise.all([generateMobileThirdPartyLicenses(), prepareStreamScripts()]).then(
-  () =>
-    withUniwindConfig(config, {
-      cssEntryFile: "./global.css",
-      extraThemes,
-      polyfills: { rem: 14 },
-    }),
+// Metro reads JSON without Babel, so a standalone build serves catalogs keyed by its renamed source.
+async function rebrandTranslationCatalogs() {
+  const importScript = (name) =>
+    import(pathToFileURL(path.join(workspaceRoot, "scripts", "lib", name)).href);
+  const [{ loadRepoEnv }, { rebrandName, rebrandCatalogFile }] = await Promise.all([
+    importScript("public-config.ts"),
+    importScript("rebrand.ts"),
+  ]);
+  const repoEnv = loadRepoEnv();
+  const name = rebrandName(repoEnv);
+  if (!name) return;
+  // babel.config.js renames the source in Metro's workers, which inherit this environment.
+  process.env.T3CODE_STANDALONE = repoEnv.T3CODE_STANDALONE;
+  process.env.T3CODE_APP_NAME = repoEnv.T3CODE_APP_NAME;
+  config.cacheVersion = `${config.cacheVersion ?? ""}:${name}`;
+  const sourceDir = path.join(__dirname, "src", "i18n", "translations");
+  await fs.promises.mkdir(rebrandedTranslationsRoot, { recursive: true });
+  for (const file of await fs.promises.readdir(sourceDir)) {
+    const catalog = rebrandCatalogFile(path.join(sourceDir, file), name);
+    if (catalog) {
+      await writeFileIfChanged(path.join(rebrandedTranslationsRoot, file), JSON.stringify(catalog));
+    }
+  }
+  const i18nProvider = path.join(__dirname, "src", "i18n", "I18nProvider.tsx");
+  const resolveRequest = config.resolver.resolveRequest;
+  config.resolver.resolveRequest = (context, moduleName, platform) => {
+    const catalog = /^\.\/translations\/([\w-]+\.json)$/.exec(moduleName)?.[1];
+    if (catalog && context.originModulePath === i18nProvider) {
+      return { type: "sourceFile", filePath: path.join(rebrandedTranslationsRoot, catalog) };
+    }
+    return (resolveRequest ?? context.resolveRequest)(context, moduleName, platform);
+  };
+}
+
+module.exports = Promise.all([
+  generateMobileThirdPartyLicenses(),
+  prepareStreamScripts(),
+  rebrandTranslationCatalogs(),
+]).then(() =>
+  withUniwindConfig(config, {
+    cssEntryFile: "./global.css",
+    extraThemes,
+    polyfills: { rem: 14 },
+  }),
 );

@@ -4,6 +4,8 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
 
+import { DEFAULT_APP_NAME, resolveAppName } from "./rebrand.ts";
+
 export interface T3CodePublicConfig {
   readonly clerkPublishableKey: string | undefined;
   readonly clerkJwtTemplate: string | undefined;
@@ -176,6 +178,12 @@ function assertStandaloneConfig(config: T3CodePublicConfig, ...sources: readonly
   if (!appScheme || OFFICIAL_APP_SCHEMES.has(resolveAppScheme({ T3CODE_APP_SCHEME: appScheme }))) {
     throw new Error(
       "T3CODE_STANDALONE=1 needs T3CODE_APP_SCHEME set to the fork's own deep-link scheme, not T3 Code's.",
+    );
+  }
+  const appName = firstNonEmpty(sources, "T3CODE_APP_NAME");
+  if (!appName || resolveAppName({ T3CODE_APP_NAME: appName }) === DEFAULT_APP_NAME) {
+    throw new Error(
+      "T3CODE_STANDALONE=1 needs T3CODE_APP_NAME set to the fork's own product name.",
     );
   }
   if (firstNonEmpty(sources, "T3CODE_EAS_PROJECT_ID") === UPSTREAM_EAS_PROJECT_ID) {

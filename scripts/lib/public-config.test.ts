@@ -60,6 +60,7 @@ describe("loadRepoEnv in a standalone build", () => {
     T3CODE_STANDALONE: "true",
     GITHUB_REPOSITORY: "fork-owner/t3code",
     T3CODE_APP_SCHEME: "forkcode",
+    T3CODE_APP_NAME: "Fork Code",
   };
 
   it("passes the fork's own config through and normalizes the switch", () => {
@@ -84,6 +85,9 @@ describe("loadRepoEnv in a standalone build", () => {
     [{ GITHUB_REPOSITORY: "" }, "owner/repo"],
     [{ T3CODE_APP_SCHEME: "" }, "T3CODE_APP_SCHEME"],
     [{ T3CODE_APP_SCHEME: "t3code-dev" }, "T3CODE_APP_SCHEME"],
+    [{ T3CODE_APP_NAME: "" }, "T3CODE_APP_NAME"],
+    [{ T3CODE_APP_NAME: "T3 Code" }, "T3CODE_APP_NAME"],
+    [{ T3CODE_APP_NAME: "<b>Fork</b>" }, "T3CODE_APP_NAME"],
   ])("refuses T3-operated config %j", (override, message) => {
     expect(() =>
       loadRepoEnv({ baseEnv: { ...fork, ...override }, repoRoot: makeTemporaryDirectory() }),

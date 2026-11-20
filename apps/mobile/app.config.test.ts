@@ -20,6 +20,7 @@ vi.mock("../../scripts/lib/public-config.ts", async (importOriginal) => ({
         "T3CODE_IOS_TEAM_ID",
         "T3CODE_DESKTOP_UPDATE_REPOSITORY",
         "T3CODE_APP_SCHEME",
+        "T3CODE_APP_NAME",
       ].flatMap((key) => (process.env[key] === undefined ? [] : [[key, process.env[key]]])),
     ),
 }));
@@ -110,7 +111,10 @@ it("uses the fork's own Expo project and hosted app in a standalone build", asyn
   vi.stubEnv("T3CODE_MOBILE_BUNDLE_ID", "com.fork.code");
   vi.stubEnv("T3CODE_EAS_PROJECT_ID", "fork-project");
   vi.stubEnv("T3CODE_HOSTED_APP_URL", "https://app.fork.example");
+  vi.stubEnv("T3CODE_APP_NAME", "Fork Code");
   const config = await loadConfig("production");
+  expect(config.name).toBe("Fork Code");
+  expect(JSON.stringify(config)).not.toMatch(/T3 Code/);
   expect(config.updates).toMatchObject({ enabled: true, url: "https://u.expo.dev/fork-project" });
   expect(config.extra?.eas?.projectId).toBe("fork-project");
   expect(config.ios?.associatedDomains).toEqual(["applinks:app.fork.example"]);

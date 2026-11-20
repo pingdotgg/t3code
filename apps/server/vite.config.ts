@@ -5,6 +5,7 @@ import { defineConfig, mergeConfig } from "vite-plus";
 
 import baseConfig from "../../vite.config.ts";
 import { appSchemeDefine, loadRepoEnv } from "../../scripts/lib/public-config.ts";
+import { rebrandPlugin } from "../../scripts/lib/rebrand.ts";
 import { standaloneBuildDefine } from "../../scripts/lib/standalone-build.ts";
 import { resolveTaggedSourceVersion } from "../../scripts/lib/tagged-source-version.ts";
 import rootPackageJson from "../../package.json" with { type: "json" };
@@ -94,6 +95,7 @@ export default mergeConfig(
     },
     pack: {
       plugins: [
+        rebrandPlugin(repoEnv),
         {
           // Every server module reads its version from this manifest import.
           name: "t3code:build-version",

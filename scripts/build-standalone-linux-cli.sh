@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Builds this machine's standalone Linux CLI archive for a fork release, the same way
 # .github/workflows/fork-release.yml does. Needs vp (with Node from engines.node), cargo,
-# patchelf, libatomic1, and T3CODE_APP_SCHEME (environment or root .env) set to the fork's
-# own scheme. Usage: scripts/build-standalone-linux-cli.sh <version> <owner/repo> <out-dir>
+# patchelf, libatomic1, and T3CODE_APP_SCHEME and T3CODE_APP_NAME (environment or root .env) set
+# to the fork's own scheme and product name. Usage: scripts/build-standalone-linux-cli.sh <version> <owner/repo> <out-dir>
 set -euo pipefail
 
 version="$1"
