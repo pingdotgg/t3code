@@ -31,7 +31,17 @@ jobs:
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
+    env:
+      # Standalone builds refuse T3 Code's scheme, so the fork names its own in a repository variable.
+      T3CODE_APP_SCHEME: ${{ vars.T3CODE_APP_SCHEME }}
     steps:
+      - name: Require the fork's app scheme
+        run: |
+          [ -n "$T3CODE_APP_SCHEME" ] || {
+            echo "::error::Set the repository variable T3CODE_APP_SCHEME to this fork's deep-link scheme: gh variable set T3CODE_APP_SCHEME --body <scheme>"
+            exit 1
+          }
+
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
