@@ -12,6 +12,7 @@ import {
   ScheduledTaskId,
   ThreadId,
   type OrchestrationV2ConversationMessage,
+  withMessageSenderNote,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -352,7 +353,7 @@ it.effect.each([
       yield* h.create;
       yield* h.send("plain", "!plain", provenance);
       expect(h.spawnCount()).toBe(0);
-      expect(h.calls[0]?.message.text).toBe("!plain");
+      expect(h.calls[0]?.message.text).toBe(withMessageSenderNote(provenance, "!plain"));
     }).pipe(Effect.provide(h.layer));
   }),
 );
