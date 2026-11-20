@@ -2,7 +2,7 @@ import { useIsFocused } from "@react-navigation/native";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { useAudioPlayerStatus } from "expo-audio";
 import { useGT, useMessages } from "gt-react-native";
-import { useContext, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { AppState, Pressable, View } from "react-native";
 import type { FilePreviewSource } from "../../components/ui/FilePreviewModal";
 import { filePreviewKey } from "../../lib/filePreviewGallery";
@@ -81,18 +81,23 @@ function InlineAudio(
   const playRequested = useRef(false);
   const audioToken = useRef<ReturnType<typeof acquireAudioSession> | null>(null);
   const [playbackRequested, setPlaybackRequested] = useState(false);
-  const requestPlayback = (requested: boolean) => {
-    playRequested.current = requested;
-    setPlaybackRequested(requested);
-    if (!requested) {
-      requestGeneration.current += 1;
-      setLoading(false);
-      if (audioToken.current) {
-        void releaseAudioSession(audioToken.current).catch(() => {});
-        audioToken.current = null;
+  const requestPlayback = useCallback(
+    (requested: boolean) => {
+      const changed = playRequested.current !== requested;
+      playRequested.current = requested;
+      setPlaybackRequested(requested);
+      if (!requested) {
+        requestGeneration.current += 1;
+        setLoading(false);
+        if (audioToken.current) {
+          void releaseAudioSession(audioToken.current).catch(() => {});
+          audioToken.current = null;
+        }
       }
-    }
-  };
+      if (changed) onPlaybackActivityChange?.(requested);
+    },
+    [onPlaybackActivityChange],
+  );
   useMediaAudioSessionHold(status.playing);
   const fullscreenVideoOpen = useFullscreenVideoOpen();
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drops the play request on fullscreen video, finish or error, and pauses the player for fullscreen
@@ -101,16 +106,8 @@ function InlineAudio(
       // oxlint-disable-next-line react/set-state-in-effect -- Native completion and fullscreen takeover invalidate the pending playback request.
       requestPlayback(false);
     }
-    if (status.didJustFinish || status.error) onPlaybackActivityChange?.(false);
     if (fullscreenVideoOpen) pauseAudioPlayer(player);
-  }, [
-    fullscreenVideoOpen,
-    status.didJustFinish,
-    status.error,
-    player,
-    requestPlayback,
-    onPlaybackActivityChange,
-  ]);
+  }, [fullscreenVideoOpen, status.didJustFinish, status.error, player, requestPlayback]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to AppState to pause audio in the background and releases the audio session on cleanup
   useEffect(() => {
     active.current = true;
@@ -150,7 +147,6 @@ function InlineAudio(
     );
     if (!isAudioSessionOwner(token)) return;
     props.onPlaybackStart?.();
-    onPlaybackActivityChange?.(true);
     audioToken.current = token;
     requestPlayback(true);
     const generation = ++requestGeneration.current;
@@ -169,7 +165,6 @@ function InlineAudio(
           if (!isCurrentRequest() || AppState.currentState !== "active") return;
           if (!uri) {
             requestPlayback(false);
-            onPlaybackActivityChange?.(false);
             setError(true);
             return;
           }
@@ -184,7 +179,6 @@ function InlineAudio(
       .catch(() => {
         if (isCurrentRequest()) {
           requestPlayback(false);
-          onPlaybackActivityChange?.(false);
           setError(true);
         }
       })
@@ -264,15 +258,17 @@ export function ThreadInlineFilePreview(props: PreviewProps) {
   const visible = useContext(ThreadMediaVisibleContext);
   const focused = useIsFocused();
   const retainRow = useContext(ThreadMediaRetainContext);
-  // Unmounting disposes the native player, so a started player stays mounted off-screen
-  // (and its feed row out of recycling) until it finishes or fails. Leaving the screen
-  // disposes it, so the latch resets too; the feed drops its row pin on blur itself.
+  // Keep the player and row mounted while playback is requested, including buffering.
+  // On blur the feed drops its row pin and the player is disposed.
   const [playbackActive, setPlaybackActive] = useState(false);
   if (!focused && playbackActive) setPlaybackActive(false);
-  const onPlaybackActivityChange = (active: boolean) => {
-    setPlaybackActive(active);
-    retainRow(active);
-  };
+  const onPlaybackActivityChange = useCallback(
+    (active: boolean) => {
+      setPlaybackActive(active);
+      retainRow(active);
+    },
+    [retainRow],
+  );
   return (
     <View
       className="my-1 overflow-hidden rounded-xl border border-border bg-card"
