@@ -965,3 +965,78 @@ export function collectProviderUsageLimits(
   }
   return { createdAt: DateTime.formatIso(DateTime.makeUnsafe(now)), accounts, notices };
 }
+
+/**
+ * The limits an instance's turns spend: the pool of the CLIProxyAPI hub it sends requests to,
+ * otherwise its own account's. Shown for the selected instance in the thread details card.
+ */
+export function instanceUsageLimits(
+  instanceId: ProviderInstanceId,
+  providers: readonly ServerProvider[],
+  sources: UsageLimitSourceSnapshots,
+  now: number,
+): ServerProviderUsageLimits | undefined {
+  const selected = providers.find((provider) => provider.instanceId === instanceId);
+  if (!selected) return undefined;
+  const { endpoint } = selected.auth;
+  // Hubs on one origin under different base paths all serve requests sent to that origin.
+  const hubs = endpoint ? sources.filter((source) => source.origin === endpoint) : [];
+  const hubAccounts = new Map<string, UsageLimitSourceSnapshot["accounts"][number]>();
+  for (const source of hubs) {
+    for (const account of source.accounts) {
+      if (account.driver !== selected.driver) continue;
+      const key =
+        accountKey(account.driver, account.email, account.usageLimits) ??
+        `${source.id}:${account.id}`;
+      const previous = hubAccounts.get(key);
+      if (
+        !previous ||
+        Date.parse(account.usageLimits.checkedAt) > Date.parse(previous.usageLimits.checkedAt)
+      ) {
+        hubAccounts.set(key, account);
+      }
+    }
+  }
+  const readable = [...hubAccounts].filter(([, account]) => !limitsNotice(account.usageLimits));
+  const [pool] = collectLimitPools(
+    readable.map(([key, account]) => ({
+      key,
+      driver: account.driver,
+      displayName: null,
+      email: account.email,
+      plan: account.plan,
+      accentColor: undefined,
+      environments: [],
+      sourceLabel: null,
+      redeem: null,
+      limits: account.usageLimits,
+    })),
+    now,
+  );
+  if (pool) {
+    return {
+      checkedAt: readable
+        .map(([, account]) => account.usageLimits.checkedAt)
+        .reduce((oldest, next) => (Date.parse(next) < Date.parse(oldest) ? next : oldest)),
+      // A pool refills account by account, so only a lone account's window has one reset clock.
+      windows: displayLimitWindows(pool).map(({ id, kind, label, usedPercent, members }) =>
+        members.length === 1 ? members[0]!.window : { id, kind, label, usedPercent },
+      ),
+    };
+  }
+  const hubError = hubs.find((source) => source.error)?.error;
+  if (hubAccounts.size > 0 || hubError) {
+    return {
+      checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
+      windows: [],
+      unavailable: { reason: "probeFailed", ...(hubError ? { message: hubError } : {}) },
+    };
+  }
+  // The report keeps one instance per login, and any other entry may be a different login or
+  // workspace, so fall back to the instance's own snapshot.
+  return (
+    collectProviderUsageLimits(instanceId, providers, sources, now)?.accounts.find(
+      (entry) => entry.instanceId === instanceId,
+    )?.limits ?? selected.usageLimits
+  );
+}

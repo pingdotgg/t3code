@@ -188,8 +188,9 @@ accounts for other providers are not read. Codex accounts show banked reset cred
 account and choose **Use reset** to redeem one. No hub plugin is required.
 
 This connection supplies usage information; configure
-the provider separately to send agent requests through the hub. Remove the hub from the same
-settings section when you no longer need it.
+the provider separately to send agent requests through the hub. When a Codex or Claude instance
+sends its requests to the hub's origin, the thread details card shows the pooled limits of the hub's
+accounts for that provider. Remove the hub from the same settings section when you no longer need it.
 
 ## Subscription usage widget
 
