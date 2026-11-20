@@ -7,6 +7,7 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.text.StaticLayout
 import android.text.TextPaint
+import android.view.MotionEvent
 import android.view.View
 import kotlin.math.ceil
 import expo.modules.kotlin.AppContext
@@ -114,6 +115,35 @@ class ReviewDiffGeometryTest {
       assertEquals(9000, field(second, "index"))
       call(canvas, "setRows", listOf(row("only", "value")))
       assertEquals(null, call(canvas, "stickyFileHeader", 0))
+    } finally {
+      parent.cleanup()
+    }
+  }
+
+  @Test
+  fun viewedCheckboxTapTargetFillsTheFileHeaderHeight() {
+    val parent = T3ReviewDiffView(RuntimeEnvironment.getApplication(), AppContext())
+    val canvas = parent.getChildAt(0)
+    val spec = View.MeasureSpec.makeMeasureSpec(320, View.MeasureSpec.EXACTLY)
+    canvas.measure(spec, spec)
+    canvas.layout(0, 0, 320, 320)
+    try {
+      call(canvas, "setRows", listOf(row("header", "").copy(kind = "file")))
+      val targets = mutableListOf<String>()
+      val onTap: (DiffRow, String, Any) -> Unit = { _, _, target -> targets += (target as Enum<*>).name }
+      call(canvas, "setOnRowTap", onTap)
+      val density = canvas.resources.displayMetrics.density
+      val headerHeight = 44f * density
+      val checkboxCenterX = 320f - 10f * density - 10f * density
+      for (y in listOf(headerHeight / 2f, 2f * density, headerHeight - 2f * density)) {
+        val down = MotionEvent.obtain(0L, 0L, MotionEvent.ACTION_DOWN, checkboxCenterX, y, 0)
+        val up = MotionEvent.obtain(0L, 10L, MotionEvent.ACTION_UP, checkboxCenterX, y, 0)
+        canvas.dispatchTouchEvent(down)
+        canvas.dispatchTouchEvent(up)
+        down.recycle()
+        up.recycle()
+      }
+      assertEquals(List(3) { "VIEWED_CHECKBOX" }, targets)
     } finally {
       parent.cleanup()
     }
