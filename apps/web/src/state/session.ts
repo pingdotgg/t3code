@@ -1,5 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
-import { createEnvironmentSessionAtoms } from "@t3tools/client-runtime/state/session";
+import {
+  createEnvironmentSessionAtoms,
+  sessionDeniesScope,
+} from "@t3tools/client-runtime/state/session";
 import {
   type AuthEnvironmentScope,
   type AuthSessionState,
@@ -32,6 +35,19 @@ export function useEnvironmentScope(
       ? EMPTY_SESSION_STATE_ATOM
       : environmentSession.sessionStateAtom(environmentId),
     (result) => sessionHasScope(result, scope),
+  );
+}
+
+/** Unlike `!useEnvironmentScope`, stays false until the host has answered without the scope. */
+export function useEnvironmentScopeDenied(
+  environmentId: EnvironmentId | null,
+  scope: AuthEnvironmentScope,
+): boolean {
+  return useAtomValue(
+    environmentId === null
+      ? EMPTY_SESSION_STATE_ATOM
+      : environmentSession.sessionStateAtom(environmentId),
+    (result) => sessionDeniesScope(result, scope),
   );
 }
 

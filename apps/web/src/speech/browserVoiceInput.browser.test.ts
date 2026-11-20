@@ -100,6 +100,29 @@ const status = {
   benchmarkTier: "cpu",
 } satisfies EnvironmentSpeechStatus;
 
+function controllerFor(
+  platform: ReturnType<typeof createBrowserVoiceInputPlatform>,
+  commitDraft: (text: string) => void,
+) {
+  return new VoiceInputController({
+    recorder: platform.recorder,
+    retryFailedRecording: true,
+    getTranscriber: () => platform.transcriber,
+    requestPermission: async () => ({ granted: true, canAskAgain: true }),
+    configureRecording: async () => {},
+    releaseRecording: async () => platform.cancelRecording(),
+    deleteRecording: platform.deleteRecording,
+    readDraft: () => ({
+      ownerKey: "draft",
+      text: "",
+      selection: { start: 0, end: 0 },
+      revision: 0,
+    }),
+    commitDraft,
+    onStateChange() {},
+  });
+}
+
 it("retains all PCM until stop, retries batch audio, and captures preferences before status resolves", async () => {
   using microphone = capture();
   let streaming = false;
@@ -125,7 +148,7 @@ it("retains all PCM until stop, retries batch audio, and captures preferences be
   });
   const onError = vi.fn();
   const platform = createBrowserVoiceInputPlatform({
-    prepared,
+    getPrepared: () => prepared,
     hasAudioConsent: () => true,
     getStreamingEnabled: () => streaming,
     getTranscriptionOptions: () => options,
@@ -136,23 +159,7 @@ it("retains all PCM until stop, retries batch audio, and captures preferences be
     onError,
   });
   const commitDraft = vi.fn();
-  const controller = new VoiceInputController({
-    recorder: platform.recorder,
-    retryFailedRecording: true,
-    getTranscriber: () => platform.transcriber,
-    requestPermission: async () => ({ granted: true, canAskAgain: true }),
-    configureRecording: async () => {},
-    releaseRecording: async () => platform.cancelRecording(),
-    deleteRecording: platform.deleteRecording,
-    readDraft: () => ({
-      ownerKey: "draft",
-      text: "",
-      selection: { start: 0, end: 0 },
-      revision: 0,
-    }),
-    commitDraft,
-    onStateChange() {},
-  });
+  const controller = controllerFor(platform, commitDraft);
   using _controller = { [Symbol.dispose]: () => controller.dispose() };
   const start = controller.start();
   await vi.waitFor(() => expect(_network).toHaveBeenCalled());
@@ -191,6 +198,60 @@ it("retains all PCM until stop, retries batch audio, and captures preferences be
   expect(platform.recorder.uri).toBeNull();
 });
 
+it("keeps recording when the live stream drops and uploads the buffered audio on stop", async () => {
+  using microphone = capture();
+  const sockets: EventTarget[] = [];
+  using _socket = stubGlobal(
+    "WebSocket",
+    class extends EventTarget {
+      constructor() {
+        super();
+        sockets.push(this);
+      }
+      send() {}
+      close() {}
+    },
+  );
+  const uploads: number[][] = [];
+  const fetch = globalThis.fetch;
+  using _network = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const request = new Request(input, init);
+    if (request.url.endsWith("/api/voice/status")) return Response.json(status);
+    if (request.url.includes("/api/auth/websocket-ticket/"))
+      return Response.json({ ticket: "stream-ticket", expiresAt: "2030-01-01T00:00:00.000Z" });
+    if (request.url.endsWith("/api/voice/transcribe")) {
+      const { pcm } = decodeSpeechPcmRequest(new Uint8Array(await request.arrayBuffer()));
+      uploads.push([...new Float32Array(pcm.slice().buffer)]);
+      return Response.json({ text: "bonjour" });
+    }
+    return fetch(input, init);
+  });
+  const onError = vi.fn();
+  const platform = createBrowserVoiceInputPlatform({
+    getPrepared: () => prepared,
+    hasAudioConsent: () => true,
+    getStreamingEnabled: () => true,
+    getTranscriptionOptions: () => DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+    getMicrophoneId: () => "",
+    onLevel() {},
+    onDurationLimit() {},
+    onText() {},
+    onError,
+  });
+  const commitDraft = vi.fn();
+  const controller = controllerFor(platform, commitDraft);
+  using _controller = { [Symbol.dispose]: () => controller.dispose() };
+  await controller.start();
+  microphone.feed(new Float32Array([0.1]));
+  sockets[0]!.dispatchEvent(new Event("close"));
+  microphone.feed(new Float32Array([0.2]));
+  expect(controller.currentState.phase).toBe("recording");
+  expect(onError).not.toHaveBeenCalled();
+  await controller.stop();
+  expect(uploads).toEqual([[Math.fround(0.1), Math.fround(0.2)]]);
+  expect(commitDraft).toHaveBeenCalledWith("bonjour", { start: 7, end: 7 });
+});
+
 it.each([
   { native: true, enabled: true, buffered: true, live: true },
   { native: true, enabled: false, buffered: true, live: false },
@@ -226,7 +287,7 @@ it.each([
     const abort = new AbortController();
     using _abort = { [Symbol.dispose]: () => abort.abort() };
     const platform = createBrowserVoiceInputPlatform({
-      prepared,
+      getPrepared: () => prepared,
       hasAudioConsent: () => true,
       getStreamingEnabled: () => enabled,
       getTranscriptionOptions: () => ({
