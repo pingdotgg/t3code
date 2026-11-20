@@ -1318,6 +1318,7 @@ it.effect(
         layerOrchestratorToolkit.pipe(
           Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
           Layer.provide(NodeCrypto.layer),
+          Layer.provide(NodeServices.layer),
           Layer.provide(
             Layer.mock(ThreadManagement.ThreadManagementService)({
               getThreadShell: (id) =>
