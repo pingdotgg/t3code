@@ -4,9 +4,7 @@ import { AgentElapsed } from "./AgentElapsed";
 import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
 import type { ReactNode } from "react";
 import { useThreadShell, useProject } from "../../state/entities";
-import { useEnvironment } from "../../state/environments";
-import { buildThreadRouteParams } from "../../threadRoutes";
-import { useNavigate } from "@tanstack/react-router";
+import { useLinkedThreadOpener } from "../../state/linkedThreadView";
 import { SubagentTooltipContent } from "./SubagentTooltipContent";
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef, scopeProjectRef } from "@t3tools/client-runtime/environment";
@@ -452,22 +450,17 @@ function SubagentTimelineLink(props: {
   );
   const remote = agent?.remoteChild ?? props.remote;
   const remoteThreadId = remote?.threadId;
-  const remoteEnvironment = useEnvironment(remote?.environmentId ?? null);
   const gt = useGT();
   const m = useMessages();
-  const navigate = useNavigate();
   const threadId = props.threadId;
-  // A task in a linked environment opens there, if this client is connected to it.
+  // A task in a linked environment opens there, or read-only through this one.
+  const remoteOpener = useLinkedThreadOpener(
+    props.parentRef,
+    remote?.threadId === undefined ? undefined : { ...remote, threadId: remote.threadId },
+    props.title,
+  );
   const open =
-    threadId !== null
-      ? () => props.onOpenThread(threadId)
-      : remote !== undefined && remoteThreadId !== undefined && remoteEnvironment !== null
-        ? () =>
-            void navigate({
-              to: "/$environmentId/$threadId",
-              params: buildThreadRouteParams(scopeThreadRef(remote.environmentId, remoteThreadId)),
-            })
-        : null;
+    threadId !== null ? () => props.onOpenThread(threadId) : (remoteOpener?.open ?? null);
   const liveStatus = agent?.status ?? props.status;
   const status = props.event ? props.event.status : liveStatus;
   const statusLabel =

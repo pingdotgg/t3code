@@ -1414,6 +1414,73 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
     }).pipe(Effect.provide(layerSession)),
   );
 
+  // A wake run has no prompt of its own, yet agy can keep working in it for minutes.
+  it.effect("steers a continuation run that keeps working after its wake", () =>
+    Effect.gen(function* () {
+      const opened = yield* openSessionWithRunningCommand(
+        { IsDaemon: true, WaitMsBeforeAsync: 500 },
+        undefined,
+        { agentVersion: "1.5.11", holdsFirstPrompt: false },
+      );
+      const { session, providerThread, command, offers, send, startTurn, until, throughTerminal } =
+        opened;
+      yield* startTurn(1, false);
+      yield* throughTerminal;
+      yield* send({
+        sessionUpdate: "tool_call_update",
+        ...command,
+        status: "completed",
+        rawOutput: { output: "Command exited with code 0.", exit_code: 0 },
+      });
+      assert.lengthOf(offers, 1, "the finished daemon must wake the thread");
+      yield* offers[0]!.dispatchIfCurrent!(Effect.void);
+      yield* startTurn(2, true);
+      const followUp = { toolCallId: "call_build", kind: "execute", title: "vp run build" };
+      yield* send({ sessionUpdate: "tool_call", ...followUp, status: "in_progress" });
+      const continued = yield* until(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === followUp.toolCallId,
+      );
+      const providerTurnId = continued.flatMap((event) =>
+        event.type === "provider_turn.updated" ? [event.providerTurn.id] : [],
+      )[0]!;
+
+      const steer = yield* session
+        .steerTurn({
+          threadId: ThreadId.make("thread-antigravity-wake"),
+          runId: RunId.make("run-antigravity-wake-2"),
+          providerThread,
+          providerTurnId,
+          message: {
+            messageId: MessageId.make("message-antigravity-steer"),
+            text: "Skip the build",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+        })
+        .pipe(Effect.exit);
+      assert.isTrue(
+        Exit.isSuccess(steer),
+        `a working wake run must accept a steer: ${String(Exit.isFailure(steer) && steer.cause)}`,
+      );
+      assert.equal(opened.cancels(), 0, "a steer must not cancel the agent's work");
+      assert.lengthOf(opened.prompts, 2);
+      assert.deepEqual(opened.prompts[1]!.prompt, [{ type: "text", text: "Skip the build" }]);
+
+      yield* send({ sessionUpdate: "tool_call_update", ...followUp, status: "completed" });
+      yield* TestClock.adjust("16 minutes");
+      const silent = yield* until((event) => event.type === "turn.terminal");
+      const terminal = silent.at(-1);
+      assert.equal(
+        terminal?.type === "turn.terminal" && terminal.status,
+        "failed",
+        "a silent steer prompt must still hit the inactivity timeout",
+      );
+    }).pipe(Effect.provide(layerSession)),
+  );
+
   it.effect("steers a run held open by a detached subagent without stopping it", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

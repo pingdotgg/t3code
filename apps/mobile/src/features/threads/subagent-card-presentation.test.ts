@@ -23,7 +23,14 @@ describe("subagent card", () => {
       statusLabel: "Launching",
       canOpenThread: false,
     });
-    expect(subagentThreadTarget(pending, "environment-here" as never, () => true)).toBeNull();
+    expect(
+      subagentThreadTarget(
+        pending,
+        "environment-here" as never,
+        () => ({ connected: true }),
+        () => true,
+      ),
+    ).toBeNull();
     const launchError = "Launch unconfirmed; work may still be running on Box.";
     expect(
       resolveSubagentRowPresentation(
