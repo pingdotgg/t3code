@@ -394,7 +394,8 @@ const config: ExpoConfig = {
     [
       "expo-camera",
       {
-        cameraPermission: "Allow T3 Code to access your camera so you can scan pairing QR codes.",
+        cameraPermission:
+          "Allow T3 Code to use your camera to take photos and scan pairing QR codes.",
         microphonePermission: false,
         barcodeScannerEnabled: true,
         recordAudioAndroid: false,
@@ -404,8 +405,6 @@ const config: ExpoConfig = {
       "expo-image-picker",
       {
         photosPermission: false,
-        cameraPermission:
-          "Allow T3 Code to use your camera to take photos and scan pairing QR codes.",
         // `false` makes this plugin add RECORD_AUDIO to blockedPermissions, breaking Android dictation.
         microphonePermission: "Allow T3 Code to use your microphone for voice input.",
       },
