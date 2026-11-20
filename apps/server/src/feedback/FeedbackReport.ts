@@ -198,7 +198,12 @@ const T3_PREFIX = /^(?:mcp__t3[-_]?code(?:[-_]direct)?__|t3[-_]?code(?:[-_]direc
 /** The bare name of a registered T3 tool however a provider prefixed it, else undefined. */
 export const resolveT3ToolName = (name: string, toolNames: ReadonlyArray<string>) => {
   const tool = resolveT3McpToolId(name) ?? name.replace(T3_PREFIX, "");
-  return toolNames.includes(tool) ? tool : undefined;
+  if (toolNames.includes(tool)) return tool;
+  // OpenCode 2 prefixes tools with `t3-code-<thread>_`, underscores and all: the longest name wins.
+  if (!/^t3-code-/iu.test(name)) return undefined;
+  return toolNames
+    .filter((candidate) => name.endsWith(`_${candidate}`))
+    .toSorted((a, b) => b.length - a.length)[0];
 };
 
 /** The stored subject, or undefined when the value names no T3 tool, `t3` command, or `general`. */

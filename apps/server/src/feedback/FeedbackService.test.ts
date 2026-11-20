@@ -101,8 +101,9 @@ const turnItems = [
   item(6, { type: "dynamic_tool", toolName: "t3-code.t3_thread_read", status: "running" }),
   item(5, { type: "dynamic_tool", toolName: "mcp__t3-code__t3_feedback", status: "running" }),
   item(6, { type: "dynamic_tool", toolName: "mcp__t3-code__t3_feedback", status: "failed" }),
-  // The call making the card in the active run.
+  // The call making the card in the active run, as Claude names it and as OpenCode 2 does.
   item(6, { type: "dynamic_tool", toolName: "mcp__t3-code__t3_feedback", status: "running" }),
+  item(6, { type: "dynamic_tool", toolName: "t3-code-thread_1_t3_feedback", status: "running" }),
 ];
 
 const harness = Effect.gen(function* () {
