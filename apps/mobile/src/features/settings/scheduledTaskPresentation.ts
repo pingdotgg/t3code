@@ -29,18 +29,49 @@ const INTERVAL_UNITS = [
 
 export function formatScheduledTaskInterval(
   everyMs: number,
+  window?: {
+    readonly start: string;
+    readonly end: string;
+    readonly weekdays?: ReadonlyArray<number>;
+  },
   resolve: MessageResolver = m,
-  window?: { readonly start: string; readonly end: string; readonly weekdays?: ReadonlyArray<number> },
   locale: string = "en",
 ): string {
   const interval = formatInterval(everyMs, resolve);
   if (!window) return interval;
+  const minutes = everyMs / MINUTE;
+  const cadence =
+    everyMs % MINUTE === 0 && minutes >= 1
+      ? resolve(msg("Every {minutes} min", { minutes }))
+      : interval;
   const selected = new Set(window.weekdays ?? []);
-  const days = selected.size === 0 || selected.size === 7
-    ? resolve(msg("every day"))
-    : [1, 2, 3, 4, 5, 6, 0].filter((day) => selected.has(day))
-        .map((day) => new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" }).format(Date.UTC(2024, 0, 7 + day))).join(", ");
-  return resolve(msg("{interval}, {days} {start}–{end}", { interval, days, start: window.start, end: window.end }));
+  const days =
+    selected.size === 0 || selected.size === 7
+      ? resolve(msg("every day"))
+      : selected.size === 5 && [1, 2, 3, 4, 5].every((day) => selected.has(day))
+        ? [1, 5]
+            .map((day) =>
+              new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" }).format(
+                Date.UTC(2024, 0, 7 + day),
+              ),
+            )
+            .join("–")
+        : [1, 2, 3, 4, 5, 6, 0]
+            .filter((day) => selected.has(day))
+            .map((day) =>
+              new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" }).format(
+                Date.UTC(2024, 0, 7 + day),
+              ),
+            )
+            .join(", ");
+  return resolve(
+    msg("{interval}, {days} {start}–{end}", {
+      interval: cadence,
+      days,
+      start: window.start,
+      end: window.end,
+    }),
+  );
 }
 
 function formatInterval(everyMs: number, resolve: MessageResolver): string {
