@@ -6,7 +6,7 @@ You can think of T3 Code as an open source "bring-your-own-subscription" alterna
 
 ## T3 Dulli fork
 
-This fork is based on upstream v0.1.10. Build the fork desktop identity with `--brand dulli`.
+This fork is based on upstream v0.1.11. Build the fork desktop identity with `--brand dulli`.
 Fork database migrations go in `apps/server/src/persistence/Migrations/dulli/` and its separate
 ledger, never upstream's numbered sequence. See [fork development](docs/fork-development.md)
 for identity, builds, releases, and coexistence. T3 itself is the harness.
