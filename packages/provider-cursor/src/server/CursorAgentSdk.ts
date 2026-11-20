@@ -23,6 +23,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import * as CursorSdk from "./CursorSdk.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
@@ -617,6 +618,58 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
     },
   );
 
+  // Ref-count one SqliteLocalAgentStore per workspace so concurrent sessions share a single
+  // index.db handle while still disposing handles, page caches, and FDs once the last one closes.
+  interface WorkspaceStoreLease {
+    readonly store: DisposableCursorLocalStore;
+    readonly wrapped: CursorLocalStore;
+    users: number;
+  }
+  const workspaceStores = new Map<string, WorkspaceStoreLease>();
+  const workspaceStoreLock = yield* Semaphore.make(1);
+  const acquireWorkspaceStore = (workspaceRef: string, method: string) =>
+    workspaceStoreLock.withPermits(1)(
+      Effect.suspend(() => {
+        const existing = workspaceStores.get(workspaceRef);
+        if (existing !== undefined) {
+          existing.users += 1;
+          return Effect.succeed(existing);
+        }
+        return Effect.tryPromise({
+          try: async () => {
+            const candidate = await sdk.loadSqlite().SqliteLocalAgentStore.open({ workspaceRef });
+            return isDisposableCursorLocalStore(candidate) ? candidate : undefined;
+          },
+          catch: (cause) => runnerError(cause, method),
+        }).pipe(
+          Effect.map((opened) => {
+            if (opened === undefined) return undefined;
+            const lease: WorkspaceStoreLease = {
+              store: opened,
+              wrapped: withNoopCursorRunEvents(opened),
+              users: 1,
+            };
+            workspaceStores.set(workspaceRef, lease);
+            return lease;
+          }),
+        );
+      }),
+    );
+  const releaseWorkspaceStore = (workspaceRef: string, lease: WorkspaceStoreLease) =>
+    workspaceStoreLock.withPermits(1)(
+      Effect.suspend(() => {
+        lease.users -= 1;
+        if (lease.users > 0) return Effect.void;
+        if (workspaceStores.get(workspaceRef) === lease) {
+          workspaceStores.delete(workspaceRef);
+        }
+        return Effect.tryPromise({
+          try: () => lease.store.dispose(),
+          catch: () => undefined,
+        }).pipe(Effect.ignore);
+      }),
+    );
+
   return CursorAgentSdkRunner.of({
     open: Effect.fn("CursorAgentSdkRunner.open")(function* (input) {
       const { Agent, createAgentPlatform } = yield* Effect.try({
@@ -649,29 +702,21 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
       const storeCwd = input.storeCwd;
       const storeWorkspace =
         input.operation === "resume" && storeCwd !== undefined ? storeCwd : cwd;
-      // Passing a per-session SqliteLocalAgentStore bypasses the SDK's unbounded module-level
-      // platform/store Maps so close() actually frees SQLite handles, page caches, and FDs.
-      const ownedStore =
+      const ownedStoreLease =
         input.options.local?.store === undefined && storeWorkspace !== undefined
-          ? yield* Effect.tryPromise({
-              try: async () => {
-                const candidate = await sdk
-                  .loadSqlite()
-                  .SqliteLocalAgentStore.open({ workspaceRef: storeWorkspace });
-                return isDisposableCursorLocalStore(candidate) ? candidate : undefined;
-              },
-              catch: (cause) => runnerError(cause, `agent.${input.operation}`),
-            })
+          ? yield* acquireWorkspaceStore(storeWorkspace, `agent.${input.operation}`)
           : undefined;
+      let storeReleased = false;
       const disposeOwnedStore =
-        ownedStore === undefined
+        ownedStoreLease === undefined || storeWorkspace === undefined
           ? Effect.void
-          : Effect.tryPromise({
-              try: () => ownedStore.dispose(),
-              catch: () => undefined,
-            }).pipe(Effect.ignore);
+          : Effect.suspend(() => {
+              if (storeReleased) return Effect.void;
+              storeReleased = true;
+              return releaseWorkspaceStore(storeWorkspace, ownedStoreLease);
+            });
       const effectiveStore =
-        ownedStore === undefined ? input.options.local?.store : withNoopCursorRunEvents(ownedStore);
+        ownedStoreLease === undefined ? input.options.local?.store : ownedStoreLease.wrapped;
       const effectiveOptions: AgentOptions =
         effectiveStore === undefined || effectiveStore === input.options.local?.store
           ? input.options
