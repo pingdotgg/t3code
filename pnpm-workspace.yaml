@@ -227,6 +227,10 @@ packageExtensions:
   "@effect/vitest@*":
     dependencies:
       vite-plus: "catalog:"
+  # Our patch makes react-native-image-viewing's Android item import expo-image.
+  "react-native-image-viewing@*":
+    peerDependencies:
+      expo-image: "*"
 
 patchedDependencies:
   react-native-image-viewing@0.2.2: patches/react-native-image-viewing@0.2.2.patch
