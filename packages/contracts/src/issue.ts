@@ -103,6 +103,13 @@ export const IssueScopeRef = Schema.Struct({
 });
 export type IssueScopeRef = typeof IssueScopeRef.Type;
 
+export const IssueCandidatesInput = Schema.Struct({
+  ...IssueScopeRef.fields,
+  /** A name or email to search people for, where the candidates offer `assigneeSearch`. */
+  query: Schema.optional(Schema.String.check(Schema.isMaxLength(320))),
+});
+export type IssueCandidatesInput = typeof IssueCandidatesInput.Type;
+
 /** One row of a listing. Carries everything a list needs and nothing a detail needs. */
 export const IssueSummary = Schema.Struct({
   tracker: IssueTrackerKind,
@@ -463,6 +470,8 @@ export type IssueAssigneeCandidate = typeof IssueAssigneeCandidate.Type;
 export const IssueCandidates = Schema.Struct({
   labels: Schema.Array(IssueLabelCandidate),
   assignees: Schema.Array(IssueAssigneeCandidate),
+  /** `assignees` is incomplete, and the tracker searches the rest by `IssueCandidatesInput.query`. */
+  assigneeSearch: Schema.optional(Schema.Boolean),
   /** The tracker has more than were read, so somebody missing is not necessarily ineligible. */
   truncated: Schema.Boolean,
 });

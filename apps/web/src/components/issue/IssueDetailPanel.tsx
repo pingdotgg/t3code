@@ -3,6 +3,7 @@ import { issueEventSentence, issueWriteAccess } from "@t3tools/client-runtime/is
 import { createIssueCommentPager } from "@t3tools/client-runtime/state/issues";
 import {
   issueAssigneeHeld,
+  issueAssigneeSearchView,
   issueAssigneesAfterPicks,
   issueLabelsAfterPicks,
   issuePicksAfterFailedWrite,
@@ -43,6 +44,7 @@ import { m } from "~/i18n/messages";
 import { issueEnvironment, refreshIssueLists } from "~/state/issues";
 import { useProjects } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
+import { useDebouncedValue } from "~/state/queries";
 import { useOpenLink } from "~/browser/useOpenLink";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
@@ -254,14 +256,23 @@ function IssueAssigneePicker({
   const candidatesQuery = useEnvironmentQuery(
     open ? issueEnvironment.candidates({ environmentId, input: reference }) : null,
   );
-  const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
-  const needle = query.trim().toLowerCase();
-  const candidates = (candidatesQuery.data?.assignees ?? []).filter(
-    (candidate) =>
-      needle.length === 0 ||
-      candidate.login.toLowerCase().includes(needle) ||
-      (candidate.name ?? "").toLowerCase().includes(needle),
+  const debouncedQuery = useDebouncedValue(query.trim(), 250);
+  const searchable = candidatesQuery.data?.assigneeSearch === true;
+  const hostQuery = searchable && debouncedQuery.length > 0 ? debouncedQuery : null;
+  const search = useEnvironmentQuery(
+    open && hostQuery !== null
+      ? issueEnvironment.candidates({ environmentId, input: { ...reference, query: hostQuery } })
+      : null,
   );
+  const view = issueAssigneeSearchView({
+    loaded: candidatesQuery.data?.assignees ?? [],
+    searchable,
+    query,
+    debouncedQuery,
+    search,
+  });
+  const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
+  const candidates = view.candidates;
   const onOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen);
     if (nextOpen) {
@@ -304,8 +315,8 @@ function IssueAssigneePicker({
       query={query}
       onQueryChange={setQuery}
       searchLabel={gt("Search people")}
-      isPending={candidatesQuery.isPending && candidatesQuery.data === null}
-      error={candidatesQuery.data === null ? candidatesQuery.error : null}
+      isPending={(candidatesQuery.isPending && candidatesQuery.data === null) || view.pending}
+      error={candidatesQuery.data === null ? candidatesQuery.error : view.error}
       candidates={candidates}
       emptyLabel={gt("Nobody can be assigned here.")}
       noMatchLabel={gt("Nobody matches that.")}

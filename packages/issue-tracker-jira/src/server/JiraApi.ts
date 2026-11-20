@@ -226,6 +226,7 @@ export class JiraApi extends Context.Service<
     >;
     readonly assignable: (
       project: string,
+      query?: string,
     ) => Effect.Effect<
       { readonly users: ReadonlyArray<JiraUser>; readonly truncated: boolean },
       IssueTrackerError
@@ -507,24 +508,40 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.map((page) => page.values)),
   ).pipe(Effect.map((page) => ({ names: page.items, truncated: page.truncated })));
 
-  const assignable: JiraApi["Service"]["assignable"] = (project) =>
+  const assignable: JiraApi["Service"]["assignable"] = (project, query) =>
     paged(
       (startAt) =>
         send("assignable", Schema.Array(User), {
           method: "GET",
           path: "/rest/api/3/user/assignable/search",
-          query: { project, startAt, maxResults: PAGE },
+          query: { project, startAt, maxResults: PAGE, ...(query ? { query } : {}) },
         }),
       // Jira drops users the caller may not see after paging, so a short page is not the last.
       true,
     ).pipe(Effect.map((page) => ({ users: page.items, truncated: page.truncated })));
 
-  const findUsers: JiraApi["Service"]["findUsers"] = (query) =>
-    send("findUsers", Schema.Array(User), {
+  const findUsers: JiraApi["Service"]["findUsers"] = Effect.fn("JiraApi.findUsers")(function* (
+    query: string,
+  ) {
+    const found = yield* send("findUsers", Schema.Array(User), {
       method: "GET",
       path: "/rest/api/3/user/search",
       query: { query, maxResults: 20 },
     });
+    // Search reads names and emails, not the account id a remote assignee pick writes back.
+    if (found.length > 0 || /[\s@]/u.test(query)) return found;
+    return yield* send("findUsers", User, {
+      method: "GET",
+      path: "/rest/api/3/user",
+      query: { accountId: query },
+    }).pipe(
+      Effect.map((user) => [user]),
+      Effect.catchIf(
+        (error) => error.reason === "not-found" || error.reason === "failed",
+        () => Effect.succeed([]),
+      ),
+    );
+  });
 
   return JiraApi.of({
     origin: storedSite("origin").pipe(Effect.map((site) => site.origin)),

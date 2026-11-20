@@ -527,14 +527,23 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
       }),
 
       listCandidates: (input) =>
-        Effect.all([jira.labels, jira.assignable(projectKey(input.scope))], {
-          concurrency: 2,
-        }).pipe(
+        Effect.all(
+          [
+            // A person search does not need the label catalogue.
+            input.query === undefined
+              ? jira.labels
+              : Effect.succeed({ names: [], truncated: false }),
+            jira.assignable(projectKey(input.scope), input.query),
+          ],
+          { concurrency: 2 },
+        ).pipe(
           Effect.map(([labels, people]) => ({
             labels: labels.names.flatMap((name) =>
               name.trim() ? [{ name, color: null, description: null }] : [],
             ),
             assignees: people.users.map((user) => ({ ...toActor(user), id: user.accountId })),
+            // Past the pages read, a person is found by searching Jira for them.
+            assigneeSearch: people.truncated,
             truncated: labels.truncated || people.truncated,
           })),
         ),

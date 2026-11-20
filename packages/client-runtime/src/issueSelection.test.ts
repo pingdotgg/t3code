@@ -7,6 +7,8 @@ import {
   issuePicksFor,
   issueWriteAfterPicks,
   noIssuePicks,
+  mergeIssueAssigneeCandidates,
+  issueAssigneeSearchView,
   type IssuePicks,
 } from "./issueSelection.ts";
 import { emptySelection, toggleSelection } from "./pullRequestSelection.ts";
@@ -15,6 +17,35 @@ const label = (name: string) => ({ name, color: null, description: null });
 const person = (login: string, id: string) => ({ login, id, name: null, avatarUrl: null });
 
 describe("issue picker picks", () => {
+  it("keeps host-matched people found by email and deduplicates their account IDs", () => {
+    const loaded = [person("Sam Rivera", "u1")];
+    const searched = [person("Sam Rivera", "u1"), person("Jordan Lee", "u2")];
+    expect(mergeIssueAssigneeCandidates(loaded, searched, "support@acme.test")).toEqual(searched);
+    expect(mergeIssueAssigneeCandidates(loaded, [], "sam")).toEqual(loaded);
+    const input = {
+      loaded,
+      searchable: true,
+      query: "support@acme.test",
+      debouncedQuery: "support@acme.test",
+      search: { data: { assignees: searched }, isPending: false, error: null },
+    };
+    expect(issueAssigneeSearchView(input).candidates).toEqual(searched);
+    expect(issueAssigneeSearchView({ ...input, query: "jordan@acme.test" })).toMatchObject({
+      candidates: [],
+      pending: true,
+      error: null,
+    });
+    expect(
+      issueAssigneeSearchView({
+        ...input,
+        search: { data: null, isPending: false, error: "offline" },
+      }),
+    ).toMatchObject({
+      candidates: [],
+      pending: false,
+      error: "offline",
+    });
+  });
   it("writes the whole label set once, and nothing when the picks cancel out", () => {
     const detail = { labels: [label("bug"), label("ui")] };
     let draft = emptySelection<ReturnType<typeof label>>();
