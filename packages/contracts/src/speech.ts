@@ -204,6 +204,13 @@ export const EnvironmentSpeechModels = Schema.Struct({
 });
 export type EnvironmentSpeechModels = typeof EnvironmentSpeechModels.Type;
 
+export const EnvironmentSpeechModelDownload = Schema.Struct({
+  ...EnvironmentSpeechModels.fields,
+  // Older environments return only the catalog.
+  cancelled: Schema.optionalKey(Schema.Boolean),
+});
+export type EnvironmentSpeechModelDownload = typeof EnvironmentSpeechModelDownload.Type;
+
 export const EnvironmentSpeechModelRequest = Schema.Struct({ modelId: SpeechModelId });
 /** A model file, or a folder to search for them, on the environment's own disk. */
 export const EnvironmentSpeechModelLinkRequest = Schema.Struct({

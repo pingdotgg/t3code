@@ -156,7 +156,7 @@ function makeService(input: {
   readonly projects: ReadonlyArray<OrchestrationProjectShell>;
   readonly trackers: ReadonlyArray<IssueTrackerApi>;
   readonly bindings?: Record<string, IssueTrackerProjectBinding>;
-  readonly bindingsFailure?: PersistenceSqlError;
+  readonly readBindings?: IssueTrackerBindings.IssueTrackerBindingsRepository["Service"]["list"];
 }) {
   return IssueService.IssueService.pipe(
     Effect.provide(
@@ -165,16 +165,15 @@ function makeService(input: {
           Layer.mergeAll(
             Layer.mock(IssueTrackerBindings.IssueTrackerBindingsRepository)({
               list:
-                input.bindingsFailure !== undefined
-                  ? Effect.fail(input.bindingsFailure)
-                  : Effect.succeed(
-                      new Map(
-                        Object.entries(input.bindings ?? {}).map(([id, binding]) => [
-                          id as ProjectId,
-                          binding,
-                        ]),
-                      ),
-                    ),
+                input.readBindings ??
+                Effect.succeed(
+                  new Map(
+                    Object.entries(input.bindings ?? {}).map(([id, binding]) => [
+                      id as ProjectId,
+                      binding,
+                    ]),
+                  ),
+                ),
             }),
             Layer.succeed(
               IssueTrackerRegistry.IssueTrackerRegistry,
@@ -283,6 +282,40 @@ describe("IssueService", () => {
       expect(
         yield* enterprise.resolveUrl("https://code.acme.test/acme/web/issues/7"),
       ).toMatchObject({ projectId: "ghes", host: "code.acme.test", key: "7", writable: true });
+
+      // A fork lists its upstream's issues and its own, counted once, and may write to both.
+      const fork = project({ id: "fork", repository: "acme/web" });
+      const forked = yield* makeService({
+        projects: [
+          {
+            ...fork,
+            repositoryIdentity: {
+              ...fork.repositoryIdentity!,
+              origin: { canonicalKey: "github.com/me/web" },
+            },
+          },
+        ],
+        trackers: [
+          fakeTracker({
+            listIssues: (input) =>
+              Effect.succeed({ items: [issue(input.scope)], nextCursor: null }),
+            comment: (input) =>
+              Effect.sync(() => {
+                writes.push(`${input.scope}#${input.key}`);
+              }),
+          }),
+        ],
+      });
+      const listed = yield* forked.list({ state: "open" });
+      expect(listed.entries.map((entry) => entry.scope).sort()).toEqual(["acme/web", "me/web"]);
+      expect(listed.trackers).toEqual([expect.objectContaining({ projectCount: 1 })]);
+      yield* forked.comment({
+        ...own,
+        projectId: "fork" as ProjectId,
+        scope: "me/web",
+        body: "ok",
+      });
+      expect(writes).toEqual(["acme/web#1", "me/web#1"]);
 
       // Another host is not reachable through this project's credentials at all.
       const elsewhere = yield* Effect.flip(service.detail({ ...own, host: "ghe.example.test" }));
@@ -510,6 +543,36 @@ describe("IssueService", () => {
 });
 
 describe("IssueService with a standalone tracker", () => {
+  it.effect("reads bindings once per listing and sees changes on the next listing", () =>
+    Effect.gen(function* () {
+      const web = project({ id: "web", repository: "acme/web" });
+      const docs = project({ id: "docs", repository: "acme/docs" });
+      let reads = 0;
+      let scope = "ENG";
+      const service = yield* makeService({
+        projects: [web, docs],
+        trackers: [fakeTracker(), fakeStandaloneTracker()],
+        readBindings: Effect.sync(() => {
+          reads += 1;
+          return new Map([[web.id, { tracker: LINEAR, scope }]]);
+        }),
+      });
+
+      const first = yield* service.list({ state: "open" });
+      expect(first.scopes?.map((entry) => entry.scope)).toEqual(["ENG", "acme/web", "acme/docs"]);
+      expect(reads).toBe(1);
+
+      scope = "OPS";
+      const next = yield* service.list({ state: "open", refresh: true });
+      expect(next.scopes?.map((entry) => entry.scope)).toEqual(["OPS", "acme/web", "acme/docs"]);
+      expect(reads).toBe(2);
+
+      const missing = yield* service.list({ state: "open", projectId: "missing" as ProjectId });
+      expect(missing.scopes).toEqual([]);
+      expect(reads).toBe(2);
+    }),
+  );
+
   it.effect("rejects a URL from another workspace with the same team and issue key", () =>
     Effect.gen(function* () {
       const service = yield* makeService({
@@ -548,15 +611,20 @@ describe("IssueService with a standalone tracker", () => {
       const projects = [project({ id: "web", repository: "acme/web" }), project({ id: "notes" })];
       const trackers = [fakeTracker(record(GITHUB)), fakeStandaloneTracker(record(LINEAR))];
       const bound = yield* makeService({
-        projects,
+        projects: [...projects, project({ id: "api", repository: "acme/api" })],
         trackers,
         bindings: { ["web" as ProjectId]: { tracker: LINEAR, scope: "ENG" } },
       });
 
       const result = yield* bound.list({ state: "open" });
-      expect(listed.sort()).toEqual(["github github.com acme/web", "linear linear.app ENG"]);
+      expect(listed.sort()).toEqual([
+        "github github.com acme/api",
+        "github github.com acme/web",
+        "linear linear.app ENG",
+      ]);
       expect(result.entries.map((entry) => [entry.tracker, entry.scope, entry.key]).sort()).toEqual(
         [
+          ["github", "acme/api", "1"],
           ["github", "acme/web", "1"],
           ["linear", "ENG", "ENG-1"],
         ],
@@ -571,6 +639,17 @@ describe("IssueService with a standalone tracker", () => {
         host: "linear.app",
         scope: "ENG",
       });
+      // Narrowed to one project, both of its trackers are still read.
+      listed.length = 0;
+      const selected = yield* bound.list({ state: "open", projectId: "web" as ProjectId });
+      expect(listed.sort()).toEqual(["github github.com acme/web", "linear linear.app ENG"]);
+      expect(selected.entries.map((entry) => [entry.projectId, entry.scope]).sort()).toEqual([
+        ["web", "ENG"],
+        ["web", "acme/web"],
+      ]);
+      listed.length = 0;
+      yield* bound.list({ state: "open", excludeProjectIds: ["web" as ProjectId] });
+      expect(listed).toEqual(["github github.com acme/api"]);
       // A reference picks the project's tracker by kind; both are the project's own, so writable.
       const linearRef = {
         projectId: "web" as ProjectId,
@@ -630,10 +709,12 @@ describe("IssueService with a standalone tracker", () => {
       const unreadable = yield* makeService({
         projects,
         trackers,
-        bindingsFailure: new PersistenceSqlError({
-          operation: "IssueTrackerBindingsRepository.list",
-          detail: "disk I/O error",
-        }),
+        readBindings: Effect.fail(
+          new PersistenceSqlError({
+            operation: "IssueTrackerBindingsRepository.list",
+            detail: "disk I/O error",
+          }),
+        ),
       });
       expect(yield* Effect.flip(unreadable.list({ state: "open" }))).toMatchObject({
         _tag: "IssueOperationError",
