@@ -59,6 +59,10 @@
       "types": "./src/imageAttachmentSize.ts",
       "default": "./src/imageAttachmentSize.ts"
     },
+    "./diff-file-order": {
+      "types": "./src/diffFileOrder.ts",
+      "default": "./src/diffFileOrder.ts"
+    },
     "./handoff": {
       "types": "./src/handoff.ts",
       "default": "./src/handoff.ts"
@@ -98,6 +102,10 @@
     "./secret-request": {
       "types": "./src/secretRequest.ts",
       "default": "./src/secretRequest.ts"
+    },
+    "./link-batch": {
+      "types": "./src/linkBatch.ts",
+      "default": "./src/linkBatch.ts"
     },
     "./link-request": {
       "types": "./src/linkRequest.ts",

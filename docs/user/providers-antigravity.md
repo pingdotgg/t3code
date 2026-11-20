@@ -18,19 +18,12 @@ Antigravity setup.
 
 ### Sign in from a remote device
 
-Google returns to a `127.0.0.1` address. It can finish directly when your browser is
-on the environment's machine. From another device, the final page will usually
-fail to load because the sign-in listener is on the environment.
+Google finishes on an Antigravity page that shows a code. Paste that code, or the
+page's full address, into the code field in the client where you started sign-in.
+This works the same from any device.
 
-Copy the full return address, including everything after `?`, into the return URL
-field in the client where you started sign-in, then choose
-**Continue**. Keep the original address; do not replace it with the server's
-hostname. Only that T3 Code sign-in session can finish the attempt. If it expires,
-retry sign-in and use the new link.
-
-The return URL contains a temporary sign-in code. Paste it only into the setup
-field. A successful callback page alone does not confirm account access; wait for
-T3 Code's confirmation.
+The code is temporary. Paste it only into the setup field. The page alone does not
+confirm account access; wait for T3 Code's confirmation.
 
 ### Other sign-in methods
 
@@ -61,9 +54,6 @@ Install [Antigravity CLI](https://antigravity.google/docs/getting-started) on th
 Set **Binary path** to its `agy` executable and update it yourself.
 Leave the field blank to use the managed runtime, or a compatible executable on
 `PATH` if no managed runtime is installed.
-On Windows, **Binary path** can also be a `.cmd` or `.bat` script that only sets
-variables and then runs `agy_acp_server.exe` by its full path or a `%~dp0`-relative
-path; keep `localharness_external.exe` beside that executable.
 
 ## Update the managed runtime
 
@@ -72,10 +62,12 @@ is available. T3 checks Google's CLI release channel while provider update check
 are enabled. Installing or reinstalling also checks that channel. Updates keep
 your profile and existing runtime available if the new release fails validation.
 
-Updating an older 1.4.5 installation migrates it to the native CLI. You may need to
-sign in again after migration. Threads already running finish with their original
-runtime; new sessions use the updated release. Custom binary paths keep using the
-executable you selected.
+T3 needs Antigravity 1.5 or newer and recommends 1.5.12 or newer. Sessions do not
+start on an older runtime: update the managed runtime here, or update the executable
+a custom binary path or `PATH` points at. You may need to sign in again after
+updating from a runtime older than 1.5. Threads already running finish with their
+original runtime; new sessions use the updated release. Custom binary paths keep
+using the executable you selected.
 
 ## Models and threads
 
@@ -114,9 +106,8 @@ Skills for every project go in `~/.gemini/config/skills` or
 so a skill there only appears when the project itself is your home directory.
 
 Antigravity receives images and audio directly, and reads PDFs and text files as
-documents. With the managed runtime on macOS and Linux, an MP4 video up to 20 MiB
-is sent as video to Gemini models. Other attachments, and videos for other models, are passed as a
-saved file path for the agent to inspect with its tools.
+documents. Other attachments, including videos, are passed as a saved file path for
+the agent to inspect with its tools.
 
 ### Subagents
 
@@ -154,8 +145,6 @@ is refused while the runtime is in use.
 
 When your Antigravity runtime offers `/goal`, send `/goal` followed by a verifiable
 objective. Antigravity keeps working until it completes the goal or you cancel it.
-If you still use the older 1.4.5 runtime, update Antigravity in provider settings,
-then refresh provider status.
 
 Use Stop to interrupt a running goal, then ask Antigravity to stop pursuing it
 before starting more work. Ordinary follow-ups wait until the running turn ends.

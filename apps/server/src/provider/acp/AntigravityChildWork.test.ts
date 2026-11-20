@@ -11,6 +11,7 @@ import {
   ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
   antigravitySubagentLaunches,
   describeAntigravitySubagentLaunches,
+  readAntigravityChildrenAtWork,
   readAntigravityChildWork,
 } from "./AntigravityChildWork.ts";
 import { sanitizeAntigravityToolPayload } from "./AntigravityProtocol.ts";
@@ -469,6 +470,48 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
         },
       });
       expect(yield* read(profile, "call_11340266277043349041")).toEqual([]);
+    }),
+  );
+
+  it.effect("counts a detached child killed before it reported as no longer at work", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const profile = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-killed-" });
+      const killed = "0a591388-d9d9-439d-a2a0-90932fd25b39";
+      const writeJson = (segments: ReadonlyArray<string>, value: unknown) => {
+        const file = path.join(profile, "antigravity-acp", "brain", ...segments);
+        return fs
+          .makeDirectory(path.dirname(file), { recursive: true })
+          .pipe(Effect.andThen(fs.writeFileString(file, JSON.stringify(value))));
+      };
+      const child = (conversationId: string, state: string, callId: string) =>
+        Effect.all([
+          writeJson([ROOT, ".system_generated", "subagents", `${conversationId}.json`], {
+            conversationId,
+            subagentDescriptor: { typeName: "research", role: LAUNCH.role },
+            state,
+          }),
+          writeJson([conversationId, ".system_generated", "messages", "launch.json"], {
+            sender: ROOT,
+            content: LAUNCH.prompt,
+            sourceMetadata: {
+              tool: { conversationId: ROOT, toolCall: { id: callId, name: "invoke_subagent" } },
+            },
+          }),
+        ]);
+
+      // agy 1.5.13 `manage_subagents(kill)` only rewrites the record's state; nothing reaches the parent's inbox.
+      yield* child(CHILD, "SUBAGENT_STATE_ALIVE", "call_alive");
+      yield* child(killed, "SUBAGENT_STATE_KILLED", "call_killed");
+
+      expect(
+        yield* readAntigravityChildrenAtWork({
+          profileDirectory: profile,
+          rootSessionId: ROOT,
+          toolCallIds: ["call_alive", "call_killed"],
+        }),
+      ).toEqual(["call_alive"]);
     }),
   );
 

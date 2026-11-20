@@ -28,6 +28,17 @@ export class SecretStoreSecureError extends Schema.TaggedError<SecretStoreSecure
   }
 }
 
+export class SecretStoreNameError extends Schema.TaggedError<SecretStoreNameError>()(
+  "SecretStoreNameError",
+  {
+    resource: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Refused ${this.resource}: a secret name cannot contain a path separator.`;
+  }
+}
+
 export class SecretStoreReadError extends Schema.TaggedError<SecretStoreReadError>()(
   "SecretStoreReadError",
   {
@@ -118,6 +129,7 @@ export class SecretStoreEncodeError extends Schema.TaggedError<SecretStoreEncode
 
 export const SecretStoreError = Schema.Union([
   SecretStoreSecureError,
+  SecretStoreNameError,
   SecretStoreReadError,
   SecretStoreTemporaryPathError,
   SecretStorePersistError,
@@ -169,30 +181,43 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  const resolveSecretPath = (name: string) => path.join(serverConfig.secretsDir, `${name}.bin`);
+  // Some names carry text from outside the server; one with a separator would leave the directory.
+  const resolveSecretPath = (name: string): Effect.Effect<string, SecretStoreNameError> =>
+    /[/\\\0]/.test(name)
+      ? Effect.fail(new SecretStoreNameError({ resource: `secret ${JSON.stringify(name)}` }))
+      : Effect.succeed(path.join(serverConfig.secretsDir, `${name}.bin`));
   const emptySecretRepair = yield* Semaphore.make(1);
   const isMissingOrNonEmpty = (secret: Option.Option<Uint8Array>) =>
     Option.isNone(secret) || secret.value.byteLength > 0;
 
   const get: ServerSecretStore["Service"]["get"] = (name) =>
-    fileSystem.readFile(resolveSecretPath(name)).pipe(
-      Effect.map((bytes) => Option.some(Uint8Array.from(bytes))),
-      Effect.catch((cause) =>
-        cause.reason._tag === "NotFound"
-          ? Effect.succeedNone
-          : Effect.fail(
-              new SecretStoreReadError({
-                resource: `secret ${name}`,
-                cause,
-              }),
-            ),
+    resolveSecretPath(name).pipe(
+      Effect.flatMap((secretPath) =>
+        fileSystem.readFile(secretPath).pipe(
+          Effect.map((bytes) => Option.some(Uint8Array.from(bytes))),
+          Effect.catch((cause) =>
+            cause.reason._tag === "NotFound"
+              ? Effect.succeedNone
+              : Effect.fail(
+                  new SecretStoreReadError({
+                    resource: `secret ${name}`,
+                    cause,
+                  }),
+                ),
+          ),
+        ),
       ),
       Effect.withSpan("ServerSecretStore.get"),
     );
 
-  const set: ServerSecretStore["Service"]["set"] = (name, value) => {
-    const secretPath = resolveSecretPath(name);
-    return crypto.uuidV4().pipe(
+  const set: ServerSecretStore["Service"]["set"] = (name, value) =>
+    resolveSecretPath(name).pipe(
+      Effect.flatMap((secretPath) => setAt(name, secretPath, value)),
+      Effect.withSpan("ServerSecretStore.set"),
+    );
+
+  const setAt = (name: string, secretPath: string, value: Uint8Array) =>
+    crypto.uuidV4().pipe(
       Effect.mapError(
         (cause) =>
           new SecretStoreTemporaryPathError({
@@ -223,15 +248,15 @@ export const make = Effect.gen(function* () {
           ),
         );
       }),
-      Effect.withSpan("ServerSecretStore.set"),
     );
-  };
 
   // `link` publishes the fully written temp file under the final name, or fails with
   // AlreadyExists, so a concurrent reader never observes a partially written secret.
-  const create: ServerSecretStore["Service"]["create"] = (name, value) => {
-    const secretPath = resolveSecretPath(name);
-    return crypto.uuidV4().pipe(
+  const create: ServerSecretStore["Service"]["create"] = (name, value) =>
+    resolveSecretPath(name).pipe(Effect.flatMap((secretPath) => createAt(name, secretPath, value)));
+
+  const createAt = (name: string, secretPath: string, value: Uint8Array) =>
+    crypto.uuidV4().pipe(
       Effect.mapError(
         (cause) =>
           new SecretStoreTemporaryPathError({
@@ -263,7 +288,6 @@ export const make = Effect.gen(function* () {
         );
       }),
     );
-  };
 
   const getOrCreateRandom: ServerSecretStore["Service"]["getOrCreateRandom"] = (name, bytes) =>
     get(name).pipe(
@@ -321,16 +345,20 @@ export const make = Effect.gen(function* () {
     );
 
   const remove: ServerSecretStore["Service"]["remove"] = (name) =>
-    fileSystem.remove(resolveSecretPath(name)).pipe(
-      Effect.catch((cause) =>
-        cause.reason._tag === "NotFound"
-          ? Effect.void
-          : Effect.fail(
-              new SecretStoreRemoveError({
-                resource: `secret ${name}`,
-                cause,
-              }),
-            ),
+    resolveSecretPath(name).pipe(
+      Effect.flatMap((secretPath) =>
+        fileSystem.remove(secretPath).pipe(
+          Effect.catch((cause) =>
+            cause.reason._tag === "NotFound"
+              ? Effect.void
+              : Effect.fail(
+                  new SecretStoreRemoveError({
+                    resource: `secret ${name}`,
+                    cause,
+                  }),
+                ),
+          ),
+        ),
       ),
       Effect.withSpan("ServerSecretStore.remove"),
     );
