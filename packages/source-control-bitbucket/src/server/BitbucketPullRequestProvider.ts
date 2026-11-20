@@ -171,15 +171,15 @@ export const make = Effect.gen(function* () {
   };
 
   // The pull request itself carries the detail, so a rate-limited secondary read only makes it partial.
-  const recoverDetailRead = <A>(
+  const recoverRateLimit = <A>(
     read: Effect.Effect<A, BitbucketPullRequestApi.BitbucketPullRequestApiError>,
     fallback: A,
   ) =>
-    recoverRead(read, fallback).pipe(
-      Effect.map((value) => ({ value, partial: false })),
+    read.pipe(
+      Effect.map((value) => ({ value, partial: undefined })),
       Effect.catchIf(
         (error) => bitbucketProviderFailure(error).reason === "rate-limited",
-        () => Effect.succeed({ value: fallback, partial: true }),
+        (error) => Effect.succeed({ value: fallback, partial: fail("getChangeRequest")(error) }),
       ),
     );
 
@@ -240,14 +240,14 @@ export const make = Effect.gen(function* () {
       return Effect.all(
         [
           api.getPullRequest(target),
-          recoverDetailRead(api.getDiffStat(target), {
+          recoverRateLimit(api.getDiffStat(target), {
             additions: 0,
             deletions: 0,
             changedFiles: 0,
           }),
-          recoverDetailRead(api.getMergeability(target), "unknown" as const),
-          recoverDetailRead(api.listChecks(target), []),
-          recoverDetailRead(api.getRepositoryPermission(target), true),
+          recoverRateLimit(recoverRead(api.getMergeability(target), "unknown" as const), "unknown"),
+          recoverRateLimit(recoverRead(api.listChecks(target), []), []),
+          recoverRateLimit(recoverRead(api.getRepositoryPermission(target), true), true),
         ],
         { concurrency: 5 },
       ).pipe(
@@ -259,24 +259,26 @@ export const make = Effect.gen(function* () {
             { value: mergeability, partial: mergeabilityPartial },
             { value: checks, partial: checksPartial },
             { value: canWrite, partial: canWritePartial },
-          ]): ProviderChangeRequestDetail => ({
-            ...toChangeRequest(pullRequest),
-            mergeability,
-            additions: diffStat.additions,
-            deletions: diffStat.deletions,
-            changedFiles: diffStat.changedFiles,
-            body: pullRequest.body,
-            mergedAt: pullRequest.state === "merged" ? pullRequest.closedAt : null,
-            closedAt: pullRequest.state === "closed" ? pullRequest.closedAt : null,
-            reviewers: pullRequest.reviewers,
-            checks,
-            // Bitbucket exposes no strategy permissions; unsupported strategies fail at merge.
-            mergeCapabilities: { merge: true, squash: true, rebase: true },
-            viewerPermissions: bitbucketViewerPermissions({ canWrite }),
-            ...(diffStatPartial || mergeabilityPartial || checksPartial || canWritePartial
-              ? { partial: true }
-              : {}),
-          }),
+          ]): ProviderChangeRequestDetail => {
+            const partial =
+              diffStatPartial ?? mergeabilityPartial ?? checksPartial ?? canWritePartial;
+            return {
+              ...toChangeRequest(pullRequest),
+              mergeability,
+              additions: diffStat.additions,
+              deletions: diffStat.deletions,
+              changedFiles: diffStat.changedFiles,
+              body: pullRequest.body,
+              mergedAt: pullRequest.state === "merged" ? pullRequest.closedAt : null,
+              closedAt: pullRequest.state === "closed" ? pullRequest.closedAt : null,
+              reviewers: pullRequest.reviewers,
+              checks,
+              // Bitbucket exposes no strategy permissions; unsupported strategies fail at merge.
+              mergeCapabilities: { merge: true, squash: true, rebase: true },
+              viewerPermissions: bitbucketViewerPermissions({ canWrite }),
+              ...(partial === undefined ? {} : { partial }),
+            };
+          },
         ),
       );
     },

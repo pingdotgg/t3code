@@ -1869,6 +1869,12 @@ export const make = Effect.gen(function* () {
             ? project.api.getChangeRequest(providerInput)
             : project.api.getChangeRequestSummary(providerInput);
         return read.pipe(
+          // A summary is persisted and held as the last good one, so a partial read fails as a rate limit.
+          Effect.tap((value) =>
+            "partial" in value && value.partial !== undefined
+              ? Effect.fail(value.partial)
+              : Effect.void,
+          ),
           Effect.mapError(toPullRequestError("summary")),
           observeRead,
           Effect.map(({ value, observedAt }) => toSummary(project, value, observedAt)),
@@ -1912,7 +1918,7 @@ export const make = Effect.gen(function* () {
   // Fallback values from failed secondary reads; they must not be cached or replace a fuller reading.
   const partialDetails = new WeakSet<PullRequestDetail>();
   const flagged = (changeRequest: ProviderChangeRequestDetail, detail: PullRequestDetail) => {
-    if (changeRequest.partial === true) partialDetails.add(detail);
+    if (changeRequest.partial !== undefined) partialDetails.add(detail);
     return detail;
   };
   const detailUncached: PullRequestService["Service"]["detail"] = (input) =>

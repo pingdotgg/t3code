@@ -2086,7 +2086,7 @@ it.effect(
     }),
 );
 
-it.effect("a partial detail is returned without replacing a fuller reading", () =>
+it.effect("a partial detail is returned without replacing a fuller detail or summary", () =>
   Effect.gen(function* () {
     let partial = false;
     const service = yield* makeService({
@@ -2098,7 +2098,17 @@ it.effect("a partial detail is returned without replacing a fuller reading", () 
           getChangeRequest: ({ number }) =>
             Effect.sync(() =>
               partial
-                ? { ...hostedChangeRequest("Body", 0), number, changedFiles: 0, partial: true }
+                ? {
+                    ...hostedChangeRequest("Body", 0),
+                    number,
+                    changedFiles: 0,
+                    partial: new PullRequestProviderError({
+                      provider: SourceControlProviderKind.make("github"),
+                      operation: "getChangeRequest",
+                      reason: "rate-limited",
+                      detail: "Rate limited.",
+                    }),
+                  }
                 : { ...hostedChangeRequest("Body", 120), number },
             ),
         }),
@@ -2110,12 +2120,18 @@ it.effect("a partial detail is returned without replacing a fuller reading", () 
     partial = true;
     yield* TestClock.adjust("61 seconds");
     const fresh = yield* service.detail({ ...reference, allowStale: false });
+    const synced = yield* Effect.result(
+      service.summary(reference, { recoverTransientFailure: false }),
+    );
     const reopened = yield* service.detail(reference);
+    const summary = yield* service.summary(reference);
     const cold = yield* service.detail({ ...reference, number: 2 });
 
-    expect({ fresh, reopened, cold }).toMatchObject({
+    expect({ fresh, synced, reopened, summary, cold }).toMatchObject({
       fresh: { additions: 0, changedFiles: 0 },
+      synced: { _tag: "Failure", failure: { cause: { reason: "rate-limited" } } },
       reopened: { additions: 120, changedFiles: 2 },
+      summary: { additions: 120, changedFiles: 2 },
       cold: { number: 2, additions: 0, changedFiles: 0 },
     });
   }),

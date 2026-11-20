@@ -131,7 +131,9 @@ for (const operation of [
           } else {
             expect(result._tag).toBe("Success");
             if (!isActivityRead && result._tag === "Success") {
-              expect("partial" in result.success && result.success.partial).toBe(status === 429);
+              expect("partial" in result.success && result.success.partial !== undefined).toBe(
+                status === 429,
+              );
             }
           }
         }
@@ -139,7 +141,7 @@ for (const operation of [
   );
 }
 
-it.effect("returns the pull request when only its diffstat read is rate limited", () =>
+it.effect("returns the pull request as partial when only its diffstat read is rate limited", () =>
   Effect.gen(function* () {
     const pullRequest = Result.getOrThrow(
       decodePullRequestJson(`{
@@ -155,11 +157,11 @@ it.effect("returns the pull request when only its diffstat read is rate limited"
       Effect.provide(
         Layer.mock(BitbucketPullRequestApi.BitbucketPullRequestApi)({
           getPullRequest: () => Effect.succeed(pullRequest),
-          getDiffStat: () =>
+          getDiffStat: (input) =>
             Effect.fail(
               new BitbucketApi.BitbucketResponseError({
                 operation: "request",
-                status: 429,
+                status: input.number === 1 ? 429 : 503,
                 responseBodyLength: 0,
               }),
             ),
@@ -178,9 +180,21 @@ it.effect("returns the pull request when only its diffstat read is rate limited"
       }),
     );
 
-    expect(result).toMatchObject({
-      _tag: "Success",
-      success: { title: "Rate limited diffstat", partial: true },
+    const unavailable = yield* Effect.result(
+      provider.getChangeRequest({
+        cwd: "/repo",
+        repository: "acme/web",
+        host: "bitbucket.org",
+        number: 2,
+      }),
+    );
+
+    expect({ result, unavailable }).toMatchObject({
+      result: {
+        _tag: "Success",
+        success: { title: "Rate limited diffstat", partial: { reason: "rate-limited" } },
+      },
+      unavailable: { _tag: "Failure", failure: { reason: "failed" } },
     });
   }),
 );
