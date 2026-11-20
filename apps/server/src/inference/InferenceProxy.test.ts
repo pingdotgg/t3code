@@ -1453,6 +1453,7 @@ it.effect(
             expect(yield* proxy.routeCandidates(local.key, hostId, "codex", astra)).toEqual([]);
             poolCooldowns = undefined;
             catalog = [...initialCatalog, { id: astra, owned_by: "openai" }];
+            expect(yield* proxy.routeCandidates(local.key, hostId, "codex", astra)).toHaveLength(1);
             yield* proxy.refreshModelCatalog(true, ProviderInstanceId.make("codex"));
             expect(yield* proxy.routeCandidates(local.key, hostId, "codex", astra)).toHaveLength(1);
             catalog = initialCatalog;
