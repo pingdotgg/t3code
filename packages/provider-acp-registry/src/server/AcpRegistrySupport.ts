@@ -1243,9 +1243,9 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       if (commandName === undefined) return Option.none<AcpRegistryPackageInstallReceipt>();
       const binDirectory = platform === "win32" ? globalPrefix : path.join(globalPrefix, "bin");
       const executablePath = resolveExecutable(
-        commandName,
+        path.join(binDirectory, commandName),
         platform,
-        withPreferredPath(environment, binDirectory, platform),
+        environment,
       );
       return executablePath === undefined
         ? Option.none<AcpRegistryPackageInstallReceipt>()
