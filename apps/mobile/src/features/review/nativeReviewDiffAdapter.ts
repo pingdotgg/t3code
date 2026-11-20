@@ -1,3 +1,4 @@
+import { cutLineNoteStart } from "@t3tools/shared/diffCutLines";
 import type { NativeReviewDiffRow, NativeReviewDiffTheme } from "../diffs/nativeReviewDiffSurface";
 import type { NativeReviewDiffFile } from "../diffs/nativeReviewDiffTypes";
 import * as Arr from "effect/Array";
@@ -14,6 +15,8 @@ import {
   type ReviewRenderableLineRow,
 } from "./reviewModel";
 import type { ReviewInlineComment } from "./reviewCommentSelection";
+import { msg } from "gt-react-native";
+import { m } from "../../i18n/messages";
 
 const NATIVE_REVIEW_MAX_WORD_DIFF_RANGE_COUNT = 4;
 const NATIVE_REVIEW_MAX_WORD_DIFF_COVERAGE = 0.45;
@@ -21,7 +24,7 @@ const NATIVE_REVIEW_MAX_WORD_DIFF_COVERAGE = 0.45;
 const NATIVE_REVIEW_MAX_WORD_DIFF_COMPARISONS = 1_000;
 // Bound the rows serialized to the native heap before mapping and word matching.
 const NATIVE_REVIEW_MAX_FILE_ROWS = 100_000;
-const TRUNCATED_FILE_NOTICE = "This diff is too large to show in full.";
+const TRUNCATED_FILE_NOTICE = msg("This diff is too large to show in full.");
 const NATIVE_HEX_COLOR = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})([\da-f]{2})?$/i;
 const NATIVE_RGBA_COLOR =
   /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)$/;
@@ -226,6 +229,8 @@ export function createNativeReviewDiffTheme(
       deleteBar: terminalRed ?? "#ff2e3f",
       addText: "#5ECC71",
       deleteText: "#FF6762",
+      warningText: nativeColor(appTheme["--color-warning-foreground"]),
+      warningBackground: nativeColor(appTheme["--color-warning"]),
     };
   }
 
@@ -243,6 +248,8 @@ export function createNativeReviewDiffTheme(
     deleteBar: terminalRed ?? "#ff2e3f",
     addText: "#199F43",
     deleteText: "#D52C36",
+    warningText: nativeColor(appTheme["--color-warning-foreground"]),
+    warningBackground: nativeColor(appTheme["--color-warning"]),
   };
 }
 
@@ -270,7 +277,15 @@ function createNoticeRow(fileId: string, suffix: string, text: string): NativeRe
 }
 
 function noticeRowsForFile(file: ReviewRenderableFile): ReadonlyArray<NativeReviewDiffRow> {
-  if (file.notice) return [createNoticeRow(file.id, "loading", file.notice)];
+  if (file.notice) {
+    return [
+      {
+        ...createNoticeRow(file.id, "loading", file.notice),
+        ...(file.noticeTone === undefined ? {} : { tone: file.noticeTone }),
+        ...(file.noticeActionable ? { actionable: true } : {}),
+      },
+    ];
+  }
   if (file.rows.length > 0) {
     return [];
   }
@@ -278,12 +293,18 @@ function noticeRowsForFile(file: ReviewRenderableFile): ReadonlyArray<NativeRevi
   const previewState = getReviewFilePreviewState(file);
   if (previewState.kind === "suppressed" && previewState.reason === "non-text") {
     return [
-      createNoticeRow(file.id, "non-text", "Unsupported format. Diff contents are not available."),
+      createNoticeRow(
+        file.id,
+        "non-text",
+        m(msg("Unsupported format. Diff contents are not available.")),
+      ),
     ];
   }
 
   if (file.changeType === "rename-pure") {
-    return [createNoticeRow(file.id, "rename", "This file was renamed without modifications.")];
+    return [
+      createNoticeRow(file.id, "rename", m(msg("This file was renamed without modifications."))),
+    ];
   }
 
   return [];
@@ -388,6 +409,7 @@ function mapLineRow(
   row: ReviewRenderableLineRow,
   rowIndex: number,
 ): NativeReviewDiffRow {
+  const noteStart = cutLineNoteStart(row.content);
   return {
     kind: "line",
     id: `${file.id}:line:${rowIndex}:${row.id}`,
@@ -396,6 +418,7 @@ function mapLineRow(
     change: row.change,
     oldLineNumber: row.oldLineNumber,
     newLineNumber: row.newLineNumber,
+    ...(noteStart === null ? {} : { noteStart }),
   };
 }
 
@@ -446,16 +469,16 @@ function prepareFileRows(file: ReviewRenderableFile): PreparedNativeReviewFileRo
   });
 
   if (sourceRows !== file.rows) {
-    rows.push(createNoticeRow(file.id, "truncated", TRUNCATED_FILE_NOTICE));
+    rows.push(createNoticeRow(file.id, "truncated", m(TRUNCATED_FILE_NOTICE)));
   }
   rows.push(...noticeRowsForFile(file));
   if (file.noEOFCRAdditions || file.noEOFCRDeletions) {
-    const side = file.noEOFCRAdditions
+    const text = file.noEOFCRAdditions
       ? file.noEOFCRDeletions
-        ? "Old and new files have"
-        : "New file has"
-      : "Old file has";
-    rows.push(createNoticeRow(file.id, "eof", `${side} no newline at end of file.`));
+        ? m(msg("Old and new files have no newline at end of file."))
+        : m(msg("New file has no newline at end of file."))
+      : m(msg("Old file has no newline at end of file."));
+    rows.push(createNoticeRow(file.id, "eof", text));
   }
   const prepared: PreparedNativeReviewFileRows = {
     fileId: file.id,
