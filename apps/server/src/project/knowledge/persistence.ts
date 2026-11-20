@@ -525,8 +525,13 @@ export const makeStore = Effect.gen(function* () {
               ? "edited"
               : event,
         ...(event === "curated" || event === "restored" ? { memoryAction: event } : {}),
-        helpful: row.helpful === null ? null : row.helpful !== 0,
         ...(reason === null ? {} : { reason }),
+        // Older clients label a feedback event with helpful=null as a positive vote.
+        ...(event === "feedback"
+          ? row.helpful === null
+            ? { helpful: false, feedbackScope: "task", reason: "Unrelated to this task." }
+            : { helpful: row.helpful !== 0, feedbackScope: "fact" }
+          : { helpful: null }),
       }))
       .toReversed();
   });

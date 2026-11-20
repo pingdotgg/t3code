@@ -3481,6 +3481,10 @@ it.effect("records every lifecycle event in order and erases bodies when forgott
       { ...existing(helpful, "history-down"), action: "feedback", helpful: false },
       { kind: "user" },
     );
+    const offTask = yield* knowledge.mutate(
+      { ...existing(unhelpful, "history-off-task"), action: "feedback", helpful: "irrelevant" },
+      agent,
+    );
     const detail = yield* knowledge.readFact({ projectId, factId: created.id });
     assert.deepEqual(
       detail.history.map((entry) => [entry.event, entry.revision, entry.helpful]),
@@ -3489,8 +3493,11 @@ it.effect("records every lifecycle event in order and erases bodies when forgott
         ["edited", 2, null],
         ["feedback", 3, true],
         ["feedback", 4, false],
+        ["feedback", 5, false],
       ],
     );
+    assert.equal(detail.history.at(-1)?.feedbackScope, "task");
+    assert.equal(detail.history.at(-1)?.reason, "Unrelated to this task.");
     assert.deepEqual(detail.history[0]?.actor, agent);
     assert.equal(detail.history[1]?.content, "Cache keys include tenant and region IDs.");
     assert.match(detail.history[1]?.contentDigest ?? "", /^[a-f0-9]{64}$/);
@@ -3500,12 +3507,13 @@ it.effect("records every lifecycle event in order and erases bodies when forgott
       [
         [0.5, 0.55],
         [0.55, unhelpful.trust],
+        [unhelpful.trust, offTask.trust],
       ],
     );
     assert.isFalse(detail.historyTruncated);
 
     yield* knowledge.mutate(
-      { ...existing(unhelpful, "history-forget"), action: "forget" },
+      { ...existing(offTask, "history-forget"), action: "forget" },
       { kind: "user" },
     );
     const forgotten = yield* knowledge.readFact({ projectId, factId: created.id });

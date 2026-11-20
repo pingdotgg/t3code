@@ -268,6 +268,7 @@ export const ProjectFactHistoryEntry = Schema.Struct({
   trustBefore: Schema.NullOr(Schema.Number),
   trustAfter: Schema.Number,
   helpful: Schema.NullOr(Schema.Boolean),
+  feedbackScope: Schema.optionalKey(Schema.Literals(["fact", "task"])),
   // The replacement for "superseded"; the replaced fact for a superseding "created".
   relatedFactId: Schema.NullOr(ProjectFactId),
   reason: Schema.optionalKey(Schema.String),

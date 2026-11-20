@@ -251,8 +251,7 @@ export function projectFactHistoryLabel(entry: ProjectFactHistoryEntry): string 
     case "forgotten":
       return entry.actor.kind === "curator" ? "Removed automatically" : "Forgotten";
     case "feedback":
-      if (entry.helpful === null) return "Unrelated to the task";
-      return entry.helpful ? "Marked helpful" : "Marked unhelpful";
+      return entry.helpful === false ? "Marked unhelpful" : "Marked helpful";
     case "superseded":
       return "Superseded";
   }

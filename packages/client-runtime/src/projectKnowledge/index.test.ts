@@ -136,9 +136,6 @@ it("traces trust from before the first recorded event through each feedback", ()
 });
 
 it("labels memory actions carried by legacy-compatible history events", () => {
-  expect(projectFactHistoryLabel(historyEntry(2, "feedback", 0.5, 0.5))).toBe(
-    "Unrelated to the task",
-  );
   const edited = historyEntry(2, "edited", null, 0.5);
   expect(projectFactHistoryLabel(edited)).toBe("Edited to revision 2");
   expect(projectFactHistoryLabel({ ...edited, memoryAction: "curated" })).toBe(
