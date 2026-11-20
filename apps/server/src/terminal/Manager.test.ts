@@ -1379,7 +1379,9 @@ it.layer(
               .writeFileString(path, data, options)
               .pipe(
                 Effect.tap(() =>
-                  data.length > 0 ? Queue.offer(writes, Buffer.byteLength(data)) : Effect.void,
+                  path.endsWith(".log") && data.length > 0
+                    ? Queue.offer(writes, Buffer.byteLength(data))
+                    : Effect.void,
                 ),
               ),
         }),
@@ -1457,7 +1459,11 @@ it.layer(
             return fs
               .writeFileString(path, data, options)
               .pipe(
-                Effect.tap(() => (data.length > 0 ? Queue.offer(writes, undefined) : Effect.void)),
+                Effect.tap(() =>
+                  path.endsWith(".log") && data.length > 0
+                    ? Queue.offer(writes, undefined)
+                    : Effect.void,
+                ),
               );
           },
         }),
