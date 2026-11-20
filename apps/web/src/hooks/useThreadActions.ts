@@ -6,7 +6,11 @@ import {
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  canSnooze,
+  type SnoozePreset,
+  threadWokeAt,
+} from "@t3tools/client-runtime/state/thread-settled";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import {
   AuthOrchestrationOperateScope,
@@ -951,7 +955,10 @@ export function useThreadActions() {
     });
   };
 
-  const snoozeThread = async (target: ScopedThreadRef, snoozedUntil: string) => {
+  const snoozeThread = async (
+    target: ScopedThreadRef,
+    choice: Pick<SnoozePreset, "snoozedUntil" | "wakesOnPullRequest">,
+  ) => {
     if (!readEnvironmentServerConfigLoaded(target.environmentId)) {
       return AsyncResult.failure(
         Cause.fail(
@@ -977,7 +984,11 @@ export function useThreadActions() {
     const action = ThreadUndo.begin("snooze", scopedThreadKey(target));
     const result = await snoozeThreadMutation({
       environmentId: target.environmentId,
-      input: { threadId: target.threadId, snoozedUntil },
+      input: {
+        threadId: target.threadId,
+        snoozedUntil: choice.snoozedUntil,
+        ...(choice.wakesOnPullRequest === true && { wakesOnPullRequest: true }),
+      },
     });
     if (result._tag !== "Success") {
       action.finish();
@@ -1008,7 +1019,11 @@ export function useThreadActions() {
           case "snooze":
             return snoozeThreadMutation({
               environmentId: target.environmentId,
-              input: { threadId: target.threadId, snoozedUntil: step.snoozedUntil },
+              input: {
+                threadId: target.threadId,
+                snoozedUntil: step.snoozedUntil,
+                ...(step.wakesOnPullRequest === true && { wakesOnPullRequest: true }),
+              },
             });
         }
       },

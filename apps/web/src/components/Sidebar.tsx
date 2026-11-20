@@ -29,7 +29,9 @@ import { SortableContext } from "@dnd-kit/sortable";
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import {
   canSnooze,
+  canSnoozeUntilPullRequest,
   effectiveSnoozed,
+  threadSnoozeWakeLabel,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
 import {
@@ -224,12 +226,7 @@ import {
 import { SidebarPointerSensor } from "./Sidebar.pointer";
 import { createSidebarListMotion } from "./Sidebar.motion";
 import { createSidebarShiftGuard } from "./Sidebar.shiftGuard";
-import {
-  pickSnoozePreset,
-  resolveSnoozePresets,
-  snoozeWakeLabel,
-  type SnoozePreset,
-} from "./Sidebar.snooze";
+import { pickSnoozePreset, resolveSnoozePresets, type SnoozePreset } from "./Sidebar.snooze";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { deriveProviderEntriesByEnvironment } from "../providerInstances";
 import { useStableCallback } from "../hooks/useStableCallback";
@@ -2247,7 +2244,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   };
   const performSnooze = async (
     threadRef: ScopedThreadRef,
-    preset: Pick<SnoozePreset, "snoozedUntil">,
+    preset: Pick<SnoozePreset, "snoozedUntil" | "wakesOnPullRequest">,
     opts: { coSnoozingKeys?: ReadonlySet<string> } = {},
   ) => {
     const threadKey = scopedThreadKey(threadRef);
@@ -2256,7 +2253,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     }
     snoozingThreadKeysRef.current.add(threadKey);
     const navigateAfterSnooze = planForwardNavigation(threadKey, opts.coSnoozingKeys);
-    const result = await snoozeThread(threadRef, preset.snoozedUntil);
+    const result = await snoozeThread(threadRef, preset);
     snoozingThreadKeysRef.current.delete(threadKey);
     if (result._tag === "Failure") {
       return isAtomCommandInterrupted(result)
@@ -2279,7 +2276,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const attemptSnooze = useStableCallback(
     (
       threadRef: ScopedThreadRef,
-      preset: Pick<SnoozePreset, "snoozedUntil">,
+      preset: Pick<SnoozePreset, "snoozedUntil" | "wakesOnPullRequest">,
       opts: { coSnoozingKeys?: ReadonlySet<string> } = {},
     ) => {
       void (async () => {
@@ -2648,6 +2645,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           new Date(),
           timestampFormat,
           thread.environmentId,
+          {
+            pullRequest:
+              serverConfigs.get(thread.environmentId)?.environment.capabilities
+                .threadSnoozeOnPullRequest === true && canSnoozeUntilPullRequest(thread),
+          },
         );
         const threadProjectGroup =
           projectGroupsRef.current.find((project) =>
@@ -3470,9 +3472,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               actionSweep?.keys.has(threadKey) ? actionSweep.action : null
                             }
                             snoozeWakeLabelText={
-                              section === "snoozed" && thread.snoozedUntil != null
-                                ? snoozeWakeLabel(
-                                    thread.snoozedUntil,
+                              section === "snoozed"
+                                ? threadSnoozeWakeLabel(
+                                    thread,
                                     { now: new Date().toISOString() },
                                     messages,
                                   )

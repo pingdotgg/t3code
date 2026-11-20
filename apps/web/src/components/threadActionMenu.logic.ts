@@ -190,6 +190,7 @@ export function buildThreadActionMenuItems(
                     id: `snooze:${preset.id}` as const,
                     label: preset.label,
                     detail: preset.whenLabel,
+                    separatorBefore: preset.wakesOnPullRequest === true,
                   })),
                   {
                     id: "snooze:custom" as const,

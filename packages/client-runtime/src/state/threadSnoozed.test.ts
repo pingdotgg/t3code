@@ -503,6 +503,15 @@ describe("pickSnoozePreset", () => {
     });
     expect(picked?.snoozedUntil).toBe(localDate(2026, 8, 31, 9).toISOString());
   });
+
+  it("offers Until PR activity last and picks it with a 30-day backstop that wakes on the PR", () => {
+    const now = localDate(2026, 8, 30, 14);
+    const shown = resolveSnoozePresets(now, { pullRequest: true });
+    expect(shown.at(-1)?.id).toBe("pull-request");
+    const picked = pickSnoozePreset({ shown, id: "pull-request", now });
+    expect(picked?.wakesOnPullRequest).toBe(true);
+    expect(picked?.snoozedUntil).toBe(localDate(2026, 9, 29, 14).toISOString());
+  });
 });
 
 describe("snoozeWakeLabel", () => {

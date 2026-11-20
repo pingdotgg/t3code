@@ -1,10 +1,38 @@
-import type { ThreadLinkedPullRequest, ThreadPullRequestLink } from "@t3tools/contracts";
+import type {
+  ThreadLinkedPullRequest,
+  ThreadPullRequestLink,
+  ThreadPullRequestSnapshot,
+} from "@t3tools/contracts";
 
 /** Tombstones prevent sync from re-adding hidden members. */
 export function visibleThreadPullRequests(
   links: ReadonlyArray<ThreadPullRequestLink>,
 ): ReadonlyArray<ThreadPullRequestLink> {
   return links.filter((link) => link.source !== "stack-dismissed");
+}
+
+/** Whether a linked pull request is still open, or not read yet, so a snooze can wait on it. */
+export function hasOpenThreadPullRequest(links: ReadonlyArray<ThreadPullRequestLink>): boolean {
+  return visibleThreadPullRequests(links).some(
+    (link) => link.snapshot === null || link.snapshot.state === "open",
+  );
+}
+
+/**
+ * Whether a pull request sync wakes a snooze that waits on pull request activity: the host
+ * updated it after the snooze (a comment, review, push, merge, or close), or it started to
+ * conflict, which moves no update time.
+ */
+export function pullRequestSyncWakesSnooze(input: {
+  readonly previous: ThreadPullRequestSnapshot | null;
+  readonly next: ThreadPullRequestSnapshot;
+  readonly snoozedAtMs: number;
+}): boolean {
+  const { previous, next } = input;
+  const updatedAtMs = next.updatedAt === null ? Number.NaN : Date.parse(next.updatedAt);
+  if (updatedAtMs > input.snoozedAtMs) return true;
+  if (previous !== null && previous.state !== next.state) return true;
+  return next.mergeability === "conflicting" && previous?.mergeability !== "conflicting";
 }
 
 export function threadPullRequestUpdatedAtMs(link: ThreadPullRequestLink): number {

@@ -1,6 +1,8 @@
 // @effect-diagnostics globalDate:off -- UI snooze presets use local calendar boundaries and Intl labels.
 import * as DateTime from "effect/DateTime";
 import { DEFAULT_SNOOZE_PRESETS, type SnoozePresetSetting } from "@t3tools/contracts/settings";
+import type { ThreadPullRequestLink } from "@t3tools/contracts";
+import { hasOpenThreadPullRequest } from "@t3tools/shared/threadPullRequests";
 
 import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts";
 import { mFallback, msg } from "gt-i18n";
@@ -214,11 +216,43 @@ export interface SnoozePreset {
   readonly label: string;
   readonly whenLabel: string;
   readonly snoozedUntil: string;
+  /** Also wakes on linked pull request activity, with `snoozedUntil` as the backstop. */
+  readonly wakesOnPullRequest?: boolean;
 }
 
 export interface SnoozePresetOptions {
   readonly presets?: ReadonlyArray<SnoozePresetSetting>;
   readonly formatTime?: (date: Date) => string;
+  /** Offer "Until PR activity": the thread has an open pull request and its server wakes on it. */
+  readonly pullRequest?: boolean;
+}
+
+/** How long a snooze waiting on pull request activity lasts when nothing happens. */
+const PULL_REQUEST_SNOOZE_DAYS = 30;
+const PULL_REQUEST_SNOOZE_PRESET_ID = "pull-request";
+
+/** "Until PR activity": wakes when a linked open pull request gets news, or after 30 days. */
+function pullRequestSnoozePreset(now: Date, resolve: MFunctionType): SnoozePreset {
+  const wake = addSnoozeDays(now, PULL_REQUEST_SNOOZE_DAYS);
+  return {
+    id: PULL_REQUEST_SNOOZE_PRESET_ID,
+    label: resolve(msg("Until PR activity", { $context: "snooze until the pull request changes" })),
+    whenLabel: resolve(
+      msg("or {date}", {
+        $context: "the latest a pull request snooze wakes",
+        date: wake.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+      }),
+    ),
+    snoozedUntil: wake.toISOString(),
+    wakesOnPullRequest: true,
+  };
+}
+
+/** Whether "Until PR activity" fits a thread: it has a linked pull request still open. */
+export function canSnoozeUntilPullRequest(thread: {
+  readonly pullRequests?: ReadonlyArray<ThreadPullRequestLink> | undefined;
+}): boolean {
+  return hasOpenThreadPullRequest(thread.pullRequests ?? []);
 }
 
 function snoozeTimeOfDayLabel(date: Date): string {
@@ -353,17 +387,16 @@ export function resolveSnoozePresets(
   // minute tie, and the stable sort keeps whichever comes first in settings.
   const wakeMinute = (preset: SnoozePreset) => Math.floor(Date.parse(preset.snoozedUntil) / 60_000);
   const seen = new Set<number>();
-  return (
-    (options.presets ?? DEFAULT_SNOOZE_PRESETS)
-      .flatMap((setting) => resolveSnoozePreset(setting, now, options.formatTime, resolve) ?? [])
-      // flatMap returned a new array; Hermes has no `toSorted`.
-      .sort((a, b) => wakeMinute(a) - wakeMinute(b))
-      .filter((preset) => {
-        if (seen.has(wakeMinute(preset))) return false;
-        seen.add(wakeMinute(preset));
-        return true;
-      })
-  );
+  const timed = (options.presets ?? DEFAULT_SNOOZE_PRESETS)
+    .flatMap((setting) => resolveSnoozePreset(setting, now, options.formatTime, resolve) ?? [])
+    // flatMap returned a new array; Hermes has no `toSorted`.
+    .sort((a, b) => wakeMinute(a) - wakeMinute(b))
+    .filter((preset) => {
+      if (seen.has(wakeMinute(preset))) return false;
+      seen.add(wakeMinute(preset));
+      return true;
+    });
+  return options.pullRequest === true ? [...timed, pullRequestSnoozePreset(now, resolve)] : timed;
 }
 
 /**
@@ -378,6 +411,9 @@ export function pickSnoozePreset(input: {
   readonly formatTime?: (date: Date) => string;
   readonly resolve?: MFunctionType;
 }): SnoozePreset | undefined {
+  if (input.id === PULL_REQUEST_SNOOZE_PRESET_ID) {
+    return pullRequestSnoozePreset(input.now, input.resolve ?? mFallback);
+  }
   const original = input.shown.find((preset) => preset.id === input.id);
   const ahead =
     original && Date.parse(original.snoozedUntil) > input.now.getTime() ? original : undefined;
@@ -387,6 +423,18 @@ export function pickSnoozePreset(input: {
   return (
     (setting && resolveSnoozePreset(setting, input.now, input.formatTime, input.resolve)) ?? ahead
   );
+}
+
+/** A snoozed row's short wake label: "PR" while it waits on pull request activity, else the time left. */
+export function threadSnoozeWakeLabel(
+  thread: { readonly snoozedUntil?: string | null; readonly snoozeWakesOnPullRequest?: boolean },
+  options: { readonly now: string },
+  resolve: MFunctionType = mFallback,
+): string | null {
+  if (thread.snoozedUntil == null) return null;
+  return thread.snoozeWakesOnPullRequest === true
+    ? resolve(msg("PR", { $context: "a snoozed thread wakes on pull request activity" }))
+    : snoozeWakeLabel(thread.snoozedUntil, options, resolve);
 }
 
 export function snoozeWakeLabel(

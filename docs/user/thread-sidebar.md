@@ -344,3 +344,8 @@ A snoozed thread keeps working and stays hidden until its wake time, even while
 its agent wakes itself for background work. It comes back early for an approval,
 a new question, a failed run, or a message or answer you send. You can snooze an existing
 question and answer when the thread wakes; the question stays unanswered.
+
+For a thread with an open pull request, choose **Snooze → Until PR activity** to hide it
+until something happens on the pull request: a comment, review, push, merge, or close, or the
+branch starting to conflict. Your own comments count too. If nothing happens, it wakes after
+30 days. A merge wakes it too, so your merge settling setting applies as usual.

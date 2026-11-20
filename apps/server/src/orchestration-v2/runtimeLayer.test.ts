@@ -32,6 +32,7 @@ import {
   type PullRequestComment,
   PullRequestOperationError,
   type PullRequestWatchUntil,
+  type ThreadPullRequestSnapshot,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
@@ -4306,6 +4307,98 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         watching: true,
       });
       assert.isTrue((yield* watchOf)?.checksPending);
+    }),
+  );
+
+  it.effect("a snooze that waits on pull request activity wakes on news, not on its own sync", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-pull-request-snooze");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("pr-snooze-create"),
+        threadId,
+        projectId: ProjectId.make("pr-snooze-project"),
+        title: "Snooze",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      // The lifecycle layer shares one clock, so times are relative to it and it never moves.
+      const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+      const at = (minutes: number) =>
+        DateTime.formatIso(DateTime.makeUnsafe(nowMs + minutes * 60_000));
+      const snoozedUntil = at(30 * 24 * 60);
+      let commands = 0;
+      const snooze = (wakesOnPullRequest: boolean) =>
+        orchestrator.dispatch({
+          type: "thread.snooze",
+          commandId: CommandId.make(`pr-snooze-${commands++}`),
+          threadId,
+          snoozedUntil,
+          ...(wakesOnPullRequest && { wakesOnPullRequest: true }),
+        });
+      const key = { host: "github.com", repository: "pingdotgg/t3code", number: 9 };
+      const sync = (snapshot: Partial<ThreadPullRequestSnapshot>) =>
+        orchestrator.dispatch({
+          type: "thread.pull-request-link.sync",
+          commandId: CommandId.make(`pr-snooze-${commands++}`),
+          threadId,
+          ...key,
+          snapshot: {
+            state: "open",
+            title: "Waiting on maintainers",
+            headBranch: "feature",
+            baseBranch: "main",
+            isDraft: false,
+            updatedAt: at(-60),
+            syncedAt: at(0),
+            mergeability: "mergeable",
+            ...snapshot,
+          },
+          stack: null,
+        });
+      const snoozedUntilNow = Effect.map(orchestrator.getThreadShell(threadId), (thread) =>
+        thread?.snoozedUntil == null ? null : DateTime.formatIso(thread.snoozedUntil),
+      );
+
+      // Nothing could wake it early without an open pull request.
+      const refused = yield* snooze(true).pipe(Effect.flip);
+      assert.equal(refused._tag, "OrchestratorDispatchError");
+
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.link",
+        commandId: CommandId.make("pr-snooze-link"),
+        threadId,
+        ...key,
+        url: "https://github.com/pingdotgg/t3code/pull/9",
+        source: "manual",
+      });
+      yield* sync({});
+      yield* snooze(true);
+      assert.isTrue((yield* orchestrator.getThreadShell(threadId))?.snoozeWakesOnPullRequest);
+
+      // Checks moving is no activity from anyone else.
+      yield* sync({ checksState: "passing" });
+      assert.equal(yield* snoozedUntilNow, snoozedUntil);
+
+      // A comment after the snooze wakes it as its timer would, so clients show it woke.
+      yield* sync({ updatedAt: at(1) });
+      assert.equal(yield* snoozedUntilNow, at(0));
+
+      // A conflict moves no update time but still needs a look.
+      yield* snooze(true);
+      yield* sync({ updatedAt: at(-60), mergeability: "conflicting" });
+      assert.equal(yield* snoozedUntilNow, at(0));
+
+      // A plain snooze keeps its timer through the same news.
+      yield* snooze(false);
+      yield* sync({ updatedAt: at(2), state: "merged" });
+      assert.equal(yield* snoozedUntilNow, snoozedUntil);
     }),
   );
 

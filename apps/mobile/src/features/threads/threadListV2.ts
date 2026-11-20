@@ -6,7 +6,7 @@ import {
   pickSnoozePreset,
   QUEUED_TURN_START_GRACE_MS,
   resolveSnoozePresets,
-  snoozeWakeLabel,
+  threadSnoozeWakeLabel,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
 import {
@@ -89,11 +89,17 @@ export function resolveThreadListV2SnoozePresets(
     readonly secondary: "snooze" | null;
     readonly now: string;
     readonly presets: ReadonlyArray<SnoozePresetSetting> | undefined;
+    /** Offer "Until PR activity". */
+    readonly pullRequest?: boolean;
   },
   resolve: MessageResolver = m,
 ): ReadonlyArray<SnoozePreset> {
   return input.secondary === "snooze"
-    ? resolveSnoozePresets(new Date(input.now), presetOptions(input.presets), resolve)
+    ? resolveSnoozePresets(
+        new Date(input.now),
+        { ...presetOptions(input.presets), pullRequest: input.pullRequest === true },
+        resolve,
+      )
     : [];
 }
 
@@ -601,8 +607,8 @@ export function buildThreadListV2ListItems(input: {
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
   const threadItems = input.items.map((item): ThreadListV2ListItem => {
     const snoozeWakeLabelText =
-      item.snoozed && item.thread.snoozedUntil != null && input.snoozeLabelNow !== undefined
-        ? snoozeWakeLabel(item.thread.snoozedUntil, { now: input.snoozeLabelNow }, resolve)
+      item.snoozed && input.snoozeLabelNow !== undefined
+        ? (threadSnoozeWakeLabel(item.thread, { now: input.snoozeLabelNow }, resolve) ?? undefined)
         : undefined;
     // Put the clock on items so recycler equality limits ticks to rows displaying snooze preset times.
     const snoozePresetMinute =

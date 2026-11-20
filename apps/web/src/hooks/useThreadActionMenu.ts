@@ -8,7 +8,11 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  canSnooze,
+  canSnoozeUntilPullRequest,
+  effectiveSnoozed,
+} from "@t3tools/client-runtime/state/thread-settled";
 import {
   AuthOrchestrationOperateScope,
   type ScopedThreadRef,
@@ -34,6 +38,7 @@ import { readEnvironmentScope } from "../state/session";
 import {
   readEnvironmentServerConfigLoaded,
   readEnvironmentSupportsAutoSettleOptOut,
+  readEnvironmentSupportsPullRequestSnooze,
   readThreadShell,
   useProjects,
 } from "../state/entities";
@@ -137,7 +142,11 @@ export function useThreadActionMenu(input: {
         titleRegeneration: configLoaded,
       };
       const isRegeneratingTitle = thread.titleRegeneration != null;
-      const snoozePresets = resolveSnoozePresets(now, timestampFormat, threadRef.environmentId);
+      const snoozePresets = resolveSnoozePresets(now, timestampFormat, threadRef.environmentId, {
+        pullRequest:
+          readEnvironmentSupportsPullRequestSnooze(threadRef.environmentId) &&
+          canSnoozeUntilPullRequest(thread),
+      });
       const items = buildThreadActionMenuItems({
         canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
         canFind: onFind !== undefined,
@@ -179,7 +188,7 @@ export function useThreadActionMenu(input: {
                 threadRef.environmentId,
               );
         if (!preset) return;
-        const result = await snoozeThread(threadRef, preset.snoozedUntil);
+        const result = await snoozeThread(threadRef, preset);
         if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
           failureToast(m(msg("Failed to snooze thread")), squashAtomCommandFailure(result));
         }

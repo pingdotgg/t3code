@@ -17,6 +17,10 @@ import { threadIssueKeysEqual } from "@t3tools/contracts";
 import { canonicalizeGitCafePullRequestUrl } from "@t3tools/source-control-definitions/registry";
 import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
 import {
+  hasOpenThreadPullRequest,
+  pullRequestSyncWakesSnooze,
+} from "@t3tools/shared/threadPullRequests";
+import {
   normalizeThreadPullRequestKey,
   visibleThreadPullRequests,
   threadPullRequestKeysEqual,
@@ -4828,6 +4832,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Thread ${command.threadId} snooze wake time ${command.snoozedUntil} is not in the future.`,
         });
       }
+      // Only a pull request sync wakes this snooze early, so it needs an open one to wait on.
+      if (
+        command.wakesOnPullRequest === true &&
+        !hasOpenThreadPullRequest(threadPullRequestsOf(thread))
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} has no open pull request to wake on.`,
+        });
+      }
       if (
         projection.runtimeRequests.some(
           (request) => request.status === "pending" && request.kind !== "user_input",
@@ -4956,6 +4971,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             snoozedUntil,
             limitRecovery: thread.limitRecovery ? { ...thread.limitRecovery, snooze: false } : null,
             snoozedAt: now,
+            snoozeWakesOnPullRequest: command.wakesOnPullRequest === true,
             updatedAt: now,
           };
         }
@@ -5463,6 +5479,34 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: now,
         payload: link,
       });
+      // A snooze waiting on pull request activity wakes as its timer would, so clients show it
+      // woke and settlement treats it as awake, for example to settle it once the PR merges.
+      const previous = threadPullRequestsOf(thread).find((candidate) =>
+        threadPullRequestKeysEqual(candidate, link),
+      );
+      if (
+        command.type === "thread.pull-request-link.sync" &&
+        thread.snoozeWakesOnPullRequest === true &&
+        thread.snoozedAt != null &&
+        thread.snoozedUntil != null &&
+        DateTime.isGreaterThan(thread.snoozedUntil, now) &&
+        pullRequestSyncWakesSnooze({
+          previous: previous?.snapshot ?? null,
+          next: command.snapshot,
+          snoozedAtMs: DateTime.toEpochMillis(thread.snoozedAt),
+        })
+      ) {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.unsnoozed",
+          threadId: command.threadId,
+          providerInstanceId: updatedThread.providerInstanceId,
+          occurredAt: now,
+          payload: { ...updatedThread, snoozedUntil: now, updatedAt: now },
+        });
+      }
       return;
     }
     const eventType = (() => {

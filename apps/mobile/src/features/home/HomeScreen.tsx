@@ -50,6 +50,7 @@ import {
 import { EmptyState } from "../../components/ui/EmptyState";
 import { FloatingActionButton } from "../../components/ui/FloatingActionButton";
 import type { WorkspaceEnvironment, WorkspaceState } from "../../state/workspaceModel";
+import type { SnoozeThreadOptions } from "./useThreadListActions";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
@@ -134,6 +135,7 @@ interface HomeScreenProps {
   readonly onSnoozeThread: (
     thread: EnvironmentThreadShell,
     snoozedUntil: string,
+    options?: SnoozeThreadOptions,
   ) => Promise<boolean>;
   readonly onUnsnoozeThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onUnsettleThread: (thread: EnvironmentThreadShell) => void;
@@ -407,6 +409,7 @@ export function HomeScreen(props: HomeScreenProps) {
     snoozePresetsByEnvironmentId,
     pinningEnvironmentIds,
     autoSettleOptOutEnvironmentIds,
+    pullRequestSnoozeEnvironmentIds,
     pinReorderEnvironmentIds,
     activeReorderEnvironmentIds,
     titleRegenerationEnvironmentIds,
@@ -575,6 +578,7 @@ export function HomeScreen(props: HomeScreenProps) {
         onSettleThread={handleSettleThread}
         snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
         snoozePresets={snoozePresetsByEnvironmentId.get(thread.environmentId)}
+        pullRequestSnoozeSupported={pullRequestSnoozeEnvironmentIds.has(thread.environmentId)}
         pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
         autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}
         reorderSupported={

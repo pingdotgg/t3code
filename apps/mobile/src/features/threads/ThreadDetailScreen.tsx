@@ -789,9 +789,11 @@ function ThreadDetailBody(
       key: "lifecycle",
       icon: settled && !lifecycleSnoozed ? "checkmark.circle" : "alarm",
       label: lifecycleSnoozed
-        ? wake === null
-          ? gt("Snoozed", { $context: "thread state" })
-          : gt("Snoozed, {time} left", { time: wake })
+        ? props.selectedThread.snoozeWakesOnPullRequest === true
+          ? gt("Snoozed until PR activity")
+          : wake === null
+            ? gt("Snoozed", { $context: "thread state" })
+            : gt("Snoozed, {time} left", { time: wake })
         : settled
           ? gt("Settled", { $context: "thread state" })
           : gt("Woke from snooze"),
