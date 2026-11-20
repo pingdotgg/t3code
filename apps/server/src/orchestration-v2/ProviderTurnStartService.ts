@@ -654,6 +654,7 @@ export const layer: Layer.Layer<
           readonly title: string;
           readonly error: Error;
           readonly message?: string;
+          readonly failureClass?: "provider_error" | "usage_limit";
         }) {
           yield* settleRunBeforeStart({
             run,
@@ -671,7 +672,7 @@ export const layer: Layer.Layer<
               failure: makeProviderFailure({
                 cause: failed.error,
                 message: failed.message ?? startFailureMessage(failed.error),
-                class: "provider_error",
+                class: failed.failureClass ?? "provider_error",
               }),
             },
           });
@@ -857,6 +858,16 @@ export const layer: Layer.Layer<
         .pipe(Effect.result);
       if (resolvedPolicy._tag === "Failure") {
         const error = resolvedPolicy.failure;
+        if (error._tag === "UsageLimitThresholdReachedError") {
+          yield* settleStartFailure({
+            signal: "usage-limit-threshold",
+            title: "Usage limit stop reached",
+            error,
+            message: error.message,
+            failureClass: "usage_limit",
+          });
+          return;
+        }
         if (error._tag !== "RuntimePolicyAboveCeilingError") return yield* error;
         yield* settleStartFailure({
           signal: "runtime-mode-above-ceiling",
