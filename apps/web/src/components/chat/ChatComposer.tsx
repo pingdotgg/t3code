@@ -3753,9 +3753,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           aria-label={gt("Use suggested prompt")}
                           className="pointer-events-auto ml-2 inline-flex cursor-pointer rounded align-[1px] [&:hover_kbd]:text-foreground"
                           onPointerDown={(event) => event.preventDefault()}
-                          onClick={() =>
-                            applyPromptReplacementStable(0, 0, offeredPromptSuggestion)
-                          }
+                          onClick={() => {
+                            // The hint unmounts a render after typing, so a late click must not prepend to a fresh draft.
+                            if (promptRef.current.length > 0) return;
+                            applyPromptReplacementStable(0, 0, offeredPromptSuggestion);
+                          }}
                         >
                           <Kbd variant="outline">⇥ Tab</Kbd>
                         </button>
