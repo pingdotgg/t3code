@@ -6,6 +6,7 @@ import {
   type LinkedThreadTarget,
 } from "@t3tools/client-runtime/linked-thread";
 import {
+  toolCallLines,
   turnItemDetailRevision,
   turnItemOutputText,
 } from "@t3tools/client-runtime/work-log/item-detail";
@@ -80,11 +81,28 @@ function ActivityRow(props: {
       : null,
   );
   const fetchedItem = fetched.data?.item ?? null;
+  const shownItem = fetchedItem ?? row.item;
+  // A command or tool call reads as what was called, as on the thread screen; only an item with
+  // no call to show falls back to its full detail.
+  const call = !open
+    ? null
+    : shownItem.type === "command_execution"
+      ? toolCallLines({ command: shownItem.input })
+      : shownItem.type === "dynamic_tool"
+        ? toolCallLines({ args: shownItem.input })
+        : null;
+  const callText = call
+    ? (call.command ??
+      call.args?.map(([key, value]) => `${key}: ${value}`).join("\n") ??
+      call.argsText)
+    : null;
   const body = !open
     ? null
-    : fetchedItem
-      ? formatItemFullDetail(row, fetchedItem)
-      : (activity.getFullDetail() ?? activity.detail);
+    : call
+      ? callText
+      : fetchedItem
+        ? formatItemFullDetail(row, fetchedItem)
+        : (activity.getFullDetail() ?? activity.detail);
   const output = !open
     ? null
     : !activity.fetchesDetail
