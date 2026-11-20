@@ -1,8 +1,8 @@
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import type { EngineState, EngineTokenResult } from "../src/connection/engineState";
-import { type LinuxHost, shellQuote } from "./wslEngine";
+import type { EngineState, EngineTokenResult } from "../src/connection/engineState.ts";
+import { type LinuxHost, shellQuote } from "./wslEngine.ts";
 
 export interface EngineConfig {
   /** `AGENT_BOARD_ENGINE_URL`. */
