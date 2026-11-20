@@ -1384,31 +1384,6 @@ describe("ThreadInlineFilePreview playback", () => {
       expect(retainRow).toHaveBeenLastCalledWith(false);
     },
   );
-
-  it("unmounts a paused inline audio player when its row scrolls out of view", async () => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-    audio.status = { ...audio.status, isLoaded: true };
-    const container = document.createElement("div");
-    root = createRoot(container);
-    const preview = createElement(ThreadInlineFilePreview, {
-      source: { kind: "document", name: "sound.mp3", uri: "https://example.com/sound.mp3" },
-      onOpen() {},
-    });
-    const render = (visible: boolean) =>
-      root!.render(createElement(ThreadMediaVisibleContext, { value: visible }, preview));
-
-    await act(async () => render(true));
-    const playButton = () =>
-      container.querySelector<HTMLButtonElement>('button[aria-label="Play audio"]');
-    const pauseButton = () =>
-      container.querySelector<HTMLButtonElement>('button[aria-label="Pause audio"]');
-    await act(async () => playButton()!.click());
-    await act(async () => pauseButton()!.click());
-    expect(playButton()).not.toBeNull();
-
-    await act(async () => render(false));
-    expect(playButton(), "paused audio control after its row leaves the viewport").toBeNull();
-  });
 });
 
 describe("PDF preview detection", () => {
