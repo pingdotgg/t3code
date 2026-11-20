@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// @effect-diagnostics nodeBuiltinImport:off globalTimers:off
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalFetch:off
 /**
  * A free ACP agent for dev servers. It plays recorded ACP transcripts with simulated
  * streaming, so the real adapter, orchestration, and UI run without a paid model.
@@ -69,6 +69,16 @@ export const SCENARIOS = [
     name: "Command output",
     file: "./dev-replay/command_output_transcript.ndjson",
   },
+  {
+    id: "delegate-remote",
+    name: "Delegate to a linked environment",
+    file: "./dev-replay/delegate_remote_transcript.ndjson",
+  },
+  {
+    id: "remote-child",
+    name: "E2E suite run",
+    file: "./dev-replay/remote_child_transcript.ndjson",
+  },
 ] as const;
 
 // Session setup and vendor state stay out: they would replace the replay agent's own models.
@@ -84,8 +94,11 @@ const REPLAYED_UPDATES = new Set([
   "usage_update",
 ]);
 
+const MCP_CALL = "t3/mcp_call";
+
 // Only requests that ask the user. A replayed terminal/create would run a real command.
-const REPLAYED_REQUESTS = new Set(["session/request_permission", "elicitation/create"]);
+// `t3/mcp_call` is this agent's own: it calls a T3 tool over the session's MCP server.
+const REPLAYED_REQUESTS = new Set(["session/request_permission", "elicitation/create", MCP_CALL]);
 
 const CHUNK_DELAY_MS = 30;
 const FRAME_DELAY_MS = 250;
@@ -142,12 +155,35 @@ export function streamChunks(text: string): ReadonlyArray<string> {
   return chunks.length === 0 ? [text] : chunks;
 }
 
-/** Fills the live session, workspace, and per-prompt tool ids, so repeated turns add rows. */
+/**
+ * Values a recording can name as `<var:name>`, read per turn from the JSON file at
+ * T3_DEV_REPLAY_VARS, for ids that change every run such as another environment's.
+ */
+function readReplayVars(): Record<string, string> {
+  const file = process.env.T3_DEV_REPLAY_VARS;
+  if (file === undefined || file === "") return {};
+  try {
+    return JSON.parse(NodeFS.readFileSync(file, "utf8")) as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+
+/** Fills the live session, workspace, vars, and per-prompt tool ids, so repeated turns add rows. */
 function materialize(
   value: unknown,
-  live: { readonly sessionId: string; readonly workspace: string; readonly turnKey: string },
+  live: {
+    readonly sessionId: string;
+    readonly workspace: string;
+    readonly turnKey: string;
+    readonly vars: Record<string, string>;
+  },
 ): unknown {
-  if (typeof value === "string") return value.replaceAll("<workspace>", live.workspace);
+  if (typeof value === "string") {
+    return value
+      .replaceAll("<workspace>", live.workspace)
+      .replace(/<var:([\w-]+)>/g, (match, name: string) => live.vars[name] ?? match);
+  }
   if (Array.isArray(value)) return value.map((entry) => materialize(entry, live));
   if (typeof value !== "object" || value === null) return value;
   return Object.fromEntries(
@@ -176,6 +212,58 @@ function permissionRejectedToolCallId(request: LogicalFrame, answer: unknown): s
   return rejected ? params.toolCall?.toolCallId : undefined;
 }
 
+interface McpServer {
+  readonly endpoint: string;
+  readonly authorization: string;
+}
+
+/** The T3 MCP server T3 hands the agent in session/new, through the stdio bridge's env. */
+function t3McpServer(servers: unknown): McpServer | undefined {
+  if (!Array.isArray(servers)) return undefined;
+  for (const server of servers as ReadonlyArray<{
+    env?: ReadonlyArray<{ name: string; value: string }>;
+  }>) {
+    const env = new Map((server.env ?? []).map((entry) => [entry.name, entry.value]));
+    const endpoint = env.get("T3_ACP_MCP_ENDPOINT");
+    const authorization = env.get("T3_ACP_MCP_AUTHORIZATION");
+    if (endpoint !== undefined && authorization !== undefined) return { endpoint, authorization };
+  }
+  return undefined;
+}
+
+/** One MCP tools/call over streamable HTTP: initialize, initialized, then the call. */
+async function callT3Tool(server: McpServer, name: string, args: unknown): Promise<unknown> {
+  let sessionHeader: string | undefined;
+  const post = async (body: object) => {
+    const response = await fetch(server.endpoint, {
+      method: "POST",
+      headers: {
+        authorization: server.authorization,
+        accept: "application/json, text/event-stream",
+        "content-type": "application/json",
+        ...(sessionHeader === undefined ? {} : { "mcp-session-id": sessionHeader }),
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", ...body }),
+    });
+    sessionHeader = response.headers.get("mcp-session-id") ?? sessionHeader;
+    const text = await response.text();
+    // A streamed answer carries the JSON-RPC message on a `data:` line.
+    const data = text.split("\n").find((line) => line.startsWith("data:"));
+    return text.length === 0 ? undefined : JSON.parse(data === undefined ? text : data.slice(5));
+  };
+  await post({
+    id: 1,
+    method: "initialize",
+    params: {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "t3-dev-replay", version: "1" },
+    },
+  });
+  await post({ method: "notifications/initialized" });
+  return post({ id: 2, method: "tools/call", params: { name, arguments: args } });
+}
+
 function runAgent(): void {
   const turnsByScenario = new Map<string, ReadonlyArray<ReplayTurn>>();
   const loadTurns = (scenarioId: string) => {
@@ -191,7 +279,13 @@ function runAgent(): void {
 
   const sessions = new Map<
     string,
-    { cwd: string; model: string; promptCount: number; cancel: (() => void) | undefined }
+    {
+      cwd: string;
+      model: string;
+      promptCount: number;
+      cancel: (() => void) | undefined;
+      mcp: McpServer | undefined;
+    }
   >();
   const pendingAgentRequests = new Map<string, (result: unknown) => void>();
   let nextAgentRequestId = 1;
@@ -222,9 +316,33 @@ function runAgent(): void {
   ): Promise<"cancelled" | undefined> => {
     const session = sessions.get(sessionId)!;
     // Random, so a session loaded after a restart cannot reuse earlier tool rows.
-    const live = { sessionId, workspace: session.cwd, turnKey: NodeCrypto.randomUUID() };
+    const live = {
+      sessionId,
+      workspace: session.cwd,
+      turnKey: NodeCrypto.randomUUID(),
+      vars: readReplayVars(),
+    };
     for (const recorded of turn.frames) {
       const frame = materialize(recorded.frame, live) as LogicalFrame;
+      if (frame.kind === "request" && frame.method === MCP_CALL) {
+        await sleep(recorded.afterMs ?? FRAME_DELAY_MS, signal);
+        if (signal.aborted) return;
+        const call = frame.params as { name: string; arguments?: unknown };
+        if (session.mcp === undefined) {
+          process.stderr.write(`dev replay agent has no T3 MCP server for ${call.name}\n`);
+          continue;
+        }
+        const result = await callT3Tool(session.mcp, call.name, call.arguments ?? {}).catch(
+          (error: unknown) => ({ error: String(error) }),
+        );
+        const failed = result as { error?: unknown; result?: { isError?: boolean } } | undefined;
+        if (failed?.error !== undefined || failed?.result?.isError === true) {
+          process.stderr.write(
+            `dev replay agent: ${call.name} failed: ${JSON.stringify(result)}\n`,
+          );
+        }
+        continue;
+      }
       if (frame.kind === "request") {
         await sleep(recorded.afterMs ?? FRAME_DELAY_MS, signal);
         if (signal.aborted) return;
@@ -296,7 +414,13 @@ function runAgent(): void {
         const sessionId =
           message.method === "session/load" ? String(params.sessionId) : NodeCrypto.randomUUID();
         const cwd = typeof params.cwd === "string" ? params.cwd : process.cwd();
-        sessions.set(sessionId, { cwd, model: SCENARIOS[0].id, promptCount: 0, cancel: undefined });
+        sessions.set(sessionId, {
+          cwd,
+          model: SCENARIOS[0].id,
+          promptCount: 0,
+          cancel: undefined,
+          mcp: t3McpServer(params.mcpServers),
+        });
         return {
           ...(message.method === "session/new" ? { sessionId } : {}),
           models: {

@@ -1,6 +1,6 @@
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { type PullRequestActionInput, SourceControlProviderKind } from "@t3tools/contracts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -64,6 +64,7 @@ import * as SourceControlProviderRegistry from "../sourceControl/SourceControlPr
 import * as ServerConfig from "../config.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
@@ -83,6 +84,8 @@ interface FakeProviderScenario {
   };
   /** The kind the fake host reports itself as. */
   kind?: string;
+  /** False for a host that opens every change request ready for review. */
+  createsDraftChangeRequests?: boolean;
   /** Answers to successive change request listings, whatever their head selector. */
   prListSequence?: ReadonlyArray<ReadonlyArray<FakeChangeRequest>>;
   prListByHeadSelector?: Record<string, ReadonlyArray<FakeChangeRequest>>;
@@ -118,6 +121,7 @@ type FakeProviderCall =
       readonly baseRefName: string;
       readonly headSelector: string;
       readonly title: string;
+      readonly draft: unknown;
     }
   | { readonly operation: "getChangeRequest"; readonly reference: string }
   | {
@@ -476,6 +480,7 @@ function createFakeSourceControlProvider(scenario: FakeProviderScenario = {}): {
   return {
     service: {
       kind,
+      createsDraftChangeRequests: scenario.createsDraftChangeRequests ?? true,
       ...headBranchProbe,
       listChangeRequests: (input) =>
         record(input.cwd, {
@@ -508,6 +513,7 @@ function createFakeSourceControlProvider(scenario: FakeProviderScenario = {}): {
           baseRefName: input.baseRefName,
           headSelector: input.headSelector,
           title: input.title,
+          draft: "draft" in input ? input.draft : undefined,
         }),
       getDefaultBranch: (input) =>
         record(input.cwd, { operation: "getDefaultBranch" }).pipe(
@@ -628,6 +634,7 @@ function preparePullRequestThread(
 
 function makeManager(input?: {
   providerScenario?: FakeProviderScenario;
+  pullRequests?: Partial<PullRequestService.PullRequestService["Service"]>;
   sourceControlProvider?: SourceControlProvider["Service"];
   textGeneration?: Partial<FakeGitTextGeneration>;
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
@@ -736,6 +743,7 @@ function makeManager(input?: {
 
   const layerManager = Layer.mergeAll(
     Layer.succeed(TextGeneration.TextGeneration, textGeneration),
+    Layer.mock(PullRequestService.PullRequestService)(input?.pullRequests ?? {}),
     Layer.mock(ProviderRegistry.ProviderRegistry)({
       getProviders: Effect.succeed([]),
     }),
@@ -4416,6 +4424,113 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           ),
         ).toBe(true);
       }),
+  );
+
+  it.effect("createPullRequest refuses a branch with commits it has not pushed", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/unpushed"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/unpushed"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "late.txt"), "late\n");
+      yield* runGit(repoDir, ["add", "late.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Late commit"]);
+      const { manager, providerCalls } = yield* makeManager({
+        providerScenario: { prListSequence: [[], []] },
+      });
+
+      const error = yield* Effect.flip(
+        manager.createPullRequest({
+          cwd: repoDir,
+          projectId: ProjectId.make("project-1"),
+          title: "Feature",
+          body: "Body",
+        }),
+      );
+
+      expect(error.message).toContain("1 unpushed commit");
+      expect(created(providerCalls)).toEqual([]);
+
+      // An open PR is returned as it is; returning it publishes nothing.
+      const open = {
+        number: 7,
+        title: "Feature",
+        url: "https://github.com/pingdotgg/codething-mvp/pull/7",
+        baseRefName: "main",
+        headRefName: "feature/unpushed",
+      };
+      const existing = yield* makeManager({ providerScenario: { prListSequence: [[open]] } });
+      const found = yield* existing.manager.createPullRequest({
+        cwd: repoDir,
+        projectId: ProjectId.make("project-1"),
+        title: "Feature",
+        body: "Body",
+      });
+      expect(found).toMatchObject({ status: "opened_existing", number: 7 });
+
+      // A retry after a failed draft finds the open PR and still drafts it.
+      const actions: Array<PullRequestActionInput> = [];
+      const retried = yield* makeManager({
+        providerScenario: { prListSequence: [[open]] },
+        pullRequests: {
+          summary: () => Effect.succeed({ isDraft: false } as never),
+          runAction: (action) => Effect.sync(() => void actions.push(action)),
+        },
+      });
+      yield* retried.manager.createPullRequest({
+        cwd: repoDir,
+        projectId: ProjectId.make("project-1"),
+        title: "Feature",
+        body: "Body",
+        draft: true,
+      });
+      expect(actions).toMatchObject([
+        { repository: "pingdotgg/codething-mvp", number: 7, action: "draft" },
+      ]);
+
+      // A draft of a PR the host does not list yet fails, so a retry drafts it.
+      yield* runGit(repoDir, ["push"]);
+      const unlisted = yield* makeManager({
+        providerScenario: { prListSequence: [[], []], createsDraftChangeRequests: false },
+      });
+      const notListed = yield* Effect.flip(
+        unlisted.manager.createPullRequest({
+          cwd: repoDir,
+          projectId: ProjectId.make("project-1"),
+          title: "Feature",
+          body: "Body",
+          draft: true,
+        }),
+      );
+      expect(notListed.message).toContain("does not list it yet");
+      expect(created(unlisted.providerCalls)).toHaveLength(1);
+
+      // A new PR asked for as a draft is opened as one, never ready first.
+      const newActions: Array<PullRequestActionInput> = [];
+      const fresh = yield* makeManager({
+        providerScenario: { prListSequence: [[], [open]] },
+        pullRequests: {
+          summary: () => Effect.succeed({ isDraft: false } as never),
+          runAction: (action) => Effect.sync(() => void newActions.push(action)),
+        },
+      });
+      yield* fresh.manager.createPullRequest({
+        cwd: repoDir,
+        projectId: ProjectId.make("project-1"),
+        title: "Feature",
+        body: "Body",
+        draft: true,
+      });
+      expect(
+        fresh.providerCalls.flatMap((call) =>
+          call.operation === "createChangeRequest" ? [call.draft] : [],
+        ),
+      ).toEqual([true]);
+      expect(newActions).toEqual([]);
+    }),
   );
 
   it.effect("generates PR content from the created worktree's selected remote base", () =>
