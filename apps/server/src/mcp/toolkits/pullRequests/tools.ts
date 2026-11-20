@@ -609,7 +609,7 @@ export const MergePullRequestResult = Schema.Struct({
 export type MergePullRequestResult = typeof MergePullRequestResult.Type;
 
 const ReadPullRequestTool = Tool.make("pull_request_read", {
-  description: "Read a PR's state, checks, review comments, or diff. Use instead of gh or cafe.",
+  description: "Read a PR's state, checks, review comments, or diff.",
   parameters: Schema.Struct({
     ...ThreadPullRequestInput.fields,
     sections: Schema.optional(
@@ -811,8 +811,7 @@ export const RerunChecksResult = Schema.Struct({
 export type RerunChecksResult = typeof RerunChecksResult.Type;
 
 const CheckLogsTool = Tool.make("ci_logs", {
-  description:
-    "Read the tail of a PR's failing check logs, or one named check's. Use instead of gh run view.",
+  description: "Read the tail of a PR's failing check logs, or one named check's.",
   parameters: Schema.Struct({
     ...ThreadPullRequestInput.fields,
     check: Schema.optional(TrimmedNonEmptyString),
