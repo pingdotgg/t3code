@@ -281,7 +281,12 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       ...(options.awaitServerReady ? { awaitServerReady: options.awaitServerReady } : {}),
       settings: {
         ...host.settings,
-        get: SubscriptionRef.get(serverSettings),
+        get: host.settings.get.pipe(
+          Effect.map((settings) => ({
+            ...settings,
+            enableProviderUpdateChecks: options.updateChecks ?? true,
+          })),
+        ),
         changes: SubscriptionRef.changes(serverSettings),
       },
     }),
@@ -451,7 +456,13 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
 
   it.effect("clears a published update when update checks are disabled", () =>
     Effect.gen(function* () {
-      const h = yield* makeHarness({ awaitServerReady: Effect.never });
+      let updatesEnabled = true;
+      const h = yield* makeHarness({
+        awaitServerReady: Effect.never,
+        get updateChecks() {
+          return updatesEnabled;
+        },
+      });
       yield* SubscriptionRef.update(h.installState, (state) => ({ ...state, version: "1.5.13" }));
       expect((yield* h.instance.snapshot.refresh).versionAdvisory?.status).toBe("behind_latest");
       const cleared = yield* h.instance.snapshot.streamChanges.pipe(
@@ -459,6 +470,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         Stream.runHead,
         Effect.forkScoped({ startImmediately: true }),
       );
+      updatesEnabled = false;
       yield* SubscriptionRef.update(h.serverSettings, (settings) => ({
         ...settings,
         enableProviderUpdateChecks: false,

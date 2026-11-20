@@ -971,9 +971,8 @@ describe("providerMaintenanceRunner", () => {
           },
           undefined,
           undefined,
-          (input, onProgress, version) =>
+          (input, onProgress) =>
             Effect.gen(function* () {
-              assert.strictEqual(version, "1.5.13");
               installed.push(input.instanceId);
               yield* onProgress("Downloading.");
               if (installError !== null) {

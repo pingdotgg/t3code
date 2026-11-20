@@ -39,13 +39,6 @@ const state: ProviderInstallState = {
   message: null,
 };
 
-const running = {
-  ...state,
-  operationId: "install-1",
-  phase: "downloading",
-  message: "Downloading.",
-} satisfies ProviderInstallState;
-
 function instance(kind = driver, id = instanceId): ProviderInstance {
   return {
     instanceId: id,
@@ -89,8 +82,14 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
     yield* input.beforeInstallStart ?? Effect.void;
     const current = yield* SubscriptionRef.get(installationState);
     if (current.phase === "downloading") return { state: current, owned: false };
-    yield* SubscriptionRef.set(installationState, running);
-    return { state: running, owned: true };
+    const started = {
+      ...state,
+      operationId: "install-1",
+      phase: "downloading",
+      message: "Downloading.",
+    } satisfies ProviderInstallState;
+    yield* SubscriptionRef.set(installationState, started);
+    return { state: started, owned: true };
   });
   const dependencies = Layer.mergeAll(
     ServerSettings.layerTest(input.settings),
@@ -134,7 +133,15 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
     Layer.mock(AntigravityInstallation.AntigravityInstallation)({
       managedDirectory: "/unused-managed-runtime",
       checkForUpdate: Effect.void,
-      start: startOperation.pipe(Effect.map((operation) => operation.state)),
+      start: Effect.sync(() => {
+        calls.push("start");
+        return {
+          ...state,
+          operationId: "install-1",
+          phase: "downloading" as const,
+          message: "Downloading.",
+        };
+      }).pipe(Effect.tap((started) => SubscriptionRef.set(installationState, started))),
       startOperation: () => startOperation,
       cancel: () =>
         Effect.sync(() => {
@@ -295,6 +302,12 @@ describe("provider installation routing", () => {
   );
 
   const watched = () => Object.assign(instance(), { refreshModels: () => Effect.void });
+  const running = {
+    ...state,
+    operationId: "install-1",
+    phase: "downloading",
+    message: "Downloading.",
+  } satisfies ProviderInstallState;
 
   it.effect.each([
     { phase: "succeeded", message: null, error: null },
