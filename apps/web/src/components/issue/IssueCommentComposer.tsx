@@ -6,6 +6,7 @@ import { useRef, useState } from "react";
 
 import { m } from "~/i18n/messages";
 import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFieldSpeech";
+import { cn } from "~/lib/utils";
 import { issueEnvironment } from "~/state/issues";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -92,7 +93,11 @@ export function IssueCommentComposer({
             <textarea
               ref={textareaRef}
               rows={2}
-              className="field-sizing-content max-h-64 min-h-[2lh] w-full resize-none bg-transparent px-3.5 pt-3 pb-1 text-base text-foreground outline-none wrap-anywhere placeholder:text-muted-foreground/70 disabled:opacity-64 sm:text-sm"
+              className={cn(
+                "field-sizing-content max-h-64 w-full resize-none bg-transparent px-3.5 pt-3 pb-1 text-base text-foreground outline-none wrap-anywhere placeholder:text-muted-foreground/70 disabled:opacity-64 sm:text-sm",
+                // Two full lines above the audience row; the padding counts against min-height.
+                audiences ? "min-h-[calc(2lh+1rem)]" : "min-h-[2lh]",
+              )}
               aria-label={gt("Add a comment")}
               placeholder={blocked ?? gt("Leave a comment")}
               value={body}
