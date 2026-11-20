@@ -95,12 +95,12 @@ describe("ranking the slash menu", () => {
     ]);
   });
 
-  it("Given the input /re, when the items are ranked, then prefix matches lead word matches inside each group", () => {
+  it("Given the input /re, when the items are ranked, then prefix matches lead word matches, and each is grouped as commands, skills, and T3 actions", () => {
     expect(labels(slashQuery("/re", 3) ?? "")).toEqual([
       "/review",
+      "$review-agent",
       "/code-review",
       "/egm-review",
-      "$review-agent",
       "$pr-description",
       "/model",
     ]);
@@ -109,11 +109,24 @@ describe("ranking the slash menu", () => {
   it("Given the input /rev, when the items are ranked, then the same items stay and nothing else joins them", () => {
     expect(labels(slashQuery("/rev", 4) ?? "")).toEqual([
       "/review",
+      "$review-agent",
       "/code-review",
       "/egm-review",
-      "$review-agent",
       "$pr-description",
     ]);
+  });
+
+  it("Given the input /mod, when the items are ranked, then the T3 action that starts with it leads a command that only mentions it", () => {
+    const withModel = rankSlashItems(
+      buildSlashItems({
+        commands: [command({ name: "update-config", description: "Change the model" })],
+        skills: [],
+        actions: ["model"],
+        messageIsOnlyTheCommand: true,
+      }),
+      "mod",
+    );
+    expect(withModel.map((item) => item.label)).toEqual(["/model", "/update-config"]);
   });
 
   it("Given the input /comp, when the items are ranked, then only /compact stays", () => {

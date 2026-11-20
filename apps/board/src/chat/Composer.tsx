@@ -117,6 +117,7 @@ export function Composer({
     }
     if (slashQuery(draft, cursor) === null && slashQuery(value, at) !== null) refresh();
     setActive(0);
+    setClosedFor(null);
     setDraft(value);
     setCursor(at);
   };

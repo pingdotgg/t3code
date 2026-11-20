@@ -1,6 +1,6 @@
-import { useEffect } from "react";
+import { Fragment, useEffect } from "react";
 
-import { GROUP_ORDER, GROUP_TITLE, type SlashItem } from "./slash";
+import { GROUP_TITLE, type SlashItem } from "./slash";
 
 // The lanes that time the menu set this flag, so an ordinary session does not collect marks.
 export const MARK_SLASH = localStorage.getItem("board:slash-marks") === "1";
@@ -36,48 +36,38 @@ export function SlashMenu({
         <p className="px-3 py-2 text-muted">No matching command.</p>
       ) : (
         <ul id={id} role="listbox" aria-label="Commands and skills">
-          {GROUP_ORDER.map((group) => {
-            const inGroup = items.filter((item) => item.group === group);
-            if (inGroup.length === 0) return null;
+          {items.map((item, index) => {
+            const selected = index === active;
             return (
-              <li key={group} role="presentation">
-                <p className="px-3 pt-1.5 pb-0.5 text-[11px] font-medium text-faint">
-                  {GROUP_TITLE[group]}
-                </p>
-                <ul role="presentation">
-                  {inGroup.map((item) => {
-                    const selected = items[active]?.id === item.id;
-                    return (
-                      <li
-                        key={item.id}
-                        id={slashOptionId(id, item)}
-                        ref={
-                          selected ? (row) => row?.scrollIntoView({ block: "nearest" }) : undefined
-                        }
-                        role="option"
-                        aria-selected={selected}
-                        // The textarea keeps focus through a click.
-                        onMouseDown={(event) => event.preventDefault()}
-                        onClick={() => onPick(item)}
-                        onMouseMove={() => {
-                          if (!selected) onHover(items.indexOf(item));
-                        }}
-                        className={`flex cursor-pointer items-baseline gap-2 px-3 py-1 ${selected ? "bg-hover" : ""}`}
-                      >
-                        <span className="shrink-0 font-medium text-fg">{item.label}</span>
-                        {item.hint !== null && (
-                          <span className="max-w-[40%] shrink-0 truncate text-faint">
-                            {item.hint}
-                          </span>
-                        )}
-                        <span className="min-w-0 flex-1 truncate text-muted">
-                          {item.description}
-                        </span>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </li>
+              <Fragment key={item.id}>
+                {item.group !== items[index - 1]?.group && (
+                  <li
+                    role="presentation"
+                    className="px-3 pt-1.5 pb-0.5 text-[11px] font-medium text-faint"
+                  >
+                    {GROUP_TITLE[item.group]}
+                  </li>
+                )}
+                <li
+                  id={slashOptionId(id, item)}
+                  ref={selected ? (row) => row?.scrollIntoView({ block: "nearest" }) : undefined}
+                  role="option"
+                  aria-selected={selected}
+                  // The textarea keeps focus through a click.
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => onPick(item)}
+                  onMouseMove={() => {
+                    if (!selected) onHover(index);
+                  }}
+                  className={`flex cursor-pointer items-baseline gap-2 px-3 py-1 ${selected ? "bg-hover" : ""}`}
+                >
+                  <span className="shrink-0 font-medium text-fg">{item.label}</span>
+                  {item.hint !== null && (
+                    <span className="max-w-[40%] shrink-0 truncate text-faint">{item.hint}</span>
+                  )}
+                  <span className="min-w-0 flex-1 truncate text-muted">{item.description}</span>
+                </li>
+              </Fragment>
             );
           })}
         </ul>

@@ -100,27 +100,19 @@ function tier(item: SlashItem, query: string): 0 | 1 | null {
 }
 
 /**
- * The items a query keeps, as commands, then skills, then T3 actions. Within a group the names
- * that start with the query come first, then the ones with a word that does, each in the order
- * the engine listed them. An empty query keeps every item.
+ * The items a query keeps. Names that start with the query come first, then the ones with a word
+ * that does. Inside each of those, items are grouped as commands, then skills, then T3 actions, in
+ * the order the engine listed them. An empty query keeps every item, grouped the same way.
  */
 export function rankSlashItems(
   items: ReadonlyArray<SlashItem>,
   query: string,
 ): ReadonlyArray<SlashItem> {
   const needle = query.trim().toLowerCase();
-  return GROUP_ORDER.flatMap((group) => {
-    const inGroup = items.filter((item) => item.group === group);
-    if (needle === "") return inGroup;
-    const scored = inGroup.flatMap((item) => {
-      const rank = tier(item, needle);
-      return rank === null ? [] : [{ item, rank }];
-    });
-    return [
-      ...scored.filter((entry) => entry.rank === 0),
-      ...scored.filter((e) => e.rank === 1),
-    ].map((entry) => entry.item);
-  });
+  const byGroup = GROUP_ORDER.flatMap((group) => items.filter((item) => item.group === group));
+  if (needle === "") return byGroup;
+  const ranks = new Map(byGroup.map((item) => [item, tier(item, needle)]));
+  return [0, 1].flatMap((rank) => byGroup.filter((item) => ranks.get(item) === rank));
 }
 
 /** The query after a leading `/` when the cursor sits in the message's first word, or null when the menu stays shut. */
