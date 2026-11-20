@@ -2222,7 +2222,7 @@ it.effect("returns after the submodule budget without a ref in uncaptured submod
       .captureCheckpoint({ cwd: root, checkpointRef })
       .pipe(Effect.forkChild);
     yield* Deferred.await(submoduleStarted);
-    yield* TestClock.adjust("5 seconds");
+    yield* TestClock.adjust("3 seconds");
     yield* Fiber.join(capture);
 
     // The root tree records the submodule's moved HEAD even though its own capture never ran.

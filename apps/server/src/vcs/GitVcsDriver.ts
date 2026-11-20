@@ -482,7 +482,8 @@ const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const FLAGGED_INDEX_ENTRIES_MAX_BYTES = 1024 * 1024;
 const CHECKPOINT_RECOVERY_MAX_CANDIDATES = 64;
 const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
-const SUBMODULE_CAPTURE_BUDGET = "5 seconds";
+// Below the 5 s baseline budget in CheckpointService, so a baseline is not lost to submodules.
+const SUBMODULE_CAPTURE_BUDGET = "3 seconds";
 // Windows limits a command line to 32767 characters.
 const GITLINK_PATHSPEC_MAX_CHARS = 16_384;
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
