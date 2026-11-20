@@ -6,6 +6,7 @@ import {
   codexAppServerArgs,
   codexExecLaunchArgs,
   codexMcpListLaunchArgs,
+  resolveCodexLaunchArgs,
 } from "./codexLaunchArgs.ts";
 
 describe("codexAppServerArgs", () => {
@@ -20,8 +21,21 @@ describe("codexAppServerArgs", () => {
       launchArgs: "-c thread_unload_delay_secs=1800",
       expected: ["-c", "thread_unload_delay_secs=1800"],
     },
+    {
+      name: "preserves an escaped trailing space in the environment override",
+      launchArgs: "--strict-config",
+      environment: { T3CODE_CODEX_LAUNCH_ARGS: "--cloud-skills-snapshot skills.json\\ " },
+      expected: ["--cloud-skills-snapshot", "skills.json "],
+    },
+    {
+      name: "uses configured arguments when the environment override is blank",
+      launchArgs: "--strict-config",
+      environment: { T3CODE_CODEX_LAUNCH_ARGS: " \t " },
+      expected: ["--strict-config"],
+    },
   ])("asks Codex to unload unsubscribed threads immediately and $name", (row) => {
-    NodeAssert.deepStrictEqual(codexAppServerArgs(row.launchArgs), [
+    const launchArgs = resolveCodexLaunchArgs(row.launchArgs, row.environment ?? {});
+    NodeAssert.deepStrictEqual(codexAppServerArgs(launchArgs), [
       "app-server",
       "-c",
       "thread_unload_delay_secs=0",
@@ -38,13 +52,27 @@ describe("codexExecLaunchArgs", () => {
     );
   });
 
-  it("drops launch args that enable user hooks", () => {
-    NodeAssert.deepStrictEqual(
-      codexExecLaunchArgs(
-        "--enable hooks --enable=hooks --enable codex_hooks --enable=codex_hooks --enable foo --disable hooks",
-      ),
-      ["--enable", "foo", "--disable", "hooks"],
-    );
+  it("keeps user hooks, apps, and plugins off during text generation", () => {
+    const launchArgs =
+      "--enable hooks --enable=hooks --enable codex_hooks --enable=codex_hooks --enable apps --enable=apps --enable connectors --enable=connectors --enable plugins --enable=plugins --enable foo --disable hooks";
+    NodeAssert.deepStrictEqual(codexExecLaunchArgs(launchArgs), [
+      "--enable",
+      "foo",
+      "--disable",
+      "hooks",
+    ]);
+    NodeAssert.deepStrictEqual(codexMcpListLaunchArgs(launchArgs), [
+      "--enable",
+      "hooks",
+      "--enable=hooks",
+      "--enable",
+      "codex_hooks",
+      "--enable=codex_hooks",
+      "--enable",
+      "foo",
+      "--disable",
+      "hooks",
+    ]);
   });
 
   it("does not pair value-taking flags with adjacent flags", () => {

@@ -75,6 +75,7 @@ const clientLaunchHarness = (input: {
   const layerDependencies = Layer.mergeAll(
     Layer.mock(ProviderRegistry.ProviderRegistry)({
       getProviders: Effect.succeed(input.providers ?? []),
+      refreshWorkspaceSnapshot: () => Effect.succeed(input.providers ?? []),
     }),
     ServerSettings.layerTest({
       fallbackModelSelection: input.fallbackModel ?? null,
@@ -172,6 +173,7 @@ const clientLaunchHarness = (input: {
               } as unknown as ProjectRecord)
             : Option.none(),
         ),
+      workspaceScanDirectory: Effect.succeed,
     }),
     Layer.mock(PeerForwarding.PeerForwarding)({}),
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
@@ -375,6 +377,22 @@ it.effect("a launch with a model its provider does not advertise creates no thre
       ],
       slashCommands: [],
       skills: [],
+      // The project folder's own provider config adds a model the machine catalog lacks.
+      workspaceSnapshots:
+        driver === "codex"
+          ? [
+              {
+                cwd: "/projects/client-target",
+                checkedAt: "2026-01-01T00:00:00Z",
+                slashCommands: [],
+                skills: [],
+                models: [
+                  { slug: "gpt-5.4", name: "GPT", isCustom: false, capabilities: null },
+                  { slug: "folder-local", name: "Local", isCustom: false, capabilities: null },
+                ],
+              },
+            ]
+          : [],
     }));
     const { projectId, dependencies } = clientLaunchHarness({
       runtimeModeCeiling: "auto",
@@ -416,7 +434,10 @@ it.effect("a launch with a model its provider does not advertise creates no thre
     expect(yield* launchWith("claudeAgent", "Opus")).toMatchObject({
       modelSelection: { instanceId: "claudeAgent", model: "Opus" },
     });
-    expect(launched).toHaveLength(1);
+    expect(yield* launchWith("codex", "folder-local")).toMatchObject({
+      modelSelection: { instanceId: "codex", model: "folder-local" },
+    });
+    expect(launched).toHaveLength(2);
   }),
 );
 
@@ -737,6 +758,70 @@ it.effect("a launch that omits its workspace follows the new-threads-in-a-worktr
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect("a defaulted worktree launch stays shared only when Git says HEAD has no commit", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const commitArgs = ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty"];
+    for (const [checkout, expected] of [
+      ["not a repository", "root"],
+      ["no commit yet", "root"],
+      ["branch tip object missing", "worktree"],
+      ["git refuses the repository", "refused"],
+    ] as const) {
+      const repo = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-launch-head-" });
+      const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+      const { projectId, dependencies } = clientLaunchHarness({
+        runtimeModeCeiling: "auto",
+        launched,
+        workspaceRoot: repo,
+        defaultThreadEnvMode: "worktree",
+      });
+      const git = yield* GitVcsDriver.GitVcsDriver.pipe(Effect.provide(dependencies));
+      if (checkout !== "not a repository")
+        yield* git.execute({
+          operation: "test.setupRepo",
+          cwd: repo,
+          args: ["init", "-b", "main"],
+        });
+      if (checkout === "branch tip object missing")
+        yield* fileSystem.writeFileString(`${repo}/.git/refs/heads/main`, `${"1".repeat(40)}\n`);
+      if (checkout === "git refuses the repository") {
+        yield* git.execute({
+          operation: "test.setupRepo",
+          cwd: repo,
+          args: [...commitArgs, "-m", "init"],
+        });
+        // Git quotes the broken file's path in its refusal; that path must not read as "not a repository".
+        yield* fileSystem.writeFileString(`${repo}/not a git repository`, "[core\n");
+        yield* fileSystem.writeFileString(
+          `${repo}/.git/config`,
+          `[include]\n\tpath = ${repo}/not a git repository\n`,
+        );
+      }
+      const toolkit = yield* ProjectToolkit.pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+            Layer.provide(dependencies),
+          ),
+        ),
+      );
+      const result = (yield* toolkit
+        .handle("t3_thread_launch", { title: "Fix", projectId })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies))).at(-1)?.result;
+
+      if (expected === "refused") {
+        expect(result, checkout).toMatchObject({ code: "orchestration_error" });
+        expect(launched, checkout).toHaveLength(0);
+      } else {
+        expect(
+          launched.map((launch) => launch.workspaceStrategy.type),
+          checkout,
+        ).toEqual([expected]);
+      }
+    }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("a launch into a new worktree creates nothing when its branch collides", () =>
   Effect.gen(function* () {
     const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
@@ -898,6 +983,36 @@ it.effect("a client launches with the fallback for an exhausted default", () =>
       modelSelection: fallbackModel,
     });
     expect(launched[0]?.modelSelection).toEqual(fallbackModel);
+  }),
+);
+
+it.effect("creating a project through MCP refuses a model default instead of dropping it", () =>
+  Effect.gen(function* () {
+    const harness = clientLaunchHarness({ runtimeModeCeiling: "full-access", launched: [] });
+    const dependencies = Layer.merge(
+      harness.dependencies,
+      Layer.mock(Project.ProjectService)({
+        create: () => Effect.die("the project was created without its model default"),
+      }),
+    );
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+
+    const refused = yield* toolkit
+      .handle("t3_project_create", {
+        title: "client-target",
+        workspaceRoot: "/projects/client-target",
+        defaultModelSelection: harness.modelSelection,
+      })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+    expect(refused.at(-1)?.result).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringContaining("t3_project_update"),
+    });
   }),
 );
 
