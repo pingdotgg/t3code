@@ -8,6 +8,7 @@ import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
@@ -264,10 +265,13 @@ const linkAntigravityUserConfig = Effect.fn("linkAntigravityUserConfig")(functio
   for (const [link, target, type] of [
     [links[0], targets[0], directoryType],
     [links[1], targets[1], directoryType],
-    ...antigravityUserRuleFiles.map(
-      (name) =>
-        [path.join(input.profileDirectory, name), path.join(userGemini, name), "file"] as const,
-    ),
+    // File symlinks need elevation or Developer Mode on Windows, so rules are copied there.
+    ...(input.platform === "win32"
+      ? []
+      : antigravityUserRuleFiles.map(
+          (name) =>
+            [path.join(input.profileDirectory, name), path.join(userGemini, name), "file"] as const,
+        )),
   ] as const) {
     yield* Effect.gen(function* () {
       // The harness creates these folders itself, and mkdir fails on a dangling link.
@@ -313,6 +317,60 @@ const linkAntigravityUserConfig = Effect.fn("linkAntigravityUserConfig")(functio
       ),
     );
   }
+});
+
+const RuleCopiesJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
+const decodeRuleCopies = Schema.decodeUnknownOption(RuleCopiesJson);
+const encodeRuleCopies = Schema.encodeSync(RuleCopiesJson);
+
+/** Copies refresh each launch; the recorded copy keeps a file the profile owns or edited untouched. */
+const copyAntigravityUserRuleFiles = Effect.fn("copyAntigravityUserRuleFiles")(function* (input: {
+  readonly profileDirectory: string;
+  readonly userHome: string;
+}): Effect.fn.Return<void, never, FileSystem.FileSystem | Path.Path> {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const manifestPath = path.join(input.profileDirectory, ".t3-rule-copies.json");
+  const readOptional = (file: string) =>
+    fs.readFileString(file).pipe(Effect.orElseSucceed((): string | undefined => undefined));
+  const manifestText = yield* readOptional(manifestPath);
+  const copies: Record<string, string> = {
+    ...Option.getOrElse(decodeRuleCopies(manifestText), () => ({})),
+  };
+  for (const name of antigravityUserRuleFiles) {
+    const link = path.join(input.profileDirectory, name);
+    const target = path.join(input.userHome, ".gemini", name);
+    yield* Effect.gen(function* () {
+      const current = yield* readOptional(link);
+      if (current !== undefined && current !== copies[name]) {
+        delete copies[name];
+        return;
+      }
+      const source = yield* readOptional(target);
+      if (source === undefined) {
+        if (current !== undefined) yield* fs.remove(link);
+        delete copies[name];
+        return;
+      }
+      yield* fs.writeFileString(link, source);
+      copies[name] = source;
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Antigravity user rules are not copied into the profile.", {
+          link,
+          target,
+          error,
+        }),
+      ),
+    );
+  }
+  yield* fs
+    .writeFileString(manifestPath, encodeRuleCopies(copies))
+    .pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Antigravity rule copy record could not be written.", { error }),
+      ),
+    );
 });
 
 export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(function* (input: {
@@ -462,6 +520,9 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
       ),
     );
   yield* linkAntigravityUserConfig({ profileDirectory: geminiHome, userHome, platform });
+  if (platform === "win32") {
+    yield* copyAntigravityUserRuleFiles({ profileDirectory: geminiHome, userHome });
+  }
   return profile;
 });
 
