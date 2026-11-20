@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { getFiletypeFromFileName } from "@pierre/diffs";
 import { filePreviewDelimiter } from "@t3tools/shared/delimitedPreview";
-import type { ReactNode } from "react";
+import { type ReactNode, useCallback } from "react";
 
 import { Notice } from "../artifacts/Notice";
 import { CodeBody } from "../chat/CodeBody";
@@ -12,6 +12,7 @@ import { BinaryPlaceholder } from "./BinaryPlaceholder";
 import { DelimitedTable } from "./DelimitedTable";
 import { FileToolbar } from "./FileToolbar";
 import { PathOnly } from "./PathOnly";
+import { revealLine } from "./revealLine";
 import { type FileTarget, nameOf } from "./target";
 
 const UNITS = ["B", "KB", "MB", "GB"] as const;
@@ -54,6 +55,13 @@ export function TextBody({
   const loaded = useAtomValue(
     artifactContentsAtom(artifactContentsKey(target.environmentId, target.cwd, target.path)),
   );
+  const { line } = target;
+  // A callback ref, so the line is found once the file's body has mounted, whenever that is.
+  const reveal = useCallback(
+    (node: HTMLDivElement | null) =>
+      node === null || line === undefined ? undefined : revealLine(node, line),
+    [line],
+  );
   if (loaded.status === "loading") return <Notice>Loading the file</Notice>;
   if (loaded.status === "failed") return <Notice tone="text-red-300">{loaded.message}</Notice>;
   const { contents } = loaded;
@@ -66,8 +74,10 @@ export function TextBody({
     );
   }
   const text = contents.contents;
-  const delimiter = filePreviewDelimiter({ name });
-  const custom = textBody?.(text);
+  // A file opened at a line reads as code, so the line has a place to show.
+  const atLine = line !== undefined;
+  const delimiter = atLine ? null : filePreviewDelimiter({ name });
+  const custom = atLine ? undefined : textBody?.(text);
   return (
     <div ref={markPainted} className="flex min-h-0 flex-1 flex-col">
       <FileToolbar
@@ -88,10 +98,10 @@ export function TextBody({
       {delimiter !== null && custom === undefined ? (
         <DelimitedTable text={text} delimiter={delimiter} />
       ) : (
-        <div className="min-h-0 flex-1 overflow-auto" data-wrap="true">
+        <div ref={reveal} className="min-h-0 flex-1 overflow-auto" data-wrap="true">
           {custom !== undefined ? (
             custom
-          ) : MARKDOWN.test(name) ? (
+          ) : !atLine && MARKDOWN.test(name) ? (
             <div className="px-4 py-3 text-[13px]" data-testid="viewer-markdown">
               <ChatMarkdown text={text} />
             </div>

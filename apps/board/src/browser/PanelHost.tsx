@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 
+import { ChangesPanel } from "../changes/ChangesPanel";
 import { FilesPanel } from "../files/FilesPanel";
 import { lastOpenedBoardAtom } from "../state/boards";
 import { EmptyFiles } from "../files/EmptyFiles";
@@ -11,7 +12,8 @@ const shown = (active: boolean) => (active ? "flex min-h-0 flex-1 flex-col" : "h
 
 /**
  * The one panel beside the board. Its tabs share one width, and every tab stays mounted behind the
- * others, so the chat keeps its scroll, draft, and stream and the explorer its open folders.
+ * others, so the chat keeps its scroll, draft, and stream, the explorer its open folders, and
+ * source control its commit message.
  */
 export function PanelHost() {
   const { open, tab, width } = useAtomValue(panelAtom);
@@ -42,6 +44,14 @@ export function PanelHost() {
         className={shown(tab === "explorer")}
       >
         <FilesPanel />
+      </div>
+      <div
+        id="panel-changes"
+        role="tabpanel"
+        aria-labelledby="panel-tab-changes"
+        className={shown(tab === "changes")}
+      >
+        <ChangesPanel />
       </div>
     </aside>
   );

@@ -1,9 +1,11 @@
+import { RegistryContext } from "@effect/atom-react";
 import { ArrowRight, GitBranch, RotateCcw } from "lucide-react";
-import { useRef } from "react";
+import { useContext, useRef } from "react";
 
 import { useArtifacts } from "../artifacts/ArtifactsContext";
 import type { Ticket } from "../domain/ticket";
 import { NO_ARTIFACTS } from "../state/artifacts";
+import { openTicketChanges } from "../state/changesView";
 import type { TicketView } from "../state/boardModel";
 import { AgentCard } from "./AgentCard";
 import { ArtifactCards } from "./ArtifactCards";
@@ -11,6 +13,7 @@ import { ArtifactCount } from "./ArtifactCount";
 import { artifactsHeight, CARD_GAP, FRAME_PAD, type FrameBox, hasChips, hasPrRow } from "./layout";
 import { PrChip } from "./PrChip";
 import { RemoveWorktree } from "./RemoveWorktree";
+import { ReviewChanges } from "./ReviewChanges";
 import { useViewScale } from "./Viewport";
 
 const DRAG_THRESHOLD_PX = 4;
@@ -57,9 +60,16 @@ export function TicketFrame({
   onOpen: (threadId: string | null) => void;
 }) {
   const { ticket, agents } = view;
+  const registry = useContext(RegistryContext);
   const scale = useViewScale();
   const { groups, expanded } = useArtifacts();
   const artifacts = groups.byTicket.get(ticket.key) ?? NO_ARTIFACTS;
+  const branchText =
+    ticket.branch == null
+      ? "No branch yet"
+      : ticket.base == null
+        ? ticket.branch
+        : `${ticket.branch} → ${ticket.base}`;
   const press = useRef<{ startY: number; dragging: boolean } | null>(null);
   const seen = new Map<string, number>();
   const verdicts = (ticket.verdicts ?? []).map((verdict) => {
@@ -132,17 +142,27 @@ export function TicketFrame({
         </button>
         <p className="mt-1 flex min-w-0 items-center gap-1 text-[11px] text-faint">
           <GitBranch className="size-3 shrink-0" aria-hidden />
-          <span className="truncate">
-            {ticket.branch == null
-              ? "No branch yet"
-              : ticket.base == null
-                ? ticket.branch
-                : `${ticket.branch} → ${ticket.base}`}
-          </span>
+          {ticket.worktreePath == null ? (
+            <span className="truncate">{branchText}</span>
+          ) : (
+            <button
+              type="button"
+              data-testid="frame-changes"
+              aria-label={`Review ${ticket.key} changes`}
+              onClick={() => openTicketChanges(registry, ticket)}
+              className="min-w-0 truncate hover:text-fg hover:underline"
+            >
+              {branchText}
+            </button>
+          )}
         </p>
         {hasPrRow(ticket) && (
           <div className="mt-1.5 flex h-[20px] items-center gap-1.5">
             <PrChip view={view} />
+            <ReviewChanges
+              ticket={ticket}
+              className="grid size-5 place-items-center rounded text-faint hover:bg-hover hover:text-fg"
+            />
             {ticket.stage === "merged" && ticket.worktreePath != null && (
               <RemoveWorktree view={view} />
             )}
@@ -186,6 +206,7 @@ export function TicketFrame({
             <AgentCard
               key={agent.threadId}
               agent={agent}
+              ticket={ticket}
               selected={agent.threadId === selectedThreadId}
               onOpen={() => onOpen(agent.threadId)}
             />

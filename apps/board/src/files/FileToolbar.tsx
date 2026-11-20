@@ -17,6 +17,7 @@ export function FileToolbar({
     <div className="flex shrink-0 items-center gap-1 border-b border-line px-3 py-1">
       <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted">
         {absolutePathOf(target)}
+        {target.line !== undefined && `:${target.line}`}
       </span>
       <CopyButton read={copy.read} label={copy.label} />
       <DownloadButton target={target} text={text} />

@@ -70,6 +70,14 @@
   font: inherit;
 }
 
+/* The line a file opened at, which the file view marks and scrolls to. */
+.board-code [data-marked] {
+  display: inline-block;
+  min-width: 100%;
+  background: color-mix(in srgb, var(--color-focus) 22%, transparent);
+  box-shadow: inset 2px 0 var(--color-focus);
+}
+
 [data-wrap="true"] .board-code pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;

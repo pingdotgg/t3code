@@ -3,7 +3,7 @@ import { Atom, type AtomRegistry } from "effect/reactivity";
 import { appAtomRegistry } from "../state/registry";
 
 /** The panel's tabs. Later tabs join this list and the strip, and this one does not move. */
-export const PANEL_TABS = ["chat", "explorer"] as const;
+export const PANEL_TABS = ["chat", "explorer", "changes"] as const;
 export type PanelTab = (typeof PANEL_TABS)[number];
 
 export interface PanelState {
