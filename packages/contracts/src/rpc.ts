@@ -339,7 +339,17 @@ import {
   DeviceSession,
   DeviceShutdownInput,
 } from "./device.ts";
-import { BlenderStatus } from "./blender.ts";
+import {
+  BlenderInspectInput,
+  BlenderJob,
+  BlenderJobEvent,
+  BlenderJobRef,
+  BlenderRequestError,
+  BlenderScene,
+  BlenderStartJobInput,
+  BlenderStatus,
+  BlenderSubscribeJobsInput,
+} from "./blender.ts";
 import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
@@ -591,6 +601,11 @@ export const WS_METHODS = {
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
 
   blenderGetStatus: "blender.getStatus",
+  blenderInspect: "blender.inspect",
+  blenderStartJob: "blender.startJob",
+  blenderGetJob: "blender.getJob",
+  blenderCancelJob: "blender.cancelJob",
+  blenderSubscribeJobs: "blender.subscribeJobs",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -1089,6 +1104,43 @@ const WsBlenderGetStatusRpc = Rpc.make(WS_METHODS.blenderGetStatus, {
   payload: Schema.Struct({}),
   success: BlenderStatus,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+const BlenderError = Schema.Union([
+  BlenderRequestError,
+  ServerSettingsError,
+  EnvironmentAuthorizationError,
+]);
+
+const WsBlenderInspectRpc = Rpc.make(WS_METHODS.blenderInspect, {
+  payload: BlenderInspectInput,
+  success: BlenderScene,
+  error: BlenderError,
+});
+
+const WsBlenderStartJobRpc = Rpc.make(WS_METHODS.blenderStartJob, {
+  payload: BlenderStartJobInput,
+  success: BlenderJob,
+  error: BlenderError,
+});
+
+const WsBlenderGetJobRpc = Rpc.make(WS_METHODS.blenderGetJob, {
+  payload: BlenderJobRef,
+  success: BlenderJob,
+  error: Schema.Union([BlenderRequestError, EnvironmentAuthorizationError]),
+});
+
+const WsBlenderCancelJobRpc = Rpc.make(WS_METHODS.blenderCancelJob, {
+  payload: BlenderJobRef,
+  success: BlenderJob,
+  error: Schema.Union([BlenderRequestError, EnvironmentAuthorizationError]),
+});
+
+const WsBlenderSubscribeJobsRpc = Rpc.make(WS_METHODS.blenderSubscribeJobs, {
+  payload: BlenderSubscribeJobsInput,
+  success: BlenderJobEvent,
+  error: EnvironmentAuthorizationError,
+  stream: true,
 });
 
 const WsCloudGetRelayClientStatusRpc = Rpc.make(WS_METHODS.cloudGetRelayClientStatus, {
@@ -2335,6 +2387,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRetryResourceTelemetryRpc,
   WsServerCheckOtlpEndpointRpc,
   WsBlenderGetStatusRpc,
+  WsBlenderInspectRpc,
+  WsBlenderStartJobRpc,
+  WsBlenderGetJobRpc,
+  WsBlenderCancelJobRpc,
+  WsBlenderSubscribeJobsRpc,
   WsServerListTextGeneratorModelsRpc,
   WsServerPrepareTriageRpc,
   WsServerGetUsageSummaryRpc,

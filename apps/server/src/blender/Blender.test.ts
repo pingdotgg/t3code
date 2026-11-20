@@ -1,12 +1,22 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import type { BlenderStatus, ServerSettings as ServerSettingsSchema } from "@t3tools/contracts";
+import {
+  ThreadId,
+  type BlenderStatus,
+  type ServerSettings as ServerSettingsSchema,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as Stream from "effect/Stream";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -20,6 +30,11 @@ type ProbeOutput = {
 };
 
 const BLENDER_42 = "Blender 4.2.1 LTS\n\tbuild date: 2024-08-19\n";
+
+const noThreads: Blender.BlenderThreads = {
+  workspaceRoot: () => Effect.succeed(null),
+  stops: Stream.never,
+};
 
 /** Runs one status read against a temp host whose files and probe output the case controls. */
 const readStatus = Effect.fn(function* (input: {
@@ -72,7 +87,7 @@ const readStatus = Effect.fn(function* (input: {
     return yield* service.status;
   }).pipe(
     Effect.provide(
-      Blender.layer.pipe(
+      Blender.layerWith({ threads: noThreads, rootDir: path.join(root, "state") }).pipe(
         Layer.provide(
           ServerSettings.layerTest({
             blender: {
@@ -86,6 +101,7 @@ const readStatus = Effect.fn(function* (input: {
       ),
     ),
     Effect.provideService(ProcessRunner.ProcessRunner, runner),
+    Effect.provide(SecureRandom.layerWebCrypto),
     Effect.provideService(HostProcess.Platform, input.platform ?? "linux"),
     Effect.provideService(HostProcess.HomeDirectory, path.join(root, "home")),
     Effect.provideService(HostProcess.Environment, {
@@ -253,6 +269,407 @@ describe("Blender.status", () => {
         output,
       });
       assert.deepStrictEqual(status, expected(`${root}/bin/blender`));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
+
+interface FakeJob {
+  readonly spec: {
+    readonly resultPath: string;
+    readonly outputDir: string;
+    readonly outputs?: ReadonlyArray<string>;
+    readonly script?: string;
+    readonly savePath?: string;
+  };
+  /** The scene file Blender was asked to open. */
+  readonly scene: string | undefined;
+  readonly cwd: string | undefined;
+}
+
+const exited = (code: number) => ({
+  stdout: "",
+  stderr: "",
+  code: ChildProcessSpawner.ExitCode(code),
+  timedOut: false,
+  stdoutTruncated: false,
+  stderrTruncated: false,
+  stdoutInvalidUtf8: false,
+  stderrInvalidUtf8: false,
+});
+
+/** Does what the job script does for a script that succeeds. */
+const writeOutputs = Effect.fn(function* (job: FakeJob) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  if (job.spec.outputs?.includes("preview")) {
+    yield* fs.writeFileString(path.join(job.spec.outputDir, "preview.glb"), "glTF-binary");
+  }
+  if (job.spec.outputs?.includes("render")) {
+    yield* fs.writeFileString(path.join(job.spec.outputDir, "render.png"), "png");
+  }
+  if (job.spec.savePath) yield* fs.writeFileString(job.spec.savePath, "edited scene");
+});
+
+const succeed = Effect.fn(function* (job: FakeJob) {
+  const fs = yield* FileSystem.FileSystem;
+  yield* writeOutputs(job);
+  yield* fs.writeFileString(job.spec.resultPath, JSON.stringify({ ok: true }));
+  return exited(0);
+});
+
+const THREAD = ThreadId.make("thread-blender");
+const OTHER_THREAD = ThreadId.make("thread-other");
+
+/** A Blender service over a temp workspace whose Blender processes `run` fakes. */
+const startJobs = Effect.fn(function* (input: {
+  readonly run?: (
+    job: FakeJob,
+  ) => Effect.Effect<ReturnType<typeof exited>, never, FileSystem.FileSystem | Path.Path>;
+  readonly limits?: Partial<Blender.BlenderLimits>;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-blender-jobs-" });
+  const workspace = path.join(root, "workspace");
+  yield* fs.makeDirectory(path.join(workspace, "models"), { recursive: true });
+  yield* fs.writeFileString(path.join(workspace, "models", "chair.blend"), "original scene");
+  yield* fs.writeFileString(path.join(workspace, "edit.py"), "pass\n");
+  yield* fs.writeFileString(path.join(root, "outside.blend"), "not in the workspace");
+  const executable = path.join(root, "blender");
+  yield* fs.writeFileString(executable, "#!/bin/sh\n");
+  yield* fs.chmod(executable, 0o755);
+  const stops = yield* Queue.unbounded<Blender.BlenderThreadStop>();
+  const jobs: Array<FakeJob> = [];
+  const services = yield* Effect.context<FileSystem.FileSystem | Path.Path>();
+  const runner = ProcessRunner.ProcessRunner.of({
+    run: (run) => {
+      if (run.args[0] === "--version") return Effect.succeed({ ...exited(0), stdout: BLENDER_42 });
+      return Effect.gen(function* () {
+        const spec = JSON.parse(yield* fs.readFileString(run.args.at(-1) ?? ""));
+        const sceneIndex = run.args.indexOf("--disable-autoexec") + 1;
+        const job: FakeJob = {
+          spec,
+          scene: run.args[sceneIndex] === "--python-exit-code" ? undefined : run.args[sceneIndex],
+          cwd: run.cwd,
+        };
+        jobs.push(job);
+        return yield* (input.run ?? succeed)(job);
+      }).pipe(Effect.orDie, Effect.provide(services));
+    },
+  });
+  const context = yield* Layer.build(
+    Blender.layerWith({
+      threads: {
+        workspaceRoot: (threadId) =>
+          Effect.succeed(threadId === THREAD || threadId === OTHER_THREAD ? workspace : null),
+        stops: Stream.fromQueue(stops),
+      },
+      rootDir: path.join(root, "state"),
+      ...(input.limits === undefined ? {} : { limits: input.limits }),
+    }).pipe(
+      Layer.provide(
+        ServerSettings.layerTest({ blender: { enabled: true, executablePath: executable } }),
+      ),
+      Layer.provide(Layer.succeed(ProcessRunner.ProcessRunner, runner)),
+      Layer.provide(SecureRandom.layerWebCrypto),
+    ),
+  );
+  return { blender: Context.get(context, Blender.Blender), jobs, stops, root, workspace };
+});
+
+const gatedRun = Effect.fn(function* () {
+  const started = yield* Queue.unbounded<FakeJob>();
+  const gates: Array<Deferred.Deferred<void>> = [];
+  const interrupted: Array<FakeJob> = [];
+  const run = (job: FakeJob) =>
+    Effect.gen(function* () {
+      const gate = yield* Deferred.make<void>();
+      gates.push(gate);
+      // The export is on disk before the process is stopped, as a slow script's would be.
+      yield* writeOutputs(job).pipe(Effect.orDie);
+      yield* Queue.offer(started, job);
+      yield* Deferred.await(gate);
+      return yield* succeed(job).pipe(Effect.orDie);
+    }).pipe(Effect.onInterrupt(() => Effect.sync(() => interrupted.push(job))));
+  return { run, started, gates, interrupted };
+});
+
+describe("Blender jobs", () => {
+  it.effect("edits a private copy, publishes its preview and saves the edit as a new file", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { blender, jobs, root, workspace } = yield* startJobs({});
+      const queued = yield* blender.startJob({
+        threadId: THREAD,
+        input: "models/chair.blend",
+        script: "edit.py",
+        outputs: ["preview"],
+        saveAs: "models/chair-v2.blend",
+      });
+      assert.strictEqual(queued.status, "queued");
+      const job = yield* blender.awaitJob({ threadId: THREAD, jobId: queued.id });
+
+      assert.strictEqual(job.status, "succeeded");
+      assert.deepStrictEqual(job.result, {
+        preview: { bytes: 11, current: true },
+        saved: path.join("models", "chair-v2.blend"),
+      });
+      const [run] = jobs;
+      assert.strictEqual(run?.cwd, workspace);
+      assert.strictEqual(run?.spec.script, path.join(workspace, "edit.py"));
+      assert.isTrue(run?.scene?.startsWith(path.join(root, "state")));
+      assert.strictEqual(
+        yield* fs.readFileString(path.join(workspace, "models", "chair.blend")),
+        "original scene",
+      );
+      assert.strictEqual(
+        yield* fs.readFileString(path.join(workspace, "models", "chair-v2.blend")),
+        "edited scene",
+      );
+      const preview = yield* blender.outputFile({
+        threadId: THREAD,
+        jobId: job.id,
+        output: "preview",
+      });
+      assert.strictEqual(yield* fs.readFileString(preview), "glTF-binary");
+      // Another thread cannot reach the job.
+      const foreign = yield* blender
+        .outputFile({ threadId: OTHER_THREAD, jobId: job.id, output: "preview" })
+        .pipe(Effect.flip);
+      assert.strictEqual(foreign.reason, "job-not-found");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("refuses paths outside the workspace, existing save targets and unknown threads", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { blender, jobs, root, workspace } = yield* startJobs({});
+      yield* fs.symlink(path.join(root, "outside.blend"), path.join(workspace, "link.blend"));
+      const reasons = yield* Effect.forEach(
+        [
+          { threadId: THREAD, input: "../outside.blend", outputs: [] },
+          { threadId: THREAD, input: "link.blend", outputs: [] },
+          { threadId: THREAD, script: "models/chair.blend", outputs: [] },
+          { threadId: THREAD, input: "models/missing.blend", outputs: [] },
+          {
+            threadId: THREAD,
+            input: "models/chair.blend",
+            saveAs: "models/chair.blend",
+            outputs: [],
+          },
+          { threadId: THREAD, script: "edit.py", saveAs: "../escape.blend", outputs: [] },
+          { threadId: THREAD, outputs: ["preview" as const] },
+          { threadId: ThreadId.make("thread-unknown"), script: "edit.py", outputs: [] },
+        ],
+        (request) =>
+          blender.startJob(request).pipe(
+            Effect.flip,
+            Effect.map((error) =>
+              error._tag === "BlenderRequestError" ? error.reason : error._tag,
+            ),
+          ),
+      );
+      assert.deepStrictEqual(reasons, [
+        "path-not-allowed",
+        "path-not-allowed",
+        "path-not-allowed",
+        "file-not-found",
+        "save-target-exists",
+        "path-not-allowed",
+        "invalid-request",
+        "thread-not-found",
+      ]);
+      assert.strictEqual(jobs.length, 0);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("reports a failing script with its message and keeps nothing", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { blender } = yield* startJobs({
+        run: (job) =>
+          fs
+            .writeFileString(
+              job.spec.resultPath,
+              JSON.stringify({ ok: false, message: "RuntimeError: boom (edit.py line 3)" }),
+            )
+            .pipe(Effect.orDie, Effect.as(exited(23))),
+      });
+      const queued = yield* blender.startJob({
+        threadId: THREAD,
+        script: "edit.py",
+        outputs: ["preview"],
+      });
+      const job = yield* blender.awaitJob({ threadId: THREAD, jobId: queued.id });
+      assert.strictEqual(job.status, "failed");
+      assert.deepStrictEqual(job.failure, {
+        reason: "script-error",
+        message: "RuntimeError: boom (edit.py line 3)",
+        exitCode: 23,
+      });
+      const missing = yield* blender
+        .outputFile({ threadId: THREAD, jobId: job.id, output: "preview" })
+        .pipe(Effect.flip);
+      assert.strictEqual(missing.reason, "job-not-found");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("cancels a queued job before it starts and a running one with its process", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const fake = yield* gatedRun();
+      const { blender, jobs, root } = yield* startJobs({
+        run: fake.run,
+        limits: { runningJobs: 1 },
+      });
+      const running = yield* blender.startJob({
+        threadId: THREAD,
+        script: "edit.py",
+        outputs: ["preview"],
+      });
+      const queued = yield* blender.startJob({
+        threadId: THREAD,
+        script: "edit.py",
+        outputs: ["preview"],
+      });
+      yield* Queue.take(fake.started);
+
+      const cancelledQueued = yield* blender.cancelJob({ threadId: THREAD, jobId: queued.id });
+      assert.strictEqual(cancelledQueued.status, "cancelled");
+      const cancelledRunning = yield* blender.cancelJob({ threadId: THREAD, jobId: running.id });
+      assert.strictEqual(cancelledRunning.status, "cancelled");
+      assert.strictEqual(cancelledRunning.cancelledBy, "request");
+
+      // The running process was stopped, the queued one never started, and the export the
+      // stopped process wrote is neither served nor kept.
+      assert.strictEqual(fake.interrupted.length, 1);
+      assert.strictEqual(jobs.length, 1);
+      const stale = yield* blender
+        .outputFile({ threadId: THREAD, jobId: running.id, output: "preview" })
+        .pipe(Effect.flip);
+      assert.strictEqual(stale.reason, "job-not-found");
+      assert.deepStrictEqual(yield* fs.readDirectory(`${root}/state/jobs`), []);
+      // Cancelling a finished job changes nothing.
+      const again = yield* blender.cancelJob({ threadId: THREAD, jobId: running.id });
+      assert.deepStrictEqual(again, cancelledRunning);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("marks an older job's preview as replaced when a newer job published first", () =>
+    Effect.gen(function* () {
+      const fake = yield* gatedRun();
+      const { blender } = yield* startJobs({ run: fake.run, limits: { runningJobs: 2 } });
+      const request = {
+        threadId: THREAD,
+        input: "models/chair.blend",
+        outputs: ["preview" as const],
+      };
+      const older = yield* blender.startJob(request);
+      const newer = yield* blender.startJob(request);
+      yield* Queue.take(fake.started);
+      yield* Queue.take(fake.started);
+      yield* Deferred.succeed(fake.gates[1]!, undefined);
+      const newerDone = yield* blender.awaitJob({ threadId: THREAD, jobId: newer.id });
+      yield* Deferred.succeed(fake.gates[0]!, undefined);
+      const olderDone = yield* blender.awaitJob({ threadId: THREAD, jobId: older.id });
+      assert.deepStrictEqual(newerDone.result?.preview?.current, true);
+      assert.deepStrictEqual(olderDone.result?.preview?.current, false);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("stopping a thread ends its jobs, and deleting it drops their outputs", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const fake = yield* gatedRun();
+      const { blender, stops, root } = yield* startJobs({
+        run: fake.run,
+        limits: { runningJobs: 1 },
+      });
+      const request = { script: "edit.py", outputs: ["preview" as const] };
+      const running = yield* blender.startJob({ threadId: THREAD, ...request });
+      const queued = yield* blender.startJob({ threadId: THREAD, ...request });
+      const other = yield* blender.startJob({ threadId: OTHER_THREAD, ...request });
+      yield* Queue.take(fake.started);
+
+      yield* Queue.offer(stops, { threadId: THREAD, at: running.createdAt, forget: false });
+      const ended = yield* Effect.forEach([running, queued], (job) =>
+        blender.awaitJob({ threadId: THREAD, jobId: job.id }),
+      );
+      assert.deepStrictEqual(
+        ended.map((job) => [job.status, job.cancelledBy]),
+        [
+          ["cancelled", "thread-stopped"],
+          ["cancelled", "thread-stopped"],
+        ],
+      );
+      // The other thread's job takes the free slot and runs until its own thread is deleted.
+      yield* Queue.take(fake.started);
+      const otherEnded = yield* Effect.forkChild(
+        blender.awaitJob({ threadId: OTHER_THREAD, jobId: other.id }),
+        { startImmediately: true },
+      );
+      yield* Queue.offer(stops, { threadId: OTHER_THREAD, at: other.createdAt, forget: true });
+      assert.strictEqual((yield* Fiber.join(otherEnded)).status, "cancelled");
+      const forgotten = yield* blender
+        .getJob({ threadId: OTHER_THREAD, jobId: other.id })
+        .pipe(Effect.flip);
+      assert.strictEqual(forgotten.reason, "job-not-found");
+      assert.deepStrictEqual(yield* fs.readDirectory(`${root}/state/jobs`), []);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("streams a thread's jobs as a snapshot and then each change", () =>
+    Effect.gen(function* () {
+      const { blender } = yield* startJobs({});
+      const earlier = yield* blender.startJob({ threadId: THREAD, script: "edit.py", outputs: [] });
+      yield* blender.awaitJob({ threadId: THREAD, jobId: earlier.id });
+      const events = yield* Effect.forkChild(
+        blender.streamThreadJobs(THREAD).pipe(
+          Stream.takeUntil((event) => event._tag === "Updated" && event.job.status === "succeeded"),
+          Stream.runCollect,
+        ),
+        // Runs until it waits for changes, so it has subscribed before the next job starts.
+        { startImmediately: true },
+      );
+      yield* blender.startJob({ threadId: OTHER_THREAD, script: "edit.py", outputs: [] });
+      const later = yield* blender.startJob({ threadId: THREAD, script: "edit.py", outputs: [] });
+      const collected = yield* Fiber.join(events);
+      assert.deepStrictEqual(
+        collected.map((event) =>
+          event._tag === "Snapshot"
+            ? ["Snapshot", event.jobs.map((job) => job.id)]
+            : ["Updated", event.job.id, event.job.status],
+        ),
+        [
+          ["Snapshot", [earlier.id]],
+          ["Updated", later.id, "queued"],
+          ["Updated", later.id, "running"],
+          ["Updated", later.id, "succeeded"],
+        ],
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps only the newest finished jobs of a thread", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { blender, root } = yield* startJobs({ limits: { retainedJobsPerThread: 1 } });
+      const request = {
+        threadId: THREAD,
+        input: "models/chair.blend",
+        outputs: ["preview" as const],
+      };
+      const first = yield* blender.startJob(request);
+      yield* blender.awaitJob({ threadId: THREAD, jobId: first.id });
+      const second = yield* blender.startJob(request);
+      yield* blender.awaitJob({ threadId: THREAD, jobId: second.id });
+      const evicted = yield* blender
+        .getJob({ threadId: THREAD, jobId: first.id })
+        .pipe(Effect.flip);
+      assert.strictEqual(evicted.reason, "job-not-found");
+      assert.deepStrictEqual(yield* fs.readDirectory(`${root}/state/jobs`), [second.id]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

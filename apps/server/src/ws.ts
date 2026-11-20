@@ -91,6 +91,7 @@ import {
   serverProviderDeltas,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
+  AssetWorkspaceAssetNotFoundError,
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
   SOURCE_CONTROL_MEDIA_ASSET,
@@ -2766,6 +2767,11 @@ export const layerWsRpc = (
             ),
           ),
         [WS_METHODS.blenderGetStatus]: (_input) => blender.status,
+        [WS_METHODS.blenderInspect]: (input) => blender.inspect(input),
+        [WS_METHODS.blenderStartJob]: (input) => blender.startJob(input),
+        [WS_METHODS.blenderGetJob]: (input) => blender.getJob(input),
+        [WS_METHODS.blenderCancelJob]: (input) => blender.cancelJob(input),
+        [WS_METHODS.blenderSubscribeJobs]: (input) => blender.streamThreadJobs(input.threadId),
         [WS_METHODS.cloudGetRelayClientStatus]: (_input) => relayClient.resolve,
         [WS_METHODS.cloudInstallRelayClient]: (_input) =>
           Stream.callback<RelayClientInstallProgressEvent, RelayClientInstallFailedError>((queue) =>
@@ -3086,6 +3092,16 @@ export const layerWsRpc = (
                 !isNetworkPath(input.resource.path))
             ) {
               return yield* issueAssetUrl({ resource: input.resource });
+            }
+            if (input.resource._tag === "blender-output") {
+              const outputPath = yield* blender
+                .outputFile(input.resource)
+                .pipe(
+                  Effect.mapError(
+                    () => new AssetWorkspaceAssetNotFoundError({ resource: input.resource }),
+                  ),
+                );
+              return yield* issueAssetUrl({ resource: input.resource, outputPath });
             }
             if (input.resource._tag === "draft-workspace-file") {
               return yield* issueAssetUrl({

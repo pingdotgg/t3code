@@ -12,6 +12,8 @@ import {
   IssueTrackerKind,
   SecretProviderId,
   ThreadId,
+  BlenderJobId,
+  type AuthEnvironmentScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSourceControlWriteScope,
@@ -565,6 +567,13 @@ it.effect("separates host file URLs from readable attachment URLs", () =>
       { _tag: "media-file", threadId: ThreadId.make("thread"), path: "/repo/image.png" },
       { _tag: "draft-workspace-file", cwd: "/repo", path: "file.txt" },
       { _tag: "native-app-icon", app: { _tag: "app-path", path: "/private/Secret.app" } },
+      // Derived from workspace files, so it needs what reading them does.
+      {
+        _tag: "blender-output",
+        threadId: ThreadId.make("thread"),
+        jobId: BlenderJobId.make("job"),
+        output: "preview",
+      },
     ] as const) {
       expect(
         yield* client[WS_METHODS.assetsCreateUrl]({ resource }).pipe(Effect.flip),
@@ -574,6 +583,53 @@ it.effect("separates host file URLs from readable attachment URLs", () =>
       });
     }
     expect(handled).toBe(2);
+  }),
+);
+
+it.effect("requires host execution and thread operation to start a Blender job", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof WS_METHODS.blenderStartJob> =>
+          tag !== WS_METHODS.blenderStartJob,
+      ),
+    );
+    const startWith = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+      RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.blenderStartJob, (input) =>
+              Effect.succeed({
+                id: BlenderJobId.make("job"),
+                threadId: input.threadId,
+                sequence: 0,
+                outputs: [],
+                createdAt: 0,
+                status: "queued" as const,
+              }),
+            ),
+            RpcAuthorization.layer(scopes),
+          ),
+        ),
+        Effect.flatMap((client) =>
+          client[WS_METHODS.blenderStartJob]({
+            threadId: ThreadId.make("thread"),
+            script: "edit.py",
+            outputs: [],
+          }),
+        ),
+        Effect.map((job) => job.status),
+        Effect.catch((error) => Effect.succeed(error.requiredPermission)),
+      );
+    expect(
+      yield* Effect.all([
+        startWith([AuthOrchestrationOperateScope]),
+        startWith([AuthTerminalOperateScope]),
+        startWith([AuthTerminalOperateScope, AuthOrchestrationOperateScope]),
+      ]),
+    ).toEqual([AuthTerminalOperateScope, AuthOrchestrationOperateScope, "queued"]);
   }),
 );
 
