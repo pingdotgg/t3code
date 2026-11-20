@@ -7421,7 +7421,7 @@
   "c05b2ac13a3ec7a0": "Des valeurs plus élevées rendent les menus, les boîtes de dialogue et la zone de saisie plus opaques.",
   "a6c98b12b16f01a7": "Réinitialiser l’opacité du verre à la valeur par défaut",
   "8d7f3714a5b7e094": "Opacité du verre",
-  "03338c6aec8edacd": "Définissez la largeur maximale des messages et de la zone de saisie sur les grands écrans.",
+  "1c725c8c4e7737e0": "Set how wide messages can grow on large screens. The composer keeps its width.",
   "92785adb251da88c": "Réinitialiser la largeur de la discussion à la valeur par défaut",
   "4d457bcce0c0e272": "Largeur de la discussion",
   "81f3a196537bbee0": "Confortable (par défaut)",

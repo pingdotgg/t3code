@@ -288,20 +288,20 @@ describe("client profile merge", () => {
       surface: M,
       now: 50,
       sidecar: { ...sidecarWith({}, 100), choicePending: true },
-      local: read({ themeMode: "dark", themeLight: "a", chatWidth: "wide" }),
+      local: read({ themeMode: "dark", themeLight: "a", wordWrap: "wide" }),
       servers: [
         {
           environmentId: "s1",
           document: {
             themeMode: entry("light", 500, "dev-b"),
-            chatWidth: entry("compact", 900, "dev-b"),
+            wordWrap: entry("compact", 900, "dev-b"),
           },
         },
       ],
     });
     expect(sidecar.entries.themeMode?.changedAt).toBe(901);
     expect(sidecar.entries.themeLight?.changedAt).toBe(901);
-    expect(sidecar.entries.chatWidth).toBeUndefined();
+    expect(sidecar.entries.wordWrap).toBeUndefined();
     expect(sidecar.highestSeen).toBe(901);
     expect(sidecar.choicePending).toBe(false);
   });
@@ -310,7 +310,7 @@ describe("client profile merge", () => {
     const docs = (key: string) => [
       { environmentId: "s1", document: { [key]: entry("x", 1, "dev-b") } },
     ];
-    expect(needsClientProfileChoice(M, docs("chatWidth"))).toBe(false);
+    expect(needsClientProfileChoice(M, docs("wordWrap"))).toBe(false);
     expect(needsClientProfileChoice(M, docs("themeMode"))).toBe(true);
     expect(needsClientProfileChoice(D, docs("fontFamilyCode@windows"))).toBe(false);
     expect(needsClientProfileChoice(D, docs("fontFamilyCode@mac"))).toBe(true);

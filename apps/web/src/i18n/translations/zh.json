@@ -7435,7 +7435,7 @@
   "c05b2ac13a3ec7a0": "数值越高，菜单、对话框和输入框越不透明。",
   "a6c98b12b16f01a7": "重置玻璃不透明度为默认值",
   "8d7f3714a5b7e094": "毛玻璃不透明度",
-  "03338c6aec8edacd": "设置大屏幕上消息和输入框的最大宽度。",
+  "1c725c8c4e7737e0": "Set how wide messages can grow on large screens. The composer keeps its width.",
   "92785adb251da88c": "重置聊天宽度为默认值",
   "4d457bcce0c0e272": "聊天宽度",
   "81f3a196537bbee0": "适中（默认）",

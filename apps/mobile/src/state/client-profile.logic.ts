@@ -1,4 +1,4 @@
-import { SidebarProjectGroupingMode, ToolCallVisibility } from "@t3tools/contracts";
+import { ChatWidth, SidebarProjectGroupingMode, ToolCallVisibility } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import { DEFAULT_FOLLOW_UP_BEHAVIOR } from "../lib/followUpBehavior";
@@ -23,6 +23,7 @@ import {
 
 const isToolCallVisibility = Schema.is(ToolCallVisibility);
 const isGroupingMode = Schema.is(SidebarProjectGroupingMode);
+const isChatWidth = Schema.is(ChatWidth);
 
 function syncableThemeId(
   value: unknown,
@@ -48,6 +49,7 @@ export function readMobileProfileValues(preferences: Preferences): Record<string
     sidebarProjectGroupingMode:
       resolveMobileProjectGroupingSettings(preferences).sidebarProjectGroupingMode,
     sidebarWorkingShelfEnabled: preferences.workingShelfEnabled !== false,
+    chatWidth: preferences.chatWidth ?? "comfortable",
   };
 }
 
@@ -99,6 +101,7 @@ export function mobileProfilePatch(
   if (typeof values.sidebarWorkingShelfEnabled === "boolean") {
     patch.workingShelfEnabled = values.sidebarWorkingShelfEnabled;
   }
+  if (isChatWidth(values.chatWidth)) patch.chatWidth = values.chatWidth;
   return patch;
 }
 

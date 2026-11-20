@@ -101,6 +101,10 @@ describe("client profile mapping", () => {
     }
   });
 
+  it("applies a synced chat width", () => {
+    expect(mobileProfilePatch({}, { chatWidth: "full" }, "light")).toEqual({ chatWidth: "full" });
+  });
+
   it("dual-writes the legacy grouping flag", () => {
     expect(mobileProfilePatch({}, { sidebarProjectGroupingMode: "separate" }, "light")).toEqual({
       projectGroupingMode: "separate",
@@ -118,6 +122,7 @@ describe("client profile mapping", () => {
       mathRenderingEnabled: false,
       sidebarProjectGroupingMode: "repository",
       sidebarWorkingShelfEnabled: true,
+      chatWidth: "comfortable",
     });
   });
 
@@ -125,7 +130,12 @@ describe("client profile mapping", () => {
     expect(
       mobileProfilePatch(
         {},
-        { toolCallVisibility: "loud", followUpBehavior: 3, mathRenderingEnabled: "yes" },
+        {
+          toolCallVisibility: "loud",
+          followUpBehavior: 3,
+          mathRenderingEnabled: "yes",
+          chatWidth: "huge",
+        },
         "dark",
       ),
     ).toEqual({});

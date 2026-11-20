@@ -15,12 +15,12 @@ const REGISTRY = {
     "mathRenderingEnabled",
     "sidebarProjectGroupingMode",
     "sidebarWorkingShelfEnabled",
+    "chatWidth",
   ],
   browserAndDesktop: [
     "appearanceContrast",
     "glassOpacity",
     "panelAnimationDurationMs",
-    "chatWidth",
     "wordWrap",
     "timestampFormat",
     "effortDisplay",

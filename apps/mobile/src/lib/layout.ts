@@ -1,3 +1,4 @@
+import type { ChatWidth } from "@t3tools/contracts/settings";
 import { scaledTypographyLineHeight } from "./appearancePreferences";
 import { MOBILE_TYPOGRAPHY } from "./typography";
 import type { NativeLayoutMetrics } from "./reserved-regions";
@@ -16,6 +17,19 @@ const SPLIT_SIDEBAR_DEFAULT_MAX_WIDTH = 380;
 export const CHAT_CONTENT_MAX_WIDTH = 960;
 // Limit Android reading width for wide foldables and keyboard-open split views.
 export const ANDROID_READING_MAX_WIDTH = 640;
+// Matches the web's "wide" chat width (72rem).
+const WIDE_CHAT_CONTENT_MAX_WIDTH = 1152;
+
+/** The feed's reading width for the chat width setting; the composer keeps `readingMaxWidth`. */
+export function resolveChatFeedMaxWidth(
+  chatWidth: ChatWidth,
+  readingMaxWidth: number | undefined,
+): number | undefined {
+  if (chatWidth === "full" || readingMaxWidth === undefined) return undefined;
+  if (chatWidth === "wide") return Math.max(readingMaxWidth, WIDE_CHAT_CONTENT_MAX_WIDTH);
+  return readingMaxWidth;
+}
+
 // min-h-8 uses the 14px rem configured in metro.config.js.
 export const THREAD_WORK_ROW_MIN_HEIGHT = 28;
 

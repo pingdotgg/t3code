@@ -258,7 +258,7 @@ export function QueuedRunsControl({
       )}
       data-thread-queue="true"
       // Anchors the sr-only live region; unanchored, it escapes the timeline scroller and makes the chat column scroll.
-      className="relative mx-auto flex w-full max-w-(--chat-content-max-width) flex-col gap-2 pb-4"
+      className="relative mx-auto flex w-full max-w-(--chat-composer-max-width) flex-col gap-2 pb-4"
     >
       <span className="sr-only" aria-live="polite">
         {gt("{count, plural, one {{count} queued} other {{count} queued}}", {

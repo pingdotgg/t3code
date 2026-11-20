@@ -7387,7 +7387,7 @@
   "c05b2ac13a3ec7a0": "값이 높을수록 메뉴, 대화 상자, 입력창이 더 불투명해집니다.",
   "a6c98b12b16f01a7": "유리 불투명도 기본값으로 재설정",
   "8d7f3714a5b7e094": "유리 불투명도",
-  "03338c6aec8edacd": "큰 화면에서 메시지와 입력창이 넓어질 수 있는 폭을 설정합니다.",
+  "1c725c8c4e7737e0": "Set how wide messages can grow on large screens. The composer keeps its width.",
   "92785adb251da88c": "채팅 너비 기본값으로 재설정",
   "4d457bcce0c0e272": "채팅 너비",
   "81f3a196537bbee0": "보통(기본값)",

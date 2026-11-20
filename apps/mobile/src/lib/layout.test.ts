@@ -8,6 +8,7 @@ import {
   deriveWorkspacePaneLayout,
   nativeInspectorColumnWidth,
   isPrimarySidebarPinned,
+  resolveChatFeedMaxWidth,
 } from "./layout";
 
 describe("thread arrangement text sizing", () => {
@@ -221,5 +222,16 @@ describe("alignListPaneToHinge", () => {
     };
     expect(alignListPaneToHinge(narrowList)).toBe(layout);
     expect(alignListPaneToHinge(narrowDetail)).toBe(layout);
+  });
+});
+
+describe("chat feed width", () => {
+  it.each([
+    ["comfortable", 640, 640],
+    ["wide", 640, 1152],
+    ["full", 640, undefined],
+    ["wide", undefined, undefined],
+  ] as const)("%s with a %s reading width gives the feed %s", (chatWidth, reading, expected) => {
+    expect(resolveChatFeedMaxWidth(chatWidth, reading)).toBe(expected);
   });
 });

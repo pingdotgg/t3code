@@ -129,6 +129,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --workspace-titlebar-control-gap: 0.75rem;
   --workspace-titlebar-scroll-fade-height: 1.5rem;
   --chat-content-max-width: 46rem;
+  /* The composer keeps this width under every chat width setting. */
+  --chat-composer-max-width: 46rem;
   --thread-details-panel-width: 17.5rem;
   /* The prompt on phones: iOS zooms into any input under 16px on focus. */
   --font-size-prompt-touch: max(var(--font-size-prompt, 1rem), 16px);
@@ -2334,7 +2336,8 @@ code {
 }
 
 /* Chat width setting. Comfortable keeps the default --chat-content-max-width,
-   which sizes the timeline lane, the composer, and ChatCanvas's width probe. */
+   which sizes the timeline lane and ChatCanvas's width probe; the composer stays
+   at --chat-composer-max-width. */
 :root[data-chat-width="wide"] {
   --chat-content-max-width: 72rem;
 }

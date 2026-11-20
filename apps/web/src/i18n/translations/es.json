@@ -7420,7 +7420,7 @@
   "c05b2ac13a3ec7a0": "Los valores más altos hacen más sólidos los menús, los cuadros de diálogo y el cuadro de mensaje.",
   "a6c98b12b16f01a7": "Restablecer la opacidad del cristal al valor predeterminado",
   "8d7f3714a5b7e094": "Opacidad del cristal",
-  "03338c6aec8edacd": "Define cuánto pueden crecer los mensajes y el cuadro de mensaje en pantallas grandes.",
+  "1c725c8c4e7737e0": "Set how wide messages can grow on large screens. The composer keeps its width.",
   "92785adb251da88c": "Restablecer el ancho del chat al valor predeterminado",
   "4d457bcce0c0e272": "Ancho del chat",
   "81f3a196537bbee0": "Cómodo (predeterminado)",

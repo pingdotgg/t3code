@@ -24,12 +24,13 @@ describe("client profile keys", () => {
     expect(clientProfileBaseName("customTheme.nightfall", B)).toBe("customTheme.nightfall");
     expect(clientProfileBaseName("customTheme.nightfall", M)).toBe("customTheme.nightfall");
     expect(clientProfileBaseName("themeLight", M)).toBe("themeLight");
+    expect(clientProfileBaseName("chatWidth", M)).toBe("chatWidth");
     expect(clientProfileBaseName("snapShotShortcut@mac", B)).toBeNull();
     expect(clientProfileBaseName("unknownKey", D)).toBeNull();
   });
 
   it("limits each surface to its keys", () => {
-    expect(clientProfileBaseKeys(M)).toHaveLength(8);
+    expect(clientProfileBaseKeys(M)).toHaveLength(9);
     expect(clientProfileBaseKeys(B)).toHaveLength(66);
     expect(clientProfileBaseKeys(D)).toHaveLength(84);
     expect(isClientProfileBaseKey("browserLinkTarget", D)).toBe(true);

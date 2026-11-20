@@ -264,7 +264,9 @@ export function AppearanceSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("chat-width")}
-          description={gt("Set how wide messages and the composer can grow on large screens.")}
+          description={gt(
+            "Set how wide messages can grow on large screens. The composer keeps its width.",
+          )}
           resetAction={
             settings.chatWidth !== DEFAULT_UNIFIED_SETTINGS.chatWidth ? (
               <SettingResetButton

@@ -1,3 +1,4 @@
+import type { ChatWidth } from "@t3tools/contracts/settings";
 import {
   createContext,
   startTransition,
@@ -87,6 +88,8 @@ interface AppearancePreferencesContextValue {
   readonly setCodeWordBreak: (value: boolean) => void;
   readonly mathRenderingEnabled: boolean;
   readonly setMathRenderingEnabled: (value: boolean) => void;
+  readonly chatWidth: ChatWidth;
+  readonly setChatWidth: (value: ChatWidth) => void;
 }
 
 const AppearancePreferencesContext = createContext<AppearancePreferencesContextValue | null>(null);
@@ -321,6 +324,9 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   const setMathRenderingEnabled = (value: boolean) =>
     updatePreferences({ mathRenderingEnabled: value });
 
+  const chatWidth = storedPreferences?.chatWidth ?? "comfortable";
+  const setChatWidth = (value: ChatWidth) => updatePreferences({ chatWidth: value });
+
   const value = useMemo(
     (): AppearancePreferencesContextValue => ({
       appearance,
@@ -346,6 +352,8 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       setCodeWordBreak,
       mathRenderingEnabled,
       setMathRenderingEnabled,
+      chatWidth,
+      setChatWidth,
     }),
     [
       appearance,
@@ -370,6 +378,8 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       setCodeWordBreak,
       mathRenderingEnabled,
       setMathRenderingEnabled,
+      chatWidth,
+      setChatWidth,
     ],
   );
 

@@ -144,6 +144,7 @@ import {
   ANDROID_READING_MAX_WIDTH,
   CHAT_CONTENT_MAX_WIDTH,
   type LayoutVariant,
+  resolveChatFeedMaxWidth,
 } from "../../lib/layout";
 import { editPendingThreadMessage } from "../../state/edit-pending-thread-message";
 import { environmentCatalog } from "../../connection/catalog";
@@ -1258,6 +1259,8 @@ function ThreadDetailBody(
       : isSplitLayout
         ? CHAT_CONTENT_MAX_WIDTH
         : undefined;
+  const { chatWidth } = useAppearancePreferences();
+  const feedMaxWidth = resolveChatFeedMaxWidth(chatWidth, contentMaxWidth);
   const providerSubagentProvider = props.serverConfig?.providers.find(
     (provider) => provider.instanceId === props.selectedThread.modelSelection.instanceId,
   );
@@ -1590,7 +1593,7 @@ function ThreadDetailBody(
                       : estimatedOverlayHeight +
                         (showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : FEED_END_GAP)
                   }
-                  contentMaxWidth={contentMaxWidth}
+                  contentMaxWidth={feedMaxWidth}
                   historyControls={props.historyControls}
                   contentSideInsets={deriveContentSideInsets(nativeMetrics)}
                   layoutVariant={layoutVariant}

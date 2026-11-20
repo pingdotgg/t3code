@@ -266,15 +266,15 @@ describe("createClientProfileSync", () => {
   });
 
   it("relays a key the phone never applies from one server to another", async () => {
-    const chatWidth = entry(720, 300, "dev-b");
+    const wordWrap = entry(720, 300, "dev-b");
     using t = setup({
       local: { themeMode: "system" },
       defaults: { themeMode: "system" },
-      environments: [env("e1", { chatWidth }), env("e2", {})],
+      environments: [env("e1", { wordWrap }), env("e2", {})],
     });
     await t.controller.setEnabled(true);
-    expect(t.pushes).toEqual([{ environmentId: "e2", entries: { chatWidth } }]);
-    expect(t.applied.some((values) => "chatWidth" in values)).toBe(false);
+    expect(t.pushes).toEqual([{ environmentId: "e2", entries: { wordWrap } }]);
+    expect(t.applied.some((values) => "wordWrap" in values)).toBe(false);
   });
 
   it("coalesces a burst of local changes into one push", async () => {
