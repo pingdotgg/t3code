@@ -247,7 +247,7 @@ jobs:
           fi
 
       - name: Setup Rust
-        if: steps.resource_monitor_cache.outputs.cache-hit != 'true' || (inputs.platform == 'linux' && steps.capture_helper_cache.outputs.cache-hit != 'true')
+        if: inputs.platform == 'linux' || steps.resource_monitor_cache.outputs.cache-hit != 'true'
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: stable
@@ -506,7 +506,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsecret-1-dev pkg-config libgtk-3-0t64 libnss3 libasound2t64 libgbm1
+          sudo apt-get install -y libsecret-1-dev libudev-dev pkg-config libgtk-3-0t64 libnss3 libasound2t64 libgbm1
           if ! command -v magick >/dev/null 2>&1 && ! command -v convert >/dev/null 2>&1; then
               sudo apt-get install -y imagemagick
           fi

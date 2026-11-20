@@ -17,6 +17,7 @@
 - [Visual replies](./user/html-renders.md)
 - [Import browser sessions](./user/browser-import.md)
 - [Use T3 Code as your default browser](./user/default-browser.md)
+- [Use passkeys in the browser](./user/browser-passkeys.md)
 - [Devices](./user/devices.md)
 - [Usage and limits](./user/usage.md)
 - [Secrets](./user/secrets.md)

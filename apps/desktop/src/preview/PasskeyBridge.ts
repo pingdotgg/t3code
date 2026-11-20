@@ -1,18 +1,37 @@
+// @effect-diagnostics cryptoRandomUUID:off - This sandboxed preload has no Effect runtime.
 import type { CreateCredentialResult, GetCredentialResult } from "electron-webauthn";
 
-import { PASSKEY_CREATE_CHANNEL, PASSKEY_GET_CHANNEL } from "./GuestProtocol.ts";
+import {
+  PASSKEY_CREATE_CHANNEL,
+  PASSKEY_GET_CHANNEL,
+  PASSKEY_CANCEL_CHANNEL,
+} from "./GuestProtocol.ts";
+
+type NativeRegistrationData = Extract<CreateCredentialResult, { success: true }>["data"];
+type RegistrationData = Omit<NativeRegistrationData, "extensions"> & {
+  readonly extensions: Omit<NativeRegistrationData["extensions"], "credProps"> & {
+    readonly credProps?: CredentialPropertiesOutput;
+  };
+};
 
 export type PasskeyCeremonyResult =
-  | Extract<CreateCredentialResult, { success: true }>
+  | { readonly success: true; readonly data: RegistrationData }
   | Extract<GetCredentialResult, { success: true }>
-  | { readonly success: false; readonly error: string };
+  | { readonly success: false; readonly error: string; readonly fallbackToNative?: boolean };
 
-type PasskeyChannel = typeof PASSKEY_CREATE_CHANNEL | typeof PASSKEY_GET_CHANNEL;
+type PasskeyChannel =
+  | typeof PASSKEY_CREATE_CHANNEL
+  | typeof PASSKEY_GET_CHANNEL
+  | typeof PASSKEY_CANCEL_CHANNEL;
 // Credential Management Level 1 added `mediation` to creation requests.
 type CreationOptions = CredentialCreationOptions & {
   readonly mediation?: CredentialMediationRequirement;
 };
-type InvokePasskeyCeremony = (channel: PasskeyChannel, publicKey: unknown) => Promise<unknown>;
+type InvokePasskeyCeremony = (
+  channel: PasskeyChannel,
+  publicKey: unknown,
+  requestId: string,
+) => Promise<unknown>;
 
 const NOT_ALLOWED_MESSAGE =
   "The operation either timed out or was not allowed. See: https://www.w3.org/TR/webauthn-2/#sctn-privacy-considerations-client.";
@@ -121,9 +140,7 @@ const makeCredential = (input: {
     }),
   });
 
-const credentialFromCreateResult = (
-  data: Extract<CreateCredentialResult, { success: true }>["data"],
-) => {
+const credentialFromCreateResult = (data: RegistrationData) => {
   const transports = [...data.transports];
   const publicKey = data.publicKey.length > 0 ? data.publicKey : null;
   const extensionResults: AuthenticationExtensionsClientOutputs = {
@@ -198,7 +215,7 @@ const abortReason = (signal: AbortSignal) =>
   signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
 
 /** Keep conditional requests native so autofill and upgrades cannot open a modal sheet unprompted. */
-export function installPasskeyBridge(invoke: InvokePasskeyCeremony) {
+export function installPasskeyBridge(invoke: InvokePasskeyCeremony, platformAuthenticator = true) {
   if (typeof CredentialsContainer === "undefined" || typeof PublicKeyCredential === "undefined") {
     return;
   }
@@ -206,11 +223,13 @@ export function installPasskeyBridge(invoke: InvokePasskeyCeremony) {
     channel: PasskeyChannel,
     publicKey: unknown,
     signal: AbortSignal | undefined,
-  ): Promise<PublicKeyCredential> => {
+  ): Promise<PublicKeyCredential | null> => {
     if (signal?.aborted) throw abortReason(signal);
-    const ceremony = invoke(channel, toCloneable(publicKey)).then(
+    const requestId = crypto.randomUUID();
+    const ceremony = invoke(channel, toCloneable(publicKey), requestId).then(
       (value) => {
         const result = value as PasskeyCeremonyResult;
+        if (!result.success && result.fallbackToNative) return null;
         if (!result.success) throw ceremonyError(result.error);
         return "attestationObject" in result.data
           ? credentialFromCreateResult(result.data)
@@ -224,7 +243,10 @@ export function installPasskeyBridge(invoke: InvokePasskeyCeremony) {
     );
     if (!signal) return ceremony;
     return new Promise((resolve, reject) => {
-      const onAbort = () => reject(abortReason(signal));
+      const onAbort = () => {
+        void invoke(PASSKEY_CANCEL_CHANNEL, null, requestId).catch(() => {});
+        reject(abortReason(signal));
+      };
       signal.addEventListener("abort", onAbort, { once: true });
       ceremony.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
     });
@@ -241,7 +263,9 @@ export function installPasskeyBridge(invoke: InvokePasskeyCeremony) {
     "create",
     function create(this: CredentialsContainer, options?: CreationOptions) {
       return options?.publicKey && options.mediation !== "conditional"
-        ? run(PASSKEY_CREATE_CHANNEL, options.publicKey, options.signal)
+        ? run(PASSKEY_CREATE_CHANNEL, options.publicKey, options.signal).then(
+            (credential) => credential ?? Reflect.apply(nativeCreate, this, [options]),
+          )
         : Reflect.apply(nativeCreate, this, [options]);
     },
   );
@@ -250,12 +274,18 @@ export function installPasskeyBridge(invoke: InvokePasskeyCeremony) {
     "get",
     function get(this: CredentialsContainer, options?: CredentialRequestOptions) {
       return options?.publicKey && options.mediation !== "conditional"
-        ? run(PASSKEY_GET_CHANNEL, options.publicKey, options.signal)
+        ? run(PASSKEY_GET_CHANNEL, options.publicKey, options.signal).then(
+            (credential) => credential ?? Reflect.apply(nativeGet, this, [options]),
+          )
         : Reflect.apply(nativeGet, this, [options]);
     },
   );
 
-  define(PublicKeyCredential, "isUserVerifyingPlatformAuthenticatorAvailable", async () => true);
+  define(
+    PublicKeyCredential,
+    "isUserVerifyingPlatformAuthenticatorAvailable",
+    async () => platformAuthenticator,
+  );
   define(PublicKeyCredential, "isConditionalMediationAvailable", async () => false);
   const nativeCapabilities = PublicKeyCredential.getClientCapabilities;
   if (typeof nativeCapabilities === "function") {
@@ -264,8 +294,8 @@ export function installPasskeyBridge(invoke: InvokePasskeyCeremony) {
       conditionalCreate: false,
       conditionalGet: false,
       hybridTransport: true,
-      passkeyPlatformAuthenticator: true,
-      userVerifyingPlatformAuthenticator: true,
+      passkeyPlatformAuthenticator: platformAuthenticator,
+      userVerifyingPlatformAuthenticator: platformAuthenticator,
     }));
   }
 }
