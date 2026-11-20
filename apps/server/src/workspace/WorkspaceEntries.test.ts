@@ -750,6 +750,50 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect({ rescans, destroyed }).toEqual({ rescans: 2, destroyed: 1 });
       }).pipe(Effect.provide(TestClock.layer())),
     );
+
+    it.effect("does not start another rescan while the last one is still running", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-overlapping-refresh-" });
+        yield* writeTextFile(cwd, "src/index.ts");
+        let scanStillRunning = false;
+        let rescans = 0;
+        const createFinder = FileFinder.create.bind(FileFinder);
+        vi.spyOn(FileFinder, "create").mockImplementation((options) => {
+          const created = createFinder(options);
+          if (created.ok) {
+            const finder = created.value;
+            const scanFilesAsync = finder.scanFilesAsync.bind(finder);
+            finder.scanFilesAsync = () => {
+              rescans += 1;
+              return scanFilesAsync();
+            };
+            // A rescan of a large folder outlasts the wait and keeps running in fff.
+            const waitForIndexReady = finder.waitForIndexReady.bind(finder);
+            finder.waitForIndexReady = (timeoutMs) =>
+              scanStillRunning
+                ? Promise.resolve({ ok: true, value: false })
+                : waitForIndexReady(timeoutMs);
+            const getScanProgressAsync = finder.getScanProgressAsync.bind(finder);
+            finder.getScanProgressAsync = async () => {
+              const progress = await getScanProgressAsync();
+              return scanStillRunning && progress.ok
+                ? { ok: true, value: { ...progress.value, isScanning: true } }
+                : progress;
+            };
+          }
+          return created;
+        });
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        yield* searchWorkspaceEntries({ cwd, query: "index", limit: 10 });
+
+        scanStillRunning = true;
+        for (let run = 0; run < 3; run++) {
+          yield* workspaceEntries.refresh(cwd);
+        }
+
+        expect(rescans).toBe(1);
+      }),
+    );
   });
 
   describe("searchContents", () => {
