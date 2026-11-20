@@ -122,6 +122,16 @@ query T3Issue($id: String!, $comments: Int!) {
   issue(id: $id) {
     ...LinearIssue
     description
+    priorityLabel
+    estimate
+    dueDate
+    cycle {
+      number
+      name
+    }
+    project {
+      name
+    }
     team {
       states(first: 100) {
         nodes {

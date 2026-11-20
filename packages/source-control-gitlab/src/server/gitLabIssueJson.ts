@@ -17,12 +17,17 @@ import type {
   IssueLabel,
   IssueLabelCandidate,
   IssueLinkedPullRequest,
+  IssueProperty,
   IssueState,
   IssueTemplate,
   PullRequestState,
 } from "@t3tools/contracts";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
-import type { TrackerIssueSummary } from "@t3tools/source-control-core/server/IssueTracker";
+import {
+  issueProperties,
+  type TrackerIssueDetail,
+  type TrackerIssueSummary,
+} from "@t3tools/source-control-core/server/IssueTracker";
 
 /** GitLab's ceiling on `per_page`, which is what every bounded read asks for. */
 export const PAGE_SIZE = 100;
@@ -58,6 +63,42 @@ const RawIssueSchema = Schema.Struct({
   assignees: Schema.optional(Schema.NullOr(Schema.Array(RawUserSchema))),
   labels: Schema.optional(Schema.NullOr(Schema.Array(RawLabelRefSchema))),
   user_notes_count: Schema.optional(Schema.NullOr(Schema.Int)),
+});
+
+const RawTitledSchema = Schema.NullOr(
+  Schema.Struct({ title: Schema.optional(Schema.NullOr(Schema.String)) }),
+);
+
+/**
+ * The fields a detail shows beyond its row. Several exist only on paid tiers, and a key GitLab
+ * leaves out is left out of the properties rather than shown as unset.
+ */
+const RawIssueDetailSchema = Schema.Struct({
+  ...RawIssueSchema.fields,
+  issue_type: Schema.optional(Schema.NullOr(Schema.String)),
+  milestone: Schema.optional(RawTitledSchema),
+  iteration: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        title: Schema.optional(Schema.NullOr(Schema.String)),
+        start_date: Schema.optional(Schema.NullOr(Schema.String)),
+        due_date: Schema.optional(Schema.NullOr(Schema.String)),
+      }),
+    ),
+  ),
+  epic: Schema.optional(RawTitledSchema),
+  due_date: Schema.optional(Schema.NullOr(Schema.String)),
+  weight: Schema.optional(Schema.NullOr(Schema.Number)),
+  health_status: Schema.optional(Schema.NullOr(Schema.String)),
+  time_stats: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        human_time_estimate: Schema.optional(Schema.NullOr(Schema.String)),
+        human_total_time_spent: Schema.optional(Schema.NullOr(Schema.String)),
+      }),
+    ),
+  ),
+  confidential: Schema.optional(Schema.NullOr(Schema.Boolean)),
 });
 
 const RawNoteSchema = Schema.Struct({
@@ -107,7 +148,7 @@ const RawTemplateSchema = Schema.Struct({ content: Schema.optional(Schema.NullOr
 
 const decodeUnknownList = decodeJsonResult(Schema.Array(Schema.Unknown));
 const decodeIssue = decodeJsonResult(RawIssueSchema);
-const decodeIssueList = decodeJsonResult(Schema.Array(RawIssueSchema));
+const decodeIssueDetailList = decodeJsonResult(Schema.Array(RawIssueDetailSchema));
 const decodeIssueEntry = Schema.decodeUnknownExit(RawIssueSchema);
 const decodeNoteEntry = Schema.decodeUnknownExit(RawNoteSchema);
 const decodeLabelEventEntry = Schema.decodeUnknownExit(RawLabelEventSchema);
@@ -187,17 +228,67 @@ export function decodeIssueListJson(raw: string): Result.Result<GitLabIssueList,
   }));
 }
 
-interface GitLabIssueDetail extends TrackerIssueSummary {
-  readonly body: string;
+type GitLabIssueDetail = TrackerIssueSummary & Pick<TrackerIssueDetail, "body" | "properties">;
+
+/** `health_status` and `issue_type` are snake_case words: `needs_attention` reads "Needs attention". */
+function words(value: string | null | undefined): string | null {
+  const text = trimmed(value?.replaceAll("_", " "));
+  return text === null ? null : text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function toProperties(raw: typeof RawIssueDetailSchema.Type): ReadonlyArray<IssueProperty> {
+  const { iteration, time_stats: time } = raw;
+  const fields: ReadonlyArray<readonly [keyof typeof raw, IssueProperty]> = [
+    ["issue_type", { id: "issue_type", label: "Type", value: words(raw.issue_type) }],
+    ["milestone", { id: "milestone", label: "Milestone", value: trimmed(raw.milestone?.title) }],
+    [
+      "iteration",
+      {
+        id: "iteration",
+        label: "Iteration",
+        // An iteration in a cadence has no title of its own, only its dates.
+        value: iteration
+          ? (trimmed(iteration.title) ??
+            trimmed([iteration.start_date, iteration.due_date].filter(Boolean).join(" – ")))
+          : null,
+      },
+    ],
+    ["epic", { id: "epic", label: "Epic", value: trimmed(raw.epic?.title) }],
+    ["due_date", { id: "due_date", label: "Due date", value: trimmed(raw.due_date) }],
+    ["weight", { id: "weight", label: "Weight", value: raw.weight ?? null }],
+    [
+      "health_status",
+      { id: "health_status", label: "Health status", value: words(raw.health_status) },
+    ],
+    [
+      "time_stats",
+      { id: "time_estimate", label: "Time estimate", value: trimmed(time?.human_time_estimate) },
+    ],
+    [
+      "time_stats",
+      { id: "time_spent", label: "Time spent", value: trimmed(time?.human_total_time_spent) },
+    ],
+    [
+      "confidential",
+      { id: "confidential", label: "Confidential", value: raw.confidential ?? null },
+    ],
+  ];
+  return fields.flatMap(([key, property]) => (raw[key] === undefined ? [] : [property]));
 }
 
 /** GitLab's GET /issues/:iid ignores `with_labels_details`, so the detail is read as an `iids[]` list. */
 export function decodeIssueDetailListJson(
   raw: string,
 ): Result.Result<GitLabIssueDetail | null, DecodeFailure> {
-  return Result.map(decodeIssueList(raw), ([issue]) =>
-    issue === undefined ? null : { ...toSummary(issue), body: issue.description ?? "" },
-  );
+  return Result.map(decodeIssueDetailList(raw), ([issue]) => {
+    if (issue === undefined) return null;
+    const summary = toSummary(issue);
+    return {
+      ...summary,
+      body: issue.description ?? "",
+      properties: issueProperties(summary, toProperties(issue)),
+    };
+  });
 }
 
 /** The ids of the users a `/users?username=` lookup answered with: one, or none. */

@@ -27,6 +27,18 @@ const WORK_ITEM = {
     "System.WorkItemType": "Bug",
     "System.CommentCount": 2,
     "System.Description": "<p>Typing drops focus.</p>",
+    "System.Rev": 4,
+    "System.AreaPath": "Web App\\Composer",
+    "Microsoft.VSTS.Scheduling.StoryPoints": 0,
+    "Microsoft.VSTS.Common.AcceptanceCriteria":
+      "<div>Focus&nbsp;stays.</div><div>Paste &amp; type</div>",
+    "System.ChangedBy": {
+      displayName: "Theo",
+      uniqueName: "theo@acme.test",
+      _links: { avatar: { href: "https://dev.azure.com/acme/_apis/avatar" } },
+    },
+    "Custom.SLABreached": false,
+    "WEF_6CB513B6_Kanban.Column": "Doing",
   },
   relations: [
     { rel: "ArtifactLink", url: "vstfs:///Git/PullRequestId/p-guid%2Fr-guid%2F50" },
@@ -182,6 +194,20 @@ describe("AzureDevOpsIssueTracker", () => {
         commentsCursor: "next-token",
         viewerPermissions: { setState: true, edit: true, labels: true, assignees: true },
       });
+      // Custom fields too, named as Azure's form names them; its bookkeeping and the fields the
+      // summary already shows are left out, and rich text reads as text.
+      expect(issue.properties?.slice(3, -4)).toEqual([
+        { id: "System.WorkItemType", label: "Work Item Type", value: "Bug" },
+        { id: "System.AreaPath", label: "Area Path", value: "Web App\\Composer" },
+        { id: "Microsoft.VSTS.Scheduling.StoryPoints", label: "Story Points", value: 0 },
+        {
+          id: "Microsoft.VSTS.Common.AcceptanceCriteria",
+          label: "Acceptance Criteria",
+          value: "Focus stays.\nPaste & type",
+        },
+        { id: "System.ChangedBy", label: "Changed By", value: "Theo" },
+        { id: "Custom.SLABreached", label: "SLA Breached", value: false },
+      ]);
       // The first page is the newest comments, handed over oldest first.
       expect(seen.find((args) => args.includes("comments"))).toContain("order=desc");
       expect(issue.comments.map((comment) => comment.id)).toEqual(["1", "3"]);

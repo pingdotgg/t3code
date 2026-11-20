@@ -1,6 +1,7 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { issueEventSentence } from "@t3tools/client-runtime/issue-presentation";
+import { pinnedIssueProperties } from "@t3tools/client-runtime/issue-properties";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { createIssueCommentPager } from "@t3tools/client-runtime/state/issues";
 import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
@@ -15,7 +16,7 @@ import type {
 import { AsyncResult } from "effect/reactivity";
 import { T, useGT, useMessages, Var } from "gt-react-native";
 import { useContext, useState } from "react";
-import { Platform, Pressable, Share, View } from "react-native";
+import { Keyboard, Platform, Pressable, Share, View } from "react-native";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
 
@@ -30,6 +31,7 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { Menu } from "../../components/ui/Menu";
 import { RefreshControl } from "../../components/ui/RefreshControl";
 import { ScreenContent } from "../../components/ui/ScreenContent";
+import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { useComposerBottomInset } from "../../components/ComposerSurface";
 import { ANDROID_READING_MAX_WIDTH, CHAT_CONTENT_MAX_WIDTH } from "../../lib/layout";
@@ -58,6 +60,7 @@ import { PullRequestSectionHeading } from "../pull-requests/PullRequestSectionHe
 import { pullRequestStatus } from "../pull-requests/pullRequestStatus";
 import { usePullRequestConnected } from "../pull-requests/usePullRequestConnected";
 import { IssueCommentComposer } from "./IssueCommentComposer";
+import { IssuePropertiesView, IssuePropertyRow } from "./IssuePropertiesView";
 import { issueIdentity, issueParamsKey, issueTarget, type IssueParams } from "./issueParams";
 import {
   IssueLabelPill,
@@ -65,6 +68,7 @@ import {
   issueStatus,
   useIssueAccess,
 } from "./issuePresentation";
+import { useIssuePropertyPins } from "./useIssuePropertyPins";
 
 type IssueAccess = NonNullable<ReturnType<typeof useIssueAccess>>;
 
@@ -484,6 +488,12 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
   const detail = detailQuery.data;
   const issue: IssueSummary | null = detail ?? params.initialSummary ?? null;
   const access = useIssueAccess(params, detail);
+  const pins = useIssuePropertyPins(detail);
+  const [selectedTab, setSelectedTab] = useState<"overview" | "properties">("overview");
+  const properties = detail?.properties;
+  // A server from before properties sends none, and the screen shows only the overview.
+  const tab = properties === undefined ? "overview" : selectedTab;
+  const pinned = properties === undefined ? [] : pinnedIssueProperties(properties, pins.ids);
 
   const loadComments = useAtomCommand(issueEnvironment.comments, { reportFailure: false });
   const postComment = useAtomCommand(issueEnvironment.comment, { reportFailure: false });
@@ -549,6 +559,44 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
         ? CHAT_CONTENT_MAX_WIDTH
         : undefined;
   const url = issue?.url;
+  const refreshControl = (
+    <RefreshControl
+      refreshing={pullRefresh.refreshing}
+      onRefresh={() => void pager.refresh(registry, pullRefresh.onRefresh)}
+    />
+  );
+  const issueHeader = issue ? (
+    <View className="gap-5">
+      <IssueIdentity
+        issue={issue}
+        access={access}
+        busy={busy === "state"}
+        onMove={moveTo}
+        onEditLabels={() => navigation.navigate("IssueLabels", identity)}
+        onEditAssignees={() => navigation.navigate("IssueAssignees", identity)}
+      />
+      {mutationError || olderCommentsError || (detail && detailQuery.error) ? (
+        <Text selectable className="text-sm text-danger-foreground">
+          {mutationError ?? olderCommentsError ?? detailQuery.error}
+        </Text>
+      ) : null}
+      {properties === undefined ? null : (
+        <SegmentedControl
+          options={[
+            { value: "overview", label: gt("Overview") },
+            { value: "properties", label: gt("Properties", { $context: "issue tab" }) },
+          ]}
+          selected={tab}
+          onSelect={(next) => {
+            Keyboard.dismiss();
+            setSelectedTab(next);
+          }}
+          role="tab"
+          size="compact"
+        />
+      )}
+    </View>
+  ) : null;
   return (
     <PullRequestMarkdownRepository
       params={{
@@ -621,113 +669,128 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
           {!usesNativeWorkspaceColumns ? (
             <NativeLayoutObserver onChange={setScreenMetrics} />
           ) : null}
-          {/* Not a bare marker: Android wraps a refreshable scroll view, which the marker rejects. */}
-          <NativeScrollView
-            className="flex-1"
-            contentInsetAdjustmentBehavior="automatic"
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="interactive"
-            refreshControl={
-              <RefreshControl
-                refreshing={pullRefresh.refreshing}
-                onRefresh={() => void pager.refresh(registry, pullRefresh.onRefresh)}
-              />
-            }
-            contentContainerStyle={{
-              paddingHorizontal: 16,
-              paddingTop: 8,
-              paddingBottom: showComposer ? composerHeight + 16 : 24,
-            }}
-          >
-            {!issue ? (
-              detailQuery.error && !detailQuery.isPending ? (
-                <EmptyState
-                  title={gt("Couldn't load this issue")}
-                  detail={detailQuery.error}
-                  variant="plain"
-                />
-              ) : (
-                <AppActivityIndicator className="my-12" colorClassName="accent-icon" />
-              )
-            ) : (
-              <View className="gap-5">
-                <IssueIdentity
-                  issue={issue}
-                  access={access}
-                  busy={busy === "state"}
-                  onMove={moveTo}
-                  onEditLabels={() => navigation.navigate("IssueLabels", identity)}
-                  onEditAssignees={() => navigation.navigate("IssueAssignees", identity)}
-                />
-                {mutationError || olderCommentsError || (detail && detailQuery.error) ? (
-                  <Text selectable className="text-sm text-danger-foreground">
-                    {mutationError ?? olderCommentsError ?? detailQuery.error}
-                  </Text>
-                ) : null}
-                {!detail ? (
-                  detailQuery.error && !detailQuery.isPending ? (
-                    <EmptyState
-                      title={gt("Couldn't load this issue")}
-                      detail={detailQuery.error}
-                      variant="plain"
-                    />
-                  ) : (
-                    <IssueLoadingBody />
-                  )
+          {tab === "properties" && properties !== undefined ? (
+            <IssuePropertiesView
+              header={issueHeader}
+              refreshControl={refreshControl}
+              properties={properties}
+              pins={pins.ids}
+              ready={pins.ready}
+              onTogglePin={pins.toggle}
+            />
+          ) : (
+            // Not a bare marker: Android wraps a refreshable scroll view, which the marker rejects.
+            <NativeScrollView
+              className="flex-1"
+              contentInsetAdjustmentBehavior="automatic"
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="interactive"
+              refreshControl={refreshControl}
+              contentContainerStyle={{
+                paddingHorizontal: 16,
+                paddingTop: 8,
+                paddingBottom: showComposer ? composerHeight + 16 : 24,
+              }}
+            >
+              {!issue ? (
+                detailQuery.error && !detailQuery.isPending ? (
+                  <EmptyState
+                    title={gt("Couldn't load this issue")}
+                    detail={detailQuery.error}
+                    variant="plain"
+                  />
                 ) : (
-                  <>
-                    <PullRequestDescription
-                      markdown={detail.body}
-                      footer={
-                        detail.reactions !== undefined ? (
-                          <IssueReactions
-                            params={params}
-                            reactions={detail.reactions}
-                            canReact={access?.react === true}
+                  <AppActivityIndicator className="my-12" colorClassName="accent-icon" />
+                )
+              ) : (
+                <View className="gap-5">
+                  {issueHeader}
+                  {!detail ? (
+                    detailQuery.error && !detailQuery.isPending ? (
+                      <EmptyState
+                        title={gt("Couldn't load this issue")}
+                        detail={detailQuery.error}
+                        variant="plain"
+                      />
+                    ) : (
+                      <IssueLoadingBody />
+                    )
+                  ) : (
+                    <>
+                      {pinned.length > 0 ? (
+                        <View accessibilityLabel={gt("Pinned properties")} className="gap-1">
+                          {pinned.map((property) => (
+                            <IssuePropertyRow
+                              key={property.id}
+                              property={property}
+                              pinned
+                              disabled={!pins.ready}
+                              onTogglePin={pins.toggle}
+                            />
+                          ))}
+                        </View>
+                      ) : null}
+                      <PullRequestDescription
+                        markdown={detail.body}
+                        footer={
+                          detail.reactions !== undefined ? (
+                            <IssueReactions
+                              params={params}
+                              reactions={detail.reactions}
+                              canReact={access?.react === true}
+                            />
+                          ) : undefined
+                        }
+                      />
+                      {detail.linkedPullRequests.length > 0 ? (
+                        <LinkedPullRequests params={params} links={detail.linkedPullRequests} />
+                      ) : null}
+                      <LinkedThreads params={params} host={detail.host} />
+                      <View className="gap-3">
+                        <PullRequestSectionHeading>
+                          {detail.commentCount > 0
+                            ? gt(
+                                "{count, plural, one {Activity · {count} comment} other {Activity · {count} comments}}",
+                                { count: detail.commentCount },
+                              )
+                            : gt("Activity")}
+                        </PullRequestSectionHeading>
+                        {nextCursor !== null ? (
+                          <Button
+                            label={loadingOlder ? gt("Loading…") : gt("Load older comments")}
+                            disabled={busy !== null || !canLoadOlder}
+                            onPress={() => void loadOlder()}
                           />
-                        ) : undefined
-                      }
-                    />
-                    {detail.linkedPullRequests.length > 0 ? (
-                      <LinkedPullRequests params={params} links={detail.linkedPullRequests} />
-                    ) : null}
-                    <LinkedThreads params={params} host={detail.host} />
-                    <View className="gap-3">
-                      <PullRequestSectionHeading>
-                        {detail.commentCount > 0
-                          ? gt(
-                              "{count, plural, one {Activity · {count} comment} other {Activity · {count} comments}}",
-                              { count: detail.commentCount },
-                            )
-                          : gt("Activity")}
-                      </PullRequestSectionHeading>
-                      {nextCursor !== null ? (
-                        <Button
-                          label={loadingOlder ? gt("Loading…") : gt("Load older comments")}
-                          disabled={busy !== null || !canLoadOlder}
-                          onPress={() => void loadOlder()}
-                        />
-                      ) : null}
-                      {timeline.length === 0 ? (
-                        <Text className="text-sm text-foreground-muted">
-                          <T>Nothing has happened here yet.</T>
-                        </Text>
-                      ) : null}
-                      {timeline.map((item) => (
-                        <View key={item.key}>{item.content}</View>
-                      ))}
-                    </View>
-                  </>
-                )}
-              </View>
-            )}
-          </NativeScrollView>
+                        ) : null}
+                        {timeline.length === 0 ? (
+                          <Text className="text-sm text-foreground-muted">
+                            <T>Nothing has happened here yet.</T>
+                          </Text>
+                        ) : null}
+                        {timeline.map((item) => (
+                          <View key={item.key}>{item.content}</View>
+                        ))}
+                      </View>
+                    </>
+                  )}
+                </View>
+              )}
+            </NativeScrollView>
+          )}
           {showComposer ? (
             <KeyboardStickyView
               // On the unfolded Duo the sidebar's search shares the keyboard; follow it only for ours.
               enabled={deviceType !== "duo-unfolded" || composerFocused}
               pointerEvents="box-none"
-              style={{ position: "absolute", bottom: 0, left: 0, right: 0, top: 0 }}
+              style={{
+                position: "absolute",
+                bottom: 0,
+                left: 0,
+                right: 0,
+                top: 0,
+                // Kept mounted on the properties tab, so a draft survives the look.
+                display: tab === "overview" ? "flex" : "none",
+              }}
               offset={{ closed: 0, opened: composerBottomInset }}
             >
               <View

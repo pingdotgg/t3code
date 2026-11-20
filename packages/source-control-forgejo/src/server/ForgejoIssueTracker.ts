@@ -16,6 +16,7 @@ import {
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import {
   IssueTrackerError,
+  issueProperties,
   type IssueTrackerApi,
 } from "@t3tools/source-control-core/server/IssueTracker";
 
@@ -30,6 +31,7 @@ import {
   forgejoIssue,
   forgejoIssueComment,
   forgejoIssueEvent,
+  forgejoIssueFields,
   forgejoIssueTemplate,
 } from "./forgejoIssueJson.ts";
 import {
@@ -456,18 +458,22 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
               commentsPage(input, "getIssue", issuePath(input.scope, issue.number), 1, viewer),
               linkedPullRequests(input, timeline),
             ]).pipe(
-              Effect.map(([conversation, links]) => ({
-                ...forgejoIssue(issue),
-                body: issue.body ?? "",
-                viewer,
-                viewerPermissions: permissions(repository, issue, viewer),
-                states: ISSUE_STATES,
-                reactions: forgejoReactions(reactions, viewer),
-                comments: conversation.comments,
-                commentsCursor: conversation.nextCursor,
-                events: timeline.flatMap((entry) => forgejoIssueEvent(entry) ?? []),
-                linkedPullRequests: links,
-              })),
+              Effect.map(([conversation, links]) => {
+                const summary = forgejoIssue(issue);
+                return {
+                  ...summary,
+                  body: issue.body ?? "",
+                  properties: issueProperties(summary, forgejoIssueFields(issue)),
+                  viewer,
+                  viewerPermissions: permissions(repository, issue, viewer),
+                  states: ISSUE_STATES,
+                  reactions: forgejoReactions(reactions, viewer),
+                  comments: conversation.comments,
+                  commentsCursor: conversation.nextCursor,
+                  events: timeline.flatMap((entry) => forgejoIssueEvent(entry) ?? []),
+                  linkedPullRequests: links,
+                };
+              }),
             ),
           ),
         ),

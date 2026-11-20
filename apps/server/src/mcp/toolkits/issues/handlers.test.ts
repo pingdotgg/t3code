@@ -242,6 +242,12 @@ describe("issue toolkit handlers", () => {
                     url,
                     displayKey: key,
                     body: "Repro steps",
+                    properties: [
+                      { id: "estimate", label: "Estimate", value: 0 },
+                      { id: "customerReplied", label: "Customer replied", value: false },
+                      { id: "dueDate", label: "Due date", value: null },
+                      { id: "labels", label: "Labels", value: [] },
+                    ],
                   })
                 : Effect.fail(
                     new IssueTrackerError({
@@ -273,7 +279,17 @@ describe("issue toolkit handlers", () => {
       const result = yield* harness.call("read_issue", { url }).pipe(Effect.result);
       expect(result).toMatchObject({
         _tag: "Success",
-        success: { url, displayKey: "ENG-7", title: "Seven", body: "Repro steps" },
+        success: {
+          url,
+          displayKey: "ENG-7",
+          title: "Seven",
+          body: "Repro steps",
+          // Unset fields are left out; zero and false are answers.
+          properties: [
+            { id: "estimate", label: "Estimate", value: 0 },
+            { id: "customerReplied", label: "Customer replied", value: false },
+          ],
+        },
       });
     }),
   );
