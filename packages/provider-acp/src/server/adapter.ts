@@ -8690,14 +8690,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           return mcpBridge;
         });
 
-        const trackRunningAgent = (scope: Scope.Scope) => {
+        const trackRunningAgent = Effect.fn("AcpAdapterV2.trackRunningAgent")(function* (
+          scope: Scope.Scope,
+        ) {
           const trackAgent = host.trackAgent;
-          return trackAgent === undefined
-            ? Effect.void
-            : Effect.acquireRelease(Effect.sync(trackAgent), (release) =>
-                Effect.sync(release),
-              ).pipe(Effect.asVoid, Effect.provideService(Scope.Scope, scope));
-        };
+          if (trackAgent === undefined) return;
+          yield* Effect.acquireRelease(Effect.sync(trackAgent), (release) =>
+            Effect.sync(release),
+          ).pipe(Effect.provideService(Scope.Scope, scope));
+        });
 
         const spawnAcpRuntime = Effect.fnUntraced(function* (
           threadId: ThreadId | null,
