@@ -7,12 +7,10 @@ import {
   normalizeEventKey,
   resolveEventKeys,
   shortcutKeyFromEvent,
+  type ShortcutEventLike,
 } from "./keybindingMatching.ts";
 
-const event = (
-  key: string,
-  overrides: Partial<Parameters<typeof shortcutKeyFromEvent>[0]> = {},
-) => ({
+const event = (key: string, overrides: Partial<ShortcutEventLike> = {}) => ({
   key,
   metaKey: false,
   ctrlKey: false,
@@ -131,7 +129,7 @@ describe("matchesKeybindingShortcut", () => {
       ...event("€", { ctrlKey: true, altKey: true }),
       getModifierState: (k: "AltGraph") => k === "AltGraph",
     };
-    const withAlt = { ...shortcut, ctrlKey: true, altKey: true };
+    const withAlt = { ...shortcut, key: "€", ctrlKey: true, altKey: true };
     expect(matchesKeybindingShortcut(altGraphEvent, withAlt, "Win32")).toBe(false);
     // macOS doesn't apply the AltGraph guard.
     const macEvent = { ...altGraphEvent, ctrlKey: true, metaKey: false };
