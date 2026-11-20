@@ -232,10 +232,17 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     submit: (text: string) => void;
     text?: string;
   } | null>(null);
-  const latestRef = useRef({ input, clientSettings, cleanupPrepared, projectWords, session });
+  const latestRef = useRef({
+    input,
+    clientSettings,
+    cleanupPrepared,
+    projectWords,
+    session,
+    prepared,
+  });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed props before an async completion can read them through the session
   useLayoutEffect(() => {
-    latestRef.current = { input, clientSettings, cleanupPrepared, projectWords, session };
+    latestRef.current = { input, clientSettings, cleanupPrepared, projectWords, session, prepared };
   });
   const mountedRef = useRef(false);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- abandons this editor's pending work, and a recording that cannot outlive it, on unmount or a destination change
@@ -393,7 +400,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       const catalog = await runEnvironmentSpeech(
         getEnvironmentSpeechModels(connection, true),
       ).catch(() => null);
-      if (request !== startRequestRef.current) return;
+      if (request !== startRequestRef.current || latestRef.current.prepared !== connection) return;
       const choice = chooseSetupSpeechModel(catalog?.models ?? [], {
         selectedModelId,
         intent: latestRef.current.clientSettings.speechLanguage,
@@ -435,6 +442,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     const stillCurrent = () =>
       request === startRequestRef.current &&
       latestRef.current.session === session &&
+      latestRef.current.prepared === prepared &&
       latestRef.current.input.ownerKey === owner &&
       !latestRef.current.input.disabled;
     setSetup(INITIAL_SETUP);

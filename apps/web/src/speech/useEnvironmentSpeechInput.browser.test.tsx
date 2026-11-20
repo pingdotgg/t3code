@@ -42,6 +42,8 @@ const mocks = vi.hoisted(() => ({
   prepared: new Map<string, unknown>(),
   primaryEnvironmentId: "primary-env",
   statusRequests: [] as string[],
+  statusStarted: 0,
+  statusDelay: null as Promise<void> | null,
   statusUnavailable: false,
   statusTier: "accelerated" as "cpu" | "accelerated",
   modelState: "ready" as "ready" | "missing-model",
@@ -126,7 +128,9 @@ vi.mock("../components/ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/client-runtime/voice-input")>()),
   getEnvironmentSpeechStatus: (prepared: PreparedConnection) =>
-    Effect.sync(() => {
+    Effect.promise(async () => {
+      mocks.statusStarted += 1;
+      if (mocks.statusDelay) await mocks.statusDelay;
       mocks.statusRequests.push(prepared.environmentId);
       if (mocks.statusUnavailable) throw new Error("Temporarily offline");
       return {
@@ -234,6 +238,8 @@ function setup(options: { readonly destination?: string | null } = {}) {
   mocks.scopeLookupFailed = new Set();
   mocks.prepared.clear();
   mocks.statusRequests = [];
+  mocks.statusStarted = 0;
+  mocks.statusDelay = null;
   mocks.statusUnavailable = false;
   mocks.modelState = "ready";
   mocks.statusTier = "accelerated";
@@ -395,6 +401,31 @@ it.each([
   await act(() => mocks.voice.stop());
   expect(mocks.transcribeCalls).toEqual([]);
   expect(mocks.committed).not.toHaveBeenCalled();
+});
+
+it("does not reopen setup from a missing-model status returned for a replaced connection", async () => {
+  setup({ destination: "env-a" });
+  let resolveStatus!: () => void;
+  mocks.statusDelay = new Promise<void>((resolve) => {
+    resolveStatus = resolve;
+  });
+  mocks.modelState = "missing-model";
+  await using screen = await render(<Probe showWizard />);
+  const startPromise = mocks.voice.start();
+  await vi.waitFor(() => expect(mocks.statusStarted).toBeGreaterThanOrEqual(2));
+
+  mocks.prepared.set("env-a", { environmentId: "env-a", label: "env-a-reconnected" });
+  await screen.rerender(<Probe showWizard />);
+  resolveStatus();
+  await startPromise;
+
+  const reopened = await vi
+    .waitFor(() => expect(mocks.voice.setup.open).toBe(true), { timeout: 100 })
+    .then(() => true, () => false);
+  expect(reopened).toBe(false);
+  expect(mocks.voice.setup.open).toBe(false);
+  expect(mocks.voice.state.phase).toBe("idle");
+  expect(mocks.transcribeCalls).toEqual([]);
 });
 
 it("retries a failed transcription on the same chosen environment", async () => {
