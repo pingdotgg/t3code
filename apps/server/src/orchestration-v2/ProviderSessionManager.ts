@@ -2355,7 +2355,43 @@ export const layerWithOptions = (
         >,
       ): ProviderAdapter.ProviderAdapterV2SessionRuntime => {
         const providerSessionId = runtime.providerSessionId;
+        const runtimeMcpApps = runtime.mcpApps;
         const subscribeEvents = makeEventSubscription(eventSubscribers);
+        // MCP app views reach a live shared runtime without opening a turn, so attach the thread
+        // first: Codex resumes unloaded threads on MCP app requests and needs the thread's T3 MCP
+        // credential before the first `thread/resume` locks in its MCP server set.
+        const withMcpAppThread = <A>(
+          providerThread: OrchestrationV2ProviderThread,
+          effect: Effect.Effect<A, ProviderAdapter.ProviderAdapterV2Error>,
+        ): Effect.Effect<A, ProviderAdapter.ProviderAdapterV2Error> => {
+          const threadId = providerThread.appThreadId;
+          if (threadId === null) {
+            return observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
+              Effect.andThen(effect),
+            );
+          }
+          return observeActivity(
+            providerSessionId,
+            ensureThreadAttached({
+              providerSessionId,
+              threadId,
+              providerInstanceId: runtime.instanceId,
+            }),
+          ).pipe(
+            Effect.andThen(observeActivity(providerSessionId, touchActivity(providerSessionId))),
+            Effect.andThen(
+              Effect.acquireUseRelease(
+                holdThreadLoaded({
+                  providerSessionId,
+                  threadId,
+                  providerThread,
+                }),
+                () => effect,
+                () => scheduleThreadUnload(providerSessionId, providerThread.id),
+              ),
+            ),
+          );
+        };
         const turnMetrics = (operation: string, model?: string) =>
           withMetrics({
             counter: providerTurnsTotal,
@@ -2597,6 +2633,18 @@ export const layerWithOptions = (
                   .pipe(turnMetrics("runtime-request-response")),
               ),
             ),
+          ...(runtimeMcpApps === undefined
+            ? {}
+            : {
+                mcpApps: {
+                  listTools: (input) =>
+                    withMcpAppThread(input.providerThread, runtimeMcpApps.listTools(input)),
+                  callTool: (input) =>
+                    withMcpAppThread(input.providerThread, runtimeMcpApps.callTool(input)),
+                  readResource: (input) =>
+                    withMcpAppThread(input.providerThread, runtimeMcpApps.readResource(input)),
+                },
+              }),
         };
       };
 

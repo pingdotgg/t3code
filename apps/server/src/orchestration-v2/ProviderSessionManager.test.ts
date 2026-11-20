@@ -492,6 +492,9 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly spawnBeforeOpen?: boolean;
     readonly scopeCloseReached?: Deferred.Deferred<void>;
     readonly eventStreamsEnded?: Queue.Queue<ProviderSessionId>;
+    readonly mcpAppConfigs?: Ref.Ref<
+      ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+    >;
   } = {},
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -637,6 +640,28 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
             ),
           respondToRuntimeRequest: () => Effect.void,
           readThreadSnapshot: () => unimplemented("readThreadSnapshot unused in test"),
+          ...(options.mcpAppConfigs === undefined
+            ? {}
+            : (() => {
+                const recordMcpAppConfig = (providerThread: OrchestrationV2ProviderThread) =>
+                  Effect.gen(function* () {
+                    const config =
+                      providerThread.appThreadId === null
+                        ? undefined
+                        : yield* mcpSessions.read(providerThread.appThreadId);
+                    yield* Ref.update(options.mcpAppConfigs!, (configs) => [...configs, config]);
+                  });
+                return {
+                  mcpApps: {
+                    listTools: ({ providerThread }) =>
+                      recordMcpAppConfig(providerThread).pipe(Effect.as([])),
+                    callTool: ({ providerThread }) =>
+                      recordMcpAppConfig(providerThread).pipe(Effect.as({ content: [] })),
+                    readResource: ({ providerThread }) =>
+                      recordMcpAppConfig(providerThread).pipe(Effect.as({ contents: [] })),
+                  },
+                };
+              })()),
           rollbackThread: () => unimplemented("rollbackThread unused in test"),
           forkThread: () => unimplemented("forkThread unused in test"),
         } satisfies ProviderAdapter.ProviderAdapterV2SessionRuntime;
@@ -680,6 +705,9 @@ function layerTest(input: {
   readonly spawnBeforeOpen?: boolean;
   readonly scopeCloseReached?: Deferred.Deferred<void>;
   readonly eventStreamsEnded?: Queue.Queue<ProviderSessionId>;
+  readonly mcpAppConfigs?: Ref.Ref<
+    ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+  >;
   readonly releaseRecorded?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
@@ -736,6 +764,7 @@ function layerTest(input: {
       ...(input.eventStreamsEnded === undefined
         ? {}
         : { eventStreamsEnded: input.eventStreamsEnded }),
+      ...(input.mcpAppConfigs === undefined ? {} : { mcpAppConfigs: input.mcpAppConfigs }),
     }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
   );
   const layerConfiguredMcpRegistry =
@@ -3274,6 +3303,149 @@ it.effect("ProviderSessionManagerV2 terminal detach revokes the thread's MCP cre
 
     yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1_000, mcpConfigs })));
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 prepares a thread's MCP session before mcpApps requests on a shared session",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const unloads = yield* Queue.unbounded<string>();
+      const mcpAppConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      const ownerTurnHeld = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        const now = yield* DateTime.now;
+        const owner = ThreadId.make("thread-provider-session-manager-mcp-apps-owner");
+        const appThread = ThreadId.make("thread-provider-session-manager-mcp-apps-target");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: owner, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: appThread, now }),
+          ],
+        });
+        const ownerRuntime = yield* manager.open({
+          threadId: owner,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const ownerProviderThread = makeProviderThread({
+          idAllocator,
+          threadId: owner,
+          providerSessionId,
+          now,
+          nativeThreadId: "native-mcp-apps-owner",
+        });
+        const appProviderThread = makeProviderThread({
+          idAllocator,
+          threadId: appThread,
+          providerSessionId,
+          now,
+          nativeThreadId: "native-mcp-apps-target",
+        });
+
+        // Keep the shared session alive via owner while appThread is still unattached (as after restart).
+        const ownerRunId = idAllocator.derive.run({ threadId: owner, ordinal: 1 });
+        const ownerTurn = yield* ownerRuntime
+          .startTurn({
+            appThread: (yield* projectionStore.getThreadProjection(owner)).thread,
+            threadId: owner,
+            providerThread: ownerProviderThread,
+            runId: ownerRunId,
+            runOrdinal: 1,
+            providerTurnOrdinal: 1,
+            attemptId: idAllocator.derive.runAttempt({ runId: ownerRunId, attemptOrdinal: 1 }),
+            rootNodeId: idAllocator.derive.rootNode({ runId: ownerRunId }),
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: yield* idAllocator.allocate.message({ threadId: owner, ordinal: 1 }),
+              text: "keep busy",
+              attachments: [],
+            },
+            modelSelection,
+            runtimePolicy,
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+
+        assert.isUndefined(yield* mcpSessions.read(appThread));
+        const liveRuntime = Option.getOrUndefined(yield* manager.get(providerSessionId));
+        assert.isDefined(liveRuntime?.mcpApps);
+
+        yield* Effect.all(
+          [
+            liveRuntime!.mcpApps!.listTools({
+              providerThread: appProviderThread,
+              server: "datadog",
+            }),
+            liveRuntime!.mcpApps!.callTool({
+              providerThread: appProviderThread,
+              server: "datadog",
+              tool: "_dd_guc",
+              arguments: {},
+            }),
+            liveRuntime!.mcpApps!.readResource({
+              providerThread: appProviderThread,
+              server: "datadog",
+              uri: "ui://datadog/chart",
+            }),
+          ],
+          { concurrency: "unbounded" },
+        );
+
+        const seen = yield* Ref.get(mcpAppConfigs);
+        assert.equal(seen.length, 3);
+        const firstConfig = seen[0];
+        assert.isDefined(firstConfig, "mcpApps must prepare the thread's MCP session first");
+        for (const config of seen) {
+          assert.equal(config?.providerSessionId, firstConfig!.providerSessionId);
+        }
+        const token = firstConfig!.authorizationHeader.replace(/^Bearer\s+/, "");
+        assert.equal((yield* registry.resolve(token))?.thread.threadId, appThread);
+
+        // An idle thread loaded by an MCP app request still unloads after idleTimeoutMs.
+        yield* TestClock.adjust("1 second");
+        assert.equal(yield* Queue.take(unloads), "unload:native-mcp-apps-target");
+
+        // A subsequent turn resume keeps the same credential valid instead of revoking it.
+        yield* liveRuntime!.resumeThread({
+          threadId: appThread,
+          providerThread: appProviderThread,
+        });
+        assert.equal(
+          (yield* mcpSessions.read(appThread))?.providerSessionId,
+          firstConfig!.providerSessionId,
+        );
+        assert.equal((yield* registry.resolve(token))?.thread.threadId, appThread);
+
+        yield* Deferred.succeed(ownerTurnHeld, undefined);
+        yield* Fiber.join(ownerTurn);
+        yield* manager.release({ providerSessionId, reason: "manual_shutdown" });
+        assert.isUndefined(yield* registry.resolve(token));
+        assert.isUndefined(yield* mcpSessions.read(appThread));
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1_000,
+            unloads,
+            mcpAppConfigs,
+            startTurn: Deferred.await(ownerTurnHeld),
+          }),
+        ),
+      );
+    }),
 );
 
 it.effect(
