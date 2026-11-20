@@ -2954,3 +2954,48 @@ describe("composerDraftStore checkout pull request", () => {
     }
   });
 });
+
+describe("composerDraftStore draft snooze", () => {
+  const projectRef = scopeProjectRef(TEST_ENVIRONMENT_ID, ProjectId.make("project-snooze"));
+  const draftId = DraftId.make("draft-snooze");
+  const wakeAt = "2026-08-02T09:00:00.000Z";
+  const store = () => useComposerDraftStore.getState();
+
+  it("keeps a draft's snooze through edits and a reload, and drops it on wake or reuse", async () => {
+    vi.useFakeTimers();
+    try {
+      await useComposerDraftStore.persist.clearStorage();
+      store().setProjectDraftThreadId(projectRef, draftId, {
+        threadId: ThreadId.make("thread-snooze"),
+      });
+      store().setPrompt(draftId, "Come back to this");
+      store().setDraftSnoozedUntil(draftId, wakeAt);
+      store().setDraftThreadContext(draftId, { branch: "feature/later", worktreePath: null });
+      store().setProjectDraftThreadId(projectRef, draftId);
+      expect(store().getDraftSession(draftId)?.snoozedUntil).toBe(wakeAt);
+
+      const storage = useComposerDraftStore.persist.getOptions().storage;
+      storage?.setItem(COMPOSER_DRAFT_STORAGE_KEY, {
+        version: 9,
+        state: partializeComposerDraftStoreState(store()),
+      } as never);
+      await vi.advanceTimersByTimeAsync(300);
+      resetComposerDraftStore();
+      await useComposerDraftStore.persist.rehydrate();
+      expect(store().getDraftSession(draftId)?.snoozedUntil).toBe(wakeAt);
+
+      store().setDraftSnoozedUntil(draftId, null);
+      expect(store().getDraftSession(draftId)).not.toHaveProperty("snoozedUntil");
+
+      // Emptied, then reused as the project's new thread: the snooze must not carry over.
+      store().setDraftSnoozedUntil(draftId, wakeAt);
+      store().setPrompt(draftId, "");
+      store().setProjectDraftThreadId(projectRef, draftId);
+      expect(store().getDraftSession(draftId)).not.toHaveProperty("snoozedUntil");
+    } finally {
+      await useComposerDraftStore.persist.clearStorage();
+      vi.useRealTimers();
+      resetComposerDraftStore();
+    }
+  });
+});

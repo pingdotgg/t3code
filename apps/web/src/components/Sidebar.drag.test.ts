@@ -586,6 +586,41 @@ describe("sidebar drag projection", () => {
     expect(strategy({ ...args, index: 4 })?.y).toBe(-42);
   });
 
+  it("does not scale rows from a Snoozed header that holds draft rows", () => {
+    const items = [
+      pinnedHeader,
+      divider,
+      thread("a", "active"),
+      marker("snoozed-header"),
+      settledHeader,
+      marker("settled-placeholder"),
+    ];
+    const strategy = createSidebarSortingStrategy({
+      items,
+      settledOrder: [],
+      settledExpanded: false,
+      snoozedThreadCount: 1,
+    });
+    const target = sidebarMarkerId("settled-placeholder");
+    const plain = layout(items, "a", target);
+    const draftRowsHeight = 80;
+    const withDrafts = {
+      ...plain,
+      rects: plain.rects.map((rect, index) =>
+        index === 3
+          ? {
+              ...rect,
+              height: rect.height + draftRowsHeight,
+              bottom: rect.bottom + draftRowsHeight,
+            }
+          : index > 3
+            ? { ...rect, top: rect.top + draftRowsHeight, bottom: rect.bottom + draftRowsHeight }
+            : rect,
+      ),
+    };
+    expect(strategy({ ...withDrafts, index: 5 })).toEqual(strategy({ ...plain, index: 5 }));
+  });
+
   it("keeps the route row visible after a settled drop pushes it beyond the page", () => {
     const items = [
       pinnedHeader,

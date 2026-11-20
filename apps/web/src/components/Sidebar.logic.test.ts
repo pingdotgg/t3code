@@ -29,6 +29,8 @@ import {
   sortScopedProjectsForSidebar,
   sortSidebarV2ProjectGroups,
   shouldNavigateAfterThreadPark,
+  isDraftSnoozed,
+  minuteTickMs,
   type SidebarListItem,
   type SidebarListMarker,
   type SidebarSection,
@@ -60,6 +62,16 @@ import {
 } from "./sidebar/routeReveal";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("isDraftSnoozed", () => {
+  it("reads the minute tick as UTC, so a short snooze holds in any time zone", () => {
+    const now = minuteTickMs("2026-11-18T00:09");
+    expect(now).toBe(Date.UTC(2026, 10, 18, 0, 9));
+    expect(isDraftSnoozed({ snoozedUntil: "2026-11-18T01:09:00.000Z" }, now)).toBe(true);
+    expect(isDraftSnoozed({ snoozedUntil: "2026-11-18T00:09:00.000Z" }, now)).toBe(false);
+    expect(isDraftSnoozed({ snoozedUntil: null }, now)).toBe(false);
+  });
+});
 
 describe("deleteSelectedThreadEntries", () => {
   const entries = [{ threadKey: "one" }, { threadKey: "two" }, { threadKey: "three" }] as const;
