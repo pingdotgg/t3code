@@ -674,6 +674,18 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         })).map((skill) => skill.name),
         ["inherited:stale"],
       );
+
+      // Claude loads each repeated --plugin-dir launch arg as an inline plugin too.
+      for (const launchArgs of [
+        `--plugin-dir "${named}" --plugin-dir "${unnamed}"`,
+        `--plugin-dir="${named}" --plugin-dir="${unnamed}"`,
+      ]) {
+        const settings = { homePath: path.join(workspace, "empty"), launchArgs };
+        assert.deepEqual(
+          (yield* discoverClaudeSkills(settings, workspace)).map((skill) => skill.name),
+          ["acme:qa", "unnamed:lint"],
+        );
+      }
     }),
   );
 
