@@ -127,10 +127,11 @@ export function attachTimelineViewport(
   };
   // Input inside an embedded frame reaches none of the listeners above, but
   // its scroll still chains out to the timeline.
-  const scrolledUp = createUpwardScrollDetector({
-    top: scrollNode.scrollTop,
-    height: scrollNode.scrollHeight,
-  });
+  // Reading the scroll position forces a layout on every scroll event, so the
+  // detector only runs while the timeline holds a frame.
+  const frames = scrollNode.getElementsByTagName("iframe");
+  const readScrollPosition = () => ({ top: scrollNode.scrollTop, height: scrollNode.scrollHeight });
+  let scrolledUp = frames.length > 0 ? createUpwardScrollDetector(readScrollPosition()) : undefined;
   // Only a frame's input reaches the timeline unseen. Any other unexplained upward move is not
   // the reader's: the browser clamps scrollTop when content briefly shrinks.
   const frameHasInput = () =>
@@ -138,17 +139,19 @@ export function attachTimelineViewport(
     (document.activeElement instanceof HTMLIFrameElement &&
       scrollNode.contains(document.activeElement));
   const handleScroll = () => {
+    if (frames.length === 0) {
+      scrolledUp = undefined;
+      return;
+    }
+    const position = readScrollPosition();
+    scrolledUp ??= createUpwardScrollDetector(position);
     if (
-      scrolledUp({
-        top: scrollNode.scrollTop,
-        height: scrollNode.scrollHeight,
-        programmatic: programmaticHolds > 0,
-      }) &&
+      scrolledUp({ ...position, programmatic: programmaticHolds > 0 }) &&
       frameHasInput() &&
       // LegendList updates its scroll state on the next animation frame.
       resolveTimelineIsAtEnd({
-        contentLength: scrollNode.scrollHeight,
-        scroll: scrollNode.scrollTop,
+        contentLength: position.height,
+        scroll: position.top,
         scrollLength: scrollNode.clientHeight,
       }) === false
     ) {
