@@ -15,7 +15,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
-import { formatHex } from "culori/fn";
+import { formatHex, wcagContrast } from "culori/fn";
 import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 import { cdp, userEvent } from "vite-plus/test/browser";
 
@@ -379,10 +379,28 @@ describe("GuestPage", () => {
     expect(formatHex(getComputedStyle(pending.element()).color)).toBe("#000000");
     await expectAtEnd();
 
+    const sentTheme = parseVsCodeThemeFile({
+      type: "light",
+      colors: {
+        "editor.background": "#ffffff",
+        "editor.foreground": "#000000",
+        "chat.requestBubbleBackground": "#008900",
+      },
+    });
+    applyThemeColorPreview(sentTheme.colors, sentTheme.appearance);
+    const expectReadableSentBubble = (element: Element, bubble: Element) => {
+      const surface = getComputedStyle(bubble).backgroundColor;
+      expect(formatHex(surface)).not.toBe("#008900");
+      expect(wcagContrast(getComputedStyle(element).color, surface)).toBeGreaterThanOrEqual(4.5);
+    };
+
     // The owner sends it: the run ends, the message becomes a row, and a new run's reply grows.
     const sent = { ...waiting, status: "sent" as const };
     send(threadEvent(3, { type: "run.updated", payload: run("run-1", 1, "completed") }));
     send({ type: "view", view: { ...view, messages: [sent] } });
+    await expect.element(screen.getByText("Sent", { exact: true })).toBeVisible();
+    const unplacedProse = pending.element();
+    expectReadableSentBubble(unplacedProse, unplacedProse.parentElement!);
     send(threadEvent(4, { type: "run.updated", payload: run("run-2", 2, "running") }));
     send(
       threadEvent(5, {
@@ -404,6 +422,9 @@ describe("GuestPage", () => {
         },
       }),
     );
+    await expect.element(screen.getByRole("heading", { name: "Sam (guest)" })).toBeInTheDocument();
+    const placedProse = pending.element();
+    expectReadableSentBubble(placedProse, placedProse.closest("[data-user-message-bubble]")!);
     await expectAtEnd();
     for (const [index, words] of [10, 40, 120].entries()) {
       send(

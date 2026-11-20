@@ -1682,26 +1682,6 @@ html[data-theme-id="t3-chat"] [data-app-sidebar] {
     ),
     var(--appearance-contrast-target) var(--appearance-contrast-boost)
   );
-  --contrast-message-foreground: color-mix(
-    in oklab,
-    color-mix(
-      in oklab,
-      var(--message-foreground) var(--appearance-contrast-base),
-      var(--message-surface)
-    ),
-    var(--message-contrast-target, var(--appearance-contrast-target))
-      var(--appearance-contrast-boost)
-  );
-  --contrast-message-muted-foreground: color-mix(
-    in oklab,
-    color-mix(
-      in oklab,
-      var(--message-muted-foreground, var(--muted-foreground)) var(--appearance-contrast-base),
-      var(--message-surface)
-    ),
-    var(--message-contrast-target, var(--appearance-contrast-target))
-      var(--appearance-contrast-boost)
-  );
   --contrast-sidebar-foreground: color-mix(
     in oklab,
     color-mix(in oklab, var(--sidebar-foreground) var(--appearance-contrast-base), var(--sidebar)),
@@ -1720,6 +1700,39 @@ html[data-theme-id="t3-chat"] [data-app-sidebar] {
     in srgb,
     color-mix(in srgb, var(--sidebar-border) var(--appearance-contrast-base), transparent),
     var(--sidebar-foreground) var(--appearance-contrast-border-boost)
+  );
+}
+
+.sent-guest-bubble {
+  --message-ink-surface: var(--guest-surface);
+  --message-ink: var(--guest-bubble-foreground, var(--message-foreground));
+  --message-contrast-target: var(--guest-bubble-contrast-target, var(--appearance-contrast-target));
+  --message-muted-foreground: var(--guest-bubble-muted-foreground, var(--muted-foreground));
+  --message-inline-code-tint: var(--guest-bubble-inline-code-tint);
+}
+
+:root,
+[data-app-sidebar],
+.sent-guest-bubble {
+  --contrast-message-foreground: color-mix(
+    in oklab,
+    color-mix(
+      in oklab,
+      var(--message-ink, var(--message-foreground)) var(--appearance-contrast-base),
+      var(--message-ink-surface, var(--message-surface))
+    ),
+    var(--message-contrast-target, var(--appearance-contrast-target))
+      var(--appearance-contrast-boost)
+  );
+  --contrast-message-muted-foreground: color-mix(
+    in oklab,
+    color-mix(
+      in oklab,
+      var(--message-muted-foreground, var(--muted-foreground)) var(--appearance-contrast-base),
+      var(--message-ink-surface, var(--message-surface))
+    ),
+    var(--message-contrast-target, var(--appearance-contrast-target))
+      var(--appearance-contrast-boost)
   );
 }
 
@@ -2109,7 +2122,10 @@ code {
   background-size: 4px 2px;
 }
 
-.chat-markdown:where([data-message-link-fallback] .user-message-markdown)
+.chat-markdown:where(
+    [data-message-link-fallback] .user-message-markdown:not(.sent-guest-bubble *),
+    [data-guest-bubble-link-fallback] .sent-guest-bubble .user-message-markdown
+  )
   a:not(
     .chat-markdown-file-link,
     :has([data-slot="context-chip-label"]),
@@ -2169,8 +2185,12 @@ code {
   font-size: 0.75rem;
 }
 
-.chat-markdown:where(.user-message-markdown) section[data-footnotes] {
-  color: var(--message-footnote-foreground, var(--contrast-muted-foreground));
+.chat-markdown:where(
+    [data-message-footnote-fallback] .user-message-markdown:not(.sent-guest-bubble *),
+    [data-guest-bubble-footnote-fallback] .sent-guest-bubble .user-message-markdown
+  )
+  section[data-footnotes] {
+  color: var(--contrast-message-foreground);
 }
 
 .chat-markdown section[data-footnotes] ol {
@@ -2205,7 +2225,11 @@ code {
 }
 
 .chat-markdown.user-message-markdown :not(pre) > code {
-  background: color-mix(in srgb, var(--contrast-message-foreground) 10%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--message-inline-code-tint, var(--contrast-message-foreground)) 10%,
+    transparent
+  );
   color: var(--contrast-message-foreground);
 }
 

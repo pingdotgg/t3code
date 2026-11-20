@@ -1731,58 +1731,95 @@ export function getThemeColorVariable(role: ThemeColorRole): string {
 
 export const THEME_PREVIEW_ID = "__preview";
 
-const MESSAGE_CONTRAST_TARGET_VARIABLE = "--message-contrast-target";
-const MESSAGE_MUTED_FOREGROUND_VARIABLE = "--message-muted-foreground";
-const MESSAGE_FOOTNOTE_FOREGROUND_VARIABLE = "--message-footnote-foreground";
+const BUBBLE_INK_VARIABLES = ["contrast-target", "muted-foreground", "inline-code-tint"] as const;
+const BUBBLE_KINDS = {
+  message: { linkFallback: "messageLinkFallback", footnoteFallback: "messageFootnoteFallback" },
+  "guest-bubble": {
+    linkFallback: "guestBubbleLinkFallback",
+    footnoteFallback: "guestBubbleFootnoteFallback",
+  },
+} as const;
 
 function applyMessageInkVariables(root: HTMLElement, colors: ThemeColors): void {
   const canvas = compositeThemeColor(colors.canvas, THEME_WHITE_FOREGROUND);
   const surface = compositeThemeColor(colors.messageSurface, canvas);
   const foreground = compositeThemeColor(colors.messageForeground, surface);
   const style = getComputedStyle(root);
-  const link = compositeThemeColor(style.getPropertyValue("--info-foreground"), surface);
-  const canvasTarget = compositeThemeColor(
-    style.getPropertyValue("--appearance-contrast-target"),
-    surface,
-  );
-  const surfaceLuminance = themeRelativeLuminance(surface);
-  const foregroundIsLighter = themeRelativeLuminance(foreground) > surfaceLuminance;
-  const sameSide = foregroundIsLighter ? THEME_WHITE_FOREGROUND : THEME_BLACK_FOREGROUND;
-  // Preserve the foreground's contrast direction when both endpoints are readable.
-  const useWhite =
-    themeContrastRatio(sameSide, surface) >= 4.5 ? foregroundIsLighter : surfaceLuminance < 0.179;
-  root.style.setProperty(MESSAGE_CONTRAST_TARGET_VARIABLE, useWhite ? "white" : "black");
+  const linkColor = style.getPropertyValue("--info-foreground");
+  const canvasTargetColor = style.getPropertyValue("--appearance-contrast-target");
 
-  // The theme's muted text is solved against the canvas, which a themed bubble can be far
-  // from. Muted text across the bubble from its contrast target would cross it as contrast rises.
-  const muted = compositeThemeColor(colors.mutedForeground, surface);
-  const mutedIsLighter = themeRelativeLuminance(muted) > surfaceLuminance;
-  const solved = solveOklchLightness(
-    themeRgbToOklch(mutedIsLighter === useWhite ? muted : foreground),
-    [surface],
-    4.5,
-    useWhite ? "lighter" : "darker",
-  );
-  root.style.setProperty(
-    MESSAGE_MUTED_FOREGROUND_VARIABLE,
-    themeRgbToHexColor(themeOklchToRgb(solved)),
-  );
-
-  root.toggleAttribute("data-message-link-fallback", themeContrastRatio(link, surface) < 4.5);
-  // As contrast rises, the canvas footnote color moves from muted text toward the canvas target.
-  const canvasTargetIsLighter = themeRelativeLuminance(canvasTarget) > surfaceLuminance;
-  if (
-    mutedIsLighter !== canvasTargetIsLighter ||
-    themeContrastRatio(muted, surface) < 4.5 ||
-    themeContrastRatio(canvasTarget, surface) < 4.5
-  ) {
-    root.style.setProperty(
-      MESSAGE_FOOTNOTE_FOREGROUND_VARIABLE,
-      "var(--contrast-message-foreground)",
-    );
+  // Resolve the CSS mix in the browser so the ink uses the same tint and opacity as the bubble.
+  const probe = document.createElement("span");
+  probe.hidden = true;
+  probe.style.backgroundColor = "var(--guest-surface)";
+  root.append(probe);
+  const guestSurface = compositeThemeColor(getComputedStyle(probe).backgroundColor, canvas);
+  probe.remove();
+  const guestInk = compositeThemeColor(colors.messageForeground, guestSurface);
+  const guestFallback =
+    themeContrastRatio(guestInk, guestSurface) < 4.5 ? readableThemeForeground(guestSurface) : null;
+  if (guestFallback) {
+    root.style.setProperty("--guest-bubble-foreground", themeRgbToHexColor(guestFallback));
   } else {
-    root.style.removeProperty(MESSAGE_FOOTNOTE_FOREGROUND_VARIABLE);
+    root.style.removeProperty("--guest-bubble-foreground");
   }
+
+  function applyBubbleInk(
+    kind: keyof typeof BUBBLE_KINDS,
+    surface: ThemeRgbColor,
+    foreground: ThemeRgbColor,
+  ): void {
+    const surfaceLuminance = themeRelativeLuminance(surface);
+    const foregroundIsLighter = themeRelativeLuminance(foreground) > surfaceLuminance;
+    const sameSide = foregroundIsLighter ? THEME_WHITE_FOREGROUND : THEME_BLACK_FOREGROUND;
+    // Keep the ink on the same side of the surface when its contrast target is readable.
+    const useWhite =
+      themeContrastRatio(sameSide, surface) >= 4.5 ? foregroundIsLighter : surfaceLuminance < 0.179;
+
+    // Canvas-muted text on the other side of the bubble would cross it as contrast rises.
+    const muted = compositeThemeColor(colors.mutedForeground, surface);
+    const mutedIsLighter = themeRelativeLuminance(muted) > surfaceLuminance;
+    const solved = solveOklchLightness(
+      themeRgbToOklch(mutedIsLighter === useWhite ? muted : foreground),
+      [surface],
+      4.5,
+      useWhite ? "lighter" : "darker",
+    );
+
+    const link = compositeThemeColor(linkColor, surface);
+    const { linkFallback, footnoteFallback } = BUBBLE_KINDS[kind];
+    if (themeContrastRatio(link, surface) < 4.5) root.dataset[linkFallback] = "";
+    else delete root.dataset[linkFallback];
+
+    const canvasTarget = compositeThemeColor(canvasTargetColor, surface);
+    const canvasTargetIsLighter = themeRelativeLuminance(canvasTarget) > surfaceLuminance;
+    if (
+      mutedIsLighter !== canvasTargetIsLighter ||
+      themeContrastRatio(muted, surface) < 4.5 ||
+      themeContrastRatio(canvasTarget, surface) < 4.5
+    ) {
+      root.dataset[footnoteFallback] = "";
+    } else {
+      delete root.dataset[footnoteFallback];
+    }
+
+    root.style.setProperty(`--${kind}-contrast-target`, useWhite ? "white" : "black");
+    root.style.setProperty(
+      `--${kind}-muted-foreground`,
+      themeRgbToHexColor(themeOklchToRgb(solved)),
+    );
+
+    // If the usual 10% ink overlay erodes contrast, tint away from the ink instead.
+    const codeSurface = mixThemeRgbColors(surface, foreground, 0.1);
+    if (themeContrastRatio(foreground, codeSurface) < 4.5) {
+      root.style.setProperty(`--${kind}-inline-code-tint`, useWhite ? "black" : "white");
+    } else {
+      root.style.removeProperty(`--${kind}-inline-code-tint`);
+    }
+  }
+
+  applyBubbleInk("message", surface, foreground);
+  applyBubbleInk("guest-bubble", guestSurface, guestFallback ?? guestInk);
 }
 
 /** Callers must restore the stored theme with refreshTheme when the draft closes. */
@@ -1830,10 +1867,14 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
   }
 
   delete root.dataset.themeId;
-  delete root.dataset.messageLinkFallback;
-  root.style.removeProperty(MESSAGE_CONTRAST_TARGET_VARIABLE);
-  root.style.removeProperty(MESSAGE_MUTED_FOREGROUND_VARIABLE);
-  root.style.removeProperty(MESSAGE_FOOTNOTE_FOREGROUND_VARIABLE);
+  for (const [kind, { linkFallback, footnoteFallback }] of Object.entries(BUBBLE_KINDS)) {
+    delete root.dataset[linkFallback];
+    delete root.dataset[footnoteFallback];
+    for (const variable of BUBBLE_INK_VARIABLES) {
+      root.style.removeProperty(`--${kind}-${variable}`);
+    }
+  }
+  root.style.removeProperty("--guest-bubble-foreground");
   for (const variable of Object.values(APP_THEME_VARIABLES)) {
     root.style.removeProperty(variable);
   }

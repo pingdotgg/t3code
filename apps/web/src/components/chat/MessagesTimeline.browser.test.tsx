@@ -3,7 +3,7 @@ import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
 import { flushSync } from "react-dom";
 import { AudioPreview } from "../files/AudioPreview";
 import { cdp, page, userEvent } from "vite-plus/test/browser";
-import { converter, formatHex } from "culori/fn";
+import { blend, converter, formatHex, wcagContrast } from "culori/fn";
 import {
   ComposerContextId,
   EnvironmentId,
@@ -233,14 +233,6 @@ function setup({ scheduledTasks = [] as ReadonlyArray<{ id: string; title: strin
 
 const toRgb = converter("rgb");
 
-function relativeLuminance(color: string) {
-  const { r, g, b } = toRgb(color)!;
-  const [red, green, blue] = [r, g, b].map((channel) =>
-    channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4,
-  );
-  return 0.2126 * red! + 0.7152 * green! + 0.0722 * blue!;
-}
-
 /** The nearest background painted behind an element. */
 function surfaceBehind(element: HTMLElement) {
   for (let node = element.parentElement; node; node = node.parentElement) {
@@ -251,9 +243,9 @@ function surfaceBehind(element: HTMLElement) {
 }
 
 function contrastWithSurface(element: HTMLElement) {
-  const ink = relativeLuminance(getComputedStyle(element).color);
-  const surface = relativeLuminance(surfaceBehind(element));
-  return (Math.max(ink, surface) + 0.05) / (Math.min(ink, surface) + 0.05);
+  const style = getComputedStyle(element);
+  const surface = blend([surfaceBehind(element), style.backgroundColor]);
+  return wcagContrast(style.color, surface);
 }
 
 const TASK_ID = ScheduledTaskId.make("task-1");
@@ -555,6 +547,7 @@ describe("MessagesTimeline messages", () => {
   it.each([
     { surface: "#000000", contrast: 200 },
     { surface: "#565656", contrast: 100 },
+    { surface: "#767676", contrast: 100, foreground: "#ffffff" },
     // An edited theme: its black muted text reads on this gray, across it from the white prose.
     { surface: "#767676", contrast: 150, foreground: "#ffffff", mutedForeground: "#000000" },
   ])(
@@ -584,7 +577,11 @@ describe("MessagesTimeline messages", () => {
       const file = { type: "file", id: "notes", name: "notes.txt", mimeType: "text/plain" };
       const lines = Array.from({ length: 60 }, (_, index) => `Line ${index}`).join("\n");
       await using screen = await renderTimeline([
-        message(`# Main heading\n\n###### Small heading\n\n${lines}`, {}, "long"),
+        message(
+          `# Main heading\n\n###### Small heading\n\nInline \`code\`\n\n${lines}`,
+          {},
+          "long",
+        ),
         message("See the notes", { attachments: [{ ...file, sizeBytes: 100 }] }, "file-row"),
         message("", { attachments: [{ ...file, id: "card", sizeBytes: 100 }] }, "file-card"),
         message(AGENT_MESSAGE, { createdBy: "agent", senderThreadId: SENDER_THREAD_ID }, "agent"),
@@ -597,6 +594,7 @@ describe("MessagesTimeline messages", () => {
         disclosure: screen.button("Show full message"),
         heading: screen.getByRole("heading", { name: "Main heading" }).element() as HTMLElement,
         smallHeading: screen.container.querySelector<HTMLElement>("h6")!,
+        inlineCode: screen.container.querySelector<HTMLElement>("code")!,
         fileRowDownload: screen.buttons("Download notes.txt")[0]!,
         fileCardDownload: screen.buttons("Download notes.txt")[1]!,
         fileCardSize: screen.getByText("TXT · 100 B").element() as HTMLElement,
