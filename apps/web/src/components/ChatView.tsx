@@ -40,7 +40,7 @@ import { useComposerResume } from "./chat/useComposerResume";
 import { ThreadFind, ThreadFindCanvas } from "./chat/ThreadFindProvider";
 import { closeThreadFind, openThreadFind, useThreadFindOpen } from "./chat/threadFindStore";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
-import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
+import { useUsageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import {
   isThreadEnvironmentLocked,
   resolveDraftHeroState,
@@ -2636,30 +2636,29 @@ export default function ChatView(props: ChatViewProps) {
     );
     return item ? [item] : [];
   });
-  const limitRecoveryBanner =
+  const limitRecoveryBanner = useUsageLimitRecoveryBannerItem(
     limitRecoveryRun !== null && activeThreadShell !== null
-      ? usageLimitRecoveryBannerItem(
-          {
-            runId: limitRecoveryRun.runId,
-            errorCode: serverRuntime?.lastErrorCode ?? null,
-            resetAt: serverRuntime?.usageLimitResetAt ?? null,
-            stoppedAt: limitRecoveryRun.completedAt ?? activeThreadShell.updatedAt,
-            settled: activeThreadShell.settledOverride === "settled",
-            requestPending: pendingApprovals.length > 0 || pendingUserInputs.length > 0,
-            recovery: activeThreadShell.limitRecovery ?? null,
-            snoozedUntil: activeThreadShell.snoozedUntil,
-            timestampFormat,
-            onChange: async (limitRecovery) => {
-              const result = await updateThreadMetadata({
-                environmentId,
-                input: { threadId: activeThreadShell.id, limitRecovery },
-              });
-              if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-            },
+      ? {
+          runId: limitRecoveryRun.runId,
+          errorCode: serverRuntime?.lastErrorCode ?? null,
+          resetAt: serverRuntime?.usageLimitResetAt ?? null,
+          stoppedAt: limitRecoveryRun.completedAt ?? activeThreadShell.updatedAt,
+          settled: activeThreadShell.settledOverride === "settled",
+          requestPending: pendingApprovals.length > 0 || pendingUserInputs.length > 0,
+          recovery: activeThreadShell.limitRecovery ?? null,
+          snoozedUntil: activeThreadShell.snoozedUntil,
+          timestampFormat,
+          onChange: async (limitRecovery) => {
+            const result = await updateThreadMetadata({
+              environmentId,
+              input: { threadId: activeThreadShell.id, limitRecovery },
+            });
+            if (result._tag === "Failure") throw squashAtomCommandFailure(result);
           },
-          messages,
-        )
-      : null;
+        }
+      : null,
+    messages,
+  );
   const composerBannerItems = (() => {
     const fallbackSelection = draftFallback?.selection;
     const defaultSelection =
