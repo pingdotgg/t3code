@@ -96,5 +96,11 @@ describe("T3 device instructions", () => {
       "Again.",
     );
     assert.notInclude(t3AcpPromptWithInstructions({ prompt: "Hi.", state }), "## T3 Code devices");
+    const withProxy = t3AcpPromptWithInstructions({
+      prompt: "Render a chart.",
+      state: { ...state, toolExposure: "deferred-proxy" },
+    });
+    assert.include(withProxy, "tool_call({ name, arguments })");
+    assert.notInclude(t3AcpPromptWithInstructions({ prompt: "Hi.", state }), "tool_call(");
   });
 });
