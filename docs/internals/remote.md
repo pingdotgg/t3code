@@ -103,6 +103,11 @@ Unlinking on the linking side only forgets the token.
   [`linkRequestTarget`](../../packages/client-runtime/src/linkRequest.ts) names
   a machine for it only when the client already reaches exactly one machine
   there. An address alone never moves an unexpired link to another address.
+- **The receiving side owns a link's expiry.** It renews the session when the
+  link is used and answers each call with `T3-Link-Expires-At`; the linking
+  side stores that and never extends a link on its own. A receiving side that
+  predates renewal sends no header, so the link keeps its original 30 days on
+  both sides.
 - **All callers on one side share the link's single session on the other**,
   so idempotency keys are hashed with the caller's namespace before they
   leave. Without that, two agents reusing a key would collide on the far side.
@@ -181,6 +186,9 @@ undo by accident:
   up in `/proc/net/tcp` and refuses other users. macOS and Windows have no such check yet. The
   mobile app's device preview has the same listener while it is open: iOS suspends other apps, but
   Android lets any app reach it, and apps cannot see another app's socket owner there.
+- **Off stays routed.** `allowsPreviewTunnel` (setting plus policy) gates the route and, from
+  server config, the clients, which then stream. The partition keeps its tunnel proxy anyway, so a
+  desktop tab left open fails instead of loading the reviewer's own localhost.
 - **System browser links** have no tunnel. They keep the private-network rewrite in
   [`browserTargetResolver.ts`](../../apps/web/src/browser/browserTargetResolver.ts).
 

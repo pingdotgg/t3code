@@ -5,16 +5,23 @@ import {
   AuthOrchestrationReadScope,
   AuthSessionId,
   AuthTerminalOperateScope,
+  DEFAULT_SERVER_SETTINGS,
+  type ManagedPolicySummary,
+  type ServerSettings,
 } from "@t3tools/contracts";
 import * as NodeNet from "node:net";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 import { HttpRouter, HttpServer } from "effect/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import * as PreviewTunnel from "./PreviewTunnel.ts";
 
 const listen = (onConnection: (socket: NodeNet.Socket) => void) =>
@@ -40,13 +47,51 @@ const listen = (onConnection: (socket: NodeNet.Socket) => void) =>
       ),
   ).pipe(Effect.map(({ server }) => ({ port: (server.address() as NodeNet.AddressInfo).port })));
 
+/** Settings the route reads; `set` publishes a change as the real service does. */
+const makeSettings = Effect.fn(function* (
+  enablePreviewTunnel = true,
+  managedPolicy?: ManagedPolicySummary,
+  /** Applied right after the first read, as a change landing while a tunnel dials. */
+  afterFirstRead?: Partial<ServerSettings>,
+) {
+  const current = yield* Ref.make<ServerSettings>({
+    ...DEFAULT_SERVER_SETTINGS,
+    enablePreviewTunnel,
+  });
+  const changes = yield* PubSub.unbounded<ServerSettings>();
+  const set = (patch: Partial<ServerSettings>) =>
+    Ref.updateAndGet(current, (settings) => ({ ...settings, ...patch })).pipe(
+      Effect.flatMap((settings) => PubSub.publish(changes, settings)),
+    );
+  let pendingChange = afterFirstRead;
+  return {
+    set,
+    layer: Layer.mock(ServerSettingsService, {
+      managedPolicy,
+      getSettings: Ref.get(current).pipe(
+        Effect.tap(() => {
+          const change = pendingChange;
+          pendingChange = undefined;
+          return change ? set(change) : Effect.void;
+        }),
+      ),
+      streamChanges: Stream.fromPubSub(changes),
+      subscribeChanges: PubSub.subscribe(changes).pipe(Effect.map(Stream.fromSubscription)),
+    }),
+  };
+});
+
 /** Serves the tunnel route; `wsTicket=reader` authenticates without terminal:operate. */
-const serveTunnel = (sessionInvalidated: Effect.Effect<void> = Effect.never) =>
+const serveTunnel = (
+  sessionInvalidated: Effect.Effect<void> = Effect.never,
+  settings?: Layer.Layer<ServerSettingsService>,
+) =>
   Effect.gen(function* () {
+    const settingsLayer = settings ?? (yield* makeSettings()).layer;
     const services = yield* Layer.build(
       HttpRouter.serve(PreviewTunnel.routeLayer, { disableListenLog: true }).pipe(
         Layer.provideMerge(NodeHttpServer.layerTest),
-        Layer.provide(PreviewTunnel.layer),
+        Layer.provide(PreviewTunnel.layer.pipe(Layer.provide(settingsLayer))),
         Layer.provide(
           Layer.mock(SessionStore.SessionStore, {
             cookieName: "t3_session",
@@ -151,7 +196,7 @@ it.effect.each([
   }),
 );
 
-it.effect("answers a port nothing listens on with 502, marked as about the port", () =>
+it.effect("answers a port nothing listens on with 403, marked as about the port", () =>
   Effect.gen(function* () {
     const closed = yield* Effect.promise(
       () =>
@@ -166,7 +211,7 @@ it.effect("answers a port nothing listens on with 502, marked as about the port"
     const tunnel = yield* serveTunnel();
     const client = yield* openTunnel(`${tunnel.origin}/api/preview/tunnel?port=${closed}`);
     const response = yield* refusal(client);
-    expect(response).toEqual({ status: 502, portRefused: true });
+    expect(response).toEqual({ status: 403, portRefused: true });
   }),
 );
 
@@ -180,6 +225,72 @@ it.effect("closes an open tunnel when its session is revoked", () =>
     yield* Effect.promise(() => new Promise((resolve) => client.once("open", resolve)));
     const clientClosed = new Promise((resolve) => client.once("close", resolve));
     yield* Deferred.succeed(revoked, undefined);
+    yield* Effect.promise(() => Promise.all([clientClosed, upstreamClosed.promise]));
+  }),
+);
+
+it.effect.each([
+  { case: "the setting", enabled: false, policy: undefined },
+  {
+    case: "a policy, whatever the setting",
+    enabled: true,
+    policy: {
+      organization: "Example Corp",
+      lockedSettings: [],
+      limits: { previewTunnel: false },
+    } satisfies ManagedPolicySummary,
+  },
+])("refuses every tunnel with 403 when $case turns it off", ({ enabled, policy }) =>
+  Effect.gen(function* () {
+    let dialled = 0;
+    const listed = yield* listen((socket) => {
+      dialled++;
+      socket.destroy();
+    });
+    const settings = yield* makeSettings(enabled, policy);
+    const tunnel = yield* serveTunnel(Effect.never, settings.layer);
+    const client = yield* openTunnel(`${tunnel.origin}/api/preview/tunnel?port=${listed.port}`);
+    const status = yield* Effect.promise(
+      () =>
+        new Promise<{ status: number | undefined; disabled: boolean }>((resolve, reject) => {
+          client.on("unexpected-response", (_request, response) =>
+            resolve({
+              status: response.statusCode,
+              disabled:
+                response.headers[PreviewTunnel.PREVIEW_TUNNEL_DISABLED_HEADER] !== undefined,
+            }),
+          );
+          client.on("open", () => reject(new Error("tunnel opened")));
+          client.on("error", reject);
+        }),
+    );
+    expect(status).toEqual({ status: 403, disabled: true });
+    expect(dialled).toBe(0);
+  }),
+);
+
+it.effect("closes an open tunnel when the setting turns it off", () =>
+  Effect.gen(function* () {
+    const upstreamClosed = Promise.withResolvers<void>();
+    const upstream = yield* listen((socket) => socket.on("close", () => upstreamClosed.resolve()));
+    const settings = yield* makeSettings();
+    const tunnel = yield* serveTunnel(Effect.never, settings.layer);
+    const client = yield* openTunnel(`${tunnel.origin}/api/preview/tunnel?port=${upstream.port}`);
+    yield* Effect.promise(() => new Promise((resolve) => client.once("open", resolve)));
+    const clientClosed = new Promise((resolve) => client.once("close", resolve));
+    yield* settings.set({ enablePreviewTunnel: false });
+    yield* Effect.promise(() => Promise.all([clientClosed, upstreamClosed.promise]));
+  }),
+);
+
+it.effect("closes a tunnel the setting turns off while it is still dialling", () =>
+  Effect.gen(function* () {
+    const settings = yield* makeSettings(true, undefined, { enablePreviewTunnel: false });
+    const upstreamClosed = Promise.withResolvers<void>();
+    const upstream = yield* listen((socket) => socket.on("close", () => upstreamClosed.resolve()));
+    const tunnel = yield* serveTunnel(Effect.never, settings.layer);
+    const client = yield* openTunnel(`${tunnel.origin}/api/preview/tunnel?port=${upstream.port}`);
+    const clientClosed = new Promise((resolve) => client.once("close", resolve));
     yield* Effect.promise(() => Promise.all([clientClosed, upstreamClosed.promise]));
   }),
 );

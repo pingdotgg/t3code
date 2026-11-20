@@ -1381,6 +1381,28 @@ describe("extractMcpToolCallIdentity", () => {
     });
   });
 
+  it("recovers server, tool, and arguments from Antigravity call_mcp_tool calls", () => {
+    // agy 1.5.12 reaches MCP tools its context budget left out through call_mcp_tool.
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "call_13347576314095519317",
+      kind: "execute",
+      title: "MCP Tool navigate_page",
+      status: "in_progress",
+      rawInput: {
+        ServerName: "chrome-devtools",
+        ToolName: "navigate_page",
+        Arguments: { url: "https://example.com" },
+      },
+    });
+
+    expect(extractMcpToolCallIdentity(toolCall)).toEqual({
+      server: "chrome-devtools",
+      tool: "navigate_page",
+      input: { url: "https://example.com" },
+    });
+  });
+
   it("recovers T3 identity from acp-mcp-call fallback commands", () => {
     const toolCall = toolCallFromUpdate({
       sessionUpdate: "tool_call",
