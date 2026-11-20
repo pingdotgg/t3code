@@ -66,7 +66,7 @@ export interface DeviceWorld {
   readonly deviceDiscoveryFailures?: Readonly<Record<string, DeviceOperationError>> | undefined;
   /** false: agent device access is off, so the thread holds no `device` capability. */
   readonly deviceAgentAccess?: boolean | undefined;
-  /** Every capture reaches T3 with adb screencap's multi-display warning ahead of the PNG. */
+  /** Every capture reaches T3 as a PNG whose header says 0×0. */
   readonly deviceInvalidCapture?: boolean | undefined;
   /** Devices another thread's agent-device session holds, by device id: that thread's id. */
   readonly deviceOwners?: Readonly<Record<string, string>> | undefined;
@@ -547,24 +547,19 @@ const failing = <A, R>(effect: Effect.Effect<A, DeviceError, R>) =>
 const NODE = "/usr/bin/node";
 const HUB = "http://127.0.0.1:47613";
 const PLATFORM_NAMES = { ios: "iOS Simulators", android: "Android Emulators" } as const;
-/** T3 reads only a capture's PNG header; replay has no screens to send. */
-const capture = (platform: DevicePlatform) => {
-  const png = new Uint8Array(24);
+/** A complete PNG holding only the header T3 reads; replay has no screens to send. */
+const capture = (width: number, height: number) => {
+  const png = new Uint8Array(45);
   const view = new DataView(png.buffer);
   view.setUint32(0, 0x89504e47);
   view.setUint32(4, 0x0d0a1a0a);
+  view.setUint32(8, 13);
   view.setUint32(12, 0x49484452);
-  view.setUint32(16, platform === "ios" ? 1206 : 1080);
-  view.setUint32(20, platform === "ios" ? 2622 : 2400);
+  view.setUint32(16, width);
+  view.setUint32(20, height);
+  view.setUint32(37, 0x49454e44);
   return png;
 };
-/**
- * What `adb exec-out screencap -p` prints before the PNG on an emulator with several displays,
- * such as a foldable. T3 passes the hub's bytes on, and its PNG check finds no header.
- */
-const SCREENCAP_WARNING = new TextEncoder().encode(
-  "[Warning] Multiple displays were found, but no display id was specified! Defaulting to the first display found, however this default is not guaranteed to be consistent across captures. A display id should be specified.\n",
-);
 
 const fakeHost = (
   world: DeviceWorld,
@@ -604,8 +599,10 @@ const fakeHost = (
       screenshot: (device) =>
         Effect.succeed(
           world.deviceInvalidCapture
-            ? new Uint8Array([...SCREENCAP_WARNING, ...capture(device.platform)])
-            : capture(device.platform),
+            ? capture(0, 0)
+            : device.platform === "ios"
+              ? capture(1206, 2622)
+              : capture(1080, 2400),
         ),
     },
     // T3 checks an Android emulator's host for ffmpeg's H.264 encoder before streaming it.

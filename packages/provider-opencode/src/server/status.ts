@@ -1,5 +1,6 @@
 import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import {
+  ProviderDriverKind,
   type ModelCapabilities,
   type ServerProviderModel,
   type ServerProviderSkill,
@@ -15,7 +16,11 @@ import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
-import { compareSemverVersions } from "@t3tools/shared/semver";
+import {
+  brokenVersionDetail,
+  noCompatibilityPolicy,
+  type ProviderCompatibilityLookup,
+} from "@t3tools/provider-core/server/compatibility";
 import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
@@ -26,6 +31,7 @@ import {
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import type { ProbedOpenCode } from "./versionProbe.ts";
 import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
+import { ServiceUnavailableError } from "@opencode/protocol/errors";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
 
 const OPENCODE_PRESENTATION = {
@@ -184,6 +190,10 @@ function titleCaseSlug(value: string): string {
   return segments.join(" ");
 }
 
+function reasoningVariantLabel(value: string): string {
+  return value === "xhigh" ? "Extra High" : titleCaseSlug(value);
+}
+
 function inferDefaultVariant(
   providerID: string,
   variants: ReadonlyArray<string>,
@@ -238,11 +248,11 @@ function openCodeCapabilitiesForModel(input: {
 }): ModelCapabilities {
   const variantValues = Object.keys(input.model.variants ?? {});
   const defaultVariant = inferDefaultVariant(input.providerID, variantValues);
-  const variantOptions = variantValues.map((value) =>
-    defaultVariant === value
-      ? { id: value, label: titleCaseSlug(value), isDefault: true as const }
-      : { id: value, label: titleCaseSlug(value) },
-  );
+  const variantOptions = variantValues.map((id) => ({
+    id,
+    label: reasoningVariantLabel(id),
+    ...(id === defaultVariant ? { isDefault: true as const } : {}),
+  }));
   const primaryAgents = input.agents.filter(
     (agent) => !agent.hidden && (agent.mode === "primary" || agent.mode === "all"),
   );
@@ -498,6 +508,15 @@ const catalogFingerprint = (models: ReadonlyArray<OpenCode2Model>) =>
     .toSorted()
     .join("\n");
 
+// A cold OpenCode 2.2.5 503s model reads for about a minute while its location plugins activate.
+const PLUGIN_ACTIVATION_DEADLINE = "2 minutes";
+
+const isServiceUnavailable = Schema.is(ServiceUnavailableError);
+const isActivatingPlugins = (error: unknown): boolean =>
+  OpenCodeRuntime.isOpenCodeRuntimeError(error)
+    ? isActivatingPlugins(error.cause)
+    : isServiceUnavailable(error) && error.service === "plugin";
+
 /** A cold server can list a partial catalog; two agreeing reads reduce that startup race. */
 const settleOpenCode2Catalog = <E>(
   list: Effect.Effect<ReadonlyArray<OpenCode2Model>, E>,
@@ -536,17 +555,22 @@ export const makeOpenCode2ModelLoader = <E>(
         ),
       );
       // The first read can include a cold server start, so only settling shares the budget.
+      // Each retry borrows the managed server, so retries well inside its idle TTL keep it alive.
       return tracked.pipe(
+        Effect.retry({ while: isActivatingPlugins, schedule: Schedule.spaced("1 second") }),
+        Effect.timeoutOption(PLUGIN_ACTIVATION_DEADLINE),
         Effect.flatMap((first) =>
-          settleOpenCode2Catalog(tracked, first).pipe(
-            Effect.timeoutOption(
-              resolveProviderProbeTimeoutMs(
-                "opencode",
-                OPENCODE_2_CATALOG_SETTLE_TIMEOUT_MS,
-                environment,
+          Option.isNone(first)
+            ? Effect.succeedNone
+            : settleOpenCode2Catalog(tracked, first.value).pipe(
+                Effect.timeoutOption(
+                  resolveProviderProbeTimeoutMs(
+                    "opencode",
+                    OPENCODE_2_CATALOG_SETTLE_TIMEOUT_MS,
+                    environment,
+                  ),
+                ),
               ),
-            ),
-          ),
         ),
         Effect.catch((error) =>
           latest.length > 0 ? Effect.succeedSome(latest) : Effect.fail(error),
@@ -664,7 +688,7 @@ function openCode2ModelCapabilities(model: OpenCode2Model): ModelCapabilities {
               type: "select",
               options: variants.map((id) => ({
                 id,
-                label: titleCaseSlug(id),
+                label: reasoningVariantLabel(id),
                 ...(id === defaultVariant ? { isDefault: true } : {}),
               })),
               ...(defaultVariant === undefined ? {} : { currentValue: defaultVariant }),
@@ -764,6 +788,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     OpenCodeRuntime.OpenCodeRuntimeError
   >,
   environment?: NodeJS.ProcessEnv,
+  compatibility: ProviderCompatibilityLookup = noCompatibilityPolicy,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -838,21 +863,30 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   if (probed.generation === "v2") {
     return yield* checkOpenCode2(openCodeSettings, probed.version, checkedAt, loadOpenCode2Models);
   }
-  if (compareSemverVersions(probed.version, OpenCodeRuntime.MINIMUM_OPENCODE_VERSION) < 0) {
-    return buildServerProvider({
-      presentation: OPENCODE_PRESENTATION,
-      enabled: openCodeSettings.enabled,
-      checkedAt,
-      models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
-      probe: {
-        installed: true,
-        version: probed.version,
-        status: "error",
-        auth: { status: "unknown" },
-        message: `OpenCode v${probed.version} is too old. Upgrade to v${OpenCodeRuntime.MINIMUM_OPENCODE_VERSION} or newer.`,
-      },
+  const refuseBroken = Effect.fnUntraced(function* (detected: string) {
+    const broken = brokenVersionDetail({
+      name: "OpenCode",
+      version: detected,
+      advisory: yield* compatibility(ProviderDriverKind.make("opencode"), detected),
     });
-  }
+    return broken === undefined
+      ? undefined
+      : buildServerProvider({
+          presentation: OPENCODE_PRESENTATION,
+          enabled: openCodeSettings.enabled,
+          checkedAt,
+          models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
+          probe: {
+            installed: true,
+            version: detected,
+            status: "error",
+            auth: { status: "unknown" },
+            message: broken,
+          },
+        });
+  });
+  const refused = yield* refuseBroken(probed.version);
+  if (refused !== undefined) return refused;
 
   const installedVersion = isExternalServer ? {} : { installedVersion: probed.version };
   let version = probed.version;
@@ -895,6 +929,9 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
       ),
     ),
   );
+  // The server that answered can differ from the CLI the probe ran.
+  const refusedServer = version === probed.version ? undefined : yield* refuseBroken(version);
+  if (refusedServer !== undefined) return { ...refusedServer, ...installedVersion };
   if (inventoryExit._tag === "Failure") {
     yield* logDiscoveryFailure({
       phase: "inventory",

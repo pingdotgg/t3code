@@ -37,12 +37,11 @@ import { collectStreamAsString } from "@t3tools/provider-core/server/snapshotPro
 import * as NetService from "@t3tools/shared/Net";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
+import { parseSemver } from "@t3tools/shared/semver";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 const OPENCODE_EMPTY_CONFIG_CONTENT = "{}";
 
-export const MINIMUM_OPENCODE_VERSION = "1.14.19";
 const OPENCODE_HEALTH_TIMEOUT_MS = 5_000;
 
 const OpenCodeHealthSchema = Schema.Struct({
@@ -162,7 +161,7 @@ export const runOpenCodeSdk = <A>(
       new OpenCodeRuntimeError({ operation, detail: openCodeRuntimeErrorDetail(cause), cause }),
   }).pipe(Effect.withSpan(`opencode.${operation}`));
 
-export const verifyOpenCodeServerVersion = Effect.fn("verifyOpenCodeServerVersion")(function* (
+const verifyOpenCodeServerVersion = Effect.fn("verifyOpenCodeServerVersion")(function* (
   client: OpencodeClient,
   environment?: NodeJS.ProcessEnv,
 ) {
@@ -185,7 +184,7 @@ export const verifyOpenCodeServerVersion = Effect.fn("verifyOpenCodeServerVersio
       (cause) =>
         new OpenCodeRuntimeError({
           operation: "global.health",
-          detail: `OpenCode server returned an invalid health response. T3 Code requires OpenCode v${MINIMUM_OPENCODE_VERSION} or newer.`,
+          detail: "OpenCode server returned an invalid health response.",
           cause,
         }),
     ),
@@ -193,13 +192,7 @@ export const verifyOpenCodeServerVersion = Effect.fn("verifyOpenCodeServerVersio
   if (parseSemver(health.version) === null) {
     return yield* new OpenCodeRuntimeError({
       operation: "global.health",
-      detail: `OpenCode server returned an invalid version. T3 Code requires OpenCode v${MINIMUM_OPENCODE_VERSION} or newer.`,
-    });
-  }
-  if (compareSemverVersions(health.version, MINIMUM_OPENCODE_VERSION) < 0) {
-    return yield* new OpenCodeRuntimeError({
-      operation: "global.health",
-      detail: `OpenCode v${health.version} is too old. Upgrade to v${MINIMUM_OPENCODE_VERSION} or newer.`,
+      detail: "OpenCode server returned an invalid version.",
     });
   }
   return health.version;
@@ -267,7 +260,43 @@ export interface ParsedOpenCodeModelSlug {
   readonly modelID: string;
 }
 
-export type OpenCodeVariantCache = Map<string, ReadonlySet<string> | undefined>;
+export interface OpenCodeCatalogModel {
+  readonly variants: ReadonlySet<string>;
+  readonly contextWindow: number | undefined;
+}
+
+export type OpenCodeVariantCache = Map<string, OpenCodeCatalogModel | undefined>;
+
+/** The model's catalog entry; a failed read returns undefined and is not cached. */
+export const readOpenCodeCatalogModel = Effect.fnUntraced(function* (
+  client: OpencodeClient,
+  model: ParsedOpenCodeModelSlug,
+  abortSignal?: AbortSignal,
+  cache?: OpenCodeVariantCache,
+) {
+  const key = `${model.providerID}/${model.modelID}`;
+  if (cache?.has(key)) return cache.get(key);
+
+  const response = yield* runOpenCodeSdk("provider.list", (signal) =>
+    client.provider.list(undefined, {
+      signal: abortSignal ? AbortSignal.any([signal, abortSignal]) : signal,
+    }),
+  ).pipe(
+    Effect.timeout("10 seconds"),
+    Effect.orElseSucceed(() => undefined),
+  );
+  if (response?.data === undefined) return undefined;
+
+  const catalogModel = response.data.all.find((provider) => provider.id === model.providerID)
+    ?.models[model.modelID];
+  const entry: OpenCodeCatalogModel | undefined = catalogModel && {
+    variants: new Set(Object.keys(catalogModel.variants ?? {})),
+    contextWindow: catalogModel.limit?.input ?? catalogModel.limit?.context,
+  };
+  // Keep only what this model needs; provider.list can return several megabytes.
+  cache?.set(key, entry);
+  return entry;
+});
 
 export const resolveOpenCodeVariant = Effect.fnUntraced(function* (
   client: OpencodeClient,
@@ -277,32 +306,9 @@ export const resolveOpenCodeVariant = Effect.fnUntraced(function* (
   cache?: OpenCodeVariantCache,
 ) {
   if (!variant || !model) return variant;
-
-  const key = `${model.providerID}/${model.modelID}`;
-  const cached = cache?.get(key);
-  if (cache?.has(key)) {
-    return cached !== undefined && !cached.has(variant) ? undefined : variant;
-  }
-
   // Only a confirmed catalog mismatch can invalidate a persisted selection.
-  const response = yield* runOpenCodeSdk("provider.list", (signal) =>
-    client.provider.list(undefined, {
-      signal: abortSignal ? AbortSignal.any([signal, abortSignal]) : signal,
-    }),
-  ).pipe(
-    Effect.timeout("10 seconds"),
-    Effect.orElseSucceed(() => undefined),
-  );
-  if (response?.data === undefined) return variant;
-
-  const catalogModel = response.data.all.find((provider) => provider.id === model.providerID)
-    ?.models[model.modelID];
-  const variants = catalogModel ? new Set(Object.keys(catalogModel.variants ?? {})) : undefined;
-  if (cache !== undefined) {
-    // Keep only this model's names; provider.list can return several megabytes.
-    cache.set(key, variants);
-  }
-  return variants !== undefined && !variants.has(variant) ? undefined : variant;
+  const entry = yield* readOpenCodeCatalogModel(client, model, abortSignal, cache);
+  return entry !== undefined && !entry.variants.has(variant) ? undefined : variant;
 });
 
 export interface OpenCodeSkill {
@@ -355,8 +361,9 @@ export class OpenCodeRuntime extends Context.Service<
   }
 >()("@t3tools/provider-opencode/server/OpenCodeRuntime") {}
 
-function parseServerUrlFromOutput(output: string): string | null {
-  for (const line of output.split("\n")) {
+export function parseServerUrlFromOutput(output: string): string | null {
+  // The last element is an unfinished line; a chunk can end mid-URL.
+  for (const line of output.split("\n").slice(0, -1)) {
     const match = line.match(/server listening on\s+(https?:\/\/[^\s]+)/i);
     if (match?.[1]) return match[1];
   }
