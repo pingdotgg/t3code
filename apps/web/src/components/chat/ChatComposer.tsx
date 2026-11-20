@@ -291,7 +291,7 @@ import {
 } from "./preparingComposerImages";
 import { ComposerControlsBar } from "./ComposerControlsBar";
 import { composerCommandKeyHandler } from "./composerCommandKey";
-import { usePromptSuggestion } from "./usePromptSuggestion";
+import { promptSuggestionToAccept, usePromptSuggestion } from "./usePromptSuggestion";
 import { useFreshSessionArmed } from "./freshSessionArms";
 
 function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
@@ -3754,9 +3754,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           className="pointer-events-auto ml-2 inline-flex cursor-pointer rounded align-[1px] [&:hover_kbd]:text-foreground"
                           onPointerDown={(event) => event.preventDefault()}
                           onClick={() => {
-                            // The hint unmounts a render after typing, so a late click must not prepend to a fresh draft.
-                            if (promptRef.current.length > 0) return;
-                            applyPromptReplacementStable(0, 0, offeredPromptSuggestion);
+                            const accepted = promptSuggestionToAccept(
+                              offeredPromptSuggestion,
+                              promptRef.current,
+                            );
+                            if (accepted !== null) applyPromptReplacementStable(0, 0, accepted);
                           }}
                         >
                           <Kbd variant="outline">⇥ Tab</Kbd>
