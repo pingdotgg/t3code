@@ -94,7 +94,7 @@ function StructuredValue({
   );
 }
 
-function useFetchedTurnItem(
+export function useFetchedTurnItem(
   projectedItem: OrchestrationV2ProjectedTurnItem,
   environmentId: EnvironmentId,
   source: TurnItemSource | undefined,
