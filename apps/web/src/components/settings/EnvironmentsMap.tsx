@@ -25,6 +25,7 @@ import {
   MinusIcon,
   PlusIcon,
   SearchIcon,
+  TriangleAlertIcon,
   UnfoldVerticalIcon,
   FoldVerticalIcon,
 } from "lucide-react";
@@ -78,7 +79,9 @@ import {
   fleetNeighborhood,
   fleetNodesInBox,
   fleetSearch,
+  fleetLayoutWidth,
   fleetShapeKey,
+  fleetStackPartial,
   fleetStacks,
   type FleetColumn,
   type FleetDirection,
@@ -92,6 +95,7 @@ import {
   type FleetLinkEdge,
   type FleetNode,
   type FleetRect,
+  type FleetRouteEdge,
   type FleetRouteState,
   type FleetStack,
   type FleetViewTransform,
@@ -121,7 +125,8 @@ type Messages = ReturnType<typeof useMessages>;
 /** One ordinal scale for access, read only to full access: a link's line gets heavier and darker. */
 const ACCESS_STROKE_WIDTHS = [1.25, 1.75, 2.25, 2.75, 3.5];
 const ACCESS_STROKE_OPACITIES = [0.4, 0.5, 0.62, 0.76, 0.9];
-const CANVAS_HEIGHT = { min: 260, max: 620 };
+/** Short maps get a short canvas; a tall one grows to this before the fit shrinks it. */
+const CANVAS_HEIGHT = { min: 180, max: 840 };
 const ARROW_ROVE: Record<string, FleetDirection> = {
   ArrowUp: "up",
   ArrowDown: "down",
@@ -331,12 +336,21 @@ function useFleetGraph() {
   return { graph, environments, connectProblem };
 }
 
-/** The layout for the graph's current shape; a health or status change reuses the last one. */
-function useFleetLayout(graph: FleetGraph, stacks: ReadonlyArray<FleetStack>) {
-  const key = fleetShapeKey(graph, stacks);
-  const [laid, setLaid] = useState(() => ({ key, layout: layoutFleetGraph(graph, stacks) }));
+/**
+ * The layout for the graph's current shape at the canvas's width; a health or status change
+ * reuses the last one.
+ */
+function useFleetLayout(
+  graph: FleetGraph,
+  stacks: ReadonlyArray<FleetStack>,
+  shapeKey: string,
+  canvasWidth: number | null,
+) {
+  const width = canvasWidth === null ? undefined : fleetLayoutWidth(canvasWidth);
+  const key = `${shapeKey}\n${width}`;
+  const [laid, setLaid] = useState(() => ({ key, layout: layoutFleetGraph(graph, stacks, width) }));
   if (laid.key === key) return laid;
-  const next = { key, layout: layoutFleetGraph(graph, stacks) };
+  const next = { key, layout: layoutFleetGraph(graph, stacks, width) };
   setLaid(next);
   return next;
 }
@@ -368,7 +382,7 @@ export function EnvironmentsMap(
   const { graph, environments, connectProblem } = useFleetGraph();
   const [expanded, setExpanded] = useState(NO_STACKS);
   const stacks = fleetStacks(graph, expanded);
-  const { key, layout } = useFleetLayout(graph, stacks);
+  const key = fleetShapeKey(graph, stacks);
   const [picked, setPicked] = useState<FleetFocus | null>(null);
   // Machines ticked for a batch link: apart from `picked`, which is what the details show.
   const [ticked, setTicked] = useState(NO_SELECTION);
@@ -453,7 +467,6 @@ export function EnvironmentsMap(
       <FleetCanvas
         graph={graph}
         stacks={stacks}
-        layout={layout}
         shapeKey={key}
         environments={environments}
         selection={selection}
@@ -523,7 +536,8 @@ interface FleetSceneProps {
   readonly onToggleStack: (stackId: string) => void;
 }
 
-interface FleetCanvasProps extends FleetSceneProps {
+interface FleetCanvasProps extends Omit<FleetSceneProps, "layout"> {
+  /** The graph's shape. The canvas lays it out at its own width. */
   readonly shapeKey: string;
   readonly onClearTicked: () => void;
   readonly onLinkSeveral: (sourceId: string) => void;
@@ -532,16 +546,18 @@ interface FleetCanvasProps extends FleetSceneProps {
 }
 
 function FleetCanvas({
-  shapeKey,
+  shapeKey: graphKey,
   onClearTicked,
   onLinkSeveral,
   onFind,
   ...scene
 }: FleetCanvasProps) {
   const gt = useGT();
-  const { graph, stacks, layout, selection, selected, onSelect, onTick } = scene;
+  const { graph, stacks, selection, selected, onSelect, onTick } = scene;
   const [canvas, setCanvas] = useState<HTMLDivElement | null>(null);
   const [width, setWidth] = useState<number | null>(null);
+  // A new width is a new layout, so a view held by hand goes with it as with any other shape.
+  const { key: shapeKey, layout } = useFleetLayout(graph, stacks, graphKey, width);
   const [query, setQuery] = useState("");
   // A view the user set by hand holds until the map's shape changes; otherwise it fits itself.
   const [manual, setManual] = useState<{
@@ -853,7 +869,7 @@ function FleetCanvas({
         ref={setCanvas}
         data-dragging={dragging || undefined}
         data-glide={glide || undefined}
-        className="relative min-h-65 cursor-grab touch-none overflow-clip bg-background/50 select-none data-dragging:cursor-grabbing data-glide:transition-[background-size,background-position] data-glide:duration-200 data-glide:ease-out motion-reduce:transition-none"
+        className="relative min-h-45 cursor-grab touch-none overflow-clip bg-background/50 select-none data-dragging:cursor-grabbing data-glide:transition-[background-size,background-position] data-glide:duration-200 data-glide:ease-out motion-reduce:transition-none"
         style={
           view === null || size === null
             ? undefined
@@ -881,7 +897,7 @@ function FleetCanvas({
               transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})`,
             }}
           >
-            <FleetScene {...scene} matches={matches} onReveal={reveal} />
+            <FleetScene {...scene} layout={layout} matches={matches} onReveal={reveal} />
           </div>
         )}
         {box === null ? null : (
@@ -1147,8 +1163,19 @@ const FleetScene = memo(function FleetScene({
   const fadeLine = (dimmed: boolean) =>
     cn(
       "transition-opacity duration-150 motion-reduce:transition-none",
-      dimmed && "opacity-15 forced-colors:opacity-40",
+      dimmed && "opacity-25 forced-colors:opacity-40",
     );
+  // A name on a line stays solid when out of focus, so the lines under it never show through:
+  // its text and outline step back instead.
+  const fadeName = (dimmed: boolean) =>
+    cn(
+      "transition-colors duration-150 motion-reduce:transition-none",
+      dimmed && "border-border/50 font-normal text-muted-foreground/45",
+    );
+  const routeLit = (edge: FleetRouteEdge) => lit === null || lit.edges.has(edge.id);
+  // Painted last, so the routes in focus lie over the ones that are not.
+  const routePaintOrder =
+    lit === null ? routeEdges : routeEdges.toSorted((a, b) => +routeLit(a) - +routeLit(b));
   const linkLit = (edge: FleetLinkEdge) =>
     isSelected("edge", edge.id) || (lit?.edges.has(edge.id) ?? false);
   // Painted last, so the links in focus lie over the ones that are not.
@@ -1331,7 +1358,7 @@ const FleetScene = memo(function FleetScene({
         fill="none"
         strokeLinecap="round"
       >
-        {routeEdges.map((edge) => {
+        {routePaintOrder.map((edge) => {
           const geometry = layout.routes.get(edge.id);
           if (geometry === undefined) return null;
           const style = ROUTE_STYLES[edge.state];
@@ -1342,7 +1369,7 @@ const FleetScene = memo(function FleetScene({
               stroke="currentColor"
               strokeWidth={style.width}
               strokeDasharray={style.dash}
-              className={cn(style.wire, fadeLine(lit !== null && !lit.edges.has(edge.id)))}
+              className={cn(style.wire, fadeLine(!routeLit(edge)))}
             />
           );
         })}
@@ -1463,8 +1490,10 @@ const FleetScene = memo(function FleetScene({
             style={{ left: pill.x, top: pill.y, width: pill.width, height: pill.height }}
             className={cn(
               "absolute flex items-center justify-center rounded-full border bg-background px-1.5 text-2xs leading-none text-muted-foreground",
-              ROUTE_STYLES[edge.state].pill,
-              fadeLine(lit !== null && !lit.edges.has(edge.id)),
+              routeLit(edge) && ROUTE_STYLES[edge.state].pill,
+              // Lit routes sit over the others, whose wires pass beside them on the way in.
+              routeLit(edge) && "z-1",
+              fadeName(!routeLit(edge)),
             )}
           >
             <span className="truncate">{routeKindLabel(edge.routeKind, gt)}</span>
@@ -1506,16 +1535,19 @@ const FleetScene = memo(function FleetScene({
             }}
             className={cn(
               "absolute flex cursor-pointer items-center gap-1.5 rounded-full border border-border bg-card px-1.5 text-2xs leading-none outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset aria-pressed:border-primary aria-pressed:text-primary",
-              healthTone(edge.health),
+              lit === null || lit.edges.has(edge.id) ? healthTone(edge.health) : null,
               badge.onDemand && "z-10 shadow-sm/5",
-              fadeLine(lit !== null && !lit.edges.has(edge.id)),
+              fadeName(lit !== null && !lit.edges.has(edge.id)),
             )}
             onClick={() => onSelect(isSelected("edge", edge.id) ? null : target)}
             onFocus={() => setHover(target)}
             onBlur={() => setHover(null)}
             {...hoverProps(target)}
           >
-            <AccessMeter access={edge.link.access} />
+            <AccessMeter
+              access={edge.link.access}
+              className={cn(lit !== null && !lit.edges.has(edge.id) && "opacity-45")}
+            />
             <span className="truncate">{m(accessConfig[edge.link.access].label)}</span>
           </button>
         );
@@ -1556,7 +1588,9 @@ const FleetScene = memo(function FleetScene({
                   .join(", "),
                 summary,
               });
-        const troubled = group === null && stack.reachable < count;
+        const partial = fleetStackPartial(stack);
+        // The room a closed stack's card adds below its name when some machines do not answer.
+        const partialBand = partial && !stack.expanded ? 20 : 0;
         const ToggleIcon = stack.expanded ? FoldVerticalIcon : UnfoldVerticalIcon;
         const hidden = count - stack.shownIds.length;
         return (
@@ -1589,34 +1623,65 @@ const FleetScene = memo(function FleetScene({
               {...focusProps({ kind: "stack", id: stack.id }, face, spoken)}
               className={cn(
                 nodeClass(stack.id),
-                "gap-2 px-2.5 pr-8",
+                "flex-col items-stretch overflow-clip",
                 stack.expanded
                   ? "rounded-t-xl"
-                  : "rounded-lg border border-foreground/25 bg-card hover:border-foreground/50",
+                  : "rounded-lg border bg-card hover:border-foreground/50",
+                !stack.expanded && (partial ? "border-warning/60" : "border-foreground/25"),
                 !stack.expanded && group !== null && "border-dashed",
                 holdsSelection(stack) && "ring-2 ring-primary ring-inset forced-colors:outline-2",
               )}
             >
-              <span className="min-w-0 flex-1">
+              <span className="flex min-h-0 min-w-0 flex-1 flex-col justify-center px-2.5 pr-8">
                 <span className="flex items-center gap-1.5">
                   <span className="truncate text-xs leading-4 font-semibold text-foreground">
                     {group ?? range}
                   </span>
-                  <span className="shrink-0 rounded-full bg-muted px-1.5 text-2xs leading-4 text-muted-foreground tabular-nums forced-colors:border">
-                    {count}
-                  </span>
+                  {group === null && !stack.expanded ? null : (
+                    <span className="shrink-0 rounded-full bg-muted px-1.5 text-2xs leading-4 text-muted-foreground tabular-nums forced-colors:border">
+                      {count}
+                    </span>
+                  )}
                 </span>
-                {stack.expanded ? null : (
-                  <span
-                    className={cn(
-                      "block truncate text-2xs leading-4",
-                      troubled ? "text-warning" : "text-muted-foreground",
-                    )}
-                  >
-                    {summary}
+                {stack.expanded ? null : group !== null ? (
+                  <span className="block truncate text-2xs leading-4 text-muted-foreground">
+                    {range}
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1.5 text-2xs leading-4 text-muted-foreground">
+                    {only !== undefined && stack.sources.length === 1 ? (
+                      <AccessMeter access={only.access} className="text-foreground/70" />
+                    ) : null}
+                    <span className="whitespace-nowrap tabular-nums">
+                      {gt("{machines, plural, one {# machine} other {# machines}}", {
+                        machines: count,
+                      })}
+                    </span>
                   </span>
                 )}
               </span>
+              {partialBand === 0 ? null : (
+                // The headline of a stack that is partly down: its own band, never cut short.
+                <span
+                  style={{ height: partialBand }}
+                  className="flex shrink-0 items-center gap-1.5 border-t border-warning/30 bg-warning/16 px-2.5 text-2xs leading-none font-semibold text-warning-foreground forced-colors:border-t-2"
+                >
+                  <TriangleAlertIcon aria-hidden className="size-3 shrink-0 text-warning" />
+                  <span className="shrink-0 whitespace-nowrap tabular-nums">
+                    {gt("{reachable, plural, =0 {None reachable} other {# reachable}}", {
+                      reachable: stack.reachable,
+                      $context:
+                        "on a card for a group of linked machines: how many of them answer right now",
+                    })}
+                  </span>
+                  <span className="h-1 min-w-0 flex-1 overflow-clip rounded-full bg-warning/25 forced-colors:hidden">
+                    <span
+                      className="block h-full rounded-full bg-warning"
+                      style={{ width: `${(stack.reachable / count) * 100}%` }}
+                    />
+                  </span>
+                </span>
+              )}
             </button>
             <button
               type="button"
@@ -1632,7 +1697,10 @@ const FleetScene = memo(function FleetScene({
                     : gt("Show each machine on the map")
               }
               aria-expanded={stack.expanded}
-              style={{ left: face.x + face.width - 28, top: face.y + face.height / 2 - 11 }}
+              style={{
+                left: face.x + face.width - 28,
+                top: face.y + (face.height - partialBand) / 2 - 11,
+              }}
               className="absolute flex size-5.5 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
               onClick={() => onToggleStack(stack.id)}
             >
@@ -1847,7 +1915,7 @@ const FleetScene = memo(function FleetScene({
               )}
               className={cn(
                 nodeClass(node.id),
-                "gap-3 rounded-xl border bg-card px-3 text-card-foreground shadow-sm/5 hover:border-foreground/45",
+                "gap-2.5 rounded-xl border bg-card px-3 text-card-foreground shadow-sm/5 hover:border-foreground/45",
                 dimmed ? "border-dashed border-foreground/25" : "border-foreground/20",
                 over && "border-primary",
               )}
@@ -1870,7 +1938,9 @@ const FleetScene = memo(function FleetScene({
                 />
               </span>
               <span className={cn("min-w-0 flex-1", dimmed && "opacity-70")}>
-                <span className="block truncate text-sm leading-5 font-semibold">{node.label}</span>
+                <span className="line-clamp-2 text-sm leading-4.5 font-semibold [overflow-wrap:anywhere]">
+                  {node.label}
+                </span>
                 <span
                   className={cn(
                     "block truncate text-2xs leading-4",

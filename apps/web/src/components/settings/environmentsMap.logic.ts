@@ -568,6 +568,10 @@ export function fleetLinkOffer(
   };
 }
 
+/** Some of a stack's linked machines do not answer: its card grows a line to say how many do. */
+export const fleetStackPartial = (stack: FleetStack) =>
+  stack.kind === "targets" && stack.reachable < stack.memberIds.length;
+
 /** Changes exactly when the layout would: membership, labels, routes, wiring and open stacks. */
 export function fleetShapeKey(graph: FleetGraph, stacks: ReadonlyArray<FleetStack>): string {
   return [
@@ -578,7 +582,7 @@ export function fleetShapeKey(graph: FleetGraph, stacks: ReadonlyArray<FleetStac
     // Which environments fold follows their state, which nothing above carries.
     ...stacks.map(
       (stack) =>
-        `${stack.id}\u0000${stack.expanded}\u0000${stack.kind === "environments" ? stack.memberIds.join() : ""}`,
+        `${stack.id}\u0000${stack.expanded}\u0000${fleetStackPartial(stack)}\u0000${stack.kind === "environments" ? stack.memberIds.join() : ""}`,
     ),
   ].join("\n");
 }
@@ -650,15 +654,89 @@ export interface FleetLayout {
 }
 
 const HEADER = 28;
-const CLIENT = { width: 136, height: 44 };
-const WIRE = 72;
-const PILL = { width: 82, height: 18 };
-const PILL_GAP = 10;
+const CLIENT = { height: 44 };
+const PILL = { height: 18 };
 const PORT_PITCH = 22;
-const CARD = { width: 204, height: 60 };
+const CARD = { height: 60 };
 const OFFER = { height: 44 };
-const TARGET = { width: 188, height: 44 };
-const STACK = { height: 50, lift: 8 };
+const TARGET = { height: 44 };
+/** `partial` is the room a closed stack adds to say how many of its machines answer. */
+const STACK = { height: 50, partial: 20, lift: 8 };
+
+/**
+ * Every horizontal measure the map can give up or take. Heights never change with the width, so
+ * what is drawn where, lane by lane, is the same at every width and only the columns move.
+ */
+interface FleetMetrics {
+  /** The card for this app, where every route starts. */
+  readonly app: number;
+  /** The run from it to the route names. */
+  readonly wire: number;
+  readonly pill: number;
+  readonly pillGap: number;
+  readonly card: number;
+  readonly target: number;
+  /** The run from the environments, past their lanes, to the machines they link to. */
+  readonly linkRun: number;
+  readonly laneFirst: number;
+  readonly betweenFirst: number;
+  readonly betweenLast: number;
+}
+
+const REGULAR: FleetMetrics = {
+  app: 136,
+  wire: 72,
+  pill: 82,
+  pillGap: 10,
+  card: 204,
+  target: 188,
+  linkRun: 92,
+  laneFirst: 24,
+  betweenFirst: 16,
+  betweenLast: 10,
+};
+/** The least each measure can be with its text still whole: a narrow settings column. */
+const COMPACT: FleetMetrics = {
+  app: 124,
+  wire: 28,
+  pill: 72,
+  pillGap: 6,
+  card: 166,
+  target: 146,
+  linkRun: 36,
+  laneFirst: 18,
+  betweenFirst: 14,
+  betweenLast: 6,
+};
+/** Past this the map is enlarged instead: longer wires would only pull the columns apart. */
+const ROOMY: FleetMetrics = {
+  app: 148,
+  wire: 112,
+  pill: 88,
+  pillGap: 12,
+  card: 244,
+  target: 220,
+  linkRun: 132,
+  laneFirst: 24,
+  betweenFirst: 16,
+  betweenLast: 10,
+};
+
+const mixMetrics = (from: FleetMetrics, to: FleetMetrics, t: number): FleetMetrics => {
+  const at = (key: keyof FleetMetrics) => Math.floor(from[key] + (to[key] - from[key]) * t);
+  return {
+    app: at("app"),
+    wire: at("wire"),
+    pill: at("pill"),
+    pillGap: at("pillGap"),
+    card: at("card"),
+    target: at("target"),
+    linkRun: at("linkRun"),
+    laneFirst: at("laneFirst"),
+    betweenFirst: at("betweenFirst"),
+    betweenLast: at("betweenLast"),
+  };
+};
 const CHIP = { width: 124, height: 26 };
 const CHIP_GAP = 6;
 const FRAME_PAD = 8;
@@ -667,15 +745,13 @@ const FRAME_HEADER = 30;
 const FOLD_COLUMNS = 2;
 const GROUP_GAP = 28;
 const BAY_GAP = 12;
-const LANE_FIRST = 24;
 const LANE_STEP = 14;
 const LANE_CLEARANCE = 10;
-const LINK_RUN = 92;
 const ARROW_LENGTH = 6;
 /** How far apart two hosts' links enter one machine, so each keeps its own last stretch. */
 const ENTRY_PITCH = 14;
 /** The channel left of the cards that links between environments keep to themselves. */
-const BETWEEN = { first: 16, step: 14, last: 10 };
+const BETWEEN = { step: 14 };
 /**
  * Where those links meet a card's left edge: past its routes, the outermost lane innermost.
  * The pitch clears an arrowhead and the heaviest line; a card grows to hold its ports.
@@ -704,7 +780,8 @@ function elbowPath(x0: number, y0: number, viaX: number, x1: number, y1: number)
 
 /** Straight to `fanX`, across any lanes so they only ever meet it square, then a curve. */
 const sCurve = (x0: number, y0: number, x1: number, y1: number, fanX = x0) => {
-  const reach = Math.max(24, (x1 - fanX) / 2);
+  // A short run bends within itself, so it still arrives level instead of doubling back.
+  const reach = Math.max(Math.min(24, (x1 - fanX) * 0.6), (x1 - fanX) / 2);
   const lead = fanX > x0 ? `H${fanX}` : "";
   return `M${x0} ${y0}${lead}C${fanX + reach} ${y0} ${x1 - reach} ${y1} ${x1} ${y1}`;
 };
@@ -768,14 +845,42 @@ const pushTo = <K, V>(into: Map<K, V[]>, key: K, value: V) => {
 };
 
 /**
- * Links to machines seen only through a link run right of the environments, links between two
- * environments left of them, each on its own lane with its own entry. A stack takes one place
- * whatever it holds, so the cost follows what is drawn. Deterministic.
+ * The map at the width it is given. It gives up gutters, wire runs and card width before the fit
+ * has to shrink it, and takes more of each on a wide canvas, up to a point. With no width it is
+ * laid out at its regular measures.
  */
 export function layoutFleetGraph(
   graph: FleetGraph,
   stacks: ReadonlyArray<FleetStack> = [],
+  canvasWidth?: number,
 ): FleetLayout {
+  const regular = layoutFleetGraphAt(graph, stacks, REGULAR);
+  if (canvasWidth === undefined) return regular;
+  const room = canvasWidth - fleetFitPadding(canvasWidth) * 2;
+  const narrow = room < regular.width;
+  // Narrower than regular, the map fits at full size. Wider, it is enlarged first.
+  const wanted = narrow ? room : room / FLEET_FIT_MAX_SCALE;
+  if (!narrow && wanted <= regular.width) return regular;
+  const limit = narrow ? COMPACT : ROOMY;
+  const end = layoutFleetGraphAt(graph, stacks, limit);
+  if (narrow ? end.width >= wanted : end.width <= wanted) return end;
+  // Width is a maximum of sums of the measures, so it never exceeds this straight-line estimate.
+  const t = (wanted - regular.width) / (end.width - regular.width);
+  return layoutFleetGraphAt(graph, stacks, mixMetrics(REGULAR, limit, t));
+}
+
+/**
+ * Links to machines seen only through a link run right of the environments, links between two
+ * environments left of them, each on its own lane with its own entry. A stack takes one place
+ * whatever it holds, so the cost follows what is drawn. Deterministic.
+ */
+function layoutFleetGraphAt(
+  graph: FleetGraph,
+  stacks: ReadonlyArray<FleetStack>,
+  metrics: FleetMetrics,
+): FleetLayout {
+  const CLIENT_SIZE = { width: metrics.app, height: CLIENT.height };
+  const PILL_SIZE = { width: metrics.pill, height: PILL.height };
   const nodes = new Map<string, FleetRect>();
   const stackGeometry = new Map<string, FleetStackGeometry>();
   const routes = new Map<string, FleetRouteGeometry>();
@@ -928,7 +1033,7 @@ export function layoutFleetGraph(
   };
   const hostWidth = folds.some((stack) => stack.expanded)
     ? FRAME_PAD * 2 + FOLD_COLUMNS * (CHIP.width + CHIP_GAP) - CHIP_GAP
-    : CARD.width;
+    : metrics.card;
   const entryHeight = (entry: ColumnEntry) =>
     entry.kind === "host"
       ? cardExtent(entry.host, -1) + cardExtent(entry.host, 1)
@@ -940,12 +1045,14 @@ export function layoutFleetGraph(
     Math.max(least, 20 + (item.entries.length - 1) * ENTRY_PITCH);
   const itemSize = (item: BayItem) => {
     if (item.kind === "target") {
-      return { width: TARGET.width, height: faceHeight(item, TARGET.height) };
+      return { width: metrics.target, height: faceHeight(item, TARGET.height) };
     }
     if (!item.stack.expanded) {
       return {
-        width: TARGET.width + STACK.lift,
-        height: faceHeight(item, STACK.height) + STACK.lift,
+        width: metrics.target + STACK.lift,
+        height:
+          faceHeight(item, STACK.height + (fleetStackPartial(item.stack) ? STACK.partial : 0)) +
+          STACK.lift,
       };
     }
     const columns = frameColumns(frameCells(item.stack));
@@ -972,13 +1079,13 @@ export function layoutFleetGraph(
     return stack.memberIds.length > stack.shownIds.length ? cell(stack.shownIds.length) : null;
   };
 
-  const pillX = CLIENT.width + WIRE;
+  const pillX = metrics.app + metrics.wire;
   const cardX =
     pillX +
-    PILL.width +
+    metrics.pill +
     (betweenLanes.length === 0
-      ? PILL_GAP
-      : BETWEEN.last + (betweenLanes.length - 1) * BETWEEN.step + BETWEEN.first);
+      ? metrics.pillGap
+      : metrics.betweenLast + (betweenLanes.length - 1) * BETWEEN.step + metrics.betweenFirst);
   const cardRight = cardX + hostWidth;
 
   // Heights first: which lanes the channel needs, and so how wide it is, follows from them.
@@ -1122,9 +1229,10 @@ export function layoutFleetGraph(
     lane.index = index;
     (taken[index] ??= []).push(lane);
   }
-  const laneX = (lane: FleetLane) => cardRight + LANE_FIRST + lane.index * LANE_STEP;
-  const fanX = taken.length === 0 ? cardRight : cardRight + LANE_FIRST + taken.length * LANE_STEP;
-  const bayX = fanX + LINK_RUN;
+  const laneX = (lane: FleetLane) => cardRight + metrics.laneFirst + lane.index * LANE_STEP;
+  const fanX =
+    taken.length === 0 ? cardRight : cardRight + metrics.laneFirst + taken.length * LANE_STEP;
+  const bayX = fanX + metrics.linkRun;
   const endX = bayX - ARROW_LENGTH;
   const lineInto = (entry: BayEntry) => {
     const trunk = trunkOf.get(entry.key);
@@ -1163,7 +1271,7 @@ export function layoutFleetGraph(
     if (!stack.expanded) {
       stackGeometry.set(stack.id, {
         rect: { x: bayX, y: itemY, ...size },
-        face: { x: bayX, y: face.top, width: TARGET.width, height: face.height },
+        face: { x: bayX, y: face.top, width: metrics.target, height: face.height },
         lines,
         more: null,
       });
@@ -1190,7 +1298,7 @@ export function layoutFleetGraph(
   nodes.set(FLEET_CLIENT_NODE_ID, {
     x: 0,
     y: clientCenterY - CLIENT.height / 2,
-    ...CLIENT,
+    ...CLIENT_SIZE,
   });
 
   // Wires leave the client a little apart, in the order they arrive, so they never cross. A
@@ -1213,7 +1321,7 @@ export function layoutFleetGraph(
   wires.forEach((wire, index) => {
     const startY =
       clientCenterY + (wires.length < 2 ? 0 : (index / (wires.length - 1) - 0.5) * fan);
-    const d = `${sCurve(CLIENT.width, startY, pillX, wire.portY)}H${cardX}`;
+    const d = `${sCurve(metrics.app, startY, pillX, wire.portY)}H${cardX}`;
     if (wire.edge === null) {
       const geometry = stackGeometry.get(wire.entry.id)!;
       stackGeometry.set(wire.entry.id, {
@@ -1224,7 +1332,7 @@ export function layoutFleetGraph(
     }
     routes.set(wire.edge.id, {
       d,
-      pill: { x: pillX, y: wire.portY - PILL.height / 2, ...PILL },
+      pill: { x: pillX, y: wire.portY - PILL.height / 2, ...PILL_SIZE },
     });
   });
 
@@ -1234,7 +1342,7 @@ export function layoutFleetGraph(
   // name is shown only while its link is in focus, so it never covers a line that is being read.
   const runs = between.map((link) => ({
     link,
-    x: cardX - BETWEEN.first - betweenLane.get(link.id)! * BETWEEN.step,
+    x: cardX - metrics.betweenFirst - betweenLane.get(link.id)! * BETWEEN.step,
     from: portY(link, link.from),
     to: portY(link, link.to),
   }));
@@ -1429,20 +1537,28 @@ const FLEET_MIN_SCALE = 0.3;
 const FLEET_MAX_SCALE = 2;
 /** A small setup is enlarged to fill the canvas, but not until two machines look like a poster. */
 const FLEET_FIT_MAX_SCALE = 1.15;
-const FLEET_FIT_PADDING = 28;
+/** The fit never has to go below this on a map with its stacks closed, down to a 560px canvas. */
+export const FLEET_FIT_LEGIBLE_SCALE = 0.85;
 
-const fitScale = (available: number, extent: number) =>
-  Math.max(0.01, (available - FLEET_FIT_PADDING * 2) / Math.max(1, extent));
+/** The canvas width a layout is made for: steps, so dragging a window edge relays it rarely. */
+export const fleetLayoutWidth = (canvasWidth: number) => Math.floor(canvasWidth / 16) * 16;
+
+/** The margin the fit leaves around the map: a narrow canvas spends less of itself on it. */
+const fleetFitPadding = (canvasWidth: number) => (canvasWidth < 720 ? 16 : 28);
+
+const fitScale = (available: number, extent: number, padding: number) =>
+  Math.max(0.01, (available - padding * 2) / Math.max(1, extent));
 
 /** Centers the whole map in the viewport at the largest scale that shows all of it. */
 export function fitFleetLayout(
   layout: Pick<FleetLayout, "width" | "height">,
   viewport: { readonly width: number; readonly height: number },
 ): FleetViewTransform {
+  const padding = fleetFitPadding(viewport.width);
   const scale = Math.min(
     FLEET_FIT_MAX_SCALE,
-    fitScale(viewport.width, layout.width),
-    fitScale(viewport.height, layout.height),
+    fitScale(viewport.width, layout.width, padding),
+    fitScale(viewport.height, layout.height, padding),
   );
   return {
     scale,
@@ -1457,8 +1573,9 @@ export function fleetCanvasHeight(
   width: number,
   bounds: { readonly min: number; readonly max: number },
 ): number {
-  const scale = Math.min(FLEET_FIT_MAX_SCALE, fitScale(width, layout.width));
-  const wanted = Math.ceil(layout.height * scale + FLEET_FIT_PADDING * 2);
+  const padding = fleetFitPadding(width);
+  const scale = Math.min(FLEET_FIT_MAX_SCALE, fitScale(width, layout.width, padding));
+  const wanted = Math.ceil(layout.height * scale + padding * 2);
   return Math.max(bounds.min, Math.min(bounds.max, wanted));
 }
 

@@ -4,8 +4,10 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildFleetGraph,
+  FLEET_FIT_LEGIBLE_SCALE,
   fitFleetLayout,
   fleetCanvasHeight,
+  fleetStackPartial,
   FLEET_CLIENT_NODE_ID,
   fleetEnvironmentNodeId,
   FLEET_FOLD_ENVIRONMENTS_OVER,
@@ -893,10 +895,90 @@ describe("layoutFleetGraph", () => {
     expect(arrival("nucbox").y).toBeLessThan(arrival("cups").y);
   });
 
+  it("gives up gutters before scale: a real setup stays legible from 560 to 1400 wide", () => {
+    const routes = (...kinds: ReadonlyArray<"lan" | "tailnet" | "relay">) =>
+      kinds.map((kind, index) => ({ id: `${kind}-${index}`, kind }));
+    const graph = build([
+      environment("cups", "unknown", {
+        phase: "offline",
+        routes: routes("tailnet", "tailnet", "relay"),
+      }),
+      environment(
+        "nucbox-1",
+        [
+          link("Julius's MacBook Pro", { access: "full-access" }),
+          ...vms(7, "fs", { access: "full-access" }),
+          ...vms(37, "gs", { access: "full-access", status: "unreachable" }),
+        ],
+        { routes: routes("lan", "tailnet", "tailnet", "relay"), activeRouteId: "lan-0" },
+      ),
+      environment("Julius's MacBook Pro"),
+    ]);
+    const stacks = fleetStacks(graph, new Set());
+    expect(stacks.map((stack) => [stack.memberIds.length, stack.reachable])).toEqual([[44, 7]]);
+    const regular = layoutFleetGraph(graph, stacks);
+    const widths = [560, 900, 1400].map((width) => {
+      const layout = layoutFleetGraph(graph, stacks, width);
+      expectNoOverlap(layout, membersOf(stacks));
+      const height = fleetCanvasHeight(layout, width, { min: 0, max: 840 });
+      expect(fitFleetLayout(layout, { width, height }).scale, `at ${width}`).toBeGreaterThanOrEqual(
+        FLEET_FIT_LEGIBLE_SCALE,
+      );
+      // Only the columns move: every height, and so every lane and entry, is the regular one.
+      expect(layout.height).toBe(regular.height);
+      // Each line keeps the last stretch into its machine to itself.
+      const arrivals = new Map<string, number[]>();
+      const arrive = (into: string, y: number) =>
+        arrivals.set(into, [...(arrivals.get(into) ?? []), y]);
+      for (const edge of graph.edges) {
+        if (edge.kind === "route") {
+          const { pill } = layout.routes.get(edge.id)!;
+          arrive(edge.to, pill.y + pill.height / 2);
+        } else if (layout.links.has(edge.id)) arrive(edge.to, layout.links.get(edge.id)!.arrow.y);
+      }
+      for (const [into, heights] of arrivals) {
+        const sorted = heights.toSorted((left, right) => left - right);
+        for (const [index, y] of sorted.entries()) {
+          if (index > 0) {
+            expect(y - sorted[index - 1]!, `into ${into}`).toBeGreaterThanOrEqual(FLEET_LANE_PITCH);
+          }
+        }
+      }
+      // Every wire and link still ends level, however short its run became.
+      for (const { d } of [...layout.routes.values(), ...layout.links.values()]) {
+        const [before, last] = samplePath(d).slice(-2);
+        expect(before!.y).toBe(last!.y);
+      }
+      return layout.width;
+    });
+    expect(widths[0]).toBeLessThan(regular.width);
+    expect(widths[2]).toBeGreaterThan(regular.width);
+  });
+
+  it("gives a stack room to say how many machines answer only when some do not", () => {
+    const face = (links: ReadonlyArray<PeerLinkSummary>) => {
+      const graph = build([environment("host", links)]);
+      const stacks = fleetStacks(graph, new Set());
+      expect(fleetStackPartial(stacks[0]!)).toBe(
+        links.some((entry) => entry.status !== "reachable"),
+      );
+      return {
+        key: fleetShapeKey(graph, stacks),
+        height: layoutFleetGraph(graph, stacks).stacks.get(stacks[0]!.id)!.face.height,
+      };
+    };
+    const whole = face(vms(6));
+    const partial = face([...vms(5), link("vm-6", { status: "unreachable" })]);
+    expect(partial.height).toBeGreaterThan(whole.height);
+    // The card changes size, so the layout has to be made again.
+    expect(partial.key).not.toBe(whole.key);
+  });
+
   it("keeps the shape key when only health, route state or status changes", () => {
     const key = (graph: ReturnType<typeof build>) =>
       fleetShapeKey(graph, fleetStacks(graph, new Set()));
-    const before = build([environment("a", [...vms(6)])]);
+    // One machine already not answering: how many more go quiet does not resize the card.
+    const before = build([environment("a", [...vms(5), link("vm-6", { status: "unreachable" })])]);
     const after = build([
       environment("a", [...vms(6, "vm", { status: "unreachable" })], {
         activeRouteId: null,
