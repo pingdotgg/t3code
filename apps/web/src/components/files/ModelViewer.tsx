@@ -288,6 +288,13 @@ export default function ModelViewer(props: {
       });
       return;
     }
+    const showSendError = () => {
+      toastManager.add({
+        type: "error",
+        title: gt("Unable to add to chat"),
+        description: gt("Please try again."),
+      });
+    };
     setSending(true);
     try {
       const earlier = notes.every((note) => note.stale) ? rememberedCapture.current : null;
@@ -306,23 +313,19 @@ export default function ModelViewer(props: {
         signal,
       });
       if (signal.aborted) return;
-      if (!staged) throw new Error("Could not stage the model annotation");
-      const next = notesRef.current.filter((note) => !notes.includes(note));
-      rememberedCapture.current = null;
-      rememberPins(next);
-      setNotes(next);
-      if (next.length === 0) setAnnotating(false);
-    } catch {
-      if (!signal.aborted) {
-        toastManager.add({
-          type: "error",
-          title: gt("Unable to add to chat"),
-          description: gt("Please try again."),
-        });
+      if (staged) {
+        const next = notesRef.current.filter((note) => !notes.includes(note));
+        rememberedCapture.current = null;
+        rememberPins(next);
+        setNotes(next);
+        if (next.length === 0) setAnnotating(false);
+      } else {
+        showSendError();
       }
-    } finally {
-      if (!signal.aborted) setSending(false);
+    } catch {
+      if (!signal.aborted) showSendError();
     }
+    if (!signal.aborted) setSending(false);
   };
 
   const summary = scene?.summary;
