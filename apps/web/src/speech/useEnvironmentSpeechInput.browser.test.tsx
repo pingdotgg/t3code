@@ -901,29 +901,26 @@ it("sends the project's vocabulary and name as hints, and the cue only with clea
   await act(() => mocks.voice.start());
   await act(() => mocks.voice.stop());
   expect(mocks.recordingOptions.at(-1)?.speechCustomWords).toEqual([
-    { term: "Acme App", aliases: [] },
     { term: "effect", aliases: ["affect"] },
   ]);
+  expect(mocks.recordingOptions.at(-1)?.speechHints).toEqual(["Acme App"]);
   expect(mocks.cleanupCalls).toEqual([]);
 
   chooseTranscriptCleanup(true);
   await screen.rerender(<Probe projectId="proj-1" projectName="Acme App" />);
   await act(() => mocks.voice.start());
   await act(() => mocks.voice.stop());
-  expect(mocks.recordingOptions.at(-1)?.speechCustomWords.map(({ term }) => term)).toEqual([
-    "scratch that",
-    "Acme App",
-    "effect",
-  ]);
-  expect(mocks.cleanupOptions.at(-1)).toMatchObject({ speechCorrectionWord: "scratch that" });
+  expect(mocks.recordingOptions.at(-1)?.speechHints).toEqual(["scratch that", "Acme App"]);
+  expect(mocks.cleanupOptions.at(-1)).toMatchObject({
+    speechCorrectionWord: "scratch that",
+    speechCustomWords: [{ term: "effect", aliases: ["affect"] }],
+  });
   expect(mocks.recordingOptions.at(-1)?.speechCorrectionWord).toBe("scratch that");
   chooseTranscriptCleanup(false);
   await act(() => mocks.voice.start());
   await act(() => mocks.voice.stop());
   expect(mocks.recordingOptions.at(-1)?.speechCorrectionWord).toBeUndefined();
-  expect(mocks.recordingOptions.at(-1)?.speechCustomWords.map(({ term }) => term)).not.toContain(
-    "scratch that",
-  );
+  expect(mocks.recordingOptions.at(-1)?.speechHints).not.toContain("scratch that");
 });
 
 it("shares one status probe per destination across every mounted editor", async () => {
