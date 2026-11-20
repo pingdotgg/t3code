@@ -63,6 +63,26 @@ describe("ElectronApp", () => {
       assert.strictEqual(systemLocale, "fr-FR");
     }).pipe(Effect.provide(ElectronApp.layer)),
   );
+
+  it("pairs the active UI language with English and matching system spellcheck dictionaries", () => {
+    const available = ["de", "en-GB", "en-US", "fr", "pt-BR", "tr"];
+    assert.deepStrictEqual(ElectronApp.resolveSpellCheckerLanguages("tr", ["en-US"], available), [
+      "tr",
+      "en-US",
+    ]);
+    assert.deepStrictEqual(ElectronApp.resolveSpellCheckerLanguages("tr", ["tr-TR"], available), [
+      "tr",
+      "en-US",
+    ]);
+    assert.deepStrictEqual(
+      ElectronApp.resolveSpellCheckerLanguages("en", ["tr-TR", "en-GB"], available),
+      ["en-US", "tr", "en-GB"],
+    );
+    assert.deepStrictEqual(ElectronApp.resolveSpellCheckerLanguages("ja", ["ja-JP"], available), [
+      "en-US",
+    ]);
+    assert.deepStrictEqual(ElectronApp.resolveSpellCheckerLanguages("tr", ["tr-TR"], []), []);
+  });
 });
 
 it.effect("reads both macOS hour preferences without overriding explicit formats", () =>

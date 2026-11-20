@@ -67,12 +67,11 @@ const loadCatalog = async (locale: string): Promise<Catalog> => {
 /** Activates the saved `language` client setting; "system" follows the OS language order. */
 export const applyLanguage = Effect.fn("desktop.i18n.applyLanguage")(function* (language: string) {
   const electronApp = yield* ElectronApp.ElectronApp;
-  const locale = resolveLocale(
-    language,
-    yield* electronApp.preferredSystemLanguages,
-    SUPPORTED_LOCALES,
-    DEFAULT_LOCALE,
-  );
+  const systemLocales = yield* electronApp.preferredSystemLanguages;
+  const locale = resolveLocale(language, systemLocales, SUPPORTED_LOCALES, DEFAULT_LOCALE);
+  if (electronApp.syncSpellCheckerLanguages) {
+    yield* electronApp.syncSpellCheckerLanguages(locale, systemLocales);
+  }
   requestedLocale = locale;
   if (locale === activeLocale) return;
   const catalog = yield* Effect.promise(() => loadCatalog(locale));

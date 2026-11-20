@@ -47,6 +47,10 @@ export class ElectronApp extends Context.Service<
     /** Packaged builds ship only en-US; app.getLocale() and Intl defaults do not reflect the OS locale. */
     readonly systemLocale: Effect.Effect<string>;
     readonly preferredSystemLanguages: Effect.Effect<ReadonlyArray<string>>;
+    readonly syncSpellCheckerLanguages?: (
+      locale: string,
+      systemLocales: ReadonlyArray<string>,
+    ) => Effect.Effect<void>;
     readonly whenReady: Effect.Effect<void, ElectronAppWhenReadyError>;
     readonly requestSingleInstanceLock: Effect.Effect<boolean>;
     readonly quit: Effect.Effect<void>;
@@ -110,6 +114,46 @@ export function toSystemLocaleTag(identifier: string, hourCycle?: "h12" | "h23")
   }
 }
 
+export function resolveSpellCheckerLanguages(
+  activeLocale: string,
+  systemLocales: ReadonlyArray<string>,
+  availableLanguages: ReadonlyArray<string>,
+): ReadonlyArray<string> {
+  if (availableLanguages.length === 0) return [];
+
+  const matchAvailable = (tag: string): string | undefined => {
+    const normalized = (tag.split("@")[0] ?? "").trim().replaceAll("_", "-").toLowerCase();
+    if (!normalized) return undefined;
+    const exact = availableLanguages.find((entry) => entry.toLowerCase() === normalized);
+    if (exact) return exact;
+    const base = normalized.split("-")[0] ?? "";
+    if (!base) return undefined;
+    const exactBase = availableLanguages.find((entry) => entry.toLowerCase() === base);
+    if (exactBase) return exactBase;
+    if (base === "en") {
+      const enUs = availableLanguages.find((entry) => entry.toLowerCase() === "en-us");
+      if (enUs) return enUs;
+    }
+    return availableLanguages.find((entry) => entry.toLowerCase().startsWith(`${base}-`));
+  };
+
+  const resolved: string[] = [];
+  const add = (candidate: string | undefined) => {
+    if (candidate && !resolved.includes(candidate)) {
+      resolved.push(candidate);
+    }
+  };
+
+  add(matchAvailable(activeLocale));
+  for (const tag of systemLocales) {
+    add(matchAvailable(tag));
+  }
+  if (!resolved.some((entry) => entry.toLowerCase().startsWith("en"))) {
+    add(matchAvailable("en-US"));
+  }
+  return resolved;
+}
+
 /** @public */
 export const make = ElectronApp.of({
   metadata: Effect.gen(function* () {
@@ -157,6 +201,26 @@ export const make = ElectronApp.of({
     return toSystemLocaleTag(identifier, hourCycle);
   }),
   preferredSystemLanguages: Effect.sync(() => Electron.app.getPreferredSystemLanguages()),
+  syncSpellCheckerLanguages: Effect.fn("ElectronApp.syncSpellCheckerLanguages")(
+    function (locale, systemLocales) {
+      return Effect.sync(() => {
+        if (!Electron.app.isReady()) return;
+        const defaultSession = Electron.session?.defaultSession;
+        if (!defaultSession) return;
+        const languages = resolveSpellCheckerLanguages(
+          locale,
+          systemLocales,
+          defaultSession.availableSpellCheckerLanguages,
+        );
+        if (languages.length === 0) return;
+        try {
+          defaultSession.setSpellCheckerLanguages([...languages]);
+        } catch {
+          // Best-effort: unsupported dictionary or test stub must not block language switching.
+        }
+      });
+    },
+  ),
   whenReady: Effect.gen(function* () {
     const isPackaged = Electron.app.isPackaged;
     yield* Effect.tryPromise({
