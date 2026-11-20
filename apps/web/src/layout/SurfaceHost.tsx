@@ -1357,6 +1357,7 @@ export function LayoutSurfaceHost({
       inert={background}
       ref={rootRef}
       data-strip-under-controls={active && split && !staged ? "" : undefined}
+      data-split-panes={active && split ? "" : undefined}
     >
       <div
         ref={scrollerRef}
