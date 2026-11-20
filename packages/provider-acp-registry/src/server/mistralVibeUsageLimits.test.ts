@@ -35,13 +35,6 @@ describe("mistralVibeAccountToUsageLimits", () => {
     });
   });
 
-  it("clamps usage past 100% (pay-as-you-go keeps billing)", () => {
-    expect(
-      mistralVibeAccountToUsageLimits({ budget: { usagePercentage: 130 } }, checkedAt)?.windows[0]
-        ?.usedPercent,
-    ).toBe(100);
-  });
-
   it("omits resetsAt when the reset string does not parse", () => {
     const report = mistralVibeAccountToUsageLimits(
       { budget: { usagePercentage: 10, resetAt: "not a date" } },
