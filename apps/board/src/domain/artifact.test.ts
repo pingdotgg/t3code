@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { classifyArtifact, groupArtifacts, parseReadme } from "./artifact";
 
 describe("classifyArtifact", () => {
-  // Every path is from the XEO-3330 evidence layout, under the store folder.
+  // Every path is from a real run's evidence layout, under the store folder.
   const cases = [
     ["artifacts/XEO-3366/01-discovery.txt", "proof", "XEO-3366"],
     ["artifacts/XEO-3366/README.txt", "report", "XEO-3366"],
