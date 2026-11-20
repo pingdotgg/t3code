@@ -391,7 +391,7 @@ export const VoiceTranscriptionDestination = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("cloud"),
     environmentId: EnvironmentId,
-    provider: Schema.Literals(["openai", "xai"]),
+    provider: Schema.Literals(["openai", "xai", "meta"]),
   }),
   Schema.Struct({
     kind: Schema.Literal("cloud"),
@@ -1361,6 +1361,7 @@ export const CloudSpeechCredentials = Schema.Struct({
   openai: CloudSpeechCredential,
   xai: CloudSpeechCredential,
   openrouter: CloudSpeechCredential,
+  meta: CloudSpeechCredential,
 });
 
 export const ServerSettings = Schema.Struct({
@@ -1399,7 +1400,7 @@ export const ServerSettings = Schema.Struct({
   /** Lets clients reach this machine's loopback ports over `/api/preview/tunnel`. */
   enablePreviewTunnel: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   cloudSpeechCredentials: CloudSpeechCredentials.pipe(
-    Schema.withDecodingDefault(Effect.succeed({ openai: "", xai: "", openrouter: "" })),
+    Schema.withDecodingDefault(Effect.succeed({ openai: "", xai: "", openrouter: "", meta: "" })),
   ),
   speechModelId: Schema.String.pipe(
     Schema.withDecodingDefault(Effect.succeed("handy-computer/parakeet-unified-en-0.6b-gguf")),
@@ -1866,6 +1867,7 @@ export const ServerSettingsPatch = Schema.Struct({
       openai: Schema.optionalKey(SettingsSecretValue),
       xai: Schema.optionalKey(SettingsSecretValue),
       openrouter: Schema.optionalKey(SettingsSecretValue),
+      meta: Schema.optionalKey(SettingsSecretValue),
     }),
   ),
   speechModelId: Schema.optionalKey(Schema.String),
