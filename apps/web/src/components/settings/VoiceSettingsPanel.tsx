@@ -55,7 +55,7 @@ import {
   UnlinkIcon,
   XIcon,
 } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { msg, T, useGT, useLocale, useMessages, Var } from "gt-react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -1342,7 +1342,7 @@ export function VoiceSettingsPanel() {
     if (devices) updateMicrophoneOrder((order) => rememberMicrophones(order, devices));
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes microphone changes and invalidates pending scans when settings closes
-  useLayoutEffect(() => {
+  useEffect(() => {
     const initialRefreshId = microphoneRefreshId.current;
     queueMicrotask(() => {
       if (initialRefreshId === microphoneRefreshId.current) void refreshMicrophones();
