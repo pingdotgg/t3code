@@ -9557,6 +9557,79 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  // Claude Code 2.1.316+ frames: the CLI reports Fast off on the result, or only in a notification.
+  it.effect.each([
+    {
+      name: "says when Claude Code reports a requested Fast mode as off",
+      result: { fast_mode_state: "off", fast_mode_disabled_reason: "preference" },
+      notification: false,
+    },
+    {
+      name: "says when Claude Code rejects a requested Fast mode only in a notification",
+      result: { fast_mode_state: "on" },
+      notification: true,
+    },
+  ] as const)("$name", ({ result, notification }) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-fast-mode-off"),
+          text: "Reply with ok.",
+          attachments: [],
+          modelSelection: {
+            ...CLAUDE_TEST_MODEL_SELECTION,
+            options: [...CLAUDE_TEST_MODEL_SELECTION.options, { id: "fastMode", value: true }],
+          },
+        }),
+      );
+      yield* Queue.offerAll(harness.sdkMessages, [
+        ...(notification
+          ? [
+              claudeSdkFrame({
+                type: "system",
+                subtype: "notification",
+                key: "fast-mode-overage-rejected",
+                text: "Fast mode disabled · Out of usage credits",
+                priority: "immediate",
+                color: "error",
+                uuid: "00000000-0000-4000-8000-000000000621",
+                session_id: WAKE_NATIVE_SESSION,
+              }),
+            ]
+          : []),
+        makeAssistantTextFrame({ uuid: "00000000-0000-4000-8000-000000000622", text: "ok" }),
+        claudeSdkFrame({
+          ...makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000623", result: "ok" }),
+          ...result,
+        }),
+      ]);
+      yield* Queue.take(harness.terminalReceipts);
+      const notices = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.isTrue(
+        notices.some((notice) => /fast/iu.test(JSON.stringify(notice))),
+        `expected a notice that Fast mode is not in effect, got ${JSON.stringify(notices)}`,
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("keeps an unreported /compact failure's reason on the compaction, not as a reply", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
