@@ -19,12 +19,14 @@ export function previewPdfAssetUrl(rawUrl: string, httpBaseUrl: string | null): 
     ) {
       return null;
     }
+    // Any site can serve a page at this path; one the client embedded would run in the user's
+    // own browser instead of the preview's. Only this environment's assets are loaded here.
     if (
       url.origin !== baseUrl.origin &&
       !isLocalLoopbackHost(url.hostname) &&
       url.hostname !== "0.0.0.0"
     ) {
-      return url.href;
+      return null;
     }
     // The browser may run on the host's loopback address. Fetch signed bytes
     // through this client's environment connection, including remote routes.
