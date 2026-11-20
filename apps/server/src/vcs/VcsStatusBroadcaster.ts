@@ -37,6 +37,7 @@ import { VcsAutomaticFetchInterval } from "./VcsAutomaticFetchInterval.ts";
 
 const VCS_STATUS_REFRESH_FAILURE_BASE_DELAY = Duration.seconds(30);
 const VCS_STATUS_REFRESH_FAILURE_MAX_DELAY = Duration.minutes(15);
+const VCS_STATUS_CACHE_CAPACITY = 256;
 const MAX_FAILURE_DIAGNOSTIC_VALUES = 8;
 // A held index.lock fails the read, and its removal moves no HEAD to trigger another.
 const CHECKOUT_REFRESH_RETRY = Schedule.exponential(Duration.seconds(1)).pipe(
@@ -308,15 +309,68 @@ export const make = Effect.gen(function* () {
   // periodic poll that started before an agent creates a PR can finish after the
   // turn-end refresh and overwrite the fresh PR with its stale `pr: null`.
   const remoteWriteLocks = yield* KeyedLock.make<string>();
+  const activeRemoteReads = new Map<string, number>();
   const withRemoteWriteLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
-    remoteWriteLocks.withLock(cwd, effect);
+    Effect.acquireUseRelease(
+      Effect.sync(() => activeRemoteReads.set(cwd, (activeRemoteReads.get(cwd) ?? 0) + 1)),
+      () => remoteWriteLocks.withLock(cwd, effect),
+      () =>
+        Effect.sync(() => {
+          const remaining = (activeRemoteReads.get(cwd) ?? 1) - 1;
+          if (remaining === 0) activeRemoteReads.delete(cwd);
+          else activeRemoteReads.set(cwd, remaining);
+        }).pipe(Effect.andThen(trimCachedStatuses)),
+    );
   const pollersRef = yield* SynchronizedRef.make(new Map<string, ActiveRemotePoller>());
   const headWatchersRef = yield* SynchronizedRef.make(new Map<string, ActiveHeadWatcher>());
+  // A refresh that started after a request saw every change that request could mean, so queued
+  // callers share it instead of each running git status again.
+  const localRefreshRequests = new Map<string, number>();
+  const localRefreshResults = new Map<
+    string,
+    {
+      readonly startedAt: number;
+      readonly local: VcsStatusLocalResult;
+      readonly includesBranchChanges: boolean;
+    }
+  >();
+
+  // Keep watched snapshots and remote operations coherent until their consumers finish.
+  const evictExcessStatuses = (cache: Map<string, CachedVcsStatus>, retainedCwd?: string) => {
+    for (const candidate of cache.keys()) {
+      if (cache.size <= VCS_STATUS_CACHE_CAPACITY) break;
+      if (
+        candidate === retainedCwd ||
+        detailedSubscribers.has(candidate) ||
+        activeRemoteReads.has(candidate)
+      )
+        continue;
+      cache.delete(candidate);
+      // A queued caller can read git again. Keep the monotonic request counter so it cannot
+      // mistake an older result for a later request.
+      localRefreshResults.delete(candidate);
+    }
+    return cache;
+  };
+  const trimCachedStatuses = Ref.update(cacheRef, (cache) => evictExcessStatuses(new Map(cache)));
+  const retainCachedStatus = (
+    cache: ReadonlyMap<string, CachedVcsStatus>,
+    cwd: string,
+    status: CachedVcsStatus,
+  ) => {
+    const next = new Map(cache);
+    next.delete(cwd);
+    next.set(cwd, status);
+    return evictExcessStatuses(next, cwd);
+  };
 
   const getCachedStatus = Effect.fn("VcsStatusBroadcaster.getCachedStatus")(function* (
     cwd: string,
   ) {
-    return yield* Ref.get(cacheRef).pipe(Effect.map((cache) => cache.get(cwd) ?? null));
+    return yield* Ref.modify(cacheRef, (cache) => {
+      const cached = cache.get(cwd) ?? null;
+      return [cached, cached ? retainCachedStatus(cache, cwd, cached) : cache] as const;
+    });
   });
 
   // Only full subscribers and direct reads show Changes totals. Command palette rows subscribe
@@ -369,7 +423,7 @@ export const make = Effect.gen(function* () {
         const remote = previous.remote?.branch === local.refName ? previous.remote : null;
         return [
           [previous.local?.fingerprint !== nextLocal.fingerprint, previous.remote !== remote],
-          new Map(cache).set(cwd, { local: nextLocal, remote }),
+          retainCachedStatus(cache, cwd, { local: nextLocal, remote }),
         ] as const;
       });
       yield* publishBranch(cwd, local, observation);
@@ -396,7 +450,7 @@ export const make = Effect.gen(function* () {
         const next = remote?.branch === previous.local?.value.refName ? remote : null;
         return [
           [previous.remote?.fingerprint !== next?.fingerprint, next?.value ?? null],
-          new Map(cache).set(cwd, { ...previous, remote: next }),
+          retainCachedStatus(cache, cwd, { ...previous, remote: next }),
         ] as const;
       });
       if (options?.publish && changed) {
@@ -468,17 +522,6 @@ export const make = Effect.gen(function* () {
     );
   }, Effect.scoped);
 
-  // A refresh that started after a request saw every change that request could mean, so queued
-  // callers share it instead of each running git status again.
-  const localRefreshRequests = new Map<string, number>();
-  const localRefreshResults = new Map<
-    string,
-    {
-      readonly startedAt: number;
-      readonly local: VcsStatusLocalResult;
-      readonly includesBranchChanges: boolean;
-    }
-  >();
   const refreshLocalStatusCore = Effect.fn("VcsStatusBroadcaster.refreshLocalStatusCore")(
     function* (cwd: string) {
       const requestedAt = (localRefreshRequests.get(cwd) ?? 0) + 1;
@@ -1107,7 +1150,7 @@ export const make = Effect.gen(function* () {
               const remaining = (detailedSubscribers.get(cwd) ?? 1) - 1;
               if (remaining === 0) detailedSubscribers.delete(cwd);
               else detailedSubscribers.set(cwd, remaining);
-            }),
+            }).pipe(Effect.andThen(trimCachedStatuses)),
         );
         if (input.includeRemote !== false) yield* acquireBranchChangesDemand(cwd);
         const subscription = yield* PubSub.subscribe(changesPubSub);

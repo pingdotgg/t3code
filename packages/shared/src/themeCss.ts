@@ -3,32 +3,52 @@ import { THEME_COLOR_ROLES } from "./themePalettes.ts";
 const FETCHES_BY_STRING = /image-set\(|\bsrc\(/i;
 // Only CSS whitespace may come first. \s also matches U+00A0, which makes the address relative.
 const URL_NOT_LOCAL = /url\((?![ \t\n\f\r]*["']?(?:data:|#))/i;
-// Read tokens left to right, as CSS does: a url( inside a string loads nothing, and a quote in an
-// unquoted url( is not a string. A quoted url() that is not data: or #id keeps `url(` for the check.
-const URL_OR_STRING =
-  /url\((?![ \t\n\f\r]*["'])[^)]*|url\([ \t\n\f\r]*("[^"\n\r\f]*"|'[^'\n\r\f]*')|"[^"\n\r\f]*"|'[^'\n\r\f]*'/gi;
+// Read tokens left to right, as CSS does: a url( or /* inside a string loads nothing, and a quote
+// in an unquoted url( or after a backslash is not a string. A quoted url() that is not data: or #id
+// keeps `url(` for the check.
+const ESCAPE = String.raw`\\(?:(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{1,5}(?![0-9a-fA-F]))(?:\r\n|[\n\r\f])?|\r\n|[^0-9a-fA-F])`;
+const STRING = String.raw`"(?:${ESCAPE}|[^"\\\n\r\f])*"|'(?:${ESCAPE}|[^'\\\n\r\f])*'`;
+const URL_OR_STRING = String.raw`url\((?![ \t\n\f\r]*["'])([^)]*)|url\([ \t\n\f\r]*(${STRING})|${STRING}|${ESCAPE}`;
+const CSS_TOKENS = new RegExp(String.raw`\/\*[\s\S]*?\*\/|${URL_OR_STRING}`, "gi");
 
-function fetchesByText(code: string): boolean {
-  const outsideStrings = code.replace(URL_OR_STRING, (token, urlString: string | undefined) => {
-    if (urlString !== undefined) return /^["'](?:data:|#)/i.test(urlString) ? "" : "url(";
-    return token.startsWith('"') || token.startsWith("'") ? "" : token;
+/**
+ * The code with its strings and comments removed, keeping `url(` where a quoted url() can load a
+ * file. A declaration value keeps a comment or quoted url() that holds an escape. In a stylesheet
+ * an unquoted url() is judged by its address too.
+ */
+function withoutStrings(code: string, stylesheet: boolean): string {
+  return code.replace(CSS_TOKENS, (token, address?: string, urlString?: string) => {
+    const url = stylesheet ? (address ?? urlString) : urlString;
+    if (url !== undefined) {
+      if (!stylesheet && url.includes("\\")) return token;
+      return /^[ \t\n\f\r]*["']?(?:data:|#)/i.test(url) ? "" : "url(";
+    }
+    if (token.startsWith("/*")) {
+      if (stylesheet) return "";
+      return token.includes("\\") ? token : " ";
+    }
+    return /^["']/.test(token) ? "" : token;
   });
-  return FETCHES_BY_STRING.test(outsideStrings) || URL_NOT_LOCAL.test(outsideStrings);
+}
+
+function fetchesOutsideStrings(code: string): boolean {
+  return FETCHES_BY_STRING.test(code) || URL_NOT_LOCAL.test(code);
 }
 
 /**
  * Whether one declaration value can load a remote file. Clients drop those declarations.
- * A value with var() stays unparsed until use, and an escape can spell `var` or `url` in it,
- * so every value that still has a backslash is refused.
+ * Values with var() can keep escapes that spell `var` or `url`. Refuse escapes that survive
+ * removing plain strings, including escapes in URL addresses.
  */
 export function themeCssValueFetches(value: string): boolean {
-  return value.includes("\\") || fetchesByText(value);
+  const code = withoutStrings(value, false);
+  return code.includes("\\") || fetchesOutsideStrings(code);
 }
 
 /** A text check for early feedback. CSS escapes can dodge it; the client check is the guard. */
 export function themeCssLoadsRemoteFiles(css: string): boolean {
-  const code = css.replace(/\/\*[\s\S]*?\*\//g, "");
-  return /@import/i.test(code) || fetchesByText(code);
+  const code = withoutStrings(css, true);
+  return /@import/i.test(code) || fetchesOutsideStrings(code);
 }
 
 /**
@@ -79,7 +99,7 @@ export const THEME_GUIDE = [
   "",
   "CSS: `css` applies after the app's styles. Use `.dark` or `:root:not(.dark)` for one appearance.",
   "It cannot load files: no @import, no image-set(), and url() only with data: or #id.",
-  "A background image must be embedded as a data: address. `css` holds 50,000 characters, so keep the image near 30 KB.",
+  'For a background image, copy a JPEG, PNG, or WebP file of up to 16 MB to `<themesDir>/<themeId>.jpg` (or .png, .webp), beside the theme file. CSS shows it with `var(--theme-background-image)`, such as `[data-workspace-area="conversation"] { background: var(--theme-background-image) center / cover no-repeat; }`. Delete the file to remove it. Do not embed images in `css`: it holds 100,000 characters.',
   "The app's own rules can be more specific. If a rule has no effect, add !important.",
   "It cannot reach the terminal text, the file tree, or diff internals. Use color roles for those.",
   "Native scrollbars take `::-webkit-scrollbar` and `::-webkit-scrollbar-thumb`.",
@@ -89,5 +109,5 @@ export const THEME_GUIDE = [
   ...THEME_CSS_HOOKS.map((hook) => `- ${hook.selector}: ${hook.styles}`),
   "",
   "You cannot see the result. Make small changes, then ask the user how it looks.",
-  "To undo, set a built-in theme: t3-chat, grove, ocean, ember, or iris.",
+  "To undo, set `t3-code`, the stock T3 Code theme, or another built-in theme. An empty `current` means the stock theme or no environment theme.",
 ].join("\n");
