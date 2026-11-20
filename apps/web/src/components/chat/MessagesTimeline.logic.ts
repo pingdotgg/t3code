@@ -28,6 +28,8 @@ import {
   toolGroupSummaryKind,
   contextCompactionTokenCounts,
   workEntriesViewedImagePaths,
+  workEntriesWebSources,
+  type WebSource,
   type ToolGroupSummaryKind,
   liveThoughtLine,
   workEntryHiddenByToolCallVisibility,
@@ -588,6 +590,14 @@ type MessagesTimelineRowContent =
       hasFailure: boolean;
     }
   | {
+      /** Pages the turn's web searches found, shown under its answer so the work fold keeps them. */
+      kind: "web-sources";
+      id: string;
+      createdAt: string;
+      sources: ReadonlyArray<WebSource>;
+      expanded: boolean;
+    }
+  | {
       /** Images the agent opened in the tool group above, kept visible while the group is collapsed. */
       kind: "viewed-images";
       id: string;
@@ -741,6 +751,25 @@ export function resolveAssistantMessageCopyState({
     text: hasText ? (visible ? renderCodexDirectivesForCopy(text) : text) : null,
     visible,
   };
+}
+
+// Every search in the run counts, including ones the work fold or tool visibility hides.
+function deriveWebSourcesByRunId(timelineEntries: ReadonlyArray<TimelineEntry>) {
+  const searchesByRunId = new Map<string, WorkLogEntry[]>();
+  for (const entry of timelineEntries) {
+    if (entry.kind !== "work" || entry.entry.itemType !== "web_search" || !entry.entry.runId) {
+      continue;
+    }
+    const searches = searchesByRunId.get(entry.entry.runId) ?? [];
+    searches.push(entry.entry);
+    searchesByRunId.set(entry.entry.runId, searches);
+  }
+  const sourcesByRunId = new Map<string, ReadonlyArray<WebSource>>();
+  for (const [runId, searches] of searchesByRunId) {
+    const sources = workEntriesWebSources(searches);
+    if (sources.length > 0) sourcesByRunId.set(runId, sources);
+  }
+  return sourcesByRunId;
 }
 
 function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<TimelineEntry>) {
@@ -1661,6 +1690,7 @@ export function deriveMessagesTimelineRows(
     : new Map<MessageId, number>();
   const nextRows: MessagesTimelineRow[] = [];
   const terminalAssistantMessageIds = deriveTerminalAssistantMessageIds(timelineEntries);
+  const webSourcesByRunId = deriveWebSourcesByRunId(timelineEntries);
   const failedRunIds = failedTimelineRunIds(timelineEntries, input.latestRun ?? null);
   const itemizedRunIds = itemizedFailedRunIds(timelineEntries, failedRunIds);
   const liveSubagentEntryIds = liveSubagentCardEntryIds(timelineEntries);
@@ -2306,6 +2336,11 @@ export function deriveMessagesTimelineRows(
       terminalAssistantMessageIds.has(timelineEntry.message.id) &&
       !assistantResponseStillInProgress;
 
+    const answerSources =
+      showAssistantMeta && timelineEntry.message.runId != null
+        ? webSourcesByRunId.get(timelineEntry.message.runId)
+        : undefined;
+
     nextRows.push({
       kind: "message",
       id: timelineEntry.id,
@@ -2330,6 +2365,16 @@ export function deriveMessagesTimelineRows(
           ? revertTurnCountByUserMessageId.get(timelineEntry.message.id)
           : undefined,
     });
+    if (answerSources) {
+      const id = `web-sources:${timelineEntry.message.id}`;
+      nextRows.push({
+        kind: "web-sources",
+        id,
+        createdAt: timelineEntry.createdAt,
+        sources: answerSources,
+        expanded: input.expandedWorkGroupIds?.has(id) ?? false,
+      });
+    }
   }
 
   const setupHandedOff =
@@ -2822,6 +2867,19 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
     case "proposed-plan":
       return a.proposedPlan === (b as typeof a).proposedPlan;
+
+    case "web-sources": {
+      const bw = b as typeof a;
+      return (
+        a.createdAt === bw.createdAt &&
+        a.expanded === bw.expanded &&
+        a.sources.length === bw.sources.length &&
+        a.sources.every(
+          (source, index) =>
+            source.url === bw.sources[index]!.url && source.title === bw.sources[index]!.title,
+        )
+      );
+    }
 
     case "viewed-images": {
       const bv = b as typeof a;

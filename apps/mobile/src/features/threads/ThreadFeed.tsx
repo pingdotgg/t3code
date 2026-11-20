@@ -112,6 +112,7 @@ import {
 import {
   contextCompactionTokenCounts,
   resolveViewedImageAsset,
+  webSourcesMarkdown,
 } from "@t3tools/client-runtime/work-log/presentation";
 import {
   renderCodexInlineDirectivesAsMarkdown,
@@ -256,6 +257,7 @@ import {
   ThreadDisclosureChevron,
   THREAD_DISCLOSURE_TRANSITION_MS,
   ThreadWorkGroupToggle,
+  ThreadWebSources,
   ThreadThinkingRow,
   ThreadWorkLog,
   WORK_GROUP_TOGGLE_HEIGHT,
@@ -2151,6 +2153,26 @@ function renderFeedEntry(
           </View>
         ))}
       </View>
+    );
+  }
+
+  if (entry.type === "web-sources") {
+    return (
+      <ThreadWebSources
+        rowSizing={props.workRowSizing}
+        iconSubtleColor={iconSubtleColor}
+        count={entry.sources.length}
+        expanded={entry.expanded}
+        onToggle={() => props.onToggleWorkGroup(entry.id, entry.id)}
+      >
+        <AssistantMarkdownContent
+          markdown={webSourcesMarkdown(entry.sources)}
+          environmentId={props.environmentId}
+          markdownStyles={markdownStyles.assistant}
+          linkHandlers={props.markdownLinkHandlers}
+          renderImage={props.renderMarkdownImage}
+        />
+      </ThreadWebSources>
     );
   }
 

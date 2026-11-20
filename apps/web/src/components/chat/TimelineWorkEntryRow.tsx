@@ -1,5 +1,5 @@
 import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
-import { WorkLogDetails, WorkLogRow } from "./WorkLog";
+import { WorkLogButton, WorkLogDetails, WorkLogRow } from "./WorkLog";
 import {
   getQuestionAnswerPreview,
   getQuestionAnswerText,
@@ -18,6 +18,7 @@ import {
   resolveViewedImageAsset,
   resolveWorkEntryToolPresentation,
   toolGroupAction,
+  webSourcesMarkdown,
   workEntryViewedImagePath,
 } from "@t3tools/client-runtime/work-log/presentation";
 import { t3ToolResultIndicatesFailure } from "@t3tools/client-runtime/t3ToolSummary";
@@ -37,7 +38,7 @@ import ChatMarkdown from "../ChatMarkdown";
 import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 import { workGroupImageGallery } from "./markdownImageGallery";
-import { ChevronRightIcon, CircleAlertIcon, XIcon, RotateCcwIcon } from "lucide-react";
+import { ChevronRightIcon, CircleAlertIcon, GlobeIcon, XIcon, RotateCcwIcon } from "lucide-react";
 import { Button, InlineButton } from "../ui/button";
 import { useAssetUrls } from "../../assets/assetUrls";
 import { useThreadShell } from "../../state/entities";
@@ -274,6 +275,44 @@ export function ViewedImagesTimelineRow({
           />
         ) : null;
       })}
+    </div>
+  );
+}
+
+export function WebSourcesTimelineRow({
+  row,
+}: {
+  row: Extract<TimelineRow, { kind: "web-sources" }>;
+}) {
+  const { onToggleWorkGroup, markdownCwd, threadRef } = use(TimelineRowCtx);
+  const gt = useGT();
+  return (
+    <div>
+      <WorkLogButton
+        aria-expanded={row.expanded}
+        onClick={() => onToggleWorkGroup(row.id, row.id)}
+        icon={<GlobeIcon aria-hidden className="size-4 shrink-0 stroke-2 text-icon-muted" />}
+        label={gt("Sources · {count}", { count: row.sources.length })}
+        trailing={
+          <ChevronRightIcon
+            aria-hidden
+            className={cn(
+              "size-3 shrink-0 text-icon-muted opacity-70 transition-transform duration-200",
+              row.expanded && "rotate-90",
+            )}
+          />
+        }
+      />
+      {row.expanded ? (
+        <div className="ms-8 min-w-0 text-sm">
+          <ChatMarkdown
+            text={webSourcesMarkdown(row.sources)}
+            cwd={markdownCwd}
+            threadRef={threadRef ?? undefined}
+            parseRawHtml={false}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

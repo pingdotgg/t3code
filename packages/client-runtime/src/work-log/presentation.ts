@@ -454,6 +454,65 @@ export function workEntriesViewedImagePaths(
   return [...new Set(entries.flatMap((entry) => workEntryViewedImagePath(entry) ?? []))];
 }
 
+export interface WebSource {
+  readonly url: string;
+  readonly title: string;
+  readonly host: string;
+}
+
+const webSourcesByItem = new WeakMap<OrchestrationV2TurnItem, ReadonlyArray<WebSource>>();
+
+/** Distinct http(s) pages the entries' web searches returned, in result order. */
+export function workEntriesWebSources(
+  entries: ReadonlyArray<WorkLogPresentationEntry>,
+): WebSource[] {
+  const sources = new Map<string, WebSource>();
+  for (const entry of entries) {
+    const item = entry.structuredPayload;
+    if (item?.type !== "web_search") continue;
+    let itemSources = webSourcesByItem.get(item);
+    if (itemSources === undefined) {
+      itemSources = (item.results ?? []).flatMap(
+        (result) => webSource(result.url, result.title) ?? [],
+      );
+      webSourcesByItem.set(item, itemSources);
+    }
+    for (const source of itemSources) {
+      if (!sources.has(source.url)) sources.set(source.url, source);
+    }
+  }
+  return [...sources.values()];
+}
+
+/** One linked line per source, for the clients' markdown renderers. */
+export function webSourcesMarkdown(sources: ReadonlyArray<WebSource>): string {
+  return sources
+    .map(
+      (source) =>
+        `- [${escapeMarkdownText(source.title)}](<${source.url}>) · ${escapeMarkdownText(source.host)}`,
+    )
+    .join("\n");
+}
+
+function escapeMarkdownText(text: string): string {
+  return text.replace(/[\\`*_{}[\]()#+\-.!|<>~&]/g, "\\$&");
+}
+
+function webSource(rawUrl: string | undefined, title: string | undefined): WebSource | null {
+  if (!rawUrl) return null;
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  const host = url.hostname.replace(/^www\./, "");
+  // Anchors into one page are one source.
+  const href = url.href.split("#")[0]!;
+  return { url: href, title: title?.replace(/\s+/g, " ").trim() || host, host };
+}
+
 export interface ViewedImageAsset {
   readonly resource: Extract<AssetResource, { readonly _tag: "media-file" }>;
   readonly alt: string;

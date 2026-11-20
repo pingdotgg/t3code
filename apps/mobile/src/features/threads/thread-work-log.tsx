@@ -1445,6 +1445,42 @@ export function ThreadWorkGroupToggle(props: {
   );
 }
 
+export function ThreadWebSources(props: {
+  readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
+  readonly iconSubtleColor: ColorValue;
+  readonly count: number;
+  readonly expanded: boolean;
+  readonly onToggle: () => void;
+  readonly children: ReactNode;
+}) {
+  const gt = useGT();
+  return (
+    <WorkLogBlock>
+      <WorkLogPressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: props.expanded }}
+        onPress={() => {
+          void Haptics.selectionAsync();
+          props.onToggle();
+        }}
+        rowSizing={props.rowSizing}
+      >
+        <WorkLogIconSlot>
+          <WorkLogIcon icon="browser" color={props.iconSubtleColor} />
+        </WorkLogIconSlot>
+        <WorkLogLabel>{gt("Sources · {count}", { count: props.count })}</WorkLogLabel>
+        <ThreadDisclosureChevron
+          expanded={props.expanded}
+          collapsedDirection="right"
+          size={11}
+          tintColor={props.iconSubtleColor}
+        />
+      </WorkLogPressable>
+      {props.expanded ? <View className="ms-8 pb-1">{props.children}</View> : null}
+    </WorkLogBlock>
+  );
+}
+
 export function ThreadThinkingRow(props: {
   readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
   readonly iconSubtleColor: ColorValue;
