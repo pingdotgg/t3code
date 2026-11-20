@@ -331,7 +331,7 @@ class ThreadFeedTouchView(
   }
 }
 
-internal fun horizontalEdgeDistance(x: Int, left: Int, right: Int): Int = maxOf(
+private fun horizontalEdgeDistance(x: Int, left: Int, right: Int): Int = maxOf(
   left - x,
   x - right + 1,
   0

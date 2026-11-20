@@ -20,6 +20,7 @@ import {
   ThreadMediaVisibleContext,
 } from "./ThreadMarkdownVideo";
 import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
+import { ThreadFeedTouchView } from "../../native/ThreadFeedTouchView";
 import {
   enrichedContextLinkCustomization,
   enrichedThreadLinkCustomization,
@@ -153,11 +154,9 @@ import {
   Pressable,
   StyleSheet,
   type ColorValue,
-  type ViewProps,
   useWindowDimensions,
   View,
 } from "react-native";
-import { requireNativeView, requireOptionalNativeModule } from "expo";
 import { Image as ExpoImage } from "expo-image";
 import { useResolveClassNames } from "uniwind";
 import { useReduceMotionEnabled } from "../../lib/appState";
@@ -3118,20 +3117,6 @@ function DisclosureRow(props: {
       {props.children}
     </Animated.View>
   );
-}
-
-const nativeControls =
-  Platform.OS === "android"
-    ? requireOptionalNativeModule<{
-        hasThreadFeedTouchView?: () => boolean;
-      }>("T3NativeControls")
-    : null;
-const NativeThreadFeedTouchView = nativeControls?.hasThreadFeedTouchView?.()
-  ? requireNativeView<ViewProps>("T3NativeControls", "ThreadFeedTouchView")
-  : null;
-
-function ThreadFeedTouchView(props: ViewProps) {
-  return NativeThreadFeedTouchView ? <NativeThreadFeedTouchView {...props} /> : <View {...props} />;
 }
 
 const THREAD_FEED_MAINTAIN_SCROLL_AT_END = {
