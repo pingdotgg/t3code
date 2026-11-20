@@ -10,6 +10,7 @@ import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { threadSteersDuringCompaction } from "@t3tools/client-runtime/state/thread-workflows";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
+import { queuedRunEditStaleReason } from "@t3tools/client-runtime/queued-run-edit";
 import {
   announcedRun,
   isDetailBehindShell,
@@ -590,6 +591,10 @@ export function useThreadComposerState(input: {
         threadId: thread.id,
         runId: edit.runId,
         text: restoreAttachmentOnlyBootstrapPrompt(text, payload.attachments.length > 0),
+        ...(edit.expectedText === undefined ? {} : { expectedText: edit.expectedText }),
+        ...(edit.expectedAttachmentIds === undefined
+          ? {}
+          : { expectedAttachmentIds: edit.expectedAttachmentIds }),
         edit: {
           messageId: edit.messageId,
           attachments: payload.attachments,
@@ -602,9 +607,24 @@ export function useThreadComposerState(input: {
     if (result._tag !== "Success") {
       // The run left the queue during the save; its exit already told the composer what happened.
       if (!finishSave(false)) return;
+      const current = appAtomRegistry
+        .get(
+          environmentThreadDetails.quietThreadAtom({
+            environmentId: thread.environmentId,
+            threadId: thread.id,
+          }),
+        )
+        ?.projection.messages.find((message) => message.id === edit.messageId);
       Dialog.alert(
         m(msg("Could not save the queued message")),
-        m(msg("It may have already started. Your edit is still in the composer.")),
+        queuedRunEditStaleReason(
+          {
+            expectedText: edit.expectedText,
+            expectedAttachmentIds: edit.expectedAttachmentIds,
+            current,
+          },
+          m,
+        ) ?? m(msg("It may have already started. Your edit is still in the composer.")),
       );
       return;
     }

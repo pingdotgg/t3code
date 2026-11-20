@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import {
+  type OrchestrationV2ThreadProjection,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+} from "@t3tools/contracts";
+import { mFallback } from "gt-i18n";
 
 import {
   canForkProjectedAssistantItem,
@@ -13,6 +18,7 @@ const capabilities = (input?: {
   readonly queued?: boolean;
   readonly steer?: boolean;
   readonly restartSteer?: boolean;
+  readonly steerAttachments?: boolean;
   readonly nativeFork?: boolean;
   readonly portableFork?: boolean;
 }) =>
@@ -21,6 +27,7 @@ const capabilities = (input?: {
       supportsQueuedMessages: input?.queued ?? false,
       supportsActiveSteering: input?.steer ?? false,
       supportsSteeringByInterruptRestart: input?.restartSteer ?? false,
+      activeSteeringAcceptsAttachments: input?.steerAttachments ?? true,
     },
     threads: {
       canForkThread: input?.nativeFork ?? false,
@@ -333,11 +340,18 @@ describe("thread workflows", () => {
           {
             id: "active",
             status,
+            modelSelection: { instanceId: "codex", model: "gpt-5.4" },
             providerThreadId: "provider-thread",
             activeAttemptId: "attempt-active",
             ordinal: 1,
           },
-          { id: "queued", status: "queued", userMessageId: "message", ordinal: 2 },
+          {
+            id: "queued",
+            status: "queued",
+            userMessageId: "message",
+            modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+            ordinal: 2,
+          },
         ],
         messages: [{ id: "message", text: "Queued" }],
         providerTurns: [
@@ -364,6 +378,251 @@ describe("thread workflows", () => {
       } as never);
 
       expect(state.canPromoteToSteer).toBe(status !== "waiting");
+    },
+  );
+
+  const selection = { instanceId: "codex", model: "gpt-5.4" };
+  const image = { type: "image", id: "image", name: "a.png", mimeType: "image/png", sizeBytes: 8 };
+  const cannotJoin = "Some queued messages can't join the current turn.";
+  it.each([
+    { name: "a steerable turn", asOne: null, each: null },
+    {
+      name: "an agent that restarts to steer",
+      provider: { restartSteer: true },
+      asOne: null,
+      each: "This agent restarts its turn for every message. Send them as one instead.",
+    },
+    {
+      name: "queued messages on a different model from the active turn without restart steering",
+      provider: { restartSupported: false },
+      activeModel: "another-model",
+      asOne: cannotJoin,
+      each: cannotJoin,
+    },
+    {
+      name: "attachments without restart steering",
+      provider: { restartSupported: false, steerAttachments: false },
+      second: { attachments: [image] },
+      asOne: cannotJoin,
+      each: cannotJoin,
+    },
+    {
+      name: "compaction without restart steering",
+      provider: { restartSupported: false, steerAttachments: false },
+      activeMessage: { text: "/compact" },
+      second: { attachments: [image] },
+      asOne: null,
+      each: "Send them as one to skip the compaction.",
+    },
+    {
+      name: "a notification between user messages",
+      notificationPosition: 3,
+      asOne: "A notification is waiting between these messages.",
+      each: null,
+    },
+    {
+      name: "a notification before user messages",
+      notificationPosition: 1,
+      asOne: null,
+      each: null,
+    },
+    {
+      name: "a notification after user messages",
+      notificationPosition: 5,
+      asOne: null,
+      each: null,
+    },
+    { name: "a stopped thread", activeStatus: "completed", asOne: null, each: null },
+    {
+      name: "merged text exceeding the provider limit",
+      second: { text: "x".repeat(120_000) },
+      asOne: "Queued messages are too long to send as one.",
+      each: null,
+    },
+    {
+      name: "a turn still starting",
+      activeStatus: "starting",
+      asOne: null,
+      each: null,
+    },
+    {
+      name: "a guest's message",
+      second: { context: { version: 1, records: [], guest: { name: "Sam", text: "Hi" } } },
+      asOne: "A guest's message can't be combined with others.",
+      each: null,
+    },
+    {
+      name: "an agent's message",
+      second: { createdBy: "agent", senderThreadId: "thread:lead" },
+      asOne: "Messages from agents and automations are sent on their own.",
+      each: null,
+    },
+    {
+      name: "a command",
+      second: { text: "/compact" },
+      asOne: "Commands are sent on their own.",
+      each: cannotJoin,
+    },
+    {
+      name: "a fresh-session message",
+      secondRun: { freshContext: true },
+      asOne: "A message that starts a fresh session is sent on its own.",
+      each: cannotJoin,
+    },
+    {
+      name: "a plan implementation",
+      secondRun: { sourcePlanRef: { threadId: "thread", planId: "plan" } },
+      asOne: "Plan and continuation messages are sent on their own.",
+      each: null,
+    },
+    {
+      name: "a follow-up that owns a delegated task",
+      secondRun: { delegatedTaskId: "node:followup" },
+      asOne: "Follow-ups to a delegated task are sent on their own.",
+      each: null,
+    },
+    {
+      name: "a delegated task follow-up that would keep the combined message",
+      firstRun: { delegatedTaskId: "node:followup" },
+      asOne: "Follow-ups to a delegated task are sent on their own.",
+      each: null,
+    },
+    {
+      name: "another model",
+      secondRun: { modelSelection: { ...selection, model: "gpt-5.5" } },
+      asOne: "Queued messages use different models.",
+      each: cannotJoin,
+    },
+    {
+      name: "too many attachments",
+      second: {
+        attachments: Array.from({ length: PROVIDER_SEND_TURN_MAX_ATTACHMENTS + 1 }, (_, index) => ({
+          ...image,
+          id: `image-${index}`,
+        })),
+      },
+      asOne: `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`,
+      each: null,
+    },
+    {
+      name: "images too large to send together",
+      second: {
+        attachments: Array.from({ length: 9 }, (_, index) => ({
+          ...image,
+          id: `image-${index}`,
+          sizeBytes: PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+        })),
+      },
+      asOne: "Images can total up to 80 MiB per message. Use smaller images or send fewer at once.",
+      each: null,
+    },
+    {
+      name: "attachments the turn cannot take",
+      provider: { steerAttachments: false },
+      second: { attachments: [image] },
+      asOne: null,
+      each: cannotJoin,
+    },
+  ] as const)(
+    "offers sending the whole queue for $name",
+    (row: {
+      readonly provider?: {
+        readonly restartSteer?: boolean;
+        readonly restartSupported?: boolean;
+        readonly steerAttachments?: boolean;
+      };
+      readonly activeStatus?: string;
+      readonly activeModel?: string;
+      readonly activeMessage?: Record<string, unknown>;
+      readonly notificationPosition?: number;
+      readonly second?: Record<string, unknown>;
+      readonly firstRun?: Record<string, unknown>;
+      readonly secondRun?: Record<string, unknown>;
+      readonly asOne: string | null;
+      readonly each: string | null;
+    }) => {
+      const message = (id: string, fields?: Record<string, unknown>) => ({
+        id,
+        role: "user",
+        text: id,
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+        ...fields,
+      });
+      const queued = (id: string, ordinal: number, fields?: Record<string, unknown>) => ({
+        id,
+        status: "queued",
+        userMessageId: `message-${id}`,
+        modelSelection: selection,
+        ordinal,
+        ...fields,
+      });
+      const projection = {
+        thread: { id: "thread", activeProviderThreadId: "provider-thread" },
+        runs: [
+          {
+            id: "active",
+            status: row.activeStatus ?? "running",
+            userMessageId: "message-active",
+            providerThreadId: "provider-thread",
+            activeAttemptId: "attempt-active",
+            modelSelection: { ...selection, model: row.activeModel ?? selection.model },
+            ordinal: 1,
+          },
+          queued("first", 2, row.firstRun),
+          queued("second", 4, row.secondRun),
+          ...(row.notificationPosition === undefined
+            ? []
+            : [queued("notification", 5, { queuePosition: row.notificationPosition })]),
+        ],
+        messages: [
+          message("message-active", row.activeMessage),
+          message("message-first"),
+          message("message-second", row.second),
+          ...(row.notificationPosition === undefined
+            ? []
+            : [
+                message("message-notification", {
+                  notification: {
+                    source: { kind: "monitor" },
+                    outcome: "updated",
+                    summary: "PR update",
+                  },
+                }),
+              ]),
+        ],
+        providerTurns: [
+          { id: "provider-turn-active", runAttemptId: "attempt-active", status: "running" },
+        ],
+        providerThreads: [
+          { id: "provider-thread", appThreadId: "thread", providerSessionId: "provider-session" },
+        ],
+        providerSessions: [
+          {
+            id: "provider-session",
+            status: "running",
+            capabilities: capabilities({
+              queued: true,
+              steer: row.provider?.restartSteer !== true,
+              restartSteer: row.provider?.restartSupported ?? true,
+              ...(row.provider?.steerAttachments === undefined
+                ? {}
+                : { steerAttachments: row.provider.steerAttachments }),
+            }),
+          },
+        ],
+      } as never;
+      const state = deriveThreadQueueWorkflowState(
+        projection,
+        (encoded) => `«${mFallback(encoded)}»` as never,
+      );
+
+      const translated = (reason: string | null) => (reason === null ? null : `«${reason}»`);
+      expect([state.sendAsOneBlockedReason, state.sendEachBlockedReason]).toEqual([
+        translated(row.asOne),
+        translated(row.each),
+      ]);
     },
   );
 

@@ -42,7 +42,7 @@ import {
   TurnItemId,
 } from "./baseSchemas.ts";
 import { AuthMcpClientAccess } from "./auth.ts";
-import { ChatAttachment } from "./chatAttachment.ts";
+import { ChatAttachment, ChatAttachmentId } from "./chatAttachment.ts";
 import { ThreadGuestShare } from "./guestShare.ts";
 import { StoredThreadTags, ThreadTag } from "./threadTags.ts";
 import { ThreadTitleRegenerationOutcome } from "./threadTitle.ts";
@@ -3551,6 +3551,17 @@ export const OrchestrationV2Command = Schema.Union([
     text: Schema.String,
     // Replaces all attachments; absent preserves them for older clients editing text.
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
+    // The message the edit began from; a stored text or attachment list that differs means
+    // another client changed it, for example by combining another message into it.
+    expectedText: Schema.optional(Schema.String),
+    expectedAttachmentIds: Schema.optional(Schema.Array(ChatAttachmentId)),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("queued-run.merge"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    // The queue as the client saw it, in delivery order; the first run keeps the combined message.
+    runIds: Schema.Array(RunId).check(Schema.isMinLength(2)),
   }),
   Schema.Struct({
     type: Schema.Literal("runtime-request.respond"),

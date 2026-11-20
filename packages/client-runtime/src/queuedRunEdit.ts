@@ -79,6 +79,37 @@ export function queuedRunEditBlockedReason(
     : null;
 }
 
+export function queuedRunEditStaleReason(
+  input: {
+    readonly expectedText: string | undefined;
+    readonly expectedAttachmentIds: ReadonlyArray<string> | undefined;
+    readonly current:
+      | {
+          readonly text: string;
+          readonly attachments: ReadonlyArray<{ readonly id: string }>;
+        }
+      | undefined;
+  },
+  resolve: MFunctionType = mFallback,
+): string | null {
+  const { expectedText, expectedAttachmentIds, current } = input;
+  if (current === undefined) return null;
+  const textChanged = expectedText !== undefined && current.text !== expectedText;
+  const attachmentsChanged =
+    expectedAttachmentIds !== undefined &&
+    (current.attachments.length !== expectedAttachmentIds.length ||
+      current.attachments.some(
+        (attachment, index) => attachment.id !== expectedAttachmentIds[index],
+      ));
+  return textChanged || attachmentsChanged
+    ? resolve(
+        msg(
+          "This queued message changed since you started editing it. Cancel your edit to see the new version.",
+        ),
+      )
+    : null;
+}
+
 interface ExitWatch<E> {
   readonly runs: QueuedRunsAtom;
   readonly runId: RunId;

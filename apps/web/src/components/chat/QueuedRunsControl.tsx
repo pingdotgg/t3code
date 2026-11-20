@@ -62,6 +62,7 @@ const QUEUE_VISIBLE_ROWS = 3;
 export interface QueuedRunsControlHandle {
   steerNext: (repeat: boolean) => boolean;
   editLatest: (repeat: boolean) => boolean;
+  sendAllAsOne: (repeat: boolean) => boolean;
 }
 
 type ThreadQueueProjection = Parameters<typeof deriveThreadQueueWorkflowState>[0];
@@ -84,6 +85,7 @@ export function QueuedRunsControl({
   readonly ref?: Ref<QueuedRunsControlHandle>;
   readonly steerShortcutLabel?: string | null;
   readonly editShortcutLabel?: string | null;
+  readonly sendAllAsOneShortcutLabel?: string | null;
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly optimisticMessages: ReadonlyArray<
@@ -103,9 +105,12 @@ export function QueuedRunsControl({
   const projection = useQuietThreadProjection(
     scopeThreadRef(props.environmentId, props.threadId),
   )?.projection;
+  const supportsQueuedRunMerge =
+    useEnvironment(props.environmentId)?.serverConfig?.queuedRunMerge === true;
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun);
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue);
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
+  const merge = useAtomCommand(threadEnvironment.mergeQueuedRuns);
   const [showAll, setShowAll] = useState(false);
   const queueListId = useId();
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
@@ -171,13 +176,7 @@ export function QueuedRunsControl({
     })),
   ];
 
-  const sendQueuedMessage = async (queuedRunId: RunId) => {
-    const freshContext = queued.some(
-      ({ run }) => run.id === queuedRunId && run.freshContext === true,
-    );
-    if (!canSendRun(freshContext) || steerInFlightRef.current) return;
-    steerInFlightRef.current = true;
-    setBusyRunId(queuedRunId);
+  const sendNow = async (queuedRunId: RunId) => {
     const result = workflow?.canSendNow
       ? await resume({
           environmentId: props.environmentId,
@@ -189,8 +188,6 @@ export function QueuedRunsControl({
             input: { threadId: props.threadId, queuedRunId, targetRunId: activeRun.id },
           })
         : null;
-    steerInFlightRef.current = false;
-    setBusyRunId(null);
     if (result?._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       toastManager.add({
@@ -202,6 +199,72 @@ export function QueuedRunsControl({
             : m(msg("An error occurred.")),
       });
     }
+    return result;
+  };
+
+  const runQueueAction = async (busyRun: RunId, action: () => Promise<void>) => {
+    steerInFlightRef.current = true;
+    setBusyRunId(busyRun);
+    await action();
+    steerInFlightRef.current = false;
+    setBusyRunId(null);
+  };
+
+  const sendQueuedMessage = async (queuedRunId: RunId) => {
+    const freshContext = queued.some(
+      ({ run }) => run.id === queuedRunId && run.freshContext === true,
+    );
+    if (!canSendRun(freshContext) || steerInFlightRef.current) return;
+    await runQueueAction(queuedRunId, async () => {
+      await sendNow(queuedRunId);
+    });
+  };
+
+  const queueActionBlockedReason =
+    props.editingRunId !== null
+      ? gt("Finish editing the queued message first.")
+      : optimisticQueued.length > 0
+        ? gt("Wait for queued messages to save.")
+        : busyRunId !== null
+          ? gt("Another queue action is still running.")
+          : null;
+  const sendAllAsOneBlockedReason =
+    queueActionBlockedReason ??
+    (!supportsQueuedRunMerge
+      ? gt("Update this environment to send queued messages as one.")
+      : null) ??
+    workflow?.sendAsOneBlockedReason ??
+    null;
+  const sendEachBlockedReason = queueActionBlockedReason ?? workflow?.sendEachBlockedReason ?? null;
+  const queuedRunIds = queued.map(({ run }) => run.id);
+
+  const sendAllAsOne = async () => {
+    const [survivor] = queuedRunIds;
+    if (survivor === undefined || sendAllAsOneBlockedReason !== null || steerInFlightRef.current) {
+      return;
+    }
+    await runQueueAction(survivor, async () => {
+      const merged = await merge({
+        environmentId: props.environmentId,
+        input: { threadId: props.threadId, runIds: queuedRunIds },
+      });
+      if (merged._tag === "Success") await sendNow(survivor);
+    });
+  };
+
+  const sendEach = async () => {
+    const [first] = queuedRunIds;
+    if (first === undefined || sendEachBlockedReason !== null || steerInFlightRef.current) return;
+    await runQueueAction(first, async () => {
+      if (workflow?.canSendNow) {
+        await resume({ environmentId: props.environmentId, input: { threadId: props.threadId } });
+        return;
+      }
+      for (const queuedRunId of queuedRunIds) {
+        const sent = await sendNow(queuedRunId);
+        if (sent?._tag !== "Success") return;
+      }
+    });
   };
 
   useImperativeHandle(ref, () => ({
@@ -232,6 +295,11 @@ export function QueuedRunsControl({
           attachments: latest.attachments,
         });
       }
+      return true;
+    },
+    sendAllAsOne(repeat) {
+      if (queued.length < 2 || sendAllAsOneBlockedReason !== null) return false;
+      if (!repeat) void sendAllAsOne();
       return true;
     },
   }));
@@ -420,30 +488,84 @@ export function QueuedRunsControl({
           );
         })}
       </ol>
-      {collapsible ? (
-        <div className="self-end pe-1 text-xs pointer-coarse:[&_[data-slot=inline-button]]:relative pointer-coarse:[&_[data-slot=inline-button]]:after:absolute pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-x-1.5 pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-y-3.5">
-          <InlineButton
-            tone="muted"
-            aria-expanded={showAll}
-            aria-controls={queueListId}
-            // Keep the composer focused; keyboard activation still works.
-            onPointerDown={(event) => event.preventDefault()}
-            onClick={() => setShowAll((value) => !value)}
-          >
-            {showAll
-              ? gt("Show fewer")
-              : gt(
-                  "{count, plural, one {Show all {count} queued} other {Show all {count} queued}}",
-                  { count: items.length },
+      {items.length >= 2 ? (
+        <div className="flex items-center gap-1.5 self-end pe-1 text-xs pointer-coarse:[&_[data-slot=inline-button]]:relative pointer-coarse:[&_[data-slot=inline-button]]:after:absolute pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-x-1.5 pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-y-3.5">
+          {collapsible ? (
+            <InlineButton
+              tone="muted"
+              aria-expanded={showAll}
+              aria-controls={queueListId}
+              // Keep the composer focused; keyboard activation still works.
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => setShowAll((value) => !value)}
+            >
+              {showAll
+                ? gt("Show fewer")
+                : gt(
+                    "{count, plural, one {Show all {count} queued} other {Show all {count} queued}}",
+                    { count: items.length },
+                  )}
+              <ChevronDownIcon
+                aria-hidden
+                className={cn(
+                  "size-3.5 transition-transform duration-150 motion-reduce:transition-none",
+                  showAll && "rotate-180",
                 )}
-            <ChevronDownIcon
-              aria-hidden
-              className={cn(
-                "size-3.5 transition-transform duration-150 motion-reduce:transition-none",
-                showAll && "rotate-180",
-              )}
-            />
-          </InlineButton>
+              />
+            </InlineButton>
+          ) : null}
+          <Tooltip>
+            <TooltipTrigger render={<span className="flex shrink-0" />}>
+              <Button
+                size="xs"
+                variant="ghost-muted"
+                disabled={sendEachBlockedReason !== null}
+                onClick={() => void sendEach()}
+              >
+                <T>Send one by one</T>
+              </Button>
+            </TooltipTrigger>
+            <TooltipPopup>
+              {sendEachBlockedReason ??
+                (workflow?.canSendNow
+                  ? gt("Start a turn for each message, in order")
+                  : gt("Send each message into the current turn, in order"))}
+            </TooltipPopup>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger render={<span className="flex shrink-0" />}>
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={sendAllAsOneBlockedReason !== null}
+                onClick={() => void sendAllAsOne()}
+              >
+                <ArrowUpIcon />
+                <T>Send all as one</T>
+              </Button>
+            </TooltipTrigger>
+            <TooltipPopup>
+              {sendAllAsOneBlockedReason ??
+                (props.sendAllAsOneShortcutLabel
+                  ? workflow?.canSendNow
+                    ? gt("Combine them into one message and start a turn ({shortcut})", {
+                        shortcut: props.sendAllAsOneShortcutLabel,
+                      })
+                    : workflow?.promoteSkipsCompaction
+                      ? gt("Combine them into one message and skip compaction ({shortcut})", {
+                          shortcut: props.sendAllAsOneShortcutLabel,
+                        })
+                      : gt(
+                          "Combine them into one message and send it into the current turn ({shortcut})",
+                          { shortcut: props.sendAllAsOneShortcutLabel },
+                        )
+                  : workflow?.canSendNow
+                    ? gt("Combine them into one message and start a turn")
+                    : workflow?.promoteSkipsCompaction
+                      ? gt("Combine them into one message and skip compaction")
+                      : gt("Combine them into one message and send it into the current turn"))}
+            </TooltipPopup>
+          </Tooltip>
         </div>
       ) : null}
     </section>

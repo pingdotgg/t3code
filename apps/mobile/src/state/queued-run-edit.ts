@@ -32,6 +32,8 @@ export interface QueuedRunEdit {
   readonly runId: RunId;
   readonly messageId: MessageId;
   readonly originalText: string;
+  readonly expectedText?: string;
+  readonly expectedAttachmentIds?: ReadonlyArray<ChatAttachment["id"]>;
   readonly existingAttachments: ReadonlyArray<ChatAttachment>;
   readonly context?: OrchestrationMessageContext;
   /** Removing a server attachment changes the message even when the draft looks untouched. */
