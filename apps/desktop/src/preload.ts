@@ -258,6 +258,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   cancelProviderAuthCallback: (url: string) =>
     ipcRenderer.invoke(IpcChannels.CANCEL_PROVIDER_AUTH_CALLBACK_CHANNEL, url),
   startFileDrag: (input) => ipcRenderer.invoke(IpcChannels.START_FILE_DRAG_CHANNEL, input),
+  openPendingSignIn: () => ipcRenderer.invoke(IpcChannels.OPEN_PENDING_SIGN_IN_CHANNEL),
+  settlePendingSignIn: (id: string, authorizationUrl: string | null) =>
+    ipcRenderer.invoke(IpcChannels.SETTLE_PENDING_SIGN_IN_CHANNEL, { id, authorizationUrl }),
   openExternal: (url: string) => ipcRenderer.invoke(IpcChannels.OPEN_EXTERNAL_CHANNEL, url),
   readMedia: (url: string) => ipcRenderer.invoke(IpcChannels.READ_MEDIA_CHANNEL, url),
   checkSystemPermission: (pane: string) =>

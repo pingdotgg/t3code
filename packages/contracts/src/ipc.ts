@@ -1182,6 +1182,10 @@ export interface DesktopBridge {
   receiveProviderAuthCallback: (authorizationUrl: string) => Promise<string>;
   cancelProviderAuthCallback: (authorizationUrl: string) => Promise<void>;
   startFileDrag: (input: { environmentId: EnvironmentId; path: string }) => Promise<boolean>;
+  /** Opens the browser now on a local "starting sign-in" page; returns its id. */
+  openPendingSignIn: () => Promise<string>;
+  /** Forwards that page to a Google sign-in link, or shows that sign-in stopped when null. */
+  settlePendingSignIn: (id: string, authorizationUrl: string | null) => Promise<void>;
   openExternal: (url: string) => Promise<boolean>;
   /** Reads http(s) media in the main process, outside renderer CORS and CSP; null on network failure. */
   readMedia: (url: string) => Promise<DesktopMediaRead | null>;
