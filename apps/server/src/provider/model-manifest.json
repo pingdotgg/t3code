@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-11-14T15:58:47Z",
+  "updatedAt": "2026-11-19T00:00:00Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -74,14 +74,22 @@
     },
     {
       "driver": "antigravity",
-      "t3CodeRange": ">=0.0.42",
-      "recommendedRange": ">=1.5.1 <2",
+      "t3CodeRange": ">=0.0.42 <0.1.10",
+      "recommendedRange": "=1.4.5 || =1.4.1",
       "ranges": [
-        { "range": ">=1.5.1 <2", "status": "supported" },
         { "range": "=1.4.5", "status": "supported" },
         { "range": "=1.4.1", "status": "supported" },
         { "range": "=1.3.0", "status": "supported" },
         { "range": "=1.1.1", "status": "supported" }
+      ]
+    },
+    {
+      "driver": "antigravity",
+      "t3CodeRange": ">=0.1.10",
+      "recommendedRange": ">=1.5.12 <2",
+      "ranges": [
+        { "range": ">=1.5.0 <2", "status": "supported" },
+        { "range": "<1.5.0", "status": "broken" }
       ]
     },
     {

@@ -111,41 +111,30 @@ describe("provider compatibility", () => {
     );
   });
 
-  it("recognizes Antigravity semver release tags while keeping dated candidates unknown", () => {
+  it("marks Antigravity below 1.5 broken and recommends 1.5.12 in the bundled manifest", () => {
+    const policies = decodeCompatibilityPolicies(bundledManifest.compatibility);
     const antigravity = ProviderDriverKind.make("antigravity");
-    const taggedPolicy = {
-      ...policy,
-      driver: antigravity,
-      ranges: [{ range: "=2.0.0", status: "supported" as const }],
-    };
-    for (const [version, expected] of [
-      ["agy_acp_server_2.0.0", "supported"],
-      ["2.0.0", "supported"],
-      ["agy_acp_server_2.0.1", "unknown"],
-      ["agy_acp_server_2.0.0-beta.1", "unknown"],
-      ["agy_acp_server_20260818_01_RC01", "unknown"],
-    ] as const) {
-      assert.strictEqual(
-        resolveProviderCompatibility([taggedPolicy], antigravity, version)?.status,
-        expected,
-      );
+    for (const version of [
+      "1.1.1",
+      "1.3.0",
+      "1.4.1",
+      "1.4.5",
+      "1.4.9",
+      "agy_acp_server_1.4.5",
+      "1.4.5-beta",
+    ]) {
+      const advisory = resolveProviderCompatibility(policies, antigravity, version);
+      assert.strictEqual(advisory?.status, "broken", version);
     }
+    const supported = resolveProviderCompatibility(policies, antigravity, "1.5.11");
+    assert.strictEqual(supported?.status, "supported");
+    assert.strictEqual(supported?.recommendedRange, ">=1.5.12 <2");
+    // Stable releases before 0.1.10 cannot install the CLI, so they keep the policy they shipped with.
+    assert.strictEqual(
+      resolveProviderCompatibility(policies, antigravity, "1.4.5", "0.1.9")?.status,
+      "supported",
+    );
   });
-
-  it.each(["1.4.5", "1.5.7"])(
-    "supports the legacy and native Antigravity runtime %s in the bundled manifest",
-    (version) => {
-      const policies = decodeCompatibilityPolicies(bundledManifest.compatibility);
-      assert.strictEqual(
-        resolveProviderCompatibility(
-          policies,
-          ProviderDriverKind.make("antigravity"),
-          `agy_acp_server_${version}`,
-        )?.status,
-        "supported",
-      );
-    },
-  );
 
   it("classifies boundaries and treats unlisted versions and release tags as unknown", () => {
     for (const [version, expected] of [
@@ -156,7 +145,6 @@ describe("provider compatibility", () => {
       ["v2.0.0", "supported"],
       ["3.0.0", "unknown"],
       ["2.0.0-beta.1", "unknown"],
-      ["agy_acp_server_20260818_01_RC01", "unknown"],
       [null, "unknown"],
     ] as const) {
       assert.strictEqual(resolveProviderCompatibility([policy], driver, version)?.status, expected);

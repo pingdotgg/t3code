@@ -18,7 +18,6 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -84,6 +83,7 @@ const DRIVER = ProviderDriverKind.make("antigravity");
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
 const isNodeRuntimeUnavailableError = Schema.is(NodeRuntimeUnavailableError);
 const isAcpRequestError = Schema.is(AcpErrors.AcpRequestError);
+const isProviderSetupError = Schema.is(ProviderSetupError);
 const isAcpErrorDetails = Schema.is(Schema.Struct({ details: Schema.String }));
 const REFRESH_FAILED =
   "Could not refresh Antigravity models. The previous model list is unchanged.";
@@ -313,22 +313,38 @@ export const AntigravityDriver: ProviderDriver<
         childProcessSpawner: spawner,
         spawn,
       }).pipe(Effect.provideService(SecureRandom.SecureRandom, random));
+      // A custom or PATH executable has no version until it answers initialize.
+      const startCompatible = Effect.fn("AntigravityDriver.startCompatible")(function* () {
+        const version = (yield* runtime.initialize()).agentInfo?.version;
+        const advisory = version ? yield* installation.compatibility(version) : undefined;
+        if (advisory?.status === "broken") {
+          const target =
+            advisory.recommendedVersion ?? advisory.recommendedRange ?? "a newer version";
+          const update =
+            executable.source === "managed"
+              ? `Update it in Antigravity setup to ${target}`
+              : `Update the Antigravity executable at ${executable.executablePath} to ${target}`;
+          const cause = new ProviderSetupError({
+            instanceId,
+            operation: "runtime",
+            detail: `Antigravity ${version} does not work with this T3 Code release. ${update}, then retry.`,
+          });
+          return yield* new AcpErrors.AcpTransportError({ detail: cause.detail, cause });
+        }
+        return yield* runtime.start();
+      });
       return {
         ...runtime,
-        ...(executable.harnessPath === null
-          ? { setMode: (modeId: string) => runtime.setMode(antigravityCliSessionMode(modeId)) }
-          : {}),
+        setMode: (modeId: string) => runtime.setMode(antigravityCliSessionMode(modeId)),
         start: () =>
-          runtime
-            .start()
-            .pipe(
-              Effect.tapError((cause): Effect.Effect<void> =>
-                runtimeInput.onAuthorizationUrl === undefined &&
-                isAntigravitySignInRequiredError(cause)
-                  ? provider.onAuthRequired
-                  : Effect.void,
-              ),
+          startCompatible().pipe(
+            Effect.tapError((cause): Effect.Effect<void> =>
+              runtimeInput.onAuthorizationUrl === undefined &&
+              isAntigravitySignInRequiredError(cause)
+                ? provider.onAuthRequired
+                : Effect.void,
             ),
+          ),
       };
     });
 
@@ -382,10 +398,6 @@ export const AntigravityDriver: ProviderDriver<
       readonly onAuthorizationUrl: (url: string) => Effect.Effect<void, AcpErrors.AcpError>;
     }) {
       if (auth.authMethod !== "oauth-personal") return undefined;
-      const resolved = yield* installation
-        .resolve(settings.binaryPath, processEnvironment)
-        .pipe(Effect.option);
-      if (Option.isSome(resolved) && resolved.value.harnessPath !== null) return undefined;
       const cwd = yield* fileSystem
         .makeTempDirectoryScoped({ prefix: "t3-antigravity-login-" })
         .pipe(
@@ -398,8 +410,7 @@ export const AntigravityDriver: ProviderDriver<
               }),
           ),
         );
-      const { executable, spawn } = yield* prepareSpawn(cwd, processEnvironment);
-      if (executable.harnessPath !== null) return undefined;
+      const { spawn } = yield* prepareSpawn(cwd, processEnvironment);
       const failed = (detail: string, cause?: unknown) =>
         new ProviderSetupError({ instanceId, operation: "start", detail, cause });
       // Without a display it prints the link only, instead of opening a browser on this machine.
@@ -651,7 +662,11 @@ export const AntigravityDriver: ProviderDriver<
                 : cause._tag === "ProviderSetupError" &&
                     (cause.operation === "configure" || cause.operation === "start")
                   ? cause.detail
-                  : refreshFailureDetail(cause),
+                  : cause._tag === "AcpTransportError" &&
+                      isProviderSetupError(cause.cause) &&
+                      cause.cause.operation === "runtime"
+                    ? cause.cause.detail
+                    : refreshFailureDetail(cause),
               cause,
             }),
       ),

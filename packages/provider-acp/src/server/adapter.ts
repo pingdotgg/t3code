@@ -378,9 +378,6 @@ export interface AcpAdapterV2Flavor {
     readonly attachments: ReadonlyArray<ChatAttachment>;
     readonly resolveAttachmentPath: (attachment: ChatAttachment) => string | null;
     readonly promptCapabilities: EffectAcpSchema.AgentCapabilities["promptCapabilities"];
-    readonly agentVersion: string | undefined;
-    /** The session's model after selection, with its display name when the agent lists it. */
-    readonly currentModel: { readonly id: string; readonly name: string | undefined } | undefined;
   }) => Effect.Effect<ReadonlyArray<EffectAcpSchema.ContentBlock>, EffectAcpErrors.AcpError>;
   readonly promptFailure?: (cause: unknown) => OrchestrationV2ProviderFailure;
   /**
@@ -8833,24 +8830,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           if (!flavor.buildAttachmentPrompt) return yield* imageAttachmentBlocks(attachments);
           const setup = yield* Ref.get(activeSessionSetup);
-          const modelOption = findModelConfigOption(yield* runtime.getConfigOptions);
-          const currentModelId = modelOption?.currentValue;
           return yield* flavor
             .buildAttachmentPrompt({
               text: messageText,
               attachments,
               resolveAttachmentPath: host.resolveAttachmentPath,
               promptCapabilities: setup?.initializeResult.agentCapabilities?.promptCapabilities,
-              agentVersion: setup?.initializeResult.agentInfo?.version,
-              currentModel:
-                typeof currentModelId !== "string" || modelOption === undefined
-                  ? undefined
-                  : {
-                      id: currentModelId,
-                      name: flattenSelectChoices(modelOption.options).find(
-                        (choice) => choice.value === currentModelId,
-                      )?.name,
-                    },
             })
             .pipe(
               Effect.mapError(
