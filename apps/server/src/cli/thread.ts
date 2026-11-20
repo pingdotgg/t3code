@@ -8,6 +8,7 @@ import {
   RunId,
   ThreadId,
   TrimmedNonEmptyString,
+  type OrchestratorMcpThreadDetail,
   type OrchestratorMcpThreadListItem,
   type OrchestratorMcpThreadRun,
   type OrchestratorMcpThreadStatus,
@@ -216,11 +217,12 @@ export type ThreadTools = ReturnType<typeof makeThreadTools>;
  * outside agent does, and revokes that session when the command ends.
  */
 const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E, R>(
-  flags: { readonly baseDir: Option.Option<string> },
+  flags: { readonly baseDir: Option.Option<string>; readonly json: boolean },
   run: (tools: ThreadTools) => Effect.Effect<A, E, R>,
 ) {
   const logLevel = yield* GlobalFlag.LogLevel;
-  const config = yield* resolveCliAuthConfig(flags, logLevel);
+  const config = yield* resolveCliAuthConfig(flags, logLevel, { quietLogs: flags.json });
+  const minimumLogLevel = flags.json ? "Error" : config.logLevel;
   return yield* Effect.gen(function* () {
     const runtimeState = yield* readLiveServerRuntimeState(config.serverRuntimeStatePath);
     if (Option.isNone(runtimeState)) {
@@ -248,10 +250,11 @@ const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E,
     return yield* run(makeThreadTools(session, origin));
   }).pipe(
     Effect.scoped,
+    Effect.provideService(References.MinimumLogLevel, minimumLogLevel),
     Effect.provide(
       EnvironmentAuth.layerRuntime.pipe(
         Layer.provide(ServerConfig.layer(config)),
-        Layer.provide(Layer.succeed(References.MinimumLogLevel, config.logLevel)),
+        Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
       ),
     ),
   );
@@ -509,6 +512,17 @@ const runResultText = Effect.fn("cli.thread.runResultText")(function* (
   return item === undefined ? null : yield* readFullText(tools, threadId, item);
 });
 
+/** The latest run's last error once it ended without completing, else null. */
+export const latestRunError = Effect.fn("cli.thread.latestRunError")(function* (
+  tools: ThreadTools,
+  thread: Pick<OrchestratorMcpThreadDetail, "threadId" | "status" | "latestRunId">,
+) {
+  const { status, latestRunId } = thread;
+  if (latestRunId === null || status === "idle" || status === "completed") return null;
+  if (!TERMINAL_RUN_STATUSES.has(status)) return null;
+  return yield* runResultText(tools, thread.threadId, latestRunId, "error");
+});
+
 type WaitOutcome =
   | {
       readonly type: "ended";
@@ -715,6 +729,45 @@ const launchWorkspaceStrategy = (input: {
       }),
   });
 
+/**
+ * Options are model specific, so they need an explicit model. `true` and
+ * `false` become booleans because boolean options such as fastMode only match
+ * a boolean.
+ */
+export const launchModelSelection = Effect.fn("cli.thread.launchModelSelection")(function* (input: {
+  readonly provider: Option.Option<string>;
+  readonly model: Option.Option<string>;
+  readonly option: ReadonlyArray<string>;
+}) {
+  if (Option.isSome(input.provider) !== Option.isSome(input.model)) {
+    return yield* new ThreadUsageError({ detail: "--provider and --model go together." });
+  }
+  if (Option.isNone(input.provider) || Option.isNone(input.model)) {
+    if (input.option.length > 0) {
+      return yield* new ThreadUsageError({ detail: "--option needs --provider and --model." });
+    }
+    return undefined;
+  }
+  const options: Array<{ readonly id: string; readonly value: string | boolean }> = [];
+  for (const entry of input.option) {
+    const separator = entry.indexOf("=");
+    const id = separator < 0 ? "" : entry.slice(0, separator).trim();
+    const value = separator < 0 ? "" : entry.slice(separator + 1).trim();
+    if (id.length === 0 || value.length === 0) {
+      return yield* new ThreadUsageError({ detail: `--option '${entry}' is not id=value.` });
+    }
+    if (options.some((option) => option.id === id)) {
+      return yield* new ThreadUsageError({ detail: `--option ${id} is given more than once.` });
+    }
+    options.push({ id, value: value === "true" ? true : value === "false" ? false : value });
+  }
+  return {
+    instanceId: input.provider.value,
+    model: input.model.value,
+    ...(options.length === 0 ? {} : { options }),
+  };
+});
+
 const jsonFlag = Flag.Boolean("json").pipe(
   Flag.withDescription("Print JSON instead of text."),
   Flag.withDefault(false),
@@ -791,6 +844,12 @@ const threadStartCommand = Command.make("start", {
     Flag.withDescription("Model slug. Defaults to the project's default model."),
     Flag.optional,
   ),
+  option: Flag.String("option").pipe(
+    Flag.withDescription(
+      "Model option as id=value, such as effort=high. Repeat for more. Needs --provider and --model.",
+    ),
+    Flag.atLeast(0),
+  ),
   worktree: Flag.String("worktree").pipe(
     Flag.withDescription(
       "Run in a new git worktree based on this branch, tag, or commit, instead of the project folder.",
@@ -809,9 +868,7 @@ const threadStartCommand = Command.make("start", {
     Effect.gen(function* () {
       const message = yield* readMessageArgument(flags.message);
       const workspaceStrategy = yield* launchWorkspaceStrategy(flags);
-      if (Option.isSome(flags.provider) !== Option.isSome(flags.model)) {
-        return yield* new ThreadUsageError({ detail: "--provider and --model go together." });
-      }
+      const modelSelection = yield* launchModelSelection(flags);
       const title = yield* decodeTitle(
         Option.getOrElse(flags.title, () => titleFromMessage(message)),
       ).pipe(Effect.mapError(() => new ThreadUsageError({ detail: "The title is empty." })));
@@ -826,14 +883,7 @@ const threadStartCommand = Command.make("start", {
               title,
               message,
               ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
-              ...(Option.isSome(flags.provider) && Option.isSome(flags.model)
-                ? {
-                    modelSelection: {
-                      instanceId: flags.provider.value,
-                      model: flags.model.value,
-                    },
-                  }
-                : {}),
+              ...(modelSelection === undefined ? {} : { modelSelection }),
             },
             ThreadLaunchResult,
           );
@@ -924,8 +974,9 @@ const threadShowCommand = Command.make("show", {
               })),
             ),
           );
+          const error = yield* latestRunError(tools, thread);
           if (flags.json) {
-            return yield* printJson({ thread, messages });
+            return yield* printJson({ thread, messages, error });
           }
           yield* Console.log(thread.title);
           yield* Console.log(
@@ -938,6 +989,9 @@ const threadShowCommand = Command.make("show", {
           }
           if (thread.pendingRequestCount > 0) {
             yield* Console.log(`Waiting for ${thread.pendingRequestCount} answer(s).`);
+          }
+          if (error !== null) {
+            yield* Console.log(`Error: ${error}`);
           }
           for (const entry of messages) {
             yield* Console.log(`\n[${entry.role}]\n${entry.text}`);
