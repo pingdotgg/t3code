@@ -62,6 +62,7 @@ import {
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { layerRealGit } from "./ProviderTurnStartService.testkit.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as MultiRepoWorkspaces from "../vcs/MultiRepoWorkspaces.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
@@ -408,6 +409,52 @@ effectIt.effect("restores into a leftover worktree folder that cannot itself be 
             Layer.mock(ProjectService.ProjectService)({
               getById: () =>
                 Effect.succeedSome({ workspaceRoot: "/tmp/provider-turn-start-project" } as never),
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
+});
+
+effectIt.effect("restores a multi-repo group into its leftover folder by removing it first", () => {
+  const worktreePath = "/tmp/provider-turn-start-project/.worktrees/feature-restore";
+  const remove = vi.fn(() => Effect.void);
+  const createWorktree = vi.fn(() => Effect.succeed({} as never));
+  return Effect.gen(function* () {
+    const { restore } = yield* ThreadWorktreeRestore;
+    yield* restore({
+      id: ThreadId.make("thread_group_restore"),
+      projectId: ProjectId.make("project_group_restore"),
+      worktreePath,
+      branch: "feature/restore",
+    });
+    expect(remove).toHaveBeenCalledWith(worktreePath, { recursive: true });
+    expect(createWorktree).toHaveBeenCalledTimes(1);
+  }).pipe(
+    Effect.provide(
+      layerThreadWorktreeRestore.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(FileSystem.FileSystem, {
+              exists: (target: string) => Effect.succeed(!target.endsWith("/.git")),
+              readDirectory: () => Effect.succeed(["node_modules"]),
+              stat: () => Effect.succeed({ type: "Directory" }),
+              realPath: (target: string) => Effect.succeed(normalize(target)),
+              remove,
+            } as never),
+            layerWorktreeLocation(),
+            Layer.mock(GitWorkflow.GitWorkflowService)({
+              pruneWorktrees: () => Effect.void,
+              createWorktree,
+              listLocalBranchNames: () => Effect.succeed(["feature/restore"]),
+            }),
+            Layer.mock(ProjectService.ProjectService)({
+              getById: () =>
+                Effect.succeedSome({ workspaceRoot: "/tmp/provider-turn-start-project" } as never),
+            }),
+            Layer.mock(MultiRepoWorkspaces.MultiRepoWorkspaces)({
+              members: () => Effect.succeed(["api", "web"]),
             }),
           ),
         ),

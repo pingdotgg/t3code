@@ -11,6 +11,7 @@ import * as ServerConfig from "../config.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import { scratchFolderRoot } from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as MultiRepoWorkspaces from "../vcs/MultiRepoWorkspaces.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import { isWithinRoot } from "./KnownWorkspaces.ts";
 import { withWorkspaceLease } from "./workspaceLease.ts";
@@ -55,6 +56,7 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
   const serverConfig = yield* ServerConfig.ServerConfig;
+  const multiRepo = yield* Effect.serviceOption(MultiRepoWorkspaces.MultiRepoWorkspaces);
 
   // Storage cleanup prunes idle No project folders, which have no branch to restore from.
   // An empty folder, only directly inside the No project's own root, lets the thread run again.
@@ -197,7 +199,13 @@ export const makeRestoreMissingWorktree = Effect.gen(function* () {
         ),
       ),
     );
-    yield* (leftover ? clearLeftovers : Effect.void).pipe(
+    // Workler refuses any existing target, so a multi-repo group's leftover folder goes entirely.
+    const isGroup =
+      Option.isSome(multiRepo) && (yield* multiRepo.value.members(project.workspaceRoot)) !== null;
+    const clearTarget = isGroup
+      ? fileSystem.remove(worktreePath, { recursive: true })
+      : clearLeftovers;
+    yield* (leftover ? clearTarget : Effect.void).pipe(
       Effect.andThen(recreateMissingWorktree({ cwd: project.workspaceRoot, worktreePath, branch })),
       Effect.mapError((cause) =>
         cause._tag === "WorktreeRecreateNoBaseError"
