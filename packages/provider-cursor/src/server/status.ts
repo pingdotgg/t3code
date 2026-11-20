@@ -23,6 +23,7 @@ import {
   providerModelsFromSettings,
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
+import { isInvalidCursorTeamId, type CursorTeam } from "./auth.ts";
 import * as CursorSdkCatalog from "./CursorSdkCatalog.ts";
 
 const CURSOR_PRESENTATION = {
@@ -187,7 +188,10 @@ export function buildCursorDiscoveredModelsFromSdk(
   });
 }
 
-function cursorSdkAuth(user: SDKUser | undefined, type: "api-key" | "browser"): ServerProviderAuth {
+function cursorSdkAuth(
+  user: SDKUser | undefined,
+  { type, team }: { readonly type: "api-key" | "browser"; readonly team?: CursorTeam | undefined },
+): ServerProviderAuth {
   const email = user?.userEmail?.trim();
   const apiKeyName = user?.apiKeyName.trim();
   return {
@@ -200,6 +204,7 @@ function cursorSdkAuth(user: SDKUser | undefined, type: "api-key" | "browser"): 
           ? `Cursor API key (${apiKeyName})`
           : "Cursor API key",
     ...(email ? { email } : {}),
+    ...(team ? { workspaceId: String(team.id) } : {}),
   };
 }
 
@@ -253,7 +258,10 @@ export function buildCursorProviderSnapshot(input: {
 export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(function* (
   cursorSettings: CursorSettings,
   environment?: NodeJS.ProcessEnv,
-  authenticationType: "api-key" | "browser" = "api-key",
+  authentication: {
+    readonly type: "api-key" | "browser";
+    readonly team?: CursorTeam | undefined;
+  } = { type: "api-key" },
 ): Effect.fn.Return<ServerProviderDraft, never, CursorSdkCatalog.CursorSdkCatalog> {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = getCursorFallbackModels(cursorSettings);
@@ -297,9 +305,9 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
     CURSOR_SDK_CATALOG_TIMEOUT_MS,
     environment,
   );
-  const readCatalog = Effect.suspend(() => sdkCatalog.read(sdkApiKey)).pipe(
-    Effect.timeoutOption(timeoutMs),
-  );
+  const readCatalog = Effect.suspend(() =>
+    sdkCatalog.read(sdkApiKey, authentication.team?.id),
+  ).pipe(Effect.timeoutOption(timeoutMs));
   // api.cursor.com latency is intermittent; one slow read should not flip the provider to error.
   const catalogResult = yield* readCatalog.pipe(
     Effect.filterOrElse(Option.isSome, () => readCatalog),
@@ -314,12 +322,12 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
     let message = "Cursor SDK catalog request failed. Check server logs for details.";
     if (failure.authenticationFailure) {
       message =
-        authenticationType === "browser"
+        authentication.type === "browser"
           ? "Cursor sign-in expired or was rejected. Sign in again in provider settings."
           : "Cursor SDK authentication failed. Check CURSOR_API_KEY.";
     } else if (failure.planRequired) {
       message =
-        authenticationType === "browser"
+        authentication.type === "browser"
           ? "Cursor needs a paid plan to run in T3 Code. Upgrade this account or sign in with a different one."
           : "Cursor needs a paid plan to run in T3 Code. Upgrade the account that owns CURSOR_API_KEY or use a key from a paid account.";
     }
@@ -356,13 +364,20 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
 
   const snapshot = catalogResult.success.value;
   const discoveredModels = buildCursorDiscoveredModelsFromSdk(snapshot.models);
+  const teamId = environment?.CURSOR_TEAM_ID?.trim();
+  const teamInvalid = isInvalidCursorTeamId(teamId);
   return buildCursorProviderSnapshot({
     checkedAt,
     cursorSettings,
     parsed: {
       version: null,
-      status: "ready",
-      auth: cursorSdkAuth(snapshot.user, authenticationType),
+      status: teamInvalid ? "warning" : "ready",
+      auth: cursorSdkAuth(snapshot.user, authentication),
+      ...(teamInvalid
+        ? {
+            message: `CURSOR_TEAM_ID "${teamId}" is not a Cursor team id. Runs fail until it is fixed.`,
+          }
+        : {}),
     },
     discoveredModels,
     ...(discoveredModels.length === 0

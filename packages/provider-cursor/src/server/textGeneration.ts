@@ -13,7 +13,7 @@ import type { CursorSettings } from "../settings.ts";
 
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import { cursorSdkModelSelection } from "./sdkModel.ts";
-import type { CursorAuth } from "./auth.ts";
+import type { CursorAccess, CursorAuth } from "./auth.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import * as CursorSdk from "./CursorSdk.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -52,7 +52,7 @@ function cursorSandboxUnsupported(cause: unknown): boolean {
 export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(function* (
   cursorSettings: CursorSettings,
   environment?: NodeJS.ProcessEnv,
-  resolveApiKey?: Effect.Effect<string, ProviderSetupError>,
+  resolveAccess?: Effect.Effect<CursorAccess, ProviderSetupError>,
   withAccess?: CursorAuth["withAccess"],
   getModels?: () => ReadonlyArray<ServerProviderModel>,
   getSdkModels?: () => ReadonlyArray<SDKModel>,
@@ -61,7 +61,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
   const sdk = yield* CursorSdk.CursorSdk;
   const resolvedEnvironment = environment ?? process.env;
 
-  const resolveCursorApiKey = Effect.fn("CursorTextGeneration.resolveCursorApiKey")(function* (
+  const resolveCursorAccess = Effect.fn("CursorTextGeneration.resolveCursorAccess")(function* (
     operation: TextGenerationOperations.Operation,
   ) {
     if (!cursorSettings.enabled) {
@@ -71,9 +71,8 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       });
     }
 
-    const apiKey = resolveApiKey
-      ? yield* resolveApiKey
-      : resolvedEnvironment.CURSOR_API_KEY?.trim();
+    if (resolveAccess) return yield* resolveAccess;
+    const apiKey = resolvedEnvironment.CURSOR_API_KEY?.trim();
     if (!apiKey) {
       return yield* new TextGenerationError({
         operation,
@@ -81,7 +80,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       });
     }
 
-    return apiKey;
+    return { apiKey, team: undefined };
   });
 
   const runCursorJson: TextGenerationOperations.Runner = Effect.fn(
@@ -90,7 +89,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
     function* (input) {
       const { operation, prompt, modelSelection } = input;
 
-      const apiKey = yield* resolveCursorApiKey(operation);
+      const { apiKey, team } = yield* resolveCursorAccess(operation);
       const sdkFailure = (detail: string) => (cause: unknown) =>
         new TextGenerationError({ operation, detail, cause });
       const { Agent } = yield* Effect.try({
@@ -121,6 +120,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       );
       const agentOptions = {
         apiKey,
+        ...(team ? { teamId: team.id } : {}),
         mode: "plan",
         model: cursorSdkModelSelection(modelSelection, getModels?.() ?? [], getSdkModels?.() ?? []),
         local: {
