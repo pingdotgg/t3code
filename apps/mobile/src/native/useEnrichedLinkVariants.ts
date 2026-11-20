@@ -118,6 +118,7 @@ export function useEnrichedLinkVariants(
   urls: ReadonlyArray<string>,
   props: SelectableMarkdownTextProps,
   fileHrefs: ReadonlySet<string>,
+  inlineCodeHrefs: ReadonlySet<string>,
 ) {
   const { linkCustomization, skills, models, textStyle, fileEmbedLabel } = props;
   const theme = useUniwindTheme();
@@ -180,13 +181,13 @@ export function useEnrichedLinkVariants(
         [...links].map(([url, link]) => [
           url,
           {
-            label: link.label,
+            label: inlineCodeHrefs.has(url) ? undefined : link.label,
             iconUri: link.icon ? Image.resolveAssetSource(link.icon)?.uri : undefined,
             iconTintColor: link.chip?.tintsIcon ? chipForegrounds.get(url) : link.iconTintColor,
           },
         ]),
       ),
-    [chipForegrounds, links],
+    [chipForegrounds, links, inlineCodeHrefs],
   );
   return { linkVariants, linkPillContent };
 }

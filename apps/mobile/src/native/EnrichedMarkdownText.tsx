@@ -247,22 +247,30 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
     }),
     [gt],
   );
-  const { markdown, fileHrefs } = useMemo(() => {
+  const { markdown, fileHrefs, inlineCodeHrefs } = useMemo(() => {
+    const inlineCodeHrefs = new Set<string>();
     if (!fileEmbedLabel) {
       return {
         markdown: markdownWithTextDirection(
-          markdownForNativeRendering(props.markdown, ENRICHED_INLINE_FILE_LINK_REGEX),
+          markdownForNativeRendering(
+            props.markdown,
+            ENRICHED_INLINE_FILE_LINK_REGEX,
+            inlineCodeHrefs,
+          ),
         ),
         fileHrefs: new Set<string>(),
+        inlineCodeHrefs,
       };
     }
     const content = markdownWithInlineFileLinks(
       markdownForNativeParsing(props.markdown),
       ENRICHED_INLINE_FILE_LINK_REGEX,
+      inlineCodeHrefs,
     );
     const files = markdownWithFileEmbeds(content, fileEmbedLabel);
     return {
       ...files,
+      inlineCodeHrefs,
       markdown: markdownWithTextDirection(markdownWithTableBreaks(files.markdown)),
     };
   }, [props.markdown, fileEmbedLabel]);
@@ -291,7 +299,12 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   const linkUrls = textLinkKey
     ? [...new Set([...parsedLinkUrls, ...textLinkKey.split("\n")])]
     : parsedLinkUrls;
-  const { linkVariants, linkPillContent } = useEnrichedLinkVariants(linkUrls, props, fileHrefs);
+  const { linkVariants, linkPillContent } = useEnrichedLinkVariants(
+    linkUrls,
+    props,
+    fileHrefs,
+    inlineCodeHrefs,
+  );
   const linkRecognition = useMemo(() => ({ text: textLinkRegex ?? undefined }), [textLinkRegex]);
   const [activeMenu, setActiveMenu] = useState<{
     url: string;
