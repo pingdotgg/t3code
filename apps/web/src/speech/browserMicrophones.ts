@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { useStableCallback } from "../hooks/useStableCallback";
 import {
   getClientSettings,
@@ -54,7 +54,15 @@ export function useMicrophoneRefresh({
     if (latest.current === scan) reportResult(devices);
   });
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes browser device changes and invalidates pending scans on cleanup
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- invalidates pending scans at commit before passive cleanup can run
+  useLayoutEffect(() => {
+    if (!enabled) return;
+    return () => {
+      latest.current = null;
+    };
+  }, [enabled]);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes browser device changes
   useEffect(() => {
     if (!enabled) return;
     const initial = Symbol();
@@ -65,7 +73,6 @@ export function useMicrophoneRefresh({
     const devices = navigator.mediaDevices;
     devices?.addEventListener?.("devicechange", refresh);
     return () => {
-      latest.current = null;
       devices?.removeEventListener?.("devicechange", refresh);
     };
   }, [enabled, refresh]);
