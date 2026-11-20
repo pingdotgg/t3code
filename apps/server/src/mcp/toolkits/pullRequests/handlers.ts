@@ -61,6 +61,7 @@ import {
   PullRequestProjectNotFoundError,
   PullRequestsToolkit,
   type ThreadPullRequestEntry,
+  alreadyEndedWatchNext,
   CHILD_PULL_REQUEST_REPORT_NEXT,
 } from "./tools.ts";
 
@@ -326,6 +327,11 @@ const make = Effect.gen(function* () {
     return yield* watches
       .setWatching({ threadId, target: input, watching, until: input.until })
       .pipe(
+        Effect.map((result) =>
+          result.state === undefined
+            ? result
+            : { ...result, next: alreadyEndedWatchNext(result.state) },
+        ),
         Effect.catchTags({
           PullRequestWatchThreadNotFoundError: (error) =>
             threadNotFound(engine, scope, error.threadId, error.message),
