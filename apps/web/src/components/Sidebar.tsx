@@ -2923,8 +2923,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       if (event.defaultPrevented || event.repeat || isCommandPaletteOpen() || isModelPickerOpen()) {
         return;
       }
-      if (routeThreadRef && isOpenThreadRenameKey(event)) {
-        const routeThread = threadByKey.get(scopedThreadKey(routeThreadRef));
+      if (routeThreadRef && routeThreadKey && isOpenThreadRenameKey(event, routeThreadKey)) {
+        const routeThread = threadByKey.get(routeThreadKey);
         if (!routeThread) return;
         event.preventDefault();
         startThreadRename(routeThreadRef, routeThread.title);
@@ -2965,6 +2965,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     navigateToThread,
     orderedThreadKeys,
     routeRowThreadKey,
+    routeThreadKey,
     routeThreadRef,
     startThreadRename,
     threadByKey,
