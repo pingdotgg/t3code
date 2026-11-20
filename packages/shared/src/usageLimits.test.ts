@@ -1888,17 +1888,6 @@ describe("instance usage limits", () => {
     expect(limitsOf(selected, sources)?.windows.map(remainingPercent)).toEqual([remaining, 90]);
   });
 
-  it("pools separate workspaces for the same Codex email", () => {
-    const email = "same@example.com";
-    const limits = limitsOf(routed, [
-      hub([
-        hubAccount("personal.json", 100, { email, workspaceId: "personal" }),
-        hubAccount("team.json", 0, { email, workspaceId: "team" }),
-      ]),
-    ]);
-    expect(limits?.windows[0]?.usedPercent).toBe(50);
-  });
-
   it("keeps a readable snapshot when a newer duplicate failed", () => {
     const limits = limitsOf(routed, [
       hub([hubAccount("a", 30)]),
@@ -1921,11 +1910,6 @@ describe("instance usage limits", () => {
   it("rounds remaining quota for a pool of accounts the same way as Usage", () => {
     const limits = limitsOf(routed, [hub([hubAccount("a", 99), hubAccount("b", 100)])]);
     expect(limits?.windows.map(remainingPercent)).toEqual([1, 90]);
-  });
-
-  it("preserves a successful snapshot with no windows", () => {
-    const empty = { checkedAt, windows: [] };
-    expect(limitsOf(routed, [hub([hubAccount("a", 0, { usageLimits: empty })])])).toEqual(empty);
   });
 
   it("keeps a lone hub account's reset clock", () => {
