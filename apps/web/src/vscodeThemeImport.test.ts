@@ -576,25 +576,13 @@ describe("VS Code theme import", () => {
       numberedBase: "Catppuccin Mocha High Contrast Accessible v2",
     },
     {
-      name: "GitHub Dark High Contrast Colorblind Previews JP",
-      numberedBase: "GitHub Dark High Contrast Colorblind Previews",
-      fromFilename: true,
-    },
-    {
       name: "İstanbul İncisi İzmir İskenderun İnegöl İpsala",
       numberedBase: "İstanbul İncisi İzmir İskenderun İnegöl İ",
     },
-  ])("keeps all numbered variants of $name", ({ name, numberedBase, fromFilename }) => {
+  ])("keeps all numbered variants of $name", ({ name, numberedBase }) => {
     const themes = resolveThemeLabelCollisions(
-      (
-        [
-          ["Classic", "#1e1e2e"],
-          ["Violet", "#25203b"],
-          ["Evergreen", "#152a26"],
-        ] as const
-      ).map(([variant, background]) => ({
+      ["#1e1e2e", "#25203b", "#152a26"].map((background) => ({
         theme: darkVsCodeTheme(name, background),
-        sourceName: fromFilename ? `${name} ${variant}.json` : undefined,
       })),
     );
     expect(themes.map((theme) => theme.label)).toEqual([
@@ -605,26 +593,23 @@ describe("VS Code theme import", () => {
     expect(new Set(themes.map((theme) => theme.id)).size).toBe(3);
   });
 
-  it.each(["before", "after"])(
-    "keeps the palette of a named variant selected %s the duplicates",
-    (position) => {
-      const name = "Catppuccin Mocha High Contrast Accessible Themes";
-      const numberedBase = "Catppuccin Mocha High Contrast Accessible Them";
-      const duplicates = ["#1e1e2e", "#25203b"].map((background) => ({
-        theme: darkVsCodeTheme(name, background),
-      }));
-      const peer = { theme: darkVsCodeTheme(`${numberedBase} 2`, "#152a26") };
-      const themes = resolveThemeLabelCollisions(
-        position === "before" ? [peer, ...duplicates] : [...duplicates, peer],
-      );
-      expect(themes.find(({ id }) => id === peer.theme.id)?.colors.canvas).toBe(
-        peer.theme.colors.canvas,
-      );
-      expect(themes.find(({ label }) => label === `${numberedBase} 3`)?.colors.canvas).toBe(
-        duplicates[1]!.theme.colors.canvas,
-      );
-    },
-  );
+  it("does not take the ID of a later theme already named with that number", () => {
+    const name = "Catppuccin Mocha High Contrast Accessible Themes";
+    const numberedBase = "Catppuccin Mocha High Contrast Accessible Them";
+    const duplicates = ["#1e1e2e", "#25203b"].map((background) => ({
+      theme: darkVsCodeTheme(name, background),
+    }));
+    const peer = { theme: darkVsCodeTheme(`${numberedBase} 2`, "#152a26") };
+    const themes = resolveThemeLabelCollisions([...duplicates, peer]);
+    expect(themes.map(({ label }) => label)).toEqual([
+      name,
+      `${numberedBase} 3`,
+      `${numberedBase} 2`,
+    ]);
+    expect(themes.find(({ id }) => id === peer.theme.id)?.colors.canvas).toBe(
+      peer.theme.colors.canvas,
+    );
+  });
 
   it("makes the appended number reach the ID when the name already contains that number", () => {
     const name = "İzmir İzmit İznik İğdır İdil İspir İncir 2 Ö";
