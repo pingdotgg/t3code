@@ -215,7 +215,7 @@ const directoryModels = (directory: string): ReadonlyArray<ProviderReplayEntry> 
 ];
 
 const bigPickle: ModelSelection = { instanceId, model: "opencode/big-pickle" };
-const policy = (runtimeMode: "full-access" | "approval-required" = "full-access") => ({
+const policy = (runtimeMode: "full-access" | "approval-required" | "auto" = "full-access") => ({
   runtimeMode,
   interactionMode: "default" as const,
   cwd: WORK,
@@ -242,7 +242,7 @@ const providerThread = (now: DateTime.Utc): OrchestrationV2ProviderThread => ({
 const turnInput = (
   thread: OrchestrationV2ProviderThread,
   modelSelection: ModelSelection = bigPickle,
-  runtimeMode: "full-access" | "approval-required" = "full-access",
+  runtimeMode: "full-access" | "approval-required" | "auto" = "full-access",
 ) => ({
   appThread: { title: TITLE } as OrchestrationV2AppThread,
   threadId,
@@ -282,7 +282,12 @@ const agentList = {
       description: "The default agent.",
       mode: "primary",
       hidden: false,
-      permissions: [{ action: "*", resource: "*", effect: "allow" }, ...buildPaths],
+      permissions: [
+        { action: "*", resource: "*", effect: "allow" },
+        { action: "shell", resource: "rm *", effect: "ask" },
+        { action: "shell", resource: "printf *", effect: "allow" },
+        ...buildPaths,
+      ],
     },
   ],
 };
@@ -290,6 +295,17 @@ const supervisedRules = [
   { action: "shell", resource: "*", effect: "ask" },
   { action: "edit", resource: "*", effect: "ask" },
   { action: "external_directory", resource: "*", effect: "ask" },
+  ...buildPaths,
+  ...mcpRules,
+];
+// Auto keeps the shared asks, then applies the agent's action-specific rules. The default
+// catch-all allow is intentionally absent so Auto stays stricter than Full access.
+const autoRules = [
+  { action: "shell", resource: "*", effect: "ask" },
+  { action: "edit", resource: "*", effect: "ask" },
+  { action: "external_directory", resource: "*", effect: "ask" },
+  { action: "shell", resource: "rm *", effect: "ask" },
+  { action: "shell", resource: "printf *", effect: "allow" },
   ...buildPaths,
   ...mcpRules,
 ];
@@ -333,6 +349,7 @@ const resumed = (
     readonly contextUsage?: OrchestrationV2ProviderThread["contextUsage"];
     readonly external?: boolean;
     readonly supervised?: boolean;
+    readonly auto?: boolean;
     readonly processExit?: Effect.Effect<void>;
     readonly beforeResponse?: (path: string) => Effect.Effect<void>;
     readonly borrowers?: { current: number };
@@ -362,11 +379,14 @@ const resumed = (
                   : emptyShellInventory),
               ])),
         ...withInstructions([
-          ...(options?.supervised === true
+          ...(options?.supervised === true || options?.auto === true
             ? [
                 out("agent.list", "<any>"),
                 reply("agent.list", agentList),
-                out("session.update", { sessionID: SESSION, permissions: supervisedRules }),
+                out("session.update", {
+                  sessionID: SESSION,
+                  permissions: options?.auto === true ? autoRules : supervisedRules,
+                }),
                 reply("session.update", null),
               ]
             : []),
@@ -406,7 +426,13 @@ const resumed = (
       },
       threadId,
       modelSelection: bigPickle,
-      runtimePolicy: policy(options?.supervised === true ? "approval-required" : "full-access"),
+      runtimePolicy: policy(
+        options?.auto === true
+          ? "auto"
+          : options?.supervised === true
+            ? "approval-required"
+            : "full-access",
+      ),
     });
     return { runtime, thread };
   });
@@ -3179,6 +3205,38 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         ended?.status === "failed" ? ended.failure.message : undefined,
         "OpenCode is waiting on a request T3 Code couldn't answer.",
       );
+    }),
+  );
+
+  it.effect("Auto applies the selected agent's native permission rules", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        { auto: true },
+      );
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread, bigPickle, "auto"));
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }),
+  );
+
+  it.effect("Auto applies the selected agent's action-specific native rules", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        { auto: true },
+      );
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread, bigPickle, "auto"));
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
     }),
   );
 
