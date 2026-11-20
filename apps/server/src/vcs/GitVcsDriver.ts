@@ -625,6 +625,14 @@ const HEAD_MOVES_SCAN_LIMIT = 512;
 const HEAD_MARK_TRAILER = "T3-Head-Moved-At";
 const HEAD_MARK_TRAILER_PATTERN = new RegExp(`^${HEAD_MARK_TRAILER}: (\\d+) (\\d+)$`, "m");
 
+// Parses "git version 2.34.1" or "git version 2.45.1.windows.1".
+const gitSupportsRemergeDiff = (versionOutput: string): boolean => {
+  const match = /^git version (\d+)\.(\d+)/.exec(versionOutput);
+  if (match === null) return false;
+  const major = Number(match[1]);
+  return major > 2 || (major === 2 && Number(match[2]) >= 36);
+};
+
 export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -689,6 +697,23 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         ? { appendTruncationMarker: input.appendTruncationMarker }
         : {}),
     });
+
+  // --diff-merges=remerge needs Git 2.36.
+  let remergeDiffSupported: boolean | undefined;
+  const supportsRemergeDiff = Effect.fn("GitVcsDriver.supportsRemergeDiff")(function* (
+    cwd: string,
+  ) {
+    if (remergeDiffSupported === undefined) {
+      const version = yield* execute({
+        operation: "GitVcsDriver.version",
+        cwd,
+        args: ["version"],
+      }).pipe(Effect.option);
+      if (Option.isNone(version)) return false;
+      remergeDiffSupported = gitSupportsRemergeDiff(version.value.stdout);
+    }
+    return remergeDiffSupported;
+  });
 
   const detectRepository: VcsDriver.VcsDriver["Service"]["detectRepository"] = Effect.fn(
     "detectRepository",
@@ -2201,12 +2226,54 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       });
 
       // Remerge diffs retain merge conflict fixes while excluding clean upstream changes.
+      // Older Git gets dense combined diffs, which miss a conflict resolved to one side's
+      // version, so it also keeps every path more than one parent changed since the merge base.
+      const remerge = yield* supportsRemergeDiff(input.cwd);
+      const listMergeSharedPaths = (args: ReadonlyArray<string>, stdin?: string) =>
+        listLines(["rev-list", "--merges", "--parents", ...args], stdin).pipe(
+          Effect.flatMap((merges) =>
+            Effect.forEach(
+              merges,
+              Effect.fnUntraced(function* (merge) {
+                const parents = merge.split(" ").slice(1);
+                const [base] = yield* listLines(["merge-base", "--octopus", ...parents]).pipe(
+                  // Unrelated histories have no merge base; the combined diff still applies.
+                  Effect.orElseSucceed((): ReadonlyArray<string> => []),
+                );
+                if (base === undefined) return [];
+                const changed = yield* Effect.forEach(
+                  parents,
+                  (parent) => listPaths(["diff", base, parent]),
+                  { concurrency: "unbounded" },
+                );
+                const counts = new Map<string, number>();
+                for (const path of changed.flatMap((paths) => [...new Set(paths)])) {
+                  if (path === "") continue;
+                  counts.set(path, (counts.get(path) ?? 0) + 1);
+                }
+                return [...counts].flatMap(([path, count]) => (count > 1 ? [path] : []));
+              }),
+              { concurrency: 4 },
+            ),
+          ),
+          Effect.map((lists) => lists.flat()),
+        );
+      const listCommitPaths = (args: ReadonlyArray<string>, stdin?: string) =>
+        remerge
+          ? listPaths(["log", ...args, "--format=", "--diff-merges=remerge"], stdin)
+          : Effect.all(
+              [
+                listPaths(["log", ...args, "--format=", "--cc"], stdin),
+                listMergeSharedPaths(args, stdin),
+              ],
+              { concurrency: "unbounded" },
+            ).pipe(Effect.map((lists) => lists.flat()));
       const [recentCommits, ...pathLists] = yield* Effect.all(
         [
           listLines(["rev-list", `--since=@${capturedAt}`, `${startHead}..${endHead}`]),
           listPaths(["diff", startHead, `${turnStart}^{commit}`]),
           listPaths(["diff", endHead, `${input.toCheckpointRef}^{commit}`]),
-          listPaths(["log", "--format=", "--diff-merges=remerge", `${endHead}..${startHead}`]),
+          listCommitPaths([`${endHead}..${startHead}`]),
         ],
         { concurrency: "unbounded" },
       );
@@ -2248,10 +2315,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       const ownCommitPaths =
         ownCommits.length === 0
           ? []
-          : yield* listPaths(
-              ["log", "--no-walk=unsorted", "--stdin", "--format=", "--diff-merges=remerge"],
-              `${ownCommits.join("\n")}\n`,
-            );
+          : yield* listCommitPaths(["--no-walk=unsorted", "--stdin"], `${ownCommits.join("\n")}\n`);
       return new Set([...pathLists.flat(), ...ownCommitPaths].filter((path) => path.length > 0));
     }),
 
