@@ -25,7 +25,9 @@ import { buildTriageLaunchPrompt } from "../triage/triagePrompt.ts";
 const cliPath = NodeURL.fileURLToPath(new URL("../bin.ts", import.meta.url));
 
 async function fixture(commands: ReadonlyArray<string>) {
-  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-triage-"));
+  const root = await NodeFSP.mkdtemp(
+    NodePath.join(await NodeFSP.realpath(NodeOS.tmpdir()), "t3-triage-"),
+  );
   const bin = NodePath.join(root, "bin");
   const record = NodePath.join(root, "launch.json");
   await NodeFSP.mkdir(bin);

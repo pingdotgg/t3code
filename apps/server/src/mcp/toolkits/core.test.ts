@@ -173,7 +173,7 @@ it.effect(
       const tool = server.tools.find(({ tool }) => tool.name === "t3_project_code_query")?.tool;
       expect(tool?.annotations?.readOnlyHint).toBe(true);
       expect(tool?.annotations?.destructiveHint).toBe(false);
-      expect(tool?.description).toContain("before broad repository-reading loops");
+      expect(tool?.description).toContain("code graph before broad reads");
 
       const denied = yield* server
         .callTool({
@@ -196,7 +196,7 @@ it.effect(
         ({ tool }) => tool.name === "t3_project_file_history",
       )?.tool;
       expect(history?.annotations?.readOnlyHint).toBe(true);
-      expect(history?.description).toContain("not that the thread authored the change");
+      expect(history?.description).toContain("presence is not authorship");
       // File history joins files to threads, so it needs thread access, not filesystem access.
       const historyDenied = yield* server
         .callTool({
