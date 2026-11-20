@@ -999,19 +999,28 @@ interface AcpMcpContext {
 
 // A GUI-subsystem executable (packaged Windows desktop) does not hold the console, so PowerShell
 // neither waits for it nor captures its output or exit code; cmd.exe running a batch file does.
+// cmd.exe decodes batch files with the console code page, so paths come from the (UTF-16) environment.
+const ACP_MCP_CALL_LAUNCHER = [
+  "@echo off",
+  "setlocal EnableExtensions DisableDelayedExpansion",
+  'set "ELECTRON_RUN_AS_NODE=1"',
+  "if not defined T3_ACP_MCP_ENTRYPOINT goto packaged",
+  '"%T3_ACP_MCP_NODE%" "%T3_ACP_MCP_ENTRYPOINT%" acp-mcp-call %*',
+  "exit /b %errorlevel%",
+  ":packaged",
+  '"%T3_ACP_MCP_NODE%" acp-mcp-call %*',
+  "",
+].join("\r\n");
+
 const writeAcpMcpCallLauncher = Effect.fn("AcpAdapterV2.writeAcpMcpCallLauncher")(function* (
-  self: SelfInvocation,
   stateDir: string,
 ) {
   if (!(yield* HostProcess.isWindows)) return undefined;
   const fileSystem = yield* FileSystem.FileSystem;
   const dir = `${stateDir}\\acp`;
   const launcherPath = `${dir}\\acp-mcp-call.cmd`;
-  const quote = (value: string) => `"${value.replaceAll("%", "%%")}"`;
-  const command = [self.command, ...selfInvocationArgs(self, [])].map(quote).join(" ");
-  const script = `@echo off\r\nsetlocal EnableExtensions DisableDelayedExpansion\r\nset "ELECTRON_RUN_AS_NODE=1"\r\n${command} acp-mcp-call %*\r\n`;
   return yield* fileSystem.makeDirectory(dir, { recursive: true }).pipe(
-    Effect.andThen(fileSystem.writeFileString(launcherPath, script)),
+    Effect.andThen(fileSystem.writeFileString(launcherPath, ACP_MCP_CALL_LAUNCHER)),
     Effect.as(launcherPath),
     Effect.catch((error) =>
       Effect.logWarning("Could not write the ACP terminal tool launcher.", error).pipe(
@@ -2008,7 +2017,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   const host = yield* ProviderHost.ProviderHost;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const { flavor, selfInvocation: self } = options;
-  const callLauncher = yield* writeAcpMcpCallLauncher(self, host.paths.stateDir);
+  const callLauncher = yield* writeAcpMcpCallLauncher(host.paths.stateDir);
   const readMcpContext = (threadId: ThreadId | null) =>
     threadId === null
       ? Effect.succeed(
