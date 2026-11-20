@@ -97,6 +97,7 @@ function shouldPublishAgentAwarenessEvent(
     case "thread.metadata-updated":
     case "thread.pull-request-link-updated":
     case "thread.pull-request-synced":
+    case "thread.issue-synced":
     case "thread.settled":
     case "thread.model-selection-updated":
     case "thread.provider-switched":
@@ -204,6 +205,8 @@ function resolveAgentActivityPublishingStartupState(input: {
 const RELAY_AGENT_ACTIVITY_DETAIL_MAX_LENGTH = 160;
 const REDACTED_RELAY_AGENT_FAILURE_DETAIL = "The agent run failed.";
 const RELAY_AGENT_ACTIVITY_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000] as const;
+// Nothing else re-queues a thread when the network returns, so a lost terminal state is retried until it lands.
+const RELAY_AGENT_ACTIVITY_STEADY_RETRY_DELAY_MS = 60_000;
 
 function sanitizeRelayAgentActivityState(
   state: RelayAgentActivityState | null,
@@ -819,11 +822,15 @@ export const make = Effect.gen(function* () {
 
   schedulePublishRetry = Effect.fnUntraced(function* (threadId: ThreadId) {
     const attempts = publishRetries.get(threadId)?.attempts ?? 0;
-    const delayMs = RELAY_AGENT_ACTIVITY_RETRY_DELAYS_MS[attempts];
-    if (delayMs === undefined) {
-      // Retain exhausted budgets until activity or success resets them; old timers must not restart retries.
-      yield* Effect.logWarning("agent activity publish retry budget exhausted", { threadId });
-      return;
+    const delayMs =
+      RELAY_AGENT_ACTIVITY_RETRY_DELAYS_MS[attempts] ?? RELAY_AGENT_ACTIVITY_STEADY_RETRY_DELAY_MS;
+    if (attempts === RELAY_AGENT_ACTIVITY_RETRY_DELAYS_MS.length) {
+      yield* Effect.logWarning(
+        "agent activity publish retry budget exhausted; retrying every minute",
+        {
+          threadId,
+        },
+      );
     }
     const retry = {
       attempts: attempts + 1,

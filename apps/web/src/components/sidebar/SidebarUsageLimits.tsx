@@ -1,10 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
-import {
-  collectLimitAccounts,
-  collectLimitPools,
-  formatDuration,
-} from "@t3tools/shared/usageLimits";
+import { collectLimitAccounts, collectLimitPools } from "@t3tools/shared/usageLimits";
+import { formatDuration } from "@t3tools/shared/usageLimitsCopy";
 import { useNavigate } from "@tanstack/react-router";
+import { useGT, useMessages } from "gt-react";
 import { useState } from "react";
 
 import { cn } from "../../lib/utils";
@@ -53,6 +51,7 @@ function SidebarUsageChip({
   readonly summary: SidebarUsageSummary;
   readonly onClick: () => void;
 }) {
+  const gt = useGT();
   const label = providerClients.get(summary.driver)?.label ?? String(summary.driver);
   const low = summary.remainingPercent <= LOW_REMAINING_PERCENT;
   return (
@@ -61,7 +60,10 @@ function SidebarUsageChip({
         render={
           <button
             type="button"
-            aria-label={`${label} usage: ${summary.remainingPercent}% left`}
+            aria-label={gt("{provider} usage: {percent}% left", {
+              provider: label,
+              percent: summary.remainingPercent,
+            })}
             className={cn(
               "inline-flex h-8 shrink-0 cursor-pointer items-center gap-1 rounded-md px-1.5 text-xs tabular-nums outline-hidden ring-ring transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset",
               low ? "text-warning" : "text-(--sidebar-icon-color)",
@@ -93,10 +95,12 @@ function SidebarUsageTooltip({
   readonly label: string;
   readonly summary: SidebarUsageSummary;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const [now] = useState(() => Date.now());
   return (
     <div className="flex flex-col gap-0.5 text-left">
-      <div className="font-medium">{label} usage left</div>
+      <div className="font-medium">{gt("{provider} usage left", { provider: label })}</div>
       {summary.windows.map((window) => {
         const nextReset = window.resets.find((reset) => reset.at > now);
         return (
@@ -106,7 +110,8 @@ function SidebarUsageTooltip({
               {window.remainingPercent}%
               {nextReset ? (
                 <span className="text-muted-foreground">
-                  {` · resets in ${formatDuration(nextReset.at - now)}`}
+                  {" · "}
+                  {gt("resets in {duration}", { duration: formatDuration(nextReset.at - now, m) })}
                 </span>
               ) : null}
             </span>

@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react-native";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { Platform, Pressable, View } from "react-native";
 
@@ -13,7 +14,9 @@ export function WorkspaceEmptyDetail(props: {
   readonly onStartNewTask?: () => void;
   readonly onAddConnection?: () => void;
 }) {
+  const gt = useGT();
   const pullRequests = props.tab === "pullRequests";
+  const issues = props.tab === "issues";
   const settings = props.tab === "settings";
   if (props.tab === "usage") return <View className="flex-1 bg-screen" />;
   return (
@@ -28,12 +31,12 @@ export function WorkspaceEmptyDetail(props: {
         {props.onAddConnection ? (
           <View className="w-full max-w-[430px]">
             <EmptyState
-              title="No environments connected"
-              detail="Add an environment to load projects and start coding sessions."
+              title={gt("No environments connected")}
+              detail={gt("Add an environment to load projects and start coding sessions.")}
               variant="plain"
               action={
                 <FloatingActionButton
-                  label="Add environment"
+                  label={gt("Add environment")}
                   icon="plus"
                   variant="extended"
                   tone="primary"
@@ -52,21 +55,25 @@ export function WorkspaceEmptyDetail(props: {
             />
             <Text className="text-center text-xl font-t3-bold">
               {settings
-                ? "Select a setting"
+                ? gt("Select a setting")
                 : pullRequests
-                  ? "Select a pull request"
-                  : "Select a thread"}
+                  ? gt("Select a pull request")
+                  : issues
+                    ? gt("Select an issue")
+                    : gt("Select a thread")}
             </Text>
             <Text className="text-center text-base text-foreground-muted">
               {settings
-                ? "Choose a page from the sidebar."
+                ? gt("Choose a page from the sidebar.")
                 : pullRequests
-                  ? "Choose a pull request from the sidebar to review it."
-                  : Platform.OS === "android"
-                    ? "Choose a thread from the sidebar or start a new thread."
-                    : "Choose a thread from the sidebar or start a new task."}
+                  ? gt("Choose a pull request from the sidebar to review it.")
+                  : issues
+                    ? gt("Choose an issue from the sidebar to read it.")
+                    : Platform.OS === "android"
+                      ? gt("Choose a thread from the sidebar or start a new thread.")
+                      : gt("Choose a thread from the sidebar or start a new task.")}
             </Text>
-            {props.onStartNewTask && !pullRequests && !settings ? (
+            {props.onStartNewTask && !pullRequests && !issues && !settings ? (
               Platform.OS === "android" ? (
                 <NewThreadButton extended className="mt-2" onPress={props.onStartNewTask} />
               ) : (
@@ -75,7 +82,9 @@ export function WorkspaceEmptyDetail(props: {
                   className="mt-2 flex-row items-center gap-2 rounded-full bg-primary px-5 py-3 active:opacity-70"
                   onPress={props.onStartNewTask}
                 >
-                  <Text className="text-base font-t3-bold text-primary-foreground">New thread</Text>
+                  <Text className="text-base font-t3-bold text-primary-foreground">
+                    <T>New thread</T>
+                  </Text>
                 </Pressable>
               )
             ) : null}
