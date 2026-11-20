@@ -1,19 +1,23 @@
 import { Check, Circle } from "lucide-react";
 
+import { CheckRows } from "../checks/CheckRows";
 import type { MergeCondition } from "../domain/forYou";
-import type { ConditionKey, ConditionState } from "../domain/readiness";
+import type { CheckRun, ConditionKey, ConditionState } from "../domain/readiness";
 import { ClaimEvidence } from "./ClaimEvidence";
 
 /**
  * Each merge-ready condition as the board computes it from the ticket and its checks. A card
- * passes the orchestrator's claims too, and a row says so when the claim and the live result disagree.
+ * passes the orchestrator's claims too, and a row says so when the claim and the live result
+ * disagree. Given the checks, the CI condition lists them in the Checks tab's rows.
  */
 export function ReadinessChecklist({
   conditions,
   claims,
+  checks,
 }: {
   conditions: ReadonlyArray<ConditionState>;
   claims?: Readonly<Record<ConditionKey, MergeCondition>>;
+  checks?: { readonly runs: ReadonlyArray<CheckRun>; readonly now: number };
 }) {
   return (
     <ul aria-label="Merge readiness" data-testid="readiness" className="flex flex-col gap-2">
@@ -51,6 +55,11 @@ export function ReadinessChecklist({
                 </p>
               )}
               {claim !== undefined && <ClaimEvidence condition={claim} />}
+              {condition.key === "ci_green" && checks !== undefined && checks.runs.length > 0 && (
+                <div data-testid="readiness-checks" className="-mx-1 mt-1">
+                  <CheckRows checks={checks.runs} now={checks.now} />
+                </div>
+              )}
             </div>
           </li>
         );

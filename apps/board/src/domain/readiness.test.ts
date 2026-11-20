@@ -20,6 +20,9 @@ const minutesAgo = (minutes: number) => NOW - minutes * 60_000;
 const check = (name: string, status: CheckRun["status"], runningSince: number | null = null) => ({
   name,
   status,
+  description: null,
+  url: null,
+  required: false,
   placeholder: false,
   runningSince,
 });

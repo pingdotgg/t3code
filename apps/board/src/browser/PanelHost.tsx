@@ -4,7 +4,7 @@ import { ChangesPanel } from "../changes/ChangesPanel";
 import { FilesPanel } from "../files/FilesPanel";
 import { lastOpenedBoardAtom } from "../state/boards";
 import { EmptyFiles } from "../files/EmptyFiles";
-import { attachChatSlot, panelAtom } from "./panel";
+import { attachChatSlot, attachChecksSlot, panelAtom } from "./panel";
 import { PanelTabs } from "./PanelTabs";
 import { ResizeHandle } from "./ResizeHandle";
 
@@ -52,6 +52,16 @@ export function PanelHost() {
         className={shown(tab === "changes")}
       >
         <ChangesPanel />
+      </div>
+      <div
+        id="panel-checks"
+        role="tabpanel"
+        aria-labelledby="panel-tab-checks"
+        className={shown(tab === "checks")}
+      >
+        {opened === null && <EmptyFiles>Open a board to see its pull requests.</EmptyFiles>}
+        {/* The board's own screen draws the checks into this slot, because they need its tickets and pull request context. */}
+        <div ref={attachChecksSlot} className="flex min-h-0 flex-1 flex-col" />
       </div>
     </aside>
   );

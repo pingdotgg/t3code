@@ -3,7 +3,7 @@ import { Atom, type AtomRegistry } from "effect/reactivity";
 import { appAtomRegistry } from "../state/registry";
 
 /** The panel's tabs. Later tabs join this list and the strip, and this one does not move. */
-export const PANEL_TABS = ["chat", "explorer", "changes"] as const;
+export const PANEL_TABS = ["chat", "explorer", "changes", "checks"] as const;
 export type PanelTab = (typeof PANEL_TABS)[number];
 
 export interface PanelState {
@@ -24,11 +24,17 @@ export const panelAtom = Atom.make<PanelState>({
 const change = (registry: AtomRegistry.AtomRegistry, next: (state: PanelState) => PanelState) =>
   registry.set(panelAtom, next(registry.get(panelAtom)));
 
+const markOpen = (tab: PanelTab) => {
+  if (tab === "checks") performance.mark("board:checks-open");
+};
+
 export function setPanelTab(registry: AtomRegistry.AtomRegistry, tab: PanelTab): void {
+  markOpen(tab);
   change(registry, (state) => ({ ...state, tab }));
 }
 
 export function showPanelTab(registry: AtomRegistry.AtomRegistry, tab: PanelTab): void {
+  markOpen(tab);
   change(registry, (state) => ({ ...state, open: true, tab }));
 }
 
@@ -48,3 +54,12 @@ export const chatSlotAtom = Atom.make<HTMLElement | null>(null).pipe(
 
 // A stable function, so a re-render does not detach and attach the slot again.
 export const attachChatSlot = (node: HTMLElement | null) => appAtomRegistry.set(chatSlotAtom, node);
+
+/** Where the open board's checks draw, which needs the board's pull request context. */
+export const checksSlotAtom = Atom.make<HTMLElement | null>(null).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("checks-slot"),
+);
+
+export const attachChecksSlot = (node: HTMLElement | null) =>
+  appAtomRegistry.set(checksSlotAtom, node);

@@ -92,6 +92,9 @@ export function trackRunning(
     return {
       name: check.name,
       status: check.status,
+      description: check.description,
+      url: check.url,
+      required: check.required === true,
       placeholder: check.placeholder === true,
       runningSince: isRunning ? (seen.get(key) ?? now) : null,
     };
