@@ -60,10 +60,9 @@ export const BlenderToolkit = Toolkit.make(
     .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),
   Tool.make("blender_job", {
     description:
-      "Read this thread's Blender job and available output links. Set wait to wait for completion without polling.",
+      "Read this thread's Blender job and available output links. Background job completion is delivered to this thread.",
     parameters: Schema.Struct({
       jobId: BlenderJobRef.fields.jobId,
-      wait: Schema.optionalKey(Schema.Boolean),
     }),
     success: jobResult,
     failure: OrchestratorMcpFailure,

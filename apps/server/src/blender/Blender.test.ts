@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
   ThreadId,
+  type BlenderJob,
   type BlenderStatus,
   type ServerSettings as ServerSettingsSchema,
 } from "@t3tools/contracts";
@@ -299,15 +300,28 @@ const exited = (code: number) => ({
   stderrInvalidUtf8: false,
 });
 
+function glbFixture(text: string) {
+  const payload = Buffer.from(text);
+  const data = Buffer.alloc(12 + payload.length);
+  data.write("glTF");
+  data.writeUInt32LE(2, 4);
+  data.writeUInt32LE(data.length, 8);
+  payload.copy(data, 12);
+  return data;
+}
+
 /** Does what the job script does for a script that succeeds. */
 const writeOutputs = Effect.fn(function* (job: FakeJob) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   if (job.spec.outputs?.includes("preview")) {
-    yield* fs.writeFileString(path.join(job.spec.outputDir, "preview-1.glb"), "glTF-binary");
+    yield* fs.writeFile(path.join(job.spec.outputDir, "preview-1.glb"), glbFixture("binary"));
   }
   if (job.spec.outputs?.includes("render")) {
-    yield* fs.writeFileString(path.join(job.spec.outputDir, "render.png"), "png");
+    yield* fs.writeFile(
+      path.join(job.spec.outputDir, "render.png"),
+      Buffer.from("89504e470d0a1a0a", "hex"),
+    );
   }
   if (job.spec.savePath) yield* fs.writeFileString(job.spec.savePath, "edited scene");
 });
@@ -334,6 +348,7 @@ const startJobs = Effect.fn(function* (input: {
     job: FakeJob,
   ) => Effect.Effect<ReturnType<typeof exited>, never, FileSystem.FileSystem | Path.Path>;
   readonly limits?: Partial<Blender.BlenderLimits>;
+  readonly onAgentJobCompleted?: (job: BlenderJob) => Effect.Effect<void>;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -375,6 +390,9 @@ const startJobs = Effect.fn(function* (input: {
       },
       rootDir: path.join(root, "state"),
       ...(input.limits === undefined ? {} : { limits: input.limits }),
+      ...(input.onAgentJobCompleted === undefined
+        ? {}
+        : { onAgentJobCompleted: input.onAgentJobCompleted }),
     }).pipe(
       Layer.provide(
         ServerSettings.layerTest({ blender: { enabled: true, executablePath: executable } }),
@@ -404,6 +422,22 @@ const gatedRun = Effect.fn(function* () {
 });
 
 describe("Blender jobs", () => {
+  it.effect("delivers a terminal event to the agent only for agent-requested jobs", () =>
+    Effect.gen(function* () {
+      const events = yield* Queue.unbounded<BlenderJob>();
+      const { blender } = yield* startJobs({
+        onAgentJobCompleted: (job) => Queue.offer(events, job).pipe(Effect.asVoid),
+      });
+      const request = { threadId: THREAD, script: "edit.py", outputs: [] };
+      const clientJob = yield* blender.startJob(request);
+      yield* blender.awaitJob({ threadId: THREAD, jobId: clientJob.id });
+      const agentJob = yield* blender.startJob(request, { notifyAgent: true });
+      const completed = yield* Queue.take(events);
+      assert.strictEqual(completed.id, agentJob.id);
+      assert.strictEqual(completed.status, "succeeded");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("serves successive complete preview revisions while the owning job is running", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -440,8 +474,8 @@ describe("Blender jobs", () => {
           ),
           { startImmediately: true },
         );
-        const bytes = `glTF-preview-${revision}`;
-        yield* fs.writeFileString(path.join(job.spec.outputDir, `preview-${revision}.glb`), bytes);
+        const bytes = glbFixture(`preview-${revision}`);
+        yield* fs.writeFile(path.join(job.spec.outputDir, `preview-${revision}.glb`), bytes);
         yield* Effect.sync(() => notify?.(Buffer.from(`T3_BLENDER_PREVIEW ${revision}\n`)));
         const published = yield* Fiber.join(updated);
         assert.deepStrictEqual(
@@ -451,7 +485,7 @@ describe("Blender jobs", () => {
           "running",
         );
         const file = yield* blender.outputFile({ ...ref, revision });
-        assert.strictEqual(yield* fs.readFileString(file), bytes);
+        assert.deepStrictEqual(Buffer.from(yield* fs.readFile(file)), bytes);
       }
       const cancelled = yield* blender.cancelJob({ threadId: THREAD, jobId: run.id });
       assert.strictEqual(cancelled.status, "cancelled");
@@ -480,7 +514,7 @@ describe("Blender jobs", () => {
 
       assert.strictEqual(job.status, "succeeded");
       assert.deepStrictEqual(job.result, {
-        preview: { bytes: 11, current: true, revision: 1 },
+        preview: { bytes: 18, current: true, revision: 1 },
         saved: path.join("models", "chair-v2.blend"),
       });
       const [run] = jobs;
@@ -500,7 +534,7 @@ describe("Blender jobs", () => {
         jobId: job.id,
         output: "preview",
       });
-      assert.strictEqual(yield* fs.readFileString(preview), "glTF-binary");
+      assert.strictEqual(yield* fs.readFileString(preview), glbFixture("binary").toString());
       // Another thread cannot reach the job.
       const foreign = yield* blender
         .outputFile({ threadId: OTHER_THREAD, jobId: job.id, output: "preview" })
@@ -715,7 +749,9 @@ describe("Blender jobs", () => {
         collected.map((event) =>
           event._tag === "Snapshot"
             ? ["Snapshot", event.jobs.map((job) => job.id)]
-            : ["Updated", event.job.id, event.job.status],
+            : event._tag === "Updated"
+              ? ["Updated", event.job.id, event.job.status]
+              : ["Removed", event.jobId],
         ),
         [
           ["Snapshot", [earlier.id]],

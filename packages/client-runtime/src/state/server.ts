@@ -1579,7 +1579,9 @@ export function createServerEnvironmentAtoms<R, E>(
               const next =
                 event._tag === "Snapshot"
                   ? event.jobs
-                  : [event.job, ...jobs.filter((job) => job.id !== event.job.id)];
+                  : event._tag === "Removed"
+                    ? jobs.filter((job) => job.id !== event.jobId)
+                    : [event.job, ...jobs.filter((job) => job.id !== event.job.id)];
               const ordered = [...next].sort((a, b) => b.sequence - a.sequence).slice(0, 24);
               return [ordered, [ordered]] as const;
             },

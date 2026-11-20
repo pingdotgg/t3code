@@ -731,8 +731,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     }),
   ).pipe(Layer.provide(DelegatedTaskQuestionReactor.layer), Layer.provide(ProjectionStoreV2.layer)),
   // Above orchestration, whose thread events end a thread's jobs.
-  Blender.layer.pipe(Layer.provide(ProcessRunner.layer)),
-  BlenderWorkflow.layer,
+  Blender.layer.pipe(Layer.provide(ProcessRunner.layer), Layer.provideMerge(BlenderWorkflow.layer)),
   ProviderUsageLimitsIngestion.layer,
   layerProviderInstallationRefresh,
   ProviderInstallation.layer,

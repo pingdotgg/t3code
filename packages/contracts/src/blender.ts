@@ -162,6 +162,7 @@ export const isBlenderJobTerminal = (job: Pick<BlenderJob, "status">) =>
 export const BlenderJobEvent = Schema.Union([
   Schema.TaggedStruct("Snapshot", { jobs: Schema.Array(BlenderJob) }),
   Schema.TaggedStruct("Updated", { job: BlenderJob }),
+  Schema.TaggedStruct("Removed", { threadId: ThreadId, jobId: BlenderJobId }),
 ]);
 export type BlenderJobEvent = typeof BlenderJobEvent.Type;
 

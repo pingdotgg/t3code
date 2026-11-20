@@ -63,17 +63,17 @@ export const layer = McpToolAccess.toLayer(BlenderToolkit, {
         });
       }
       const blender = yield* Blender.Blender;
-      return yield* blender.startJob({ ...input, threadId }).pipe(Effect.mapError(rejected));
+      return yield* blender
+        .startJob({ ...input, threadId }, { notifyAgent: true })
+        .pipe(Effect.mapError(rejected));
     }),
   ),
-  blender_job: McpToolAccess.readsAsCaller(({ jobId, wait }) =>
+  blender_job: McpToolAccess.readsAsCaller(({ jobId }) =>
     Effect.gen(function* () {
       const { threadId, origin } = yield* activeThread();
       const blender = yield* Blender.Blender;
       const ref = { threadId, jobId };
-      const job = yield* (wait ? blender.awaitJob(ref) : blender.getJob(ref)).pipe(
-        Effect.mapError(rejected),
-      );
+      const job = yield* blender.getJob(ref).pipe(Effect.mapError(rejected));
       const links: Array<{ output: BlenderJobOutput; url: string }> = [];
       for (const output of job.outputs) {
         if (job.result?.[output] === undefined) continue;

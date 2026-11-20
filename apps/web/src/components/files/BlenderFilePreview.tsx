@@ -12,6 +12,7 @@ import { lazy, Suspense, useState } from "react";
 
 import { useAssetUrlState } from "~/assets/assetUrls";
 import { Button } from "~/components/ui/button";
+import { toastManager } from "~/components/ui/toast";
 import { serverEnvironment } from "~/state/server";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -66,6 +67,8 @@ export function BlenderFilePreview({
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   if (previewAsset._tag === "Success" && previewAsset.url !== previewUrl) {
     setPreviewUrl(previewAsset.url);
+  } else if (newestPreview === undefined && stream.isSuccess && previewUrl !== null) {
+    setPreviewUrl(null);
   }
   const [scene, setScene] = useState<BlenderScene | null>(null);
   const [busy, setBusy] = useState(false);
@@ -74,9 +77,10 @@ export function BlenderFilePreview({
     setBusy(true);
     try {
       await startJob({ environmentId, input: { threadId, input: path, outputs: [output] } });
-    } finally {
-      setBusy(false);
+    } catch {
+      toastManager.add({ type: "error", title: gt("The environment request failed.") });
     }
+    setBusy(false);
   }
 
   async function inspectScene() {
@@ -84,9 +88,10 @@ export function BlenderFilePreview({
     try {
       const result = await inspect({ environmentId, input: { threadId, path } });
       if (AsyncResult.isSuccess(result)) setScene(result.value);
-    } finally {
-      setBusy(false);
+    } catch {
+      toastManager.add({ type: "error", title: gt("The environment request failed.") });
     }
+    setBusy(false);
   }
 
   return (

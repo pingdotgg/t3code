@@ -1448,10 +1448,15 @@ const layerToolExposure = Layer.effect(
   McpToolExposure.McpToolExposure,
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
+    const notify = () => server.notifications["notifications/tools/list_changed"]({});
+    const blender = yield* Effect.serviceOption(BlenderWorkflow.BlenderWorkflow);
+    if (Option.isSome(blender)) {
+      yield* blender.value.changes.pipe(Stream.runForEach(notify), Effect.forkScoped);
+    }
     return McpToolExposure.make(
       () =>
         server.tools.map(({ tool }) => ({ name: tool.name, description: tool.description ?? "" })),
-      () => server.notifications["notifications/tools/list_changed"]({}),
+      notify,
     );
   }),
 );
