@@ -1,0 +1,38 @@
+[package]
+name = "conn-app"
+description = "Conn native desktop application built with GPUI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+default-run = "conn-app"
+
+[[bin]]
+name = "conn-app"
+path = "src/main.rs"
+
+[dependencies]
+conn-client.workspace = true
+conn-contract.workspace = true
+conn-state.workspace = true
+conn-theme.workspace = true
+conn-web.workspace = true
+gpui-kit.workspace = true
+alacritty_terminal.workspace = true
+futures.workspace = true
+image.workspace = true
+markdown.workspace = true
+raw-window-handle.workspace = true
+rust-embed.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[features]
+# Scripted UI automation and screenshot capture hook for visual verification in nick-vm
+# (modeled on .refs/threadbear/desktop/gpui/src/automation.rs). Never enabled in release builds.
+automation = ["gpui-kit/test-support"]
+
+[lints]
+workspace = true

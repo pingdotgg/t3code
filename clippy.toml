@@ -1,0 +1,9 @@
+# BeautifulRust clippy configuration (matches ../conn-server/clippy.toml).
+
+# Prefer two-variant enums or explicit methods over bare bool parameters.
+max-fn-params-bools = 0
+
+# Allow unwrap, expect, and printing in tests, where a panic is the assertion.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-print-in-tests = true

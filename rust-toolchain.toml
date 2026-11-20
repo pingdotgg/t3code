@@ -1,0 +1,6 @@
+# Pinned to match both ../conn-server and .refs/threadbear so rustfmt and clippy
+# behave identically across local runs, nick-vm, and CI.
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

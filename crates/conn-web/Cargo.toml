@@ -1,0 +1,19 @@
+[package]
+name = "conn-web"
+description = "Embedded Chromium browser runtime (CEF-on-demand) for conn-gpui, modeled on threadbear-web."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+# Phase 5: add pinned cef / cef-dll-sys (features = ["dox"]) + ureq + dlopen loader
+# following .refs/threadbear/desktop/web/Cargo.toml.
+
+[lints]
+workspace = true
