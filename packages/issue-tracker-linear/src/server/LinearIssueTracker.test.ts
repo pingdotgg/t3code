@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -74,6 +75,7 @@ const bareDetail = (identifier: string) =>
 function fakeLinear(
   answers: Record<string, (variables: Record<string, unknown>) => unknown>,
   stored: string | null = "lin_api_stored",
+  beforeAnswer?: (operation: string) => Effect.Effect<void>,
 ) {
   const requests: Array<{
     readonly authorization: string | undefined;
@@ -83,7 +85,7 @@ function fakeLinear(
   const http = Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         const body = request.body;
         const text =
           body._tag === "Uint8Array" ? new TextDecoder().decode(body.body) : String(body._tag);
@@ -94,6 +96,7 @@ function fakeLinear(
           operation,
           query: parsed.query,
         });
+        if (beforeAnswer !== undefined) yield* beforeAnswer(operation);
         const answer = answers[operation];
         const answered = answer?.(parsed.variables);
         const response =
@@ -162,6 +165,34 @@ describe("LinearIssueTracker", () => {
         });
       }
       expect(numbers).toEqual([42, undefined, 42, 42]);
+    }),
+  );
+
+  it.effect("cancels the in-flight viewer read when the issue is missing", () =>
+    Effect.gen(function* () {
+      const viewerStarted = yield* Deferred.make<void>();
+      const viewerCanceled = yield* Deferred.make<void>();
+      const { tracker } = fakeLinear(
+        {
+          T3Issue: () =>
+            new Response(JSON.stringify({ errors: [{ message: "Issue not found" }] }), {
+              headers: { "content-type": "application/json" },
+            }),
+        },
+        "lin_api_stored",
+        (operation) =>
+          operation === "T3Viewer"
+            ? Deferred.succeed(viewerStarted, undefined).pipe(
+                Effect.andThen(Effect.never),
+                Effect.onInterrupt(() => Deferred.succeed(viewerCanceled, undefined)),
+              )
+            : Deferred.await(viewerStarted),
+      );
+
+      const api = yield* tracker;
+      const error = yield* Effect.flip(api.getIssue({ ...target, key: "ENG-1" }));
+      expect(error.reason).toBe("not-found");
+      expect(yield* Deferred.isDone(viewerCanceled)).toBe(true);
     }),
   );
 
