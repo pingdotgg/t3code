@@ -5,7 +5,9 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { useContext, useState } from "react";
 
+import { CreateBoard } from "../board/CreateBoard";
 import { environmentProjects, projectEnvironment, threadCountsAtom } from "../state/projects";
+import { BoardList } from "./BoardList";
 import { CountChip } from "./CountChip";
 import { ProjectHeader } from "./ProjectHeader";
 import { PillRow } from "./PillRow";
@@ -31,6 +33,7 @@ export function ProjectList() {
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [showHidden, setShowHidden] = useState(false);
+  const [creatingFor, setCreatingFor] = useState<string | null>(null);
 
   const toggle = (id: string) => {
     const next = new Set(collapsed);
@@ -66,6 +69,10 @@ export function ProjectList() {
               open={open}
               onToggle={() => toggle(key)}
               onMenu={() => setMenuFor(menuFor === key ? null : key)}
+              onAdd={() => {
+                setCreatingFor(key);
+                if (!open) toggle(key);
+              }}
             />
             {counts && (
               <div className="py-0.5" style={{ paddingLeft: CHIP_INDENT_PX }}>
@@ -85,11 +92,17 @@ export function ProjectList() {
               />
             )}
             {open && (
-              <SidebarRow
-                depth={1}
-                icon={<Folder className="size-3.5" />}
-                title={project.workspaceRoot}
-              />
+              <>
+                <SidebarRow
+                  depth={1}
+                  icon={<Folder className="size-3.5" />}
+                  title={project.workspaceRoot}
+                />
+                {creatingFor === key && (
+                  <CreateBoard project={project} onDone={() => setCreatingFor(null)} />
+                )}
+                <BoardList project={project} />
+              </>
             )}
           </li>
         );

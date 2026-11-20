@@ -15,6 +15,8 @@ const bridge: BoardBridge = {
   answerPrompt: (accepted) => ipcRenderer.send("board:prompt-answer", accepted),
   pickFolder: () => ipcRenderer.invoke("board:pick-folder"),
   resolveFolder: (text) => ipcRenderer.invoke("board:resolve-folder", text),
+  readLocalState: () => ipcRenderer.invoke("board:local-state-read"),
+  writeLocalState: (text) => ipcRenderer.invoke("board:local-state-write", text),
 };
 
 contextBridge.exposeInMainWorld("board", bridge);

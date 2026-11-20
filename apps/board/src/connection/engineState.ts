@@ -30,6 +30,9 @@ export interface BoardBridge {
   readonly pickFolder: () => Promise<FolderResult | null>;
   /** Checks a typed folder and returns its path inside WSL. */
   readonly resolveFolder: (text: string) => Promise<FolderResult>;
+  /** The text of the file in the app's user data folder, empty when there is none. */
+  readonly readLocalState: () => Promise<string>;
+  readonly writeLocalState: (text: string) => Promise<void>;
 }
 
 export type FolderResult =
