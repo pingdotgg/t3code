@@ -461,9 +461,7 @@ const sessionRules = (
       ]),
   // Auto has no reviewer of its own, so honor the user's action-specific OpenCode rules after
   // T3's asks. The default agent's catch-all allow is not an explicit opt-in to unrestricted Auto.
-  ...(policy.runtimeMode === "auto"
-    ? nativeRules.filter((entry) => entry.action !== "*" || entry.effect !== "allow")
-    : []),
+  ...nativeRules.filter((entry) => entry.action !== "*" || entry.effect !== "allow"),
   ...grants,
   // Plan edits are re-allowed only for plan paths; free-tier sessions refuse denied shell/read.
   ...(policy.interactionMode === "plan" ? [rule("edit", "deny")] : []),
@@ -4086,20 +4084,25 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     });
 
     const rulesFor = Effect.fnUntraced(function* (
-      thread: Pick<ThreadState, "directory" | "agent" | "grants">,
+      thread: Pick<ThreadState, "directory" | "agent" | "grants" | "subagent">,
       policy: RulesPolicy,
       appThreadId: string | null,
     ) {
       const plan = policy.interactionMode === "plan";
+      // Built-in subagents ship their own allows (explore allows any shell), so only root agents count.
       const nativeRules =
-        plan || policy.runtimeMode !== "full-access"
+        policy.runtimeMode === "auto" && thread.subagent === undefined
           ? yield* agentRulesFor(thread.directory, [thread.agent])
           : [];
-      const paths = plan
-        ? agentPaths(yield* agentRulesFor(thread.directory, [thread.agent, "plan"]))
-        : policy.runtimeMode === "full-access" || policy.runtimeMode === "auto"
+      const paths =
+        policy.runtimeMode === "full-access" && !plan
           ? []
-          : agentPaths(nativeRules);
+          : agentPaths(
+              yield* agentRulesFor(
+                thread.directory,
+                plan ? [thread.agent, "plan"] : [thread.agent],
+              ),
+            );
       return sessionRules(
         policy,
         nativeRules,
@@ -4793,7 +4796,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           const directory = threadInput.runtimePolicy.cwd ?? host.paths.cwd;
           const policy = threadInput.runtimePolicy;
           const permissions = yield* rulesFor(
-            { directory, agent: "build", grants: [] },
+            { directory, agent: "build", grants: [], subagent: undefined },
             policy,
             threadInput.threadId,
           );

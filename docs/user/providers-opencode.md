@@ -67,7 +67,8 @@ OpenCode follows the shared [permission modes](./permission-modes.md). OpenCode 
 so the `permission` (v1) or `permissions` (v2) block in `opencode.jsonc` can allow
 routine commands while other commands still ask. Without those rules, **Auto** asks
 as **Supervised** does; a catch-all `"*": "allow"` does not remove Auto's default
-approval requirements. OpenCode 1.x keeps its existing mode rules, where **Auto**
+approval requirements. Subagents' own rules are not applied, so their
+commands ask as in **Supervised**. OpenCode 1.x keeps its existing mode rules, where **Auto**
 has the same rules as **Supervised**.
 Environment files such as `.env` and `.env.local` need approval in restricted
 modes even though normal file reads do not; `.env.example` is allowed.

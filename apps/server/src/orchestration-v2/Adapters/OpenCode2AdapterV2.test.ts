@@ -311,6 +311,7 @@ const autoRules = [
   { action: "shell", resource: "printf *", effect: "allow" },
   { action: "shell", resource: "*", effect: "deny" },
   ...buildPaths,
+  ...buildPaths,
   ...mcpRules,
 ];
 
@@ -1605,52 +1606,71 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
-  it.effect("gives a background subagent the rules of a mode changed while it runs", () =>
-    Effect.gen(function* () {
-      const { runtime, thread } = yield* resumed([
-        ...backgroundLaunch(CHILD),
-        event("session.execution.succeeded", { sessionID: SESSION }),
-        out("agent.list", "<any>"),
-        reply("agent.list", agentList),
-        out("session.update", { sessionID: SESSION, permissions: supervisedRules }),
-        reply("session.update", null),
-        out("session.update", {
-          sessionID: CHILD,
-          permissions: [...supervisedRules.slice(0, 3), ...mcpRules],
-        }),
-        reply("session.update", null),
-        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-        promptAccepted,
-        event("session.execution.succeeded", { sessionID: SESSION }),
-      ]);
-      const firstEnded = yield* Deferred.make<void>();
-      const ended = yield* runtime.events.pipe(
-        Stream.filter(
-          (
-            event,
-          ): event is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }> =>
-            event.type === "turn.terminal",
-        ),
-        Stream.tap(() => Deferred.succeed(firstEnded, undefined)),
-        Stream.take(2),
-        Stream.runCollect,
-        Effect.forkScoped,
-      );
-      yield* runtime.startTurn(withLineage(thread));
-      yield* Deferred.await(firstEnded);
-      yield* runtime.startTurn({
-        ...withLineage(thread),
-        runId: RunId.make("run:opencode2-adapter:2"),
-        runOrdinal: 2,
-        providerTurnOrdinal: 2,
-        attemptId: RunAttemptId.make("attempt:opencode2-adapter:2"),
-        runtimePolicy: policy("approval-required"),
-      });
-      assert.deepEqual(
-        [...(yield* Fiber.join(ended))].map((terminal) => terminal.status),
-        ["completed", "completed"],
-      );
-    }),
+  it.effect.each(["approval-required", "auto"] as const)(
+    "gives a background subagent the %s rules of a mode changed while it runs",
+    (mode) =>
+      Effect.gen(function* () {
+        // Built-in subagents such as explore ship their own allows; Auto must not copy them.
+        const general = {
+          ...agentList.data[0]!,
+          id: "general",
+          name: "General",
+          mode: "subagent",
+          permissions: [
+            { action: "*", resource: "*", effect: "deny" },
+            { action: "shell", resource: "*", effect: "allow" },
+            { action: "external_directory", resource: "*", effect: "allow" },
+          ],
+        };
+        const { runtime, thread } = yield* resumed([
+          ...backgroundLaunch(CHILD),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          out("agent.list", "<any>"),
+          reply("agent.list", { ...agentList, data: [...agentList.data, general] }),
+          out("session.update", {
+            sessionID: SESSION,
+            permissions: mode === "auto" ? autoRules : supervisedRules,
+          }),
+          reply("session.update", null),
+          out("session.update", {
+            sessionID: CHILD,
+            permissions: [...supervisedRules.slice(0, 3), ...mcpRules],
+          }),
+          reply("session.update", null),
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ]);
+        const firstEnded = yield* Deferred.make<void>();
+        const ended = yield* runtime.events.pipe(
+          Stream.filter(
+            (
+              event,
+            ): event is Extract<
+              ProviderAdapter.ProviderAdapterV2Event,
+              { type: "turn.terminal" }
+            > => event.type === "turn.terminal",
+          ),
+          Stream.tap(() => Deferred.succeed(firstEnded, undefined)),
+          Stream.take(2),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(withLineage(thread));
+        yield* Deferred.await(firstEnded);
+        yield* runtime.startTurn({
+          ...withLineage(thread),
+          runId: RunId.make("run:opencode2-adapter:2"),
+          runOrdinal: 2,
+          providerTurnOrdinal: 2,
+          attemptId: RunAttemptId.make("attempt:opencode2-adapter:2"),
+          runtimePolicy: policy(mode),
+        });
+        assert.deepEqual(
+          [...(yield* Fiber.join(ended))].map((terminal) => terminal.status),
+          ["completed", "completed"],
+        );
+      }),
   );
 
   it.effect(
@@ -4456,7 +4476,12 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           }),
           out("session.update", {
             sessionID: SESSION,
-            permissions: [...autoRules.slice(0, -mcpRules.length), denied, ...mcpRules],
+            permissions: [
+              ...autoRules.slice(0, -mcpRules.length - buildPaths.length),
+              denied,
+              ...buildPaths,
+              ...mcpRules,
+            ],
           }),
           reply("session.update", null),
           out("session.prompt", { sessionID: SESSION, text: "<any>" }),
