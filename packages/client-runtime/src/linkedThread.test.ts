@@ -1,361 +1,120 @@
-import { EnvironmentId, type PeerLinkThreadPage, ThreadId, TurnItemId } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import {
+  EventId,
+  type OrchestrationV2ThreadHistoryPage,
+  type OrchestrationV2ThreadStreamItem,
+} from "@t3tools/contracts";
+import { expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
+import { TestClock } from "effect/testing";
 
 import {
-  createLinkedThreadSession,
-  type LinkedThreadCursor,
-  type LinkedThreadReadResult,
-  presentLinkedThreadItem,
-  LINKED_THREAD_ACTIVE_POLL_MS,
-  LINKED_THREAD_IDLE_POLL_MS,
-  linkedThreadRefreshCursor,
-  mergeLinkedThreadPage,
-  resolveLinkedThreadOpen,
+  followLinkedThread,
+  LINKED_THREAD_RETRY_MS,
+  type LinkedThreadView,
 } from "./linkedThread.ts";
+import { v2Now, v2Projection } from "./state/orchestrationV2TestFixtures.ts";
 
-const nucbox = EnvironmentId.make("environment-nucbox");
-const vm = EnvironmentId.make("environment-vm");
-const threadId = ThreadId.make("thread:vm");
-
-const item = (
-  position: number,
-  text: string,
-  status: PeerLinkThreadPage["items"][number]["status"] = "completed",
-): PeerLinkThreadPage["items"][number] => ({
-  position,
-  visibility: "local",
-  sourceThreadId: threadId,
-  itemId: TurnItemId.make(`item:${position}`),
-  runId: null,
-  messageId: null,
-  createdBy: null,
-  creationSource: null,
-  type: "assistant_message",
-  status,
-  title: null,
-  text,
-  textTruncated: false,
-  updatedAt: "2026-11-19T00:00:00.000Z",
+const snapshot = (
+  snapshotSequence: number,
+  historyCursor: string | null = null,
+): OrchestrationV2ThreadStreamItem => ({
+  kind: "snapshot",
+  snapshotSequence,
+  projection: v2Projection,
+  historyCursor,
+  hasMoreHistory: historyCursor !== null,
 });
 
-const page = (
-  items: PeerLinkThreadPage["items"],
-  overrides: Partial<PeerLinkThreadPage> = {},
-): PeerLinkThreadPage => ({
-  label: "VM",
-  thread: { threadId, title: "Fix the build", status: "running", model: "gpt-5" },
-  items,
-  earlierPosition: null,
-  hasMore: false,
-  ...overrides,
+const retitled = (sequence: number, title: string): OrchestrationV2ThreadStreamItem => ({
+  kind: "event",
+  sequence,
+  event: {
+    id: EventId.make(`event:${sequence}`),
+    type: "thread.metadata-updated",
+    threadId: v2Projection.thread.id,
+    occurredAt: v2Now,
+    payload: { ...v2Projection.thread, title },
+  },
 });
 
-describe("resolveLinkedThreadOpen", () => {
-  const open = (own: { connected: boolean } | undefined, linked: boolean) =>
-    resolveLinkedThreadOpen({ environmentId: vm, viaEnvironmentId: nucbox, own, linked });
+const failure = (reason: string) => ({ _tag: "PeerLinkThreadReadError", reason });
+const titleOf = (view: LinkedThreadView) => view.thread.projection?.thread.title ?? null;
 
-  it("keeps the client's own connection when it has one", () => {
-    expect(open({ connected: true }, true)).toBe("direct");
-  });
-
-  it("reads through the link when the client is not connected to that environment", () => {
-    expect(open(undefined, true)).toBe("linked");
-    expect(open({ connected: false }, true)).toBe("linked");
-  });
-
-  it("falls back to what the client can do alone when nothing links there", () => {
-    expect(open({ connected: false }, false)).toBe("direct");
-    expect(open(undefined, false)).toBe("unavailable");
-  });
-
-  it("never routes an environment's own thread through a link", () => {
-    expect(
-      resolveLinkedThreadOpen({
-        environmentId: nucbox,
-        viaEnvironmentId: nucbox,
-        own: undefined,
-        linked: true,
-      }),
-    ).toBe("direct");
-  });
-});
-
-describe("mergeLinkedThreadPage", () => {
-  const newest = mergeLinkedThreadPage(
-    null,
-    page([item(10, "ten"), item(11, "eleven", "running")], { earlierPosition: 10 }),
-    "later",
-  );
-
-  it("moves the start back with an earlier page and keeps the forward state", () => {
-    const merged = mergeLinkedThreadPage(
-      newest,
-      page([item(8, "eight"), item(9, "nine")], { earlierPosition: null, hasMore: true }),
-      "earlier",
-    );
-    expect(merged.items.map((entry) => entry.position)).toEqual([8, 9, 10, 11]);
-    expect(merged.earlierPosition).toBeNull();
-    expect(merged.hasMore).toBe(false);
-  });
-
-  it("replaces a re-read item and appends what followed, without moving the start", () => {
-    const merged = mergeLinkedThreadPage(
-      newest,
-      page([item(11, "eleven, finished"), item(12, "twelve")], {
-        earlierPosition: 11,
-        thread: { threadId, title: "Fix the build", status: "completed", model: "gpt-5" },
-      }),
-      "later",
-    );
-    expect(merged.items.map((entry) => entry.text)).toEqual(["ten", "eleven, finished", "twelve"]);
-    expect(merged.earlierPosition).toBe(10);
-    expect(merged.thread.status).toBe("completed");
-  });
-});
-
-describe("linkedThreadRefreshCursor", () => {
-  const linkedThreadRefreshCursorOf = (shown: PeerLinkThreadPage) =>
-    linkedThreadRefreshCursor(mergeLinkedThreadPage(null, shown, "later"));
-  it("reads after the last item once everything shown has settled", () => {
-    expect(linkedThreadRefreshCursorOf(page([item(4, "a"), item(5, "b")]))).toBe(5);
-    expect(linkedThreadRefreshCursorOf(page([]))).toBe(-1);
-  });
-
-  it("re-reads from an item that is still being written", () => {
-    expect(
-      linkedThreadRefreshCursorOf(page([item(4, "a"), item(5, "b", "running"), item(6, "c")])),
-    ).toBe(4);
-  });
-
-  it("continues from the last item while a page left more behind it", () => {
-    expect(
-      linkedThreadRefreshCursorOf(page([item(4, "a", "running"), item(5, "b")], { hasMore: true })),
-    ).toBe(5);
-  });
-
-  it("continues from where a page cut short ended, not from the items it left untouched", () => {
-    const shown = mergeLinkedThreadPage(
-      mergeLinkedThreadPage(
-        null,
-        page([item(80, "a", "running"), item(81, "b"), item(99, "z")]),
-        "later",
+it.effect("keeps what it read while a linked environment is out of reach, and asks it again", () =>
+  Effect.gen(function* () {
+    const attempts = [
+      Stream.make(snapshot(1), retitled(2, "Renamed")).pipe(
+        Stream.concat(Stream.fail(failure("unreachable"))),
       ),
-      page([item(80, "a, done")], { hasMore: true }),
-      "later",
-    );
-    expect(shown.items.map((entry) => entry.position)).toEqual([80, 81, 99]);
-    expect(linkedThreadRefreshCursor(shown)).toBe(80);
-    // An earlier page leaves the forward continuation alone.
-    const earlier = mergeLinkedThreadPage(shown, page([item(79, "y")]), "earlier");
-    expect(linkedThreadRefreshCursor(earlier)).toBe(80);
-    expect(
-      linkedThreadRefreshCursor(mergeLinkedThreadPage(earlier, page([item(81, "b2")]), "later")),
-    ).toBe(99);
-  });
-
-  it("stops re-reading an item that stays unsettled once it is far behind", () => {
-    const items = [
-      item(0, "stuck", "waiting"),
-      ...Array.from({ length: 30 }, (_, i) => item(i + 1, "x")),
+      Stream.make(snapshot(5)).pipe(Stream.concat(Stream.fail(failure("expired")))),
     ];
-    expect(linkedThreadRefreshCursorOf(page(items))).toBe(30);
-  });
-});
+    let opened = 0;
+    const views = yield* Queue.unbounded<LinkedThreadView>();
+    const following = yield* followLinkedThread({
+      items: Stream.suspend(() => attempts[opened++]!),
+      historyPage: () => Effect.die("unused"),
+    }).pipe(
+      Stream.runForEach((view) => Queue.offer(views, view)),
+      Effect.flip,
+      Effect.forkChild,
+    );
 
-describe("presentLinkedThreadItem", () => {
-  const present = (
-    type: string,
-    text: string | null,
-    extra: Partial<ReturnType<typeof item>> = {},
-  ) => presentLinkedThreadItem({ ...item(0, ""), type, text, ...extra });
+    expect(titleOf(yield* Queue.take(views))).toBe(v2Projection.thread.title);
+    expect(titleOf(yield* Queue.take(views))).toBe("Renamed");
+    // Out of reach: the thread stays as read, with the reason beside it.
+    const waiting = yield* Queue.take(views);
+    expect([titleOf(waiting), waiting.error]).toEqual(["Renamed", failure("unreachable")]);
+    expect(opened).toBe(1);
 
-  it("shows messages in full and tool work as a row that opens", () => {
-    expect(present("user_message", "Fix it")).toMatchObject({ kind: "user", text: "Fix it" });
-    expect(present("command_execution", "$ vp test\n3 passed")).toEqual({
-      kind: "activity",
-      summary: "$ vp test",
-      body: "3 passed",
-      failed: false,
-      truncated: false,
-    });
-    expect(present("dynamic_tool", "{}", { title: "t3_thread_read" })).toMatchObject({
-      summary: "Tool call · t3_thread_read",
-      body: "{}",
-    });
-    expect(present("error", "Rate limited")).toMatchObject({ summary: "Error", failed: true });
-    expect(present("system_notice", "Session restarted")).toMatchObject({
-      summary: "Session restarted",
-      body: null,
-    });
-  });
+    yield* TestClock.adjust(LINKED_THREAD_RETRY_MS);
+    // It answers again: its snapshot replaces the thread and clears the reason.
+    const back = yield* Queue.take(views);
+    expect([titleOf(back), back.error, back.thread.sequence]).toEqual([
+      v2Projection.thread.title,
+      null,
+      5,
+    ]);
+    // A link that expired cannot come back by waiting, so the stream ends with it.
+    expect(yield* Fiber.join(following)).toEqual(failure("expired"));
+    expect(opened).toBe(2);
+  }),
+);
 
-  it("hides items with nothing to read", () => {
-    expect(present("checkpoint", "[]")).toBeNull();
-    expect(present("assistant_message", " ")).toBeNull();
-    expect(present("system_notice", null)).toBeNull();
-  });
-});
-
-describe("createLinkedThreadSession", () => {
-  /** Reads answer when the test says so, and timers run when the test runs them. */
-  const harness = (active = { current: true }) => {
-    const reads: Array<{
-      readonly cursor: LinkedThreadCursor;
-      readonly answer: (result: LinkedThreadReadResult) => Promise<void>;
-    }> = [];
-    const timers: Array<{ readonly run: () => void; readonly delayMs: number; live: boolean }> = [];
-    const kept: Array<PeerLinkThreadPage> = [];
-    const session = createLinkedThreadSession({
-      read: (cursor) =>
-        new Promise((resolve) => {
-          reads.push({
-            cursor,
-            answer: async (result) => {
-              resolve(result);
-              await Promise.resolve();
-            },
-          });
-        }),
-      schedule: (run, delayMs) => {
-        const timer = { run, delayMs, live: true };
-        timers.push(timer);
-        return () => {
-          timer.live = false;
-        };
-      },
-      isActive: () => active.current,
-      onRead: (page) => kept.push(page),
-    });
-    const pending = () => timers.filter((timer) => timer.live);
-    const fire = () => {
-      const timer = pending()[0]!;
-      timer.live = false;
-      timer.run();
+it.effect("loads the turns before a snapshot's window once per request", () =>
+  Effect.gen(function* () {
+    const asked: string[] = [];
+    const page: OrchestrationV2ThreadHistoryPage = {
+      snapshotSequence: 1,
+      items: [],
+      nextCursor: null,
+      hasMoreHistory: false,
     };
-    return { session, reads, pending, fire, kept };
-  };
+    const views = yield* Queue.unbounded<LinkedThreadView>();
+    yield* followLinkedThread({
+      items: Stream.make(snapshot(1, "cursor-1")).pipe(Stream.concat(Stream.never)),
+      historyPage: (cursor) =>
+        Effect.sync(() => {
+          asked.push(cursor);
+          return page;
+        }),
+    }).pipe(
+      Stream.runForEach((view) => Queue.offer(views, view)),
+      Effect.forkScoped,
+    );
 
-  it("reads the newest page on open, then follows the thread at its pace", async () => {
-    const { session, reads, pending, fire } = harness();
-    session.subscribe(() => {});
-    expect(reads.map((read) => read.cursor)).toEqual([{}]);
-    await reads[0]!.answer({
-      ok: true,
-      page: page([item(4, "a"), item(5, "b", "running")], { earlierPosition: 4 }),
-    });
-    expect(pending().map((timer) => timer.delayMs)).toEqual([LINKED_THREAD_ACTIVE_POLL_MS]);
-
-    fire();
-    expect(reads[1]!.cursor).toEqual({ afterPosition: 4 });
-    await reads[1]!.answer({
-      ok: true,
-      page: page([item(5, "b, done")], {
-        thread: { threadId, title: "Fix the build", status: "completed", model: "gpt-5" },
-      }),
-    });
-    expect(session.getSnapshot().transcript?.items.map((entry) => entry.text)).toEqual([
-      "a",
-      "b, done",
-    ]);
-    expect(pending().map((timer) => timer.delayMs)).toEqual([LINKED_THREAD_IDLE_POLL_MS]);
-  });
-
-  it("waits to read a view that opens while nobody is looking", () => {
-    const active = { current: false };
-    const { session, reads, fire } = harness(active);
-    session.subscribe(() => {});
-    expect(reads).toEqual([]);
-    active.current = true;
-    fire();
-    expect(reads.map((read) => read.cursor)).toEqual([{}]);
-  });
-
-  it("ignores a read that a newer one overtook", async () => {
-    const { session, reads, kept } = harness();
-    session.subscribe(() => {});
-    session.retry();
-    await reads[1]!.answer({ ok: true, page: page([item(4, "new")]) });
-    await reads[0]!.answer({ ok: true, page: page([item(4, "old")]) });
-    expect(session.getSnapshot().transcript?.items.map((entry) => entry.text)).toEqual(["new"]);
-    expect(kept.map((kept) => kept.items[0]?.text)).toEqual(["new"]);
-  });
-
-  it("pages back without losing what a refresh brought in meanwhile", async () => {
-    const { session, reads, fire } = harness();
-    session.subscribe(() => {});
-    await reads[0]!.answer({ ok: true, page: page([item(5, "five")], { earlierPosition: 5 }) });
-    fire();
-    void session.loadEarlier();
-    expect(reads.slice(1).map((read) => read.cursor)).toEqual([
-      { afterPosition: 5 },
-      { beforePosition: 5 },
-    ]);
-    expect(session.getSnapshot().loadingEarlier).toBe(true);
-    await reads[2]!.answer({ ok: true, page: page([item(4, "four")]) });
-    await reads[1]!.answer({ ok: true, page: page([item(6, "six")]) });
-    expect(session.getSnapshot()).toMatchObject({ loadingEarlier: false, error: null });
-    expect(session.getSnapshot().transcript?.items.map((entry) => entry.position)).toEqual([
-      4, 5, 6,
-    ]);
-    expect(session.getSnapshot().transcript?.earlierPosition).toBeNull();
-  });
-
-  it("forgets a failed earlier read once the next one succeeds", async () => {
-    const { session, reads } = harness();
-    session.subscribe(() => {});
-    await reads[0]!.answer({ ok: true, page: page([item(5, "five")], { earlierPosition: 5 }) });
-    void session.loadEarlier();
-    await reads[1]!.answer({ ok: false, error: new Error("offline") });
-    expect(session.getSnapshot()).toMatchObject({ loadingEarlier: false });
-    expect(session.getSnapshot().error).not.toBeNull();
-    void session.loadEarlier();
-    await reads[2]!.answer({ ok: true, page: page([item(4, "four")]) });
-    expect(session.getSnapshot().error).toBeNull();
-  });
-
-  it("stops asking once the view closes or the read cannot recover", async () => {
-    const closing = harness();
-    const close = closing.session.subscribe(() => {});
-    await closing.reads[0]!.answer({ ok: true, page: page([item(1, "one")]) });
-    close();
-    expect(closing.pending()).toEqual([]);
-    // Opened again, it shows what it read and asks only for what followed.
-    closing.session.subscribe(() => {});
-    expect(closing.session.getSnapshot().transcript?.items).toHaveLength(1);
-    expect(closing.reads[1]!.cursor).toEqual({ afterPosition: 1 });
-
-    const late = harness();
-    const closeLate = late.session.subscribe(() => {});
-    closeLate();
-    await late.reads[0]!.answer({ ok: true, page: page([item(1, "one")]) });
-    expect(late.session.getSnapshot().transcript).toBeNull();
-    expect(late.pending()).toEqual([]);
-
-    const expired = harness();
-    expired.session.subscribe(() => {});
-    const error = { _tag: "PeerLinkThreadReadError", reason: "expired", label: "VM", message: "" };
-    await expired.reads[0]!.answer({ ok: false, error });
-    expect(expired.session.getSnapshot().error).toBe(error);
-    expect(expired.pending()).toEqual([]);
-  });
-
-  it("keeps trying an environment that is out of reach, and waits while nobody is looking", async () => {
-    const active = { current: true };
-    const { session, reads, pending, fire } = harness(active);
-    session.subscribe(() => {});
-    await reads[0]!.answer({
-      ok: false,
-      error: { _tag: "PeerLinkThreadReadError", reason: "unreachable", label: "VM", message: "" },
-    });
-    expect(pending().map((timer) => timer.delayMs)).toEqual([LINKED_THREAD_IDLE_POLL_MS]);
-
-    active.current = false;
-    fire();
-    expect(reads).toHaveLength(1);
-    active.current = true;
-    fire();
-    expect(reads).toHaveLength(2);
-    await reads[1]!.answer({ ok: true, page: page([item(1, "one")]) });
-    expect(session.getSnapshot()).toMatchObject({ error: null });
-  });
-});
+    const shown = yield* Queue.take(views);
+    expect(shown.thread.historyCursor).toBe("cursor-1");
+    shown.loadEarlier();
+    // A second tap while the page loads asks for nothing more.
+    shown.loadEarlier();
+    expect((yield* Queue.take(views)).history).toEqual({ loading: true, failed: false });
+    const loaded = yield* Queue.take(views);
+    expect([loaded.history.loading, loaded.thread.historyCursor]).toEqual([false, null]);
+    // Nothing is left to load.
+    loaded.loadEarlier();
+    expect(asked).toEqual(["cursor-1"]);
+  }).pipe(Effect.scoped),
+);

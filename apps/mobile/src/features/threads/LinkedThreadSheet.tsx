@@ -1,17 +1,15 @@
-import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import {
   isLinkedThreadWorking,
   linkedThreadFailure,
   type LinkedThreadFailure,
-  type LinkedThreadItemPresentation,
   type LinkedThreadTarget,
-  presentLinkedThreadItem,
 } from "@t3tools/client-runtime/linked-thread";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { T, useGT, useMessages } from "gt-react-native";
-import { useRef, useState } from "react";
+import { T, useGT, useLocale, useMessages } from "gt-react-native";
+import { useRef, useState, useSyncExternalStore } from "react";
 import type * as React from "react";
-import { Pressable, ScrollView, View } from "react-native";
+import { AppState, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
@@ -21,7 +19,13 @@ import { ScreenContent } from "../../components/ui/ScreenContent";
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import { useEnvironments } from "../../state/environments";
-import { useLinkedThreadSession } from "../../state/linkedThread";
+import {
+  buildThreadFeed,
+  createThreadFeedCache,
+  type ThreadFeedActivity,
+  type ThreadFeedEntry,
+} from "../../lib/threadActivity";
+import { useLinkedThreadView } from "../../state/linkedThread";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
 import { ReadOnlyComposerBar } from "./ReadOnlyComposerBar";
 
@@ -46,63 +50,60 @@ export const linkedThreadRouteParams = (
   ...(title === null ? {} : { title }),
 });
 
-function TruncatedNote() {
-  return (
-    <Text className="mt-1 text-xs text-foreground-muted">
-      <T>Long text, cut short here.</T>
-    </Text>
-  );
-}
-
-function ActivityRow(props: {
-  readonly item: Extract<LinkedThreadItemPresentation, { kind: "activity" }>;
-}) {
-  const { item } = props;
+function ActivityRow(props: { readonly activity: ThreadFeedActivity }) {
+  const { activity } = props;
   const [open, setOpen] = useState(false);
-  const summary = (
-    <Text
-      numberOfLines={open ? undefined : 1}
-      className={`font-mono text-xs ${item.failed ? "text-danger-foreground" : "text-foreground-muted"}`}
-    >
-      {item.summary}
-    </Text>
-  );
+  const body = open ? (activity.getFullDetail() ?? activity.detail) : null;
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityState={{ expanded: open }}
+      disabled={!activity.canExpand}
       onPress={() => setOpen(!open)}
       className="active:opacity-70"
     >
-      {summary}
-      {open && item.body !== null ? (
+      <Text
+        numberOfLines={open ? undefined : 1}
+        className={`font-mono text-xs ${activity.status === "failure" ? "text-danger-foreground" : "text-foreground-muted"}`}
+      >
+        {activity.summary}
+      </Text>
+      {body ? (
         <View className="mt-1 rounded-lg bg-subtle p-2">
           <Text selectable className="font-mono text-xs text-foreground-muted">
-            {item.body}
+            {body}
           </Text>
-          {item.truncated ? <TruncatedNote /> : null}
         </View>
       ) : null}
     </Pressable>
   );
 }
 
-function LinkedThreadItem(props: { readonly item: LinkedThreadItemPresentation }) {
-  const { item } = props;
+/**
+ * One entry of the thread's feed, as the thread screen's own feed model has it. Only reading
+ * rows are drawn: what needs the thread's environment (files, visuals, apps) is left out.
+ */
+function LinkedThreadEntry(props: { readonly entry: ThreadFeedEntry }) {
+  const { entry } = props;
   const styles = useMarkdownPreviewStyles();
-  if (item.kind === "activity") return <ActivityRow item={item} />;
-  return item.kind === "user" ? (
+  if (entry.type === "activity-group") {
+    return (
+      <View className="gap-1.5">
+        {entry.activities.map((activity) => (
+          <ActivityRow key={activity.id} activity={activity} />
+        ))}
+      </View>
+    );
+  }
+  if (entry.type !== "message" || entry.message.text.trim() === "") return null;
+  return entry.message.role === "user" ? (
     <View className="max-w-[88%] self-end rounded-2xl bg-user-bubble px-3.5 py-2.5">
       <Text selectable className="text-sm text-user-bubble-foreground">
-        {item.text}
+        {entry.message.text}
       </Text>
-      {item.truncated ? <TruncatedNote /> : null}
     </View>
   ) : (
-    <View>
-      <SelectableMarkdownText markdown={item.text} textStyle={styles.nativeTextStyle} />
-      {item.truncated ? <TruncatedNote /> : null}
-    </View>
+    <SelectableMarkdownText markdown={entry.message.text} textStyle={styles.nativeTextStyle} />
   );
 }
 
@@ -166,28 +167,49 @@ function LinkedThreadComposer(props: {
   );
 }
 
+const subscribeAppState = (onChange: () => void) => {
+  const subscription = AppState.addEventListener("change", onChange);
+  return () => subscription.remove();
+};
+const appIsActive = () => AppState.currentState === "active";
+
 function LinkedThreadView(props: { readonly target: LinkedThreadTarget }) {
   const { target } = props;
   const gt = useGT();
   const m = useMessages();
+  const locale = useLocale();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const via =
     useEnvironments().environments.find(
       (environment) => environment.environmentId === target.viaEnvironmentId,
     )?.label ?? gt("this environment");
-  const { state, session } = useLinkedThreadSession(target, () => navigation.isFocused());
-  const { transcript } = state;
-  const label = transcript?.label ?? target.label;
-  const failure = state.error === null ? null : linkedThreadFailure(state.error, { via, label }, m);
+  // The stream runs only while this screen is the one being looked at.
+  const focused = useIsFocused();
+  const appActive = useSyncExternalStore(subscribeAppState, appIsActive);
+  const { view, error, retry } = useLinkedThreadView(target, focused && appActive);
+  const projection = view?.thread.projection ?? null;
+  const label = target.label;
+  const failure = error === null ? null : linkedThreadFailure(error, { via, label }, m);
+  const [feedCache] = useState(() => createThreadFeedCache());
+  const feed =
+    projection === null
+      ? []
+      : buildThreadFeed(projection.visibleTurnItems, {
+          attempts: projection.attempts,
+          nodes: projection.nodes,
+          cache: feedCache,
+          resolve: m,
+          locale,
+        });
   const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null);
   // Follows new items only while the reader is already at the end.
   const atEnd = useRef(true);
-  const working = transcript !== null && isLinkedThreadWorking(transcript);
+  const working = projection !== null && isLinkedThreadWorking(projection);
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
       <SheetHeader
-        title={transcript?.thread.title || target.title || gt("Thread on {label}", { label })}
+        title={projection?.thread.title || target.title || gt("Thread on {label}", { label })}
         onClose={() => navigation.goBack()}
       />
       <ScreenContent>
@@ -208,7 +230,7 @@ function LinkedThreadView(props: { readonly target: LinkedThreadTarget }) {
             if (atEnd.current) scroll.current?.scrollToEnd({ animated: false });
           }}
         >
-          {transcript === null ? (
+          {view === null || projection === null ? (
             failure === null ? (
               <View className="flex-row items-center gap-2 pt-6">
                 <AppActivityIndicator size="small" />
@@ -217,36 +239,31 @@ function LinkedThreadView(props: { readonly target: LinkedThreadTarget }) {
                 </Text>
               </View>
             ) : (
-              <FailureCard failure={failure} stale={false} onRetry={session.retry} />
+              <FailureCard failure={failure} stale={false} onRetry={retry} />
             )
           ) : (
             <>
-              {transcript.earlierPosition !== null ? (
+              {view.thread.historyCursor !== null ? (
                 <View className="self-center">
                   <Button
                     size="compact"
                     tone="text"
                     label={gt("Load earlier")}
-                    loading={state.loadingEarlier}
-                    disabled={state.loadingEarlier}
-                    onPress={() => void session.loadEarlier()}
+                    loading={view.history.loading}
+                    disabled={view.history.loading}
+                    onPress={view.loadEarlier}
                   />
                 </View>
               ) : null}
-              {transcript.items.length === 0 ? (
+              {feed.length === 0 ? (
                 <Text className="text-sm text-foreground-muted">
                   <T>Nothing in this thread yet.</T>
                 </Text>
               ) : null}
-              {transcript.items.map((item) => {
-                const presented = presentLinkedThreadItem(item, m);
-                return presented === null ? null : (
-                  <LinkedThreadItem key={item.position} item={presented} />
-                );
-              })}
-              {failure === null ? null : (
-                <FailureCard failure={failure} stale onRetry={session.retry} />
-              )}
+              {feed.map((entry) => (
+                <LinkedThreadEntry key={entry.id} entry={entry} />
+              ))}
+              {failure === null ? null : <FailureCard failure={failure} stale onRetry={retry} />}
             </>
           )}
         </ScrollView>

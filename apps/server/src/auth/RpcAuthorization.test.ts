@@ -13,6 +13,7 @@ import {
   IssueTrackerKind,
   SecretProviderId,
   ThreadId,
+  TurnItemId,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSourceControlWriteScope,
@@ -204,7 +205,12 @@ it.effect("allows issue reads but requires a source-control grant before comment
 
 it.effect("reads a linked environment's thread only for a client that may read threads here", () =>
   Effect.gen(function* () {
-    const linkedThreadTags = [WS_METHODS.peerLinksReadThread, WS_METHODS.peerLinksNames] as const;
+    const linkedThreadTags = [
+      WS_METHODS.peerLinksSubscribeThread,
+      WS_METHODS.peerLinksThreadHistoryPage,
+      WS_METHODS.peerLinksThreadItem,
+      WS_METHODS.peerLinksNames,
+    ] as const;
     const group = WsRpcGroup.omit(
       ...[...WsRpcGroup.requests.keys()].filter(
         (
@@ -219,16 +225,16 @@ it.effect("reads a linked environment's thread only for a client that may read t
       threadId: ThreadId.make("thread:box"),
     };
     const handlers = group.toLayer({
-      [WS_METHODS.peerLinksReadThread]: ({ threadId }) =>
+      [WS_METHODS.peerLinksSubscribeThread]: ({ threadId }) =>
+        Stream.sync(() => {
+          read.push(threadId);
+          return { kind: "synchronized" as const };
+        }),
+      [WS_METHODS.peerLinksThreadHistoryPage]: () => Effect.die("unused"),
+      [WS_METHODS.peerLinksThreadItem]: ({ threadId }) =>
         Effect.sync(() => {
           read.push(threadId);
-          return {
-            label: "Box",
-            thread: { threadId, title: "There", status: "idle" as const, model: "gpt-5" },
-            items: [],
-            earlierPosition: null,
-            hasMore: false,
-          };
+          return { item: null };
         }),
       // A thread link resolves to the linked environment by its name.
       [WS_METHODS.peerLinksNames]: () =>
@@ -243,10 +249,27 @@ it.effect("reads a linked environment's thread only for a client that may read t
         ),
       ),
     );
-    expect(yield* outsider[WS_METHODS.peerLinksReadThread](input).pipe(Effect.flip)).toMatchObject({
+    const refused = {
       _tag: "EnvironmentAuthorizationError",
       requiredPermission: AuthOrchestrationReadScope,
-    });
+    };
+    expect(
+      yield* outsider[WS_METHODS.peerLinksSubscribeThread](input).pipe(
+        Stream.runCollect,
+        Effect.flip,
+      ),
+    ).toMatchObject(refused);
+    expect(
+      yield* outsider[WS_METHODS.peerLinksThreadItem]({
+        ...input,
+        itemId: TurnItemId.make("item:1"),
+      }).pipe(Effect.flip),
+    ).toMatchObject(refused);
+    expect(
+      yield* outsider[WS_METHODS.peerLinksThreadHistoryPage]({ ...input, cursor: "c" }).pipe(
+        Effect.flip,
+      ),
+    ).toMatchObject(refused);
     expect(read).toEqual([]);
     expect(yield* outsider[WS_METHODS.peerLinksNames]({}).pipe(Effect.flip)).toMatchObject({
       requiredPermission: AuthOrchestrationReadScope,
@@ -255,7 +278,9 @@ it.effect("reads a linked environment's thread only for a client that may read t
     const reader = yield* RpcTest.makeClient(group).pipe(
       Effect.provide(Layer.merge(handlers, RpcAuthorization.layer([AuthOrchestrationReadScope]))),
     );
-    expect((yield* reader[WS_METHODS.peerLinksReadThread](input)).label).toBe("Box");
+    expect(
+      Array.from(yield* reader[WS_METHODS.peerLinksSubscribeThread](input).pipe(Stream.runCollect)),
+    ).toEqual([{ kind: "synchronized" }]);
     expect(read).toEqual([input.threadId]);
     expect((yield* reader[WS_METHODS.peerLinksNames]({})).links).toEqual([
       { environmentId: input.environmentId, label: "Box" },

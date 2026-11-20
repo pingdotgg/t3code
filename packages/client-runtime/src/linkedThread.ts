@@ -1,6 +1,26 @@
-import type { EnvironmentId, PeerLinkThreadPage, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  OrchestrationV2ThreadHistoryPage,
+  OrchestrationV2ThreadProjection,
+  OrchestrationV2ThreadStreamItem,
+  ThreadId,
+} from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
+
+import {
+  deriveRunlessWorkStartedAt,
+  deriveThreadStructureRuntime,
+} from "./state/threadExecution.ts";
+import {
+  applyThreadHistoryPage,
+  applyThreadStreamItem,
+  initialThreadStreamState,
+  type ThreadStreamState,
+} from "./state/threadStream.ts";
 
 /** A thread on a linked environment, read through the environment that holds the link. */
 export interface LinkedThreadTarget {
@@ -41,80 +61,12 @@ const hasStringField = <K extends string>(value: unknown, key: K): value is Reco
   value !== null &&
   typeof (value as Record<string, unknown>)[key] === "string";
 
-type Page = Pick<PeerLinkThreadPage, "label" | "thread" | "items" | "earlierPosition" | "hasMore">;
-
-/** What a linked thread view holds: the pages read so far, as one run of items, oldest first. */
-export type LinkedThreadTranscript = Page & {
-  /**
-   * Where the next forward read continues while the last one left more behind it, else null. A
-   * page cut short can end before items already shown, so this is not the last item's position.
-   */
-  readonly continueAfter: number | null;
-};
-
-const continuationOf = (page: Page, fallback: number | null) =>
-  page.hasMore ? (page.items.at(-1)?.position ?? fallback) : null;
-
-/**
- * Adds a page to what is shown. An earlier page moves the start back; a later one replaces the
- * items it re-reads, which is how an item still being written gets its new text. Every page
- * carries the thread's current title and status.
- */
-export function mergeLinkedThreadPage(
-  current: LinkedThreadTranscript | null,
-  page: Page,
-  direction: "earlier" | "later",
-): LinkedThreadTranscript {
-  if (current === null) return { ...page, continueAfter: continuationOf(page, null) };
-  const byPosition = new Map(current.items.map((item) => [item.position, item]));
-  for (const item of page.items) byPosition.set(item.position, item);
-  return {
-    label: page.label,
-    thread: page.thread,
-    items: [...byPosition.values()].sort((left, right) => left.position - right.position),
-    earlierPosition: direction === "earlier" ? page.earlierPosition : current.earlierPosition,
-    hasMore: direction === "later" ? page.hasMore : current.hasMore,
-    continueAfter:
-      direction === "later" ? continuationOf(page, current.continueAfter) : current.continueAfter,
-  };
-}
-
-const UNSETTLED_ITEM_STATUSES = new Set(["pending", "running", "waiting"]);
-/** How far back a refresh re-reads for items still changing, so a stuck one cannot grow it. */
-const REFRESH_WINDOW = 20;
-
-/**
- * The `afterPosition` of the next forward read. While a page left more behind it, that continues
- * from where the page ended. Otherwise it re-reads from the oldest recent item still in progress, since
- * its text and status change in place.
- */
-export function linkedThreadRefreshCursor(transcript: LinkedThreadTranscript): number {
-  if (transcript.continueAfter !== null) return transcript.continueAfter;
-  const last = transcript.items.at(-1)?.position ?? -1;
-  const unsettled = transcript.items
-    .slice(-REFRESH_WINDOW)
-    .find((item) => UNSETTLED_ITEM_STATUSES.has(item.status));
-  return unsettled === undefined ? last : unsettled.position - 1;
-}
-
-const ACTIVE_THREAD_STATUSES = new Set(["preparing", "queued", "starting", "running", "waiting"]);
-
-export const LINKED_THREAD_ACTIVE_POLL_MS = 2_500;
-export const LINKED_THREAD_IDLE_POLL_MS = 15_000;
-
-/** How long an open view waits before its next read: none while catching up, short while the thread works. */
-function linkedThreadPollDelayMs(transcript: Pick<Page, "hasMore" | "thread">): number {
-  if (transcript.hasMore) return 0;
-  return ACTIVE_THREAD_STATUSES.has(transcript.thread.status)
-    ? LINKED_THREAD_ACTIVE_POLL_MS
-    : LINKED_THREAD_IDLE_POLL_MS;
-}
-
 /** Whether a failed read can succeed later with nothing changed: the linked environment was only out of reach. */
-function isLinkedThreadFailureRetryable(error: unknown): boolean {
-  if (!hasStringField(error, "_tag") || error._tag !== "PeerLinkThreadReadError") return true;
-  return hasStringField(error, "reason") && error.reason === "unreachable";
-}
+const isLinkedThreadUnreachable = (error: unknown): boolean =>
+  hasStringField(error, "_tag") &&
+  error._tag === "PeerLinkThreadReadError" &&
+  hasStringField(error, "reason") &&
+  error.reason === "unreachable";
 
 export interface LinkedThreadFailure {
   readonly title: string;
@@ -144,7 +96,7 @@ export function linkedThreadFailure(
       retryable: true,
     };
   }
-  const retryable = isLinkedThreadFailureRetryable(error);
+  const retryable = isLinkedThreadUnreachable(error);
   const label = hasStringField(error, "label") ? error.label : names.label;
   const reason = hasStringField(error, "reason") ? error.reason : "";
   switch (reason) {
@@ -206,196 +158,105 @@ export function linkedThreadFailure(
   }
 }
 
-type Item = PeerLinkThreadPage["items"][number];
+const WORKING_STATUSES = new Set(["preparing", "queued", "starting", "running", "waiting"]);
 
-export type LinkedThreadItemPresentation =
-  | { readonly kind: "user" | "assistant"; readonly text: string; readonly truncated: boolean }
-  | {
-      readonly kind: "activity";
-      readonly summary: string;
-      /** What the row opens to show; null when the summary says it all. */
-      readonly body: string | null;
-      readonly failed: boolean;
-      readonly truncated: boolean;
-    };
-
-const ACTIVITY_LABELS = {
-  reasoning: msg("Thinking"),
-  todo_list: msg("Plan"),
-  file_search: msg("File search"),
-  web_search: msg("Web search"),
-  approval_request: msg("Approval request"),
-  user_input_request: msg("Question"),
-  subagent: msg("Subagent"),
-  dynamic_tool: msg("Tool call"),
-  compaction: msg("Context compacted"),
-  error: msg("Error"),
-} as const;
-
-const firstLine = (text: string) => {
-  const end = text.indexOf("\n");
-  return end === -1
-    ? { head: text, rest: null }
-    : { head: text.slice(0, end), rest: text.slice(end + 1) };
-};
-
-/**
- * How a transcript item reads in a linked thread view: messages in full, everything else as a
- * one-line row that opens. `null` hides items that say nothing to a reader, such as checkpoints.
- */
-export function presentLinkedThreadItem(
-  item: Pick<Item, "type" | "status" | "title" | "text" | "textTruncated">,
-  resolve: MFunctionType = mFallback,
-): LinkedThreadItemPresentation | null {
-  const text = item.text ?? "";
-  const truncated = item.textTruncated;
-  if (item.type === "checkpoint") return null;
-  if (item.type === "user_message") return { kind: "user", text, truncated };
-  if (item.type === "assistant_message" || item.type === "proposed_plan") {
-    return text.trim() === "" ? null : { kind: "assistant", text, truncated };
-  }
-  const failed = item.status === "failed" || item.type === "error";
-  if (item.type === "command_execution" || item.type === "file_change") {
-    const { head, rest } = firstLine(text);
-    return { kind: "activity", summary: head, body: rest, failed, truncated };
-  }
-  const label = Object.hasOwn(ACTIVITY_LABELS, item.type)
-    ? resolve(ACTIVITY_LABELS[item.type as keyof typeof ACTIVITY_LABELS])
-    : null;
-  const title = item.title?.trim() || null;
-  if (label === null && title === null) {
-    // Notices and the like are their own text.
-    const { head, rest } = firstLine(text);
-    return head.trim() === ""
-      ? null
-      : { kind: "activity", summary: head, body: rest, failed, truncated };
-  }
-  return {
-    kind: "activity",
-    summary: label !== null && title !== null ? `${label} · ${title}` : (label ?? title)!,
-    body: text.trim() === "" ? null : text,
-    failed,
-    truncated,
-  };
+/** Whether the thread has work under way, for the note that stands where its composer would. */
+export function isLinkedThreadWorking(projection: OrchestrationV2ThreadProjection): boolean {
+  return (
+    WORKING_STATUSES.has(deriveThreadStructureRuntime(projection)?.status ?? "") ||
+    deriveRunlessWorkStartedAt(projection) !== null
+  );
 }
 
-export const isLinkedThreadWorking = (transcript: Pick<Page, "thread">): boolean =>
-  ACTIVE_THREAD_STATUSES.has(transcript.thread.status);
+/** How long a view waits before asking again for a thread whose environment did not answer. */
+export const LINKED_THREAD_RETRY_MS = 15_000;
 
-export interface LinkedThreadCursor {
-  readonly beforePosition?: number;
-  readonly afterPosition?: number;
-}
-
-export type LinkedThreadReadResult =
-  | { readonly ok: true; readonly page: Page }
-  | { readonly ok: false; readonly error: unknown };
-
-export interface LinkedThreadSessionState {
-  readonly transcript: LinkedThreadTranscript | null;
-  /** The last read's failure, cleared by the next read that succeeds. */
+/** A linked thread as its view holds it: the thread's own stream, reduced as any thread's is. */
+export interface LinkedThreadView {
+  readonly thread: ThreadStreamState;
+  /** Why the stream stopped, while the view waits to ask again; the next item clears it. */
   readonly error: unknown;
-  readonly loadingEarlier: boolean;
+  readonly history: { readonly loading: boolean; readonly failed: boolean };
+  /** Loads the turns before the ones shown. Does nothing while a page loads or none is left. */
+  readonly loadEarlier: () => void;
 }
 
 /**
- * The reads behind one open linked thread view. It reads only while something subscribes, so a
- * view that unmounts stops asking the linked environment at once, and while `isActive` says the
- * view is not being looked at it only waits.
+ * Follows a linked environment's thread for as long as something consumes the result. The thread
+ * is built from the same stream items and with the same reducer as a guest page's, and older
+ * turns load through the same cursor. A linked environment that stops answering is asked again
+ * after a wait, with what was read kept; any other failure ends the stream.
  */
-export function createLinkedThreadSession(options: {
-  readonly read: (cursor: LinkedThreadCursor) => Promise<LinkedThreadReadResult>;
-  /** Runs `run` after `delayMs` and returns how to cancel it. */
-  readonly schedule: (run: () => void, delayMs: number) => () => void;
-  readonly isActive?: () => boolean;
-  /** Called with each forward read the session keeps, never with one a newer read overtook. */
-  readonly onRead?: (page: Page) => void;
-}) {
-  let state: LinkedThreadSessionState = { transcript: null, error: null, loadingEarlier: false };
-  const listeners = new Set<() => void>();
-  // Bumped on stop and restart, so a read that outlives its view changes nothing.
-  let generation = 0;
-  let cancelNext: (() => void) | null = null;
-
-  const update = (patch: Partial<LinkedThreadSessionState>) => {
-    state = { ...state, ...patch };
-    for (const listener of listeners) listener();
-  };
-
-  const scheduleNext = (delayMs: number) => {
-    cancelNext?.();
-    cancelNext = options.schedule(() => {
-      cancelNext = null;
-      if (options.isActive?.() === false) scheduleNext(LINKED_THREAD_ACTIVE_POLL_MS);
-      else void readLatest();
-    }, delayMs);
-  };
-
-  // Only the newest forward read applies: a retry can start one while another is still out.
-  let latestRead = 0;
-
-  const readLatest = async () => {
-    const run = generation;
-    const read = ++latestRead;
-    cancelNext?.();
-    cancelNext = null;
-    const shown = state.transcript;
-    const result = await options.read(
-      shown === null ? {} : { afterPosition: linkedThreadRefreshCursor(shown) },
-    );
-    if (run !== generation || read !== latestRead) return;
-    if (!result.ok) {
-      update({ error: result.error });
-      if (isLinkedThreadFailureRetryable(result.error)) scheduleNext(LINKED_THREAD_IDLE_POLL_MS);
-      return;
-    }
-    // An earlier page may have landed while this read was out.
-    const transcript = mergeLinkedThreadPage(state.transcript, result.page, "later");
-    update({ transcript, error: null });
-    options.onRead?.(result.page);
-    scheduleNext(linkedThreadPollDelayMs(transcript));
-  };
-
-  return {
-    getSnapshot: () => state,
-    subscribe: (listener: () => void) => {
-      listeners.add(listener);
-      if (listeners.size === 1) {
-        generation += 1;
-        if (options.isActive?.() === false) scheduleNext(LINKED_THREAD_ACTIVE_POLL_MS);
-        else void readLatest();
-      }
-      return () => {
-        if (!listeners.delete(listener) || listeners.size > 0) return;
-        generation += 1;
-        cancelNext?.();
-        cancelNext = null;
-        state = { ...state, loadingEarlier: false };
+export const followLinkedThread = <E, R, E2, R2>(source: {
+  readonly items: Stream.Stream<OrchestrationV2ThreadStreamItem, E, R>;
+  readonly historyPage: (cursor: string) => Effect.Effect<OrchestrationV2ThreadHistoryPage, E2, R2>;
+}): Stream.Stream<LinkedThreadView, E, R | R2> =>
+  Stream.unwrap(
+    Effect.gen(function* () {
+      const requests = yield* Queue.unbounded<void>();
+      let requested = false;
+      // Both halves below run one step at a time, so each reads the view the other left.
+      let view: LinkedThreadView = {
+        thread: initialThreadStreamState,
+        error: null,
+        history: { loading: false, failed: false },
+        loadEarlier: () => {
+          if (requested || view.thread.historyCursor === null) return;
+          requested = true;
+          Queue.offerUnsafe(requests, undefined);
+        },
       };
-    },
-    /** Reads the page before the oldest one shown. */
-    loadEarlier: async () => {
-      const before = state.transcript?.earlierPosition ?? null;
-      if (before === null || state.loadingEarlier) return;
-      const run = generation;
-      update({ loadingEarlier: true });
-      const result = await options.read({ beforePosition: before });
-      if (run !== generation) return;
-      update(
-        result.ok
-          ? {
-              transcript: mergeLinkedThreadPage(state.transcript, result.page, "earlier"),
-              error: null,
-              loadingEarlier: false,
+      const show = (patch: Partial<LinkedThreadView>) => {
+        view = { ...view, ...patch };
+        return view;
+      };
+      const attempt = (): Stream.Stream<LinkedThreadView, E, R> =>
+        source.items.pipe(
+          Stream.map((item) =>
+            show({ thread: applyThreadStreamItem(view.thread, item), error: null }),
+          ),
+          Stream.catch((error) =>
+            isLinkedThreadUnreachable(error)
+              ? Stream.make(show({ error })).pipe(
+                  Stream.concat(
+                    Stream.unwrap(Effect.sleep(LINKED_THREAD_RETRY_MS).pipe(Effect.map(attempt))),
+                  ),
+                )
+              : Stream.fail(error),
+          ),
+        );
+      const earlier = Stream.fromQueue(requests).pipe(
+        Stream.flatMap(() =>
+          Stream.suspend(() => {
+            const cursor = view.thread.historyCursor;
+            if (cursor === null) {
+              requested = false;
+              return Stream.empty;
             }
-          : { error: result.error, loadingEarlier: false },
+            return Stream.make(show({ history: { loading: true, failed: false } })).pipe(
+              Stream.concat(
+                Stream.fromEffect(
+                  source.historyPage(cursor).pipe(
+                    Effect.match({
+                      onSuccess: (page) =>
+                        show({
+                          thread: applyThreadHistoryPage(view.thread, cursor, page),
+                          history: { loading: false, failed: false },
+                        }),
+                      onFailure: () => show({ history: { loading: false, failed: true } }),
+                    }),
+                    Effect.ensuring(
+                      Effect.sync(() => {
+                        requested = false;
+                      }),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }),
+        ),
       );
-    },
-    /** Reads again now, after a failure the user asked to retry. */
-    retry: () => {
-      if (listeners.size > 0) void readLatest();
-    },
-  };
-}
-
-export type LinkedThreadSession = ReturnType<typeof createLinkedThreadSession>;
+      return Stream.merge(attempt(), earlier, { haltStrategy: "left" });
+    }),
+  );

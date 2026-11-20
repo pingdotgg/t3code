@@ -1,11 +1,34 @@
-import { type EnvironmentId, type PeerLinkSummary, WS_METHODS } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type PeerLinkSummary,
+  type PeerLinkThreadInput,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import { Atom, type AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
-import { createEnvironmentRpcCommand, createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
+import { followLinkedThread, type LinkedThreadView } from "../linkedThread.ts";
+import { request, subscribe } from "../rpc/client.ts";
+import {
+  createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
+  createEnvironmentSubscriptionAtomFamily,
+} from "./runtime.ts";
+
+/** The environment a client reads through, and the linked environment's thread it reads. */
+export interface LinkedThreadViewTarget {
+  readonly environmentId: EnvironmentId;
+  readonly input: PeerLinkThreadInput;
+}
+
+const threadViewKey = ({ environmentId, input }: LinkedThreadViewTarget) =>
+  JSON.stringify({
+    environmentId,
+    input: { environmentId: input.environmentId, threadId: input.threadId },
+  });
 
 export function createPeerLinkEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
@@ -27,6 +50,38 @@ export function createPeerLinkEnvironmentAtoms<R, E>(
       registry.refresh(list({ environmentId, input: {} }));
       registry.refresh(names({ environmentId, input: {} }));
     });
+  const threadStream = createEnvironmentSubscriptionAtomFamily(runtime, {
+    label: "environment-data:peer-links:thread-stream",
+    idleTtlMs: 0,
+    subscribe: (input: PeerLinkThreadInput) =>
+      followLinkedThread({
+        items: subscribe(WS_METHODS.peerLinksSubscribeThread, input),
+        historyPage: (cursor) =>
+          request(WS_METHODS.peerLinksThreadHistoryPage, { ...input, cursor }),
+      }),
+  });
+  /**
+   * What a view of the thread last showed. It outlives the subscription for a while, so coming
+   * back to the view shows the thread at once while the stream starts again.
+   */
+  const lastThreadView = Atom.family((key: string) =>
+    Atom.make<LinkedThreadView | null>(null).pipe(
+      Atom.setIdleTTL(5 * 60_000),
+      Atom.withLabel(`environment-data:peer-links:last-thread-view:${key}`),
+    ),
+  );
+  /**
+   * A linked environment's thread, streamed while a view reads it. The subscription ends with its
+   * last reader, which closes the stream at the linked environment too.
+   */
+  const threadView = Atom.family((key: string) => {
+    const stream = threadStream(JSON.parse(key) as LinkedThreadViewTarget);
+    return Atom.make((get) => {
+      const live = get(stream);
+      if (AsyncResult.isSuccess(live)) get.set(lastThreadView(key), live.value);
+      return live;
+    }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-data:peer-links:thread-view:${key}`));
+  });
   return {
     list,
     names,
@@ -45,10 +100,13 @@ export function createPeerLinkEnvironmentAtoms<R, E>(
       tag: WS_METHODS.peerLinksUnlink,
       onSuccess: ({ environmentId }, registry) => refreshLinks(registry, environmentId),
     }),
-    /** One page of a linked environment's thread. An open view calls it; nothing is cached. */
-    readThread: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:peer-links:read-thread",
-      tag: WS_METHODS.peerLinksReadThread,
+    threadView: (target: LinkedThreadViewTarget) => threadView(threadViewKey(target)),
+    lastThreadView: (target: LinkedThreadViewTarget) => lastThreadView(threadViewKey(target)),
+    /** One item of a linked environment's thread in full, for a row the reader opened. */
+    threadItem: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:peer-links:thread-item",
+      tag: WS_METHODS.peerLinksThreadItem,
+      idleTtlMs: 0,
     }),
     // An agent's link card. One answer per card at a time.
     answerRequest: createEnvironmentRpcCommand(runtime, {

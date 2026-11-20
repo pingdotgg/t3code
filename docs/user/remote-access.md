@@ -481,12 +481,15 @@ fails with that reason.
 
 You can read a thread on a linked machine without connecting this app to it. Open
 a task that was delegated there from the thread's agents, or a thread link that
-points there, and its transcript opens read-only, fetched by the machine you are
-connected to over its link. It follows the thread while it runs. On web and
-desktop it opens as a tab in the right panel, beside the thread you are in.
+points there, and the thread opens read-only, streamed through the machine you
+are connected to over its link. It follows the thread live. On web and desktop
+it opens as a tab in the right panel, beside the thread you are in, and shows
+the same timeline as any other thread.
 
 - The view is marked **Read-only** with both machines' names. To reply, approve
   or stop the thread, connect this app to that machine.
+- Files, images and published visuals stay on that machine and do not load
+  here. A command's output shows as of when you open its row.
 - If this app is already connected to that machine, the thread opens there as
   usual instead.
 - You need permission to read threads on the machine you are connected to, and

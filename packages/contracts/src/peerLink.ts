@@ -1,17 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { AuthMcpClientAccess } from "./auth.ts";
-import {
-  EnvironmentId,
-  NonNegativeInt,
-  ThreadId,
-  TrimmedNonEmptyString,
-  TurnItemId,
-} from "./baseSchemas.ts";
-import {
-  OrchestratorMcpThreadStatus,
-  OrchestratorMcpThreadTimelineItem,
-} from "./orchestratorMcp.ts";
+import { EnvironmentId, ThreadId, TrimmedNonEmptyString, TurnItemId } from "./baseSchemas.ts";
 
 /**
  * A link from this environment to another one (the peer). This environment
@@ -110,36 +100,37 @@ export const peerLinkFailureKind = (
         : "other";
 
 /**
- * A page of a linked environment's thread, read for a client of this environment over the link.
- * No cursor reads the newest page; `beforePosition` pages back and `afterPosition` reads what
- * came after, which is also how an open view refreshes.
+ * Where an environment serves one of its threads to an environment linked to it, signed in with
+ * the link's own session as on `/mcp`. The stream carries the same items the owner's thread
+ * subscription does; history pages and item detail are the owner's too.
  */
-export const PeerLinkThreadReadInput = Schema.Struct({
+const PEER_LINK_THREAD_ROUTE_PREFIX = "/api/links/thread";
+export const PEER_LINK_THREAD_STREAM_ROUTE = `${PEER_LINK_THREAD_ROUTE_PREFIX}/stream`;
+export const PEER_LINK_THREAD_HISTORY_ROUTE = `${PEER_LINK_THREAD_ROUTE_PREFIX}/history`;
+export const PEER_LINK_THREAD_ITEM_ROUTE = `${PEER_LINK_THREAD_ROUTE_PREFIX}/item`;
+
+/** A thread on a linked environment, as a client of this environment names it. */
+export const PeerLinkThreadInput = Schema.Struct({
   /** The linked environment the thread lives in. */
   environmentId: EnvironmentId,
   threadId: ThreadId,
-  beforePosition: Schema.optionalKey(NonNegativeInt),
-  afterPosition: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(-1))),
 });
-export type PeerLinkThreadReadInput = typeof PeerLinkThreadReadInput.Type;
+export type PeerLinkThreadInput = typeof PeerLinkThreadInput.Type;
 
-export const PeerLinkThreadPage = Schema.Struct({
-  /** What this environment calls the linked one. */
-  label: Schema.String,
-  thread: Schema.Struct({
-    threadId: ThreadId,
-    title: Schema.String,
-    status: OrchestratorMcpThreadStatus,
-    model: Schema.String,
-  }),
-  /** Oldest first. Each page is bounded in items and in bytes. */
-  items: Schema.Array(OrchestratorMcpThreadTimelineItem),
-  /** Pass as `beforePosition` for the page before this one; null at the thread's start. */
-  earlierPosition: Schema.NullOr(NonNegativeInt),
-  /** More items follow this page already, so the next read need not wait. */
-  hasMore: Schema.Boolean,
+export const PeerLinkThreadHistoryInput = Schema.Struct({
+  ...PeerLinkThreadInput.fields,
+  /** The `historyCursor` of the snapshot or of the page before. */
+  cursor: TrimmedNonEmptyString,
 });
-export type PeerLinkThreadPage = typeof PeerLinkThreadPage.Type;
+export type PeerLinkThreadHistoryInput = typeof PeerLinkThreadHistoryInput.Type;
+
+export const PeerLinkThreadItemInput = Schema.Struct({
+  ...PeerLinkThreadInput.fields,
+  itemId: TurnItemId,
+  /** Unused by the server; a client keys its cache on it, as for its own threads' items. */
+  revision: Schema.optional(Schema.String),
+});
+export type PeerLinkThreadItemInput = typeof PeerLinkThreadItemInput.Type;
 
 /** Why a linked environment's thread could not be read, with the reason in words. */
 export class PeerLinkThreadReadError extends Schema.TaggedError<PeerLinkThreadReadError>()(
@@ -154,7 +145,7 @@ export class PeerLinkThreadReadError extends Schema.TaggedError<PeerLinkThreadRe
       "rejected",
       "unreachable",
       "thread_not_found",
-      /** The linked environment runs a version that cannot page a thread backwards. */
+      /** The linked environment runs a version that does not serve its threads to a link. */
       "incompatible",
     ]),
     /** What this environment calls the linked one, when it still has the link. */

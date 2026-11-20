@@ -267,6 +267,10 @@
       "types": "./src/state/orchestration.ts",
       "default": "./src/state/orchestration.ts"
     },
+    "./state/thread-stream": {
+      "types": "./src/state/threadStream.ts",
+      "default": "./src/state/threadStream.ts"
+    },
     "./state/thread-history-merge": {
       "types": "./src/state/threadHistoryMerge.ts",
       "default": "./src/state/threadHistoryMerge.ts"

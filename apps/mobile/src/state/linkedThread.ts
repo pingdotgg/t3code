@@ -1,15 +1,10 @@
-import {
-  createLinkedThreadSession,
-  type LinkedThreadTarget,
-} from "@t3tools/client-runtime/linked-thread";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { useAtomValue } from "@effect/atom-react";
+import type { LinkedThreadTarget } from "@t3tools/client-runtime/linked-thread";
 import type { EnvironmentId, OrchestrationV2Subagent } from "@t3tools/contracts";
-import { useState, useSyncExternalStore } from "react";
-import { AppState } from "react-native";
 
 import { useEnvironments } from "./environments";
 import { peerLinkEnvironment, useLinkedEnvironments } from "./peerLinks";
-import { useAtomCommand } from "./use-atom-command";
+import { useEnvironmentQuery } from "./query";
 
 /**
  * What places a delegated task's thread: this app's own connections, and the links `environmentId`
@@ -38,33 +33,21 @@ export function useLinkedThreadReach(
 }
 
 /**
- * The transcript of `target`, read through the environment that links to it. Reads start when the
- * calling screen mounts, stop when it unmounts, and wait while the app is in the background or
- * `isFocused` says another screen covers this one.
+ * The thread of `target`, streamed through the environment that links to it. The stream runs only
+ * while `active`; what it last showed stays, so coming back to the screen shows it at once.
  */
-export function useLinkedThreadSession(target: LinkedThreadTarget, isFocused: () => boolean) {
-  const read = useAtomCommand(peerLinkEnvironment.readThread, {
-    reportFailure: false,
-    reportDefect: false,
-  });
-  const [session] = useState(() =>
-    createLinkedThreadSession({
-      read: async (cursor) => {
-        const result = await read({
-          environmentId: target.viaEnvironmentId,
-          input: { environmentId: target.environmentId, threadId: target.threadId, ...cursor },
-        });
-        return result._tag === "Success"
-          ? { ok: true, page: result.value }
-          : { ok: false, error: squashAtomCommandFailure(result) };
-      },
-      schedule: (run, delayMs) => {
-        const timer = setTimeout(run, delayMs);
-        return () => clearTimeout(timer);
-      },
-      isActive: () => AppState.currentState === "active" && isFocused(),
-    }),
-  );
-  const state = useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot);
-  return { state, session };
+export function useLinkedThreadView(target: LinkedThreadTarget, active: boolean) {
+  const viewTarget = {
+    environmentId: target.viaEnvironmentId,
+    input: { environmentId: target.environmentId, threadId: target.threadId },
+  };
+  const live = useEnvironmentQuery(active ? peerLinkEnvironment.threadView(viewTarget) : null);
+  const view = useAtomValue(peerLinkEnvironment.lastThreadView(viewTarget));
+  return {
+    view,
+    /** Why the stream is not running: it ended, or it waits to ask again. */
+    error: live.failure ?? view?.error ?? null,
+    /** Asks again now. */
+    retry: live.refresh,
+  };
 }

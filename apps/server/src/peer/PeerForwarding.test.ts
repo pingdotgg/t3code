@@ -4,8 +4,6 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   EnvironmentId,
-  MessageId,
-  OrchestratorMcpThreadSendResult,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadShell,
   type SourceControlCloneRepositoryInput,
@@ -13,11 +11,9 @@ import {
   ProviderInstanceId,
   RunId,
   ThreadId,
-  TurnItemId,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
-import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -47,8 +43,6 @@ import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as PeerLinkRequests from "./PeerLinkRequests.ts";
-import * as PeerMcpClient from "./PeerMcpClient.ts";
-import * as PeerThreadReader from "./PeerThreadReader.ts";
 import { descriptorOf, layerLinkingEnvironment, linkTo, servePeer } from "./PeerLinks.testkit.ts";
 
 const laptop = descriptorOf("environment-laptop", "Laptop");
@@ -79,53 +73,6 @@ const nothingSeen: Seen = {
 /** The box user's own thread, which no link started. */
 const usersThread = ThreadId.make("thread:box-users-own");
 
-/** A long idle thread of the box user's, whose transcript a client reads over the link. */
-const transcriptThread = ThreadId.make("thread:box-transcript");
-const TRANSCRIPT_ITEMS = 120;
-/** Enough text that a page fills its byte budget well before its item limit. */
-const transcriptText = (position: number) => `reply ${position} ${"x".repeat(2_000)}`;
-
-const transcriptPage: ThreadManagement.ThreadManagementService["Service"]["getTimelinePage"] = (
-  threadId,
-  options,
-) => {
-  const matching = Array.from({ length: TRANSCRIPT_ITEMS }, (_, position) => position).filter(
-    (position) =>
-      position > (options.afterPosition ?? -1) &&
-      position < (options.beforePosition ?? Number.POSITIVE_INFINITY),
-  );
-  const page =
-    options.beforePosition === undefined
-      ? matching.slice(0, options.limit)
-      : matching.slice(-options.limit);
-  return Effect.succeed({
-    items: page.map((position) => {
-      const id = TurnItemId.make(`item:${position}`);
-      return {
-        position,
-        visibility: "local" as const,
-        sourceThreadId: threadId,
-        sourceItemId: id,
-        item: {
-          id,
-          threadId,
-          runId: boxRun,
-          status: "completed" as const,
-          title: null,
-          updatedAt: DateTime.makeUnsafe(0),
-          type: "assistant_message" as const,
-          messageId: MessageId.make(`message:${position}`),
-          text: transcriptText(position),
-          streaming: false,
-        } as never,
-      };
-    }),
-    totalItems: TRANSCRIPT_ITEMS,
-    hasMore: page.length > 0 && page.at(-1)! < matching.at(-1)!,
-    hasEarlier: page.length > 0 && page[0]! > matching[0]!,
-  });
-};
-
 /**
  * B's threads: one `auto` thread in `boxProject` that the laptop's link
  * started, whose run finishes on the third wait, and the box user's own.
@@ -139,34 +86,14 @@ const boxThreads = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) => {
   const users = { ...liveThreadShell(usersThread, { runtimeMode: "auto" }), projectId: boxProject };
   const run = (status: OrchestrationV2Run["status"]) =>
     ({ id: boxRun, status }) as unknown as OrchestrationV2Run;
-  const transcript = {
-    ...liveThreadShell(transcriptThread, { runtimeMode: "auto", activeRunId: null }),
-    projectId: boxProject,
-    title: "Long transcript",
-    status: "idle" as const,
-  };
   const shellOf = (threadId: ThreadId): Effect.Effect<OrchestrationV2ThreadShell | null> =>
-    threadId === boxThread
-      ? linked
-      : Effect.succeed(
-          threadId === usersThread ? users : threadId === transcriptThread ? transcript : null,
-        );
+    threadId === boxThread ? linked : Effect.succeed(threadId === usersThread ? users : null);
   const projectionOf = (threadId: ThreadId) =>
     shellOf(threadId).pipe(
-      Effect.map(
-        (thread) =>
-          ({
-            thread,
-            runs: threadId === transcriptThread ? [] : [run("running")],
-            runtimeRequests: [],
-            providerTurns: [],
-          }) as never,
-      ),
+      Effect.map((thread) => ({ thread, runs: [run("running")], runtimeRequests: [] }) as never),
     );
   return Layer.mock(ThreadManagement.ThreadManagementService)({
     getThreadShell: shellOf,
-    getTimelinePage: transcriptPage,
-    getRunCount: () => Effect.succeed(0),
     getProjectThreadRecords: (input) => projectionOf(input.threadId),
     getThreadRecords: (threadId) => projectionOf(threadId),
     listProjectThreads: () => linked.pipe(Effect.map((shell) => [shell] as never)),
@@ -442,18 +369,7 @@ const makeLaptop = Effect.gen(function* () {
         ),
         Effect.provideService(McpSchema.McpServerClient, mcpClient),
       );
-  const reader = yield* PeerThreadReader.layer.pipe(
-    Layer.provide(Layer.succeedContext(linking)),
-    Layer.build,
-  );
-  return {
-    links: Context.get(linking, PeerLinks.PeerLinks),
-    settings: Context.get(linking, ServerSettings.ServerSettingsService),
-    peers: Context.get(linking, PeerMcpClient.PeerMcpClient),
-    /** What a client connected to the laptop reads the box's threads through. */
-    reader: Context.get(reader, PeerThreadReader.PeerThreadReader),
-    call,
-  };
+  return { links: Context.get(linking, PeerLinks.PeerLinks), call };
 });
 
 const failureOf = (result: McpSchema.CallToolResult) => {
@@ -825,122 +741,6 @@ it.effect("refuses a launch there above the link's access, naming the link", () 
       // Once the link has expired, that is what the agent needs to hear.
       yield* TestClock.adjust(Duration.days(31));
       expect(failureOf(yield* launchAboveLink).message).toContain("expired");
-    }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
-);
-
-it.effect("reads a linked environment's thread for a client in bounded pages, and only reads", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const seen = yield* Ref.make<Seen>(nothingSeen);
-      const linkSession = yield* Ref.make("");
-      const b = yield* serveBox(seen, linkSession);
-      const a = yield* makeLaptop;
-      yield* linkTo(a.links, b, "full-access");
-      yield* Ref.set(linkSession, (yield* b.linkedSessions)[0]!.sessionId);
-      const read = (cursor: { beforePosition?: number; afterPosition?: number } = {}) =>
-        a.reader.read({ environmentId: box.environmentId, threadId: transcriptThread, ...cursor });
-
-      // No cursor reads the end of the thread, not its start.
-      const newest = yield* read();
-      expect(newest).toMatchObject({
-        label: "Box",
-        thread: { threadId: transcriptThread, title: "Long transcript", status: "idle" },
-        hasMore: false,
-      });
-      expect(newest.items.at(-1)).toMatchObject({
-        position: TRANSCRIPT_ITEMS - 1,
-        type: "assistant_message",
-        text: transcriptText(TRANSCRIPT_ITEMS - 1),
-      });
-
-      // Walking back visits every item once, each page within the item and byte bounds.
-      const pages = [newest];
-      while (pages[0]!.earlierPosition !== null) {
-        pages.unshift(yield* read({ beforePosition: pages[0]!.earlierPosition }));
-      }
-      expect(pages.flatMap((page) => page.items.map((item) => item.position))).toEqual(
-        Array.from({ length: TRANSCRIPT_ITEMS }, (_, position) => position),
-      );
-      expect(pages.length).toBeGreaterThan(TRANSCRIPT_ITEMS / 50);
-      for (const page of pages) {
-        expect(page.items.length).toBeGreaterThan(0);
-        expect(page.items.length).toBeLessThanOrEqual(50);
-        expect(Buffer.byteLength(JSON.stringify(page), "utf8")).toBeLessThanOrEqual(30_000);
-      }
-
-      // A refresh reads only what follows the cursor.
-      const refreshed = yield* read({ afterPosition: TRANSCRIPT_ITEMS - 3 });
-      expect(refreshed.items.map((item) => item.position)).toEqual([
-        TRANSCRIPT_ITEMS - 2,
-        TRANSCRIPT_ITEMS - 1,
-      ]);
-      expect((yield* read({ afterPosition: TRANSCRIPT_ITEMS - 1 })).items).toEqual([]);
-
-      // The link has full access, yet the modes a client's read carries let nothing be written.
-      const written = yield* a.peers
-        .call({
-          environmentId: box.environmentId,
-          tool: "t3_thread_send",
-          arguments: { threadId: boxThread, message: "Carry on there." },
-          limits: PeerThreadReader.CLIENT_READ_LIMITS,
-          success: OrchestratorMcpThreadSendResult,
-        })
-        .pipe(Effect.flip);
-      expect(written.code).toBe("runtime_mode_escalation_denied");
-      expect((yield* Ref.get(seen)).sends).toEqual([]);
-    }),
-  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
-);
-
-it.effect("tells a client why a linked environment's thread cannot be read", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const seen = yield* Ref.make<Seen>(nothingSeen);
-      const linkSession = yield* Ref.make("");
-      const b = yield* serveBox(seen, linkSession);
-      const a = yield* makeLaptop;
-      yield* linkTo(a.links, b, "auto");
-      const session = (yield* b.linkedSessions)[0]!.sessionId;
-      yield* Ref.set(linkSession, session);
-      const reasonOf = (environmentId: EnvironmentId, threadId: ThreadId) =>
-        a.reader.read({ environmentId, threadId }).pipe(
-          Effect.flip,
-          Effect.map(({ reason, label }) => ({ reason, label })),
-        );
-
-      expect(yield* reasonOf(box.environmentId, ThreadId.make("thread:box-gone"))).toEqual({
-        reason: "thread_not_found",
-        label: "Box",
-      });
-
-      yield* Ref.set(b.bearers, []);
-      expect(
-        yield* reasonOf(EnvironmentId.make("environment-elsewhere"), transcriptThread),
-      ).toEqual({ reason: "unknown_link", label: null });
-
-      yield* a.settings.updateSettings({ linkedEnvironmentsEnabled: false });
-      expect(yield* reasonOf(box.environmentId, transcriptThread)).toEqual({
-        reason: "disabled",
-        label: null,
-      });
-      yield* a.settings.updateSettings({ linkedEnvironmentsEnabled: true });
-      // Neither refusal asked the box anything.
-      expect(yield* Ref.get(b.bearers)).toEqual([]);
-
-      yield* b.auth.revokeSession(session);
-      expect(yield* reasonOf(box.environmentId, transcriptThread)).toEqual({
-        reason: "rejected",
-        label: "Box",
-      });
-
-      yield* Ref.set(b.bearers, []);
-      yield* TestClock.adjust(Duration.days(31));
-      expect(yield* reasonOf(box.environmentId, transcriptThread)).toEqual({
-        reason: "expired",
-        label: "Box",
-      });
-      expect(yield* Ref.get(b.bearers)).toEqual([]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
