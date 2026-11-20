@@ -276,6 +276,8 @@ function describeAct(act: ComputerAct, typed: string | null): string {
       return `open the menu of ${act.label ? `“${clip(act.label)}”` : (act.ref ?? "a control")}`;
     case "open_url":
       return `open ${clip(act.url ?? "a page")}`;
+    case "choose_file":
+      return `choose the file ${clip(act.path ?? "")}`;
   }
 }
 

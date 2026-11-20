@@ -39,6 +39,8 @@ export type ScreenControl = {
   focused?: boolean;
   /** Where it is on screen, when the backend knows (for a caller that reads the tree next to a screenshot). */
   bounds?: Rect;
+  /** The sheet, dialog, popup or DevTools it sits in, when not the window's own content (`sheet “Open”`). */
+  window?: string;
 };
 
 export const CONTROL_ROLES = [
@@ -63,7 +65,7 @@ export type Observation = {
   url?: string;
   /** Visible, actionable controls, in reading order (at most about 150). */
   controls: ScreenControl[];
-  /** A short excerpt of the visible text, for context (at most about 1,500 characters). */
+  /** The visible text, then a `## <window>` section for each sheet, dialog or DevTools open with it. */
   text?: string;
   /** Read from a screenshot: only text is listed, not icons such as a play button. */
   visual?: boolean;
@@ -90,7 +92,9 @@ export type ScreenAction =
   /** Open the control's context menu. */
   | { kind: "menu"; ref: string }
   /** Press the item of an open menu with this title. */
-  | { kind: "pick"; label: string };
+  | { kind: "pick"; label: string }
+  /** Pick the file at this absolute path in the file panel the app has open. */
+  | { kind: "choose_file"; path: string };
 
 /**
  * How an action reached the app. `background`: without the person's real pointer, focus or keyboard (an accessibility

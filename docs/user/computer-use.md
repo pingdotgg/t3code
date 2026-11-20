@@ -13,6 +13,12 @@ Agents either take single steps themselves (read the window, then click, type,
 press a key, scroll or open a web address in your default browser) or hand
 computer use a goal to work through. Both are checked the same way.
 
+Agents also see what an app opens over its window: an Open or Save sheet,
+a dialog, a browser's popup such as **Save password**, and the browser's
+DevTools when they are open, so they can read Console and Network entries.
+To upload a file, an agent opens the page's file picker and chooses the file
+by its path, which waits for your tap.
+
 Computer use runs on macOS. Approving, stopping and settings work from any
 client, including the mobile app and browsers on Windows or Linux.
 
