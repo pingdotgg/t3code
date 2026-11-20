@@ -24,6 +24,11 @@ export function createPeerLinkEnvironmentAtoms<R, E>(
       onSuccess: ({ environmentId }, registry) =>
         Effect.sync(() => registry.refresh(list({ environmentId, input: {} }))),
     }),
+    // Leaves the list alone: a batch refreshes it once, when it ends (`runLinkBatch`).
+    linkInBatch: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:peer-links:link-in-batch",
+      tag: WS_METHODS.peerLinksLink,
+    }),
     unlink: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:peer-links:unlink",
       tag: WS_METHODS.peerLinksUnlink,

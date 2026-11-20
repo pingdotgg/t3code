@@ -30,6 +30,7 @@ import {
   isAntigravitySignInRequiredError,
   makeAntigravityStderrHandler,
   makeAntigravityStdoutTransform,
+  antigravityLoginResponse,
   parseAntigravityAuthorizationUrl,
   prepareAntigravityProfile,
   resolveAntigravityInstanceDirectories,
@@ -55,7 +56,7 @@ describe("Antigravity process environment", () => {
     browserCommand: "managed-browser-helper",
   };
 
-  it("isolates the profile and harness after merging overrides without changing the base environment", () => {
+  it("runs `agy acp` with an isolated profile without changing the base environment", () => {
     const baseEnv = {
       HOME: "/home/developer",
       PATH: "/usr/bin",
@@ -71,7 +72,6 @@ describe("Antigravity process environment", () => {
       GEMINI_HOME: "/shared-gemini-home",
       gemini_home: "/alias-shared-home",
       AGY_ACP_FORCE_FILE_STORAGE: "0",
-      ANTIGRAVITY_HARNESS_PATH: "/wrong-version/harness",
       BROWSER: "open-real-browser",
       browser: "another-real-browser",
       PYTHONUNBUFFERED: "0",
@@ -82,7 +82,7 @@ describe("Antigravity process environment", () => {
     };
     const original = { ...baseEnv };
     const spawn = buildAntigravityAcpSpawnInput({
-      installation: { executablePath: "/release/acp", harnessPath: "/release/harness" },
+      installation: { executablePath: "/usr/bin/agy" },
       profile,
       cwd: "/project",
       baseEnv,
@@ -90,8 +90,8 @@ describe("Antigravity process environment", () => {
 
     expect(baseEnv).toEqual(original);
     expect(spawn).toEqual({
-      command: "/release/acp",
-      args: ["--uid=", "--alsologtostderr"],
+      command: "/usr/bin/agy",
+      args: ["acp", "--gemini-dir", profile.geminiHome, "--app-data-dir", "antigravity-acp"],
       cwd: "/project",
       extendEnv: false,
       env: {
@@ -100,7 +100,6 @@ describe("Antigravity process environment", () => {
         CUSTOM_SETTING: "keep-this",
         GEMINI_HOME: profile.geminiHome,
         AGY_ACP_FORCE_FILE_STORAGE: "1",
-        ANTIGRAVITY_HARNESS_PATH: "/release/harness",
         BROWSER: profile.browserCommand,
         PYTHONUNBUFFERED: "1",
         ELECTRON_RUN_AS_NODE: "1",
@@ -109,31 +108,11 @@ describe("Antigravity process environment", () => {
     });
   });
 
-  it("runs the agy CLI as `agy acp` without a harness", () => {
-    const spawn = buildAntigravityAcpSpawnInput({
-      installation: { executablePath: "/usr/bin/agy", harnessPath: null },
-      profile,
-      cwd: "/project",
-      baseEnv: { PATH: "/usr/bin", ANTIGRAVITY_HARNESS_PATH: "/stale/harness" },
-    });
-
-    expect(spawn.command).toBe("/usr/bin/agy");
-    expect(spawn.args).toEqual([
-      "acp",
-      "--gemini-dir",
-      profile.geminiHome,
-      "--app-data-dir",
-      "antigravity-acp",
-    ]);
-    expect(spawn.env).not.toHaveProperty("ANTIGRAVITY_HARNESS_PATH");
-    expect(spawn.env).toMatchObject({ GEMINI_HOME: profile.geminiHome, PATH: "/usr/bin" });
-  });
-
   it("passes only the configured method's credential and keeps the GCP pair out of the environment", () => {
     const baseEnv = { PATH: "/usr/bin", GOOGLE_API_KEY: "ambient-key" };
     const spawnFor = (auth: AntigravityAuthConfig) =>
       buildAntigravityAcpSpawnInput({
-        installation: { executablePath: "/release/acp", harnessPath: "/release/harness" },
+        installation: { executablePath: "/usr/bin/agy" },
         profile,
         cwd: "/project",
         baseEnv,
@@ -179,10 +158,7 @@ describe("Antigravity process environment", () => {
       browserCommand: "managed-browser-helper",
     };
     const input = {
-      installation: {
-        executablePath: "C:\\release\\agy_acp_server.exe",
-        harnessPath: "C:\\release\\localharness_external.exe",
-      },
+      installation: { executablePath: "C:\\release\\agy.exe" },
       profile: windowsProfile,
       cwd: "C:\\project",
       baseEnv: { PATH: "C:\\Windows\\system32", TEMP: "C:\\Users\\user\\AppData\\Local\\Temp" },
@@ -269,6 +245,46 @@ describe("Antigravity authorization URL", () => {
           expect(encodeUnknownJson(result.failure)).not.toContain(invalidUrl);
         }
       }),
+  );
+});
+
+describe("Antigravity code sign-in", () => {
+  const loginUrl =
+    "https://accounts.google.com/o/oauth2/auth?access_type=offline&code_challenge_method=S256&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&response_type=code&state=login-state";
+
+  it.effect("accepts the agy CLI's link and only a code or page URL for that sign-in", () =>
+    Effect.gen(function* () {
+      const pending = yield* parseAntigravityAuthorizationUrl(loginUrl, "code");
+      expect(pending.redirectUri).toBe("https://antigravity.google/oauth-callback");
+      for (const other of [
+        loginUrl.replace("antigravity.google", "antigravity.google.example.invalid"),
+        loginUrl.replace("/o/oauth2/auth", "/o/oauth2/v2/auth"),
+      ]) {
+        expect(
+          Result.isFailure(
+            yield* parseAntigravityAuthorizationUrl(other, "code").pipe(Effect.result),
+          ),
+        ).toBe(true);
+      }
+      expect(
+        Result.isFailure(yield* parseAntigravityAuthorizationUrl(loginUrl).pipe(Effect.result)),
+      ).toBe(true);
+
+      const page = "https://antigravity.google/oauth-callback?state=login-state&code=4%2F0Ab-c";
+      expect(antigravityLoginResponse(pending, " 4/0Ab-code_1.x~ ")).toBe("4/0Ab-code_1.x~");
+      expect(antigravityLoginResponse(pending, page)).toBe(page);
+      for (const invalid of [
+        "",
+        "4/0Ab code",
+        "4/0Ab\nsecond line",
+        page.replace("login-state", "other-state"),
+        page.replace("antigravity.google", "evil.example"),
+        page.replace("&code=4%2F0Ab-c", ""),
+        `${page}&code=again`,
+      ]) {
+        expect(antigravityLoginResponse(pending, invalid)).toBeUndefined();
+      }
+    }),
   );
 });
 
@@ -401,37 +417,6 @@ describe("Antigravity stdout compatibility", () => {
 });
 
 describe("Antigravity stderr compatibility", () => {
-  it.effect.each([
-    "I1022 11:04:37.910207 1865358 local_connection.py:551] harness stderr: Agent run failed: failed to handle call hook response: no pending hook for ID hook_request_2",
-    "E1022 11:04:37.910207 1865358 server.py:5275] Failed to rebuild agent for session native-session; connection unrecoverable",
-    "E1022 11:04:37.910207 1865358 server.py:5266] Agent connection lost for session native-session after rebuild retry",
-  ])("retires the transport on a native harness failure: %s", (line) =>
-    Effect.gen(function* () {
-      const handleStderr = makeAntigravityStderrHandler();
-      yield* handleStderr(line.slice(0, 70));
-      const error = yield* handleStderr(`${line.slice(70)}\r\n`).pipe(Effect.flip);
-      expect(error._tag).toBe("AcpTransportError");
-      expect(error.message).not.toContain("native-session");
-      expect(error.message).not.toContain("hook_request_2");
-    }),
-  );
-
-  it.effect(
-    "does not classify task prose or unrelated native warnings as a transport failure",
-    () =>
-      Effect.gen(function* () {
-        const handleStderr = makeAntigravityStderrHandler();
-        yield* handleStderr("Agent run failed: example from a task\n");
-        yield* handleStderr("Agent connection was lost and could not be re-established\n");
-        yield* handleStderr(
-          "I1022 11:04:37.910207 1865358 server.py:5142] Agent connection closed for session native-session; rebuilding agent and retrying the turn once.\n",
-        );
-        yield* handleStderr(
-          "W1022 11:04:37.910207 1865358 telemetry.py:431] No business auth manager configured\n",
-        );
-      }),
-  );
-
   it.effect("forwards fragmented native sign-in URLs from runtime 1.1.1", () =>
     Effect.gen(function* () {
       const urls: string[] = [];
@@ -533,7 +518,7 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
       }),
     );
     return buildAntigravityAcpSpawnInput({
-      installation: { executablePath: "/release/acp", harnessPath: "/release/harness" },
+      installation: { executablePath: "/usr/bin/agy" },
       profile,
       cwd: directory,
       baseEnv,

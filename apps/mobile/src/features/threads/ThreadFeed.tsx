@@ -289,6 +289,7 @@ import {
 } from "@t3tools/client-runtime/workspace-basename-lookup";
 import {
   resolveThreadLink,
+  useEnvironmentPreviewTunnelOff,
   useLiveThreadLinkLabels,
   useQuietThreadShell,
   useThreadChipIcons,
@@ -3146,6 +3147,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const navigation = useNavigation();
   const openThreadLink = useOpenThreadLink(props.environmentId);
   const openLocalPreview = useOpenLocalPreview();
+  const previewTunnelOff = useEnvironmentPreviewTunnelOff(props.environmentId);
+  // Without the tunnel, loopback links fall through to the system browser like any other link.
+  const deviceLoopbackUrl = (href: string) =>
+    previewTunnelOff ? null : loopbackUrlForDevice(href);
   // Recycling a row disposes its native audio player, so a started clip's row stays rendered.
   const [retainedMediaRowId, setRetainedMediaRowId] = useState<string | null>(null);
   const focused = useIsFocused();
@@ -3428,7 +3433,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       return;
     }
     // Safari would open the phone's own localhost, so these open on the device by default.
-    const deviceUrl = loopbackUrlForDevice(href);
+    const deviceUrl = deviceLoopbackUrl(href);
     if (deviceUrl) {
       openLocalPreview(
         { environmentId: String(props.environmentId), threadId: String(props.threadId) },
@@ -3561,7 +3566,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         };
       }
       // The environment's localhost, which this device can only reach through the tunnel.
-      if (loopbackUrlForDevice(href)) {
+      if (deviceLoopbackUrl(href)) {
         return {
           title: href,
           actions: [
@@ -3587,7 +3592,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         else if (actionId === "copy-thread-link") copyTextWithHaptic(hostedThreadLink(thread));
         return;
       }
-      const deviceUrl = loopbackUrlForDevice(href);
+      const deviceUrl = deviceLoopbackUrl(href);
       if (deviceUrl) {
         if (actionId === "open-on-device") {
           markdownLinkRequest.current?.abort();
