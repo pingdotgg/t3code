@@ -477,7 +477,7 @@ export function LinkEnvironmentDialog({
               void submit();
             }}
           >
-            {machines.length > 0 ? (
+            {machines.length > 0 && through === null ? (
               <LinkMachineSelect
                 machines={machines}
                 value={selected}
