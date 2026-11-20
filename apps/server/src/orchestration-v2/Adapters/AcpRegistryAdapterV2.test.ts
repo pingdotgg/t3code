@@ -3044,7 +3044,7 @@ describe("AcpRegistryAdapterV2", () => {
         throw new Error("Missing provider retry item");
       assert.equal(retry.turnItem.title, "Provider retry");
       assert.equal(retry.turnItem.failure.class, "usage_limit");
-      assert.equal(retry.turnItem.retry.attempt, 1);
+      assert.equal(retry.turnItem.retry?.attempt, 1);
       const terminal = yield* session.terminal;
       assert.equal(terminal.status, "completed");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
