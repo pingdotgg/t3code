@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
@@ -107,6 +108,7 @@ export function SidebarThreadGroupOverflowRow(props: {
   /** Folder rows draw the branch further right, so the label starts where worker titles do. */
   inFolder?: boolean;
 }) {
+  const gt = useGT();
   const showingLess = props.expanded === true;
   return (
     <button
@@ -118,10 +120,12 @@ export function SidebarThreadGroupOverflowRow(props: {
       onClick={showingLess ? props.onCollapse : props.onExpand}
     >
       {showingLess ? (
-        "Show less"
+        gt("Show less")
       ) : (
         <span data-thread-group-anchor>
-          +{props.count} {props.kind}
+          {props.kind === "settled"
+            ? gt("{count, plural, other {+{count} settled}}", { count: props.count })
+            : gt("{count, plural, other {+{count} snoozed}}", { count: props.count })}
         </span>
       )}
     </button>

@@ -1,6 +1,9 @@
 import { resolveThreadGroupFor } from "@t3tools/client-runtime/state/thread-groups";
 import { topicUpdatedSince } from "@t3tools/client-runtime/state/thread-board";
 import type { EnvironmentId, OrchestrationV2BoardTopic, ThreadId } from "@t3tools/contracts";
+import { msg } from "gt-react-native";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 export interface BoardTopicPresentation {
   readonly editedLabel: string | null;
@@ -13,12 +16,17 @@ export function presentBoardTopic(
     readonly authorInGroup: boolean;
   },
   viewedAt: string | null,
+  resolve: MessageResolver = m,
 ): BoardTopicPresentation {
   return {
     editedLabel:
       topic.editCount === 0
         ? null
-        : `edited ${topic.editCount} ${topic.editCount === 1 ? "time" : "times"}`,
+        : resolve(
+            msg("{count, plural, one {edited {count} time} other {edited {count} times}}", {
+              count: topic.editCount,
+            }),
+          ),
     updated: topicUpdatedSince(topic, viewedAt),
     authorLeft: !topic.authorInGroup,
   };

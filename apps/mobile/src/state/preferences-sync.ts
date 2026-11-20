@@ -12,16 +12,18 @@ import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
+import { msg } from "gt-react-native";
 import { Appearance } from "react-native";
 
 import * as Dialog from "../components/ui/Dialog";
+import { m } from "../i18n/messages";
 import { subscribeRegisteredMobileThemes } from "../lib/mobileThemeRegistry";
 import { uuidv4 } from "../lib/uuid";
 import type { Preferences } from "../persistence/mobile-preferences";
 import { appAtomRegistry } from "./atom-registry";
 import { applyMobileProfileValues, readMobileProfileValues } from "./client-profile.logic";
 import { createMobileEditorThemeSource } from "./editor-theme-source";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "./preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "./preferences";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
 
@@ -48,7 +50,7 @@ function preferencesReady(): Promise<Preferences> {
 
 // Writes are optimistic: the atom shows the patch at once and the store saves in call order.
 function writePreferences(patch: Partial<Preferences>): Preferences {
-  appAtomRegistry.set(updateMobilePreferencesAtom, patch);
+  void runAtomCommand(appAtomRegistry, saveMobilePreferences, patch);
   return loadedPreferences() ?? {};
 }
 
@@ -132,19 +134,23 @@ export const preferencesSync = createClientProfileSync({
 
 function presentChoice() {
   Dialog.alert(
-    "Sync preferences",
-    "Other devices already sync preferences through your servers. Use synced settings: this device switches to the preferences your other devices share. Use this device's settings: all your devices switch to this device's preferences.",
+    m(msg("Sync preferences")),
+    m(
+      msg(
+        "Other devices already sync preferences through your servers. Use synced settings: this device switches to the preferences your other devices share. Use this device's settings: all your devices switch to this device's preferences.",
+      ),
+    ),
     [
       {
-        text: "Use synced settings",
+        text: m(msg("Use synced settings")),
         onPress: () => void preferencesSync.choose("synced"),
       },
       {
-        text: "Use this device's settings",
+        text: m(msg("Use this device's settings")),
         onPress: () => void preferencesSync.choose("thisDevice"),
       },
       {
-        text: "Cancel",
+        text: m(msg("Cancel")),
         style: "cancel",
         onPress: () => void preferencesSync.cancelChoice(),
       },
@@ -154,8 +160,6 @@ function presentChoice() {
 }
 
 export function installPreferencesSync(): () => void {
-  // Mounted so the update atom keeps running between writes, as VoiceInputProvider does.
-  const unmountUpdate = appAtomRegistry.mount(updateMobilePreferencesAtom);
   const unsubscribeStatus = appAtomRegistry.subscribe(preferencesSync.statusAtom, (status) => {
     if (status.type === "choice") presentChoice();
   });
@@ -163,6 +167,5 @@ export function installPreferencesSync(): () => void {
   return () => {
     stop();
     unsubscribeStatus();
-    unmountUpdate();
   };
 }

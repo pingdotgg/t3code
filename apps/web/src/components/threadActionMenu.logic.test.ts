@@ -96,6 +96,11 @@ describe("buildThreadActionMenuItems", () => {
     expect(items.find((item) => item.id === "turn-into-project")?.disabled).toBe(true);
   });
 
+  it("disables only rename where no inline title editor exists", () => {
+    const items = buildThreadActionMenuItems({ ...baseState, canRename: false });
+    expect(items.filter((item) => item.disabled).map((item) => item.id)).toEqual(["rename"]);
+  });
+
   it("worker menu has detach and no pin", () => {
     const items = buildThreadActionMenuItems({
       ...baseState,

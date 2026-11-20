@@ -6,7 +6,15 @@ import { isProviderSkillUserInvocable } from "@t3tools/client-runtime/providerSk
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { videoMimeType } from "@t3tools/shared/video";
+import { msg } from "gt-react-native";
+import { m } from "../i18n/messages";
 import {
+  assistantCitationLabel,
+  collectAssistantCitations,
+  expandAssistantCitationsForProvider,
+} from "@t3tools/shared/assistantCitations";
+import {
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   COMPOSER_CONTEXT_MAX_RECORDS,
   COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS,
   ComposerContextId,
@@ -19,10 +27,6 @@ import {
   type EnvironmentId,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import {
-  assistantCitationLabel,
-  collectAssistantCitations,
-} from "@t3tools/shared/assistantCitations";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   collectComposerContextReferences,
@@ -40,15 +44,26 @@ import {
 const isMessageContext = Schema.is(OrchestrationMessageContext);
 const decodeMessageContext = Schema.decodeUnknownOption(OrchestrationMessageContext);
 
+export function assistantCitationDraftWithinLimit(text: string): boolean {
+  return (
+    text.length <= PROVIDER_SEND_TURN_MAX_INPUT_CHARS &&
+    expandAssistantCitationsForProvider(text).length <= PROVIDER_SEND_TURN_MAX_INPUT_CHARS
+  );
+}
+
 export function composerContextSendBlockReason(
   context?: OrchestrationMessageContext,
 ): string | null {
   if (!context) return null;
   if (context.records.length > COMPOSER_CONTEXT_MAX_RECORDS) {
-    return `Remove context items until there are at most ${COMPOSER_CONTEXT_MAX_RECORDS}.`;
+    return m(
+      msg("Remove context items until there are at most {max}.", {
+        max: COMPOSER_CONTEXT_MAX_RECORDS,
+      }),
+    );
   }
   return !isMessageContext(context) || decodeMessageContext(context)._tag === "None"
-    ? "This draft has too much context to send. Remove some context items and try again."
+    ? m(msg("This draft has too much context to send. Remove some context items and try again."))
     : null;
 }
 
@@ -146,6 +161,7 @@ export function pullRequestComposerContext(
       ? sanitizeComposerContextLabel(path.split("/").at(-1) ?? path, "file")
       : `#${metadata.number}`,
     sectionId: `pull-request:${metadata.number}`,
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- context record sent to the agent
     sectionTitle: `PR #${metadata.number}`,
     filePath: path || `PR #${metadata.number}`,
     startIndex: 0,
@@ -199,14 +215,14 @@ export function composerContextEditorTokens(
 ) {
   const references = collectComposerContextReferences(text);
   const citations = collectAssistantCitations(text);
-  const covered = [...references, ...citations];
   const inlineTokens = tokens.filter(
     (token) =>
       // `$HOME` and other `$name` text that is not one of the provider's skills stays prose.
       (token.type !== "skill" || knownSkills.has(token.value)) &&
-      !covered.some((range) => token.start < range.end && token.end > range.start),
+      !references.some((ref) => token.start < ref.end && token.end > ref.start) &&
+      !citations.some((ref) => token.start < ref.end && token.end > ref.start),
   );
-  const taken = [...inlineTokens, ...covered, ...composerMathRanges(text)];
+  const taken = [...inlineTokens, ...references, ...citations, ...composerMathRanges(text)];
   const models = modelTokens.filter(
     (mention) => !taken.some((range) => mention.start < range.end && mention.end > range.start),
   );
@@ -217,17 +233,15 @@ export function composerContextEditorTokens(
       value: ref.label,
       ...ref,
     })),
-    ...citations.map(({ citation, source, start, end }) => ({
-      type: "citation" as const,
-      value: assistantCitationLabel(citation),
-      source,
-      start,
-      end,
-    })),
     ...models.map((mention) => ({
       type: "model" as const,
       value: mention.model,
       ...mention,
+    })),
+    ...citations.map((ref) => ({
+      type: "citation" as const,
+      value: assistantCitationLabel(ref.citation),
+      ...ref,
     })),
   ].sort((a, b) => a.start - b.start);
 }

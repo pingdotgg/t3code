@@ -1,6 +1,9 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import { isListedThreadLineage } from "@t3tools/contracts";
+import { msg } from "gt-react-native";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 export function planGroupSettle(
   lead: EnvironmentThreadShell,
@@ -57,13 +60,20 @@ export function resolveAttachTargets(
     );
 }
 
-const threadsOfGroup = (workerCount: number) =>
-  `${workerCount} ${workerCount === 1 ? "thread" : "threads"} of this group`;
-
-export function groupLeadArchiveDetail(workerCount: number): string {
-  return `${threadsOfGroup(workerCount)} will be shown separately while it is archived.`;
+export function groupLeadArchiveDetail(workerCount: number, resolve: MessageResolver = m): string {
+  return resolve(
+    msg(
+      "{count, plural, one {{count} thread of this group will be shown separately while it is archived.} other {{count} threads of this group will be shown separately while it is archived.}}",
+      { count: workerCount },
+    ),
+  );
 }
 
-export function groupLeadDeleteDetail(workerCount: number): string {
-  return `${threadsOfGroup(workerCount)} will stay and become ${workerCount === 1 ? "an ordinary thread" : "ordinary threads"}.`;
+export function groupLeadDeleteDetail(workerCount: number, resolve: MessageResolver = m): string {
+  return resolve(
+    msg(
+      "{count, plural, one {{count} thread of this group will stay and become an ordinary thread.} other {{count} threads of this group will stay and become ordinary threads.}}",
+      { count: workerCount },
+    ),
+  );
 }

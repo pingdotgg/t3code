@@ -1,12 +1,12 @@
 import { modelChipIcon } from "../lib/contextChipIconSource";
 import { useMemo } from "react";
-import { Image } from "react-native";
-import type { LinkPillContent, MarkdownStyle } from "react-native-enriched-markdown";
-import type { ComposerContextRecord } from "@t3tools/contracts";
 import {
   assistantCitationLabel,
   parseAssistantCitationHref,
 } from "@t3tools/shared/assistantCitations";
+import { Image } from "react-native";
+import type { LinkPillContent, MarkdownStyle } from "react-native-enriched-markdown";
+import type { ComposerContextRecord } from "@t3tools/contracts";
 import { contextChipAccent, contextChipPresentation } from "../lib/composerChipPresentation";
 import { CONTEXT_CHIP_ICON_SOURCES } from "../lib/contextChipIcons.generated";
 import { FONT_FAMILIES } from "../lib/fontFamilies";
@@ -73,7 +73,7 @@ function presentation(
   if (citation)
     return {
       label: assistantCitationLabel(citation),
-      icon: CONTEXT_CHIP_ICON_SOURCES.quote,
+      icon: CONTEXT_CHIP_ICON_SOURCES["message-circle"],
       chip: { accent: contextChipPresentation("citation").accent, tintsIcon: true },
     };
   const context = enrichedContextLinkCustomization(url);

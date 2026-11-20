@@ -1,7 +1,10 @@
+import { msg } from "gt-react";
 import { resolveBoardLeadKey, topicUpdatedSince } from "@t3tools/client-runtime/state/thread-board";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ThreadGroupCandidate } from "@t3tools/client-runtime/state/thread-groups";
 import type { EnvironmentId, OrchestrationV2BoardTopic, ThreadId } from "@t3tools/contracts";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 export type BoardTopicInput = Pick<OrchestrationV2BoardTopic, "editCount" | "updatedAt"> & {
   readonly authorInGroup: boolean;
@@ -16,11 +19,16 @@ export interface BoardTopicPresentation {
 export function presentBoardTopic(
   topic: BoardTopicInput,
   viewedAt: string | null,
+  resolve: MessageResolver = m,
 ): BoardTopicPresentation {
   return {
     editedLabel:
       topic.editCount > 0
-        ? `edited ${topic.editCount} ${topic.editCount === 1 ? "time" : "times"}`
+        ? resolve(
+            msg("{count, plural, one {edited {count} time} other {edited {count} times}}", {
+              count: topic.editCount,
+            }),
+          )
         : null,
     updated: topicUpdatedSince(topic, viewedAt),
     authorLeft: !topic.authorInGroup,

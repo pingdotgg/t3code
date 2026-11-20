@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { T } from "gt-react";
 
 import { preferencesSync } from "../../clientProfile/preferencesSync";
 import {
@@ -23,24 +24,36 @@ export function PreferencesSyncChoiceDialog() {
     >
       <AlertDialogPopup>
         <AlertDialogHeader>
-          <AlertDialogTitle>Sync preferences</AlertDialogTitle>
+          <AlertDialogTitle>
+            <T>Sync preferences</T>
+          </AlertDialogTitle>
           <AlertDialogDescription>
-            Other devices already sync preferences through your servers. Choose which settings to
-            keep.
+            <T>
+              Other devices already sync preferences through your servers. Choose which settings to
+              keep.
+            </T>
           </AlertDialogDescription>
         </AlertDialogHeader>
         <div className="flex flex-col gap-2 px-6 pb-4 text-muted-foreground text-sm">
           <p>
-            Use synced settings: this device switches to the preferences your other devices share.
+            <T>
+              Use synced settings: this device switches to the preferences your other devices share.
+            </T>
           </p>
-          <p>Use this device's settings: all your devices switch to this device's preferences.</p>
+          <p>
+            <T>Use this device's settings: all your devices switch to this device's preferences.</T>
+          </p>
         </div>
         <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+          <AlertDialogClose render={<Button variant="outline" />}>
+            <T>Cancel</T>
+          </AlertDialogClose>
           <Button variant="outline" onClick={() => void preferencesSync.choose("thisDevice")}>
-            Use this device's settings
+            <T>Use this device's settings</T>
           </Button>
-          <Button onClick={() => void preferencesSync.choose("synced")}>Use synced settings</Button>
+          <Button onClick={() => void preferencesSync.choose("synced")}>
+            <T>Use synced settings</T>
+          </Button>
         </AlertDialogFooter>
       </AlertDialogPopup>
     </AlertDialog>

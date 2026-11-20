@@ -15,6 +15,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
+  type EnvironmentSpeechModel,
   EnvironmentVoiceHttpApi,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -80,7 +81,7 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
           status: Effect.succeed({ supported: false as const, reason: "test" }),
           prepareModel: Effect.void,
           models: () => Effect.succeed({ models: [] }),
-          downloadModel: () => Effect.succeed({ models: [] }),
+          downloadModel: () => Effect.succeed({ models: [], cancelled: false }),
           linkModels: () => Effect.succeed({ models: [] }),
           selectModel: () => Effect.succeed({ models: [] }),
           cancelDownload: () => Effect.succeed({ models: [] }),
@@ -162,33 +163,30 @@ effectIt.effect(
           return Effect.fail(new CloudSpeechError({ provider, reason: "rejected-key" }));
         },
       });
+      const linkedModel: EnvironmentSpeechModel = {
+        id: "fixture/model",
+        name: "Fixture",
+        description: "",
+        size: 1,
+        languages: ["en"],
+        accuracy: 0,
+        speed: 0,
+        recommended: false,
+        supportsStreaming: false,
+        supportsLanguageDetection: false,
+        supportsTranslation: false,
+        active: true,
+        state: "installed",
+        linkedFrom: "/home/someone/models/fixture.gguf",
+      };
       const { handler, dispose } = HttpRouter.toWebHandler(
         HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
           Layer.provide(speechHttpApiLayer),
           Layer.provide(principal(AuthOrchestrationOperateScope, AuthSettingsWriteScope)),
           Layer.provide(
             Layer.mock(SpeechService.SpeechService)({
-              models: () =>
-                Effect.succeed({
-                  models: [
-                    {
-                      id: "fixture/model",
-                      name: "Fixture",
-                      description: "",
-                      size: 1,
-                      languages: ["en"],
-                      accuracy: 0,
-                      speed: 0,
-                      recommended: false,
-                      supportsStreaming: false,
-                      supportsLanguageDetection: false,
-                      supportsTranslation: false,
-                      active: true,
-                      state: "installed",
-                      linkedFrom: "/home/someone/models/fixture.gguf",
-                    },
-                  ],
-                }),
+              models: () => Effect.succeed({ models: [linkedModel] }),
+              downloadModel: () => Effect.succeed({ models: [linkedModel], cancelled: true }),
             }),
           ),
           Layer.provide(cloud),
@@ -270,6 +268,22 @@ effectIt.effect(
         handler(new Request("http://localhost/api/voice/models"), context),
       );
       expect(yield* Effect.promise(() => listed.text())).not.toContain("/home/someone");
+      const downloaded = yield* Effect.promise(() =>
+        handler(
+          new Request("http://localhost/api/voice/models/download", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ modelId: linkedModel.id }),
+          }),
+          context,
+        ),
+      );
+      expect(downloaded.status).toBe(200);
+      const { linkedFrom: _, ...publicModel } = linkedModel;
+      expect(yield* Effect.promise(() => downloaded.json())).toEqual({
+        models: [publicModel],
+        cancelled: true,
+      });
     }),
 );
 

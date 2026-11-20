@@ -1,13 +1,15 @@
 import { preferencesSync } from "../clientProfile/preferencesSync";
 import { themeProfileValuesForDefault } from "../clientProfile/themeSource";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { themeEnvironmentIdAtom } from "../state/primaryEnvironment";
+import { localEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { themeServerSettingsAtom } from "../state/server";
 import { getThemeDefinition, singleAppearanceOf, subscribeToCustomThemes } from "../themePalette";
-import { setAppearanceMode, setTheme } from "./useTheme";
+import { getThemeSnapshot, setAppearanceMode, setTheme } from "./useTheme";
 
 const APPLIED_DEFAULT_THEME_STORAGE_PREFIX = "t3code:default-theme-applied:v2:";
 const APPLIED_DEFAULT_APPEARANCE_STORAGE_PREFIX = "t3code:default-appearance-applied:v1:";
+// The synced profile names the stock palette in both halves; see clientProfile/themeSource.
+const STOCK_THEME_PROFILE_VALUES = { themeLight: "t3-code", themeDark: "t3-code" };
 
 /** Include set time so reasserting the same theme still applies. */
 export function defaultThemeGeneration(theme: string, setAt: string): string {
@@ -21,7 +23,9 @@ export function defaultThemeToApply(input: {
   readonly appliedGeneration: string | null;
   readonly resolves: boolean;
 }): string | null {
-  if (input.environmentId === null || input.defaultTheme.length === 0) return null;
+  // Empty with a set time means the stock theme was set; with none, no theme was.
+  if (input.environmentId === null) return null;
+  if (input.defaultTheme.length === 0 && input.defaultThemeSetAt.length === 0) return null;
   const generation = defaultThemeGeneration(input.defaultTheme, input.defaultThemeSetAt);
   if (input.appliedGeneration === generation) return null;
   // The setting and the palette it names arrive independently, so an id that
@@ -63,7 +67,7 @@ function writeAppliedGeneration(storageKey: string, generation: string): void {
 
 async function adoptDefaultThemeOnce(): Promise<void> {
   if (typeof window === "undefined") return;
-  const environmentId = appAtomRegistry.get(themeEnvironmentIdAtom);
+  const environmentId = appAtomRegistry.get(localEnvironmentIdAtom);
   if (environmentId === null) return;
   const settings = appAtomRegistry.get(themeServerSettingsAtom);
   const { defaultTheme, defaultThemeSetAt } = settings;
@@ -74,11 +78,14 @@ async function adoptDefaultThemeOnce(): Promise<void> {
     defaultTheme,
     defaultThemeSetAt,
     appliedGeneration: readAppliedGeneration(storageKey),
-    resolves: definition !== null,
+    resolves: definition !== null || defaultTheme === "",
   });
-  if (generation === null || definition === null) return;
+  if (generation === null) return;
 
-  const values = themeProfileValuesForDefault(defaultTheme, themeSetsOwnMode(settings));
+  const values =
+    definition === null
+      ? STOCK_THEME_PROFILE_VALUES
+      : themeProfileValuesForDefault(defaultTheme, themeSetsOwnMode(settings));
   if (values === null) return;
   const result = await preferencesSync.adoptExternalChange({
     environmentId,
@@ -87,11 +94,16 @@ async function adoptDefaultThemeOnce(): Promise<void> {
   });
   if (result === "waiting") return;
   if (result === "off") {
-    // A single-appearance theme needs both preference and appearance writes to take effect.
-    if (!setTheme(defaultTheme)) return;
-    const half = singleAppearanceOf(definition);
-    // Only record adoption after both writes succeed, so an appearance failure remains retryable.
-    if (half !== null && themeSetsOwnMode(settings) && !setAppearanceMode(half)) return;
+    if (definition === null) {
+      // The stock theme keeps the client's own light, dark, or system mode.
+      if (!setTheme(getThemeSnapshot().appearanceMode)) return;
+    } else {
+      // A single-appearance theme needs both preference and appearance writes to take effect.
+      if (!setTheme(defaultTheme)) return;
+      const half = singleAppearanceOf(definition);
+      // Only record adoption after both writes succeed, so an appearance failure remains retryable.
+      if (half !== null && themeSetsOwnMode(settings) && !setAppearanceMode(half)) return;
+    }
   }
   writeAppliedGeneration(storageKey, generation);
 }
@@ -99,7 +111,7 @@ async function adoptDefaultThemeOnce(): Promise<void> {
 /** Like the theme, the environment's mode applies once per set, then local choices win. */
 async function adoptDefaultAppearanceOnce(): Promise<void> {
   if (typeof window === "undefined") return;
-  const environmentId = appAtomRegistry.get(themeEnvironmentIdAtom);
+  const environmentId = appAtomRegistry.get(localEnvironmentIdAtom);
   if (environmentId === null) return;
   const { defaultAppearance, defaultAppearanceSetAt } =
     appAtomRegistry.get(themeServerSettingsAtom);
@@ -155,7 +167,7 @@ async function adoptDefaults(): Promise<void> {
 export function startDefaultThemeAdoption(): () => void {
   const adopt = () => void adoptDefaults();
   const unsubscribes = [
-    appAtomRegistry.subscribe(themeEnvironmentIdAtom, adopt),
+    appAtomRegistry.subscribe(localEnvironmentIdAtom, adopt),
     appAtomRegistry.subscribe(themeServerSettingsAtom, adopt),
     appAtomRegistry.subscribe(preferencesSync.statusAtom, adopt),
     subscribeToCustomThemes(adopt),

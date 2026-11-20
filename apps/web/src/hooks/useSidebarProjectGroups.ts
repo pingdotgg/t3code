@@ -1,3 +1,5 @@
+import { useMessages } from "gt-react";
+
 import { sortSidebarV2ProjectGroups } from "../components/Sidebar.logic";
 import { selectProjectGroupingSettings } from "@t3tools/client-runtime/state/project-grouping";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
@@ -17,16 +19,20 @@ export function useSidebarProjectGroups() {
   const groupingSettings = useClientSettings(selectProjectGroupingSettings);
   const environments = useEnvironmentIdentities();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const resolve = useMessages();
   const orderedProjects = orderProjectsManually(projects, projectOrder);
   const labels = new Map(
     environments.map((environment) => [environment.environmentId, environment.label] as const),
   );
-  const unsortedGroups = buildSidebarProjectSnapshots({
-    projects: sortOrder === "manual" ? orderedProjects : projects,
-    groupScratchProjects: true,
-    settings: groupingSettings,
-    primaryEnvironmentId,
-    resolveEnvironmentLabel: (environmentId) => labels.get(environmentId) ?? null,
-  });
+  const unsortedGroups = buildSidebarProjectSnapshots(
+    {
+      projects: sortOrder === "manual" ? orderedProjects : projects,
+      groupScratchProjects: true,
+      settings: groupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: (environmentId) => labels.get(environmentId) ?? null,
+    },
+    resolve,
+  );
   return sortSidebarV2ProjectGroups(unsortedGroups, threads, sortOrder, delegatedUnderParent);
 }

@@ -32,6 +32,11 @@ describe("default theme adoption", () => {
     expect(next).not.toBe(applied);
   });
 
+  it("applies the stock theme only when the environment set it", () => {
+    expect(defaultThemeToApply({ ...BASE, defaultTheme: "", defaultThemeSetAt: "" })).toBe(null);
+    expect(defaultThemeToApply({ ...BASE, defaultTheme: "" })).not.toBe(null);
+  });
+
   it("stamps adoption with the time the default was set", () => {
     expect(defaultThemeChangedAt("2026-11-10T10:00:00.000Z")).toBe(1794304800000);
     expect(defaultThemeChangedAt("")).toBe(0);

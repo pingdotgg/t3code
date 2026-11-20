@@ -117,6 +117,21 @@ describe("theme files", () => {
     }
   });
 
+  it("derives an imported palette from top-level canvas and accent like a published theme", () => {
+    const theme = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      name: "Teal",
+      appearance: "dark",
+      canvas: "#0b1a1e",
+      accent: "#f08a2c",
+      colors: { sidebar: "#0f2126" },
+    });
+
+    expect(theme.colors.canvas).toBe(canonical("#0b1a1e"));
+    expect(theme.colors.accent).toBe(canonical("#f08a2c"));
+    expect(theme.colors.sidebar).toBe(canonical("#0f2126"));
+  });
+
   it("round-trips custom search colours and fills them in for older theme files", () => {
     const legacy = parseThemeFile({
       version: THEME_FILE_VERSION,

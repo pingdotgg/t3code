@@ -9,11 +9,11 @@ import {
 import {
   collectLimitAccounts,
   collectLimitPools,
-  formatDuration,
   type LimitAccount,
-  limitsNotice,
 } from "@t3tools/shared/usageLimits";
+import { formatDuration, limitsNotice } from "@t3tools/shared/usageLimitsCopy";
 import { useNavigate } from "@tanstack/react-router";
+import { msg, T, useGT, useMessages } from "gt-react";
 import {
   AlignHorizontalJustifyCenterIcon,
   AlignHorizontalJustifyEndIcon,
@@ -25,6 +25,7 @@ import {
 import { type MouseEvent, type ReactNode, useLayoutEffect, useRef, useState } from "react";
 
 import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
+import type { MessageResolver } from "../../i18n/messages";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { observeResize } from "../../lib/observeResize";
 import { cn } from "../../lib/utils";
@@ -88,10 +89,28 @@ function gaugeTitle(gauge: UsageGaugeData): string {
   return gauge.name ? `${label} ${gauge.name}` : label;
 }
 
-function chipLabel(gauge: UsageGaugeData): string {
-  const arcs = gauge.inner ? [gauge.inner, gauge.outer] : [gauge.outer];
-  const left = arcs.map((arc) => `${arc.remaining}% left in the ${arc.shortLabel} window`);
-  return `${gaugeTitle(gauge)}: ${left.join(", ")}`;
+function chipLabel(gauge: UsageGaugeData, resolve: MessageResolver): string {
+  const title = gaugeTitle(gauge);
+  return gauge.inner
+    ? resolve(
+        msg(
+          "{title}: {innerPercent}% left in the {innerWindow} window, {outerPercent}% left in the {outerWindow} window",
+          {
+            title,
+            innerPercent: gauge.inner.remaining,
+            innerWindow: gauge.inner.shortLabel,
+            outerPercent: gauge.outer.remaining,
+            outerWindow: gauge.outer.shortLabel,
+          },
+        ),
+      )
+    : resolve(
+        msg("{title}: {percent}% left in the {window} window", {
+          title,
+          percent: gauge.outer.remaining,
+          window: gauge.outer.shortLabel,
+        }),
+      );
 }
 
 function ChipContent({
@@ -105,10 +124,11 @@ function ChipContent({
   readonly paceMarks: boolean;
   readonly now: number;
 }) {
+  const m = useMessages();
   const low = gauge.focus.remaining <= LOW_REMAINING_PERCENT;
   const resetsIn =
     gauge.focus.resetsAt !== null && gauge.focus.resetsAt > now
-      ? formatDuration(gauge.focus.resetsAt - now)
+      ? formatDuration(gauge.focus.resetsAt - now, m)
       : null;
   return (
     <>
@@ -215,14 +235,15 @@ function UsageStrip({
 }
 
 function AccountLabel({ account }: { readonly account: LimitAccount }) {
+  const gt = useGT();
   const label = account.displayName ?? account.email ?? providerLabel(account.driver);
   return label.includes("@") ? (
     <RedactedSensitiveText
       key={label}
       value={label}
-      ariaLabel="Toggle account label visibility"
-      revealTooltip="Click to reveal account"
-      hideTooltip="Click to hide account"
+      ariaLabel={gt("Toggle account label visibility")}
+      revealTooltip={gt("Click to reveal account")}
+      hideTooltip={gt("Click to hide account")}
       className="max-w-full truncate align-bottom font-sans text-xs leading-normal"
     />
   ) : (
@@ -241,6 +262,8 @@ function UsageCard({
   readonly onCustomize: () => void;
   readonly onOpenUsage: () => void;
 }) {
+  const m = useMessages();
+  const gt = useGT();
   const label = gaugeTitle(gauge);
   const shown = new Set(gauge.windows.map((arc) => arc.window.id));
   const checkedAt = gauge.accounts
@@ -262,7 +285,7 @@ function UsageCard({
         ) : null}
       </div>
       {gauge.accounts.map((account) => {
-        const notice = limitsNotice(account.limits);
+        const notice = limitsNotice(account.limits, m);
         return (
           <div key={account.key} className="flex min-w-0 flex-col gap-1">
             {gauge.accounts.length > 1 ? (
@@ -285,18 +308,20 @@ function UsageCard({
         );
       })}
       <div className="flex items-center gap-1 border-t pt-2 text-2xs text-muted-foreground">
-        {checkedAt ? <span>Updated {formatRelativeTimeLabel(checkedAt, now)}</span> : null}
+        {checkedAt ? (
+          <span>{gt("Updated {time}", { time: formatRelativeTimeLabel(checkedAt, now, m) })}</span>
+        ) : null}
         <Button
           variant="ghost"
           size="icon-xs"
-          aria-label="Customize usage bar"
+          aria-label={gt("Customize usage bar")}
           className="ms-auto"
           onClick={onCustomize}
         >
           <Settings2Icon />
         </Button>
         <Button variant="ghost" size="xs" onClick={onOpenUsage}>
-          Open Usage
+          <T>Open Usage</T>
           <ArrowRightIcon />
         </Button>
       </div>
@@ -305,23 +330,47 @@ function UsageCard({
 }
 
 const STYLE_OPTIONS = [
-  { value: "auto", label: "Auto" },
-  { value: "detailed", label: "Detailed" },
-  { value: "compact", label: "Compact" },
-  { value: "minimal", label: "Minimal" },
+  { value: "auto", label: msg("Auto", { $context: "usage bar style" }) },
+  { value: "detailed", label: msg("Detailed", { $context: "usage bar style" }) },
+  { value: "compact", label: msg("Compact", { $context: "usage bar style" }) },
+  { value: "minimal", label: msg("Minimal", { $context: "usage bar style" }) },
 ] as const;
 
 const ALIGNMENT_OPTIONS = [
-  { value: "start", label: "Left", icon: AlignHorizontalJustifyStartIcon },
-  { value: "center", label: "Center", icon: AlignHorizontalJustifyCenterIcon },
-  { value: "end", label: "Right", icon: AlignHorizontalJustifyEndIcon },
-  { value: "spread", label: "Spread", icon: AlignHorizontalSpaceBetweenIcon },
+  {
+    value: "start",
+    label: msg("Left", { $context: "alignment" }),
+    icon: AlignHorizontalJustifyStartIcon,
+  },
+  {
+    value: "center",
+    label: msg("Center", { $context: "alignment" }),
+    icon: AlignHorizontalJustifyCenterIcon,
+  },
+  {
+    value: "end",
+    label: msg("Right", { $context: "alignment" }),
+    icon: AlignHorizontalJustifyEndIcon,
+  },
+  {
+    value: "spread",
+    label: msg("Spread", { $context: "alignment" }),
+    icon: AlignHorizontalSpaceBetweenIcon,
+  },
 ] as const;
 
 const FOCUS_OPTIONS = [
-  { value: "lowest", label: "Lowest", description: "Whichever window has the least left" },
-  { value: "short", label: "5h", description: "The short window, such as 5 hours" },
-  { value: "long", label: "Weekly", description: "The long window, such as a week" },
+  {
+    value: "lowest",
+    label: msg("Lowest", { $context: "usage window with the least left" }),
+    description: msg("Whichever window has the least left"),
+  },
+  { value: "short", label: "5h", description: msg("The short window, such as 5 hours") },
+  {
+    value: "long",
+    label: msg("Weekly", { $context: "usage window" }),
+    description: msg("The long window, such as a week"),
+  },
 ] as const;
 
 function ControlRow({ label, children }: { readonly label: string; readonly children: ReactNode }) {
@@ -346,11 +395,13 @@ function setGaugeHidden(hidden: readonly string[], key: string, hide: boolean) {
 function UsageBarControls({ gauges }: { readonly gauges: readonly UsageGaugeData[] }) {
   const { style, alignment, paceMarks, hidden } = useBarSettings();
   const focus = useClientSettings((settings) => settings.sidebarUsageBarFocus);
+  const gt = useGT();
+  const messages = useMessages();
   return (
     <div className="flex flex-col gap-1.5">
-      <ControlRow label="Style">
+      <ControlRow label={gt("Style", { $context: "usage bar setting" })}>
         <ToggleGroup
-          aria-label="Usage bar style"
+          aria-label={gt("Usage bar style")}
           value={[style]}
           onValueChange={(value) => {
             const next = pick(STYLE_OPTIONS, value[0]);
@@ -359,14 +410,14 @@ function UsageBarControls({ gauges }: { readonly gauges: readonly UsageGaugeData
         >
           {STYLE_OPTIONS.map((option) => (
             <ToggleGroupItem key={option.value} value={option.value}>
-              {option.label}
+              {messages(option.label)}
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
       </ControlRow>
-      <ControlRow label="Alignment">
+      <ControlRow label={gt("Alignment")}>
         <ToggleGroup
-          aria-label="Usage bar alignment"
+          aria-label={gt("Usage bar alignment")}
           value={[alignment]}
           onValueChange={(value) => {
             const next = pick(ALIGNMENT_OPTIONS, value[0]);
@@ -374,7 +425,11 @@ function UsageBarControls({ gauges }: { readonly gauges: readonly UsageGaugeData
           }}
         >
           {ALIGNMENT_OPTIONS.map((option) => (
-            <ToggleGroupItem key={option.value} value={option.value} aria-label={option.label}>
+            <ToggleGroupItem
+              key={option.value}
+              value={option.value}
+              aria-label={messages(option.label)}
+            >
               <option.icon className="size-3.5" />
             </ToggleGroupItem>
           ))}
@@ -382,9 +437,9 @@ function UsageBarControls({ gauges }: { readonly gauges: readonly UsageGaugeData
       </ControlRow>
       {/* Only Compact and Minimal fit one number for nested arcs; Detailed labels both. */}
       {style === "compact" || style === "minimal" ? (
-        <ControlRow label="Number shows">
+        <ControlRow label={gt("Number shows")}>
           <ToggleGroup
-            aria-label="Window the number reports"
+            aria-label={gt("Window the number reports")}
             value={[focus]}
             onValueChange={(value) => {
               const next = pick(FOCUS_OPTIONS, value[0]);
@@ -395,20 +450,20 @@ function UsageBarControls({ gauges }: { readonly gauges: readonly UsageGaugeData
               <ToggleGroupItem
                 key={option.value}
                 value={option.value}
-                aria-label={option.description}
-                title={option.description}
+                aria-label={messages(option.description)}
+                title={messages(option.description)}
               >
-                {option.label}
+                {messages(option.label)}
               </ToggleGroupItem>
             ))}
           </ToggleGroup>
         </ControlRow>
       ) : null}
-      <ControlRow label="Pace marks">
+      <ControlRow label={gt("Pace marks")}>
         <Switch
           size="sm"
           checked={paceMarks}
-          aria-label="Show pace marks"
+          aria-label={gt("Show pace marks")}
           onCheckedChange={(checked) =>
             void updateClientSettings({ sidebarUsageBarPaceMarks: Boolean(checked) })
           }
@@ -416,7 +471,9 @@ function UsageBarControls({ gauges }: { readonly gauges: readonly UsageGaugeData
       </ControlRow>
       {gauges.length > 1 ? (
         <div className="flex flex-col gap-1.5 pt-1">
-          <span className="text-xs text-muted-foreground">Gauges</span>
+          <span className="text-xs text-muted-foreground">
+            <T>Gauges</T>
+          </span>
           <div className="flex flex-wrap gap-1">
             {gauges.map((gauge) => (
               <Toggle
@@ -466,14 +523,18 @@ export function SidebarUsageBarDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPopup className="max-w-sm">
         <DialogHeader>
-          <DialogTitle>Customize usage bar</DialogTitle>
+          <DialogTitle>
+            <T>Customize usage bar</T>
+          </DialogTitle>
         </DialogHeader>
         {open ? <SidebarUsageBarDialogBody /> : null}
         <DialogFooter>
           <Button variant="ghost" onClick={resetBarCustomization}>
-            Reset to defaults
+            <T>Reset to defaults</T>
           </Button>
-          <Button onClick={() => onOpenChange(false)}>Done</Button>
+          <Button onClick={() => onOpenChange(false)}>
+            <T>Done</T>
+          </Button>
         </DialogFooter>
       </DialogPopup>
     </Dialog>
@@ -481,6 +542,8 @@ export function SidebarUsageBarDialog({
 }
 
 function SidebarUsageBarDialogBody() {
+  const gt = useGT();
+  const messages = useMessages();
   const now = Date.parse(`${useNowMinute()}Z`);
   const gauges = useUsageGauges(now);
   const { paceMarks, hidden } = useBarSettings();
@@ -498,7 +561,7 @@ function SidebarUsageBarDialogBody() {
                   <span
                     key={gauge.key}
                     role="img"
-                    aria-label={chipLabel(gauge)}
+                    aria-label={chipLabel(gauge, messages)}
                     className={cn(CHIP_CLASS_NAME, style === "minimal" ? "px-0.5" : "px-1")}
                   >
                     <ChipContent gauge={gauge} style={style} paceMarks={paceMarks} now={now} />
@@ -508,8 +571,8 @@ function SidebarUsageBarDialogBody() {
             ) : (
               <p className="py-2 text-center text-xs text-muted-foreground">
                 {gauges.length === 0
-                  ? "No connected provider reports usage limits yet."
-                  : "Every gauge is hidden."}
+                  ? gt("No connected provider reports usage limits yet.")
+                  : gt("Every gauge is hidden.")}
               </p>
             )}
           </div>
@@ -526,6 +589,8 @@ export function SidebarUsageBar() {
 }
 
 function SidebarUsageBarStrip() {
+  const gt = useGT();
+  const messages = useMessages();
   const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
   const now = Date.parse(`${useNowMinute()}Z`);
@@ -566,12 +631,18 @@ function SidebarUsageBarStrip() {
     const gauge = visible.find((entry) => entry.key === chip?.dataset.gaugeKey);
     const choice = await ensureLocalApi().contextMenu.show(
       [
-        { id: "customize", label: "Customize usage bar…" },
-        { id: "usage", label: "Open Usage" },
+        { id: "customize", label: gt("Customize usage bar…") },
+        { id: "usage", label: gt("Open Usage") },
         ...(gauge && visible.length > 1
-          ? [{ id: "hide-gauge", label: `Hide ${gaugeTitle(gauge)}`, separatorBefore: true }]
+          ? [
+              {
+                id: "hide-gauge",
+                label: gt("Hide {gauge}", { gauge: gaugeTitle(gauge) }),
+                separatorBefore: true,
+              },
+            ]
           : []),
-        { id: "hide", label: "Hide usage bar", separatorBefore: !gauge || visible.length < 2 },
+        { id: "hide", label: gt("Hide usage bar"), separatorBefore: !gauge || visible.length < 2 },
       ] as const,
       { x: event.clientX, y: event.clientY },
     );
@@ -599,7 +670,7 @@ function SidebarUsageBarStrip() {
                   <button
                     type="button"
                     data-gauge-key={gauge.key}
-                    aria-label={chipLabel(gauge)}
+                    aria-label={chipLabel(gauge, messages)}
                     className={cn(
                       CHIP_CLASS_NAME,
                       style === "minimal" ? "px-0.5" : "px-1",
@@ -618,7 +689,7 @@ function SidebarUsageBarStrip() {
             className="h-8 w-full rounded-md text-start text-xs text-muted-foreground hover:bg-accent"
             onClick={() => setCustomizing(true)}
           >
-            Every gauge is hidden. Customize…
+            <T>Every gauge is hidden. Customize…</T>
           </button>
         )}
       </div>
@@ -635,7 +706,9 @@ function SidebarUsageBarStrip() {
       <Popover open={customizing} onOpenChange={setCustomizing}>
         <PopoverPopup anchor={strip} side="top" align="start" sideOffset={6}>
           <div className="flex w-80 flex-col gap-3">
-            <span className="text-sm font-medium text-foreground">Usage bar</span>
+            <span className="text-sm font-medium text-foreground">
+              <T>Usage bar</T>
+            </span>
             <UsageBarControls gauges={gauges} />
           </div>
         </PopoverPopup>

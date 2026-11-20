@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   collectComposerModelMentions,
@@ -145,6 +146,7 @@ export function ModelMentionChip(props: {
   /** Makes the chip edit the model's options, writing them back into the mention. */
   onSourceChange?: ((source: string) => void) | undefined;
 }) {
+  const gt = useGT();
   const presentation = useAtomValue(
     modelMentionPresentationAtom(`${props.environmentId ?? ""}\u0000${props.source}`),
   );
@@ -173,7 +175,7 @@ export function ModelMentionChip(props: {
               kind="neutral"
               style={accent ? ({ "--context-chip-accent": accent } as CSSProperties) : undefined}
               render={<button type="button" />}
-              aria-label={`Model ${label}. Change options`}
+              aria-label={gt("Model {label}. Change options", { label })}
               data-markdown-copy={props.source}
             />
           }
@@ -199,7 +201,7 @@ export function ModelMentionChip(props: {
       accent={accent}
       icon={icon}
       label={label}
-      accessibleLabel={`Model ${label}`}
+      accessibleLabel={gt("Model {label}", { label })}
       copyMarkdown={props.source}
     >
       <div className="space-y-1 p-2 text-sm">

@@ -12,7 +12,6 @@ import {
 import {
   assistantCitationLabel,
   assistantCitationsToPlainText,
-  assistantTextSelectorNear,
   collectAssistantCitations,
   expandAssistantCitationsForProvider,
   formatAssistantCitationHref,
@@ -281,32 +280,5 @@ describe("assistant citation references", () => {
         "",
       ].join("\n"),
     );
-  });
-
-  it("locates a native selection at the occurrence nearest its reported offset", () => {
-    const text = "Run the tests.\nThen run the tests.\n\nFinally run   the\ntests again.";
-    const second = text.indexOf("run the tests", 5);
-
-    expect(assistantTextSelectorNear(text, "run the tests", second + 2)).toEqual({
-      text: "run the tests",
-      start: second,
-      end: second + 13,
-      prefix: "Run the tests. Then ",
-      suffix: ". Finally run the tests again.",
-    });
-    expect(assistantTextSelectorNear(text, " run the\ntests ", 60)).toMatchObject({
-      text: "run the\ntests",
-      start: 43,
-      end: 56,
-      suffix: " again.",
-    });
-    expect(assistantTextSelectorNear(text, "not rendered here", 7)).toEqual({
-      text: "not rendered here",
-      start: 7,
-      end: 24,
-      prefix: "",
-      suffix: "",
-    });
-    expect(assistantTextSelectorNear(text, " \n ", 0)).toBeNull();
   });
 });

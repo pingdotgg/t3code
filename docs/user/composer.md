@@ -129,21 +129,25 @@ Leaving reasoning level or service tier unset uses the provider's own configurat
 ## Quote an assistant response
 
 On web and desktop, select text within one assistant response and choose
-**Cite in composer**. On mobile, select the text and choose **Cite** in the selection
-menu. You can add a comment about the quote and write instructions around it.
+**Cite in composer**. You can add a comment about the quote and write instructions
+around it.
 
 Select the quote in a draft or sent message to return to its source. If the source
 is unavailable or has changed, the saved quote remains readable.
 
 The chip shows your comment when it has one, or a short quote preview otherwise. Use the pencil
-button to add or change the comment; on mobile, tap the chip. To remove the citation, place the caret beside its chip and
+button to add or change the comment. To remove the citation, place the caret beside its chip and
 delete it like other inline context. Copying, reloading, and restoring a
 [stashed prompt](#prompt-stash) keep each comment
 with its quote, and sending tells the agent which words were quoted and which comment you wrote.
 The quoted text and comment count toward the message limit.
 
-On mobile, going to the source scrolls to the response and briefly highlights all of it rather
-than the quoted words.
+On mobile, long-press an assistant response, adjust the text selection, and choose
+**Cite** to insert a quote at the composer cursor. If the passage appears more than
+once in that section, choose its source occurrence. Select more surrounding text
+if a short passage appears too often. Tap a quote in a draft to add
+or edit its comment, or to remove it. To open the source message, tap a quote in
+a draft or sent message, then choose **Go to message**.
 
 ## Recall a sent prompt
 
@@ -177,8 +181,10 @@ to its checkpoint from before that message. That also undoes edits you made your
 File restore is only offered for threads running in a worktree, and it is
 refused when another thread or agent session also uses that directory, a folder
 inside it, or a folder that contains it, since
-restoring would erase their changes. A thread that works in the project directory
-rewinds the conversation only. The selected prompt and its attachments return to the composer for editing and
+restoring would erase their changes. Completed subagents belonging to the reverting
+thread do not block restoring that same worktree, provided they have no queued or
+active work, pending requests, or background tasks. A thread that works in the project
+directory rewinds the conversation only. The selected prompt and its attachments return to the composer for editing and
 resending. Any unsent draft stays above the restored prompt.
 
 This removes the selected message and later conversation from the active thread

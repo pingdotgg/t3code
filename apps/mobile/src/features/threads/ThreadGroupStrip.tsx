@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { boardHasUpdates } from "@t3tools/client-runtime/state/thread-board";
 import { resolveThreadGroupFor } from "@t3tools/client-runtime/state/thread-groups";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { T, useGT } from "gt-react-native";
 import { useRef } from "react";
 import { Platform, Pressable, ScrollView, View, type ScrollViewInstance } from "react-native";
 
@@ -36,6 +37,7 @@ export function ThreadGroupStrip(props: {
   readonly threadId: ThreadId;
   readonly onOpenBoard: () => void;
 }) {
+  const gt = useGT();
   const shells = useAtomValue(steadyNavigationThreadShellsAtom);
   const openLinkedThread = useOpenLinkedThread();
   const scrollRef = useRef<ScrollViewInstance>(null);
@@ -54,7 +56,9 @@ export function ThreadGroupStrip(props: {
       )}
     >
       <SymbolView name="person.2" size={12} tintColorClassName="accent-foreground-muted" />
-      <Text className="text-xs text-foreground-muted">Group</Text>
+      <Text className="text-xs text-foreground-muted">
+        <T context="label before the thread group's members">Group</T>
+      </Text>
       <ScrollView
         ref={scrollRef}
         horizontal
@@ -72,7 +76,15 @@ export function ThreadGroupStrip(props: {
                 key={`${shell.id}:${current}`}
                 accessibilityRole="button"
                 accessibilityState={{ selected: current }}
-                accessibilityLabel={`Open ${shell.title}${lead ? ", lead" : ""}${needsInput ? ", needs input" : ""}`}
+                accessibilityLabel={
+                  lead
+                    ? needsInput
+                      ? gt("Open {title}, lead, needs input", { title: shell.title })
+                      : gt("Open {title}, lead", { title: shell.title })
+                    : needsInput
+                      ? gt("Open {title}, needs input", { title: shell.title })
+                      : gt("Open {title}", { title: shell.title })
+                }
                 disabled={current}
                 className={cn(
                   "max-w-48 flex-row items-center gap-1.5 rounded-full px-2.5 py-1",
@@ -96,7 +108,11 @@ export function ThreadGroupStrip(props: {
                   {shell.title}
                 </Text>
                 {lead || current ? (
-                  <Text className="text-xs text-foreground-muted">{lead ? "lead" : "you"}</Text>
+                  <Text className="text-xs text-foreground-muted">
+                    {lead
+                      ? gt("lead", { $context: "the group's lead thread" })
+                      : gt("you", { $context: "the thread you are viewing" })}
+                  </Text>
                 ) : null}
               </Pressable>
             );
@@ -105,11 +121,17 @@ export function ThreadGroupStrip(props: {
       </ScrollView>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`Board${hasBoardUpdates ? ", has updates" : ""}`}
+        accessibilityLabel={
+          hasBoardUpdates
+            ? gt("Board, has updates", { $context: "thread group board" })
+            : gt("Board", { $context: "thread group board" })
+        }
         className="mr-4 shrink-0 flex-row items-center gap-1.5 rounded-full bg-subtle px-2.5 py-1"
         onPress={props.onOpenBoard}
       >
-        <Text className="text-xs text-foreground">Board</Text>
+        <Text className="text-xs text-foreground">
+          {gt("Board", { $context: "thread group board" })}
+        </Text>
         {hasBoardUpdates ? (
           <View className="h-1.5 w-1.5 rounded-full bg-adaptive-sky-600-400" />
         ) : null}

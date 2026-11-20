@@ -18,7 +18,6 @@ import {
   createEnvironmentCommand,
   createEnvironmentRpcCommand,
   environmentConnectionAtom,
-  mapAtomCommandResult,
 } from "./runtime.ts";
 import { waitForTitleRegenerationOutcome } from "./threadTitleRegeneration.ts";
 import {
@@ -40,6 +39,7 @@ import {
   resumeThreadQueue,
   retryWorkspacePreparation,
   linkThreadPullRequest,
+  linkThreadIssue,
   respondToThreadApproval,
   respondToThreadUserInput,
   dismissThreadUserInput,
@@ -59,6 +59,7 @@ import {
   stopThreadSession,
   unarchiveThread,
   unlinkThreadPullRequest,
+  unlinkThreadIssue,
   unpinThread,
   unsettleThread,
   unsnoozeThread,
@@ -150,10 +151,11 @@ export function createThreadEnvironmentAtoms<R, E>(
     command: AtomCommand<W, A, E>,
   ): AtomCommand<W, A, E> => ({
     label: command.label,
-    run: (registry, target) => {
-      registry.update(rowActionsAtom(target.environmentId), (count) => count + 1);
-      return command.run(registry, target);
-    },
+    run: (registry, target) =>
+      Effect.suspend(() => {
+        registry.update(rowActionsAtom(target.environmentId), (count) => count + 1);
+        return command.run(registry, target);
+      }),
   });
 
   const sent = {
@@ -321,6 +323,18 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
+    linkIssue: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:link-issue",
+      execute: linkThreadIssue,
+      scheduler,
+      concurrency,
+    }),
+    unlinkIssue: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:unlink-issue",
+      execute: unlinkThreadIssue,
+      scheduler,
+      concurrency,
+    }),
     setRuntimeMode: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:set-runtime-mode",
       execute: setThreadRuntimeMode,
@@ -474,24 +488,22 @@ export function createThreadEnvironmentAtoms<R, E>(
   );
   const regenerateTitle = {
     label: commands.armTitleRegeneration.label,
-    run: async (
+    run: (
       registry: AtomRegistry.AtomRegistry,
       target: { readonly environmentId: EnvironmentId; readonly input: { threadId: ThreadId } },
-    ) => {
-      const armed = await commands.armTitleRegeneration.run(registry, target);
-      const outcome =
-        armed._tag === "Success"
-          ? await waitForTitleRegenerationOutcome(
-              registry,
-              {
-                snapshot: snapshotAtom(target.environmentId),
-                disconnected: disconnectedAtom(target.environmentId),
-              },
-              { threadId: target.input.threadId, ...armed.value },
-            )
-          : null;
-      return mapAtomCommandResult(armed, () => outcome);
-    },
+    ) =>
+      commands.armTitleRegeneration.run(registry, target).pipe(
+        Effect.flatMap((armed) =>
+          waitForTitleRegenerationOutcome(
+            registry,
+            {
+              snapshot: snapshotAtom(target.environmentId),
+              disconnected: disconnectedAtom(target.environmentId),
+            },
+            { threadId: target.input.threadId, ...armed },
+          ),
+        ),
+      ),
   };
   return {
     ...commands,
@@ -580,37 +592,46 @@ export function createThreadEnvironmentAtoms<R, E>(
     })),
     attachToGroup: {
       label: commands.attachToGroup.label,
-      run: ((registry, target) => {
-        const threads = registry.get(optimistic.snapshotAtom(target.environmentId))?.threads ?? [];
-        const { threadId, parentThreadId } = target.input;
-        const ids = new Set(threads.map((thread) => thread.id));
-        const targetThread = threads.find((thread) => thread.id === parentThreadId);
-        // Mirror the server: groups are one level deep, so a worker target resolves to its lead.
-        const targetLead = targetThread?.groupParentThreadId;
-        const effectiveParentId = targetLead && ids.has(targetLead) ? targetLead : parentThreadId;
-        const carriedIds = threads
-          .filter((thread) => thread.groupParentThreadId === threadId)
-          .map((thread) => thread.id);
-        let sent: ReturnType<typeof commands.attachToGroup.run> | undefined;
-        const shared: typeof commands.attachToGroup = {
-          label: commands.attachToGroup.label,
-          run: () => (sent ??= commands.attachToGroup.run(registry, target)),
-        };
-        const main = optimistic.wrap(shared, (thread, input) => ({
-          ...thread,
-          groupParentThreadId: effectiveParentId,
-          ...(input.orderKey === undefined ? {} : { groupOrderKey: input.orderKey }),
-        }));
-        const carried = optimistic.wrap(shared, (thread) => ({
-          ...thread,
-          groupParentThreadId: effectiveParentId,
-        }));
-        const result = main.run(registry, target);
-        for (const id of carriedIds) {
-          void carried.run(registry, { ...target, input: { ...target.input, threadId: id } });
-        }
-        return result;
-      }) satisfies typeof commands.attachToGroup.run,
+      run: ((registry, target) =>
+        Effect.suspend(() => {
+          const threads =
+            registry.get(optimistic.snapshotAtom(target.environmentId))?.threads ?? [];
+          const { threadId, parentThreadId } = target.input;
+          const ids = new Set(threads.map((thread) => thread.id));
+          const targetThread = threads.find((thread) => thread.id === parentThreadId);
+          // Mirror the server: groups are one level deep, so a worker target resolves to its lead.
+          const targetLead = targetThread?.groupParentThreadId;
+          const effectiveParentId = targetLead && ids.has(targetLead) ? targetLead : parentThreadId;
+          const label = commands.attachToGroup.label;
+          // One send; each carried worker's optimistic update wraps it and confirms with its reply.
+          const send: typeof commands.attachToGroup = {
+            label,
+            run: () => commands.attachToGroup.run(registry, target),
+          };
+          const withCarried = threads
+            .filter((thread) => thread.groupParentThreadId === threadId)
+            .reduce<typeof commands.attachToGroup>((inner, carriedThread) => {
+              const carried = optimistic.wrap(inner, (thread) => ({
+                ...thread,
+                groupParentThreadId: effectiveParentId,
+              }));
+              return {
+                label,
+                run: (innerRegistry, innerTarget) =>
+                  carried.run(innerRegistry, {
+                    ...innerTarget,
+                    input: { ...innerTarget.input, threadId: carriedThread.id },
+                  }),
+              };
+            }, send);
+          return optimistic
+            .wrap(withCarried, (thread, input) => ({
+              ...thread,
+              groupParentThreadId: effectiveParentId,
+              ...(input.orderKey === undefined ? {} : { groupOrderKey: input.orderKey }),
+            }))
+            .run(registry, target);
+        })) satisfies typeof commands.attachToGroup.run,
     },
     detachFromGroup: optimistic.wrap(commands.detachFromGroup, (thread) => ({
       ...thread,
