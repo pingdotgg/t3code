@@ -3261,8 +3261,6 @@ describe("storage cleanup reports and local file policies", () => {
         const { service, fs, repo, worktree, command, fullStatusCalls, threadBranches } =
           yield* cleanupFixture();
         const changed = { outcome: "kept", reason: "Repository or branch changed" };
-        yield* command(worktree, ["checkout", "--detach"]);
-        expect((yield* service.runNow).entries[0]).toMatchObject(changed);
         yield* command(worktree, ["switch", "--orphan", "other"]);
         expect((yield* service.runNow).entries[0]).toMatchObject(changed);
         yield* command(worktree, ["tag", "feature", "feature"]);
@@ -3290,6 +3288,34 @@ describe("storage cleanup reports and local file policies", () => {
         yield* fs.writeFileString(`${worktree}/.git`, gitFile);
         expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
         expect(fullStatusCalls()).toBe(0);
+      }),
+    ),
+  );
+  it.live("removes a clean detached worktree only when every commit is on a branch", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, command } = yield* cleanupFixture();
+        yield* command(worktree, ["checkout", "--detach"]);
+        yield* fs.writeFileString(`${worktree}/tracked.txt`, "unpushed\n");
+        yield* command(worktree, ["commit", "-am", "unpushed"]);
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        yield* command(worktree, ["checkout", "--detach", "main"]);
+        yield* command(worktree, ["-c", "sequence.editor=echo break >>", "rebase", "-i", "--root"]);
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        yield* command(worktree, ["rebase", "--abort"]);
+        yield* command(worktree, ["checkout", "-b", "topic", "main"]);
+        yield* command(worktree, ["commit", "--allow-empty", "-m", "topic"]);
+        yield* command(worktree, ["checkout", "--detach", "main"]);
+        yield* fs.writeFileString(`${worktree}/tracked.txt`, "autostashed\n");
+        yield* command(worktree, ["merge", "--autostash", "--no-ff", "--no-commit", "topic"]);
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        yield* command(worktree, ["merge", "--abort"]);
+        expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("autostashed\n");
+        yield* command(worktree, ["checkout", "--", "tracked.txt"]);
+        yield* command(worktree, ["bisect", "start"]);
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        yield* command(worktree, ["bisect", "reset"]);
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
       }),
     ),
   );
@@ -3486,6 +3512,58 @@ describe("storage cleanup reports and local file policies", () => {
           reason: "Default branch is unavailable",
         });
         expect(yield* fs.exists(worktree)).toBe(true);
+      }),
+    ),
+  );
+  it.live("fetches a failing default branch once per sweep and names the broken local ref", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, repo, worktree, command, setThreads, setStoredWorktreePaths } =
+          yield* cleanupFixture({
+            ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+            worktreeUnchanged: true,
+          });
+        const second = `${worktree}-2`;
+        yield* command(repo, ["worktree", "add", "-b", "feature-2", second]);
+        setStoredWorktreePaths([worktree, second]);
+        setThreads([
+          shell({ branch: "feature", worktreePath: worktree, archivedAt: at(-DAY_MS) }),
+          shell({
+            id: ThreadId.make("thread-2"),
+            branch: "feature-2",
+            worktreePath: second,
+            archivedAt: at(-DAY_MS),
+          }),
+        ]);
+        const remote = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-remote-" });
+        yield* command(remote, ["init", "--bare", "-b", "main"]);
+        yield* command(repo, ["remote", "add", "origin", remote]);
+        yield* command(repo, ["push", "origin", "main"]);
+        yield* command(repo, ["remote", "set-head", "origin", "main"]);
+        yield* command(repo, ["commit", "--allow-empty", "-m", "remote only"]);
+        yield* command(repo, ["push", "origin", "main"]);
+        yield* command(repo, ["reset", "--hard", "HEAD~1"]);
+        yield* command(repo, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        const trackingRef = yield* fs.readFileString(`${repo}/.git/refs/remotes/origin/main`);
+        yield* fs.writeFileString(`${repo}/.git/refs/remotes/origin/main 2`, trackingRef);
+        const fetchLog = `${remote}/fetches.log`;
+        const uploadPack = `${remote}/upload-pack.sh`;
+        yield* fs.writeFileString(
+          uploadPack,
+          `#!/bin/sh\necho fetch >> '${fetchLog}'\nexec git-upload-pack "$@"\n`,
+        );
+        yield* fs.chmod(uploadPack, 0o755);
+        yield* command(repo, ["config", "remote.origin.uploadpack", uploadPack]);
+
+        const report = yield* service.runNow;
+        expect((yield* fs.readFileString(fetchLog)).trim().split("\n")).toHaveLength(1);
+        expect(report.entries).toHaveLength(2);
+        for (const entry of report.entries) {
+          expect(entry.outcome).not.toBe("removed");
+          expect(entry.reason).toContain("broken local ref");
+        }
+        expect(yield* fs.exists(worktree)).toBe(true);
+        expect(yield* fs.exists(second)).toBe(true);
       }),
     ),
   );

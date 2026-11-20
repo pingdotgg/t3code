@@ -167,9 +167,12 @@ T3_MCP_BEARER_TOKEN=<provider-session-token>
 ```
 
 The extension preserves public names under `mcp__t3-code__` for saved loadouts
-and tool selectors. Modern Pi also receives hidden `mcp__t3_code__` aliases,
-which reserve the normalized namespace against configured MCP servers without
-adding declarations or search results. On Pi 0.99+,
+and tool selectors. Modern Pi also receives `mcp__t3_code__` aliases, Pi's own
+name for the server, which reserve it against configured MCP servers. They are
+`model-only` and hide their own declarations, so the model can call them without
+added declarations, search results, or codemode entries. An alias follows its
+public tool: dropped when that tool is excluded, and off while a direct one is
+off. Pi's `hidden` exposure would make them unreachable. On Pi 0.99+,
 `orchestrator_capabilities`, `delegate_task`, and `task_status` remain directly
 available; optional tools are discovered through Pi's builtin `tool_search`.
 On older Pi or without builtin search, all tools remain directly available.
@@ -352,8 +355,13 @@ its own under the environment's Scratch project. A new worktree with `startFromO
 `startFromOrigin: false`. The new thread may not run with broader runtime or
 interaction modes than the caller. As for `delegate_task`, a runtime mode the
 provider does not offer is refused, and an inherited or default one steps down
-to the broadest mode it offers. Launch has no retry key, so inspect existing threads after a failed or lost response before
-launching again. `create_threads` remains the batch option for a shared checkout.
+to the broadest mode it offers. `create_threads` remains the batch option for a
+shared checkout.
+
+Set `clientRequestId` on the initial launch to make it retryable. After an error
+or a lost reply, resend the same request with the same key from the same
+provider session. This reuses any thread already created by that request. If the
+initial request had no key, check for the thread before launching again.
 
 ### `t3_thread_list`
 
