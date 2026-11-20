@@ -467,7 +467,17 @@ from that machine's **Settings → Environments**. An address you type always
 needs a pasted code. From a terminal, use
 `ada environment link <address> --pairing-code <code> --access <mode>`.
 
-To link many machines at once from a terminal, put one `<address> <pairing-code>` per
+To link many machines at once, choose **Link several…** in the **Machines**
+header on web and desktop, or **Link several machines to …** under the network
+on mobile. It appears once this app has two other machines saved. Tick the
+machines, pick one access level for all of them, and confirm once. A machine
+can be ticked when this app is connected to it with a session that manages
+access there and has an address another machine can reach; the list says why
+when it cannot. Each machine reports its own result, and the ones that failed
+stay ticked so you can try only those again. Machines already linked are left
+as they are.
+
+For machines no app is connected to, put one `<address> <pairing-code>` per
 line in a file (make each code with `ada pair` on that machine) and run
 `ada environment link --from <file> --access <mode>`, or `--from -` to read
 standard input. It prints a result per line, leaves machines already linked as
