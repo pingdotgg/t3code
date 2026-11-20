@@ -199,6 +199,7 @@ const make = Effect.gen(function* () {
           writable: detail.writable,
           capabilities: detail.capabilities,
           states: detail.states,
+          ...(detail.transitions === undefined ? {} : { transitions: detail.transitions }),
           author: detail.author?.login ?? null,
           assignees: detail.assignees.map((actor) => actor.login),
           labels: detail.labels.map((label) => label.name),
@@ -253,6 +254,8 @@ const make = Effect.gen(function* () {
         yield* issues.setState({
           ...refOf(target),
           state: input.state,
+          ...(input.transitionId === undefined ? {} : { transitionId: input.transitionId }),
+          ...(input.fields === undefined ? {} : { fields: input.fields }),
         });
         return identityOf(target);
       }),

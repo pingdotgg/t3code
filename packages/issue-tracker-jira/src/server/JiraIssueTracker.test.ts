@@ -231,8 +231,17 @@ describe("JiraIssueTracker", () => {
     Effect.gen(function* () {
       const { tracker } = fakeJira({
         "GET /rest/api/3/myself": () => JULIUS,
+        "GET /rest/api/3/issue/ENG-7/transitions": ({ query }) => {
+          expect(query.get("expand")).toBe("transitions.fields");
+          return {
+            transitions: [
+              { id: "31", name: "Finish", to: DONE },
+              { id: "11", name: "Back", to: TODO },
+            ],
+          };
+        },
         "GET /rest/api/3/issue/ENG-7": ({ query }) => {
-          expect(query.get("expand")).toBe("transitions,changelog");
+          expect(query.get("expand")).toBe("changelog");
           return issue(
             "ENG-7",
             {
@@ -242,10 +251,6 @@ describe("JiraIssueTracker", () => {
               },
             },
             {
-              transitions: [
-                { id: "31", name: "Finish", to: DONE },
-                { id: "11", name: "Back", to: TODO },
-              ],
               changelog: {
                 histories: [
                   {
@@ -310,6 +315,10 @@ describe("JiraIssueTracker", () => {
           { category: "open", name: "In Progress" },
           { category: "closed", name: "Done" },
         ],
+        transitions: [
+          { id: "31", name: "Finish", to: { category: "closed", name: "Done" }, fields: [] },
+          { id: "11", name: "Back", to: { category: "open", name: "To Do" }, fields: [] },
+        ],
         viewerPermissions: {
           setState: true,
           comment: true,
@@ -339,8 +348,10 @@ describe("JiraIssueTracker", () => {
   it.effect("moves an issue by the transition that leads to the named status", () =>
     Effect.gen(function* () {
       const { tracker, requests } = fakeJira({
-        "GET /rest/api/3/issue/ENG-7": () =>
-          issue("ENG-7", {}, { transitions: [{ id: "31", name: "Finish", to: DONE }] }),
+        "GET /rest/api/3/issue/ENG-7": () => issue("ENG-7"),
+        "GET /rest/api/3/issue/ENG-7/transitions": () => ({
+          transitions: [{ id: "31", name: "Finish", to: DONE }],
+        }),
         "POST /rest/api/3/issue/ENG-7/transitions": () => undefined,
       });
       const api = yield* tracker;
@@ -361,6 +372,79 @@ describe("JiraIssueTracker", () => {
       expect(foreign.detail).toBe("OPS-1 does not belong to Jira project ENG.");
       expect(requests).toHaveLength(before);
     }),
+  );
+
+  it.effect(
+    "requires a specific advertised transition and validates its current screen fields",
+    () =>
+      Effect.gen(function* () {
+        const resolution = {
+          required: true,
+          name: "Resolution",
+          schema: { type: "resolution", system: "resolution" },
+          operations: ["set"],
+          allowedValues: [
+            { id: "fixed", name: "Fixed" },
+            { id: "cancelled", name: "Cancelled" },
+          ],
+        };
+        let transitions = [
+          { id: "31", name: "Resolve", to: DONE, fields: { resolution } },
+          { id: "41", name: "Cancel", to: DONE, fields: { resolution } },
+        ];
+        const { tracker, requests } = fakeJira({
+          "GET /rest/api/3/issue/ENG-7": () => issue("ENG-7"),
+          "GET /rest/api/3/issue/ENG-7/transitions": () => ({ transitions }),
+          "POST /rest/api/3/issue/ENG-7/transitions": () => undefined,
+        });
+        const api = yield* tracker;
+        const move = { ...target, key: "ENG-7", state: "Done" };
+        const ambiguous = yield* api.setState(move).pipe(Effect.flip);
+        expect(ambiguous.detail).toContain("transition");
+        const missing = yield* api.setState({ ...move, transitionId: "31" }).pipe(Effect.flip);
+        expect(missing.detail).toContain("Resolution");
+        const invalid = yield* api
+          .setState({ ...move, transitionId: "31", fields: { resolution: "invented" } })
+          .pipe(Effect.flip);
+        expect(invalid.detail).toContain("Resolution");
+        const unknown = yield* api
+          .setState({
+            ...move,
+            transitionId: "31",
+            fields: { resolution: "fixed", summary: "injected" },
+          })
+          .pipe(Effect.flip);
+        expect(unknown.detail).toContain("summary");
+        expect(requests.filter((request) => request.method === "POST")).toHaveLength(0);
+
+        yield* api.setState({ ...move, transitionId: "41", fields: { resolution: "cancelled" } });
+        expect(requests.at(-1)?.body).toEqual({
+          transition: { id: "41" },
+          fields: { resolution: { id: "cancelled" } },
+        });
+        transitions = [{ id: "31", name: "Resolve", to: DONE, fields: { resolution } }];
+        const stale = yield* api
+          .setState({ ...move, transitionId: "41", fields: { resolution: "fixed" } })
+          .pipe(Effect.flip);
+        expect(stale.detail).toContain("available");
+        expect(requests.filter((request) => request.method === "POST")).toHaveLength(1);
+        transitions = [{ id: "51", name: "Reassign", to: IN_PROGRESS, fields: { resolution } }];
+        yield* api.setState({
+          ...move,
+          state: "In Progress",
+          transitionId: "51",
+          fields: { resolution: "fixed" },
+        });
+        expect(requests.at(-1)?.body).toEqual({
+          transition: { id: "51" },
+          fields: { resolution: { id: "fixed" } },
+        });
+        const wrongDestination = yield* api
+          .setState({ ...move, transitionId: "51", fields: { resolution: "fixed" } })
+          .pipe(Effect.flip);
+        expect(wrongDestination.detail).toContain("available");
+        expect(requests.filter((request) => request.method === "POST")).toHaveLength(2);
+      }),
   );
 
   it.effect("files an issue as a Task with names turned into what Jira addresses", () =>

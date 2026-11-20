@@ -43,6 +43,7 @@ export function issueWriteAccess(detail: IssueDetail, canWrite: boolean) {
       : null;
   const may = (capability: boolean, permission: boolean) =>
     blocked === null && capability && permission;
+  const canMove = may(true, detail.viewerPermissions.setState);
   return {
     blocked,
     comment: may(detail.capabilities.comment, detail.viewerPermissions.comment),
@@ -51,8 +52,15 @@ export function issueWriteAccess(detail: IssueDetail, canWrite: boolean) {
     assignees: may(detail.capabilities.assignees, detail.viewerPermissions.assignees),
     react: blocked === null && detail.capabilities.reactions,
     /** The states the issue can move to; empty when the viewer may not move it. */
-    states: may(true, detail.viewerPermissions.setState)
-      ? detail.states.filter((state) => state.name !== detail.state.name)
-      : [],
+    states: canMove ? detail.states.filter((state) => state.name !== detail.state.name) : [],
+    /**
+     * The workflow actions the viewer may take, by name since two can reach one state; null when
+     * the tracker moves an issue by state alone.
+     */
+    transitions: detail.capabilities.transitionForms
+      ? canMove
+        ? (detail.transitions ?? [])
+        : []
+      : null,
   };
 }

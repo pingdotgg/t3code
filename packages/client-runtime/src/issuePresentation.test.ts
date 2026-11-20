@@ -1,4 +1,4 @@
-import type { IssueDetail, IssueState } from "@t3tools/contracts";
+import type { IssueDetail, IssueState, IssueTransition } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { issueWriteAccess } from "./issuePresentation.ts";
@@ -12,12 +12,25 @@ const workflow: ReadonlyArray<IssueState> = [
   { category: "closed", name: "Duplicate", closeReason: "duplicate" },
 ];
 
-function issue(overrides: { writable?: boolean; setState?: boolean; states?: typeof workflow }) {
+const resolve: IssueTransition = {
+  id: "31",
+  name: "Resolve",
+  to: { category: "closed", name: "Done" },
+  fields: [],
+};
+
+function issue(overrides: {
+  writable?: boolean;
+  setState?: boolean;
+  states?: typeof workflow;
+  transitionForms?: boolean;
+}) {
   return {
     writable: overrides.writable ?? true,
     state: { category: "open", name: "Todo" },
     states: overrides.states ?? workflow,
-    capabilities: {},
+    capabilities: { transitionForms: overrides.transitionForms },
+    transitions: [resolve],
     viewerPermissions: { setState: overrides.setState ?? true },
   } as unknown as IssueDetail;
 }
@@ -38,5 +51,11 @@ describe("issueWriteAccess", () => {
     expect(issueWriteAccess(issue({ writable: false }), true).states).toEqual([]);
     expect(issueWriteAccess(issue({}), false).states).toEqual([]);
     expect(issueWriteAccess(issue({ states: [] }), true).states).toEqual([]);
+    expect(issueWriteAccess(issue({ transitionForms: true }), true).transitions).toEqual([resolve]);
+    expect(
+      issueWriteAccess(issue({ transitionForms: true, setState: false }), true).transitions,
+    ).toEqual([]);
+    expect(issueWriteAccess(issue({ transitionForms: true }), false).transitions).toEqual([]);
+    expect(issueWriteAccess(issue({}), true).transitions).toBeNull();
   });
 });

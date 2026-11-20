@@ -110,6 +110,17 @@ Commands built at run time, external script files and full shell/interpreter sem
 
 This API replay measures routing and recovery decisions. Screenshots return product text and metadata without rendered image blocks, and Codex code cells have no `image` helper, so a cell that calls it fails with `image is not defined`. The shell remains simulated, children are not executed, and `priorTurns` is synthetic context rather than native resume or compaction. It does not test launcher execution, binding, pruning, actual device state, transport failures or resource cleanup, and it models agent-device's session check rather than running it. DEL-02 checks managed recording start/stop and the final filename; it does not inspect video bytes, required flow, transforms, codec or size. Screenshots and final text do not establish delivered artifacts or honesty. Keep local real-harness results separate; their scores and costs are not API-replay results. Offline validation costs $0. Record fresh per-model baseline and candidate costs before using device-case scores as release evidence.
 
+## Jira transition cases
+
+`cases/issues.ndjson` checks that the agent asks for an unspecified required Resolution, uses the
+selected transition and option IDs when two actions reach the same status, and performs an ordinary
+fieldless transition without an unnecessary question. All tickets and metadata are authored fixtures.
+The runner advertises `IssuesToolkit` from this checkout, including transition fields returned by
+`read_issue` and accepted by `set_issue_state`.
+
+From `evals/`, use `pnpm mcp-tool-use --cases mcp-tool-use/cases/issues.ndjson --samples 1 --out runs/issues`
+for a focused run; add `--dry-run` to validate the cases and rendered requests without model calls.
+
 ## Threads vs tasks cases
 
 `cases/threads-vs-tasks.ndjson` covers explicit thread requests, delegated and background work, lifecycle operations, child permissions, and ordinary code requests using words like "thread" and "task". The native-subagent case is Claude-only. All scenarios use authored Acme data.

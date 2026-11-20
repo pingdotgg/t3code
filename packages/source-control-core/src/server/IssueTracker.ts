@@ -6,6 +6,8 @@ import * as Schema from "effect/Schema";
 import type * as Effect from "effect/Effect";
 import type {
   IssueState,
+  IssueTransition,
+  IssueTransitionFields,
   IssueCandidates,
   IssueCapabilities,
   IssueComment,
@@ -85,6 +87,7 @@ export interface TrackerIssueDetail extends TrackerIssueSummary {
   readonly viewerPermissions: IssueViewerPermissions;
   /** Every state the issue can be in, in workflow order; `setState` is asked for one by name. */
   readonly states: ReadonlyArray<IssueState>;
+  readonly transitions?: ReadonlyArray<IssueTransition>;
   readonly reactions?: ReadonlyArray<IssueReaction>;
   readonly comments: ReadonlyArray<IssueComment>;
   /** Where older comments carry on; null once the conversation is whole. */
@@ -162,7 +165,11 @@ export interface IssueTrackerApi {
    * name comes from a client, so the tracker is what proves it.
    */
   readonly setState?: (
-    input: IssueTarget & { readonly state: string },
+    input: IssueTarget & {
+      readonly state: string;
+      readonly transitionId?: string | undefined;
+      readonly fields?: IssueTransitionFields | undefined;
+    },
   ) => Effect.Effect<void, IssueTrackerError>;
 
   /**

@@ -24,6 +24,7 @@ import type {
   IssueListEntry,
   IssueReaction,
   IssueRef,
+  IssueTransition,
   PullRequestRef,
   ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -71,6 +72,7 @@ import {
 } from "../pullRequest/pullRequestPresentation";
 import { IssueCommentComposer } from "./IssueCommentComposer";
 import { IssueDetailGhost } from "./IssueDetailGhost";
+import { IssueTransitionDialog } from "./IssueTransitionDialog";
 import { ReactionBar } from "../pullRequest/PullRequestReactions";
 import { PullRequestsUnavailableState } from "../pullRequest/PullRequestsUnavailableState";
 import { issueTrackerPresentation, issueStatePresentation } from "./issuePresentation";
@@ -471,6 +473,7 @@ export function IssueDetailPanel({
   const [titleDraft, setTitleDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [changingState, setChangingState] = useState(false);
+  const [transitionDialog, setTransitionDialog] = useState<IssueTransition | null>(null);
 
   if (detail === null) {
     if (detailQuery.error !== null && !detailQuery.isPending) {
@@ -540,12 +543,12 @@ export function IssueDetailPanel({
     setEditing(null);
   };
 
-  const moveTo = async (state: string) => {
+  const moveTo = async (state: string, transitionId?: string) => {
     if (changingState) return;
     setChangingState(true);
     const result = await setState({
       environmentId,
-      input: { ...reference, state },
+      input: { ...reference, state, ...(transitionId === undefined ? {} : { transitionId }) },
     });
     setChangingState(false);
     if (result._tag === "Failure") {
@@ -565,8 +568,25 @@ export function IssueDetailPanel({
       className={cn("size-3.5 shrink-0", currentState.toneClassName)}
     />
   );
+  const moves =
+    access.transitions === null
+      ? otherStates.map((state) => ({
+          key: state.name,
+          label: state.name,
+          to: state,
+          select: () => void moveTo(state.name),
+        }))
+      : access.transitions.map((transition) => ({
+          key: transition.id,
+          label: transition.name,
+          to: transition.to,
+          select: () =>
+            transition.fields.length > 0
+              ? setTransitionDialog(transition)
+              : void moveTo(transition.to.name, transition.id),
+        }));
   const stateControl: ReactNode =
-    otherStates.length > 0 ? (
+    moves.length > 0 ? (
       <Menu>
         <MenuTrigger
           render={
@@ -583,15 +603,15 @@ export function IssueDetailPanel({
           <ChevronDownIcon aria-hidden className="size-3" />
         </MenuTrigger>
         <MenuPopup align="end">
-          {otherStates.map((state) => {
-            const presentation = issueStatePresentation(state);
+          {moves.map((move) => {
+            const presentation = issueStatePresentation(move.to);
             return (
-              <MenuItem key={state.name} onClick={() => void moveTo(state.name)}>
+              <MenuItem key={move.key} onClick={move.select}>
                 <presentation.Icon
                   aria-hidden
                   className={cn("size-3.5 shrink-0", presentation.toneClassName)}
                 />
-                {state.name}
+                {move.label}
               </MenuItem>
             );
           })}
@@ -906,6 +926,29 @@ export function IssueDetailPanel({
         </PullRequestSection>
       </div>
 
+      {transitionDialog ? (
+        <IssueTransitionDialog
+          transition={transitionDialog}
+          issueKey={detail.displayKey}
+          issueUrl={detail.url}
+          onClose={() => setTransitionDialog(null)}
+          onSubmit={async (fields) => {
+            const result = await setState({
+              environmentId,
+              input: {
+                ...reference,
+                state: transitionDialog.to.name,
+                transitionId: transitionDialog.id,
+                fields,
+              },
+            });
+            if (result._tag === "Failure")
+              return readableFailure(squashAtomCommandFailure(result), "The tracker refused it.");
+            refreshIssueLists(environmentId);
+            return null;
+          }}
+        />
+      ) : null}
       {detail.capabilities.comment ? (
         <IssueCommentComposer
           environmentId={environmentId}

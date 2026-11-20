@@ -24,6 +24,7 @@ import type {
 
 import { adfToMarkdown, hasUnwritableContent, markdownToAdf } from "./adf.ts";
 import * as JiraApi from "./JiraApi.ts";
+import { jiraTransition, jiraTransitionValues } from "./jiraTransitions.ts";
 
 const DESCRIPTOR: StandaloneIssueTrackerDescriptor = {
   tracker: JiraApi.KIND,
@@ -53,6 +54,7 @@ const CAPABILITIES: IssueCapabilities = {
   linkedPullRequests: false,
   events: true,
   search: true,
+  transitionForms: true,
 };
 
 const EVERYTHING: IssueViewerPermissions = {
@@ -122,8 +124,10 @@ function toSummary(
 }
 
 /** Where the issue stands and everywhere its workflow lets this account move it, in board order. */
-function toStates(issue: JiraApi.JiraIssue): IssueState[] {
-  const transitions = issue.transitions ?? [];
+function toStates(
+  issue: JiraApi.JiraIssue,
+  transitions: ReadonlyArray<JiraApi.JiraTransition>,
+): IssueState[] {
   if (transitions.length === 0) return [];
   const byName = new Map(
     [issue.fields.status, ...transitions.map((transition) => transition.to)].map((status) => [
@@ -369,7 +373,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
 
       getIssue: Effect.fn("JiraIssueTracker.getIssue")(function* (input) {
         const key = yield* requireKey("getIssue", input.key);
-        const [origin, issue, page, allowed, me] = yield* Effect.all(
+        const [origin, issue, page, allowed, me, transitions] = yield* Effect.all(
           [
             jira.origin,
             jira.getIssue(key),
@@ -383,6 +387,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
               ])
               .pipe(Effect.orElseSucceed(() => null)),
             jira.myself().pipe(Effect.orElseSucceed(() => null)),
+            jira.getTransitions(key),
           ],
           { concurrency: 5 },
         );
@@ -401,7 +406,8 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
                   labels: allowed["EDIT_ISSUES"] === true,
                   assignees: allowed["ASSIGN_ISSUES"] === true,
                 },
-          states: toStates(issue),
+          states: toStates(issue, transitions),
+          transitions: transitions.map(jiraTransition),
           comments: page.comments.map((comment) => toComment(comment, summary.url)),
           commentsCursor: page.total > page.comments.length ? String(page.comments.length) : null,
           events: toEvents(issue.changelog?.histories ?? []),
@@ -490,19 +496,47 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
 
       setState: Effect.fn("JiraIssueTracker.setState")(function* (input) {
         const key = yield* requireProjectKey("setState", input);
-        const issue = yield* jira.getIssue(key);
-        if (issue.fields.status.name === input.state) return;
-        const wanted = (issue.transitions ?? []).find(
-          (transition) => transition.to.name === input.state,
-        );
+        const [issue, transitions] = yield* Effect.all([
+          jira.getIssue(key),
+          jira.getTransitions(key),
+        ]);
+        const matches = transitions.filter((transition) => transition.to.name === input.state);
+        if (input.transitionId === undefined && issue.fields.status.name === input.state) {
+          if (input.fields !== undefined && Object.keys(input.fields).length > 0) {
+            return yield* JiraApi.fail(
+              "setState",
+              "failed",
+              "Choose a transition before submitting its fields.",
+            );
+          }
+          return;
+        }
+        if (input.transitionId === undefined && matches.length > 1) {
+          return yield* JiraApi.fail(
+            "setState",
+            "failed",
+            "More than one workflow transition reaches this status. Choose a transition by its ID.",
+          );
+        }
+        const wanted =
+          input.transitionId === undefined
+            ? matches[0]
+            : transitions.find(
+                (transition) =>
+                  transition.id === input.transitionId && transition.to.name === input.state,
+              );
         if (wanted === undefined) {
           return yield* JiraApi.fail(
             "setState",
             "failed",
-            `This issue's workflow has no move to "${input.state}" from "${issue.fields.status.name}".`,
+            input.transitionId === undefined
+              ? `This issue's workflow has no move to "${input.state}" from "${issue.fields.status.name}".`
+              : "This workflow transition is no longer available. Refresh the issue and choose again.",
           );
         }
-        yield* jira.transition(key, wanted.id);
+        const values = jiraTransitionValues(wanted, input.fields);
+        if ("error" in values) return yield* JiraApi.fail("setState", "failed", values.error);
+        yield* jira.transition(key, wanted.id, values);
       }),
 
       listCandidates: (input) =>
