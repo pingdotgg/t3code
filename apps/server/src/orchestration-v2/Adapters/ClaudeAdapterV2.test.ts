@@ -9710,8 +9710,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  const gatewayLimitWithCountdown =
-    "API Error: Server is temporarily limiting requests (not your usage limit) · All credentials for model claude-opus-5-5 are cooling down (last error: rate_limit_error: This request would exceed your account's rate limit. Please try again later.) (reset after 2h26m17s)";
+  const gatewayLimitMessage =
+    "API Error: Server is temporarily limiting requests (not your usage limit) · All credentials for model claude-opus-5-5 are cooling down";
+  const gatewayLimitWithCountdown = `${gatewayLimitMessage} (last error: rate_limit_error: This request would exceed your account's rate limit. Please try again later.) (reset after 2h26m17s)`;
 
   it.effect.each([
     { status: 503, cooldown: "4m 6s", seconds: 246 },
@@ -9751,6 +9752,24 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       sdkRateLimitUntyped: true,
       assistantResetSeconds: 9000,
       result: gatewayLimitWithCountdown,
+    },
+    {
+      status: 429,
+      cooldown: "a countdown only inside the last error",
+      seconds: 0,
+      proxy: true,
+      sdkResetSeconds: null,
+      sdkRateLimitUntyped: true,
+      result: `${gatewayLimitMessage} (last error: rate_limit_error (reset after 1h))`,
+    },
+    {
+      status: 429,
+      cooldown: "an outer countdown after a nested countdown",
+      seconds: 60,
+      proxy: true,
+      sdkResetSeconds: null,
+      sdkRateLimitUntyped: true,
+      result: `${gatewayLimitMessage} (last error: rate_limit_error (reset after 1h)) (reset after 1m)`,
     },
     {
       status: 429,
