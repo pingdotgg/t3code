@@ -253,7 +253,11 @@ class AntigravitySkillLinkError extends Schema.TaggedError<AntigravitySkillLinkE
   }
 }
 
-const antigravityUserRuleFiles = ["AGENTS.md", "GEMINI.md"] as const;
+const antigravityUserConfigFiles = [
+  ["AGENTS.md"],
+  ["GEMINI.md"],
+  ["config", "skills.json"],
+] as const;
 
 /** Private GEMINI_HOME isolates credentials/hooks/MCP; link global skills and rules from the real ~/.gemini. */
 const linkAntigravityUserConfig = Effect.fn("linkAntigravityUserConfig")(function* (input: {
@@ -270,12 +274,16 @@ const linkAntigravityUserConfig = Effect.fn("linkAntigravityUserConfig")(functio
   for (const [link, target, type] of [
     [links[0], targets[0], directoryType],
     [links[1], targets[1], directoryType],
-    // File symlinks need elevation or Developer Mode on Windows, so rules are copied there.
+    // File symlinks need elevation or Developer Mode on Windows, so config files are copied there.
     ...(input.platform === "win32"
       ? []
-      : antigravityUserRuleFiles.map(
-          (name) =>
-            [path.join(input.profileDirectory, name), path.join(userGemini, name), "file"] as const,
+      : antigravityUserConfigFiles.map(
+          (segments) =>
+            [
+              path.join(input.profileDirectory, ...segments),
+              path.join(userGemini, ...segments),
+              "file",
+            ] as const,
         )),
   ] as const) {
     yield* Effect.gen(function* () {
@@ -342,23 +350,25 @@ const copyAntigravityUserRuleFiles = Effect.fn("copyAntigravityUserRuleFiles")(f
   const copies: Record<string, string> = {
     ...Option.getOrElse(decodeRuleCopies(manifestText), () => ({})),
   };
-  for (const name of antigravityUserRuleFiles) {
-    const link = path.join(input.profileDirectory, name);
-    const target = path.join(input.userHome, ".gemini", name);
+  for (const segments of antigravityUserConfigFiles) {
+    const key = segments.join("/");
+    const link = path.join(input.profileDirectory, ...segments);
+    const target = path.join(input.userHome, ".gemini", ...segments);
     yield* Effect.gen(function* () {
       const current = yield* readOptional(link);
-      if (current !== undefined && current !== copies[name]) {
-        delete copies[name];
+      if (current !== undefined && current !== copies[key]) {
+        delete copies[key];
         return;
       }
       const source = yield* readOptional(target);
       if (source === undefined) {
         if (current !== undefined) yield* fs.remove(link);
-        delete copies[name];
+        delete copies[key];
         return;
       }
+      yield* fs.makeDirectory(path.dirname(link), { recursive: true });
       yield* fs.writeFileString(link, source);
-      copies[name] = source;
+      copies[key] = source;
     }).pipe(
       Effect.catch((error) =>
         Effect.logWarning("Antigravity user rules are not copied into the profile.", {
