@@ -232,7 +232,8 @@ describe("JiraIssueTracker", () => {
       const { tracker } = fakeJira({
         "GET /rest/api/3/myself": () => JULIUS,
         "GET /rest/api/3/issue/ENG-7": ({ query }) => {
-          expect(query.get("expand")).toBe("transitions,changelog");
+          expect(query.get("fields")).toBe("*all,-comment,-worklog");
+          expect(query.get("expand")).toBe("transitions,changelog,names,schema");
           return issue(
             "ENG-7",
             {
@@ -240,8 +241,84 @@ describe("JiraIssueTracker", () => {
                 type: "doc",
                 content: [{ type: "paragraph", content: [{ type: "text", text: "Body" }] }],
               },
+              project: { key: "ENG", name: "Engineering" },
+              statuscategorychangedate: "2026-07-02T09:00:00.000+0000",
+              customfield_10050: { value: "Hardware", child: { value: "Laptop" } },
+              environment: {
+                type: "doc",
+                content: [
+                  {
+                    type: "paragraph",
+                    content: [
+                      { type: "text", text: "Chrome", marks: [{ type: "strong" }] },
+                      { type: "text", text: " 120" },
+                    ],
+                  },
+                  { type: "paragraph", content: [{ type: "text", text: "macOS 15" }] },
+                ],
+              },
+              customfield_10040: [{ value: "Gold" }, { value: "Silver" }],
+              duedate: "2026-07-10",
+              resolution: null,
+              customfield_10016: 0,
+              customfield_10020: [{ id: 12, name: "Sprint 12", state: "active", boardId: 1 }],
+              fixVersions: [{ id: "100", name: "1.2", released: false }],
+              components: [
+                { id: "1", name: "API" },
+                { id: "2", name: "Web" },
+              ],
+              issuetype: { id: "10001", name: "Bug", subtask: false },
+              priority: { id: "2", name: "High", iconUrl: "https://acme.test/high.svg" },
+              customfield_10041: THEO,
+              customfield_10042: "2026-07-03T09:30:00.000+0000",
+              customfield_10043: "",
+              customfield_10044: { type: "doc", content: [{ type: "paragraph" }] },
+              customfield_10045: [],
+              customfield_10046: { votes: 2, hasVoted: false },
             },
             {
+              names: {
+                summary: "Summary",
+                project: "Project",
+                status: "Status",
+                assignee: "Assignee",
+                labels: "Labels",
+                reporter: "Reporter",
+                created: "Created",
+                updated: "Updated",
+                resolutiondate: "Resolved",
+                priority: "Priority",
+                issuetype: "Work type",
+                components: "Components",
+                fixVersions: "Fix versions",
+                duedate: "Due date",
+                resolution: "Resolution",
+                environment: "Environment",
+                customfield_10016: "Story point estimate",
+                customfield_10020: "Sprint",
+                customfield_10040: "Support tiers",
+                customfield_10041: "Account manager",
+                customfield_10042: "First response",
+                customfield_10043: "Customer reference",
+                customfield_10044: "Workaround",
+                customfield_10045: "Affected teams",
+                customfield_10046: "Ballot",
+                customfield_10050: "Device",
+              },
+              schema: {
+                customfield_10016: {
+                  type: "number",
+                  custom: "com.pyxis.greenhopper.jira:jsw-story-points",
+                },
+                customfield_10020: {
+                  type: "array",
+                  custom: "com.pyxis.greenhopper.jira:gh-sprint",
+                },
+                customfield_10042: {
+                  type: "datetime",
+                  custom: "com.atlassian.jira.plugin.system.customfieldtypes:datetime",
+                },
+              },
               transitions: [
                 { id: "31", name: "Finish", to: DONE },
                 { id: "11", name: "Back", to: TODO },
@@ -325,6 +402,35 @@ describe("JiraIssueTracker", () => {
           },
         ],
       });
+      // Under the site's names: the familiar fields first, Sprint and story points known by their
+      // kind, then the rest by name. A value reads as Jira shows it; an empty one is unset.
+      expect(detail.properties).toEqual([
+        { id: "state", label: "Status", value: "In Progress" },
+        { id: "assignees", label: "Assignee", value: ["Theo"] },
+        { id: "labels", label: "Labels", value: ["bug"] },
+        { id: "priority", label: "Priority", value: "High" },
+        { id: "issuetype", label: "Work type", value: "Bug" },
+        { id: "components", label: "Components", value: ["API", "Web"] },
+        { id: "fixVersions", label: "Fix versions", value: ["1.2"] },
+        { id: "customfield_10020", label: "Sprint", value: ["Sprint 12"] },
+        { id: "customfield_10016", label: "Story point estimate", value: 0 },
+        { id: "duedate", label: "Due date", value: "2026-07-10" },
+        { id: "resolution", label: "Resolution", value: null },
+        { id: "environment", label: "Environment", value: "Chrome 120\nmacOS 15" },
+        { id: "customfield_10041", label: "Account manager", value: "Theo" },
+        { id: "customfield_10045", label: "Affected teams", value: null },
+        { id: "customfield_10046", label: "Ballot", value: { votes: 2, hasVoted: false } },
+        { id: "customfield_10043", label: "Customer reference", value: null },
+        { id: "customfield_10050", label: "Device", value: "Hardware / Laptop" },
+        { id: "customfield_10042", label: "First response", value: "2026-07-03T09:30:00.000Z" },
+        { id: "project", label: "Project", value: "Engineering" },
+        { id: "customfield_10040", label: "Support tiers", value: ["Gold", "Silver"] },
+        { id: "customfield_10044", label: "Workaround", value: null },
+        { id: "author", label: "Reporter", value: "Julius" },
+        { id: "createdAt", label: "Created", value: "2026-07-01T08:00:00.000Z" },
+        { id: "updatedAt", label: "Updated", value: "2026-07-02T10:00:00.000Z" },
+        { id: "closedAt", label: "Resolved", value: null },
+      ]);
       expect(detail.events.map((event) => [event.kind, event.detail])).toEqual([
         ["reopened", "In Progress"],
         ["labeled", "new"],

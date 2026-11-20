@@ -378,8 +378,9 @@ comment, edit the title and description, change labels and assignees, react, and
 reopen (with a close reason where the tracker records one) when the tracker and your account
 allow it. An issue read through a project that does not own its repository is shown read-only.
 
-**Properties** lists every field the tracker reports for the issue, such as a Linear estimate or
-an Azure DevOps area path and custom fields. Search it by field name or ID; empty fields stay
+**Properties** lists every field the tracker reports for the issue, such as a Jira sprint, a
+Linear estimate or an Azure DevOps area path, and custom fields under the names the tracker gives
+them. Search it by field name or ID; empty fields stay
 hidden until you show them. Pin a field to keep its current value in the issue's **Summary**
 (**Overview** on mobile). Pins are kept per issue on that device and do not change the issue.
 

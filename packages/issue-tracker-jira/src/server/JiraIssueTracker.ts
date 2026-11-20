@@ -6,23 +6,26 @@
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import type * as Schema from "effect/Schema";
 import {
   type IssueActor,
   type IssueCapabilities,
   type IssueComment,
   type IssueEvent,
   type IssueInvolvement,
+  type IssueProperty,
   type IssueState,
   type IssueViewerPermissions,
   type StandaloneIssueTrackerDescriptor,
 } from "@t3tools/contracts";
-import type {
-  IssueTrackerError,
-  StandaloneIssueTrackerApi,
-  TrackerIssueSummary,
+import {
+  issueProperties,
+  type IssueTrackerError,
+  type StandaloneIssueTrackerApi,
+  type TrackerIssueSummary,
 } from "@t3tools/source-control-core/server/IssueTracker";
 
-import { adfToMarkdown, hasUnwritableContent, markdownToAdf } from "./adf.ts";
+import { adfToMarkdown, adfToText, hasUnwritableContent, markdownToAdf } from "./adf.ts";
 import * as JiraApi from "./JiraApi.ts";
 
 const DESCRIPTOR: StandaloneIssueTrackerDescriptor = {
@@ -119,6 +122,117 @@ function toSummary(
     labels: (fields.labels ?? []).map((name) => ({ name, color: null })),
     commentCount,
   };
+}
+
+/** Shown elsewhere in the detail, or Jira's own bookkeeping, which no reader looks for. */
+const OMITTED_FIELDS: ReadonlySet<string> = new Set([
+  "summary",
+  "description",
+  "status",
+  "assignee",
+  "labels",
+  "reporter",
+  "created",
+  "updated",
+  "resolutiondate",
+  "statuscategorychangedate",
+  "lastViewed",
+  "workratio",
+  "issuerestriction",
+]);
+
+/** The Jira field behind each property every tracker shares, so it reads under the site's name. */
+const SHARED_FIELDS: Readonly<Record<string, string>> = {
+  state: "status",
+  assignees: "assignee",
+  labels: "labels",
+  author: "reporter",
+  createdAt: "created",
+  updatedAt: "updated",
+  closedAt: "resolutiondate",
+};
+
+/**
+ * What a reader looks for first, in this order; the rest follow by name. Sprint and story points
+ * are custom fields with a different id on every site, so they are known by their kind.
+ */
+const LEADING_FIELDS = [
+  "priority",
+  "issuetype",
+  "parent",
+  "components",
+  "fixVersions",
+  "com.pyxis.greenhopper.jira:gh-sprint",
+  "com.pyxis.greenhopper.jira:jsw-story-points",
+  "duedate",
+  "resolution",
+  "environment",
+];
+
+/** `Array.isArray` does not narrow a readonly array out of a union. */
+function isJsonObject(value: Schema.Json): value is Schema.JsonObject {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * A field's value as Jira shows it: a person by display name, an option by its value, an issue
+ * by its key, rich text as text, anything else by its name. An empty value is unset.
+ */
+function fieldValue(value: Schema.Json, datetime: boolean): Schema.Json {
+  if (typeof value === "string") {
+    if (value.trim().length === 0) return null;
+    return datetime ? iso(value) : value;
+  }
+  if (Array.isArray(value)) {
+    const items = value.flatMap((item: Schema.Json) => {
+      const shown = fieldValue(item, datetime);
+      return shown === null ? [] : [shown];
+    });
+    return items.length === 0 ? null : items;
+  }
+  if (!isJsonObject(value)) return value;
+  if (value["type"] === "doc") return adfToText(value) || null;
+  for (const key of ["displayName", "value", "name", "key", "filename"]) {
+    const name = value[key];
+    if (typeof name !== "string" || name.trim().length === 0) continue;
+    // A cascading select keeps its second level beneath the first.
+    const child = value["child"];
+    return child !== undefined && isJsonObject(child) && typeof child["value"] === "string"
+      ? `${name} / ${child["value"]}`
+      : name;
+  }
+  return Object.keys(value).length === 0 ? null : value;
+}
+
+function toProperties(
+  issue: JiraApi.JiraIssue,
+  summary: TrackerIssueSummary,
+): ReadonlyArray<IssueProperty> {
+  const names = issue.names ?? {};
+  const types = issue.schema ?? {};
+  const label = (id: string) => names[id]?.trim() || id;
+  const rank = (id: string) => {
+    const index = LEADING_FIELDS.indexOf(types[id]?.custom ?? id);
+    return index === -1 ? LEADING_FIELDS.length : index;
+  };
+  const fields: Schema.JsonObject = issue.fields;
+  const own = Object.entries(fields)
+    .filter(([id]) => !OMITTED_FIELDS.has(id))
+    .map(([id, value]) => ({
+      id,
+      label: label(id),
+      value: fieldValue(value, types[id]?.type === "datetime"),
+    }))
+    .toSorted(
+      (left, right) =>
+        rank(left.id) - rank(right.id) ||
+        left.label.localeCompare(right.label, undefined, { sensitivity: "base" }),
+    );
+  return issueProperties(summary, own).map((property) => {
+    const field = SHARED_FIELDS[property.id];
+    const name = field === undefined ? undefined : names[field]?.trim();
+    return name ? { ...property, label: name } : property;
+  });
 }
 
 /** Where the issue stands and everywhere its workflow lets this account move it, in board order. */
@@ -390,6 +504,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
         return {
           ...summary,
           body: adfToMarkdown(issue.fields.description),
+          properties: toProperties(issue, summary),
           viewer: me === null ? null : toActor(me).login,
           viewerPermissions:
             allowed === null
