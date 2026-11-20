@@ -531,19 +531,21 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(harness.onData.mock.calls.map(([data]) => data)).toEqual(["echo hi"]);
   });
 
-  it("leaves Ctrl+Alt+V to the shell on a Windows client", async () => {
+  it("leaves Ctrl+Alt+V and Ctrl+Meta+V to the shell on a Windows client", async () => {
     const harness = createHarness();
-    const read = Promise.resolve("echo hi");
+    const readText = vi.fn(() => Promise.resolve("echo hi"));
     vi.stubGlobal("navigator", {
       platform: "Win32",
-      clipboard: { readText: () => read },
+      clipboard: { readText },
     });
     const surface = await harness.create({ beforeKey: () => true });
 
     key(surface, "v", "KeyV", { altKey: true, ctrlKey: true });
-    await read;
+    key(surface, "v", "KeyV", { ctrlKey: true, metaKey: true });
+    await Promise.resolve();
 
-    expect(harness.onData.mock.calls.map(([data]) => data)).toEqual(["\x1b\x16"]);
+    expect(readText).not.toHaveBeenCalled();
+    expect(harness.onData.mock.calls.map(([data]) => data)).toContain("\x1b\x16");
   });
 
   it("keeps Ctrl+V as quoted insert for a Linux client", async () => {

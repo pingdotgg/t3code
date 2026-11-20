@@ -369,7 +369,7 @@ function isTerminalPasteShortcut(
   if (!keys.has("v")) return false;
   if (isMacPlatform(platform)) return event.metaKey;
   // Windows terminals paste on Ctrl+V; Linux keeps it for the shell's quoted insert.
-  if (isWindowsPlatform(platform)) return event.ctrlKey && !event.altKey;
+  if (isWindowsPlatform(platform)) return event.ctrlKey && !event.altKey && !event.metaKey;
   return event.ctrlKey && event.shiftKey;
 }
 
