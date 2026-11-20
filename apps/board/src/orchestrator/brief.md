@@ -22,15 +22,17 @@ A file that does not exist is empty. Create it the first time you write to it.
 
 ### `tickets.json`
 
-A JSON array. Write the whole file each time, and keep it valid JSON, because the board reads it after every change. A ticket has these fields. Leave out a field you do not know yet.
+A JSON array. Write the whole file each time, and keep it valid JSON, because the board reads it after every change. If a ticket has a bad field, the board shows an error naming it and keeps the last valid layout, so a typo hides your update. Every ticket has `key`, `title`, and `stage`. The other fields are optional. Leave out a field you do not know yet.
 
-- `key`: a short stable id. Use the tracker key when the user gives one, otherwise `T-1`, `T-2`, and so on.
-- `title`, `track` (the group it belongs to), and `dependsOn` (the keys it waits for).
+- `key`: a short stable id, unique in the file. Use the tracker key when the user gives one, otherwise `T-1`, `T-2`, and so on.
+- `title`, `track` (the group it belongs to), and `dependsOn` (a list of the keys it waits for).
 - `stage`: one of the stages below.
-- `flags`, `branch`, `base`, `worktreePath`, `pr`, `headSha`, `summary`, and `why` (one line each for the last two).
+- `flags`: a list of short strings.
+- `branch`, `base`, `worktreePath`, `headSha`, `summary`, and `why` (one line each for the last two), all text.
+- `pr`: the pull request's number, or its link.
 - `threads`: the agents on this ticket, each `{ "threadId": "...", "role": "<role name>", "round": 1 }`.
-- `verdicts`: one entry per review, each with the reviewer role and its P0 to P3 counts.
-- `fixRounds`: how many fix rounds the ticket has had.
+- `verdicts`: one entry per review, `{ "role": "reviewer", "p0": 0, "p1": 1, "p2": 0, "p3": 2 }`, with the P0 to P3 finding counts.
+- `fixRounds`: how many fix rounds the ticket has had, a whole number.
 
 Ticket stages:
 
@@ -70,7 +72,7 @@ Start an agent with `delegate_task`:
 - `role`: the role's `t3Role`.
 - `isolation`: the role's isolation. An agent that changes files gets `worktree`, so two agents never share a checkout.
 - `target`: the role's target, copied as written. When the target says `omit`, send no `target`, and the agent runs on your model.
-- `title`: `[<ticket key>] <role name>`, for example `[T-2] scout`. For an agent that serves no ticket, use `[board] <role name>`.
+- `title`: `[<ticket key>] <role name>`, for example `[T-2] scout`. The title names the registry role, never the `role` argument, so a `task` agent is `[T-2] task`, not `[T-2] implementation`. For an agent that serves no ticket, use `[board] <role name>`.
 - `task`: starts with `Read {{boardDir}}/roles/<role>.md and act as that role.` Then give the goal, the files and branches it needs, what to return, and the instruction that it never asks the user.
 
 A read-only role stays read-only only because its role file says so, so say it again in the task. Read what an agent returned before you act on it. A report is evidence, not acceptance.

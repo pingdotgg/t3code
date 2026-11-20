@@ -1,41 +1,25 @@
-import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import { ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
 import { isRunLive } from "../chat/timeline";
-import { orchestratorStats, TICKET_STAGES, type TicketStage } from "../orchestrator/brief";
-import { boardStoreAtom } from "../state/orchestrator";
+import { STAGE_LABEL, TICKET_STAGES } from "../domain/ticket";
+import type { OrchestratorStats } from "../orchestrator/brief";
 import { useEnvironmentThread } from "../state/threads";
 import type { ValidBoard } from "../store/boardFiles";
-
-export const CARD_WIDTH = 340;
-export const CARD_HEIGHT = 220;
-
-const STAGE_LABEL = {
-  planned: "Planned",
-  building: "Building",
-  reviewing: "Reviewing",
-  verifying: "Verifying",
-  pr: "PR and CI",
-  awaiting_approval: "Awaiting approval",
-  merged: "Merged",
-  off_path: "Off path",
-} as const satisfies Record<TicketStage, string>;
-
-const NO_FILES = { tickets: null, forYou: null, decisions: null };
+import { ORCHESTRATOR_BOX } from "./layout";
 
 /** A board's orchestrator on the canvas: its tickets by stage, what waits on the user, and its builders against the cap. */
 export function OrchestratorCard({
   project,
   listed,
+  stats,
 }: {
   project: EnvironmentProject;
   listed: ValidBoard;
+  stats: OrchestratorStats;
 }) {
   const { board } = listed;
-  const files = useAtomValue(boardStoreAtom(`${project.id}/${listed.folder}`)) ?? NO_FILES;
-  const stats = orchestratorStats(files, board.builderCap);
   // The panel holds the same thread open, so this adds no second subscription.
   const projection = Option.getOrNull(
     useEnvironmentThread(
@@ -55,7 +39,7 @@ export function OrchestratorCard({
       aria-label="Orchestrator card"
       data-testid="orchestrator-card"
       className="absolute rounded-xl border border-line bg-panel p-3 shadow-panel"
-      style={{ left: 40, top: 40, width: CARD_WIDTH }}
+      style={{ left: ORCHESTRATOR_BOX.x, top: ORCHESTRATOR_BOX.y, width: ORCHESTRATOR_BOX.width }}
     >
       <header className="flex items-center gap-2">
         <h3 className="min-w-0 flex-1 truncate font-semibold">{board.name}</h3>

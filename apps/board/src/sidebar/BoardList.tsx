@@ -11,6 +11,7 @@ import {
 } from "../state/boards";
 import type { ValidBoard } from "../store/boardFiles";
 import { Tooltip } from "../ui/Tooltip";
+import { BoardAgents } from "./AgentTree";
 import { PillRow } from "./PillRow";
 import { SidebarRow } from "./SidebarRow";
 
@@ -79,36 +80,40 @@ export function BoardList({ project }: { project: EnvironmentProject }) {
         }
         const busy = working.has(listed.folder);
         return (
-          <SidebarRow
-            key={listed.folder}
-            depth={1}
-            icon={
-              busy ? (
-                <Loader className="size-3.5 animate-spin" />
-              ) : (
-                <LayoutDashboard className="size-3.5" />
-              )
-            }
-            title={listed.board.name}
-            label={listed.board.name}
-            selected={lastOpened?.projectId === project.id && lastOpened.folder === listed.folder}
-            onClick={() =>
-              void openBoard(registry, { projectId: project.id, folder: listed.folder })
-            }
-            trailing={
-              <Tooltip text="Archive board" side="bottom" align="end">
-                <button
-                  type="button"
-                  disabled={busy}
-                  aria-label={`Archive ${listed.board.name}`}
-                  onClick={() => void change(listed, true)}
-                  className="grid size-5 place-items-center rounded-md opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 hover:bg-hover hover:text-fg disabled:opacity-50"
-                >
-                  <Archive className="size-3.5" />
-                </button>
-              </Tooltip>
-            }
-          />
+          <div key={listed.folder}>
+            <SidebarRow
+              depth={1}
+              icon={
+                busy ? (
+                  <Loader className="size-3.5 animate-spin" />
+                ) : (
+                  <LayoutDashboard className="size-3.5" />
+                )
+              }
+              title={listed.board.name}
+              label={listed.board.name}
+              selected={lastOpened?.projectId === project.id && lastOpened.folder === listed.folder}
+              onClick={() =>
+                void openBoard(registry, { projectId: project.id, folder: listed.folder })
+              }
+              trailing={
+                <Tooltip text="Archive board" side="bottom" align="end">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    aria-label={`Archive ${listed.board.name}`}
+                    onClick={() => void change(listed, true)}
+                    className="grid size-5 place-items-center rounded-md opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 hover:bg-hover hover:text-fg disabled:opacity-50"
+                  >
+                    <Archive className="size-3.5" />
+                  </button>
+                </Tooltip>
+              }
+            />
+            {listed.board.orchestratorThreadId !== null && (
+              <BoardAgents project={project} listed={listed} depth={1} />
+            )}
+          </div>
         );
       })}
       {archived.length > 0 && (
