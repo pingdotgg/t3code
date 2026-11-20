@@ -306,7 +306,8 @@ it.effect("mints a T3 Connect credential under the host's device approval settin
           iss: "https://relay.test",
           aud: "t3-env:environment-1",
           sub: "cloud-user-1",
-          jti: "mint-jti-1",
+          // Longer than a file name can be, and not one: the marker is named by a digest.
+          jti: "../mint-jti-1".padEnd(300, "x"),
           iat: 0,
           exp: 60,
           environmentId: "environment-1",

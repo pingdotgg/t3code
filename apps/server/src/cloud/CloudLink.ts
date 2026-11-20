@@ -39,6 +39,7 @@ import {
 } from "@t3tools/shared/relayJwt";
 import { isSecureRelayUrl, normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Context from "effect/Context";
+import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Hex from "effect/encoding/Hex";
 import * as Signature from "effect/crypto/Signature";
@@ -311,10 +312,6 @@ function stringToBytes(value: string): Uint8Array {
   return new TextEncoder().encode(value);
 }
 
-/** Relay-signed text must not name a file directly; hex is injective and safe on any file system. */
-const replayMarkerName = (prefix: string, value: string) =>
-  `${prefix}${Hex.encode(stringToBytes(value))}`;
-
 export function consumeCloudReplayGuards(input: {
   readonly secrets: ServerSecretStore.ServerSecretStore["Service"];
   readonly names: ReadonlyArray<string>;
@@ -525,12 +522,20 @@ const make = Effect.gen(function* () {
   const httpServer = yield* HttpServer.HttpServer;
   const awarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
   const random = yield* SecureRandom.SecureRandom;
+  const digest = yield* Digest.Digest;
   const signature = yield* Signature.Signature;
   const signingKey = yield* EnvironmentSigningKey;
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const managedPolicy = yield* ManagedPolicy.ManagedPolicy;
+
+  // Relay-signed text must not name a file directly; a digest is also a fixed, safe length.
+  const replayMarkerName = (prefix: string, value: string) =>
+    digest.digest(Digest.sha256, stringToBytes(value)).pipe(
+      Effect.map((hash) => `${prefix}${Hex.encode(hash)}`),
+      Effect.orDie,
+    );
 
   const withSecrets = Effect.provideService(ServerSecretStore.ServerSecretStore, secrets);
   const withRuntimeFiles = <A, E>(
@@ -1527,8 +1532,8 @@ const make = Effect.gen(function* () {
       }
       const proof = proofOption.value;
 
-      const jtiSecretName = replayMarkerName(CLOUD_HEALTH_JTI_PREFIX, proof.jti);
-      const nonceSecretName = replayMarkerName(CLOUD_HEALTH_NONCE_PREFIX, proof.nonce);
+      const jtiSecretName = yield* replayMarkerName(CLOUD_HEALTH_JTI_PREFIX, proof.jti);
+      const nonceSecretName = yield* replayMarkerName(CLOUD_HEALTH_NONCE_PREFIX, proof.nonce);
       const consumedReplayGuards = yield* consumeCloudReplayGuards({
         secrets,
         names: [jtiSecretName, nonceSecretName],
@@ -1630,8 +1635,8 @@ const make = Effect.gen(function* () {
       }
       const proof = proofOption.value;
 
-      const jtiSecretName = replayMarkerName(CLOUD_MINT_JTI_PREFIX, proof.jti);
-      const nonceSecretName = replayMarkerName(CLOUD_MINT_NONCE_PREFIX, proof.nonce);
+      const jtiSecretName = yield* replayMarkerName(CLOUD_MINT_JTI_PREFIX, proof.jti);
+      const nonceSecretName = yield* replayMarkerName(CLOUD_MINT_NONCE_PREFIX, proof.nonce);
       const consumedReplayGuards = yield* consumeCloudReplayGuards({
         secrets,
         names: [jtiSecretName, nonceSecretName],
