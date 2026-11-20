@@ -65,6 +65,7 @@ const METHOD_NEEDS: {
   handoffThread: () => [["create", "send", "artifact"]],
   settleThread: () => LIFECYCLE,
   unsettleThread: () => LIFECYCLE,
+  followParentSettlement: () => LIFECYCLE,
   setThreadParent: () => LIFECYCLE,
   listSkills: () => READ,
   createSkill: () => WRITE,

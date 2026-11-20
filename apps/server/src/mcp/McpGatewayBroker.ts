@@ -107,6 +107,7 @@ const relayCodecs: { readonly [M in McpGatewayRelayMethod]: RelayCodec } = {
   listThreads: relayCodec(McpGatewayRelayCalls.listThreads),
   settleThread: relayCodec(McpGatewayRelayCalls.settleThread),
   unsettleThread: relayCodec(McpGatewayRelayCalls.unsettleThread),
+  followParentSettlement: relayCodec(McpGatewayRelayCalls.followParentSettlement),
   threadTask: relayCodec(McpGatewayRelayCalls.threadTask),
 };
 

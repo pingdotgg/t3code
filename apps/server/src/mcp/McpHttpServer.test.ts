@@ -11,6 +11,7 @@ import {
   EnvironmentId,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
+  PEER_FOLLOW_PARENT_SETTLEMENT_TOOL,
   PreviewTabId,
   ProjectId,
   ProviderInstanceId,
@@ -57,6 +58,7 @@ import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
+import * as ParentSettlementFollow from "../orchestration-v2/ParentSettlementFollow.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
@@ -2207,10 +2209,16 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
             }),
           ),
           McpHttpServer.layerToolSearch,
+          McpHttpServer.layerPeerToolkit,
         ),
       ).pipe(
         Layer.provide(ServerSettings.layerTest()),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provide(
+          Layer.mock(ParentSettlementFollow.ParentSettlementFollow)({
+            follow: () => Effect.succeed({ waiting: [] }),
+          }),
+        ),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             resolve: (token) => Effect.succeed(scopes.get(token)),
@@ -2269,7 +2277,17 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
             ),
             call: (name: string, args: object) =>
               rpc("tools/call", { name, arguments: args }).pipe(
-                Effect.map((body) => (body as { result: { structuredContent?: unknown } }).result),
+                Effect.map(
+                  (body) =>
+                    (
+                      body as {
+                        result: {
+                          structuredContent?: unknown;
+                          content?: ReadonlyArray<{ text?: string }>;
+                        };
+                      }
+                    ).result,
+                ),
               ),
           };
         });
@@ -2286,6 +2304,21 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
       ).toEqual({ tools: [{ name: "preview_open", description: "Opens a browser preview." }] });
       expect(yield* deferring.listed).toEqual(["delegate_task", "preview_open", "tool_search"]);
       expect(yield* other.listed).toEqual(["delegate_task", "preview_open", "schedule_task"]);
+
+      // A server-to-server call is never listed or found, but a link may still call it by name.
+      expect(
+        (yield* deferring.call("tool_search", { query: "settlement parent peer" }))
+          .structuredContent,
+      ).toEqual({ tools: [] });
+      const peerCall = yield* other.call(PEER_FOLLOW_PARENT_SETTLEMENT_TOOL, {
+        parentThreadIds: ["card"],
+        action: "settle",
+        settledBy: "card",
+        settledAt: "2026-10-22T10:00:00.000Z",
+      });
+      // This session is no link, so the call itself refuses it.
+      expect(peerCall.content?.[0]?.text).toContain("OrchestratorMcpFailure");
+      expect(peerCall.content?.[0]?.text).not.toContain("not found");
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

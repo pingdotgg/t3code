@@ -698,6 +698,16 @@ export function createGatewayRuntimePort(
           return { status: "succeeded" as const };
         }),
       ),
+    followParentSettlement: (environmentId, settlement) =>
+      run(
+        Effect.gen(function* () {
+          const registry = yield* EnvironmentRegistry;
+          return yield* registry.run(
+            EnvironmentId.make(environmentId),
+            request(ORCHESTRATION_V2_WS_METHODS.followParentSettlement, settlement),
+          );
+        }),
+      ),
     setThreadParent: (environmentId, threadId, parentThreadId, parentEnvironmentId) =>
       run(
         Effect.gen(function* () {

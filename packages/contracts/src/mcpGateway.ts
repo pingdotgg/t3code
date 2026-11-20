@@ -10,7 +10,11 @@ import {
   AuthStandardClientScopes,
 } from "./auth.ts";
 import { EnvironmentId, MessageId, ProjectId, RunId, ThreadId } from "./baseSchemas.ts";
-import { OrchestrationV2RunStatus } from "./orchestrationV2.ts";
+import {
+  OrchestrationV2ParentSettlement,
+  OrchestrationV2ParentSettlementResult,
+  OrchestrationV2RunStatus,
+} from "./orchestrationV2.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 import type { TailnetDeviceAccess } from "./tailnetDevices.ts";
@@ -265,6 +269,10 @@ export const McpGatewayRelayCalls = {
   listThreads: { args: Schema.Tuple([EnvironmentId]), result: McpGatewayRelayThreadList },
   settleThread: { args: Schema.Tuple([EnvironmentId, ThreadId]), result: Schema.Unknown },
   unsettleThread: { args: Schema.Tuple([EnvironmentId, ThreadId]), result: Schema.Unknown },
+  followParentSettlement: {
+    args: Schema.Tuple([EnvironmentId, OrchestrationV2ParentSettlement]),
+    result: OrchestrationV2ParentSettlementResult,
+  },
   threadTask: {
     args: Schema.Tuple([EnvironmentId, McpGatewayRelayThreadTaskRequest]),
     result: Schema.Unknown,

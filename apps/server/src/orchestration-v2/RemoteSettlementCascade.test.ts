@@ -6,6 +6,9 @@ import {
   type GatewayScope,
   OrchestratorMcpFailure,
   type OrchestrationV2AppThread,
+  type OrchestrationV2ParentSettlement,
+  type OrchestrationV2ParentSettlementResult,
+  PEER_FOLLOW_PARENT_SETTLEMENT_TOOL,
   type TailnetDeviceAccess,
   ThreadId,
 } from "@t3tools/contracts";
@@ -42,17 +45,33 @@ const settledAt = DateTime.makeUnsafe("2026-10-22T10:00:00.000Z");
 const iso = (offsetMs: number) =>
   DateTime.formatIso(DateTime.add(settledAt, { milliseconds: offsetMs }));
 
+interface MacBookThread {
+  readonly id: string;
+  readonly parentThreadId: string;
+  readonly parentEnvironmentId: EnvironmentId;
+  /** The settlement that settled it, or `own` when it settled on its own. */
+  settledBy: string | null;
+  settledAt: string | null;
+}
+
 const remote = (
   id: string,
   parentThreadId: string,
-  settled: string | null,
-  parentEnv = devBox,
-) => ({ id, parentThreadId, parentEnvironmentId: parentEnv, settledAt: settled });
+  settled: { readonly by: string | null; readonly at: string } | null,
+  parentEnvironmentId = devBox,
+): MacBookThread => ({
+  id,
+  parentThreadId,
+  parentEnvironmentId,
+  settledBy: settled?.by ?? null,
+  settledAt: settled?.at ?? null,
+});
 
-const macBookThreads = [
+const macBookThreads = () => [
   remote("under-card", "card", null),
-  remote("settled-with-card", "card", iso(2_000)),
-  remote("settled-before-card", "card", iso(-3_600_000)),
+  remote("settled-with-card", "card", { by: card, at: iso(0) }),
+  // Settled on its own half a minute before the card.
+  remote("settled-before-card", "card", { by: null, at: iso(-30_000) }),
   // Under a sub-run the local walk passed through, and under one it did not reach.
   remote("under-aged", "aged", null),
   remote("under-busy", "busy", null),
@@ -64,12 +83,12 @@ type Call = {
   readonly method: string;
   readonly args: ReadonlyArray<unknown>;
   readonly via: "app" | "link";
-  /** The settlement a linked machine was told the change follows. */
-  readonly follows?: unknown;
 };
 
 interface World {
   readonly calls: Array<Call>;
+  /** The MacBook's chats, as its server holds them. */
+  readonly threads: Array<MacBookThread>;
   /** Whether the app reaches the MacBook. */
   reachable: boolean;
   /** Whether this server's own link to the MacBook answers. */
@@ -78,21 +97,56 @@ interface World {
   card: Partial<OrchestrationV2AppThread>;
   /** Member handshakes this server ran again for the MacBook. */
   refreshes: number;
-  /** The filter of each thread list asked of the MacBook over the link. */
-  lists: Array<unknown>;
-  /** MacBook chats still working, which refuse a settle that follows their parent. */
+  /** Each settlement the MacBook was asked to follow. */
+  readonly settlements: Array<OrchestrationV2ParentSettlement>;
+  /** MacBook chats still working, which leave a settle that follows their parent for later. */
   busy: Set<string>;
 }
 
 const world = (): World => ({
   calls: [],
+  threads: macBookThreads(),
   reachable: true,
   linkReachable: true,
   refreshes: 0,
-  lists: [],
+  settlements: [],
   busy: new Set(),
   card: { id: card, settledOverride: "settled", settledAt, deletedAt: null },
 });
+
+/** The MacBook's ParentSettlementFollow, by the rules its orchestrator applies. */
+const follow = (
+  state: World,
+  settlement: OrchestrationV2ParentSettlement,
+  via: Call["via"],
+): OrchestrationV2ParentSettlementResult => {
+  state.settlements.push(settlement);
+  const waiting: Array<ThreadId> = [];
+  for (const child of state.threads) {
+    if (
+      child.parentEnvironmentId !== settlement.parentEnvironmentId ||
+      !settlement.parentThreadIds.includes(ThreadId.make(child.parentThreadId))
+    ) {
+      continue;
+    }
+    const bySettlement =
+      child.settledBy === settlement.settledBy && child.settledAt === settlement.settledAt;
+    if (settlement.action === "settle" && child.settledAt === null) {
+      if (state.busy.has(child.id)) {
+        waiting.push(ThreadId.make(child.id));
+        continue;
+      }
+      child.settledBy = settlement.settledBy;
+      child.settledAt = settlement.settledAt;
+      state.calls.push({ method: "settleThread", args: [macBook, child.id], via });
+    } else if (settlement.action === "unsettle" && bySettlement) {
+      child.settledBy = null;
+      child.settledAt = null;
+      state.calls.push({ method: "unsettleThread", args: [macBook, child.id], via });
+    }
+  }
+  return { waiting };
+};
 
 const makeLayer = (
   state: World,
@@ -111,12 +165,8 @@ const makeLayer = (
     readonly origin?: "tailnet" | "paired";
     /** The access a new member handshake with the MacBook links at. */
     readonly handshake?: AuthMcpClientAccess;
-    /** The linked MacBook runs a version whose thread list has no parentEnvironmentId. */
+    /** The linked MacBook runs a version that cannot follow a parent's settlement. */
     readonly legacyPeer?: boolean;
-    /** The linked MacBook lists remote parents but runs a version from before `childrenOf`. */
-    readonly beforeChildrenOf?: boolean;
-    /** The linked MacBook runs a version from before `follows`. */
-    readonly beforeFollows?: boolean;
   } = {},
 ) => {
   let link =
@@ -155,77 +205,24 @@ const makeLayer = (
             }),
           );
         }
-        if (input.tool === "t3_thread_list") {
-          const filter = input.arguments.childrenOf as
-            | { readonly environmentId: string; readonly threadIds: ReadonlyArray<string> }
-            | undefined;
-          state.lists.push(filter ?? "all");
-          if (filter !== undefined && (options.legacyPeer === true || options.beforeChildrenOf)) {
-            return Effect.fail(
-              new OrchestratorMcpFailure({
-                code: "orchestration_error",
-                message: 'Unknown argument "childrenOf". Accepted arguments: allProjects, cursor.',
-              }),
-            );
-          }
-          // A chat launched from a linked machine carries `delegatedFrom`, which the real list
-          // leaves out unless subagents are asked for.
-          const listed =
-            filter !== undefined
-              ? macBookThreads.filter(
-                  (thread) =>
-                    thread.parentEnvironmentId === filter.environmentId &&
-                    filter.threadIds.includes(thread.parentThreadId),
-                )
-              : input.arguments.includeSubagents === false
-                ? []
-                : macBookThreads;
-          const threads = listed.map((thread) => ({
-            threadId: thread.id,
-            parentThreadId: options.legacyPeer === true ? null : thread.parentThreadId,
-            ...(options.legacyPeer === true
-              ? {}
-              : { parentEnvironmentId: thread.parentEnvironmentId }),
-            settled: thread.settledAt !== null,
-            settledAt: thread.settledAt,
-          }));
-          return Effect.succeed({
-            projectId: null,
-            currentThreadId: null,
-            threads,
-            nextCursor: null,
-            total: threads.length,
-          } as never);
-        }
-        const action = input.arguments.action === "settle" ? "settleThread" : "unsettleThread";
-        const follows = input.arguments.follows;
-        if (follows !== undefined && options.beforeFollows === true) {
+        if (input.tool !== PEER_FOLLOW_PARENT_SETTLEMENT_TOOL || options.legacyPeer === true) {
           return Effect.fail(
             new OrchestratorMcpFailure({
-              code: "orchestration_error",
-              message: 'Unknown argument "follows". Accepted arguments: action, threadId.',
+              code: "invalid_request",
+              message: `Tool '${input.tool}' not found`,
             }),
           );
         }
-        if (
-          follows !== undefined &&
-          action === "settleThread" &&
-          state.busy.has(String(input.arguments.threadId))
-        ) {
-          return Effect.fail(
-            new OrchestratorMcpFailure({
-              code: "orchestration_error",
-              message: "The thread is still working; it settles with its parent once it finishes.",
-            }),
-          );
-        }
-        state.calls.push({
-          method: action,
-          args: [input.environmentId, input.arguments.threadId],
-          via: "link",
-          ...(follows === undefined ? {} : { follows }),
-        });
-        return Effect.succeed({ sequence: 1 } as never);
+        return Effect.succeed(
+          follow(
+            state,
+            {
+              ...(input.arguments as Omit<OrchestrationV2ParentSettlement, "parentEnvironmentId">),
+              parentEnvironmentId: devBox,
+            },
+            "link",
+          ) as never,
+        );
       }),
   });
   // One instance, so the roster the broker writes is the one the cascade reads.
@@ -264,9 +261,9 @@ const makeLayer = (
               invocationId: event.invocationId,
               ...(!state.reachable
                 ? { error: "This T3 app is not connected right now.", unreachable: true as const }
-                : event.method === "listThreads"
-                  ? { result: { items: macBookThreads, snapshotAt: "now" } }
-                  : { result: { ok: true } }),
+                : event.method === "followParentSettlement"
+                  ? { result: follow(state, event.args[1] as never, "app") }
+                  : { error: `No ${event.method} here.` }),
             });
           }),
           Effect.forkScoped({ startImmediately: true }),
@@ -355,9 +352,8 @@ const targets = (calls: ReadonlyArray<Call>, via?: Call["via"]) =>
     .map((call) => `${call.method}:${String(call.args[0])}:${String(call.args[1])}`)
     .toSorted();
 
+// Children settled already, by this settlement or on their own, keep their settle.
 const settledChildren = [
-  `settleThread:${macBook}:settled-before-card`,
-  `settleThread:${macBook}:settled-with-card`,
   `settleThread:${macBook}:under-aged`,
   `settleThread:${macBook}:under-card`,
 ];
@@ -390,7 +386,7 @@ it.effect("a settle the remote could not take yet runs once it is reachable", ()
     const cascade = yield* RemoteSettlementCascade.make;
     yield* queue("settle");
     yield* worker.drain();
-    expect(state.calls.map((call) => call.method)).toEqual(["listThreads"]);
+    expect(state.calls.map((call) => call.method)).toEqual(["followParentSettlement"]);
     state.reachable = true;
     yield* cascade.retryWaiting;
     yield* worker.drain();
@@ -464,63 +460,57 @@ it.effect("a card settles its children on a linked machine the app is not connec
   }).pipe(Effect.provide(layerWorker(state, { link: "full-access" })));
 });
 
-const childrenOfCard = { environmentId: devBox, threadIds: [card, "aged"] };
-
-it.effect.each([
-  { name: "a linked machine lists only the card's children", peer: {}, lists: [childrenOfCard] },
-  {
-    name: "a linked machine from before the parent filter lists all its chats instead",
-    peer: { beforeChildrenOf: true },
-    lists: [childrenOfCard, "all"],
-  },
-])("$name", ({ peer, lists }) => {
-  const state = world();
-  return Effect.gen(function* () {
-    yield* queue("settle");
-    yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
-    expect(targets(state.calls, "link")).toEqual(settledChildren);
-    expect(state.lists).toEqual(lists);
-  }).pipe(Effect.provide(layerWorker(state, { app: false, link: "full-access", ...peer })));
+const cardSettlement = (action: "settle" | "unsettle") => ({
+  parentEnvironmentId: devBox,
+  parentThreadIds: [card, "aged"],
+  action,
+  settledBy: card,
+  settledAt: iso(0),
 });
 
-it.effect(
-  "a card's cascade over a link names the settlement it follows and waits for a busy child",
-  () => {
-    const state = world();
-    state.busy.add("under-card");
-    return Effect.gen(function* () {
-      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-      const effectId = `effect:settle-card:thread-settlement.remote:${macBook}`;
-      yield* queue("settle");
-      yield* worker.drain();
-      expect(targets(state.calls, "link")).toEqual(
-        settledChildren.filter((child) => !child.endsWith(":under-card")),
-      );
-      expect(yield* statusOf(effectId)).toBe("failed");
-      for (const call of state.calls) {
-        expect(call.follows).toEqual({ settledBy: card, settledAt: iso(0) });
-      }
-      // Once the child finishes, the next sweep settles it.
-      state.busy.clear();
-      state.calls.length = 0;
-      yield* TestClock.adjust("1 minute");
-      yield* worker.drain();
-      expect(targets(state.calls, "link")).toEqual(settledChildren);
-      expect(yield* statusOf(effectId)).toBe("succeeded");
-    }).pipe(Effect.provide(layerWorker(state, { app: false, link: "full-access" })));
-  },
-);
-
-it.effect("a linked machine from before follows takes the plain change", () => {
+it.effect("a linked machine is told the settlement its children follow", () => {
   const state = world();
   return Effect.gen(function* () {
     yield* queue("settle");
     yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
     expect(targets(state.calls, "link")).toEqual(settledChildren);
-    expect(state.calls.every((call) => call.follows === undefined)).toBe(true);
-  }).pipe(
-    Effect.provide(layerWorker(state, { app: false, link: "full-access", beforeFollows: true })),
-  );
+    expect(state.settlements).toEqual([cardSettlement("settle")]);
+  }).pipe(Effect.provide(layerWorker(state, { app: false, link: "full-access" })));
+});
+
+it.effect("a busy child on a linked machine waits for the link even with an app connected", () => {
+  const state = world();
+  state.busy.add("under-card");
+  return Effect.gen(function* () {
+    const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+    const effectId = `effect:settle-card:thread-settlement.remote:${macBook}`;
+    yield* queue("settle");
+    yield* worker.drain();
+    expect(targets(state.calls)).toEqual([`settleThread:${macBook}:under-aged`]);
+    // The app is never asked to settle what the linked machine left for later.
+    expect(state.calls.filter((call) => call.via === "app")).toEqual([]);
+    expect(yield* statusOf(effectId)).toBe("failed");
+    // Once the child finishes, the next sweep settles it.
+    state.busy.clear();
+    state.calls.length = 0;
+    yield* TestClock.adjust("1 minute");
+    yield* worker.drain();
+    expect(targets(state.calls, "link")).toEqual([`settleThread:${macBook}:under-card`]);
+    expect(yield* statusOf(effectId)).toBe("succeeded");
+  }).pipe(Effect.provide(layerWorker(state, { link: "full-access" })));
+});
+
+it.effect("a linked machine that cannot follow a settlement is left as it is", () => {
+  const state = world();
+  return Effect.gen(function* () {
+    yield* queue("settle");
+    yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+    // Neither the link nor the app sends it a plain settle it cannot tell apart.
+    expect(state.calls).toEqual([]);
+    expect(yield* statusOf(`effect:settle-card:thread-settlement.remote:${macBook}`)).toBe(
+      "failed",
+    );
+  }).pipe(Effect.provide(layerWorker(state, { link: "full-access", legacyPeer: true })));
 });
 
 it.effect("a parent on a machine with no app settles its children on a linked machine", () => {
@@ -586,16 +576,6 @@ it.effect("a link below full access settles nothing over it", () => {
     yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
     expect(state.calls).toEqual([]);
   }).pipe(Effect.provide(layerWorker(state, { app: false, link: "auto-accept-edits" })));
-});
-
-it.effect("a linked machine on an older version settles through the app instead", () => {
-  const state = world();
-  return Effect.gen(function* () {
-    yield* queue("settle");
-    yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
-    expect(targets(state.calls, "app")).toEqual(settledChildren);
-    expect(targets(state.calls, "link")).toEqual([]);
-  }).pipe(Effect.provide(layerWorker(state, { link: "full-access", legacyPeer: true })));
 });
 
 const headlessMembers: ReadonlyArray<{

@@ -650,6 +650,18 @@ describe("shared MCP gateway", () => {
     await transport.close();
   });
 
+  it("joins the next owner when a stopping owner resets the connection", async () => {
+    const input = await config();
+    // A stopping owner can accept a connection and then reset it while it releases the port.
+    const stopping = NodeNet.createServer((socket) => {
+      stopping.close();
+      socket.resetAndDestroy();
+    });
+    await new Promise<void>((resolve) => stopping.listen(input.port, "127.0.0.1", resolve));
+    const client = await mcp(input);
+    expect((await client.listTools()).tools.length).toBeGreaterThan(0);
+  });
+
   it("moves a running stdio session to the next owner and announces the tool change", async () => {
     const input = await config();
     const entryPoint =

@@ -115,6 +115,7 @@ overrides:
   react-native-svg: 15.16.1
   app-builder-lib: 26.16.1
   electron-updater: 6.8.9
+  builder-util-runtime: 9.7.0
   expo-modules-core: 58.0.30
   # Keep jsdom's optional peer consistent so Vite+ has one test-runner instance.
   "@exodus/bytes>@noble/hashes": "1.8.0"
@@ -239,8 +240,10 @@ patchedDependencies:
   # can run on worker threads: apps/server/src/process/SpawnWorker.ts.
   "@effect/platform-node-shared@4.1.2": patches/@effect__platform-node-shared@4.1.2.patch
   # Electron net requests never emit "socket", so upstream's idle timeout never fires and a
-  # stalled update download hangs forever.
+  # stalled update download hangs forever. A cancelled differential download aborts its range requests.
   electron-updater@6.8.9: patches/electron-updater@6.8.9.patch
+  # A cancelled download aborts its request and closes its file instead of leaving both open.
+  builder-util-runtime@9.7.0: patches/builder-util-runtime@9.7.0.patch
   # Local agents honor the attribution settings in the user's Cursor CLI cli-config.json, stream
   # shell output while it runs, expose agent.resume() (the protocol's ResumeAction), and offer
   # background shells to the host so they can outlive the run.

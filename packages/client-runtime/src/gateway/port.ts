@@ -1,5 +1,7 @@
 import type {
   AgentSkill,
+  OrchestrationV2ParentSettlement,
+  OrchestrationV2ParentSettlementResult,
   ScheduledTask,
   ScheduledTaskSchedule,
   Todo,
@@ -444,6 +446,11 @@ export interface GatewayRuntimePort {
   handoffThread?(input: AgentHandoffInput): Promise<AgentHandoffResult>;
   unsettleThread?(environmentId: string, threadId: string): Promise<{ status: "succeeded" }>;
   settleThread?(environmentId: string, threadId: string): Promise<{ status: "succeeded" }>;
+  /** A server's own call: children there follow a parent's settlement on the caller's machine. */
+  followParentSettlement?(
+    environmentId: string,
+    settlement: OrchestrationV2ParentSettlement,
+  ): Promise<OrchestrationV2ParentSettlementResult>;
   /** Links a chat under the chat that owns its work, which may be on another environment. */
   setThreadParent?(
     environmentId: string,

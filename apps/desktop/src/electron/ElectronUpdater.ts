@@ -162,15 +162,22 @@ export const make = ElectronUpdater.of({
   }),
   downloadUpdate: Effect.suspend(() => {
     const channel = autoUpdater.channel;
+    const cancellation = new CancellationToken();
+    let download: Promise<unknown> | undefined;
     return Effect.tryPromise({
-      // Interrupting cancels the download, which also frees electron-updater for the next one.
-      try: (signal) => {
-        const cancellation = new CancellationToken();
-        signal.addEventListener("abort", () => cancellation.cancel(), { once: true });
-        return autoUpdater.downloadUpdate(cancellation);
-      },
+      try: () => (download = autoUpdater.downloadUpdate(cancellation)),
       catch: (cause) => new ElectronUpdaterDownloadUpdateError({ channel, cause }),
-    }).pipe(Effect.asVoid);
+    }).pipe(
+      // Interrupting cancels the download and waits until electron-updater releases it, so a retry
+      // starts a fresh download instead of joining the cancelled one.
+      Effect.onInterrupt(() =>
+        Effect.promise(async () => {
+          cancellation.cancel();
+          await download?.catch(() => undefined);
+        }),
+      ),
+      Effect.asVoid,
+    );
   }),
   quitAndInstall: Effect.fn("ElectronUpdater.quitAndInstall")(function ({
     isSilent,

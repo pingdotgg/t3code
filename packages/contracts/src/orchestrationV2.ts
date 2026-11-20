@@ -4020,6 +4020,34 @@ export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalComma
 
 export type OrchestrationV2ServerCommand = OrchestrationV2Command | OrchestrationV2InternalCommand;
 
+export const PARENT_SETTLEMENT_PARENTS_MAX = 500;
+/** The MCP tool a linked server calls with a settlement; never listed to agents. */
+export const PEER_FOLLOW_PARENT_SETTLEMENT_TOOL = "t3_peer_follow_parent_settlement";
+
+/**
+ * A manual settle or un-settle of chats on `parentEnvironmentId`, which their children on the
+ * receiving environment follow. `settledBy` and `settledAt` identify that settlement: an
+ * un-settle reopens only children it settled. Sent between servers, never by an agent.
+ */
+export const OrchestrationV2ParentSettlement = Schema.Struct({
+  parentEnvironmentId: EnvironmentId,
+  parentThreadIds: Schema.Array(ThreadId).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(PARENT_SETTLEMENT_PARENTS_MAX),
+  ),
+  action: Schema.Literals(["settle", "unsettle"]),
+  settledBy: ThreadId,
+  settledAt: IsoDateTime,
+});
+export type OrchestrationV2ParentSettlement = typeof OrchestrationV2ParentSettlement.Type;
+
+export const OrchestrationV2ParentSettlementResult = Schema.Struct({
+  /** Children still working; they refuse the settle until they finish, so the sender retries. */
+  waiting: Schema.Array(ThreadId),
+});
+export type OrchestrationV2ParentSettlementResult =
+  typeof OrchestrationV2ParentSettlementResult.Type;
+
 export const ORCHESTRATION_V2_WS_METHODS = {
   getCommandReceipts: "orchestration.getCommandReceipts",
   dispatchCommand: "orchestration.dispatchCommand",
@@ -4039,6 +4067,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getNativeChildWork: "orchestration.getNativeChildWork",
   stopWorkflow: "orchestration.stopWorkflow",
   forceStopThread: "orchestration.forceStopThread",
+  followParentSettlement: "orchestration.followParentSettlement",
   getTurnItem: "orchestration.getTurnItem",
   launchThread: "orchestration.launchThread",
   subscribeShell: "orchestration.subscribeShell",

@@ -46,6 +46,7 @@ export const GATEWAY_PORT_METHODS: ReadonlySet<keyof GatewayRuntimePort> = new S
   "handoffThread",
   "settleThread",
   "unsettleThread",
+  "followParentSettlement",
   "setThreadParent",
   "listSkills",
   "createSkill",

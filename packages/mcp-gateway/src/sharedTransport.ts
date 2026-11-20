@@ -168,11 +168,15 @@ export function connectMcpSession(input: {
       socket.terminate();
       reject(error);
     };
+    // An owner that is stopping can accept a connection and then reset it while it releases the
+    // port; the launcher treats that like a retiring owner and starts or joins the next one.
     const onError = (error: NodeJS.ErrnoException) =>
       fail(
         error.code === "ECONNREFUSED"
           ? new GatewayUnavailableError("No shared gateway is listening.")
-          : error,
+          : error.code === "ECONNRESET"
+            ? new GatewayRetiringError("The shared gateway owner reset the connection.")
+            : error,
       );
     const onClose = () =>
       fail(
