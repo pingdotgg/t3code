@@ -669,36 +669,45 @@ export function HandoffRow(props: {
   readonly failed?: boolean;
 }) {
   const gt = useGT();
-  const { from: fromEndpoints, to } = props.endpoints;
+  const { from: fromEndpoints, to, isRecoveredContext } = props.endpoints;
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(props.environmentId));
   const derived = deriveProviderInstanceEntries(props.providers);
   const entries = settings ? applyProviderInstanceSettings(derived, settings, null) : derived;
+  const showFromEndpoints = !isRecoveredContext && fromEndpoints.length > 0;
   return (
     <TimelineSystemDivider
-      label={props.pending ? gt("Context handoff pending") : gt("Context handoff")}
+      label={
+        props.pending
+          ? gt("Context handoff pending")
+          : isRecoveredContext
+            ? gt("Recovered context")
+            : gt("Context handoff")
+      }
       icon={ArrowRightLeftIcon}
       showDetailSeparator={false}
       tone={props.failed ? "danger" : "neutral"}
       detail={
         <span className="inline-flex min-w-0 flex-wrap items-center justify-center gap-1.5">
-          {fromEndpoints.map((endpoint, index) => (
-            <span
-              key={`${endpoint.instanceId}:${endpoint.model ?? ""}`}
-              className="inline-flex min-w-0 items-center"
-            >
-              <HandoffEndpoint
-                entries={entries}
-                instanceId={endpoint.instanceId}
-                model={endpoint.model}
-              />
-              {index < fromEndpoints.length - 1 ? (
-                <span aria-hidden="true" className="ml-0.5">
-                  ,
+          {showFromEndpoints
+            ? fromEndpoints.map((endpoint, index) => (
+                <span
+                  key={`${endpoint.instanceId}:${endpoint.model ?? ""}`}
+                  className="inline-flex min-w-0 items-center"
+                >
+                  <HandoffEndpoint
+                    entries={entries}
+                    instanceId={endpoint.instanceId}
+                    model={endpoint.model}
+                  />
+                  {index < fromEndpoints.length - 1 ? (
+                    <span aria-hidden="true" className="ml-0.5">
+                      ,
+                    </span>
+                  ) : null}
                 </span>
-              ) : null}
-            </span>
-          ))}
-          {fromEndpoints.length > 0 ? (
+              ))
+            : null}
+          {showFromEndpoints ? (
             <ArrowRightIcon aria-hidden="true" className="size-3 shrink-0" />
           ) : null}
           <HandoffEndpoint entries={entries} instanceId={to.instanceId} model={to.model} />

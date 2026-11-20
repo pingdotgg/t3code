@@ -4,6 +4,7 @@ import type {
   OrchestrationV2Run,
   OrchestrationV2TurnItem,
   ProviderInstanceId,
+  ProviderThreadId,
   ServerProvider,
   ServerProviderModel,
 } from "@t3tools/contracts";
@@ -21,7 +22,17 @@ export type HandoffTimelineRun = Pick<
   "id" | "ordinal" | "providerInstanceId" | "modelSelection"
 >;
 
-export type HandoffEndpoints = ReturnType<typeof resolveHandoffEndpoints>;
+export type HandoffEndpoints = {
+  readonly from: ReadonlyArray<{
+    readonly instanceId: ProviderInstanceId;
+    readonly model?: string | undefined;
+  }>;
+  readonly to: {
+    readonly instanceId: ProviderInstanceId;
+    readonly model?: string | undefined;
+  };
+  readonly isRecoveredContext?: boolean | undefined;
+};
 
 export function resolvePendingHandoff(
   projection: Pick<ThreadStructure, "runs" | "visibleTurnItems"> | null | undefined,
@@ -53,9 +64,13 @@ export function resolveHandoffEndpoints(
   item: Pick<
     Extract<OrchestrationV2TurnItem, { type: "handoff" }>,
     "runId" | "fromModelSelections" | "fromProviderInstanceIds" | "toModel" | "toProviderInstanceId"
-  >,
+  > & {
+    readonly title?: string | null | undefined;
+    readonly fromProviderThreadIds?: ReadonlyArray<ProviderThreadId> | undefined;
+    readonly toProviderThreadId?: ProviderThreadId | undefined;
+  },
   runs: ReadonlyArray<HandoffTimelineRun>,
-) {
+): HandoffEndpoints {
   const handoffRun = item.runId === null ? undefined : runs.find((run) => run.id === item.runId);
   const toModel =
     item.toModel ??
@@ -72,7 +87,23 @@ export function resolveHandoffEndpoints(
           instanceId,
           model: latestRunModelBefore(runs, instanceId, handoffRun?.ordinal),
         }));
-  return { from: fromEndpoints, to: { instanceId: item.toProviderInstanceId, model: toModel } };
+  const isRecoveredContext = Boolean(
+    item.title === "Recovered context" ||
+    (item.fromProviderThreadIds !== undefined &&
+      item.toProviderThreadId !== undefined &&
+      item.fromProviderThreadIds.length === 1 &&
+      item.fromProviderThreadIds[0] === item.toProviderThreadId) ||
+    (fromEndpoints.length === 1 &&
+      fromEndpoints[0]!.instanceId === item.toProviderInstanceId &&
+      (fromEndpoints[0]!.model === toModel ||
+        fromEndpoints[0]!.model === undefined ||
+        toModel === undefined)),
+  );
+  return {
+    from: isRecoveredContext ? [] : fromEndpoints,
+    to: { instanceId: item.toProviderInstanceId, model: toModel },
+    ...(isRecoveredContext ? { isRecoveredContext: true } : {}),
+  };
 }
 
 function latestRunModelBefore(

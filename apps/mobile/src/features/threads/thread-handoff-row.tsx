@@ -94,13 +94,14 @@ export function ThreadHandoffRow(props: {
   const endpoints = useAtomValue(endpointsAtom);
   if (item.type !== "handoff" || endpoints === null) return null;
   const color = item.status === "failed" ? "#e11d48" : props.iconColor;
+  const label = endpoints.isRecoveredContext ? gt("Recovered context") : gt("Context handoff");
   return (
     <ThreadHandoffDivider
       environmentId={props.environmentId}
       endpoints={endpoints}
       iconColor={color}
       surfaceColor={props.surfaceColor}
-      label={gt("Context handoff")}
+      label={label}
       failed={item.status === "failed"}
     />
   );
@@ -116,6 +117,7 @@ export function ThreadHandoffDivider(props: {
 }) {
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
   const { endpoints } = props;
+  const showFromEndpoints = !endpoints.isRecoveredContext && endpoints.from.length > 0;
   const endpointProps = {
     providers: (config?.providers ?? []).map((provider) => {
       const rawConfig = config?.settings.providerInstances[provider.instanceId]?.config;
@@ -141,20 +143,22 @@ export function ThreadHandoffDivider(props: {
       failed={props.failed}
     >
       <View className="flex-row flex-wrap items-center justify-center gap-1.5">
-        {endpoints.from.map((endpoint, index) => (
-          <View
-            key={`${endpoint.instanceId}:${endpoint.model ?? ""}`}
-            className="max-w-full flex-row items-center"
-          >
-            <HandoffEndpoint {...endpoint} {...endpointProps} />
-            {index < endpoints.from.length - 1 ? (
-              <Text accessible={false} className="text-xs text-foreground-muted">
-                ,
-              </Text>
-            ) : null}
-          </View>
-        ))}
-        {endpoints.from.length > 0 ? (
+        {showFromEndpoints
+          ? endpoints.from.map((endpoint, index) => (
+              <View
+                key={`${endpoint.instanceId}:${endpoint.model ?? ""}`}
+                className="max-w-full flex-row items-center"
+              >
+                <HandoffEndpoint {...endpoint} {...endpointProps} />
+                {index < endpoints.from.length - 1 ? (
+                  <Text accessible={false} className="text-xs text-foreground-muted">
+                    ,
+                  </Text>
+                ) : null}
+              </View>
+            ))
+          : null}
+        {showFromEndpoints ? (
           <SymbolView name="arrow.right" size={12} tintColor={props.iconColor} />
         ) : null}
         <HandoffEndpoint {...endpoints.to} {...endpointProps} />

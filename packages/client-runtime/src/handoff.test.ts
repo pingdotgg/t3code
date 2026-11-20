@@ -1,6 +1,7 @@
 import {
   ContextHandoffId,
   ProviderInstanceId,
+  ProviderThreadId,
   RunId,
   type OrchestrationV2ThreadProjection,
   type ServerProvider,
@@ -72,6 +73,42 @@ describe("handoff endpoints shared by web and mobile", () => {
     expect(
       resolveHandoffEndpoints(item, [run("target", 2, from, "wrong-model")]).to.model,
     ).toBeUndefined();
+  });
+
+  it("recognizes recovered context from same provider thread and omits self-handoff arrow", () => {
+    const threadId = ProviderThreadId.make("session-1");
+    const sameInstance = ProviderInstanceId.make("antigravity");
+    const recoveryItem = {
+      runId: RunId.make("target"),
+      title: "Recovered context",
+      fromProviderThreadIds: [threadId],
+      toProviderThreadId: threadId,
+      fromProviderInstanceIds: [sameInstance],
+      toProviderInstanceId: sameInstance,
+      fromModelSelections: [{ instanceId: sameInstance, model: "4 Neon" }],
+      toModel: "4 Neon",
+    };
+    expect(resolveHandoffEndpoints(recoveryItem, [])).toEqual({
+      from: [],
+      to: { instanceId: sameInstance, model: "4 Neon" },
+      isRecoveredContext: true,
+    });
+  });
+
+  it("treats same origin and destination model and provider as recovered context", () => {
+    const sameInstance = ProviderInstanceId.make("devReplay");
+    const selfHandoffItem = {
+      runId: RunId.make("target"),
+      fromProviderInstanceIds: [sameInstance],
+      toProviderInstanceId: sameInstance,
+      fromModelSelections: [{ instanceId: sameInstance, model: "Multi turn" }],
+      toModel: "Multi turn",
+    };
+    expect(resolveHandoffEndpoints(selfHandoffItem, [])).toEqual({
+      from: [],
+      to: { instanceId: sameInstance, model: "Multi turn" },
+      isRecoveredContext: true,
+    });
   });
 });
 
