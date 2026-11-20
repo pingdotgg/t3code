@@ -295,6 +295,31 @@ layer("GitLabCli.layer", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("creates a draft MR with the Draft: title prefix", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const bodyFile = yield* fileSystem.makeTempFileScoped({ prefix: "t3-gitlab-mr-body-" });
+      const glab = yield* GitLabCli.GitLabCli;
+      const createdTitle = (title: string) =>
+        Effect.gen(function* () {
+          mockedRun.mockClear();
+          mockedRun.mockReturnValueOnce(Effect.succeed(processOutput("{}")));
+          yield* glab.createMergeRequest({
+            cwd: "/repo",
+            baseBranch: "main",
+            headSelector: "feature/fix",
+            title,
+            bodyFile,
+            draft: true,
+          });
+          return mockedRun.mock.calls[0]?.[0].args.find((arg) => arg.startsWith("title="));
+        });
+      expect(yield* createdTitle("Fix remote flow")).toBe("title=Draft: Fix remote flow");
+      expect(yield* createdTitle("draft: Fix remote flow")).toBe("title=draft: Fix remote flow");
+      expect(yield* createdTitle("[Draft] Fix remote flow")).toBe("title=[Draft] Fix remote flow");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("surfaces a friendly error when the merge request is not found", () =>
     Effect.gen(function* () {
       const cause = new VcsProcessExitError({
