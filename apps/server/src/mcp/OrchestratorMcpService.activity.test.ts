@@ -280,6 +280,19 @@ it("readThread preserves caller access errors and prefers activity-run status ov
     const failed = yield* service.readThread(makeScope(), { threadId: parentThreadId });
     expect(failed.thread.status).toBe("failed");
 
+    // A failure holds the queue: the held follow-up waits for Resume, as thread lists report.
+    pendingBackgroundTasks = [];
+    Object.assign(projection, {
+      runs: [
+        makeRun({ id: activeRunId, ordinal: 1, status: "failed" }),
+        { ...makeRun({ id: cancelledRunId, ordinal: 2, status: "queued" }), queueHeld: true },
+      ],
+    });
+    const held = yield* service.readThread(makeScope(), { threadId: parentThreadId });
+    expect(held.thread.status).toBe("failed");
+    expect(held.thread.latestRunId).toBe(activeRunId);
+    expect(held.thread.queueHeld).toBe(true);
+
     Object.assign(projection, {
       runs: [makeRun({ id: activeRunId, ordinal: 1, status: "completed" })],
     });

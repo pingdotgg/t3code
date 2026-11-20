@@ -977,6 +977,9 @@ const threadShowCommand = Command.make("show", {
           if (thread.pendingRequestCount > 0) {
             yield* Console.log(`Waiting for ${thread.pendingRequestCount} answer(s).`);
           }
+          if (thread.queueHeld === true) {
+            yield* Console.log("Queued follow-ups are held until the thread is resumed.");
+          }
           for (const entry of messages) {
             yield* Console.log(`\n[${entry.role}]\n${entry.text}`);
           }
