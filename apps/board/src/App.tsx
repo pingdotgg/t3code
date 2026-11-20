@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { Viewport } from "./board/Viewport";
+import { OpenBoard } from "./board/OpenBoard";
 import { EngineStatus } from "./sidebar/EngineStatus";
 import { EngineVersion } from "./sidebar/EngineVersion";
 import { SettingsScreen } from "./settings/SettingsScreen";
@@ -27,7 +27,7 @@ export function App() {
           }}
         />
         <main className="min-w-0">
-          <Viewport />
+          <OpenBoard />
         </main>
       </div>
       {settingsOpen && <SettingsScreen onBack={() => setSettingsOpen(false)} />}

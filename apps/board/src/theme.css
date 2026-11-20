@@ -12,6 +12,7 @@
   --color-faint: #6c7179;
   --color-sidebar: #1a1b1e;
   --color-hover: #26292d;
+  --color-message: #2b2e33;
   --color-focus: #60a5fa;
   --color-offline: #6c7179;
   --topbar-height: max(40px, env(titlebar-area-height, 52px));

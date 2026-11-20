@@ -2,7 +2,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
-import { app, BrowserWindow, Menu, nativeTheme, net, protocol } from "electron";
+import { app, BrowserWindow, Menu, nativeTheme, net, protocol, shell } from "electron";
 
 import { registerEngineIpc } from "./ipc";
 
@@ -70,6 +70,11 @@ function openWindow(): void {
       contextIsolation: true,
       sandbox: true,
     },
+  });
+  // A sign-in page or a link in a reply opens in the system browser, never in a window of the app.
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+    return { action: "deny" };
   });
   void window.loadURL(devServerUrl ?? `${SCHEME}://app/index.html`);
 }

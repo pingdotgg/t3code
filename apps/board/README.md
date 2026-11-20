@@ -72,6 +72,34 @@ The hover action on a board row archives it. Archiving sends `thread.stop` with 
 
 The last opened board lives in `local-state.json` in the app's user data folder, read and written through IPC (`localStorage` in `dev:web`).
 
+## Orchestrators
+
+Creating a board opens a dialog with the name and the **Orchestrator** picker. The picker lists the engine's Claude Code and Codex instances from the server config, each with its sign-in state and the models it offers. Type a model the instance does not list and the engine decides, as in T3.
+
+On create, the app does this in order:
+
+1. Writes the 18 role files from `roles/` into `<board folder>/roles/`.
+2. Starts the orchestrator with `orchestration.launchThread` in the project root, with the rendered `src/orchestrator/brief.md` as its first message. The brief names the board folder by absolute path, the store files and who writes each, the ticket stages, the role registry, the builder cap, and the rule that the user is reached only through `foryou.jsonl` or `request_secret`.
+3. Saves the thread id in `board.json`, then waits for the first sign of life. The dialog closes when the orchestrator has produced text. A model the instance does not offer makes the first run fail, which the engine reports only on the run, so the dialog shows that failure, the board goes back to having no orchestrator, and the failed thread is archived. **Try again** retries without a second board folder.
+
+A board with no orchestrator offers the same picker in its panel.
+
+The side panel streams the orchestrator thread and sends follow-ups with `startThreadTurn`. **Stop** interrupts the turn. A reload reattaches to the running thread. The first message, the brief, folds into a disclosure. The orchestrator card on the canvas reads `tickets.json`, `foryou.jsonl`, and `decisions.tsv` from the board folder every few seconds and shows tickets by stage, open For-you items, builders against the cap, and the latest decision.
+
+### Roles
+
+Every agent the orchestrator starts is a role from `src/orchestrator/roles.ts`, started with `delegate_task`: `role` is the role's `t3Role`, `isolation` is its isolation, `target` is its model, `title` is `[<ticket key>] <role name>`, and `task` starts with `Read <board folder>/roles/<role>.md and act as that role.` T3 cannot limit a child's tools, so a read-only role stays read-only only because its file says so.
+
+The role files port omp's `task`, `scout`, `reviewer`, `security-reviewer`, and `sonic`, the `comment-sicko` and `poteto-agent` roles from pstack-omp, the two thermo-nuclear reviewers from thermos-omp, and the nine `egm-*` roles. The omp-only front matter (`tools`, `model`, `spawns`, `thinking-level`) is dropped, and an `output` schema became a `Return` section. The models copy omp's `modelRoles`: `reviewer` runs `claude-fable-5-1` at `xhigh`, `scout` runs `claude-sonnet-5-5` at `medium`, `task` runs `claude-sonnet-5-5` at `high`, `sonic` runs `claude-haiku-5-5` at `low`, and every other role runs `claude-opus-5-5` at `high`. A role whose Claude model the orchestrator's instance does not offer uses the orchestrator's model, and the brief says so under the registry table. A Codex orchestrator's children inherit its model.
+
+### Sign-in
+
+T3 can sign in only the instances whose `setup.canAuthenticate` is true, such as a Codex instance in managed mode. **Sign in** runs `provider.auth.start` and shows the step the engine waits on: the browser page, the device code, the terminal, or the credential fields. Claude Code signs in on the machine that runs T3, so for it the picker shows the engine's own instructions and a **Refresh** button.
+
+### Timing tokens
+
+With `localStorage["board:token-marks"] = "1"`, the panel marks `board:token-received` when a streamed token reaches the thread state and `board:token-painted` two frames after its text commits, each with the reply's length in `detail.length`.
+
 ## Engine probe
 
 `scripts/engine-probe.ts` checks ten engine behaviors the board depends on, each against a real Claude Code session, and writes the results to [docs/engine-findings.md](docs/engine-findings.md). It starts its own T3 engine in `/tmp/engine-probe/run-<id>/t3`, never touches `~/.t3`, and stops that engine and its provider sessions when it ends. It reads `~/.claude/settings.json` without changing it, and deletes the Claude Code project folders its scratch projects created. Build the engine once with `vp run --filter t3 build`, then run it from a checkout.

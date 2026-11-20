@@ -31,6 +31,8 @@
     "lucide-react": "^0.564.0",
     "react": "catalog:",
     "react-dom": "catalog:",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "catalog:",
     "tailwindcss": "catalog:"
   },
   "devDependencies": {
