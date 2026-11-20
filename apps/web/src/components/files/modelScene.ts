@@ -222,13 +222,13 @@ export class ModelScene {
     this.controls.addEventListener("change", this.requestRender);
     this.setPreset("iso");
 
-    this.stopResizeObserver = observeResize(container, () => this.resize(container));
+    this.stopResizeObserver = observeResize(container, () => this.resize());
     this.visibilityObserver = new IntersectionObserver(([entry]) => {
       this.visible = entry?.isIntersecting ?? true;
       if (this.visible) this.requestRender();
     });
     this.visibilityObserver.observe(container);
-    this.resize(container);
+    this.resize();
   }
 
   /** Fetches, parses and mounts a model; aborting before it finishes frees what it made. */
@@ -278,8 +278,8 @@ export class ModelScene {
     this.onFrame();
   }
 
-  private resize(container: HTMLElement) {
-    const { clientWidth: width, clientHeight: height } = container;
+  private resize() {
+    const { clientWidth: width, clientHeight: height } = this.container;
     if (width === 0 || height === 0) return;
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
