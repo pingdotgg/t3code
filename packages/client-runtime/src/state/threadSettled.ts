@@ -254,10 +254,13 @@ export type SnoozeChoice = Pick<SnoozePreset, "snoozedUntil" | "wakesOnPullReque
 /** Whether "Until PR activity" fits a thread: pull request sync reads it and a linked one is open. */
 export function canSnoozeUntilPullRequest(thread: {
   readonly settledOverride: "settled" | "active" | null;
+  readonly settledAt: string | null;
   readonly pullRequests?: ReadonlyArray<ThreadPullRequestLink> | undefined;
 }): boolean {
   return (
-    thread.settledOverride !== "settled" && hasOpenThreadPullRequest(thread.pullRequests ?? [])
+    thread.settledOverride !== "settled" &&
+    thread.settledAt === null &&
+    hasOpenThreadPullRequest(thread.pullRequests ?? [])
   );
 }
 
