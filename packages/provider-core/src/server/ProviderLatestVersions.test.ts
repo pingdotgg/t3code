@@ -145,10 +145,11 @@ describe("ProviderLatestVersions", () => {
       expect(yield* latestVersions.cached("@example/cli", lookup)).toBe("2.0.0");
       yield* latestVersions.invalidate("@example/cli");
 
-      // A failed fresh lookup still caches null for MISSING_TTL, but stale fallback returns 2.0.0.
+      // A failed lookup after invalidation still caches null for MISSING_TTL, while stale fallback and lastKnown retain 2.0.0.
       expect(yield* latestVersions.cached("@example/cli", lookup, { fallbackToStale: true })).toBe(
         "2.0.0",
       );
+      expect(yield* latestVersions.lastKnown("@example/cli")).toBe("2.0.0");
       expect(yield* latestVersions.cached("@example/cli", lookup)).toBeNull();
       expect(lookups).toBe(2);
 

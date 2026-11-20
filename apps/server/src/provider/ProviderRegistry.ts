@@ -763,56 +763,84 @@ export const layer = Layer.effect(
       ),
       Effect.cachedWithTTL(Duration.seconds(10)),
     );
-    const refreshAllInFlightRef = yield* Ref.make<Option.Option<RefreshAllCompletion>>(
-      Option.none(),
-    );
+    const cacheGenerationRef = yield* Ref.make(0);
+    const refreshAllInFlightRef = yield* Ref.make<
+      Option.Option<{ readonly completion: RefreshAllCompletion; readonly generation: number }>
+    >(Option.none());
 
     // What the last full pass could see; a later manifest fetch does not reach providers by itself.
     const probedManifestUpdatedAt = yield* Ref.make(initialManifest.updatedAt);
 
     const refreshAll = Effect.fn("refreshAll")(function* () {
       yield* refreshHostPath;
-      const claimed = yield* Ref.modify(
-        refreshAllInFlightRef,
-        (
-          inFlight,
-        ): readonly [
-          { readonly owner: boolean; readonly completion: RefreshAllCompletion },
-          Option.Option<RefreshAllCompletion>,
-        ] => {
-          if (Option.isSome(inFlight)) {
-            return [{ owner: false, completion: inFlight.value }, inFlight];
-          }
-          const completion = Deferred.makeUnsafe<ReadonlyArray<ServerProvider>>();
-          return [{ owner: true, completion }, Option.some(completion)];
-        },
-      );
-      if (claimed.owner) {
-        // Detach shared passes so the first caller's interruption cannot cancel other callers' work.
-        // Syncing first keeps a refresh right after a rebuild from probing the replaced instance.
-        yield* manifestService.current.pipe(
-          Effect.flatMap(({ updatedAt }) =>
-            syncLiveSourcesAndContinue.pipe(
-              Effect.andThen(Ref.get(liveSubsRef)),
-              Effect.flatMap((instances) =>
-                Effect.forEach(instances.values(), (instance) => refreshOneSource(instance), {
-                  concurrency: "unbounded",
-                  discard: true,
-                }),
-              ),
-              Effect.andThen(Ref.get(providersRef)),
-              Effect.tap(() => Ref.set(probedManifestUpdatedAt, updatedAt)),
-            ),
-          ),
-          Effect.onExit((exit) =>
-            Ref.set(refreshAllInFlightRef, Option.none()).pipe(
-              Effect.andThen(Deferred.done(claimed.completion, exit)),
-            ),
-          ),
-          Effect.forkDetach,
+      const targetGeneration = yield* Ref.get(cacheGenerationRef);
+      while (true) {
+        const currentGeneration = yield* Ref.get(cacheGenerationRef);
+        const claimed = yield* Ref.modify(
+          refreshAllInFlightRef,
+          (
+            inFlight,
+          ): readonly [
+            {
+              readonly kind: "owner" | "join" | "wait-stale";
+              readonly completion: RefreshAllCompletion;
+            },
+            Option.Option<{
+              readonly completion: RefreshAllCompletion;
+              readonly generation: number;
+            }>,
+          ] => {
+            if (Option.isSome(inFlight)) {
+              return [
+                {
+                  kind: inFlight.value.generation >= targetGeneration ? "join" : "wait-stale",
+                  completion: inFlight.value.completion,
+                },
+                inFlight,
+              ];
+            }
+            const completion = Deferred.makeUnsafe<ReadonlyArray<ServerProvider>>();
+            return [
+              { kind: "owner", completion },
+              Option.some({ completion, generation: currentGeneration }),
+            ];
+          },
         );
+        if (claimed.kind === "wait-stale") {
+          // A pass started before `invalidateModelCaches` may have already read stale caches.
+          // Wait for it to finish, then start or join a fresh pass for `targetGeneration`.
+          yield* Deferred.await(claimed.completion).pipe(Effect.catchDefect(() => Effect.void));
+          continue;
+        }
+        if (claimed.kind === "owner") {
+          // Detach shared passes so the first caller's interruption cannot cancel other callers' work.
+          // Syncing first keeps a refresh right after a rebuild from probing the replaced instance.
+          yield* manifestService.current.pipe(
+            Effect.flatMap(({ updatedAt }) =>
+              syncLiveSourcesAndContinue.pipe(
+                Effect.andThen(Ref.get(liveSubsRef)),
+                Effect.flatMap((instances) =>
+                  Effect.forEach(instances.values(), (instance) => refreshOneSource(instance), {
+                    concurrency: "unbounded",
+                    discard: true,
+                  }),
+                ),
+                Effect.andThen(Ref.get(providersRef)),
+                Effect.tap(() => Ref.set(probedManifestUpdatedAt, updatedAt)),
+              ),
+            ),
+            Effect.onExit((exit) =>
+              Ref.update(refreshAllInFlightRef, (current) =>
+                Option.isSome(current) && current.value.completion === claimed.completion
+                  ? Option.none()
+                  : current,
+              ).pipe(Effect.andThen(Deferred.done(claimed.completion, exit))),
+            ),
+            Effect.forkDetach,
+          );
+        }
+        return yield* Deferred.await(claimed.completion);
       }
-      return yield* Deferred.await(claimed.completion);
     });
 
     const refresh = Effect.fn("refresh")(function* (provider?: ProviderDriverKind) {
@@ -1310,6 +1338,7 @@ export const layer = Layer.effect(
           }),
         { concurrency: "unbounded", discard: true },
       );
+      yield* Ref.update(cacheGenerationRef, (generation) => generation + 1);
     });
 
     const refreshModelCatalog = Effect.fn("ProviderRegistry.refreshModelCatalog")(function* () {
@@ -1319,6 +1348,7 @@ export const layer = Layer.effect(
         if ((yield* Ref.get(probedManifestUpdatedAt)) === updatedAt) return;
         // A new model usually ships with the CLI release that supports it.
         yield* latestVersions.invalidateAll;
+        yield* Ref.update(cacheGenerationRef, (generation) => generation + 1);
         yield* refreshAll();
       }
     });

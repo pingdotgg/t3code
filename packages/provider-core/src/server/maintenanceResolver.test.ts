@@ -2490,8 +2490,18 @@ it.layer(
         canUpdate: true,
       });
 
-      // Direct resolution still reports null so pre-update compatibility checks stay fresh.
+      // Direct resolution and explicit non-stale enrichment stay fresh so update verification
+      // cannot mistake a stale cache entry for live proof.
       expect(yield* resolveLatestProviderVersion(capabilities)).toBeNull();
+      const withoutStale = yield* enrichProviderSnapshotWithVersionAdvisory(
+        installedPackageToolProvider,
+        capabilities,
+        { enableProviderUpdateChecks: true, fallbackToStale: false },
+      );
+      expect(withoutStale.versionAdvisory).toMatchObject({
+        status: "unknown",
+        latestVersion: null,
+      });
 
       // Disabling update checks still clears the advisory.
       const disabled = yield* enrichProviderSnapshotWithVersionAdvisory(
@@ -2510,6 +2520,62 @@ it.layer(
         HttpClient.make(() => Effect.die("Homebrew's latest should not come from npm")),
       ),
     ),
+  );
+
+  it.effect(
+    "preserves the last known installer version when both installer and npm fallback fail, while preferring a live npm fallback",
+    () =>
+      Effect.gen(function* () {
+        let installerLookupCount = 0;
+        let npmResponse: Response = new Response("registry unavailable", { status: 503 });
+        const capabilities = makeProviderMaintenanceCapabilities({
+          provider: driver("packageTool"),
+          packageName: "@example/package-tool",
+          updateExecutable: "bun",
+          updateArgs: ["add", "-g", "@example/package-tool@latest"],
+          updateLockKey: "bun-global",
+          lookupLatestVersion: Effect.sync(() => (++installerLookupCount === 1 ? "2.0.0" : null)),
+        });
+
+        const httpClient = HttpClient.make((request) =>
+          Effect.sync(() => HttpClientResponse.fromWeb(request, npmResponse.clone())),
+        );
+
+        const initial = yield* enrichProviderSnapshotWithVersionAdvisory(
+          installedPackageToolProvider,
+          capabilities,
+          { enableProviderUpdateChecks: true },
+        ).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+        expect(initial.versionAdvisory).toMatchObject({
+          status: "behind_latest",
+          latestVersion: "2.0.0",
+        });
+
+        // Both installer lookup and npm fallback fail -> keep last-known installer version.
+        yield* invalidateLatestProviderVersion(capabilities);
+        const afterDualFailure = yield* enrichProviderSnapshotWithVersionAdvisory(
+          installedPackageToolProvider,
+          capabilities,
+          { enableProviderUpdateChecks: true },
+        ).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+        expect(afterDualFailure.versionAdvisory).toMatchObject({
+          status: "behind_latest",
+          latestVersion: "2.0.0",
+        });
+
+        // Installer lookup fails while live npm succeeds -> prefer the live npm version.
+        npmResponse = Response.json({ version: "2.1.0" });
+        yield* invalidateLatestProviderVersion(capabilities);
+        const afterLiveNpm = yield* enrichProviderSnapshotWithVersionAdvisory(
+          installedPackageToolProvider,
+          capabilities,
+          { enableProviderUpdateChecks: true },
+        ).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+        expect(afterLiveNpm.versionAdvisory).toMatchObject({
+          status: "behind_latest",
+          latestVersion: "2.1.0",
+        });
+      }).pipe(Effect.provide(ProviderLatestVersions.layer)),
   );
 
   it.effect.skipIf(!symlinksSupported)("updates Yarn global installs with yarn", () =>

@@ -1439,9 +1439,16 @@ export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVers
     return null;
   }
 
-  return yield* latestVersions.cached(packageName, fetchNpmLatestVersion(packageName), {
+  const npmLatest = yield* latestVersions.cached(packageName, fetchNpmLatestVersion(packageName), {
     fallbackToStale: options?.fallbackToStale === true,
   });
+  if (npmLatest !== null) return npmLatest;
+  // When both the installer lookup and the live npm fallback fail, preserve the last-known
+  // installer version for advisory display so a registry outage does not drop a known update.
+  if (options?.fallbackToStale === true && installerKey) {
+    return yield* latestVersions.lastKnown(installerKey);
+  }
+  return null;
 });
 
 export const invalidateLatestProviderVersion = Effect.fn("invalidateLatestProviderVersion")(
@@ -1461,7 +1468,8 @@ export const enrichProviderSnapshotWithVersionAdvisory = Effect.fn(
   snapshot: ServerProvider,
   maintenanceCapabilities?: ProviderMaintenanceCapabilities,
   options?: {
-    readonly enableProviderUpdateChecks: boolean | undefined;
+    readonly enableProviderUpdateChecks?: boolean | undefined;
+    readonly fallbackToStale?: boolean | undefined;
   },
 ) {
   const capabilities =
@@ -1486,7 +1494,7 @@ export const enrichProviderSnapshotWithVersionAdvisory = Effect.fn(
   }
 
   const latestVersion = yield* resolveLatestProviderVersion(capabilities, {
-    fallbackToStale: true,
+    fallbackToStale: options?.fallbackToStale !== false,
   });
   return {
     ...snapshot,

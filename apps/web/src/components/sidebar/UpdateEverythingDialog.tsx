@@ -140,7 +140,9 @@ function UpdateEverythingDialogContent({
             (updating.length === 0
               ? checking
                 ? gt("Checking for updates…")
-                : gt("Up to date")
+                : skipped.length > 0
+                  ? gt("Nothing to update")
+                  : gt("Up to date")
               : gt(
                   "{count, plural, one {Update {count} machine?} other {Update {count} machines?}}",
                   {
