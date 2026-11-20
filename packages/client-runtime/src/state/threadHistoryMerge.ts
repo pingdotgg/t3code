@@ -1,5 +1,6 @@
 import type {
   OrchestrationV2ProjectedTurnItem,
+  OrchestrationV2Subagent,
   OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import { isOrchestrationV2TurnItemVisible } from "@t3tools/shared/orchestrationV2Timeline";
@@ -47,6 +48,39 @@ function renumberVisible(
   rows: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
 ): OrchestrationV2ProjectedTurnItem[] {
   return rows.map((row, position) => (row.position === position ? row : { ...row, position }));
+}
+
+// A page is a contiguous history range, so current rows before its first
+// visible row are older than the page start and new page rows sit just
+// before the next row both lists share.
+function interleavePage(
+  current: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  page: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  pageKeys: ReadonlySet<string>,
+): OrchestrationV2ProjectedTurnItem[] {
+  const currentIndex = new Map(current.map((row, index) => [projectedItemKey(row), index]));
+  const merged: OrchestrationV2ProjectedTurnItem[] = [];
+  let pending: OrchestrationV2ProjectedTurnItem[] = [];
+  let next = 0;
+  const emitCurrentThrough = (end: number) => {
+    for (; next < end; next += 1) {
+      const row = current[next]!;
+      if (!pageKeys.has(projectedItemKey(row))) merged.push(row);
+    }
+  };
+  for (const row of page) {
+    const index = currentIndex.get(projectedItemKey(row));
+    if (index === undefined) {
+      pending.push(row);
+      continue;
+    }
+    emitCurrentThrough(index + 1);
+    merged.push(...pending, row);
+    pending = [];
+  }
+  merged.push(...pending);
+  emitCurrentThrough(current.length);
+  return merged;
 }
 
 export function mergeOlderHistoryIntoProjection(
@@ -149,10 +183,7 @@ export function mergeOlderHistoryIntoProjection(
     ];
     if (anchor.visibility === "local") turnItemById.set(String(updated.item.id), updated.item);
   } else {
-    visible = [
-      ...page,
-      ...projection.visibleTurnItems.filter((row) => !pageKeys.has(projectedItemKey(row))),
-    ];
+    visible = interleavePage(projection.visibleTurnItems, page, pageKeys);
   }
   if (
     visible.length === projection.visibleTurnItems.length &&
@@ -164,6 +195,17 @@ export function mergeOlderHistoryIntoProjection(
     turnItems: [...turnItemById.values()],
     visibleTurnItems: renumberVisible(visible),
   };
+}
+
+/** Adds the records of older subagents; a record already held is newer and stays. */
+export function mergeOlderSubagentsIntoProjection(
+  projection: OrchestrationV2ThreadProjection,
+  olderSubagents: ReadonlyArray<OrchestrationV2Subagent> | undefined,
+): OrchestrationV2ThreadProjection {
+  const held = new Set(projection.subagents.map((agent) => agent.id));
+  const added = olderSubagents?.filter((agent) => !held.has(agent.id)) ?? [];
+  if (added.length === 0) return projection;
+  return { ...projection, subagents: [...added, ...projection.subagents] };
 }
 
 export function applyHistoryPageMeta(
