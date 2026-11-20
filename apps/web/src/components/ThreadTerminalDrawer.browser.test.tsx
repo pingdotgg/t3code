@@ -1,13 +1,20 @@
-import { EMPTY_TERMINAL_SESSION_STATE } from "@t3tools/client-runtime/state/terminal";
+import {
+  applyTerminalAttachStreamEvent,
+  EMPTY_TERMINAL_SESSION_STATE,
+} from "@t3tools/client-runtime/state/terminal";
 import {
   EnvironmentId,
   ThreadId,
   type FilesystemGetMetadataResult,
   type ScopedThreadRef,
   type FilesystemEntryMetadata,
+  type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
+import { Cause } from "effect";
+import { compileResolvedKeybindingsConfig, DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { Atom, AsyncResult } from "effect/reactivity";
 import { AppAtomRegistryProvider, appAtomRegistry } from "../rpc/atomRegistry";
+import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { extractTerminalLinks } from "../terminal-links";
 import { expect, it, vi } from "vite-plus/test";
 import { act, fakeTimers, render } from "../../test/render";
@@ -16,9 +23,26 @@ import type { GhosttyTerminalSurfaceOptions } from "../terminal/ghostty/surface"
 import { selectActiveRightPanelSurface, useRightPanelStore } from "../rightPanelStore";
 
 const fixture = vi.hoisted(() => ({
-  statusByThreadId: new Map<string, "running" | "exited">(),
+  statusByThreadId: new Map<string, "starting" | "running" | "exited">(),
   pendingSurfaces: [] as Array<() => void>,
+  typeIntoSurface: null as ((data: string) => void) | null,
+  pressKey: null as ((event: KeyboardEvent) => boolean) | null,
+  writes: [] as Array<{ threadId: string; data: string }>,
+  messages: [] as string[],
+  resetSessions: () => {},
+  setSession: (
+    _thread: ScopedThreadRef,
+    _status: "closed" | "starting" | "running",
+    _version: number,
+    _generation?: number,
+  ) => {},
+  sessionEvent: (_thread: ScopedThreadRef, _type: "snapshot" | "restarted", _pid = 123) => {},
   surfaceOptions: [] as GhosttyTerminalSurfaceOptions[],
+  reportedSize: null as { cols: number; rows: number } | null,
+  resizeCommand: {},
+  runWrite: (): Promise<{ _tag: "Success" }> => Promise.resolve({ _tag: "Success" }),
+  runResize: (_input: unknown): Promise<AsyncResult.AsyncResult<unknown, unknown>> =>
+    Promise.resolve(AsyncResult.success(undefined)),
   openFilesInApp: false,
   scopes: null as ReadonlySet<string> | null,
   metadata: { entries: [{ kind: "file" }] } as FilesystemGetMetadataResult,
@@ -31,9 +55,17 @@ const fixture = vi.hoisted(() => ({
   >(),
 }));
 
-// Every surface method is a no-op; `then` stays undefined so awaiting the surface resolves to it.
+// Every other surface method is a no-op; `then` stays undefined so awaiting the surface resolves to it.
 const fakeSurface: object = new Proxy(
-  { input: document.createElement("textarea") },
+  {
+    input: document.createElement("textarea"),
+    write: (data: string) => fixture.messages.push(data),
+    // The real surface re-reports its measured grid.
+    resendSize: () => {
+      const size = fixture.reportedSize;
+      if (size) fixture.surfaceOptions.at(-1)!.onResize(size.cols, size.rows);
+    },
+  },
   {
     get: (target, key) =>
       key === "then" ? undefined : key in target ? Reflect.get(target, key) : () => undefined,
@@ -44,24 +76,86 @@ vi.mock("~/terminal/ghostty/surface", () => ({
     create: (_mount: HTMLElement, options: GhosttyTerminalSurfaceOptions) =>
       new Promise((resolve) => {
         fixture.surfaceOptions.push(options);
-        fixture.pendingSurfaces.push(() => resolve(fakeSurface));
+        fixture.pendingSurfaces.push(() => {
+          fixture.typeIntoSurface = options.onData;
+          fixture.pressKey = options.beforeKey ?? null;
+          resolve(fakeSurface);
+        });
       }),
   },
 }));
 vi.mock("../state/terminalSessions", async () => {
   const Atom = await import("effect/reactivity/Atom");
-  const sessions = Atom.family((_environmentId: EnvironmentId) =>
-    Atom.family((threadId: ThreadId) =>
-      Atom.make({
-        ...EMPTY_TERMINAL_SESSION_STATE,
-        status: fixture.statusByThreadId.get(threadId) ?? "closed",
-        version: 1,
+  // A strong map, not Atom.family: a family holds weakly, so a GC could hand setSession a new atom.
+  const summary = (threadId: ThreadId, pid: number) => ({
+    threadId,
+    terminalId: "term-1",
+    cwd: "/repo",
+    worktreePath: null,
+    status: "running" as const,
+    pid,
+    exitCode: null,
+    exitSignal: null,
+    hasRunningSubprocess: false,
+    label: "Terminal 1",
+    updatedAt: "2026-11-15T00:00:00.000Z",
+  });
+  const makeSession = (threadId: ThreadId) =>
+    Atom.make<typeof EMPTY_TERMINAL_SESSION_STATE>({
+      ...EMPTY_TERMINAL_SESSION_STATE,
+      summary: summary(threadId, 123),
+      status: fixture.statusByThreadId.get(threadId) ?? "closed",
+      version: 1,
+    });
+  let sessions = new Map<string, ReturnType<typeof makeSession>>();
+  const session = (environmentId: EnvironmentId, threadId: ThreadId) => {
+    const key = JSON.stringify([environmentId, threadId]);
+    const atom = sessions.get(key) ?? makeSession(threadId);
+    sessions.set(key, atom);
+    return atom;
+  };
+  fixture.resetSessions = () => {
+    sessions = new Map();
+  };
+  fixture.setSession = (thread, status, version, generation) => {
+    appAtomRegistry.set(session(thread.environmentId, thread.threadId), {
+      ...EMPTY_TERMINAL_SESSION_STATE,
+      status,
+      version,
+      ...(generation === undefined
+        ? {}
+        : { output: { ...EMPTY_TERMINAL_SESSION_STATE.output, generation } }),
+    });
+  };
+  fixture.sessionEvent = (thread, type, pid = 123) => {
+    const atom = session(thread.environmentId, thread.threadId);
+    const current = appAtomRegistry.get(atom);
+    appAtomRegistry.set(atom, {
+      ...current,
+      summary: summary(thread.threadId, pid),
+      ...applyTerminalAttachStreamEvent(current, {
+        type,
+        threadId: thread.threadId,
+        terminalId: "term-1",
+        snapshot: {
+          threadId: thread.threadId,
+          terminalId: "term-1",
+          cwd: "/repo",
+          worktreePath: null,
+          status: "running",
+          pid,
+          history: "",
+          exitCode: null,
+          exitSignal: null,
+          label: "Terminal 1",
+          updatedAt: "2026-11-15T00:00:00.000Z",
+        },
       }),
-    ),
-  );
+    });
+  };
   return {
     attachedTerminalSessionAtom: (environmentId: EnvironmentId, terminal: { threadId: ThreadId }) =>
-      sessions(environmentId)(terminal.threadId),
+      session(environmentId, terminal.threadId),
   };
 });
 vi.mock("../state/session", () => ({
@@ -71,7 +165,15 @@ vi.mock("../state/session", () => ({
     fixture.scopes === null || fixture.scopes.has(scope),
 }));
 vi.mock("../state/use-atom-command", () => ({
-  useAtomCommand: () => async () => ({ _tag: "Success" }),
+  useAtomCommand:
+    (command: object) => async (args: { input: { threadId: string; data?: string } }) => {
+      if (command === fixture.resizeCommand) return fixture.runResize(args);
+      if (args.input.data !== undefined) {
+        fixture.writes.push({ threadId: args.input.threadId, data: args.input.data });
+        return fixture.runWrite();
+      }
+      return { _tag: "Success" };
+    },
 }));
 // The commands are replaced above; importing their runtime would connect a client.
 vi.mock("../state/server", async () => {
@@ -79,7 +181,9 @@ vi.mock("../state/server", async () => {
   const config = Atom.make(null);
   return { serverEnvironment: { configValueAtom: () => config } };
 });
-vi.mock("../state/terminal", () => ({ terminalEnvironment: { write: {}, resize: {} } }));
+vi.mock("../state/terminal", () => ({
+  terminalEnvironment: { write: {}, resize: fixture.resizeCommand },
+}));
 vi.mock("../state/preview", () => ({ previewEnvironment: { open: {} } }));
 vi.mock("../editorPreferences", () => ({ useOpenInPreferredEditor: () => fixture.openEditor }));
 vi.mock("../state/filesystem", () => ({ filesystemEnvironment: { getMetadata: {} } }));
@@ -130,6 +234,8 @@ vi.mock("../hooks/useSettings", async () => {
   return {
     useClientSettings: <T,>(select: (settings: typeof DEFAULT_CLIENT_SETTINGS) => T) =>
       select({ ...DEFAULT_CLIENT_SETTINGS, terminalFileLinksOpenInApp: fixture.openFilesInApp }),
+    ensureClientSettingsHydrated: async () => {},
+    getClientSettings: () => DEFAULT_CLIENT_SETTINGS,
   };
 });
 
@@ -138,6 +244,7 @@ function Drawer(props: {
   terminalIds?: string[];
   cwd?: string;
   onCloseTerminal: (terminalId: string, threadRef?: ScopedThreadRef) => void;
+  keybindings?: ResolvedKeybindingsConfig;
 }) {
   const terminalIds = props.terminalIds ?? ["term-1"];
   return (
@@ -157,25 +264,30 @@ function Drawer(props: {
       onCloseTerminal={props.onCloseTerminal}
       onHeightChange={() => {}}
       onAddTerminalContext={() => {}}
-      keybindings={[]}
+      keybindings={props.keybindings ?? []}
     />
   );
 }
 
-function setup() {
+function setup(originalStatus: "starting" | "exited" = "exited") {
+  fixture.resetSessions();
   const original: ScopedThreadRef = {
-    environmentId: EnvironmentId.make("environment-a"),
+    environmentId: EnvironmentId.make(`environment-a-${expect.getState().currentTestName}`),
     threadId: ThreadId.make("thread-a"),
   };
   const other: ScopedThreadRef = {
-    environmentId: EnvironmentId.make("environment-b"),
+    environmentId: EnvironmentId.make(`environment-b-${expect.getState().currentTestName}`),
     threadId: ThreadId.make("thread-b"),
   };
   fixture.statusByThreadId = new Map([
-    [original.threadId, "exited"],
+    [original.threadId, originalStatus],
     [other.threadId, "running"],
   ]);
   fixture.pendingSurfaces = [];
+  fixture.typeIntoSurface = null;
+  fixture.pressKey = null;
+  fixture.writes = [];
+  fixture.messages = [];
   fixture.surfaceOptions = [];
   fixture.openFilesInApp = false;
   fixture.scopes = null;
@@ -183,14 +295,24 @@ function setup() {
   fixture.metadataByEnvironment = new Map();
   fixture.pendingMetadata = new Map();
   fixture.openEditor.mockClear();
-  useRightPanelStore.setState({ byThreadKey: {} });
   fixture.linkMetadata.clear();
+  fixture.reportedSize = null;
+  fixture.runResize = () => Promise.resolve(AsyncResult.success(undefined));
+  fixture.runWrite = () => Promise.resolve({ _tag: "Success" });
+  useRightPanelStore.setState(useRightPanelStore.getInitialState());
+  useTerminalUiStateStore.setState(useTerminalUiStateStore.getInitialState());
   return { original, other };
 }
 
-it.each([false, true])(
-  "opens terminal file links using the saved in-app preference (%s)",
-  async (openFilesInApp) => {
+it.each([
+  [false, "src/example.ts:42:7", "/repo/src/example.ts"],
+  [true, "src/example.ts:42:7", "/repo/src/example.ts"],
+  [false, "file:///repo/src/example.ts#L42C7", "/repo/src/example.ts"],
+  [true, "file:///repo/src/example.ts#L42C7", "/repo/src/example.ts"],
+  [true, "file:///repo/src/example%20file.ts%3A9#L42C7", "/repo/src/example file.ts:9"],
+] as const)(
+  "opens terminal file links using the saved in-app preference (%s, %s)",
+  async (openFilesInApp, link, expectedPath) => {
     const { original } = setup();
     fixture.openFilesInApp = openFilesInApp;
     await using _screen = await render(<Drawer threadRef={original} onCloseTerminal={() => {}} />);
@@ -198,7 +320,7 @@ it.each([false, true])(
       fixture.pendingSurfaces.shift()?.();
     });
     await act(() => {
-      fixture.surfaceOptions[0]!.onLinkActivate("src/example.ts:42:7", new MouseEvent("click"));
+      fixture.surfaceOptions[0]!.onLinkActivate(link, new MouseEvent("click"));
     });
 
     const panel = selectActiveRightPanelSurface(
@@ -208,13 +330,15 @@ it.each([false, true])(
     if (openFilesInApp) {
       expect(panel).toMatchObject({
         kind: "file",
-        relativePath: "/repo/src/example.ts",
+        relativePath: expectedPath,
         revealLine: 42,
       });
       expect(fixture.openEditor).not.toHaveBeenCalled();
     } else {
       expect(panel).toBeNull();
-      expect(fixture.openEditor).toHaveBeenCalledWith("/repo/src/example.ts:42:7");
+      expect(fixture.openEditor).toHaveBeenCalledWith(
+        link.startsWith("file:") ? link : "/repo/src/example.ts:42:7",
+      );
     }
   },
 );
@@ -540,6 +664,32 @@ it("opens files on their owning environment with filesystem access and no editor
   expect(await options.validateLink!("/repo/src")).toBe(false);
 });
 
+it("drops input until the shell runs instead of failing a write for every key", async () => {
+  const { original } = setup("starting");
+  fixture.setSession(original, "closed", 0);
+  await using _screen = await render(<Drawer threadRef={original} onCloseTerminal={() => {}} />);
+  await act(async () => {
+    fixture.pendingSurfaces.shift()?.();
+  });
+  const clearShortcut = () => new KeyboardEvent("keydown", { key: "l", ctrlKey: true });
+  fixture.typeIntoSurface?.("before attach");
+  fixture.pressKey?.(clearShortcut());
+  await act(() => fixture.setSession(original, "running", 0));
+  fixture.typeIntoSurface?.("stale metadata");
+  fixture.pressKey?.(clearShortcut());
+  await act(() => fixture.setSession(original, "starting", 1));
+  fixture.typeIntoSurface?.("early");
+  fixture.pressKey?.(clearShortcut());
+  expect(fixture.writes).toEqual([]);
+  await act(() => fixture.setSession(original, "running", 1));
+  fixture.typeIntoSurface?.("ready");
+  fixture.pressKey?.(clearShortcut());
+  expect(fixture.writes).toEqual([
+    { threadId: original.threadId, data: "ready" },
+    { threadId: original.threadId, data: "\u000c" },
+  ]);
+});
+
 it("closes an exited terminal on its own thread after navigating to one reusing its ID", async () => {
   const { original, other } = setup();
   const onCloseTerminal = vi.fn();
@@ -556,6 +706,42 @@ it("closes an exited terminal on its own thread after navigating to one reusing 
     vi.runOnlyPendingTimers();
   });
   expect(onCloseTerminal.mock.calls).toEqual([["term-1", original]]);
+});
+
+// Thread navigation defaults have no `!terminalFocus`, so they apply in a focused terminal.
+it("hands thread navigation shortcuts from a focused terminal back to the app", async () => {
+  const { other: threadRef } = setup();
+  using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+  useRightPanelStore.getState().openBrowser(threadRef, null);
+  await using _screen = await render(
+    <Drawer
+      threadRef={threadRef}
+      onCloseTerminal={() => {}}
+      keybindings={compileResolvedKeybindingsConfig([
+        ...DEFAULT_KEYBINDINGS,
+        { key: "ctrl+r", command: "thread.next", when: "!previewOpen" },
+        { key: "ctrl+g", command: "thread.previous", when: "terminalOpen" },
+      ])}
+    />,
+  );
+  await act(async () => {
+    fixture.pendingSurfaces.shift()?.();
+  });
+  const terminalHandles = (key: string, code: string, shiftKey = true) =>
+    fixture.surfaceOptions
+      .at(-1)!
+      .beforeKey(new KeyboardEvent("keydown", { key, code, ctrlKey: true, shiftKey }));
+
+  expect([terminalHandles("{", "BracketLeft"), terminalHandles("}", "BracketRight")]).toEqual([
+    false,
+    false,
+  ]);
+  expect(terminalHandles("C", "KeyC")).toBe(true);
+  // Sidebar sees the open preview and the closed drawer and rejects these, so the shell keeps them.
+  expect([terminalHandles("r", "KeyR", false), terminalHandles("g", "KeyG", false)]).toEqual([
+    true,
+    true,
+  ]);
 });
 
 it("only activates terminal paths confirmed to exist on their environment", async () => {
@@ -638,4 +824,130 @@ it("only activates terminal paths confirmed to exist on their environment", asyn
   expect(await validate("~/notes.ts:5:2")).toBe(true);
   await hover("~/notes.ts:5:2");
   expect(canActivate("~/notes.ts:5:2")).toBe(true);
+});
+
+it("drops the rest of a split paste when the shell restarts mid-paste", async () => {
+  const { other: threadRef } = setup();
+  let settleWrite = () => {};
+  fixture.runWrite = () =>
+    new Promise((resolve) => {
+      settleWrite = () => resolve({ _tag: "Success" });
+    });
+  await using _screen = await render(<Drawer threadRef={threadRef} onCloseTerminal={() => {}} />);
+  await act(async () => {
+    fixture.pendingSurfaces.shift()?.();
+  });
+  fixture.typeIntoSurface?.("p".repeat(70_000));
+  await act(async () => {
+    fixture.sessionEvent(threadRef, "restarted");
+    settleWrite();
+  });
+  fixture.typeIntoSurface?.("after");
+  expect(fixture.writes.map(({ data }) => data.length)).toEqual([65_536, 5]);
+});
+
+it.each([
+  { pid: 123, closes: true },
+  { pid: 456, closes: false },
+])(
+  "closes interrupted bracket framing only for its process (PID $pid)",
+  async ({ pid, closes }) => {
+    const { other: threadRef } = setup();
+    let settleWrite = () => {};
+    fixture.runWrite = () =>
+      new Promise((resolve) => {
+        settleWrite = () => {
+          fixture.runWrite = () => Promise.resolve({ _tag: "Success" });
+          resolve({ _tag: "Success" });
+        };
+      });
+    await using _screen = await render(<Drawer threadRef={threadRef} onCloseTerminal={() => {}} />);
+    await act(async () => {
+      fixture.pendingSurfaces.shift()?.();
+    });
+    const large = `\x1b[200~${"p".repeat(70_000)}\x1b[201~`;
+    fixture.typeIntoSurface?.(large);
+    await act(async () => {
+      fixture.sessionEvent(threadRef, "snapshot", pid);
+      settleWrite();
+    });
+    await act(async () => {
+      fixture.typeIntoSurface?.("after");
+    });
+    expect(
+      fixture.messages.filter((message) => message.includes("paste interrupted")),
+    ).toHaveLength(1);
+    expect(fixture.writes.map(({ data }) => data)).toEqual([
+      large.slice(0, 65_536),
+      ...(closes ? ["\x1b[201~"] : []),
+      "after",
+    ]);
+  },
+);
+
+it("closes an interrupted paste after disposal before input from a remounted view", async () => {
+  const { other: threadRef } = setup();
+  let settleWrite = () => {};
+  fixture.runWrite = () =>
+    new Promise((resolve) => {
+      settleWrite = () => {
+        fixture.runWrite = () => Promise.resolve({ _tag: "Success" });
+        resolve({ _tag: "Success" });
+      };
+    });
+  await using screen = await render(<Drawer threadRef={threadRef} onCloseTerminal={() => {}} />);
+  await act(async () => {
+    fixture.pendingSurfaces.shift()?.();
+  });
+  const large = `\x1b[200~${"p".repeat(70_000)}\x1b[201~`;
+  fixture.typeIntoSurface?.(large);
+  fixture.typeIntoSurface?.("stale");
+  await screen.rerender(<div />);
+  await act(async () => {
+    settleWrite();
+  });
+  await screen.rerender(<Drawer threadRef={threadRef} onCloseTerminal={() => {}} />);
+  await act(async () => {
+    fixture.pendingSurfaces.shift()?.();
+  });
+  await act(async () => {
+    fixture.typeIntoSurface?.("after");
+  });
+  expect(fixture.writes.map(({ data }) => data.length)).toEqual([65_536, 6, 5]);
+});
+
+it("resends a failed resize once in each writable session", async () => {
+  const { other: threadRef } = setup();
+  const resizes: unknown[] = [];
+  const failure = AsyncResult.failure(Cause.die(new Error("resize rejected")));
+  let failFirstResize = () => {};
+  fixture.runResize = (input) => {
+    resizes.push(input);
+    if (resizes.length > 1) return Promise.resolve(failure);
+    return new Promise((resolve) => {
+      failFirstResize = () => resolve(failure);
+    });
+  };
+  await using _screen = await render(<Drawer threadRef={threadRef} onCloseTerminal={() => {}} />);
+  await act(async () => {
+    fixture.pendingSurfaces.shift()?.();
+  });
+  await act(async () => {
+    fixture.reportedSize = { cols: 57, rows: 41 };
+    fixture.surfaceOptions.at(-1)!.onResize(57, 41);
+  });
+  // The first request fails while the attachment reconnects, so its retry is not sent.
+  await act(async () => {
+    fixture.setSession(threadRef, "running", 0, 1);
+    failFirstResize();
+  });
+  expect(resizes).toHaveLength(1);
+  await act(async () => {
+    fixture.setSession(threadRef, "running", 1, 2);
+  });
+  const resize = {
+    environmentId: threadRef.environmentId,
+    input: { threadId: threadRef.threadId, terminalId: "term-1", cols: 57, rows: 41 },
+  };
+  expect(resizes).toEqual([resize, resize, resize]);
 });

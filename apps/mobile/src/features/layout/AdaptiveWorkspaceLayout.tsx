@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import {
   WorkspaceColumnsRendererContext,
   WorkspacePresentationHostContext,
@@ -59,6 +60,8 @@ import { useProjects } from "../../state/entities";
 import { environmentThreadShells } from "../../state/threads";
 import { withKnownPullRequestSummary } from "../../state/use-thread-pr";
 import { mobilePreferencesAtom } from "../../state/preferences";
+import { savedConnectionsByIdAtom } from "../../state/use-remote-environment-registry";
+import { workspaceConnections } from "../../state/workspace";
 import {
   DEFAULT_MOBILE_PROJECT_GROUPING_SETTINGS,
   resolveMobileProjectGroupingSettings,
@@ -83,7 +86,8 @@ import {
 import { startOpeningDetail } from "./workspace/useSelectWorkspaceDetail";
 import { useWorkspaceTabs } from "./workspace/WorkspaceTabsContext";
 import { HomeListOptionsProvider } from "../home/home-list-options";
-import { newTaskDestination } from "../threads/new-task-project-selection";
+import { buildHomeProjectScopes, resolveHomeProjectFilterScope } from "../home/homeThreadList";
+import { newTaskDestination, newTaskFilteredProject } from "../threads/new-task-project-selection";
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
 import { PaneContext } from "../../components/ui/Pane";
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
@@ -112,7 +116,7 @@ import {
   workspaceTabColumns,
   workspaceTabNavigationState,
 } from "./workspace/workspace-tab-navigation";
-import type { WorkspaceTab } from "./workspace/workspace-tabs-state";
+import { workspaceTabOf, type WorkspaceTab } from "./workspace/workspace-tabs-state";
 import { workspaceRoutesOf } from "./workspace-overlay-routes";
 import { SettingsWorkspaceLayout } from "../settings/SettingsWorkspaceLayout";
 import { WorkspaceThreadSidebar } from "./workspace/WorkspaceThreadSidebar";
@@ -254,6 +258,7 @@ function AdaptiveWorkspaceLayoutContent(
     readonly savedThreadListFilters?: ThreadListFilters | undefined;
   },
 ) {
+  const gt = useGT();
   const floatingTabsEnabled = useAndroidFloatingTabs();
   const projectGroupingMode = props.projectGroupingMode;
   const nativeWorkspace = use(NativeWorkspaceModeContext);
@@ -362,8 +367,8 @@ function AdaptiveWorkspaceLayoutContent(
     floatingTabs.row,
     floatingTabsEnabled,
   ]);
-  // A floating sidebar brings the rail with it.
-  const width = viewportWidth - (sidebarFloats ? 0 : navigationRailWidth);
+  // The rail keeps its room even while the sidebar floats; only the list pane overlays the page.
+  const width = viewportWidth - navigationRailWidth;
   // The sidebar stays mounted under a workspace page, so its list is ready on the way back.
   const shouldRenderPrimarySidebar = layout.usesSplitView;
   const fileInspector = useMemo(
@@ -570,10 +575,7 @@ function AdaptiveWorkspaceLayoutContent(
       setFileInspectorPreferredVisible(false);
       setInspectorSheetRoute(null);
       if (layout.variant === "medium") setPrimarySidebarVisible(false);
-      workspace?.dispatch({
-        type: "select",
-        tab: detail.name === "Thread" ? "threads" : "pullRequests",
-      });
+      workspace?.dispatch({ type: "select", tab: workspaceTabOf(detail.name) });
       startOpeningDetail(detail);
       navigation.dispatch(selectWorkspaceDetail(detail, sheet));
     });
@@ -609,12 +611,38 @@ function AdaptiveWorkspaceLayoutContent(
         : undefined;
     const preferences = appAtomRegistry.get(mobilePreferencesAtom);
     const saved = AsyncResult.isSuccess(preferences) ? preferences.value : undefined;
+    // Resolve the thread list's filter as useHomeListOptions does: a removed connection's filter reads as all.
+    const listFilters = saved?.threadListFilters;
+    const listEnvironmentId =
+      listFilters?.environmentId != null &&
+      appAtomRegistry.get(savedConnectionsByIdAtom)[listFilters.environmentId] !== undefined
+        ? listFilters.environmentId
+        : null;
+    const filteredScope = resolveHomeProjectFilterScope(
+      buildHomeProjectScopes({ projects, environmentId: listEnvironmentId, projectGroupingMode }),
+      projects,
+      { selectedProjectKey: listFilters?.projectKey ?? null, projectGroupingMode },
+    );
+    const connectedEnvironmentIds = new Set(
+      appAtomRegistry
+        .get(workspaceConnections.environmentsAtom)
+        .filter((environment) => environment.connectionState === "connected")
+        .map((environment) => environment.environmentId),
+    );
     handleSelectThreadRoute(
       newTaskDestination({
         projects,
         requestId: uuidv4(),
         useLastProject: saved?.useLastProjectForNewThreads,
         currentProject: environmentId && projectId ? { environmentId, projectId } : undefined,
+        filteredProject: filteredScope
+          ? newTaskFilteredProject(
+              filteredScope,
+              listEnvironmentId,
+              connectedEnvironmentIds,
+              saved?.lastThreadProject,
+            )
+          : undefined,
         lastProject: saved?.lastThreadProject,
       }),
     );
@@ -721,7 +749,7 @@ function AdaptiveWorkspaceLayoutContent(
   // panes land. A sliding sidebar uncovers the strip it is about to fill, or covers the content
   // until it is gone.
   const contentLeftTarget = sidebarFloats
-    ? 0
+    ? navigationRailWidth
     : navigationRailWidth +
       (shouldRenderPrimarySidebar && !workspacePage && panes.primarySidebarVisible
         ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0)
@@ -794,7 +822,9 @@ function AdaptiveWorkspaceLayoutContent(
     workspacePage,
   ]);
   const railAnimatedStyle = useAnimatedStyle(() => ({ width: renderedRailWidth.value }));
-  const floatingSidebarAnimatedStyle = useAnimatedStyle(() => ({ left: renderedRailWidth.value }));
+  const floatingSidebarAnimatedStyle = useAnimatedStyle(() => ({
+    left: sidebarFloats ? renderedRailWidth.value : 0,
+  }));
   const floatingSidebarOpen = sidebarFloats && panes.primarySidebarVisible;
   // Its own value, so a sidebar that was beside a list doesn't dim the page as it leaves.
   const scrimOpacity = useSharedValue(0);
@@ -850,7 +880,7 @@ function AdaptiveWorkspaceLayoutContent(
     Math.max(
       0,
       viewportWidth -
-        (sidebarFloats ? 0 : renderedRailWidth.value) -
+        renderedRailWidth.value -
         (workspacePage || sidebarFloats ? 0 : renderedSidebarWidth.value) -
         renderedInspectorWidth.value,
     ),
@@ -974,10 +1004,7 @@ function AdaptiveWorkspaceLayoutContent(
     >
       <AndroidHingeObserver onChange={handleHingeChange} />
       {shouldRenderNavigationRail ? (
-        <Animated.View
-          className={sidebarFloats ? "absolute inset-y-0 left-0" : "shrink self-stretch"}
-          style={railAnimatedStyle}
-        />
+        <Animated.View className="shrink self-stretch" style={railAnimatedStyle} />
       ) : null}
       {shouldRenderPrimarySidebar && layout.listPaneWidth !== null ? (
         <Animated.View
@@ -994,11 +1021,9 @@ function AdaptiveWorkspaceLayoutContent(
           style={[
             workspacePage ? { position: "absolute", top: 0, bottom: 0, left: 0 } : null,
             sidebarFloats
-              ? [
-                  { position: "absolute", top: 0, bottom: 0, zIndex: 2, elevation: 8 },
-                  floatingSidebarAnimatedStyle,
-                ]
+              ? { position: "absolute", top: 0, bottom: 0, zIndex: 2, elevation: 8 }
               : null,
+            floatingSidebarAnimatedStyle,
             sidebarAnimatedStyle,
           ]}
         >
@@ -1008,8 +1033,8 @@ function AdaptiveWorkspaceLayoutContent(
                 renderFallback={(fallback) => (
                   <RenderFailureView
                     {...fallback}
-                    title="The sidebar couldn't be displayed"
-                    exit={{ label: "Open settings", onPress: handleOpenSettings }}
+                    title={gt("The sidebar couldn't be displayed")}
+                    exit={{ label: gt("Open settings"), onPress: handleOpenSettings }}
                   />
                 )}
               >
@@ -1106,7 +1131,7 @@ function AdaptiveWorkspaceLayoutContent(
           style={[{ zIndex: 1 }, scrimAnimatedStyle]}
         >
           <Pressable
-            accessibilityLabel="Hide sidebar"
+            accessibilityLabel={gt("Hide sidebar")}
             className="flex-1"
             onPress={() => setPrimarySidebarVisible(false)}
           />
