@@ -1,4 +1,5 @@
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { providerAuthRedirectShowsCode } from "@t3tools/shared/providerAuthReturnUrl";
 import { T, useGT, Var } from "gt-react-native";
 import * as Dialog from "../../components/ui/Dialog";
 import {
@@ -491,7 +492,13 @@ function ProviderAccount({
           ) : null}
           {showCallback ? (
             <>
-              {field("callback", gt("Final localhost URL"), false)}
+              {field(
+                "callback",
+                interaction?.type === "browser" && providerAuthRedirectShowsCode(interaction.url)
+                  ? gt("Paste a code")
+                  : gt("Final localhost URL"),
+                false,
+              )}
               <SettingsActionRow
                 icon="arrow.right"
                 label={gt("Continue")}

@@ -41,8 +41,10 @@ import {
   isAntigravitySignInRequiredError,
   prepareAntigravityProfile,
   resolveAntigravityInstanceDirectories,
+  startAntigravityCliLogin,
   type AntigravityAuthConfig,
 } from "../antigravityAuthSupport.ts";
+import { standaloneConfig } from "../../standalone.ts";
 import {
   antigravityCliSessionMode,
   antigravityModelOptions,
@@ -151,6 +153,7 @@ export const AntigravityDriver: ProviderDriver<
       gcpLocation: settings.gcpLocation,
     };
     const authConfigIssue = antigravityAuthConfigIssue(auth);
+    const standalone = yield* standaloneConfig.pipe(Effect.orElseSucceed(() => false));
     const processEnvironment = yield* mergeProviderInstanceEnvironment(environment);
     const userHome = resolveAntigravityUserHome(
       yield* HostProcess.Platform,
@@ -200,13 +203,7 @@ export const AntigravityDriver: ProviderDriver<
         Effect.map((catalog) => stampIdentity(ModelCatalog.applyModelCatalog(draft, catalog))),
       );
 
-    const makeRuntime = Effect.fn("AntigravityDriver.makeRuntime")(function* (
-      input: AntigravityAdapterV2RuntimeInput,
-    ): Effect.fn.Return<
-      AcpSessionRuntime.AcpSessionRuntime["Service"],
-      AcpErrors.AcpError | ProviderSetupError,
-      Scope.Scope
-    > {
+    const prepareLaunch = Effect.fn("AntigravityDriver.prepareLaunch")(function* () {
       if (authConfigIssue !== null) {
         return yield* new ProviderSetupError({
           instanceId,
@@ -231,6 +228,7 @@ export const AntigravityDriver: ProviderDriver<
         auth,
         userHome,
         tempDirectory: directories.runtimeTemp,
+        headless: standalone,
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
@@ -246,6 +244,17 @@ export const AntigravityDriver: ProviderDriver<
             : cause,
         ),
       );
+      return { executable, profile };
+    });
+
+    const makeRuntime = Effect.fn("AntigravityDriver.makeRuntime")(function* (
+      input: AntigravityAdapterV2RuntimeInput,
+    ): Effect.fn.Return<
+      AcpSessionRuntime.AcpSessionRuntime["Service"],
+      AcpErrors.AcpError | ProviderSetupError,
+      Scope.Scope
+    > {
+      const { executable, profile } = yield* prepareLaunch();
       // Use one directory per process; shared cleanup could delete files another session still reads.
       // Remove after the child dies, best-effort on Windows where handles may outlive the kill;
       // the next driver start sweeps leftovers.
@@ -394,6 +403,26 @@ export const AntigravityDriver: ProviderDriver<
         ),
       onSignedOut: Effect.suspend(() => provider.onSignedOut),
       usesBrowser: antigravityAuthUsesBrowser(auth.authMethod),
+      // agy 1.5 never hands its consumer sign-in link to BROWSER, so remote clients could not finish it.
+      ...(standalone && auth.authMethod === "oauth-personal"
+        ? {
+            cliLogin: Effect.fn("AntigravityDriver.cliLogin")(function* (onAuthorizationUrl) {
+              const { executable, profile } = yield* prepareLaunch();
+              if (executable.harnessPath !== null) return undefined;
+              return yield* startAntigravityCliLogin({
+                spawn: buildAntigravityAcpSpawnInput({
+                  installation: executable,
+                  profile,
+                  cwd: profile.geminiHome,
+                  baseEnv: processEnvironment,
+                  auth,
+                  login: true,
+                }),
+                onAuthorizationUrl,
+              }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+            }),
+          }
+        : {}),
     });
 
     // The probe must not spawn. The agent is a PyInstaller one-file bundle
