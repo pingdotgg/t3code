@@ -8,6 +8,10 @@ import type {
   ProjectWriteFileInput,
 } from "@t3tools/contracts";
 import type { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
+
+import { thrownErrorMessage } from "../errors/translatable.ts";
 
 import {
   type AtomCommand,
@@ -74,9 +78,12 @@ export type ProjectFileRead =
   | { readonly relativePath: string; readonly contents: string }
   | { readonly relativePath: string; readonly error: string };
 
-function failureMessage(result: Parameters<typeof squashAtomCommandFailure>[0]): string {
+function failureMessage(
+  result: Parameters<typeof squashAtomCommandFailure>[0],
+  resolve: MFunctionType,
+): string {
   const error = squashAtomCommandFailure(result);
-  return error instanceof Error ? error.message : "An error occurred.";
+  return thrownErrorMessage(error, resolve) ?? resolve(msg("An error occurred."));
 }
 
 /** Run before the clone starts, so the copy reflects the files as they were when the user asked. */
@@ -85,6 +92,7 @@ export function readProjectFilesToCopy(
   atoms: Pick<ProjectFileAtoms, "readFile">,
   source: { readonly environmentId: EnvironmentId; readonly cwd: string },
   relativePaths: ReadonlyArray<string>,
+  resolve: MFunctionType = mFallback,
 ): Promise<ReadonlyArray<ProjectFileRead>> {
   return Promise.all(
     relativePaths.map(async (relativePath): Promise<ProjectFileRead> => {
@@ -96,8 +104,11 @@ export function readProjectFilesToCopy(
         }),
         { label: "Read file to copy", reportFailure: false, refresh: true },
       );
-      if (result._tag === "Failure") return { relativePath, error: failureMessage(result) };
-      if (result.value.truncated) return { relativePath, error: "Too large to copy." };
+      if (result._tag === "Failure")
+        return { relativePath, error: failureMessage(result, resolve) };
+      if (result.value.truncated) {
+        return { relativePath, error: resolve(msg("Too large to copy.")) };
+      }
       return { relativePath, contents: result.value.contents };
     }),
   );
@@ -173,6 +184,7 @@ export async function writeProjectFilesAfterClone(
     readonly subdirectory: string;
     readonly reads: ReadonlyArray<ProjectFileRead>;
   },
+  resolve: MFunctionType = mFallback,
 ): Promise<ReadonlyArray<string>> {
   const clone = await waitForProjectClone(
     registry,
@@ -183,7 +195,8 @@ export async function writeProjectFilesAfterClone(
   // The server drops a finished clone after a short while, so a device that was away can miss it.
   if (!clone) {
     return input.reads.map(
-      (read) => `${read.relativePath}: The clone was gone before this file could be copied.`,
+      (read) =>
+        `${read.relativePath}: ${resolve(msg("The clone was gone before this file could be copied."))}`,
     );
   }
   const failed: Array<string> = [];
@@ -207,7 +220,8 @@ export async function writeProjectFilesAfterClone(
       },
       { label: "Copy file to machine", reportFailure: false },
     );
-    if (written._tag === "Failure") failed.push(`${read.relativePath}: ${failureMessage(written)}`);
+    if (written._tag === "Failure")
+      failed.push(`${read.relativePath}: ${failureMessage(written, resolve)}`);
   }
   return failed;
 }

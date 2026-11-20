@@ -24,16 +24,24 @@ import {
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
 import { scheduleTimeZoneLabel } from "@t3tools/client-runtime/scheduled-task-time-zone";
+import { msg } from "gt-react";
 
 import {
   resolveProjectSettings,
   type LegacyProjectSettingsFields,
 } from "@t3tools/shared/projectSettings";
+import { getActiveLocale, m, type MessageResolver } from "../../i18n/messages";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 
 import type { ResolvedSettingsScope } from "./settingsScope";
 
-export const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+/** Abbreviated weekday name, 0 = Sunday. */
+export function weekdayShortLabel(day: number, locale: string = getActiveLocale()): string {
+  // 2024-01-07 was a Sunday.
+  return new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" }).format(
+    new Date(Date.UTC(2024, 0, 7 + day)),
+  );
+}
 
 const ONCE_FORMATTER = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
@@ -44,24 +52,38 @@ export function scheduleLabel(
   schedule: ScheduledTaskSchedule,
   timeZone?: string,
   runAt?: string | null,
+  resolve: MessageResolver = m,
+  locale: string = getActiveLocale(),
 ): string {
-  if (schedule.type === "webhook") return "On webhook";
-  if (schedule.type === "once") return `Once, ${ONCE_FORMATTER.format(new Date(schedule.runAt))}`;
+  if (schedule.type === "webhook") return resolve(msg("On webhook"));
+  if (schedule.type === "once") {
+    return resolve(msg("Once, {time}", { time: ONCE_FORMATTER.format(new Date(schedule.runAt)) }));
+  }
   if (schedule.type === "interval") {
     const minutes = schedule.everyMs / 60_000;
     return Number.isInteger(minutes)
-      ? `Every ${minutes} min`
-      : `Every ${Math.round(schedule.everyMs / 1000)} sec`;
+      ? resolve(msg("Every {minutes} min", { minutes }))
+      : resolve(msg("Every {seconds} sec", { seconds: Math.round(schedule.everyMs / 1000) }));
   }
   const weekdays = schedule.weekdays ?? [];
-  const days =
-    weekdays.length === 0
-      ? "Daily"
-      : weekdays.length === 5 && weekdays.every((day) => day >= 1 && day <= 5)
-        ? "Weekdays"
-        : weekdays.map((day) => WEEKDAY_LABELS[day]).join(", ");
+  const time = schedule.timeOfDay;
   const zone = scheduleTimeZoneLabel(timeZone, runAt);
-  return `${days} at ${schedule.timeOfDay}${zone === undefined ? "" : ` ${zone}`}`;
+  if (weekdays.length === 0) {
+    return zone === undefined
+      ? resolve(msg("Daily at {time}", { time }))
+      : resolve(msg("Daily at {time} {zone}", { time, zone }));
+  }
+  if (weekdays.length === 5 && weekdays.every((day) => day >= 1 && day <= 5)) {
+    return zone === undefined
+      ? resolve(msg("Weekdays at {time}", { time }))
+      : resolve(msg("Weekdays at {time} {zone}", { time, zone }));
+  }
+  const days = weekdays
+    .map((day) => (day >= 0 && day <= 6 ? weekdayShortLabel(day, locale) : ""))
+    .join(", ");
+  return zone === undefined
+    ? resolve(msg("{days} at {time}", { days, time }))
+    : resolve(msg("{days} at {time} {zone}", { days, time, zone }));
 }
 
 export function matchesScheduledTaskScope(
@@ -107,6 +129,8 @@ export interface DraftState {
   readonly weekdays: ReadonlySet<number>;
   readonly projectId: string;
   readonly threadId: string;
+  /** The thread the form opened with, so a save can tell a cleared destination from an unbound one. */
+  readonly savedThreadId: string;
   readonly threadMode: ScheduledTaskThreadMode;
   readonly workspaceMode: WorkspaceMode;
   readonly baseRef: string;
@@ -144,64 +168,77 @@ export function toDateTimeLocalValue(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-export function scheduleDraftErrors(draft: DraftState) {
+export function scheduleDraftErrors(draft: DraftState, resolve: MessageResolver = m) {
+  const invalidRunTime = (description: string) => [
+    { title: resolve(msg("Invalid run time")), description },
+  ];
   if (draft.scheduleMode === "once") {
     const runAt = new Date(draft.runAt);
-    if (Number.isNaN(runAt.getTime()))
-      return [{ title: "Invalid run time", description: "Pick a date and time." }];
+    if (Number.isNaN(runAt.getTime())) return invalidRunTime(resolve(msg("Pick a date and time.")));
     // A time skipped by a daylight saving change parses to a different clock time.
     if (toDateTimeLocalValue(runAt) !== draft.runAt)
-      return [
-        { title: "Invalid run time", description: "That time does not exist in your time zone." },
-      ];
+      return invalidRunTime(resolve(msg("That time does not exist in your time zone.")));
     return [];
   }
   if (draft.scheduleMode === "fixed" && !draft.timeOfDay)
-    return [{ title: "Invalid run time", description: "Pick a time." }];
+    return invalidRunTime(resolve(msg("Pick a time.")));
   if (draft.scheduleMode !== "webhook") return [];
   if (parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes) === undefined)
     return [
       {
-        title: "Invalid age limit",
-        description: `Enter whole minutes from 1 to ${MAX_WEBHOOK_DELIVERY_AGE_MINUTES}, or leave it blank.`,
+        title: resolve(msg("Invalid age limit")),
+        description: resolve(
+          msg("Enter whole minutes from 1 to {max}, or leave it blank.", {
+            max: MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
+          }),
+        ),
       },
     ];
   const errors: Array<{ title: string; description: string }> = [];
-  for (const [label, value] of [
-    ["Duplicate request key", draft.replayKey],
-    ["Coalesce key", draft.coalesceKey],
+  for (const [description, value] of [
+    [msg("Duplicate request key must contain a valid request placeholder."), draft.replayKey],
+    [msg("Coalesce key must contain a valid request placeholder."), draft.coalesceKey],
   ] as const) {
     if (value.trim() && !isWebhookDedupeTemplate(value.trim()))
       errors.push({
-        title: "Invalid webhook settings",
-        description: `${label} must contain a valid request placeholder.`,
+        title: resolve(msg("Invalid webhook settings")),
+        description: resolve(description),
       });
   }
   const window = draft.coalesceWindowSeconds.trim();
   if (window && (!Number.isInteger(Number(window)) || Number(window) < 10 || Number(window) > 3600))
     errors.push({
-      title: "Invalid webhook settings",
-      description: "Coalesce window must be whole seconds from 10 to 3600.",
+      title: resolve(msg("Invalid webhook settings")),
+      description: resolve(msg("Coalesce window must be whole seconds from 10 to 3600.")),
     });
   return errors;
 }
 
-export function webhookDeliveryLabel(delivery: {
-  readonly outcome: string;
-  readonly pendingWindow?: boolean | undefined;
-}) {
-  if (delivery.outcome === "accepted") return delivery.pendingWindow ? "Opened window" : "Ran";
-  const labels: Record<string, string> = {
-    dispatch_failed: "Run failed",
-    duplicate: "Duplicate",
-    coalesced: "Coalesced",
-    filtered: "Filtered",
-    rejected_signature: "Bad signature",
-    disabled: "Task paused",
-    rate_limited: "Rate limited",
-    expired: "Too old",
-  };
-  return labels[delivery.outcome] ?? delivery.outcome.replaceAll("_", " ");
+const WEBHOOK_DELIVERY_LABELS: Record<string, string> = {
+  dispatch_failed: msg("Run failed"),
+  duplicate: msg("Duplicate", { $context: "webhook delivery outcome" }),
+  coalesced: msg("Coalesced"),
+  filtered: msg("Filtered", { $context: "webhook delivery outcome" }),
+  rejected_signature: msg("Bad signature"),
+  disabled: msg("Task paused"),
+  rate_limited: msg("Rate limited"),
+  expired: msg("Too old"),
+};
+
+export function webhookDeliveryLabel(
+  delivery: {
+    readonly outcome: string;
+    readonly pendingWindow?: boolean | undefined;
+  },
+  resolve: MessageResolver = m,
+) {
+  if (delivery.outcome === "accepted") {
+    return delivery.pendingWindow
+      ? resolve(msg("Opened window"))
+      : resolve(msg("Ran", { $context: "webhook delivery outcome" }));
+  }
+  const label = WEBHOOK_DELIVERY_LABELS[delivery.outcome];
+  return label ? resolve(label) : delivery.outcome.replaceAll("_", " ");
 }
 
 export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedule | null {
@@ -295,9 +332,10 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     weekdays,
     projectId: task.projectId,
     threadId: task.threadId ?? "",
+    savedThreadId: task.threadId ?? "",
     threadMode: scheduledTaskThreadMode(task),
     workspaceMode: task.workspaceStrategy.type,
-    baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "main",
+    baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "",
     startFromOrigin:
       task.workspaceStrategy.type === "worktree"
         ? (task.workspaceStrategy.startFromOrigin ?? false)

@@ -186,7 +186,7 @@ describe("document preview contents", () => {
           "</spine></package>",
       )
       .file("chapter.xhtml", "<html><body>" + "<figcaption/>".repeat(30_000) + "</body></html>");
-    await expect(openEpub(archive)).rejects.toThrow("too large");
+    await expect(openEpub(archive)).rejects.toMatchObject({ code: "rendered-too-large" });
   });
 
   it("decodes rich text formatting and Unicode without showing hidden destinations", () => {
@@ -233,7 +233,7 @@ Third}`;
       "<p>Third</p>",
     ]);
     expect(() => openRtf(bytes(String.raw`{\rtf1 ` + String.raw`\page`.repeat(501) + "}"))).toThrow(
-      "500 pages",
+      expect.objectContaining({ code: "rtf-too-many-pages" }),
     );
   });
 
@@ -245,7 +245,9 @@ Third}`;
     const result = openRtf(input.buffer);
     if (result.type !== "document") throw new Error("Expected document");
     expect(result.pages[0]!.html).toBe("<p>А А<br>あ</p>");
-    expect(() => openRtf(bytes(String.raw`{\rtf1\ansicpg99999 text}`))).toThrow("code page");
+    expect(() => openRtf(bytes(String.raw`{\rtf1\ansicpg99999 text}`))).toThrow(
+      expect.objectContaining({ code: "rtf-code-page" }),
+    );
   });
 
   it("resolves scoped ODF namespaces and explicit spreadsheet whitespace", async () => {
@@ -277,7 +279,9 @@ Third}`;
       .file("picture.png", pixels);
     const image = archive.file("picture.png")!;
     const read = vi.spyOn(image, "async");
-    await expect(openDocument(archive, "odp")).rejects.toThrow("too large");
+    await expect(openDocument(archive, "odp")).rejects.toMatchObject({
+      code: "rendered-too-large",
+    });
     expect(read.mock.calls.filter(([type]) => type === "base64")).toHaveLength(2);
     expect(read).toHaveBeenCalledTimes(5);
   });
@@ -298,9 +302,9 @@ Third}`;
                 { output_type: "display_data", data: {} },
                 { data: { "text/html": [""] } },
                 { data: { "text/html": [], "text/plain": "array fallback" } },
-                { data: { "text/html": "", "text/plain": "string fallback" } },
+                { data: { "text/html": "", "text/plain": "\u001b[1mstring fallback\u001b[0m" } },
                 { data: { "text/html": "  ", "text/plain": "space fallback" } },
-                { output_type: "stream", text: ["42\n"] },
+                { output_type: "stream", text: ["\u001b[", "32m42\u001b[0m\n"] },
                 { data: { "text/html": ["<b>Results</b>"], "text/plain": ["Results"] } },
               ],
             },
@@ -384,12 +388,14 @@ Third}`;
         text: "Traceback (most recent call last):\nCell In[3], line 1\n----> 1 fail()\nValueError: preview proof\nfinal entry",
       },
     ]);
-    expect(() => openNotebook(bytes('{"nbformat":3,"cells":[]}'))).toThrow("version 4");
+    expect(() => openNotebook(bytes('{"nbformat":3,"cells":[]}'))).toThrow(
+      expect.objectContaining({ code: "notebook-unsupported" }),
+    );
     expect(() =>
       openNotebook(
         bytes(JSON.stringify({ nbformat: 4, cells: Array.from({ length: 501 }, () => ({})) })),
       ),
-    ).toThrow("500 cells");
+    ).toThrow(expect.objectContaining({ code: "notebook-unsupported" }));
   });
 
   it("bounds repeated OpenDocument spreadsheet cells and keeps sheet names and values", async () => {
@@ -491,7 +497,7 @@ Third}`;
       "<html><body>" + "<![CDATA[".repeat(80_000) + "</body></html>",
     ]) {
       archive.file("content.xml", source);
-      await expect(openDocument(archive, kind)).rejects.toThrow("unsupported XML");
+      await expect(openDocument(archive, kind)).rejects.toMatchObject({ code: "xml-invalid" });
     }
   });
 

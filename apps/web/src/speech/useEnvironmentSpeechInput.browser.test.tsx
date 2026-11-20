@@ -42,11 +42,12 @@ const mocks = vi.hoisted(() => ({
   primaryEnvironmentId: "primary-env",
   statusRequests: [] as string[],
   statusUnavailable: false,
+  statusTier: "accelerated" as "cpu" | "accelerated",
   modelState: "ready" as "ready" | "missing-model",
   statusModelId: "test-model",
   models: [] as EnvironmentSpeechModel[],
   catalogOffline: false,
-  download: vi.fn<(modelId: string) => Promise<void>>(),
+  download: vi.fn<(modelId: string) => Promise<boolean | void>>(),
   selected: [] as string[],
   selectionFails: false,
   platforms: [] as string[],
@@ -134,15 +135,15 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
         supportsStreaming: false,
         supportsTranslation: false,
         acceleration: "auto",
+        benchmarkTier: mocks.statusTier,
         modelUnloadTimeout: "min_15",
         gpuDevices: [],
-        benchmarkTier: "cpu",
       };
     }),
   downloadEnvironmentSpeechModel: (_prepared: PreparedConnection, modelId: string) =>
     Effect.promise(async () => {
-      await mocks.download(modelId);
-      return { models: mocks.models };
+      const cancelled = await mocks.download(modelId);
+      return { models: mocks.models, cancelled: cancelled ?? false };
     }),
   selectEnvironmentSpeechModel: (_prepared: PreparedConnection, modelId: string) =>
     Effect.sync(() => {
@@ -151,10 +152,14 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
       mocks.statusModelId = modelId;
       return { models: mocks.models };
     }),
-  getEnvironmentSpeechModels: vi.fn(() =>
+  getEnvironmentSpeechModels: vi.fn((_prepared: PreparedConnection, includeBenchmarks = false) =>
     Effect.sync(() => {
       if (mocks.catalogOffline) throw new Error("Catalog offline");
-      return { models: mocks.models };
+      return {
+        models: mocks.models.map(({ benchmark, ...model }) =>
+          includeBenchmarks ? { ...model, ...(benchmark ? { benchmark } : {}) } : model,
+        ),
+      };
     }),
   ),
   postProcessEnvironmentTranscript: (
@@ -225,6 +230,7 @@ function setup(options: { readonly destination?: string | null } = {}) {
   mocks.statusRequests = [];
   mocks.statusUnavailable = false;
   mocks.modelState = "ready";
+  mocks.statusTier = "accelerated";
   mocks.statusModelId = "test-model";
   mocks.models = [];
   mocks.catalogOffline = false;
@@ -491,6 +497,7 @@ function catalogModel(
   id: string,
   languages: readonly string[],
   recommended: boolean,
+  errorPercent = 4,
 ): EnvironmentSpeechModel {
   return {
     id,
@@ -501,6 +508,12 @@ function catalogModel(
     accuracy: 0,
     speed: 0,
     recommended,
+    benchmark: {
+      accuracy: Object.fromEntries(
+        languages.map((language) => [language, { grade: "A", errorPercent }]),
+      ),
+      secondsPer30s: { accelerated: 2, cpu: 3 },
+    },
     supportsStreaming: false,
     supportsLanguageDetection: languages.length > 1,
     supportsTranslation: false,
@@ -510,26 +523,30 @@ function catalogModel(
 }
 
 it.each([
-  ["the browser prefers German", ["de-DE"], undefined, "auto"],
-  ["the desktop exposes no locale methods", ["de-DE"], {}, "auto"],
+  ["the browser prefers German", ["de-DE"], undefined, "auto", "accelerated"],
+  ["the remote environment uses CPU", ["de-DE"], undefined, "auto", "cpu"],
+  ["the desktop exposes no locale methods", ["de-DE"], {}, "auto", "accelerated"],
   [
     "an older preload exposes only the OS locale",
     ["en-US"],
     { getSystemLocale: () => "de-DE" },
     "auto",
+    "accelerated",
   ],
   [
     "the desktop OS prefers German",
     ["en-US"],
     { getPreferredSystemLanguages: () => ["de-DE"] },
     "auto",
+    "accelerated",
   ],
-  ["German is the chosen Voice language", ["en-US"], undefined, "de"],
+  ["German is the chosen Voice language", ["en-US"], undefined, "de", "accelerated"],
 ])(
   "offers and downloads a German-capable model when %s",
-  async (_, languages, bridge, speechLanguage) => {
+  async (_, languages, bridge, speechLanguage, tier) => {
     setup({ destination: "env-a" });
     mocks.settings = { speechLanguage };
+    mocks.statusTier = tier as "cpu" | "accelerated";
     using _languages = vi.spyOn(navigator, "languages", "get").mockReturnValue(languages);
     using _bridge = stubGlobal("desktopBridge", bridge);
     const englishDefault = "handy-computer/parakeet-unified-en-0.6b-gguf";
@@ -538,16 +555,24 @@ it.each([
     mocks.statusModelId = englishDefault;
     mocks.models = [
       { ...catalogModel(englishDefault, ["en"], true), active: true },
-      catalogModel(german, ["en", "de", "fr"], true),
       catalogModel("handy-computer/canary-180m-flash-gguf", ["en", "de", "es", "fr"], true),
+      {
+        ...catalogModel(german, ["en", "de", "fr"], false, 2),
+        benchmark: {
+          accuracy: { de: { grade: "A", errorPercent: 2 } },
+          secondsPer30s: { cpu: 20, accelerated: 2 },
+        },
+      },
     ];
     mocks.download.mockResolvedValue(undefined);
     await using _screen = await render(<Probe />);
     await act(() => mocks.voice.start());
     expect(mocks.voice.setup.open).toBe(true);
     await act(() => mocks.voice.setup.download());
-    expect(mocks.download).toHaveBeenCalledExactlyOnceWith(german);
-    expect(mocks.voice.setup.model?.id).toBe(german);
+    const expected = tier === "cpu" ? "handy-computer/canary-180m-flash-gguf" : german;
+    expect(mocks.download).toHaveBeenCalledExactlyOnceWith(expected);
+    expect(mocks.voice.setup.model?.id).toBe(expected);
+    expect(mocks.voice.setup.model?.recommended).toBe(true);
   },
 );
 
@@ -607,6 +632,7 @@ it.each([true, false])(
       mocks.models.push(catalogModel("german", ["de"], true));
       // Another client can finish setup while the catalog is offline.
       mocks.modelState = "ready";
+      mocks.statusTier = "accelerated";
       await userEvent.click(retry);
       await expect.element(wizard.getByRole("heading", { name: "german" })).toBeVisible();
       await expect.element(download).toBeEnabled();
@@ -618,29 +644,62 @@ it.each([true, false])(
 );
 
 it.each([
-  ["selects the offered model once its download installed it", "installed", ["german"], null],
+  [
+    "selects the offered model once its download installed it",
+    "installed",
+    ["german"],
+    null,
+    false,
+    "english",
+  ],
+  [
+    "selects the downloaded model after another client changed the selection",
+    "installed",
+    ["german"],
+    null,
+    false,
+    "german",
+  ],
   [
     "does not advance a cancelled download when another model is ready",
     "downloadable",
     [],
     "The model is not ready. Try downloading it again.",
+    true,
+    "english",
+  ],
+  [
+    "keeps setup open when an external cancellation leaves the weights installed",
+    "installed",
+    [],
+    "The model is not ready. Try downloading it again.",
+    true,
+    "english",
   ],
   [
     "reports a failed selection apart from the download",
     "installed",
     ["german"],
     "The model downloaded, but this environment could not select it. Try again.",
+    false,
+    "english",
   ],
-] as const)("%s", async (_, landedState, selected, error) => {
+] as const)("%s", async (_, landedState, selected, error, cancelled, initialModelId) => {
   setup({ destination: "env-a" });
   using _languages = vi.spyOn(navigator, "languages", "get").mockReturnValue(["de-DE"]);
-  mocks.selectionFails = error !== null && landedState === "installed";
+  mocks.selectionFails = error !== null && !cancelled;
   mocks.modelState = "missing-model";
-  mocks.statusModelId = "english";
+  mocks.statusModelId = initialModelId;
   mocks.models = [catalogModel("english", ["en"], true), catalogModel("german", ["de"], true)];
   mocks.download.mockImplementation(async () => {
-    mocks.models = [mocks.models[0]!, { ...mocks.models[1]!, state: landedState }];
+    mocks.models = [
+      { ...mocks.models[0]!, state: "installed", active: true },
+      { ...mocks.models[1]!, state: landedState, active: false },
+    ];
+    mocks.statusModelId = "english";
     mocks.modelState = "ready";
+    mocks.statusTier = "accelerated";
+    return cancelled;
   });
   await using _screen = await render(<Probe />);
   await act(() => mocks.voice.start());

@@ -1,3 +1,4 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
   readProjectFilesToCopy,
   writeProjectFilesAfterClone,
@@ -5,9 +6,11 @@ import {
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { scopedProjectKey } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ProjectId, ScopedProjectRef } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import { create } from "zustand";
 
 import { environmentCatalog } from "../connection/catalog";
+import { m } from "../i18n/messages";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { suggestAppAccessForRemote } from "../components/sourceControlAppAccessToast";
 import { silenceProjectCloneToasts } from "../state/projectClones";
@@ -28,12 +31,17 @@ export interface AddProjectToMachineInput {
 
 function failureMessage(result: Parameters<typeof squashAtomCommandFailure>[0]): string {
   const error = squashAtomCommandFailure(result);
-  return error instanceof Error ? error.message : "An error occurred.";
+  return thrownErrorMessage(error, m) ?? m(msg("An error occurred."));
 }
 
 export type ProjectFileCopy =
   | { readonly phase: "copying" }
-  | { readonly phase: "failed"; readonly title: string; readonly failures: ReadonlyArray<string> };
+  | {
+      readonly phase: "failed";
+      /** A `msg()`, resolved where it is shown so it follows the UI language. */
+      readonly title: string;
+      readonly failures: ReadonlyArray<string>;
+    };
 
 /** Ignored-file copies still owed to a cloned project, keyed by its scoped project key. */
 const useFileCopies = create<{ copies: Readonly<Record<string, ProjectFileCopy>> }>(() => ({
@@ -67,6 +75,7 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
     projectEnvironment,
     input.source,
     input.files,
+    m,
   );
 
   const requestedRef = { environmentId: input.target.environmentId, projectId: input.projectId };
@@ -107,25 +116,33 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
   void suggestAppAccessForRemote(input.target.environmentId, input.remoteUrl);
   if (reads.length === 0) return projectId;
 
-  void writeProjectFilesAfterClone(appAtomRegistry, projectEnvironment, {
-    clonesAtom: sourceControlEnvironment.projectClones({
+  void writeProjectFilesAfterClone(
+    appAtomRegistry,
+    projectEnvironment,
+    {
+      clonesAtom: sourceControlEnvironment.projectClones({
+        environmentId: input.target.environmentId,
+        input: {},
+      }),
+      sessionGenerationAtom: environmentCatalog.sessionGenerationAtom(input.target.environmentId),
       environmentId: input.target.environmentId,
-      input: {},
-    }),
-    sessionGenerationAtom: environmentCatalog.sessionGenerationAtom(input.target.environmentId),
-    environmentId: input.target.environmentId,
-    projectId,
-    cwd: started.value.cwd,
-    subdirectory: input.subdirectory,
-    reads,
-  }).then((failed) =>
+      projectId,
+      cwd: started.value.cwd,
+      subdirectory: input.subdirectory,
+      reads,
+    },
+    m,
+  ).then((failed) =>
     setFileCopy(
       copyKey,
       failed.length === 0
         ? null
         : {
             phase: "failed",
-            title: `Could not copy ${failed.length} ${failed.length === 1 ? "file" : "files"} to ${input.target.label}`,
+            title: msg(
+              "Could not copy {count, plural, one {{count} file} other {{count} files}} to {target}",
+              { count: failed.length, target: input.target.label },
+            ),
             failures: failed,
           },
     ),

@@ -6,6 +6,8 @@ import {
   type ProjectWriteFileInput,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -19,6 +21,10 @@ import {
 
 const environmentId = EnvironmentId.make("server");
 const projectId = ProjectId.make("clone");
+
+class WriteDenied extends Schema.TaggedError<WriteDenied>()("WriteDenied", {
+  message: Schema.String,
+}) {}
 
 describe("defaultCopiedFiles", () => {
   it("preselects env files that fit the read cap", () => {
@@ -63,12 +69,13 @@ describe("copying files to a cloned project", () => {
     const writes: Array<ProjectWriteFileInput> = [];
     const writeFile = {
       label: "write",
-      run: async (_registry: unknown, target: { readonly input: ProjectWriteFileInput }) => {
-        writes.push(target.input);
-        return target.input.relativePath.endsWith("locked")
-          ? AsyncResult.failure(Cause.fail(new Error("denied")))
-          : AsyncResult.success(undefined);
-      },
+      run: (_registry: unknown, target: { readonly input: ProjectWriteFileInput }) =>
+        Effect.suspend(() => {
+          writes.push(target.input);
+          return target.input.relativePath.endsWith("locked")
+            ? Effect.fail(new WriteDenied({ message: "denied" }))
+            : Effect.void;
+        }),
     };
     const copy = (subdirectory: string) =>
       writeProjectFilesAfterClone(
