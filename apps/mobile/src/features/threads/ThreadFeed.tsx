@@ -4363,6 +4363,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             // RN 0.81+ drops inset-area touches (facebook/react-native#54123), making blank post-send space unscrollable.
             applyWorkaroundForContentInsetHitTestBug
             {...(Platform.OS === "ios" ? { ScrollViewComponent: ThreadFeedScrollView } : {})}
+            // Android's active feed overscroll effect intercepts DOWN before a Markdown scroller sees it.
+            overScrollMode="never"
             contentInsetAdjustmentBehavior="never"
             automaticallyAdjustsScrollIndicatorInsets={usesNativeAutomaticInsets}
             scrollIndicatorInsets={{ top: anchorTopInset, bottom: 0 }}
