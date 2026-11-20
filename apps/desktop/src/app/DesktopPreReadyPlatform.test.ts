@@ -117,6 +117,9 @@ describe("DesktopPreReadyPlatform", () => {
         files.set(settingsPath, JSON.stringify({ linuxPasswordStore: "basic" }));
         commandLine.clear();
         assert.equal(yield* launch, explicitScale);
+        assert.isFalse(
+          appendSwitchMock.mock.calls.some(([name]) => name === "disable-direct-composition"),
+        );
       }
     }).pipe(
       Effect.provideService(HostProcess.Platform, "linux"),
@@ -252,9 +255,12 @@ describe("DesktopPreReadyPlatform", () => {
     ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
   });
 
-  it.effect(
-    "acquires a synchronous pre-ready layer before an asynchronous Clerk-shaped layer",
-    () =>
+  it.effect.each([
+    { platform: "darwin" as const, switches: [] },
+    { platform: "win32" as const, switches: [["disable-direct-composition"]] },
+  ])(
+    "acquires a synchronous pre-ready layer before an asynchronous Clerk-shaped layer ($platform)",
+    ({ platform, switches }) =>
       Effect.gen(function* () {
         class ClerkShaped extends Context.Service<ClerkShaped, { readonly ready: true }>()(
           "@t3tools/desktop/app/DesktopPreReadyPlatform.test/ClerkShaped",
@@ -266,7 +272,7 @@ describe("DesktopPreReadyPlatform", () => {
         });
 
         const layerPreReady = DesktopPreReadyPlatform.layer.pipe(
-          Layer.provide(Layer.succeed(HostProcess.Platform, "darwin")),
+          Layer.provide(Layer.succeed(HostProcess.Platform, platform)),
         );
 
         const layerClerkShaped = Layer.effect(
@@ -298,7 +304,7 @@ describe("DesktopPreReadyPlatform", () => {
         });
         assert.deepEqual(events, ["pre-ready", "clerk"]);
         assert.equal(registerSchemesMock.mock.calls.length, 1);
-        assert.equal(appendSwitchMock.mock.calls.length, 0);
+        assert.deepEqual(appendSwitchMock.mock.calls, switches);
         assert.equal(setDesktopNameMock.mock.calls.length, 0);
       }),
   );
