@@ -375,6 +375,18 @@ export const ThreadListV2WorkingShelfHeader = memo(function ThreadListV2WorkingS
   return <ThreadListV2ShelfHeader {...props} kind="working" />;
 });
 
+export const ThreadListV2InboxHeader = memo(function ThreadListV2InboxHeader(props: {
+  readonly pane?: "screen" | "sidebar";
+}) {
+  const gt = useGT();
+  return (
+    <ThreadListV2SectionDivider
+      label={gt("Inbox", { $context: "thread list section, threads not running" })}
+      pane={props.pane}
+    />
+  );
+});
+
 export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedShelfHeader(
   props: ThreadListV2ShelfHeaderProps,
 ) {

@@ -4588,6 +4588,7 @@
   "905197486607072f": "Discard",
   "02c0ae493e689f90": "Goal",
   "13300e8565fbd665": "{label} ({count})",
+  "8327da16dcfdb504": "Inbox",
   "694e089caefce25f": "{count, plural, one {Show {count} more settled threads} other {Show {count} more settled threads}}",
   "ece9e2869077cbb6": "Discard {title}",
   "306a6f95ad9d52f7": "Unsent",
