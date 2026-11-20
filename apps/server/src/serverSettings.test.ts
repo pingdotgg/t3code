@@ -4,6 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
   DEFAULT_SPEECH_OUTPUT_SETTINGS,
+  EnvironmentId,
   globalIdleCompaction,
   type ManagedPolicyDocument,
   ModelSelection,
@@ -2498,6 +2499,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
           model: "managed",
         };
         const chosenModel = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-mini" };
+        const speechDestination = {
+          environmentId: EnvironmentId.make("speech-policy"),
+          engine: "openai" as const,
+        };
         yield* fs.writeFileString(
           config.settingsPath,
           JSON.stringify({
@@ -2510,6 +2515,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         yield* service.updateSettings({
           defaultAutoPull: true,
           defaultModelSelection: chosenModel,
+          speechPlaybackDestination: speechDestination,
         });
         const stored = JSON.parse(yield* fs.readFileString(config.settingsPath));
         assert.deepEqual(stored.storageCleanup, {
@@ -2519,6 +2525,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         // Model selections are saved whole, never as the fields that differ from the policy's.
         assert.deepEqual(stored.textGenerationModelSelection, selection);
         assert.deepEqual(stored.defaultModelSelection, chosenModel);
+        assert.deepEqual(stored.speechPlaybackDestination, speechDestination);
+        yield* service.updateSettings({ defaultAutoPull: false });
+        const reloaded = yield* decodeServerSettingsJson(
+          yield* fs.readFileString(config.settingsPath),
+        );
+        assert.deepEqual(reloaded.speechPlaybackDestination, speechDestination);
         // The switch the server derives from the policy's idle compaction stays out of the file.
         assert.notProperty(stored, "compactIdleThreads");
       }).pipe(
@@ -2534,6 +2546,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
               "textGenerationModelSelection.model": { value: "managed", locked: false },
               defaultModelSelection: {
                 value: { instanceId: "codex", model: "gpt-managed" },
+                locked: false,
+              },
+              speechPlaybackDestination: {
+                value: { environmentId: "speech-policy", engine: "piper" },
                 locked: false,
               },
               idleCompaction: { value: "beforeCacheExpires", locked: false },
