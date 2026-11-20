@@ -5,6 +5,7 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import {
   alertForTransition,
+  liveActivityContentForStates,
   DIRECT_APNS_TERMINAL_FRESHNESS_MS,
   makePhaseTracker,
   notificationForState,
@@ -213,5 +214,41 @@ describe("notificationForState", () => {
     expect(notification.title.endsWith("...")).toBe(true);
     expect(notification.body.length).toBe(120);
     expect(notification.deepLink).toBe("/");
+  });
+});
+
+describe("live activity content", () => {
+  const thread = (id: string, overrides: Partial<AgentAwarenessState> = {}) =>
+    state({ threadId: ThreadId.make(id), ...overrides });
+
+  it("lists needs-attention threads first and counts only in-flight work", () => {
+    const content = liveActivityContentForStates(
+      [
+        thread("running", { phase: "running", updatedAt: "2026-09-04T11:59:50.000Z" }),
+        thread("approval", {
+          phase: "waiting_for_approval",
+          updatedAt: "2026-09-04T11:50:00.000Z",
+        }),
+        thread("done", { phase: "completed", updatedAt: "2026-09-04T11:59:55.000Z" }),
+      ],
+      NOW_MS,
+    );
+    expect(content?.activities.map((row) => row.threadId)).toEqual(["approval", "running", "done"]);
+    expect(content?.activeCount).toBe(2);
+    expect(content?.subtitle).toBe("Agent work in progress");
+  });
+
+  it("names a failed run and keeps finished rows for 15 minutes", () => {
+    const failed = thread("failed", { phase: "failed", updatedAt: "2026-09-04T11:50:00.000Z" });
+    expect(liveActivityContentForStates([failed], NOW_MS)?.subtitle).toBe("Agent work failed");
+    const done = thread("done", { phase: "completed", updatedAt: "2026-09-04T11:50:00.000Z" });
+    expect(liveActivityContentForStates([done], NOW_MS)?.subtitle).toBe("Agent work completed");
+    const old = thread("old", { phase: "completed", updatedAt: "2026-09-04T11:40:00.000Z" });
+    expect(liveActivityContentForStates([old], NOW_MS)).toBeNull();
+  });
+
+  it("drops running rows from an environment that died mid-run", () => {
+    const stuck = thread("stuck", { phase: "running", updatedAt: "2026-09-04T09:00:00.000Z" });
+    expect(liveActivityContentForStates([stuck], NOW_MS)).toBeNull();
   });
 });

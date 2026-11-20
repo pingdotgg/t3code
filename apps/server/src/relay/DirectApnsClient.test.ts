@@ -154,7 +154,15 @@ describe("DirectApnsClient", () => {
           });
           assert.strictEqual(result.outcome, "sent");
         }
-        const [update, start, end] = harness.requests.map((request) => ({
+        const alerted = yield* client.sendLiveActivity({
+          target,
+          token: "cd".repeat(32),
+          event: "update",
+          content,
+          alert: { title: "Fix the bug", body: "Approval: Project" },
+        });
+        assert.strictEqual(alerted.outcome, "sent");
+        const [update, start, end, alertedUpdate] = harness.requests.map((request) => ({
           headers: request.headers,
           aps: JSON.parse(request.body).aps as Record<string, unknown>,
         }));
@@ -171,8 +179,17 @@ describe("DirectApnsClient", () => {
         assert.strictEqual(update?.aps.event, "update");
         assert.isDefined(update?.aps["stale-date"]);
         assert.isUndefined(update?.aps["attributes-type"]);
+        assert.isUndefined(update?.aps.alert);
+        assert.isDefined(start?.aps.alert);
+        assert.strictEqual(start?.aps["input-push-token"], 1);
         assert.strictEqual(start?.aps["attributes-type"], "LiveActivityAttributes");
         assert.strictEqual(start?.headers["apns-priority"], "10");
+        assert.deepStrictEqual(alertedUpdate?.aps.alert, {
+          title: "Fix the bug",
+          body: "Approval: Project",
+          sound: "default",
+        });
+        assert.strictEqual(alertedUpdate?.headers["apns-priority"], "10");
         assert.isDefined(end?.aps["dismissal-date"]);
         assert.isUndefined(end?.aps["stale-date"]);
       }).pipe(Effect.provide(harness.layer));

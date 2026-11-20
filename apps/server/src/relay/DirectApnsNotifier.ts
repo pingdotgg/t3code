@@ -19,6 +19,7 @@ import { forkParked } from "../serverActivation.ts";
 import * as DirectApnsClient from "./DirectApnsClient.ts";
 import * as DirectApnsDevices from "./DirectApnsDevices.ts";
 import {
+  type DirectApnsNotification,
   alertForTransition,
   liveActivityContentForStates,
   makePhaseTracker,
@@ -72,6 +73,8 @@ export class DirectApnsNotifier extends Context.Service<
   }
 >()("t3/relay/DirectApnsNotifier") {}
 
+const START_GRACE_MS = 10_000;
+
 const make = Effect.gen(function* () {
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
   const threads = yield* ThreadManagement.ThreadManagementService;
@@ -89,21 +92,36 @@ const make = Effect.gen(function* () {
   // activity's own token only reaches us when the app next runs, so without
   // this every phase change would start another card.
   const startedTokens = new Set<string>();
+  // Activity tokens this server has pushed live work to. A card the app armed
+  // for work this server has not seen yet is not ours to end.
+  const liveTokens = new Set<string>();
+  let activeSinceMs: number | null = null;
+  // Alerts that ride on a device's live-activity push instead of a separate
+  // banner, so one transition notifies once. Anything left unsent falls back.
+  const pendingAlerts = new Map<string, DirectApnsNotification>();
 
   const publishLiveActivities = Effect.fn("DirectApnsNotifier.publishLiveActivities")(function* () {
     const entries = yield* devices.listLiveActivities;
-    if (entries.length === 0) return;
     const nowMs = yield* Clock.currentTimeMillis;
     const content = liveActivityContentForStates(states.values(), nowMs);
+    if (entries.length === 0) return;
     const finished = content === null || content.activeCount === 0;
     const endContent = content ?? {
       title: "T3 Code",
-      subtitle: "Agent work finished",
+      subtitle: "Agent work completed",
       activeCount: 0,
       updatedAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs)),
       activities: [],
     };
-    if (finished) startedTokens.clear();
+    if (finished) {
+      startedTokens.clear();
+      activeSinceMs = null;
+    } else if (activeSinceMs === null) {
+      activeSinceMs = nowMs;
+    }
+    // The app arms its own card when a thread is sent from the phone, and its
+    // token arrives within seconds; a push-to-start sooner would duplicate it.
+    const graceElapsed = activeSinceMs !== null && nowMs - activeSinceMs >= START_GRACE_MS;
     yield* Effect.forEach(
       entries,
       (entry) => {
@@ -116,33 +134,73 @@ const make = Effect.gen(function* () {
           token: string,
           event: "start" | "update" | "end",
           payload: typeof endContent,
+          alert?: DirectApnsNotification,
         ) =>
-          client.sendLiveActivity({ target, token, event, content: payload }).pipe(
-            Effect.flatMap((result) => {
-              if (result.outcome === "sent" && event === "update") {
-                sentSignatures.set(token, JSON.stringify(payload));
-              }
-              // An ended activity's token is dead; the app registers the next one.
-              const dead =
-                (result.outcome === "rejected" && result.removeToken) ||
-                (result.outcome === "sent" && event === "end");
-              if (!dead) return Effect.void;
-              sentSignatures.delete(token);
-              return devices.removeLiveActivityToken({ deviceId: entry.deviceId, token });
-            }),
-          );
+          client
+            .sendLiveActivity({
+              target,
+              token,
+              event,
+              content: payload,
+              ...(alert ? { alert: { title: alert.title, body: alert.body } } : {}),
+            })
+            .pipe(
+              Effect.flatMap((result) => {
+                if (result.outcome === "sent" && alert) pendingAlerts.delete(entry.deviceId);
+                if (result.outcome === "sent" && event === "update") {
+                  sentSignatures.set(token, JSON.stringify(payload));
+                  liveTokens.add(token);
+                }
+                if (event === "end") liveTokens.delete(token);
+                // An ended activity's token is dead; the app registers the next one.
+                const dead =
+                  (result.outcome === "rejected" && result.removeToken) ||
+                  (result.outcome === "sent" && event === "end");
+                if (!dead) return Effect.void;
+                sentSignatures.delete(token);
+                return devices.removeLiveActivityToken({ deviceId: entry.deviceId, token });
+              }),
+            );
         const activityToken = entry.activityPushToken;
         if (activityToken) {
-          if (finished) return push(activityToken, "end", endContent);
-          if (sentSignatures.get(activityToken) === JSON.stringify(content)) return Effect.void;
-          return push(activityToken, "update", content);
+          const alert = pendingAlerts.get(entry.deviceId);
+          // Finished work stays on the card as an update, so its alert expands the
+          // island; only a card with nothing left to show is ended.
+          if (content === null) {
+            return liveTokens.has(activityToken)
+              ? push(activityToken, "end", endContent, alert)
+              : Effect.void;
+          }
+          // A card armed for work this server has not seen is not ours to fill
+          // with an older thread's finished state.
+          if (finished && !liveTokens.has(activityToken)) return Effect.void;
+          if (!alert && sentSignatures.get(activityToken) === JSON.stringify(content)) {
+            return Effect.void;
+          }
+          return push(activityToken, "update", content, alert);
         }
         const startToken = entry.pushToStartToken;
-        if (startToken && !finished && !startedTokens.has(startToken)) {
+        if (startToken && !finished && graceElapsed && !startedTokens.has(startToken)) {
           startedTokens.add(startToken);
           return push(startToken, "start", content);
         }
         return Effect.void;
+      },
+      { concurrency: SEND_CONCURRENCY, discard: true },
+    );
+    yield* flushPendingAlerts();
+  });
+
+  const flushPendingAlerts = Effect.fn("DirectApnsNotifier.flushPendingAlerts")(function* () {
+    if (pendingAlerts.size === 0) return;
+    const pending = [...pendingAlerts];
+    pendingAlerts.clear();
+    const all = yield* devices.list;
+    yield* Effect.forEach(
+      pending,
+      ([deviceId, notification]) => {
+        const device = all.find((candidate) => candidate.deviceId === deviceId);
+        return device ? client.send({ device, notification }) : Effect.void;
       },
       { concurrency: SEND_CONCURRENCY, discard: true },
     );
@@ -185,8 +243,16 @@ const make = Effect.gen(function* () {
     );
     if (recipients.length === 0) return;
     const notification = notificationForState(state);
+    const withLiveCard = new Set(
+      (yield* devices.listLiveActivities)
+        .filter((entry) => entry.activityPushToken !== undefined)
+        .map((entry) => entry.deviceId),
+    );
+    for (const device of recipients) {
+      if (withLiveCard.has(device.deviceId)) pendingAlerts.set(device.deviceId, notification);
+    }
     yield* Effect.forEach(
-      recipients,
+      recipients.filter((device) => !withLiveCard.has(device.deviceId)),
       (device) =>
         client.send({ device, notification }).pipe(
           Effect.flatMap((result) =>

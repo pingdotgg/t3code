@@ -163,32 +163,64 @@ export interface DirectLiveActivityContent {
 
 const MAX_LIVE_ACTIVITY_ROWS = 5;
 
+// Same display rules as the relay's makeAggregateState (infra/relay/src/agentActivity),
+// applied to this server's threads only, so a card reads the same from either sender.
+const CARD_TERMINAL_TTL_MS = 15 * 60 * 1_000;
+const CARD_RUNNING_TTL_MS = 2 * 60 * 60 * 1_000;
+const CARD_WAITING_TTL_MS = 24 * 60 * 60 * 1_000;
+
+const attentionPriority = (phase: Phase) => {
+  if (isAttentionPhase(phase)) return 0;
+  if (phase === "failed") return 1;
+  if (phase === "starting" || phase === "running") return 2;
+  return 3;
+};
+
+const updatedAtMsOf = (state: AgentAwarenessState) => Date.parse(state.updatedAt);
+
 /**
- * The card shows this environment's in-flight threads plus anything that just
- * finished, so a completion is visible for a moment. Null means nothing is
- * worth showing and a running card should end.
+ * The card shows this environment's in-flight threads plus recently finished
+ * ones. An environment that died mid-run never reports a terminal state, so
+ * in-flight rows expire. Null means nothing is worth showing and a running
+ * card should end.
  */
 export function liveActivityContentForStates(
   states: Iterable<AgentAwarenessState>,
   nowMs: number,
 ): DirectLiveActivityContent | null {
-  const shown = [...states]
+  const all = [...states];
+  const active = all
     .filter((state) => {
-      if (!isTerminalPhase(state.phase)) return true;
-      const updatedAtMs = Date.parse(state.updatedAt);
-      return (
-        Number.isFinite(updatedAtMs) && nowMs - updatedAtMs <= DIRECT_APNS_TERMINAL_FRESHNESS_MS
-      );
+      if (isTerminalPhase(state.phase)) return false;
+      const ttl =
+        state.phase === "running" || state.phase === "starting"
+          ? CARD_RUNNING_TTL_MS
+          : CARD_WAITING_TTL_MS;
+      return nowMs <= updatedAtMsOf(state) + ttl;
     })
+    .toSorted((a, b) => attentionPriority(a.phase) - attentionPriority(b.phase));
+  const recentTerminal = all
+    .filter(
+      (state) =>
+        isTerminalPhase(state.phase) && nowMs - updatedAtMsOf(state) <= CARD_TERMINAL_TTL_MS,
+    )
     .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const shown = [...active, ...recentTerminal].slice(0, MAX_LIVE_ACTIVITY_ROWS);
   if (shown.length === 0) return null;
-  const activeCount = shown.filter((state) => !isTerminalPhase(state.phase)).length;
+  const subtitle =
+    active.length > 0
+      ? "Agent work in progress"
+      : recentTerminal[0]!.phase === "failed"
+        ? "Agent work failed"
+        : "Agent work completed";
   return {
     title: "T3 Code",
-    subtitle: activeCount > 0 ? "Agent work in progress" : "Agent work finished",
-    activeCount,
-    updatedAt: shown[0]!.updatedAt,
-    activities: shown.slice(0, MAX_LIVE_ACTIVITY_ROWS).map((state) => ({
+    subtitle,
+    activeCount: active.length,
+    updatedAt: [...active, ...recentTerminal].reduce((latest, state) =>
+      state.updatedAt.localeCompare(latest.updatedAt) > 0 ? state : latest,
+    ).updatedAt,
+    activities: shown.map((state) => ({
       environmentId: state.environmentId,
       threadId: state.threadId,
       projectTitle: truncateText(state.projectTitle, MAX_TEXT_LENGTH),

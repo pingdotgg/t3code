@@ -101,6 +101,7 @@ export class DirectApnsClient extends Context.Service<
       readonly token: string;
       readonly event: LiveActivityEvent;
       readonly content: DirectLiveActivityContent;
+      readonly alert?: { readonly title: string; readonly body: string };
     }) => Effect.Effect<DirectApnsSendResult>;
   }
 >()("t3/relay/DirectApnsClient") {}
@@ -328,10 +329,11 @@ const make = Effect.gen(function* () {
 
   const sendLiveActivity: DirectApnsClient["Service"]["sendLiveActivity"] = Effect.fn(
     "DirectApnsClient.sendLiveActivity",
-  )(function* ({ target, token, event, content }) {
+  )(function* ({ target, token, event, content, alert }) {
     const nowSeconds = Math.floor((yield* Clock.currentTimeMillis) / 1_000);
     const urgent =
       event !== "update" ||
+      alert !== undefined ||
       content.activities.some(
         (row) => row.phase === "waiting_for_approval" || row.phase === "waiting_for_input",
       );
@@ -354,9 +356,19 @@ const make = Effect.gen(function* () {
           ...(event === "end"
             ? { "dismissal-date": nowSeconds + LIVE_ACTIVITY_DISMISS_AFTER_SECONDS }
             : { "stale-date": nowSeconds + LIVE_ACTIVITY_STALE_AFTER_SECONDS }),
+          // iOS silently drops a push-to-start that carries no alert.
           ...(event === "start"
-            ? { "attributes-type": "LiveActivityAttributes", attributes: {} }
+            ? {
+                "attributes-type": "LiveActivityAttributes",
+                attributes: {},
+                // Without this iOS never issues an update token for a push-started card.
+                "input-push-token": 1,
+                alert: { title: content.title, body: content.subtitle },
+              }
             : {}),
+          // An alert on an update or end wakes the screen and expands the island,
+          // like the relay's pushes, instead of redrawing silently.
+          ...(event !== "start" && alert ? { alert: { ...alert, sound: "default" } } : {}),
         },
       },
     });
