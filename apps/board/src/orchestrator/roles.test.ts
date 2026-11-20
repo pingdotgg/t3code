@@ -70,7 +70,7 @@ describe("the role registry", () => {
     const fallen = resolved.filter((role) => role.fallback !== null);
     expect(fallen.map((role) => role.name)).toEqual(["reviewer"]);
     expect(fallen[0]).toMatchObject({
-      target: null,
+      target: { providerInstanceId: "claudeAgent" },
       fallback:
         "claude-fable-5-1 is not offered by claudeAgent, so it uses the orchestrator's model",
     });
@@ -78,6 +78,10 @@ describe("the role registry", () => {
 
   it("Given a Codex orchestrator, when the roles resolve, then every child inherits its model", () => {
     const resolved = resolveRoles(ROLES, { instanceId: "codex", driver: "codex", offered: [] });
-    expect(resolved.every((role) => role.target === null && role.fallback === null)).toBe(true);
+    expect(
+      resolved.every(
+        (role) => role.target.providerInstanceId === "codex" && role.target.model === undefined,
+      ),
+    ).toBe(true);
   });
 });

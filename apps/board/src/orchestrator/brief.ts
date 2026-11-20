@@ -5,21 +5,29 @@ import { parseTickets, type TicketStage } from "../domain/ticket";
 import template from "./brief.md?raw";
 import { DEFAULT_ROLES, type ResolvedRole } from "./roles";
 
-export interface BriefInput {
+/** What differs between boards, which the first message carries. */
+export interface BoardFacts {
   /** The board folder's absolute path. */
   readonly boardDir: string;
   readonly builderCap: number;
+  readonly project: string;
+  /** The project's absolute path, which is the orchestrator's working folder. */
+  readonly projectDir: string;
+}
+
+export interface BriefInput extends BoardFacts {
   readonly roles?: ReadonlyArray<ResolvedRole>;
 }
 
-function targetText(role: ResolvedRole): string {
-  const { target } = role;
-  if (target === null) return "omit";
-  const instance =
-    target.providerInstanceId === undefined
-      ? ""
-      : `"providerInstanceId":"${target.providerInstanceId}",`;
-  return `\`{${instance}"model":"${target.model}","options":{"effort":"${target.effort}"}}\``;
+function targetText({ target }: ResolvedRole): string {
+  const parts = [
+    ...(target.providerInstanceId === undefined
+      ? []
+      : [`"providerInstanceId":"${target.providerInstanceId}"`]),
+    ...(target.model === undefined ? [] : [`"model":"${target.model}"`]),
+    ...(target.effort === undefined ? [] : [`"options":{"effort":"${target.effort}"}`]),
+  ];
+  return `\`{${parts.join(",")}}\``;
 }
 
 function rolesTable(roles: ReadonlyArray<ResolvedRole>): string {
@@ -36,12 +44,26 @@ function rolesTable(roles: ReadonlyArray<ResolvedRole>): string {
   ].join("\n");
 }
 
-/** The orchestrator's first message, with the board's folder, builder cap, and role registry filled in. */
-export function renderBrief(input: BriefInput): string {
-  return template
-    .replaceAll("{{boardDir}}", input.boardDir)
+const FACTS_AT = template.indexOf("# Board facts");
+const RULES = template.slice(0, FACTS_AT).trimEnd();
+const FACTS = template.slice(FACTS_AT);
+
+/** The rules every board's orchestrator follows, with the role registry filled in. They hold nothing about one board. */
+export function renderRules(roles: ReadonlyArray<ResolvedRole> = DEFAULT_ROLES): string {
+  return RULES.replaceAll("{{roles}}", rolesTable(roles));
+}
+
+/** The board's folder, builder cap, and project. */
+export function renderFacts(input: BoardFacts): string {
+  return FACTS.replaceAll("{{boardDir}}", input.boardDir)
     .replaceAll("{{builderCap}}", String(input.builderCap))
-    .replaceAll("{{roles}}", rolesTable(input.roles ?? DEFAULT_ROLES));
+    .replaceAll("{{project}}", input.project)
+    .replaceAll("{{projectDir}}", input.projectDir);
+}
+
+/** The rules and the board facts in one message, for an orchestrator that has no standing instructions. */
+export function renderBrief(input: BriefInput): string {
+  return `${renderRules(input.roles)}\n\n${renderFacts(input)}`;
 }
 
 export interface StoreFiles {

@@ -1,4 +1,7 @@
-import type { OrchestrationV2ThreadShell } from "@t3tools/contracts";
+import {
+  isProviderNativeSubagentThread,
+  type OrchestrationV2ThreadShell,
+} from "@t3tools/contracts";
 
 import type { Ticket, TicketStage } from "../domain/ticket";
 import { ROLES } from "../orchestrator/roles";
@@ -12,6 +15,7 @@ export type FamilyRow = Pick<
   | "status"
   | "branch"
   | "lineage"
+  | "creationSource"
   | "activityRunStatus"
   | "pendingBackgroundTasks"
   | "pendingRuntimeRequest"
@@ -27,6 +31,8 @@ export interface AgentView {
   readonly role: string;
   /** Whether the role is one of the registry's. An agent the orchestrator started outside it is flagged. */
   readonly registered: boolean;
+  /** T3 made this thread from the provider's own subagent call, not from `delegate_task`, so no registry role started it. */
+  readonly outsideRegistry: boolean;
   readonly ticketKey: string | null;
   readonly driver: string | null;
   readonly runState: RunState;
@@ -95,6 +101,7 @@ function agentOf(
     title: row.title,
     role,
     registered: ROLE_NAMES.has(role),
+    outsideRegistry: isProviderNativeSubagentThread(row),
     ticketKey: parts?.[1] ?? null,
     driver: driverOf(row.providerInstanceId),
     runState: runStateOf(row),

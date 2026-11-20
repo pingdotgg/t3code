@@ -83,15 +83,15 @@ export const ROLES: ReadonlyArray<Role> = SPECS.map((role) => ({
 }));
 
 export interface RoleTarget {
-  /** The instance that serves the model, so a child runs where the orchestrator does. */
+  /** The instance the child runs on. It names the picked instance, never the orchestrator instance, which would give the child the orchestrator's rules. */
   readonly providerInstanceId?: string;
-  readonly model: string;
-  readonly effort: string;
+  /** Left out when the child takes the orchestrator's model. */
+  readonly model?: string;
+  readonly effort?: string;
 }
 
 export interface ResolvedRole extends Role {
-  /** Null when the child runs on the orchestrator's model. */
-  readonly target: RoleTarget | null;
+  readonly target: RoleTarget;
   /** Why the role does not use its own model, or null. */
   readonly fallback: string | null;
 }
@@ -106,20 +106,21 @@ export interface OrchestratorModel {
 /**
  * Each role keeps its Claude model when the orchestrator's instance offers it. A Codex
  * orchestrator's children inherit its model, and a Claude model the instance does not offer
- * falls back to the orchestrator's model.
+ * falls back to the orchestrator's model. Every target names the picked instance.
  */
 export function resolveRoles(
   roles: ReadonlyArray<Role>,
   orchestrator: OrchestratorModel,
 ): ReadonlyArray<ResolvedRole> {
   return roles.map((role): ResolvedRole => {
+    const inherited = { providerInstanceId: orchestrator.instanceId };
     if (orchestrator.driver !== "claudeAgent") {
-      return { ...role, target: null, fallback: null };
+      return { ...role, target: inherited, fallback: null };
     }
     if (!orchestrator.offered.includes(role.model.slug)) {
       return {
         ...role,
-        target: null,
+        target: inherited,
         fallback: `${role.model.slug} is not offered by ${orchestrator.instanceId}, so it uses the orchestrator's model`,
       };
     }

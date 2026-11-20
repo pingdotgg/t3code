@@ -25,6 +25,7 @@ const agent = (threadId: string): AgentView => ({
   title: threadId,
   role: "task",
   registered: true,
+  outsideRegistry: false,
   ticketKey: null,
   driver: null,
   runState: "idle",

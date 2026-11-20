@@ -23,6 +23,7 @@ const row = (
       relationshipToParent: "subagent",
       rootThreadId: ORCHESTRATOR,
     },
+    creationSource: "mcp",
     activityRunStatus: null,
     pendingBackgroundTasks: [],
     pendingRuntimeRequest: null,
@@ -129,6 +130,32 @@ describe("an agent's role", () => {
 
   it("Given a registry role in the title, when joined, then the title wins over the ticket entry", () => {
     expect(join("[T-1] scout", "task")).toMatchObject({ role: "scout", registered: true });
+  });
+});
+
+describe("an agent outside the role registry", () => {
+  const flagged = (creationSource: FamilyRow["creationSource"], subagent = true) => {
+    const child = row("th-a", "hello", { creationSource });
+    return joinBoard({
+      tickets: [],
+      family: [
+        subagent ? child : { ...child, lineage: { ...child.lineage, relationshipToParent: null } },
+      ],
+      orchestratorThreadId: ORCHESTRATOR,
+      driverOf,
+    }).unassigned[0]?.outsideRegistry;
+  };
+
+  it("Given a child T3 made from the provider's own subagent call, when joined, then it is flagged", () => {
+    expect(flagged("provider")).toBe(true);
+  });
+
+  it("Given a child started by delegate_task, when joined, then it is not flagged", () => {
+    expect(flagged("mcp")).toBe(false);
+  });
+
+  it("Given a provider thread that is not a subagent, when joined, then it is not flagged", () => {
+    expect(flagged("provider", false)).toBe(false);
   });
 });
 

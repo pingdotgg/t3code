@@ -1,4 +1,4 @@
-import { GitBranch, MessageCircleQuestion } from "lucide-react";
+import { GitBranch, MessageCircleQuestion, TriangleAlert } from "lucide-react";
 
 import type { AgentView, RunState } from "../state/boardModel";
 import { Tooltip } from "../ui/Tooltip";
@@ -31,6 +31,7 @@ export function AgentCard({
       data-role={agent.role}
       data-state={agent.runState}
       data-registered={agent.registered}
+      data-outside-registry={agent.outsideRegistry}
       aria-label={`${agent.role} agent, ${state.label.toLowerCase()}`}
       aria-pressed={selected}
       // A press that starts on a card is a click, not the start of a pan.
@@ -63,6 +64,11 @@ export function AgentCard({
         <span className="flex items-center gap-1 text-[11px] text-amber-300">
           <MessageCircleQuestion className="size-3 shrink-0" aria-hidden />
           Waiting on you
+        </span>
+      ) : agent.outsideRegistry ? (
+        <span className="flex items-center gap-1 text-[11px] text-amber-300">
+          <TriangleAlert className="size-3 shrink-0" aria-hidden />
+          Outside the role registry
         </span>
       ) : (
         <span className="flex min-w-0 items-center gap-1 text-[11px] text-faint">
