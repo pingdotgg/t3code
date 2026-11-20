@@ -10,6 +10,7 @@ import type * as Option from "effect/Option";
 import type * as Scope from "effect/Scope";
 import type * as Stream from "effect/Stream";
 
+import type { ProviderCompatibilityLookup } from "./compatibility.ts";
 import type { ProviderCredentialError } from "./errors.ts";
 
 export interface ProviderHostPaths {
@@ -44,12 +45,21 @@ export class ProviderHost extends Context.Service<
       readonly subscribe: Effect.Effect<Stream.Stream<ServerSettings>, never, Scope.Scope>;
     };
     readonly shouldRunBackgroundWork: (scope: BackgroundScope) => Effect.Effect<boolean>;
+    /** Completes once server startup finishes; first provider checks wait for it. */
+    readonly awaitServerReady?: Effect.Effect<void>;
     /** Absolute attachment path, or null if the ID does not resolve inside attachmentsDir. */
     readonly resolveAttachmentPath: (attachment: ChatAttachment) => string | null;
     readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
+    /**
+     * Counts a running agent for local server discovery, so listeners carrying its
+     * T3CODE_THREAD_ID show under its thread. Call the returned function when it stops.
+     */
+    readonly trackAgent?: () => () => void;
     readonly credentials: (
       namespace: string,
       bindingId: string,
     ) => Effect.Effect<ProviderCredentials>;
+    /** A driver declares its minimum version in the policy and asks here, not in a constant. */
+    readonly compatibility: ProviderCompatibilityLookup;
   }
 >()("@t3tools/provider-core/server/ProviderHost") {}

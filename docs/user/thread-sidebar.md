@@ -13,10 +13,11 @@ Its branch and workspace mode come from your configured defaults. To continue in
 an existing worktree, use **New thread in this worktree** from the branch toolbar.
 
 On mobile, **New thread** starts in the current thread's project, or else in the
-last project you opened or chose on that device. If neither is available, the
-project picker opens. Turn off **Settings → General → Use last project** to
-choose a project every time. When you pick a project that is on more than one
-machine, the thread starts on a connected one if any is connected.
+project the thread list is filtered to, or else in the last project you opened
+or chose on that device. If none is available, the project picker opens. Turn
+off **Settings → General → Use last project** to choose a project every time.
+When you pick a project that is on more than one machine, the thread starts on
+a connected one if any is connected.
 
 When you change a new thread's project, T3 Code stays in the current environment
 if that project exists there. Otherwise it selects an environment that has it.
@@ -134,8 +135,8 @@ open.
 
 Threads that are working or waiting on work they will resume from move into a collapsed
 **Working** section below the active list.
-That includes subagents, watched pull requests with checks still running, and background commands or monitors the agent
-says it is waiting on. A dev server or other process an agent leaves running does not keep a thread
+That includes subagents, watched pull requests with checks still running, Claude monitors,
+and background commands or other monitors the agent says it is waiting on. A dev server or other process an agent leaves running does not keep a thread
 there. A thread returns to the top of the active list when it finishes, fails, or needs an approval or
 answer. The Working section lists the thread you last sent work to first. Pinned threads stay in
 the pinned section.
@@ -249,8 +250,8 @@ thread** from its long-press menu on mobile.
 keeps the provider's explanation. Retry after the limit resets, or switch to
 another provider instance.
 Press **Resume** in an empty composer to continue a limited or interrupted turn
-manually. Do this when the provider reports no reset time, because nothing
-continues the turn on its own.
+manually when the provider supports native continuation, or send a message to continue.
+Do this when the provider reports no reset time, because nothing continues the turn on its own.
 Queued messages stay saved while the limit blocks the thread. They run after
 the continuation finishes. If the queue was held by a restart, resume it then.
 
@@ -268,7 +269,10 @@ the snooze. Enable **Snooze until limits reset** in thread behavior settings to
 snooze limit stops by default. Providers without a reset time offer manual
 retry and the normal snooze choices.
 
-On web and desktop, use **Agents** to follow work delegated to subagents.
+On web and desktop, use **Agents** to follow work delegated to subagents. Click
+a subagent there or on its conversation card to open it in the right panel,
+beside the thread you are in. See
+[Open a thread beside the one you are in](#open-a-thread-beside-the-one-you-are-in).
 On mobile, open a subagent from its conversation card or **Agents**. On iOS
 layouts with an inspector, its thread opens beside the parent. Maximize it to
 fill the screen; close the full-screen view to return to the parent and inspector.
@@ -296,6 +300,31 @@ To choose what the thread details card shows, right-click the card or open
 shortcuts, such as Open in editor and project scripts. **Reset to default** brings
 back the standard rows.
 
+## Open a thread beside the one you are in
+
+On web and desktop, a subagent, a side chat, and a
+[thread on a linked machine](remote-access.md#read-a-linked-machines-threads)
+all open the same way. Click one to open it as a tab in the right panel, so the
+thread you are in stays in view. Hold ⌘ (Ctrl on Windows and Linux) while you
+click, or middle-click, to open it in the main view instead. With the keyboard,
+Enter and ⌘/Ctrl + Enter do the same. Right-click for **Open in side panel** and
+**Open in main view**.
+
+To make the main view the place a plain click opens them, set **Settings → Chat →
+Open subagents and side chats in** to **Main view**. The modifier then opens
+the side panel.
+
+From a tab, **Open in main view** at the top of the tab, or in the tab's
+right-click menu, moves it to the main view. The bottom of the view depends on
+the thread: a side chat or a subagent you delegated has a composer, a subagent
+the agent started is read-only, and a thread on a linked machine is read-only
+with **Connect to interact**.
+
+Other thread links open in the main view as before.
+
+On mobile these threads open in the inspector on layouts that have one, where
+Maximize fills the screen, and full screen everywhere else.
+
 ## Side chats
 
 A side chat lets you ask a question about a thread without adding to it. It starts
@@ -304,19 +333,25 @@ with what the thread knows, and the thread keeps working while you ask.
 On web and desktop, start a message with `/side` or `/btw`, then your question.
 You can also choose **Side chat** from the **+** menu in the right panel. The side
 chat opens as a tab there, with its own composer. Side chats do not show in the
-sidebar. Find one again under **Side chats** in thread details.
+sidebar. Find one again under **Side chats** in thread details, where it opens
+[like a subagent does](#open-a-thread-beside-the-one-you-are-in).
 
 A side chat works in the same folder as the thread and starts with the permissions,
 model, and reasoning level shown in the thread's composer, including for its first
 reply. Change them for an individual side chat in its composer. Later changes to the
 parent do not change existing side chats.
 
-To use what you learned, choose **Bring back**. The thread gets the side chat with
-your next message there. Bring back is available while the thread is idle.
+To use what you learned, choose **Add to chat** at the top of the side chat, or type
+`@` and a word from its title in the thread's composer. The thread's message gets a
+link to the side chat, and the agent reads as much of it as it needs. This works
+while the thread is busy, once you have sent a message in the side chat. An agent on
+an external OpenCode server cannot read the link, so put the details in your message
+instead.
 
 Closing a side chat you never sent a message in deletes it. To delete one you used,
 choose **Delete** at the top of the side chat. Deleting a thread also deletes its
-side chats.
+side chats. Archiving a thread also archives its side chats and stops their work, and
+unarchiving the thread brings them back.
 
 On mobile, a thread lists its side chats above the composer. Tap one to open it and
 answer its questions.
