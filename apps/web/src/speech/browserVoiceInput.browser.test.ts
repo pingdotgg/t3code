@@ -363,3 +363,82 @@ it("refreshes the stream ticket for a same-destination reconnect between awaits"
   expect(Boolean(transcription.streaming)).toBe(true);
   expect(sockets).toEqual(["wss://reconnected.example.test/ws/voice?wsTicket=reconnected-ticket"]);
 });
+
+it("keeps a streamed recording when its stream drops and uploads it after reconnecting", async () => {
+  using microphone = capture();
+  const sockets: EventTarget[] = [];
+  using _socket = stubGlobal(
+    "WebSocket",
+    class extends EventTarget {
+      constructor() {
+        super();
+        sockets.push(this);
+      }
+      send() {}
+      close() {}
+    },
+  );
+  const uploads: Uint8Array[] = [];
+  const fetch = globalThis.fetch;
+  using _network = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const request = new Request(input, init);
+    if (request.url.endsWith("/api/voice/status")) return Response.json(status);
+    if (request.url.includes("/api/auth/websocket-ticket/"))
+      return Response.json({ ticket: "stream-ticket", expiresAt: "2030-01-01T00:00:00.000Z" });
+    if (request.url.endsWith("/api/voice/transcribe")) {
+      uploads.push(decodeSpeechPcmRequest(new Uint8Array(await request.arrayBuffer())).pcm);
+      return Response.json({ text: "recovered" });
+    }
+    return fetch(input, init);
+  });
+  let currentPrepared: typeof prepared | null = prepared;
+  const onError = vi.fn();
+  const platform = createBrowserVoiceInputPlatform({
+    prepared,
+    getPrepared: () => currentPrepared,
+    hasAudioConsent: () => true,
+    getStreamingEnabled: () => true,
+    getTranscriptionOptions: () => DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+    getMicrophoneId: () => "",
+    onLevel() {},
+    onDurationLimit() {},
+    onText() {},
+    onError,
+  });
+  const commitDraft = vi.fn();
+  const controller = new VoiceInputController({
+    recorder: platform.recorder,
+    retryFailedRecording: true,
+    getTranscriber: () => platform.transcriber,
+    requestPermission: async () => ({ granted: true, canAskAgain: true }),
+    configureRecording: async () => {},
+    releaseRecording: async () => platform.cancelRecording(),
+    deleteRecording: platform.deleteRecording,
+    readDraft: () => ({
+      ownerKey: "draft",
+      text: "",
+      selection: { start: 0, end: 0 },
+      revision: 0,
+    }),
+    commitDraft,
+    onStateChange() {},
+  });
+  using _controller = { [Symbol.dispose]: () => controller.dispose() };
+  await controller.start();
+  microphone.feed(new Float32Array([0.1]));
+  currentPrepared = null;
+  sockets[0]!.dispatchEvent(new Event("close"));
+  microphone.feed(new Float32Array([0.2]));
+  expect(controller.currentState.phase).toBe("recording");
+  expect(onError).not.toHaveBeenCalled();
+
+  await controller.stop();
+  expect(controller.currentState).toMatchObject({ phase: "error", errorAction: "retry" });
+  currentPrepared = prepared;
+  await controller.start();
+  expect(commitDraft).toHaveBeenCalledWith("recovered", expect.anything());
+  expect(uploads.map((pcm) => [...new Float32Array(pcm.slice().buffer)])).toEqual([
+    [Math.fround(0.1), Math.fround(0.2)],
+  ]);
+  expect(sockets).toHaveLength(1);
+});

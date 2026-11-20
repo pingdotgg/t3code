@@ -536,12 +536,14 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         (cloudProvider !== undefined ||
           (status?.prepared === prepared && status.value?.supported !== false));
   return {
+    // A recording this editor owns keeps its controls while the destination reconnects.
     available:
-      destinationReady &&
-      !busyElsewhere &&
-      typeof navigator !== "undefined" &&
-      Boolean(navigator.mediaDevices?.getUserMedia) &&
-      typeof AudioWorkletNode !== "undefined",
+      (owns && snapshot.state.phase !== "idle") ||
+      (destinationReady &&
+        !busyElsewhere &&
+        typeof navigator !== "undefined" &&
+        Boolean(navigator.mediaDevices?.getUserMedia) &&
+        typeof AudioWorkletNode !== "undefined"),
     status: currentStatus,
     transcriptionEnvironmentId: destination.environmentId,
     transcriptionEnvironmentLabel: destination.label,

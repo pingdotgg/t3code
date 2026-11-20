@@ -426,6 +426,8 @@ it("keeps a stopped recording local while disconnected and retries it on reconne
   mocks.connected.delete("env-a");
   mocks.prepared.delete("env-a");
   await screen.rerender(<Probe />);
+  // The editor keeps its stop and cancel controls while the destination is down.
+  expect(mocks.voice.available).toBe(true);
   await act(() => mocks.voice.stop());
   expect(mocks.transcribeCalls).toEqual([]);
   expect(mocks.voice.state).toMatchObject({ phase: "error", errorAction: "retry" });

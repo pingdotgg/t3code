@@ -133,17 +133,23 @@ export function createBrowserVoiceInputPlatform(input: {
           message: m(msg("Voice transcription failed. Check the destination in Settings → Voice.")),
         });
     }
-    return {
-      locale,
-      transcribe: transcribeRecording,
-      streaming: openSpeechStream({
-        url,
-        canSend: input.hasAudioConsent,
-        options: recordingOptions,
-        signal: options.signal,
-        onText: input.onText,
-        onError: (error) => input.onError(error.message),
-      }),
-    };
+    const transcription: {
+      readonly locale: string;
+      readonly transcribe: typeof transcribeRecording;
+      streaming?: ReturnType<typeof openSpeechStream>;
+    } = { locale, transcribe: transcribeRecording };
+    transcription.streaming = openSpeechStream({
+      url,
+      canSend: input.hasAudioConsent,
+      options: recordingOptions,
+      signal: options.signal,
+      onText: input.onText,
+      onError: (error) => {
+        // A dropped stream keeps recording; the controller then uploads the local recording.
+        if (input.hasAudioConsent()) delete transcription.streaming;
+        else input.onError(error.message);
+      },
+    });
+    return transcription;
   });
 }
