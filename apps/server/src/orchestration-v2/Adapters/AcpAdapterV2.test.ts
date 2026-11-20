@@ -2808,15 +2808,20 @@ describe("AcpAdapterV2", () => {
 
   it.live.each([
     { active: "plan", target: "compact", allowed: true },
+    // regression: #39880 omp advertises a loaded session's commands ~50 ms after session/load.
+    { active: "plan", target: "compact", allowed: true, loadedCommandsDelayMs: 50 },
     { active: "compact", target: "plan", allowed: false },
     { active: "compact", target: undefined, allowed: false },
   ])(
     "validates the target session's compact command ($active -> $target)",
-    ({ active, target, allowed }) =>
+    ({ active, target, allowed, loadedCommandsDelayMs }) =>
       Effect.gen(function* () {
         const harness = yield* makeAdvertisedCompactionHarness({
           T3_ACP_AVAILABLE_COMMANDS: active,
           ...(target === undefined ? {} : { T3_ACP_LOADED_COMMANDS: target }),
+          ...(loadedCommandsDelayMs === undefined
+            ? {}
+            : { T3_ACP_LOADED_COMMANDS_DELAY_MS: String(loadedCommandsDelayMs) }),
         });
         const result = yield* harness.compact(true);
         assert.equal(Exit.isSuccess(result), allowed);
