@@ -70,8 +70,8 @@ but never skips an approval. **Jev (TypeSafe)** answers once you paste an API
 key from the TypeSafe console; **Custom** takes an OpenAI-compatible or System
 One endpoint of your own. That endpoint sees the task's goal, control labels
 and up to 1,500 characters of visible text, so write a goal you are fine
-sending to it. The text a task types is never sent to it, and a goal that
-contains that text is refused.
+sending to it. The text a task types is never sent to it: a goal refers to it
+as `{text}`, which the endpoint reads as a marker.
 
 The decision endpoint and its key are shared: set it on one device and every
 connected environment uses it. The latest save wins, and clearing it on one

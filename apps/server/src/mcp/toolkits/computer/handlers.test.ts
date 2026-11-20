@@ -387,6 +387,22 @@ describe("computer toolkit", () => {
         expect(Object.keys(properties ?? {})).not.toContain("approvalId");
         expect(Object.keys(properties ?? {})).not.toContain("approve");
       }
+      // Descriptions on refined ids and trimmed strings must reach the schema the model reads.
+      const described = (name: string) => {
+        const schema = server.tools.find((entry) => entry.tool.name === name)?.tool.inputSchema as
+          | { properties?: Record<string, { description?: string }> }
+          | undefined;
+        const properties = schema?.properties;
+        return Object.fromEntries(
+          Object.entries(properties ?? {}).map(([key, value]) => [
+            key,
+            value.description !== undefined,
+          ]),
+        );
+      };
+      expect(described("computer_use")).toMatchObject({ goal: true, hostId: true, taskId: true });
+      expect(described("computer_status")).toMatchObject({ hostId: true });
+      expect(described("computer_act")).toMatchObject({ hostId: true });
     }).pipe(Effect.scoped, Effect.provide(layerTest())),
   );
 

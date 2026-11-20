@@ -57,17 +57,19 @@ steered by it, so no model's verdict grants a step: a click the deterministic
 policy cannot show is safe always becomes a tap. No accessibility role clears a
 click on an untrusted surface, since a `tab`, `row` or `textbox` can still send. The decision endpoint only
 chooses the next step, and the server sends it an allowlisted, capped state,
-never what the host put there beyond it. The goal goes with it, so a goal
-that contains the task's `text` is refused. Only that `text` is ever typed
-(without one, only the exact address the helper's navigation parser reads
-from the goal). It is kept out of the decision endpoint, read-only snapshots,
-logs, errors and the audit file. A field value the helper echoes
-(`containing “…”`) is dropped when it holds the text, and text of three
-characters or more is replaced wherever else it appears. Shorter text cannot
-be told apart from ordinary words: labels keep it, so a "No" button stays
-visible, and screen text that holds it is left out whole. A read-only client's
-approval is redacted when the approval is made, so it stays redacted after its
-task is gone.
+never what the host put there beyond it. The goal goes with it as the agent's
+words: it refers to the task's `text` as `{text}`, which everyone but the helper
+reads as a marker. Quoted labels in it are never matched against the text, so a
+task typing "OK" can still click the "OK" button. Only that `text` is ever typed
+(without one, only the exact address the helper's navigation parser reads from
+the goal). It is kept out of the decision endpoint, read-only snapshots, logs,
+errors and the audit file. A field value the helper echoes (`containing “…”`) is
+dropped when it holds the text, and text of three characters or more is
+replaced wherever else it appears. Shorter text cannot be told apart from
+ordinary words, so it never changes a label, and screen text is kept whole until
+a `type` step is granted; after that, a screen region that holds it is left out.
+A read-only client's approval is redacted when the approval is made, so it stays
+redacted after its task is gone.
 
 A host is bound to the authenticated session that connected it. Host calls
 from any other session are refused, and only that session's reconnect

@@ -114,6 +114,8 @@ type PendingDecision = {
   readonly questions: ComputerQuestions;
   /** The questions as the planner reads them: the typed text hidden, keys that held it renamed. */
   readonly shown: AliasedQuestions;
+  /** `shown` within the snapshot's budget, as the agent's tools read it. */
+  readonly view: ComputerQuestions;
   readonly wake: Deferred.Deferred<ComputerAnswers, ComputerError>;
 };
 
@@ -151,6 +153,8 @@ type Task = {
   readonly waitingSinceMs: number | null;
   /** A decision or an authorization is being answered: a task takes one step at a time. */
   readonly stepInFlight: boolean;
+  /** A `type` step was granted, so the screen can now echo the typed text. */
+  readonly typed: boolean;
   /** Its start or control was sent: its host stays reserved until the host answers or goes away. */
   readonly onHost: boolean;
 };
@@ -247,49 +251,60 @@ const hostView = (host: Host): ComputerHostView => ({
   connectedAt: DateTime.makeUnsafe(host.connectedAtMs),
 });
 
+/** The helper's keys for clicking a listed control; every other choice is one of its built-in moves. */
+const CONTROL_CHOICE = /^c\d+$/;
+
 /**
- * The questions as a snapshot carries them: at most `MAX_VIEW_QUESTIONS`, every string capped, and choices kept
- * in order while the whole decision fits in `MAX_VIEW_DECISION_BYTES`.
+ * The questions as a snapshot carries them, within `MAX_VIEW_DECISION_BYTES` of JSON: at most
+ * `MAX_VIEW_QUESTIONS`, every string capped. Each question and its built-in moves are placed first, so a long
+ * list of controls can never crowd out the move the planner needs; controls fill what is left, in order.
  */
-function boundedQuestions(questions: ComputerQuestions): ComputerQuestions {
-  let left = MAX_VIEW_DECISION_BYTES;
-  const take = (value: string, max: number) => {
-    const capped = capBytes(value, max);
-    left -= utf8Bytes(capped);
-    return capped;
-  };
+function boundedQuestions(aliased: AliasedQuestions): ComputerQuestions {
+  const asked = Object.entries(aliased.questions).slice(0, MAX_VIEW_QUESTIONS);
   const bounded: Record<string, ComputerQuestion> = {};
-  for (const [id, question] of Object.entries(questions).slice(0, MAX_VIEW_QUESTIONS)) {
-    const key = take(id, MAX_VIEW_KEY_BYTES);
-    const instructions = take(question.instructions, MAX_VIEW_INSTRUCTIONS_BYTES);
-    if (question.type === "noul") {
-      bounded[key] = { type: "noul", instructions };
-      continue;
+  for (const [id, question] of asked) {
+    const instructions = capBytes(question.instructions, MAX_VIEW_INSTRUCTIONS_BYTES);
+    bounded[id] =
+      question.type === "noul"
+        ? { type: "noul", instructions }
+        : { type: "choice", instructions, criteria: {} };
+  }
+  let size = utf8Bytes(JSON.stringify(bounded));
+  for (const builtIn of [true, false]) {
+    for (const [id, question] of asked) {
+      const into = bounded[id];
+      if (question.type !== "choice" || into?.type !== "choice") continue;
+      const criteria = into.criteria as Record<string, string>;
+      for (const [choice, line] of Object.entries(question.criteria)) {
+        const original = aliased.choices.get(id)?.get(choice) ?? choice;
+        if (CONTROL_CHOICE.test(original) === builtIn) continue;
+        const shown = capBytes(line, MAX_STEP_BYTES);
+        // `"key":"line",` as JSON writes it.
+        const cost = utf8Bytes(JSON.stringify(choice)) + utf8Bytes(JSON.stringify(shown)) + 2;
+        if (size + cost > MAX_VIEW_DECISION_BYTES) break;
+        criteria[choice] = shown;
+        size += cost;
+      }
     }
-    const criteria: Record<string, string> = {};
-    for (const [choice, line] of Object.entries(question.criteria)) {
-      if (left - MAX_VIEW_KEY_BYTES - MAX_STEP_BYTES < 0) break;
-      criteria[take(choice, MAX_VIEW_KEY_BYTES)] = take(line, MAX_STEP_BYTES);
-    }
-    bounded[key] = { type: "choice", instructions, criteria };
   }
   return bounded;
 }
 
 /**
  * Only the agent's tools read the planner's questions, so client snapshots leave them out. The typed text
- * is kept out of every field, whoever reads it; a goal never holds it.
+ * is kept out of every field, whoever reads it.
  */
 const taskView = (task: Task, withQuestions = true): ComputerTaskView => {
   const shown = (value: string, max = MAX_VIEW_FIELD_BYTES) =>
     capBytes(hideTyped(value, task.text), max);
-  const read = (value: string) => capBytes(hideEchoed(value, task.text), MAX_VIEW_FIELD_BYTES);
+  const read = (value: string) =>
+    capBytes(hideEchoed(value, task.text, task.typed), MAX_VIEW_FIELD_BYTES);
   return {
     taskId: task.id,
     kind: task.kind,
     hostId: task.hostId,
     hostName: task.hostName,
-    goal: capBytes(task.goal, MAX_VIEW_FIELD_BYTES),
+    goal: capBytes(shownGoal(task.goal, task.text), MAX_VIEW_FIELD_BYTES),
     status: task.status,
     reason: shown(task.reason),
     surface: read(task.surface),
@@ -303,7 +318,7 @@ const taskView = (task: Task, withQuestions = true): ComputerTaskView => {
       task.decision === null
         ? null
         : withQuestions
-          ? { id: task.decision.id, questions: boundedQuestions(task.decision.shown.questions) }
+          ? { id: task.decision.id, questions: task.decision.view }
           : { id: task.decision.id },
     approvalsMode: task.approvalsMode,
     ...(withQuestions && read(task.screenText) !== "" ? { screenText: read(task.screenText) } : {}),
@@ -350,19 +365,36 @@ function hideTyped(value: string, typed: string | null): string {
   return typed.length >= MIN_HIDDEN ? unechoed.split(typed).join(TYPED_TEXT) : unechoed;
 }
 
-/** Text read off the screen, which can echo what was typed: a field too short to clean is left out whole. */
-function hideEchoed(value: string, typed: string | null): string {
-  if (typed !== null && typed !== "" && typed.length < MIN_HIDDEN && holds(value, typed)) return "";
+/**
+ * Text read off the screen. Before the text is typed nothing there can echo it, so all of it is kept. After,
+ * text too short to tell apart is left out of any region that holds it.
+ */
+function hideEchoed(value: string, typed: string | null, alreadyTyped: boolean): string {
+  if (alreadyTyped && typed !== null && typed !== "" && typed.length < MIN_HIDDEN) {
+    if (holds(value, typed)) return "";
+  }
   return hideTyped(value, typed);
 }
 
-/** Whether a goal carries the typed text: as written for longer text, as a word of its own for shorter. */
-function goalCarries(goal: string, typed: string): boolean {
-  if (typed.length >= MIN_HIDDEN) return holds(goal, typed);
+/** How a goal refers to the task's `text` without writing it. */
+const TEXT_REFERENCE = "{text}";
+/** A goal's parts: the agent's words, a quoted control label, and references to the prepared text. */
+const GOAL_PARTS = /(\{text\}|“[^”]*”|"[^"]*")/;
+
+/**
+ * A goal as anyone but the helper reads it. A `{text}` reference reads as the typed-text marker, a quoted label
+ * is kept as written, and the agent's own words have the typed text replaced when it is long enough to tell
+ * apart. Nothing is matched against a label or against shorter text.
+ */
+function shownGoal(goal: string, typed: string | null): string {
   return goal
-    .toLowerCase()
-    .split(/[^\p{L}\p{N}]+/u)
-    .includes(typed.toLowerCase());
+    .split(GOAL_PARTS)
+    .map((part, index) => {
+      if (index % 2 === 0)
+        return typed !== null && typed.length >= MIN_HIDDEN ? hideTyped(part, typed) : part;
+      return part === TEXT_REFERENCE ? TYPED_TEXT : part;
+    })
+    .join("");
 }
 
 const utf8Bytes = (value: string) => new TextEncoder().encode(value).byteLength;
@@ -386,10 +418,15 @@ function aliasQuestions(questions: ComputerQuestions, typed: string | null): Ali
   const choices = new Map<string, Map<string, string>>();
   const shown: Record<string, ComputerQuestion> = {};
   let renamed = 0;
+  // A key is renamed when it is too long to show or names the typed text; the map decodes answers back.
   const alias = (key: string, taken: ReadonlySet<string>) => {
-    if (typed === null || typed === "" || !holds(key, typed)) return key;
-    let next = `hidden_${++renamed}`;
-    while (taken.has(next)) next = `hidden_${++renamed}`;
+    const names =
+      typed !== null &&
+      typed !== "" &&
+      (typed.length >= MIN_HIDDEN ? holds(key, typed) : key.toLowerCase() === typed.toLowerCase());
+    if (!names && utf8Bytes(key) <= MAX_VIEW_KEY_BYTES) return key;
+    let next = `key_${++renamed}`;
+    while (taken.has(next)) next = `key_${++renamed}`;
     return next;
   };
   const questionIds = new Set(Object.keys(questions));
@@ -446,12 +483,13 @@ function unaliasAnswers<A extends object>(
 function outboundState(state: unknown, task: Task) {
   const decided = Option.getOrUndefined(decodeDecideState(state));
   const text = (value: string, max: number) => hideTyped(value, task.text).slice(0, max);
-  const read = (value: string, max: number) => hideEchoed(value, task.text).slice(0, max);
+  const read = (value: string, max: number) =>
+    hideEchoed(value, task.text, task.typed).slice(0, max);
   const list = (values: ReadonlyArray<string> | undefined, keep: number) =>
     (values ?? []).slice(-keep).map((value) => text(value, MAX_STATE_FIELD));
   const screen = decided?.screen;
   return {
-    goal: task.goal,
+    goal: shownGoal(task.goal, task.text),
     ...(task.text === null
       ? {}
       : { hasTextToType: true, alreadyTyped: decided?.alreadyTyped === true }),
@@ -502,17 +540,20 @@ const waitEnded = (task: Task, nowMs: number): Task =>
 function readerBinding(
   binding: ComputerApprovalBinding,
   typed: string | null,
+  alreadyTyped: boolean,
 ): ComputerApprovalBinding {
   const { text: _text, ...action } = binding.action;
   const hidden = (field: "label" | "name" | "fieldLabel" | "why" | "url") => {
     const value = action[field];
     if (value === undefined) return {};
-    return { [field]: field === "url" ? hideEchoed(value, typed) : hideTyped(value, typed) };
+    return {
+      [field]: field === "url" ? hideEchoed(value, typed, alreadyTyped) : hideTyped(value, typed),
+    };
   };
   return {
     ...binding,
-    title: hideEchoed(binding.title, typed),
-    url: hideEchoed(binding.url, typed),
+    title: hideEchoed(binding.title, typed, alreadyTyped),
+    url: hideEchoed(binding.url, typed, alreadyTyped),
     why: hideTyped(binding.why, typed),
     action: {
       ...action,
@@ -1137,7 +1178,7 @@ const make = Effect.gen(function* () {
       kind: task.kind,
       hostId: task.hostId,
       hostName: task.hostName,
-      goal: task.goal,
+      goal: shownGoal(task.goal, task.text),
       textLength: task.text === null ? null : textDigest(task.text).len,
       textSha256: task.text === null ? null : textDigest(task.text).sha256,
       requester: task.requester,
@@ -1183,6 +1224,7 @@ const make = Effect.gen(function* () {
       ended: yield* Deferred.make<void>(),
       waitingSinceMs: null,
       stepInFlight: false,
+      typed: false,
       onHost: false,
     };
     const created = yield* mutate((state) => {
@@ -1237,7 +1279,7 @@ const make = Effect.gen(function* () {
   const waitForTap = Effect.fn("ComputerService.waitForTap")(
     function* (task: Task, binding: ComputerApprovalBinding) {
       const approval = yield* approvals
-        .create({ binding, readerBinding: readerBinding(binding, task.text) })
+        .create({ binding, readerBinding: readerBinding(binding, task.text, task.typed) })
         .pipe(
           Effect.mapError((cause) =>
             failure(
@@ -1470,10 +1512,10 @@ const make = Effect.gen(function* () {
       if (goal.length === 0 || goal.length > MAX_GOAL) {
         return yield* failure("refused", `A goal is required, and at most ${MAX_GOAL} characters.`);
       }
-      if (input.text !== undefined && input.text !== "" && goalCarries(goal, input.text)) {
+      if (goal.includes(TEXT_REFERENCE) && (input.text === undefined || input.text === "")) {
         return yield* failure(
           "refused",
-          "Keep the text to type out of the goal, which the decision endpoint reads; say what it is for instead.",
+          `The goal refers to ${TEXT_REFERENCE}, but no text was given.`,
         );
       }
       return yield* begin({ ...input, goal });
@@ -1535,6 +1577,7 @@ const make = Effect.gen(function* () {
       const decisionId = `dec_${yield* random.uuidV4()}`;
       const wake = yield* Deferred.make<ComputerAnswers, ComputerError>();
       const startedAtMs = yield* Clock.currentTimeMillis;
+      const shown = aliasQuestions(questions, task.text);
       const registered = yield* mutate((state) => {
         if (taskIn(state, task.id)?.status !== "running") return [false, state] as const;
         return [
@@ -1544,7 +1587,8 @@ const make = Effect.gen(function* () {
             decision: {
               id: decisionId,
               questions,
-              shown: aliasQuestions(questions, task.text),
+              shown,
+              view: boundedQuestions(shown),
               wake,
             },
             waitingSinceMs: startedAtMs,
@@ -1763,13 +1807,16 @@ const make = Effect.gen(function* () {
     const nowMs = yield* Clock.currentTimeMillis;
     // The check and the grant's return have nothing awaited between them: a stop or deadline either
     // lands before the check and wins, or after the grant was handed off.
-    const verdict = yield* Ref.get(stateRef).pipe(
-      Effect.map((state) => {
-        const current = taskIn(state, task.id);
-        if (current === undefined || current.status !== "running") return "ended" as const;
-        return outOfTime(current, nowMs) ? ("late" as const) : ("granted" as const);
-      }),
-    );
+    const verdict = yield* Ref.modify(stateRef, (state) => {
+      const current = taskIn(state, task.id);
+      if (current === undefined || current.status !== "running") return ["ended" as const, state];
+      if (outOfTime(current, nowMs)) return ["late" as const, state];
+      if (input.action.kind !== "type" || current.typed) return ["granted" as const, state];
+      return [
+        "granted" as const,
+        patchTask(state, task.id, (running) => ({ ...running, typed: true })),
+      ];
+    });
     if (verdict === "ended") return yield* endedGrant(task.id);
     if (verdict === "late") return yield* deny(task.id, TOO_LONG);
     yield* record("grant", {
@@ -1806,7 +1853,7 @@ const make = Effect.gen(function* () {
       url: capBytes(input.observation.url ?? "", MAX_BINDING_URL_BYTES),
       action: input.action,
       why: decision.why,
-      goal: task.goal,
+      goal: shownGoal(task.goal, task.text),
       requester: task.requester,
     };
     // The real pointer is the person's to lend, whatever the approvals setting.

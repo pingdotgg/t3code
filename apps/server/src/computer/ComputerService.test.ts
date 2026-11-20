@@ -1350,91 +1350,118 @@ it.effect("a standalone helper that never answers a control is stopped and start
   );
 });
 
+const answerTyped = ComputerDecider.ComputerDecider.of({
+  ask: (input) =>
+    Effect.sync(() => {
+      const [id, question] = Object.entries(input.questions)[0] ?? [];
+      const choice =
+        question?.type === "choice"
+          ? Object.entries(question.criteria).find(([, line]) => line.includes("[typed text]"))?.[0]
+          : undefined;
+      return {
+        _tag: "answers",
+        answers:
+          id === undefined || choice === undefined
+            ? {}
+            : { [id]: { type: "choice", choice, probability: 0.9 } },
+      } as const;
+    }),
+});
+
+const asking = (
+  sent: Array<{ readonly state: unknown; readonly questions: unknown }>,
+): ComputerDecider.ComputerDecider["Service"] => ({
+  ask: (input) => {
+    sent.push(input);
+    return answerTyped.ask(input);
+  },
+});
+
+const sentGoal = (sent: { readonly state: unknown }) => (sent.state as { goal: string }).goal;
+
+it.effect("a goal refers to its text, and a label that matches the text is kept", () => {
+  const sent: Array<{ readonly state: unknown; readonly questions: unknown }> = [];
+  return Effect.gen(function* () {
+    const service = yield* ComputerService.ComputerService;
+    const host = yield* startHost();
+    const next = { next: { type: "noul" as const, instructions: "Done?" } };
+
+    const ok = yield* startUse({
+      goal: "click the existing “OK” button, then type {text} into Reply",
+      text: "OK",
+    });
+    yield* host.decide({ taskId: ok.taskId, questions: next });
+    const shown = "click the existing “OK” button, then type [typed text] into Reply";
+    assert.strictEqual(sentGoal(sent[0]!), shown);
+    assert.strictEqual((yield* taskOf(ok.taskId))?.goal, shown);
+    yield* service.stop({ by: "web" });
+
+    assert.strictEqual(
+      (yield* service.startUse({ goal: "send {text}", requester: "agent: test" }).pipe(Effect.flip))
+        .reason,
+      "refused",
+    );
+
+    // Long text the agent wrote out anyway is still kept out of its own words.
+    const long = yield* startUse({ goal: "tell Dana on my way", text: "on my way" });
+    const answers = yield* host.decide({
+      taskId: long.taskId,
+      questions: {
+        "type on my way": {
+          type: "choice",
+          instructions: "What next?",
+          criteria: { "on my way": "Type on my way", stuck: "None" },
+        },
+      },
+    });
+    assert.notInclude(JSON.stringify(sent[1]), "on my way");
+    assert.strictEqual(sentGoal(sent[1]!), "tell Dana [typed text]");
+    assert.deepStrictEqual(answers, {
+      "type on my way": { type: "choice", choice: "on my way", probability: 0.9 },
+    });
+  }).pipe(Effect.provide(layerTest({ decider: asking(sent) })));
+});
+
 it.effect(
-  "the typed text stays out of goals and echoed values, and never hides a label or reaches a reader",
+  "short typed text keeps the screen until it is typed, then leaves out what can echo it",
   () => {
     const sent: Array<{ readonly state: unknown; readonly questions: unknown }> = [];
     return Effect.gen(function* () {
-      const service = yield* ComputerService.ComputerService;
       const host = yield* startHost();
-      for (const [goal, text] of [
-        ["tell Dana on my way", "on my way"],
-        ["answer Dana with OK", "ok"],
-      ] as const) {
-        assert.strictEqual(
-          (yield* startUse({ goal, text }).pipe(Effect.flip)).reason,
-          "refused",
-          goal,
-        );
-      }
-
-      const short = yield* startUse({ goal: "answer Dana's question", text: "ok" });
-      yield* host.decide({
-        taskId: short.taskId,
-        state: { screen: { app: "Messages", title: "Dana", visibleText: "Me: draftok" } },
-        questions: {
-          next: {
-            type: "choice",
-            instructions: "What next?",
-            criteria: {
-              c0: "Click the button “OK”",
-              c1: "Click the textbox “Message” containing “draftok”",
+      const task = yield* startUse({ goal: "put {text} in the Search box", text: "a" });
+      const look = (visibleText: string) =>
+        host.decide({
+          taskId: task.taskId,
+          state: { screen: { app: "Billing", title: "Invoice", visibleText } },
+          questions: {
+            next: {
+              type: "choice",
+              instructions: "What next?",
+              criteria: { c0: "Click the textbox “Search” containing “a”", stuck: "None" },
             },
           },
-        },
-      });
-      const shortWire = sent[0] as {
-        state: { screen: { visibleText: string } };
-        questions: { next: { criteria: Record<string, string> } };
-      };
-      assert.deepStrictEqual(shortWire.questions.next.criteria, {
-        c0: "Click the button “OK”",
-        c1: "Click the textbox “Message”",
-      });
-      assert.strictEqual(shortWire.state.screen.visibleText, "");
-      yield* service.stop({ by: "web" });
+        });
+      const wire = (index: number) =>
+        sent[index] as {
+          state: { screen: { visibleText: string } };
+          questions: { next: { criteria: Record<string, string> } };
+        };
 
-      const long = yield* startUse();
-      const answers = yield* host.decide({
-        taskId: long.taskId,
-        questions: {
-          "type on my way": {
-            type: "choice",
-            instructions: "What next?",
-            criteria: { "on my way": "Type on my way", stuck: "None" },
-          },
-        },
-      });
-      assert.notInclude(JSON.stringify(sent[1]), "on my way");
-      assert.deepStrictEqual(answers, {
-        "type on my way": { type: "choice", choice: "on my way", probability: 0.9 },
-      });
-    }).pipe(
-      Effect.provide(
-        layerTest({
-          decider: ComputerDecider.ComputerDecider.of({
-            ask: (input) =>
-              Effect.sync(() => {
-                sent.push(input);
-                const [id, question] = Object.entries(input.questions)[0] ?? [];
-                const choice =
-                  question?.type === "choice"
-                    ? Object.entries(question.criteria).find(([, line]) =>
-                        line.includes("[typed text]"),
-                      )?.[0]
-                    : undefined;
-                return {
-                  _tag: "answers",
-                  answers:
-                    id === undefined || choice === undefined
-                      ? {}
-                      : { [id]: { type: "choice", choice, probability: 0.9 } },
-                } as const;
-              }),
-          }),
+      yield* look("Invoice 1042, balance $250.00");
+      assert.strictEqual(wire(0).state.screen.visibleText, "Invoice 1042, balance $250.00");
+      assert.strictEqual(wire(0).questions.next.criteria.c0, "Click the textbox “Search”");
+
+      assert.deepStrictEqual(
+        yield* host.authorize({
+          taskId: task.taskId,
+          step: 1,
+          action: { kind: "type", ref: "r1", role: "textbox", label: "Search", text: "a" },
         }),
-      ),
-    );
+        { ok: true, grant: "allow" },
+      );
+      yield* look("Results for a: Invoice 1042, balance $250.00");
+      assert.strictEqual(wire(1).state.screen.visibleText, "");
+    }).pipe(Effect.provide(layerTest({ decider: asking(sent) })));
   },
 );
 
@@ -1522,17 +1549,22 @@ it.effect("an unconfirmed stop removes its host before the audit line is written
   );
 });
 
-it.effect("a snapshot bounds a planner decision's questions", () =>
+it.effect("a snapshot bounds a planner decision's questions, keeping every built-in move", () =>
   Effect.gen(function* () {
     const service = yield* ComputerService.ComputerService;
     const host = yield* startHost();
     const task = yield* startUse();
-    const criteria = Object.fromEntries(
-      Array.from({ length: 300 }, (_, index) => [
-        `c${index}`,
-        `Click the button “${"x".repeat(900)}”`,
-      ]),
-    );
+    // The helper's 200 controls with long localized labels, then its built-in moves.
+    const criteria = {
+      ...Object.fromEntries(
+        Array.from({ length: 200 }, (_, index) => [
+          `c${index}`,
+          `Klicken Sie auf die Schaltfläche „${"Überweisung bestätigen ".repeat(20)}“`,
+        ]),
+      ),
+      type_text: "Type the prepared text (not shown to you) into a text box.",
+      stuck: "None of these moves toward the goal.",
+    };
     const questions = Object.fromEntries(
       Array.from({ length: 10 }, (_, index) => [
         `q${index}`,
@@ -1544,8 +1576,47 @@ it.effect("a snapshot bounds a planner decision's questions", () =>
 
     const status = yield* service.status(null);
     const shown = status.tasks[0]?.pendingDecision?.questions ?? {};
-    assert.isAtMost(Object.keys(shown).length, 4);
+    assert.strictEqual(Object.keys(shown).length, 4);
+    for (const question of Object.values(shown)) {
+      assert.containsAllKeys(question.type === "choice" ? question.criteria : {}, [
+        "type_text",
+        "stuck",
+      ]);
+    }
+    assert.isAtMost(new TextEncoder().encode(JSON.stringify(shown)).byteLength, 64_000);
     assert.isAtMost(new TextEncoder().encode(JSON.stringify(status)).byteLength, 256_000);
+  }).pipe(Effect.provide(layerTest())),
+);
+
+it.effect("an answer naming a long key's shown alias reaches the host under its own key", () =>
+  Effect.gen(function* () {
+    const service = yield* ComputerService.ComputerService;
+    const host = yield* startHost();
+    const task = yield* startUse();
+    const long = `move_${"x".repeat(100)}`;
+    const decided = yield* host
+      .decide({
+        taskId: task.taskId,
+        questions: {
+          next: { type: "choice", instructions: "What next?", criteria: { [long]: "Move on" } },
+        },
+      })
+      .pipe(Effect.forkScoped);
+    const decision = yield* waitForDecision(task.taskId);
+    const pending = (yield* service.status(null)).tasks[0]?.pendingDecision;
+    const next = pending?.questions?.next;
+    const [shownKey] = next?.type === "choice" ? Object.keys(next.criteria) : [];
+    assert.isAtMost(new TextEncoder().encode(shownKey ?? "").byteLength, 64);
+
+    yield* service.answerDecision({
+      taskId: task.taskId,
+      decisionId: decision.id,
+      answers: { next: { choice: shownKey ?? "", confidence: "high" } },
+      answeredBy: "agent: test",
+    });
+    assert.deepStrictEqual(yield* Fiber.join(decided), {
+      next: { type: "choice", choice: long, probability: 0.9 },
+    });
   }).pipe(Effect.provide(layerTest())),
 );
 
