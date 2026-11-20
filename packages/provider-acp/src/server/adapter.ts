@@ -9553,15 +9553,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   detail: `Provider turn ${turnInput.providerTurnId} is not active and cannot be steered.`,
                 });
               }
-              // `agy acp` rejects a prompt while the running one waits on a question or approval,
-              // so the message waits as a follow-up until the user answers.
-              if ((yield* Ref.get(pendingRuntimeRequests)).size > 0) {
-                return yield* new ProviderAdapter.ProviderAdapterSteerDeclinedError({
-                  driver,
-                  providerThreadId: turnInput.providerThread.id,
-                  providerTurnId: turnInput.providerTurnId,
-                });
-              }
               const generation = yield* Ref.get(runtimeCallbackGeneration);
               const checkPromptOutcome =
                 flavor.watchPromptOutcome === undefined
@@ -9572,6 +9563,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 generation,
                 Effect.gen(function* () {
                   if (context.finalized || context.interrupted) return false;
+                  // `agy acp` rejects a prompt while the running one waits on a question or
+                  // approval, so the message waits as a follow-up until the user answers. Checked
+                  // under the callback permit, which also guards registering those requests.
+                  if ((yield* Ref.get(pendingRuntimeRequests)).size > 0) {
+                    return yield* new ProviderAdapter.ProviderAdapterSteerDeclinedError({
+                      driver,
+                      providerThreadId: turnInput.providerThread.id,
+                      providerTurnId: turnInput.providerTurnId,
+                    });
+                  }
                   // The steer prompt carries the turn on, also past a prompt that already settled.
                   const released = context.foregroundIdle;
                   context.foregroundIdle = yield* Deferred.make<void>();
