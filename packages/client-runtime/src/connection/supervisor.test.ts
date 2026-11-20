@@ -2936,3 +2936,123 @@ describe("EnvironmentSupervisor routes", () => {
       }),
   );
 });
+
+describe("EnvironmentSupervisor background fibers", () => {
+  it.effect("hears the network return after its connectivity stream died", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const status = yield* SubscriptionRef.make<NetworkStatus>("offline");
+      const subscriptions = yield* Ref.make(0);
+      const dying = Connectivity.Connectivity.of({
+        status: SubscriptionRef.get(status),
+        changes: Stream.unwrap(
+          Ref.updateAndGet(subscriptions, (count) => count + 1).pipe(
+            Effect.map((count) =>
+              count === 1
+                ? Stream.die(new Error("platform connectivity stream died"))
+                : SubscriptionRef.changes(status),
+            ),
+          ),
+        ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(
+        Effect.provideService(Connectivity.Connectivity, dying),
+        Effect.provide(harness.dependencies),
+      );
+      yield* TestClock.adjust("10 minutes");
+      expect((yield* SubscriptionRef.get(supervisor.state)).phase).toBe("offline");
+
+      yield* SubscriptionRef.set(status, "online");
+      yield* TestClock.adjust("10 minutes");
+      expect((yield* SubscriptionRef.get(supervisor.state)).phase).toBe("connected");
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("replaces a stalled session on return to the app after its wakeup stream died", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ probe: () => Effect.never });
+      const returns = yield* SubscriptionRef.make(0);
+      const subscriptions = yield* Ref.make(0);
+      const dying = ConnectionWakeups.ConnectionWakeups.of({
+        changes: Stream.unwrap(
+          Ref.updateAndGet(subscriptions, (count) => count + 1).pipe(
+            Effect.map((count) =>
+              count === 1
+                ? Stream.die(new Error("platform wakeup stream died"))
+                : SubscriptionRef.changes(returns).pipe(
+                    Stream.drop(1),
+                    Stream.map(() => "application-active" as const),
+                  ),
+            ),
+          ),
+        ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(
+        Effect.provideService(ConnectionWakeups.ConnectionWakeups, dying),
+        Effect.provide(harness.dependencies),
+      );
+      yield* TestClock.adjust("10 minutes");
+      expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
+        phase: "connected",
+        generation: 1,
+      });
+
+      // The user returns to the app; the session's probe never answers.
+      yield* SubscriptionRef.update(returns, (count) => count + 1);
+      yield* TestClock.adjust("15 seconds");
+      yield* TestClock.adjust("15 seconds");
+      yield* TestClock.adjust("10 minutes");
+      expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
+        phase: "connected",
+        generation: 2,
+      });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("still moves to a better route after one route check crashed", () =>
+    Effect.gen(function* () {
+      const lanReachable = yield* Ref.make(false);
+      const preflights = yield* Ref.make(0);
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          route.target._tag === "BearerConnectionTarget"
+            ? Ref.get(lanReachable).pipe(
+                Effect.map((reachable) => (reachable ? "answered" : "silent")),
+              )
+            : Effect.succeed("unchecked"),
+        preflight: () =>
+          Ref.updateAndGet(preflights, (count) => count + 1).pipe(
+            Effect.flatMap((count) =>
+              count === 1
+                ? Effect.die(new Error("route check threw"))
+                : Ref.get(lanReachable).pipe(
+                    Effect.map((reachable) => (reachable ? "ready" : "silent")),
+                  ),
+            ),
+          ),
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 1,
+      );
+      yield* TestClock.adjust("60 seconds");
+      expect(yield* Ref.get(preflights)).toBeGreaterThanOrEqual(1);
+
+      yield* Ref.set(lanReachable, true);
+      for (let minute = 0; minute < 60; minute += 1) {
+        yield* TestClock.adjust("60 seconds");
+      }
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+        "BearerConnectionTarget",
+      );
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+});
