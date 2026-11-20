@@ -170,9 +170,11 @@ export function makeAssistantStreamingFilter(
       nextDueAt = value.dueAt;
   };
   return {
+    /** `release` delivers a paragraph-mode snapshot whole instead of holding any of it back. */
     filter(
       event: ProviderAdapter.ProviderAdapterV2Event,
       now: number,
+      release = false,
     ): ProviderAdapter.ProviderAdapterV2Event | null {
       if (
         event.type === "node.updated" &&
@@ -189,6 +191,11 @@ export function makeAssistantStreamingFilter(
       }
       if (mode === "turn") return null;
       const previous = tracks.get(key);
+      if (release) {
+        const scan = previous?.scan ?? EMPTY_SCAN;
+        track(key, { text: message.text, at: now, held: null, dueAt: now, scan });
+        return event;
+      }
       const delivered = previous?.text ?? "";
       const hold = (scan = previous?.scan ?? EMPTY_SCAN) => {
         track(key, {
@@ -217,14 +224,17 @@ export function makeAssistantStreamingFilter(
       return withText(event, ready);
     },
     nextIdleFlushAt: (): number | null => nextDueAt,
-    /** Returns the held snapshots due by `now` and counts them as delivered. */
-    takeIdleFlushes(now: number): ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event> {
+    /** Returns the held snapshots due by `now`, or all of them, and counts them as delivered. */
+    takeIdleFlushes(
+      now: number,
+      all = false,
+    ): ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event> {
       const due: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
       nextDueAt = null;
       for (const [key, current] of tracks) {
         const event = current.held;
         if (event === null) continue;
-        if (current.dueAt > now) {
+        if (!all && current.dueAt > now) {
           if (nextDueAt === null || current.dueAt < nextDueAt) nextDueAt = current.dueAt;
           continue;
         }

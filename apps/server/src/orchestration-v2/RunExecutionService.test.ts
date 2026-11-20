@@ -4619,6 +4619,10 @@ function runBackgroundItemScenario(
     readonly onFinalized?: (
       events: ReadonlyArray<OrchestrationV2DomainEvent>,
     ) => Effect.Effect<void>;
+    // Runs once the turn has started, while ingestion continues.
+    readonly onStarted?: (
+      runExecution: RunExecutionService.RunExecutionServiceV2Shape,
+    ) => Effect.Effect<void>;
   },
 ) {
   return Effect.gen(function* () {
@@ -4787,6 +4791,7 @@ function runBackgroundItemScenario(
           },
         },
       });
+      yield* options?.onStarted?.(runExecution) ?? Effect.void;
     }).pipe(Effect.provide(layerTest));
 
     // No timeout: tests advance the TestClock, which would fire it early.
@@ -4986,6 +4991,72 @@ it.effect.each([
       `message.updated:final:"First.\\n\\nWaiting on the build.\\n\\nRunning tests passed." in commit`,
       `turn_item.updated:final:"First.\\n\\nWaiting on the build.\\n\\nRunning tests passed." in commit`,
     ]);
+  }),
+);
+
+it.effect("delivers held text, and holds none back, while a message to the thread lands", () =>
+  Effect.gen(function* () {
+    const key = "held-text-before-steer";
+    const ids = backgroundScenarioIds(key);
+    const providerEvents = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+    const delivered = yield* Ref.make<ReadonlyArray<string>>([]);
+    const markerIngested = yield* Queue.unbounded<void>();
+    const marker = streamedMessageEvent({
+      id: `message:${key}:marker`,
+      threadId: ids.threadId,
+      runId: ids.runId,
+      role: "assistant",
+      text: "Marker",
+      streaming: false,
+    });
+    const assistantSnapshot = (suffix: string, text: string) =>
+      ({
+        type: "turn_item.updated",
+        driver,
+        turnItem: {
+          ...makeLinkedChildTurnItemFixture({ ids, driver, type: "assistant_message" }),
+          id: TurnItemId.make(`${ids.itemId}${suffix}`),
+          threadId: ids.threadId,
+          runId: ids.runId,
+          nodeId: ids.rootNodeId,
+          providerTurnId: ids.rootProviderTurnId,
+          text,
+          streaming: true,
+        },
+      }) as ProviderAdapter.ProviderAdapterV2Event;
+    // Held without a paragraph break, and the idle clock never moves.
+    const ingest = (suffix: string, text: string) =>
+      Queue.offerAll(providerEvents, [assistantSnapshot(suffix, text), marker]).pipe(
+        Effect.andThen(Queue.take(markerIngested)),
+      );
+    const scenario = yield* runBackgroundItemScenario(key, () => Stream.fromQueue(providerEvents), {
+      batched: true,
+      onIngest: (event) => {
+        if (event === marker) return Queue.offer(markerIngested, undefined).pipe(Effect.asVoid);
+        if (event.type !== "turn_item.updated" || event.turnItem.type !== "assistant_message")
+          return Effect.void;
+        const { text } = event.turnItem;
+        return Ref.update(delivered, (current) => [...current, text]);
+      },
+      onStarted: (runExecution) =>
+        Effect.gen(function* () {
+          yield* ingest("", "Bicycles began as");
+          assert.deepEqual(yield* Ref.get(delivered), []);
+          yield* runExecution.releaseHeldAssistantText(
+            ids.threadId,
+            Effect.gen(function* () {
+              assert.deepEqual(yield* Ref.get(delivered), ["Bicycles began as"]);
+              // A new item that arrives before the message commits is not hidden either.
+              yield* ingest(":second", "Then came");
+              assert.deepEqual(yield* Ref.get(delivered), ["Bicycles began as", "Then came"]);
+            }),
+          );
+          yield* ingest(":third", "Later on");
+          assert.deepEqual(yield* Ref.get(delivered), ["Bicycles began as", "Then came"]);
+          yield* Queue.offer(providerEvents, rootTerminalEvent(ids, "completed"));
+        }),
+    }).pipe(Effect.forkChild);
+    yield* Fiber.join(scenario);
   }),
 );
 

@@ -28,6 +28,7 @@ import {
 import * as Context from "effect/Context";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -685,6 +686,15 @@ export interface RunExecutionServiceV2Shape {
    * Pass the returned effect to `startRootRun`, which awaits it before prompting the provider.
    */
   readonly forkBaseline: (input: RunBaselineInput) => Effect.Effect<Effect.Effect<void>>;
+  /**
+   * Runs `effect` after committing the paragraph-mode text the thread's runs hold back, and keeps
+   * them from holding any more until it ends. Held text already has its timeline position, so a
+   * message stored meanwhile would otherwise see that text appear above it later.
+   */
+  readonly releaseHeldAssistantText: <A, E, R>(
+    threadId: ThreadId,
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E, R>;
 }
 
 export class RunExecutionServiceV2 extends Context.Service<
@@ -719,6 +729,8 @@ export const layer: Layer.Layer<
     const finalizationObserver = yield* RunFinalizationService.RunFinalizationObserver;
     const turnAnalytics = yield* ProviderUsageAnalytics.ProviderTurnAnalytics;
     const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+    const heldTextFlushes = new Map<ThreadId, Set<Effect.Effect<void>>>();
+    const heldTextReleases = new Map<ThreadId, number>();
 
     const writeFinalRunEvents = Effect.fn("RunExecutionService.writeFinalRunEvents")(
       function* (input: {
@@ -1070,6 +1082,27 @@ export const layer: Layer.Layer<
     });
 
     return RunExecutionServiceV2.of({
+      releaseHeldAssistantText: (threadId, effect) =>
+        Effect.acquireUseRelease(
+          // Ingestion steps that start after this deliver instead of holding; earlier ones finish
+          // before the flush, which is queued behind them.
+          Effect.sync(() =>
+            heldTextReleases.set(threadId, (heldTextReleases.get(threadId) ?? 0) + 1),
+          ),
+          () =>
+            Effect.gen(function* () {
+              for (const flush of heldTextFlushes.get(threadId) ?? []) yield* flush;
+            }).pipe(
+              Effect.withSpan("RunExecutionService.releaseHeldAssistantText"),
+              Effect.andThen(effect),
+            ),
+          () =>
+            Effect.sync(() => {
+              const count = (heldTextReleases.get(threadId) ?? 1) - 1;
+              if (count === 0) heldTextReleases.delete(threadId);
+              else heldTextReleases.set(threadId, count);
+            }),
+        ),
       forkBaseline: (input) =>
         captureRunBaseline(input).pipe(
           Effect.forkChild({ startImmediately: true }),
@@ -1813,6 +1846,22 @@ export const layer: Layer.Layer<
           readonly type: "idle_flush";
           readonly at: number;
         }>(1);
+        const heldTextFlushRequests = yield* Queue.unbounded<{
+          readonly type: "held_text_flush";
+          readonly done: Deferred.Deferred<void>;
+        }>();
+        const pendingHeldTextFlushes = new Set<Deferred.Deferred<void>>();
+        const flushHeldText = Effect.gen(function* () {
+          const done = yield* Deferred.make<void>();
+          if (idleFlushClosed) return;
+          pendingHeldTextFlushes.add(done);
+          yield* Queue.offer(heldTextFlushRequests, { type: "held_text_flush", done });
+          yield* Deferred.await(done);
+        });
+        const registerHeldTextFlush = Effect.sync(() => {
+          const flushes = heldTextFlushes.get(input.run.threadId) ?? new Set();
+          heldTextFlushes.set(input.run.threadId, flushes.add(flushHeldText));
+        });
         let idleFlushWake: { readonly at: number; readonly fiber: Fiber.Fiber<void> } | undefined;
         const scheduleIdleFlush = Effect.suspend(() => {
           const at = assistantStreaming.nextIdleFlushAt();
@@ -1836,12 +1885,17 @@ export const layer: Layer.Layer<
         });
         const closeIdleFlush = Effect.suspend(() => {
           idleFlushClosed = true;
+          for (const done of pendingHeldTextFlushes) Deferred.doneUnsafe(done, Effect.void);
+          pendingHeldTextFlushes.clear();
+          const flushes = heldTextFlushes.get(input.run.threadId);
+          flushes?.delete(flushHeldText);
+          if (flushes?.size === 0) heldTextFlushes.delete(input.run.threadId);
           const wake = idleFlushWake;
           idleFlushWake = undefined;
           return wake === undefined ? Effect.void : Fiber.interrupt(wake.fiber);
         });
         // Per-tick ingestion avoids adding a span for every idle wake.
-        const flushIdleAssistantText = Effect.fnUntraced(function* (wokeAt: number) {
+        const flushIdleAssistantText = Effect.fnUntraced(function* (wokeAt: number, all = false) {
           // A tick means its timer slept until `wokeAt`, but the wall clock can still read up
           // to a millisecond earlier; trusting it would keep the finished wake and never re-arm.
           const now = Math.max(DateTime.toEpochMillis(yield* DateTime.now), wokeAt);
@@ -1849,7 +1903,7 @@ export const layer: Layer.Layer<
           if (idleFlushWake !== undefined && idleFlushWake.at <= now) idleFlushWake = undefined;
           if (idleFlushClosed) return;
           const rootSettled = yield* Ref.get(rootRunFinalized);
-          for (const event of assistantStreaming.takeIdleFlushes(now)) {
+          for (const event of assistantStreaming.takeIdleFlushes(now, all)) {
             // Settling the root run closed its messages; only children may still stream.
             if (rootSettled && streamedThreadId(event) === input.run.threadId) continue;
             // The held text's child may have been handed to another run since it arrived.
@@ -1880,6 +1934,7 @@ export const layer: Layer.Layer<
           const deliveredEvent = assistantStreaming.filter(
             event,
             DateTime.toEpochMillis(yield* DateTime.now),
+            heldTextReleases.has(input.run.threadId),
           );
           const startedRootTurn =
             event.type === "provider_turn.updated" &&
@@ -1977,13 +2032,23 @@ export const layer: Layer.Layer<
           .consumeProviderEvents(
             eventSubscription.events.pipe(
               Stream.merge(Stream.fromQueue(idleFlushTicks), { haltStrategy: "left" }),
+              Stream.merge(Stream.fromQueue(heldTextFlushRequests), { haltStrategy: "left" }),
             ),
             (event) =>
               event.type === "idle_flush"
                 ? flushIdleAssistantText(event.at)
-                : Effect.gen(function* () {
-                    yield* ingestEvent(yield* routeEvent(event));
-                  }),
+                : event.type === "held_text_flush"
+                  ? flushIdleAssistantText(0, true).pipe(
+                      Effect.ensuring(
+                        Effect.sync(() => {
+                          pendingHeldTextFlushes.delete(event.done);
+                          Deferred.doneUnsafe(event.done, Effect.void);
+                        }),
+                      ),
+                    )
+                  : Effect.gen(function* () {
+                      yield* ingestEvent(yield* routeEvent(event));
+                    }),
             Effect.gen(function* () {
               if (yield* agentTurnsSettled) yield* endPreviewActivity;
               return yield* shouldStopProviderEventIngestion;
@@ -1992,6 +2057,7 @@ export const layer: Layer.Layer<
             { threadId: input.run.threadId, delegated: isDelegatedAppThread(input.appThread) },
           )
           .pipe(
+            (consume) => Effect.andThen(registerHeldTextFlush, consume),
             Effect.ensuring(closeIdleFlush),
             Effect.mapError((cause) => new RunExecutionIngestError({ runId: input.run.id, cause })),
             Effect.flatMap(() =>
