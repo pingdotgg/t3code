@@ -22,7 +22,7 @@ jobs:
   # open: if the diff cannot be resolved, everything runs.
   changes:
     name: Changes
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       typecheck: ${{ steps.detect.outputs.typecheck }}
@@ -64,8 +64,8 @@ jobs:
       contents: read
       id-token: write
     name: Lint
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -120,8 +120,8 @@ jobs:
     name: Build and Typecheck
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.build != 'false' || needs.changes.outputs.typecheck != 'false') }}
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -143,7 +143,7 @@ jobs:
           # Fetch only the indexes these main and universe packages need. The full set is ~42 MB,
           # which a slow mirror can stretch past the wait below.
           sudo sed -i -e 's|http://|https://|g' -e 's/^Components: .*/Components: main universe/' \
-            /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
+            /etc/apt/t3-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
           (
             set +e
             sudo apt-get update -o Acquire::Languages=none \
@@ -275,8 +275,8 @@ jobs:
     name: Test
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.test != 'false' }}
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -296,7 +296,7 @@ jobs:
           # Fetch only the indexes these main and universe packages need. The full set is ~42 MB,
           # which a slow mirror can stretch past the wait below.
           sudo sed -i -e 's|http://|https://|g' -e 's/^Components: .*/Components: main universe/' \
-            /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
+            /etc/apt/t3-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
           (
             set +e
             sudo apt-get update -o Acquire::Languages=none \
@@ -365,8 +365,8 @@ jobs:
     name: Test Web ${{ matrix.shard }}
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.test_web != 'false' }}
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -427,7 +427,7 @@ jobs:
       contents: read
       id-token: write
     name: Test Server ${{ matrix.shard }}
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     # Shards take 2-5 minutes. When the shared task cache throttles reads, each
     # failed fetch stalls vp for 15-90s, which pushed shards past 10 minutes.
     timeout-minutes: 20
@@ -557,8 +557,8 @@ jobs:
     name: Rust
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -591,8 +591,8 @@ jobs:
     name: Mobile Native Static Analysis
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.mobile_native != 'false' }}
-    runs-on: blacksmith-6vcpu-macos-27
-    timeout-minutes: 10
+    runs-on: macos-26
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -624,7 +624,7 @@ jobs:
     name: Release Smoke
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.release_smoke != 'false' }}
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -664,7 +664,7 @@ jobs:
         mobile_native_static_analysis,
         release_smoke,
       ]
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Require every job to pass

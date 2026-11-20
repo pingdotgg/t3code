@@ -3,9 +3,8 @@ run-name: ${{ github.event_name == 'workflow_dispatch' && format('Dev client {0}
 
 # Builds the simulator and emulator development client for a commit's native
 # fingerprint and shares it through the native-client cache, the one
-# `vp run mobile:install` reads on every machine. Android builds with Gradle,
-# ccache, and pnpm state on a sticky disk; iOS builds on a macOS runner, so no
-# machine needs Xcode or an EAS build for it.
+# `vp run mobile:install` reads on every machine. Android builds with Gradle
+# and ccache on Linux. iOS builds on macOS.
 #
 # - push to main: main's client is cached before anyone asks for it.
 # - workflow_dispatch: `mobile:install` starts this for the checkout's HEAD on a
@@ -61,7 +60,7 @@ jobs:
   android:
     name: Android ${{ matrix.abi }}
     if: github.repository == 'pingdotgg/t3code' && (github.event_name != 'workflow_dispatch' || inputs.platform == 'android')
-    runs-on: blacksmith-32vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -142,19 +141,22 @@ jobs:
 
       # Pull requests build cold: their code must not write Gradle or ccache state that
       # the runs holding the cache login restore.
-      - name: Mount build cache
+      - name: Cache Android build dependencies
         if: github.event_name != 'pull_request'
-        uses: useblacksmith/stickydisk@3f6be1451e3cad893b778bc93495c80452a5da26 # v1.7.2
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          key: ${{ github.repository }}-android-dev-client-${{ matrix.abi }}
-          path: ~/.cache/t3-android-dev-client
+          key: ${{ github.repository }}-android-dev-client-${{ matrix.abi }}-${{ hashFiles('pnpm-lock.yaml', 'apps/mobile/eas.json') }}
+          restore-keys: ${{ github.repository }}-android-dev-client-${{ matrix.abi }}-
+          path: |
+            ~/.cache/t3-android-dev-client/gradle/caches
+            ~/.cache/t3-android-dev-client/gradle/wrapper
+            ~/.cache/t3-android-dev-client/ccache
 
       - name: Configure Gradle and ccache
         run: |
           mkdir -p "$GRADLE_USER_HOME" "$CCACHE_DIR"
-          # No daemon: nothing should hold the sticky disk open when it is committed.
+          # Stop Gradle processes before saving the cache.
           printf 'org.gradle.caching=true\norg.gradle.daemon=false\n' > "$GRADLE_USER_HOME/gradle.properties"
-          sudo sed -i 's|http://|https://|g' /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
           sudo apt-get update -qq && sudo apt-get install -y -qq ccache
           ccache --zero-stats
 
@@ -219,7 +221,7 @@ jobs:
   ios:
     name: iOS simulator
     if: github.repository == 'pingdotgg/t3code' && (github.event_name != 'workflow_dispatch' || inputs.platform == 'ios')
-    runs-on: blacksmith-12vcpu-macos-27
+    runs-on: macos-26
     timeout-minutes: 60
     concurrency:
       group: mobile-dev-client-ios-${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.fingerprint || github.sha }}

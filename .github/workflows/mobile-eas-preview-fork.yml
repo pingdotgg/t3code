@@ -1,7 +1,7 @@
 name: Mobile EAS Preview (Fork)
 
 # EAS previews for fork PRs. This runs the PR's code with an Expo token: the
-# app config and plugins run on this runner; both clients build on Blacksmith
+# app config and plugins run on this runner; both clients build on GitHub-hosted runners
 # with preview signing credentials. The label is the maintainer's sign-off
 # that they reviewed that code, so it covers exactly the commit it was applied
 # to: this pins that commit and consumes the label before running anything. A
@@ -22,7 +22,7 @@ jobs:
     if: >-
       github.event.pull_request.head.repo.full_name != github.repository &&
       github.event.label.name == '🚀 Mobile Continuous Deployment'
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     concurrency:
       group: mobile-eas-preview-fork-${{ github.event.pull_request.number }}
       cancel-in-progress: true
@@ -220,14 +220,14 @@ jobs:
           group="$(eas update --auto --branch "pr-$PR" --platform android --environment preview --non-interactive --json | sed -n '/^\[/,$p' | jq -er '.[0].group')"
           echo "group=$group" >> "$GITHUB_OUTPUT"
 
-  # The reviewed commit's Android client, built cold: no sticky disk, because PR
+  # The reviewed commit's Android client, built cold: no shared build cache, because PR
   # code could leave Gradle or ccache state that trusted builds would restore, and
   # no build record tag, so nobody else is served an APK a fork's code built.
   android-build:
     name: Android preview client
     needs: preview
     if: needs.preview.outputs.build == 'true'
-    runs-on: blacksmith-32vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       contents: read
@@ -261,7 +261,7 @@ jobs:
       - name: Drop checkout credentials
         uses: ./.trusted/.github/actions/drop-checkout-credentials
 
-      # Cold: no sticky disk or EAS cache that trusted builds would restore.
+      # Cold: no shared build cache or EAS cache that trusted builds would restore.
       - name: Build
         uses: ./.trusted/.github/actions/eas-local-build
         with:
@@ -291,7 +291,7 @@ jobs:
     name: iOS preview client
     needs: preview
     if: needs.preview.outputs.ios_build == 'true'
-    runs-on: blacksmith-12vcpu-macos-27
+    runs-on: macos-26
     timeout-minutes: 60
     permissions:
       contents: read
@@ -323,7 +323,7 @@ jobs:
       - name: Drop checkout credentials
         uses: ./.trusted/.github/actions/drop-checkout-credentials
 
-      # Cold: no sticky disk or EAS cache that trusted builds would restore.
+      # Cold: no shared build cache or EAS cache that trusted builds would restore.
       - name: Build
         uses: ./.trusted/.github/actions/eas-local-build
         with:
@@ -353,7 +353,7 @@ jobs:
     name: Mobile preview comment
     needs: [preview, android-build, ios-build]
     if: always() && !cancelled() && needs.preview.result == 'success'
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     concurrency:
       group: mobile-preview-comment-${{ github.event.pull_request.number }}
       cancel-in-progress: false

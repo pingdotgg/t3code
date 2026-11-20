@@ -91,7 +91,7 @@ it.layer(NodeServices.layer)("androidSdk", (it) => {
   );
 });
 
-it("finds a Blacksmith build by its run title and reads its state", () => {
+it("finds a GitHub Actions build by its run title and reads its state", () => {
   const fingerprint = "a".repeat(40);
   const title = buildRunTitle("android", "x86_64", fingerprint);
   assert.strictEqual(title, `Dev client android x86_64 ${fingerprint}`);

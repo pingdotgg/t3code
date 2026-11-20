@@ -7,8 +7,8 @@ name: Mobile EAS Production
 # runner, with corepack pinning pnpm 10.24 in eas.json, local == build.
 #
 # Every merge reconciles native fingerprints and publishes matching OTAs.
-# Store builds run here with `eas build --local` on Blacksmith (the android and
-# ios jobs). Local builds never appear in `eas build:list`, so each finished build
+# Store builds run here with `eas build --local` on GitHub-hosted runners (the Android and
+# iOS jobs). Local builds never appear in `eas build:list`, so each finished build
 # pushes a mobile-android-build/<version>/<fingerprint> or
 # mobile-ios-build/<profile>/<version>/<fingerprint> tag that the reconcile reads.
 # iOS prereleases use the testflight profile (3.0.0); App Store binaries use
@@ -73,7 +73,7 @@ jobs:
   production:
     name: EAS ${{ inputs.profile || 'production' }} ${{ github.event_name == 'push' && 'auto' || inputs.mode }}
     if: github.repository == 'pingdotgg/t3code'
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     # Serialize runs so OTAs publish in merge order. GitHub keeps at most one
     # queued job per group, so a burst of merges collapses into one run of the
     # newest commit — intermediate commits don't need their own OTA.
@@ -454,14 +454,14 @@ jobs:
           done
 
   # ARM-only, without release lint (see the production profile in eas.json),
-  # with Gradle, ccache, and pnpm state on a sticky disk. Its own concurrency
+  # with a Gradle and ccache archive. Its own concurrency
   # group keeps later OTAs from waiting on it.
   android:
     name: Android store build
     needs: production
     # Skipped when the production job failed: no store build after a failed OTA.
     if: needs.production.outputs.android_build == 'true'
-    runs-on: blacksmith-32vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     concurrency:
       group: mobile-android-store-build
@@ -545,13 +545,12 @@ jobs:
         run: |
           echo ":rocket: android: submitted and recorded \`$BUILD_TAG\`" >> "$GITHUB_STEP_SUMMARY"
 
-  # No sticky disk: it mounts ext4 and only works on Linux runners.
   ios:
     name: iOS store build
     needs: production
     # Skipped when the production job failed: no store build after a failed OTA.
     if: needs.production.outputs.ios_build == 'true'
-    runs-on: blacksmith-12vcpu-macos-27
+    runs-on: macos-26
     timeout-minutes: 60
     concurrency:
       group: mobile-ios-store-build
