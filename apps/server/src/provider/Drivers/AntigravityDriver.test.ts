@@ -16,7 +16,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient } from "effect/http";
 
@@ -93,6 +95,8 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       readonly newSessionErrorData?: unknown;
       readonly initialMode?: string;
       readonly agentVersion?: string;
+      /** Answers `acp --login` like agy: prints a Google link, then reads the pasted code. */
+      readonly codeLogin?: boolean;
     } = {},
   ) {
     const directory = path.join(root, name);
@@ -104,6 +108,11 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       executablePath,
       [
         "#!/bin/sh",
+        ...(options.codeLogin
+          ? [
+              `for arg in "$@"; do if [ "$arg" = --login ]; then printf '%s\\n' ${shellQuote("https://accounts.google.com/o/oauth2/auth?response_type=code&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&state=login-state")}; read -r code; exit 0; fi; done`,
+            ]
+          : []),
         ...(options.loginRequired
           ? [`printf '%s\\n' ${shellQuote(ANTIGRAVITY_AUTH_STDOUT_PREFIX + authorizationUrl)}`]
           : []),
@@ -701,6 +710,33 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         );
         expect(yield* fs.exists(directories.runtimeTemp)).toBe(false);
         expect(yield* fs.exists(legacyRoot)).toBe(false);
+      }),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "signs in to both Google methods through agy's code login without a display",
+    () =>
+      Effect.gen(function* () {
+        for (const authMethod of ["oauth-personal", "oauth-business"] as const) {
+          const h = yield* makeHarness({
+            config: { authMethod, gcpProject: "test-project", gcpLocation: "global" },
+          });
+          h.controls.selected = yield* h.makeExecutable(`runtime ${authMethod}`, {
+            codeLogin: true,
+          });
+          const auth = h.instance.auth;
+          if (!auth) return yield* Effect.die("Antigravity does not expose sign-in.");
+          yield* auth.start("owner");
+          const settled = yield* auth.subscribe("owner").pipe(
+            Stream.filter((state) => state.phase !== "idle" && state.phase !== "starting"),
+            Stream.runHead,
+            Effect.map(Option.getOrThrow),
+          );
+          expect({ authMethod, phase: settled.phase }).toEqual({ authMethod, phase: "waiting" });
+          expect(settled.authorizationUrl).toMatch(/^https:\/\/accounts\.google\.com\//);
+          expect(settled.interaction?.type).toBe("credentials");
+          expect(h.launches.some((launch) => launch.args.includes("--login"))).toBe(true);
+        }
       }),
   );
 });
