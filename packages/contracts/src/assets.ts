@@ -61,6 +61,7 @@ export const AssetResource = Schema.Union([
     threadId: ThreadId,
     jobId: BlenderJobId,
     output: BlenderJobOutput,
+    revision: Schema.optionalKey(NonNegativeInt),
   }),
   Schema.TaggedStruct("project-favicon", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),

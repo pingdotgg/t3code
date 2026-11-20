@@ -156,12 +156,13 @@ it("keeps earlier screenshot labels after deleting a stale pin and adding a live
 
 it("retries a failed model load and recovers when its source changes", async () => {
   const existingFetch = globalThis.fetch;
+  const replacement = Promise.withResolvers<Response>();
   const fetchModel = vi
     .fn<typeof fetch>()
     .mockResolvedValueOnce(new Response(null, { status: 503 }))
     .mockResolvedValueOnce(new Response(triangle))
     .mockResolvedValueOnce(new Response(null, { status: 503 }))
-    .mockResolvedValueOnce(new Response(triangle));
+    .mockImplementationOnce(() => replacement.promise);
   using _fetch = stubGlobal("fetch", (arg: RequestInfo | URL, init?: RequestInit) =>
     typeof arg === "string" && arg.startsWith("/test-model/")
       ? fetchModel(arg, init)
@@ -187,9 +188,18 @@ it("retries a failed model load and recovers when its source changes", async () 
   await expect.element(screen.getByRole("button", { name: "Fit" })).toBeEnabled();
   expect(fetchModel.mock.calls[1]?.[1]?.cache).toBe("reload");
 
+  await userEvent.click(screen.getByRole("button", { name: "Front" }));
+  await expect.element(screen.getByText("az 0° el 0°")).toBeVisible();
+  const oldCanvas = screen.getByRole("application").element().querySelector("canvas");
+  expect(oldCanvas?.isConnected).toBe(true);
   await screen.rerender(view("/test-model/unavailable.stl"));
   await expect.element(screen.getByRole("alert")).toBeVisible();
   await screen.rerender(view("/test-model/repaired.stl"));
+  await expect.element(screen.getByRole("button", { name: "Fit" })).toBeEnabled();
+  await expect.element(screen.getByText("az 0° el 0°")).toBeVisible();
+  replacement.resolve(new Response(triangle.replace("vertex 20 20 0", "vertex 40 20 0")));
+  await vi.waitFor(() => expect(oldCanvas?.isConnected).toBe(false));
+  await expect.element(screen.getByText("az 0° el 0°")).toBeVisible();
   await expect.element(screen.getByRole("button", { name: "Fit" })).toBeEnabled();
   expect(fetchModel.mock.calls.map(([url]) => url)).toEqual([
     "/test-model/initial.stl",

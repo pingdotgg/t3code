@@ -12239,5 +12239,15 @@
   "4a68afdfba5dd4b2": "Exécutable Blender",
   "ab39572afaba9197": "Détecter automatiquement",
   "d43d445743b6e85f": "blender 3d modèle rendu exporter glb version installation détecter",
-  "ab38a3e714c42e79": "blender chemin binaire exécutable remplacer emplacement installation"
+  "ab38a3e714c42e79": "blender chemin binaire exécutable remplacer emplacement installation",
+  "cf57df8a6f5171ad": "Désactiver les outils Blender",
+  "60490d61ec202db9": "Activer les outils Blender",
+  "965bbfc5895b0675": "Inspecter la scène",
+  "0e4296bb7c366333": "Exporter l’aperçu",
+  "38e796a9c0330613": "Effectuer le rendu",
+  "2a1419da20c2bb27": "En attente",
+  "7342bfc328008926": "En cours",
+  "e60b3936c5e2190b": "Aperçu indisponible",
+  "a77f12dbb9ce5e91": "Objets de la scène : {count}",
+  "0873072e89dcaad3": "Rendu Blender"
 }

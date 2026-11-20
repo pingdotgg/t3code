@@ -101,6 +101,7 @@ export function blockedAssetUrlState(
     (resource._tag !== "workspace-file" &&
       resource._tag !== "media-file" &&
       resource._tag !== "draft-workspace-file" &&
+      resource._tag !== "blender-output" &&
       !(resource._tag === "native-app-icon" && resource.app._tag === "app-path"))
   ) {
     return null;

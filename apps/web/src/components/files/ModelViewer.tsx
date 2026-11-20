@@ -120,16 +120,18 @@ export default function ModelViewer(props: {
   const pointerDown = useRef<{ x: number; y: number } | null>(null);
   const [sceneState, setSceneState] = useState<{
     readonly scene: ModelScene;
-    readonly signal: AbortSignal;
+    readonly controller: AbortController;
+    readonly memoryKey: string;
+    readonly viewRequestKey: string | null;
   } | null>(null);
-  const scene = sceneState?.scene ?? null;
+  const installed = useRef<typeof sceneState>(null);
+  const scene = sceneState?.memoryKey === props.memoryKey ? sceneState.scene : null;
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [notes, setNotes] = useState<ReadonlyArray<ModelNote>>([]);
   const captureRef = useRef<ModelPinCapture | null>(null);
   const earlierCaptureRef = useRef<ModelPinCapture | null>(null);
   const lastPinNumber = useRef(0);
-  const loadController = useRef<AbortController | null>(null);
   const [sending, setSending] = useState(false);
   const [annotating, setAnnotating] = useState(false);
   const [wireframe, setWireframe] = useState(false);
@@ -143,16 +145,39 @@ export default function ModelViewer(props: {
   const notesRef = useRef(notes);
   const draftRef = useRef(draft);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the WebGL scene: loads the file, restores remembered notes and camera, and disposes everything on unmount or retry
+  const closeScene = useEffectEvent(() => {
+    const current = installed.current;
+    if (!current) return;
+    installed.current = null;
+    current.controller.abort();
+    const { scene } = current;
+    useModelPreviewStore.getState().remember(current.memoryKey, {
+      fingerprint: scene.summary.fingerprint,
+      notes: notesRef.current,
+      view: scene.view,
+      wireframe: readWireframe(),
+      lastPinNumber: lastPinNumber.current,
+      capture: captureRef.current,
+      earlierCapture: earlierCaptureRef.current,
+    });
+    scene.dispose();
+  });
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases the installed WebGL scene when the viewer closes
+  useEffect(() => () => closeScene(), []);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads each asset revision and swaps WebGL scenes only after the newest load succeeds
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
     const controller = new AbortController();
-    loadController.current = controller;
-    let mounted: ModelScene | null = null;
     setError(null);
-    setDraft(null);
-    setSending(false);
+    if (installed.current && installed.current.memoryKey !== props.memoryKey) {
+      closeScene();
+      setSceneState(null);
+      setDraft(null);
+      setSending(false);
+    }
     loadModelScene({
       container,
       src: props.src,
@@ -165,7 +190,9 @@ export default function ModelViewer(props: {
           loaded.dispose();
           return;
         }
-        mounted = loaded;
+        closeScene();
+        setDraft(null);
+        setSending(false);
         const store = useModelPreviewStore.getState();
         const memory = store.memory[props.memoryKey];
         const restoredWireframe = memory?.wireframe ?? false;
@@ -192,7 +219,9 @@ export default function ModelViewer(props: {
           status: statusRef,
         };
         loaded.setFrameListener(() => placeOverlays(loaded, overlays));
-        setSceneState({ scene: loaded, signal: controller.signal });
+        const next = { scene: loaded, controller, memoryKey: props.memoryKey, viewRequestKey };
+        installed.current = next;
+        setSceneState(next);
       })
       .catch((cause: unknown) => {
         if (!controller.signal.aborted) {
@@ -200,25 +229,21 @@ export default function ModelViewer(props: {
         }
       });
     return () => {
-      controller.abort();
-      if (!mounted) return;
-      useModelPreviewStore.getState().remember(props.memoryKey, {
-        fingerprint: mounted.summary.fingerprint,
-        notes: notesRef.current,
-        view: mounted.view,
-        wireframe: readWireframe(),
-        lastPinNumber: lastPinNumber.current,
-        capture: captureRef.current,
-        earlierCapture: earlierCaptureRef.current,
-      });
-      mounted.dispose();
-      setSceneState(null);
+      if (installed.current?.controller !== controller) controller.abort();
     };
   }, [props.src, props.format, props.memoryKey, viewRequestKey, attempt]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves the WebGL camera when a clicked chat link asks for a saved view while this model is open
   useEffect(() => {
-    if (!sceneState || sceneState.signal.aborted || !viewRequest || viewRequestKey === null) return;
+    if (
+      !sceneState ||
+      sceneState.controller.signal.aborted ||
+      sceneState.viewRequestKey !== viewRequestKey ||
+      !viewRequest ||
+      viewRequestKey === null
+    ) {
+      return;
+    }
     sceneState.scene.setView(viewRequest);
     useModelPreviewStore.getState().consumeView(viewRequestKey);
   }, [sceneState, viewRequest, viewRequestKey]);
@@ -303,7 +328,7 @@ export default function ModelViewer(props: {
   };
 
   const sendToChat = async () => {
-    const signal = loadController.current?.signal;
+    const signal = sceneState?.controller.signal;
     if (!scene || !signal || signal.aborted || sending || notes.length === 0) return;
     const target = props.composerDraftTarget;
     if (!target) {
@@ -454,7 +479,11 @@ export default function ModelViewer(props: {
       >
         <div ref={containerRef} className="absolute inset-0 bg-background" />
         {error ? (
-          <div className="absolute inset-0 flex">
+          <div
+            className={
+              scene ? "absolute inset-x-0 bottom-0 flex bg-background/90" : "absolute inset-0 flex"
+            }
+          >
             <FileSurfaceFailure
               message={error}
               onRetry={() => {

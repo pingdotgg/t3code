@@ -108,6 +108,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.secretsAnswerRequest]: "secrets",
   [WS_METHODS.guestShareCreate]: "guest-share",
   [WS_METHODS.blenderGetStatus]: "blender",
+  [WS_METHODS.blenderGetWorkflow]: "blender",
+  [WS_METHODS.blenderSetWorkflow]: "blender",
   [WS_METHODS.blenderInspect]: "blender",
   [WS_METHODS.blenderStartJob]: "blender",
   [WS_METHODS.blenderGetJob]: "blender",

@@ -601,6 +601,8 @@ export const WS_METHODS = {
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
 
   blenderGetStatus: "blender.getStatus",
+  blenderGetWorkflow: "blender.getWorkflow",
+  blenderSetWorkflow: "blender.setWorkflow",
   blenderInspect: "blender.inspect",
   blenderStartJob: "blender.startJob",
   blenderGetJob: "blender.getJob",
@@ -1111,6 +1113,18 @@ const BlenderError = Schema.Union([
   ServerSettingsError,
   EnvironmentAuthorizationError,
 ]);
+
+const WsBlenderGetWorkflowRpc = Rpc.make(WS_METHODS.blenderGetWorkflow, {
+  payload: BlenderSubscribeJobsInput,
+  success: Schema.Boolean,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsBlenderSetWorkflowRpc = Rpc.make(WS_METHODS.blenderSetWorkflow, {
+  payload: Schema.Struct({ ...BlenderSubscribeJobsInput.fields, active: Schema.Boolean }),
+  success: Schema.Boolean,
+  error: BlenderError,
+});
 
 const WsBlenderInspectRpc = Rpc.make(WS_METHODS.blenderInspect, {
   payload: BlenderInspectInput,
@@ -2387,6 +2401,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRetryResourceTelemetryRpc,
   WsServerCheckOtlpEndpointRpc,
   WsBlenderGetStatusRpc,
+  WsBlenderGetWorkflowRpc,
+  WsBlenderSetWorkflowRpc,
   WsBlenderInspectRpc,
   WsBlenderStartJobRpc,
   WsBlenderGetJobRpc,

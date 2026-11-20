@@ -12248,5 +12248,15 @@
   "4a68afdfba5dd4b2": "Blender executable",
   "ab39572afaba9197": "Detect automatically",
   "d43d445743b6e85f": "blender 3d model render export glb version install detect",
-  "ab38a3e714c42e79": "blender path binary override location install"
+  "ab38a3e714c42e79": "blender path binary override location install",
+  "cf57df8a6f5171ad": "Disable Blender tools",
+  "60490d61ec202db9": "Enable Blender tools",
+  "965bbfc5895b0675": "Inspect scene",
+  "0e4296bb7c366333": "Export preview",
+  "38e796a9c0330613": "Render",
+  "2a1419da20c2bb27": "Queued",
+  "7342bfc328008926": "Running",
+  "e60b3936c5e2190b": "Preview unavailable",
+  "a77f12dbb9ce5e91": "Scene objects: {count}",
+  "0873072e89dcaad3": "Blender render"
 }

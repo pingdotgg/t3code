@@ -35,6 +35,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -57,6 +58,9 @@ const VERSION_LINE = /^Blender (\d+)\.(\d+)(?:\.(\d+))?/m;
 // The job script re-raises a failure, which `--python-exit-code` turns into this status.
 const SCRIPT_FAILURE_EXIT_CODE = 23;
 const GLB_MAGIC = "glTF";
+const PREVIEW_MARKER = /^T3_BLENDER_PREVIEW ([1-9]\d{0,2})\r?$/gm;
+const MAX_ACTIVE_JOBS = 24;
+const MAX_RETAINED_JOBS = 24;
 
 /**
  * The environment's Blender integration, for settings, clients and agents alike. Jobs belong to
@@ -82,9 +86,9 @@ export class Blender extends Context.Service<
     /** Waits for the job to finish, however it ends. */
     readonly awaitJob: (ref: BlenderJobRef) => Effect.Effect<BlenderJob, BlenderRequestError>;
     readonly streamThreadJobs: (threadId: ThreadId) => Stream.Stream<BlenderJobEvent>;
-    /** The retained file of a succeeded job's output, for minting its asset URL. */
+    /** A retained, complete job output, for minting its asset URL. */
     readonly outputFile: (
-      ref: BlenderJobRef & { readonly output: BlenderJobOutput },
+      ref: BlenderJobRef & { readonly output: BlenderJobOutput; readonly revision?: number },
     ) => Effect.Effect<string, BlenderRequestError>;
   }
 >()("t3/blender/Blender") {}
@@ -126,6 +130,7 @@ const DEFAULT_LIMITS: BlenderLimits = {
 const JobReport = Schema.Union([
   Schema.Struct({
     ok: Schema.Literal(true),
+    previewRevision: Schema.optionalKey(Schema.Number),
     scene: Schema.optionalKey(
       Schema.Struct({ objects: Schema.Array(BlenderSceneObject), objectCount: Schema.Number }),
     ),
@@ -245,10 +250,8 @@ interface JobPlan {
   readonly timeoutSeconds: number;
 }
 
-const OUTPUT_FILES: Record<BlenderJobOutput, string> = {
-  preview: "preview.glb",
-  render: "render.png",
-};
+const RENDER_FILE = "render.png";
+const previewFile = (revision: number) => `preview-${revision}.glb`;
 
 const make = Effect.fn("Blender.make")(function* (options: {
   readonly threads: BlenderThreads;
@@ -266,6 +269,7 @@ const make = Effect.fn("Blender.make")(function* (options: {
     // Probes start on client request, so concurrent reads share one Blender process at a time.
     const probeLock = yield* Semaphore.make(1);
     const jobSlots = yield* Semaphore.make(limits.runningJobs);
+    const staging = yield* Semaphore.make(1);
     const updates = yield* PubSub.unbounded<BlenderJob>();
     const jobs = new Map<BlenderJobId, JobEntry>();
     // Executables whose version a probe accepted, so jobs do not probe again.
@@ -496,8 +500,15 @@ const make = Effect.fn("Blender.make")(function* (options: {
       const finished = [...jobs.values()]
         .filter((entry) => entry.job.threadId === threadId && isBlenderJobTerminal(entry.job))
         .toSorted((a, b) => b.job.sequence - a.job.sequence);
-      for (const entry of finished.slice(limits.retainedJobsPerThread)) {
+      const oldest = [...jobs.values()]
+        .filter((entry) => isBlenderJobTerminal(entry.job))
+        .toSorted((a, b) => b.job.sequence - a.job.sequence)
+        .slice(MAX_RETAINED_JOBS);
+      for (const entry of new Set([...finished.slice(limits.retainedJobsPerThread), ...oldest])) {
         jobs.delete(entry.job.id);
+        if (![...jobs.values()].some((remaining) => remaining.target === entry.target)) {
+          currentPreview.delete(entry.target);
+        }
         yield* removeDir(entry.dir);
       }
     });
@@ -526,14 +537,56 @@ const make = Effect.fn("Blender.make")(function* (options: {
       const info = yield* fs.stat(file).pipe(Effect.option);
       if (Option.isNone(info) || info.value.type !== "File") return null;
       const bytes = Number(info.value.size);
-      if (output === "preview") {
-        const header = yield* fs.readFile(file).pipe(
-          Effect.map((data) => new TextDecoder().decode(data.subarray(0, 4))),
+      if (output === "preview" && bytes <= limits.outputBytes) {
+        const header = yield* fs.open(file).pipe(
+          Effect.flatMap((handle) => handle.readAlloc(4)),
+          Effect.scoped,
+          Effect.map((data) => Option.map(data, (bytes) => new TextDecoder().decode(bytes))),
+          Effect.map(Option.getOrElse(() => "")),
           Effect.orElseSucceed(() => ""),
         );
         if (header !== GLB_MAGIC) return null;
       }
       return bytes;
+    });
+
+    const publishPreview = Effect.fn("Blender.publishPreview")(function* (
+      entry: JobEntry,
+      revision: number,
+    ) {
+      if (!Number.isInteger(revision) || revision < 1 || revision > 256)
+        return "output-missing" as const;
+      const file = path.join(entry.dir, "out", previewFile(revision));
+      const bytes = yield* checkOutput("preview", file);
+      if (bytes === null) return "output-missing" as const;
+      if (bytes > limits.outputBytes) return "output-too-large" as const;
+      if (
+        entry.job.status !== "running" ||
+        revision <= (entry.job.result?.preview?.revision ?? 0)
+      ) {
+        return null;
+      }
+      const previousSequence = currentPreview.get(entry.target);
+      const current = previousSequence === undefined || previousSequence <= entry.job.sequence;
+      const previous =
+        current && previousSequence !== undefined && previousSequence !== entry.job.sequence
+          ? [...jobs.values()].find((other) => other.job.sequence === previousSequence)
+          : undefined;
+      if (current) currentPreview.set(entry.target, entry.job.sequence);
+      entry.job = {
+        ...entry.job,
+        result: { ...entry.job.result, preview: { bytes, current, revision } },
+      };
+      const previousPreview = previous?.job.result?.preview;
+      if (previous !== undefined && previousPreview?.current === true) {
+        previous.job = {
+          ...previous.job,
+          result: { ...previous.job.result, preview: { ...previousPreview, current: false } },
+        };
+        yield* PubSub.publish(updates, previous.job);
+      }
+      yield* PubSub.publish(updates, entry.job);
+      return null;
     });
 
     /** Links the edited scene into the workspace; a file created there meanwhile is never replaced. */
@@ -572,6 +625,12 @@ const make = Effect.fn("Blender.make")(function* (options: {
             yield* publishJob(entry, { status: "running", startedAt: yield* now });
             const work = path.join(entry.dir, "work");
             const out = path.join(entry.dir, "out");
+            const previews = yield* Queue.sliding<number>(1);
+            let tail = "";
+            const receivePreviews = Stream.fromQueue(previews).pipe(
+              Stream.runForEach((revision) => publishPreview(entry, revision)),
+              Effect.andThen(Effect.never),
+            );
             const output = yield* runner
               .run({
                 command: plan.executablePath,
@@ -585,8 +644,20 @@ const make = Effect.fn("Blender.make")(function* (options: {
                 timeoutBehavior: "timedOutResult",
                 maxOutputBytes: limits.logBytes,
                 outputMode: "truncate",
+                ...(entry.job.outputs.includes("preview")
+                  ? {
+                      onStdoutChunk: (chunk: Uint8Array) => {
+                        const text = tail + Buffer.from(chunk).toString("utf8");
+                        const end = text.lastIndexOf("\n") + 1;
+                        for (const match of text.slice(0, end).matchAll(PREVIEW_MARKER)) {
+                          Queue.offerUnsafe(previews, Number(match[1]));
+                        }
+                        tail = text.slice(end).slice(-32);
+                      },
+                    }
+                  : {}),
               })
-              .pipe(Effect.option);
+              .pipe(Effect.option, Effect.raceFirst(receivePreviews));
             if (Option.isNone(output))
               return yield* failJob(entry, "spawn-failed", "Blender did not start.");
             if (output.value.timedOut) {
@@ -601,24 +672,31 @@ const make = Effect.fn("Blender.make")(function* (options: {
                   : lastLines(output.value.stderr || output.value.stdout) || "Blender failed.";
               return yield* failJob(entry, "script-error", message, exitCode);
             }
-            const sizes: Partial<Record<BlenderJobOutput, number>> = {};
-            for (const kind of entry.job.outputs) {
-              const bytes = yield* checkOutput(kind, path.join(out, OUTPUT_FILES[kind]));
-              if (bytes === null) {
+            const { previewRevision } = report.value;
+            if (entry.job.outputs.includes("preview")) {
+              const failure =
+                previewRevision === undefined
+                  ? "output-missing"
+                  : yield* publishPreview(entry, previewRevision);
+              if (failure !== null || entry.job.result?.preview?.revision !== previewRevision) {
                 return yield* failJob(
                   entry,
-                  "output-missing",
-                  `No ${OUTPUT_FILES[kind]} was written.`,
+                  failure ?? "output-missing",
+                  failure === "output-too-large"
+                    ? "The exported GLB is too large."
+                    : "No complete GLB was produced.",
                 );
               }
-              if (bytes > limits.outputBytes) {
-                return yield* failJob(
-                  entry,
-                  "output-too-large",
-                  `${OUTPUT_FILES[kind]} is ${bytes} bytes.`,
-                );
+            }
+            let renderBytes: number | null = null;
+            if (entry.job.outputs.includes("render")) {
+              renderBytes = yield* checkOutput("render", path.join(out, RENDER_FILE));
+              if (renderBytes === null) {
+                return yield* failJob(entry, "output-missing", "No render PNG was produced.");
               }
-              sizes[kind] = bytes;
+              if (renderBytes > limits.outputBytes) {
+                return yield* failJob(entry, "output-too-large", "The rendered PNG is too large.");
+              }
             }
             // From here the job either succeeds or fails on its own; a cancel waits for that.
             yield* Effect.uninterruptible(
@@ -641,18 +719,12 @@ const make = Effect.fn("Blender.make")(function* (options: {
                     );
                   }
                 }
-                const previewIsCurrent =
-                  sizes.preview !== undefined &&
-                  (currentPreview.get(entry.target) ?? -1) < entry.job.sequence;
-                if (previewIsCurrent) currentPreview.set(entry.target, entry.job.sequence);
                 yield* publishJob(entry, {
                   status: "succeeded",
                   finishedAt: yield* now,
                   result: {
-                    ...(sizes.preview === undefined
-                      ? {}
-                      : { preview: { bytes: sizes.preview, current: previewIsCurrent } }),
-                    ...(sizes.render === undefined ? {} : { render: { bytes: sizes.render } }),
+                    ...entry.job.result,
+                    ...(renderBytes === null ? {} : { render: { bytes: renderBytes } }),
                     ...(entry.job.saveAs === undefined ? {} : { saved: entry.job.saveAs }),
                   },
                 });
@@ -661,14 +733,29 @@ const make = Effect.fn("Blender.make")(function* (options: {
           }),
         )
         .pipe(
-          // Only a succeeded job's outputs are kept; inputs and partial files never are. Waiters
-          // resume only here, once the process has exited and its files are settled.
+          // Waiters resume after the process exits and only complete outputs remain.
           Effect.ensuring(
             Effect.suspend(() =>
-              (entry.job.status === "succeeded"
-                ? removeDir(path.join(entry.dir, "work"))
-                : removeDir(entry.dir)
-              ).pipe(Effect.andThen(Deferred.succeed(entry.done, entry.job))),
+              Effect.gen(function* () {
+                const preview = entry.job.result?.preview;
+                if (entry.job.status !== "succeeded" && preview === undefined) {
+                  yield* removeDir(entry.dir);
+                } else {
+                  yield* removeDir(path.join(entry.dir, "work"));
+                  const out = path.join(entry.dir, "out");
+                  const files = yield* fs.readDirectory(out).pipe(Effect.orElseSucceed(() => []));
+                  for (const file of files) {
+                    if (
+                      (preview !== undefined && file === previewFile(preview.revision)) ||
+                      (entry.job.result?.render !== undefined && file === RENDER_FILE)
+                    ) {
+                      continue;
+                    }
+                    yield* removeDir(path.join(out, file));
+                  }
+                }
+                yield* Deferred.succeed(entry.done, entry.job);
+              }),
             ),
           ),
         );
@@ -684,10 +771,14 @@ const make = Effect.fn("Blender.make")(function* (options: {
       const script =
         input.script === undefined ? undefined : yield* workspaceFile(root, input.script, ".py");
       const saveAs = input.saveAs === undefined ? undefined : yield* saveTarget(root, input.saveAs);
-      const active = [...jobs.values()].filter(
-        (entry) => entry.job.threadId === input.threadId && !isBlenderJobTerminal(entry.job),
-      ).length;
-      if (active >= limits.activeJobsPerThread) return yield* requestError("too-many-jobs");
+      const active = [...jobs.values()].filter((entry) => !isBlenderJobTerminal(entry.job));
+      if (
+        active.length >= MAX_ACTIVE_JOBS ||
+        active.filter((entry) => entry.job.threadId === input.threadId).length >=
+          limits.activeJobsPerThread
+      ) {
+        return yield* requestError("too-many-jobs");
+      }
 
       const id = BlenderJobId.make(yield* random.uuidV4());
       const dir = path.join(jobsDir, id);
@@ -745,7 +836,7 @@ const make = Effect.fn("Blender.make")(function* (options: {
         // Started at once, so a cancel that interrupts it still runs its cleanup.
       ).pipe(Effect.forkIn(layerScope, { startImmediately: true }));
       return queued;
-    });
+    }, staging.withPermit);
 
     const findJob = Effect.fn("Blender.findJob")(function* (ref: BlenderJobRef) {
       const entry = jobs.get(ref.jobId);
@@ -776,7 +867,14 @@ const make = Effect.fn("Blender.make")(function* (options: {
         (entry) => cancelEntry(entry, "thread-stopped"),
         { concurrency: "unbounded", discard: true },
       );
-      if (stop.forget) yield* Effect.forEach(owned, (entry) => removeDir(entry.dir));
+      if (stop.forget) {
+        for (const entry of owned) {
+          if (![...jobs.values()].some((remaining) => remaining.target === entry.target)) {
+            currentPreview.delete(entry.target);
+          }
+          yield* removeDir(entry.dir);
+        }
+      }
     });
 
     yield* threads.stops.pipe(Stream.runForEach(cancelThread), Effect.forkIn(layerScope));
@@ -818,10 +916,18 @@ const make = Effect.fn("Blender.make")(function* (options: {
       streamThreadJobs,
       outputFile: Effect.fn("Blender.outputFile")(function* (ref) {
         const { job, dir } = yield* findJob(ref);
-        if (job.status !== "succeeded" || !job.outputs.includes(ref.output)) {
-          return yield* requestError("job-not-found");
+        if (ref.output === "preview") {
+          const preview = job.result?.preview;
+          if (
+            preview === undefined ||
+            (ref.revision !== undefined && ref.revision !== preview.revision)
+          ) {
+            return yield* requestError("job-not-found");
+          }
+          return path.join(dir, "out", previewFile(preview.revision));
         }
-        return path.join(dir, "out", OUTPUT_FILES[ref.output]);
+        if (job.result?.render === undefined) return yield* requestError("job-not-found");
+        return path.join(dir, "out", RENDER_FILE);
       }),
     });
   }

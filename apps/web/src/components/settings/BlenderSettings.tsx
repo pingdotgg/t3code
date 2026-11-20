@@ -103,12 +103,12 @@ function BlenderControls({
   const canChooseExecutable = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const canRead = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  const enabled = settings?.enabled ?? false;
   const status = useEnvironmentQuery(
-    environmentId === null || !canRead
+    environmentId === null || !canRead || !enabled
       ? null
       : serverEnvironment.blenderStatus({ environmentId, input: {} }),
   );
-  const enabled = settings?.enabled ?? false;
   const executablePath = settings?.executablePath ?? "";
   const save = (patch: { enabled?: boolean; executablePath?: string }) =>
     updateSettings({ blender: patch }, { onSaved: status.refresh });
@@ -127,7 +127,7 @@ function BlenderControls({
               <Button
                 size="sm"
                 variant="outline"
-                disabled={status.isPending || environmentId === null}
+                disabled={status.isPending || !canRead || environmentId === null}
                 onClick={status.refresh}
               >
                 {gt("Check again")}

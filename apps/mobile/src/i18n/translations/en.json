@@ -5371,5 +5371,22 @@
   "ad208e3e32c85029": "Hide all",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Tool calls in chat",
-  "8d545d54c0a9e950": "Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows only final answers. Approvals, questions, and errors always show."
+  "8d545d54c0a9e950": "Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows only final answers. Approvals, questions, and errors always show.",
+  "46dae7e064a17ca3": "Blender",
+  "b95264c546ace798": "Use Blender",
+  "041f72da36764c03": "Run the Blender installed on this environment.",
+  "4a68afdfba5dd4b2": "Blender executable",
+  "ab39572afaba9197": "Detect automatically",
+  "4de3af73ce6281b2": "Leave empty to find Blender on PATH or in standard install locations.",
+  "a1fa1a5615e2c36b": "This connection cannot choose which executable the environment runs.",
+  "af7f60f596cead9c": "No executable at the configured path.",
+  "c573d98d512b5a52": "Blender was not found on PATH or in standard install locations.",
+  "229ef6b0ebeeb9bd": "Blender {version} on PATH at {path}.",
+  "8166c72c08206f6e": "Blender {version} at {path}.",
+  "922a9295eb4f29b8": "Blender {version} at {path} is older than {minimum}, the oldest supported release.",
+  "86314f808f8629d5": "Blender at {path} could not start.",
+  "35f6a730990758c3": "Blender at {path} did not report its version in time.",
+  "319010572dd9291b": "Blender at {path} exited with code {code}.",
+  "df000210ad5bae41": "Blender at {path} did not print a version.",
+  "805fe7f0b74a8bb7": "Check again"
 }

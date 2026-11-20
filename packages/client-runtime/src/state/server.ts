@@ -6,6 +6,7 @@ import {
   thrownErrorMessage,
 } from "../errors/translatable.ts";
 import {
+  type BlenderJob,
   type EnvironmentId,
   type ProviderInstanceId,
   type ServerConfig,
@@ -1545,6 +1546,45 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverGetNpmRelease,
       staleTimeMs: 60_000,
       refreshIntervalMs: 5 * 60_000,
+    }),
+    blenderWorkflow: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:blender:workflow",
+      tag: WS_METHODS.blenderGetWorkflow,
+      idleTtlMs: 0,
+    }),
+    blenderSetWorkflow: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:blender:set-workflow",
+      tag: WS_METHODS.blenderSetWorkflow,
+    }),
+    blenderInspect: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:blender:inspect",
+      tag: WS_METHODS.blenderInspect,
+    }),
+    blenderStartJob: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:blender:start-job",
+      tag: WS_METHODS.blenderStartJob,
+    }),
+    blenderCancelJob: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:blender:cancel-job",
+      tag: WS_METHODS.blenderCancelJob,
+    }),
+    blenderJobs: createEnvironmentSubscriptionAtomFamily(runtime, {
+      label: "environment-data:blender:jobs",
+      idleTtlMs: 0,
+      subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.blenderSubscribeJobs>) =>
+        subscribe(WS_METHODS.blenderSubscribeJobs, input).pipe(
+          Stream.mapAccum(
+            (): ReadonlyArray<BlenderJob> => [],
+            (jobs, event) => {
+              const next =
+                event._tag === "Snapshot"
+                  ? event.jobs
+                  : [event.job, ...jobs.filter((job) => job.id !== event.job.id)];
+              const ordered = [...next].sort((a, b) => b.sequence - a.sequence).slice(0, 24);
+              return [ordered, [ordered]] as const;
+            },
+          ),
+        ),
     }),
     // Each read probes the destination's Blender, so it reruns only on mount or an explicit refresh.
     blenderStatus: createEnvironmentRpcQueryAtomFamily(runtime, {

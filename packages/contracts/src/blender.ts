@@ -134,11 +134,11 @@ export const BlenderJob = Schema.Struct({
   startedAt: Schema.optionalKey(Schema.Number),
   finishedAt: Schema.optionalKey(Schema.Number),
   status: Schema.Literals(["queued", "running", "succeeded", "failed", "cancelled"]),
-  /** Set once the job succeeds with the outputs it asked for. */
+  /** Finished outputs. A complete preview is available while the job is still running. */
   result: Schema.optionalKey(
     Schema.Struct({
       preview: Schema.optionalKey(
-        Schema.Struct({ bytes: NonNegativeInt, current: Schema.Boolean }),
+        Schema.Struct({ bytes: NonNegativeInt, current: Schema.Boolean, revision: NonNegativeInt }),
       ),
       render: Schema.optionalKey(Schema.Struct({ bytes: NonNegativeInt })),
       saved: Schema.optionalKey(Schema.String),

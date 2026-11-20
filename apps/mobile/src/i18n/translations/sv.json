@@ -5370,5 +5370,22 @@
   "ad208e3e32c85029": "Dölj alla",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Verktygsanrop i chatten",
-  "8d545d54c0a9e950": "Dölj kommandon, redigeringar och sökningar som agenter kör. Dölj lyckade behåller misslyckanden. Zen visar bara slutliga svar. Godkännanden, frågor och fel visas alltid."
+  "8d545d54c0a9e950": "Dölj kommandon, redigeringar och sökningar som agenter kör. Dölj lyckade behåller misslyckanden. Zen visar bara slutliga svar. Godkännanden, frågor och fel visas alltid.",
+  "46dae7e064a17ca3": "Blender",
+  "b95264c546ace798": "Använd Blender",
+  "041f72da36764c03": "Kör den Blender som är installerad i den här miljön.",
+  "4a68afdfba5dd4b2": "Blenders körbara fil",
+  "ab39572afaba9197": "Identifiera automatiskt",
+  "4de3af73ce6281b2": "Lämna tomt för att söka efter Blender i PATH och på vanliga installationsplatser.",
+  "a1fa1a5615e2c36b": "Den här anslutningen får inte välja vilken körbar fil miljön kör.",
+  "af7f60f596cead9c": "Det finns ingen körbar fil på den angivna sökvägen.",
+  "c573d98d512b5a52": "Blender hittades inte i PATH eller på vanliga installationsplatser.",
+  "229ef6b0ebeeb9bd": "Blender {version} i PATH på {path}.",
+  "8166c72c08206f6e": "Blender {version} på {path}.",
+  "922a9295eb4f29b8": "Blender {version} på {path} är äldre än {minimum}, den äldsta version som stöds.",
+  "86314f808f8629d5": "Blender på {path} kunde inte starta.",
+  "35f6a730990758c3": "Blender på {path} rapporterade inte sin version i tid.",
+  "319010572dd9291b": "Blender på {path} avslutades med kod {code}.",
+  "df000210ad5bae41": "Blender på {path} skrev inte ut någon version.",
+  "805fe7f0b74a8bb7": "Kontrollera igen"
 }

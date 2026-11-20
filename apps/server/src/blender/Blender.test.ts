@@ -13,6 +13,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -284,6 +285,7 @@ interface FakeJob {
   /** The scene file Blender was asked to open. */
   readonly scene: string | undefined;
   readonly cwd: string | undefined;
+  readonly onStdoutChunk: ((chunk: Uint8Array) => void) | undefined;
 }
 
 const exited = (code: number) => ({
@@ -302,7 +304,7 @@ const writeOutputs = Effect.fn(function* (job: FakeJob) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   if (job.spec.outputs?.includes("preview")) {
-    yield* fs.writeFileString(path.join(job.spec.outputDir, "preview.glb"), "glTF-binary");
+    yield* fs.writeFileString(path.join(job.spec.outputDir, "preview-1.glb"), "glTF-binary");
   }
   if (job.spec.outputs?.includes("render")) {
     yield* fs.writeFileString(path.join(job.spec.outputDir, "render.png"), "png");
@@ -313,7 +315,13 @@ const writeOutputs = Effect.fn(function* (job: FakeJob) {
 const succeed = Effect.fn(function* (job: FakeJob) {
   const fs = yield* FileSystem.FileSystem;
   yield* writeOutputs(job);
-  yield* fs.writeFileString(job.spec.resultPath, JSON.stringify({ ok: true }));
+  yield* fs.writeFileString(
+    job.spec.resultPath,
+    JSON.stringify({
+      ok: true,
+      ...(job.spec.outputs?.includes("preview") ? { previewRevision: 1 } : {}),
+    }),
+  );
   return exited(0);
 });
 
@@ -351,6 +359,7 @@ const startJobs = Effect.fn(function* (input: {
           spec,
           scene: run.args[sceneIndex] === "--python-exit-code" ? undefined : run.args[sceneIndex],
           cwd: run.cwd,
+          onStdoutChunk: run.onStdoutChunk,
         };
         jobs.push(job);
         return yield* (input.run ?? succeed)(job);
@@ -395,6 +404,65 @@ const gatedRun = Effect.fn(function* () {
 });
 
 describe("Blender jobs", () => {
+  it.effect("serves successive complete preview revisions while the owning job is running", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const ready = yield* Deferred.make<FakeJob>();
+      const finish = yield* Deferred.make<void>();
+      const { blender } = yield* startJobs({
+        run: (job) =>
+          Deferred.succeed(ready, job).pipe(
+            Effect.andThen(Deferred.await(finish)),
+            Effect.andThen(succeed(job)),
+            Effect.orDie,
+          ),
+      });
+      const run = yield* blender.startJob({
+        threadId: THREAD,
+        input: "models/chair.blend",
+        outputs: ["preview"],
+      });
+      const job = yield* Deferred.await(ready);
+      const ref = { threadId: THREAD, jobId: run.id, output: "preview" as const };
+      const notify = job.onStdoutChunk;
+      assert.isDefined(notify);
+      for (const revision of [1, 2]) {
+        const updated = yield* Effect.forkChild(
+          blender.streamThreadJobs(THREAD).pipe(
+            Stream.filter(
+              (event) =>
+                event._tag === "Updated" &&
+                event.job.id === run.id &&
+                event.job.result?.preview?.revision === revision,
+            ),
+            Stream.runHead,
+          ),
+          { startImmediately: true },
+        );
+        const bytes = `glTF-preview-${revision}`;
+        yield* fs.writeFileString(path.join(job.spec.outputDir, `preview-${revision}.glb`), bytes);
+        yield* Effect.sync(() => notify?.(Buffer.from(`T3_BLENDER_PREVIEW ${revision}\n`)));
+        const published = yield* Fiber.join(updated);
+        assert.deepStrictEqual(
+          Option.isSome(published) && published.value._tag === "Updated"
+            ? published.value.job.status
+            : null,
+          "running",
+        );
+        const file = yield* blender.outputFile({ ...ref, revision });
+        assert.strictEqual(yield* fs.readFileString(file), bytes);
+      }
+      const cancelled = yield* blender.cancelJob({ threadId: THREAD, jobId: run.id });
+      assert.strictEqual(cancelled.status, "cancelled");
+      assert.strictEqual(cancelled.result?.preview?.revision, 2);
+      assert.strictEqual(
+        yield* fs.exists(yield* blender.outputFile({ ...ref, revision: 2 })),
+        true,
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("edits a private copy, publishes its preview and saves the edit as a new file", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -412,7 +480,7 @@ describe("Blender jobs", () => {
 
       assert.strictEqual(job.status, "succeeded");
       assert.deepStrictEqual(job.result, {
-        preview: { bytes: 11, current: true },
+        preview: { bytes: 11, current: true, revision: 1 },
         saved: path.join("models", "chair-v2.blend"),
       });
       const [run] = jobs;

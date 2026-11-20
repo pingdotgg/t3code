@@ -12239,5 +12239,15 @@
   "4a68afdfba5dd4b2": "Blender-Programmdatei",
   "ab39572afaba9197": "Automatisch erkennen",
   "d43d445743b6e85f": "blender 3d modell rendern export glb version installation erkennen",
-  "ab38a3e714c42e79": "blender pfad programmdatei binärdatei überschreiben ort installation"
+  "ab38a3e714c42e79": "blender pfad programmdatei binärdatei überschreiben ort installation",
+  "cf57df8a6f5171ad": "Blender-Werkzeuge deaktivieren",
+  "60490d61ec202db9": "Blender-Werkzeuge aktivieren",
+  "965bbfc5895b0675": "Szene prüfen",
+  "0e4296bb7c366333": "Vorschau exportieren",
+  "38e796a9c0330613": "Rendern",
+  "2a1419da20c2bb27": "In der Warteschlange",
+  "7342bfc328008926": "Läuft",
+  "e60b3936c5e2190b": "Vorschau nicht verfügbar",
+  "a77f12dbb9ce5e91": "Szenenobjekte: {count}",
+  "0873072e89dcaad3": "Blender-Rendering"
 }

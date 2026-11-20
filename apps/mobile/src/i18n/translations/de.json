@@ -5370,5 +5370,22 @@
   "ad208e3e32c85029": "Alle ausblenden",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Tool-Aufrufe im Chat",
-  "8d545d54c0a9e950": "Die Befehle, Bearbeitungen und Suchen ausblenden, die Agenten ausführen. „Erfolgreiche ausblenden“ behält Fehler. „Zen“ zeigt nur endgültige Antworten. Genehmigungen, Fragen und Fehler werden immer angezeigt."
+  "8d545d54c0a9e950": "Die Befehle, Bearbeitungen und Suchen ausblenden, die Agenten ausführen. „Erfolgreiche ausblenden“ behält Fehler. „Zen“ zeigt nur endgültige Antworten. Genehmigungen, Fragen und Fehler werden immer angezeigt.",
+  "46dae7e064a17ca3": "Blender",
+  "b95264c546ace798": "Blender verwenden",
+  "041f72da36764c03": "Das in dieser Umgebung installierte Blender ausführen.",
+  "4a68afdfba5dd4b2": "Blender-Programmdatei",
+  "ab39572afaba9197": "Automatisch erkennen",
+  "4de3af73ce6281b2": "Leer lassen, um Blender im PATH oder an den üblichen Installationsorten zu suchen.",
+  "a1fa1a5615e2c36b": "Diese Verbindung darf nicht festlegen, welche ausführbare Datei die Umgebung startet.",
+  "af7f60f596cead9c": "Unter dem eingestellten Pfad gibt es keine ausführbare Datei.",
+  "c573d98d512b5a52": "Blender wurde weder im PATH noch an den üblichen Installationsorten gefunden.",
+  "229ef6b0ebeeb9bd": "Blender {version} im PATH unter {path}.",
+  "8166c72c08206f6e": "Blender {version} unter {path}.",
+  "922a9295eb4f29b8": "Blender {version} unter {path} ist älter als {minimum}, die älteste unterstützte Version.",
+  "86314f808f8629d5": "Blender unter {path} konnte nicht gestartet werden.",
+  "35f6a730990758c3": "Blender unter {path} hat seine Version nicht rechtzeitig gemeldet.",
+  "319010572dd9291b": "Blender unter {path} wurde mit Code {code} beendet.",
+  "df000210ad5bae41": "Blender unter {path} hat keine Version ausgegeben.",
+  "805fe7f0b74a8bb7": "Erneut prüfen"
 }

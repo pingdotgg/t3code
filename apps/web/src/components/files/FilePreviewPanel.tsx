@@ -94,6 +94,7 @@ import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
 import { AudioPreview } from "./AudioPreview";
+import { BlenderFilePreview } from "./BlenderFilePreview";
 import { BrowserDocumentFrame, isPdfPreviewFile } from "./BrowserDocumentFrame";
 import { DelimitedTablePreview } from "./DelimitedTablePreview";
 import { PreviewImage } from "./PreviewImage";
@@ -1267,10 +1268,16 @@ export default function FilePreviewPanel({
   const isAudio = relativePath !== null && !isVideo && isWorkspaceAudioPreviewPath(relativePath);
   const isImage = relativePath !== null && !isVideo && isWorkspaceImagePreviewPath(relativePath);
   const isMedia = isImage || isVideo || isAudio;
+  const isBlenderScene =
+    !draft &&
+    attachment === undefined &&
+    serverConfig?.settings.blender.enabled === true &&
+    relativePath?.toLowerCase().endsWith(".blend") === true;
   const isPdf = relativePath !== null && isPdfPreviewFile(relativePath);
   const isDocument =
     relativePath !== null &&
     (binaryPreviewKind({ name: relativePath }) !== null ||
+      isBlenderScene ||
       officePreviewKind({ name: relativePath }) !== null ||
       modelPreviewKind({ name: relativePath }) !== null ||
       isWorkspaceFontPreviewPath(relativePath));
@@ -1671,6 +1678,12 @@ export default function FilePreviewPanel({
               htmlRender={attachment.htmlRender === true}
               threadRef={threadRef}
               composerDraftTarget={composerDraftTarget}
+            />
+          ) : relativePath && isBlenderScene && canReadFiles ? (
+            <BlenderFilePreview
+              key={JSON.stringify([environmentId, threadRef.threadId, relativePath])}
+              thread={threadRef}
+              path={relativePath}
             />
           ) : relativePath && isVideo && absolutePath ? (
             <WorkspaceVideoPreview

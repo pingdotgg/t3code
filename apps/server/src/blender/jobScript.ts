@@ -33,7 +33,7 @@ def scene_summary(limit):
     import bpy
 
     selected = set(obj.name for obj in bpy.context.selected_objects)
-    objects = list(bpy.context.scene.objects)
+    objects = sorted(bpy.context.scene.objects, key=lambda obj: obj.name not in selected)
     return {
         "objectCount": len(objects),
         "objects": [
@@ -48,6 +48,27 @@ def scene_summary(limit):
     }
 
 
+outputs = spec.get("outputs", [])
+preview_revision = 0
+
+
+def publish_preview():
+    import bpy
+    global preview_revision
+    if "preview" not in outputs or preview_revision >= 256:
+        raise ValueError("Request a preview output and publish at most 256 revisions per job.")
+    revision = preview_revision + 1
+    directory = spec["outputDir"]
+    publish(
+        lambda path: bpy.ops.export_scene.gltf(filepath=path, export_format="GLB"),
+        os.path.join(directory, "preview-%s.glb" % revision),
+    )
+    preview_revision = revision
+    if revision > 2:
+        os.remove(os.path.join(directory, "preview-%s.glb" % (revision - 2)))
+    print("T3_BLENDER_PREVIEW %s" % revision, flush=True)
+
+
 script = spec.get("script")
 try:
     import bpy
@@ -55,19 +76,16 @@ try:
     if script:
         sys.argv = [script]
         try:
-            runpy.run_path(script, run_name="__main__")
+            runpy.run_path(script, init_globals={"publish_preview": publish_preview}, run_name="__main__")
         except SystemExit as exit:
             if exit.code not in (None, 0):
                 raise
     result = {"ok": True}
     if "inspectLimit" in spec:
         result["scene"] = scene_summary(spec["inspectLimit"])
-    outputs = spec.get("outputs", [])
     if "preview" in outputs:
-        publish(
-            lambda path: bpy.ops.export_scene.gltf(filepath=path, export_format="GLB"),
-            os.path.join(spec["outputDir"], "preview.glb"),
-        )
+        publish_preview()
+        result["previewRevision"] = preview_revision
     if "render" in outputs:
         def render(path):
             bpy.context.scene.render.image_settings.file_format = "PNG"

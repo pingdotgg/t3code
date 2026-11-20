@@ -5364,5 +5364,22 @@
   "ad208e3e32c85029": "Ocultar todas",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Chamadas de ferramentas no chat",
-  "8d545d54c0a9e950": "Oculta os comandos, edições e pesquisas que os agentes executam. \"Ocultar bem-sucedidas\" mantém as falhas. Zen mostra só as respostas finais. Aprovações, perguntas e erros sempre aparecem."
+  "8d545d54c0a9e950": "Oculta os comandos, edições e pesquisas que os agentes executam. \"Ocultar bem-sucedidas\" mantém as falhas. Zen mostra só as respostas finais. Aprovações, perguntas e erros sempre aparecem.",
+  "46dae7e064a17ca3": "Blender",
+  "b95264c546ace798": "Usar o Blender",
+  "041f72da36764c03": "Executar o Blender instalado neste ambiente.",
+  "4a68afdfba5dd4b2": "Executável do Blender",
+  "ab39572afaba9197": "Detectar automaticamente",
+  "4de3af73ce6281b2": "Deixe em branco para procurar o Blender no PATH ou nos locais de instalação padrão.",
+  "a1fa1a5615e2c36b": "Esta conexão não pode escolher qual executável o ambiente executa.",
+  "af7f60f596cead9c": "Não há executável no caminho configurado.",
+  "c573d98d512b5a52": "O Blender não foi encontrado no PATH nem nos locais de instalação padrão.",
+  "229ef6b0ebeeb9bd": "Blender {version} no PATH, em {path}.",
+  "8166c72c08206f6e": "Blender {version} em {path}.",
+  "922a9295eb4f29b8": "O Blender {version} em {path} é anterior a {minimum}, a versão compatível mais antiga.",
+  "86314f808f8629d5": "O Blender em {path} não pôde ser iniciado.",
+  "35f6a730990758c3": "O Blender em {path} não informou a versão a tempo.",
+  "319010572dd9291b": "O Blender em {path} encerrou com o código {code}.",
+  "df000210ad5bae41": "O Blender em {path} não exibiu uma versão.",
+  "805fe7f0b74a8bb7": "Verificar novamente"
 }
