@@ -12,10 +12,11 @@ This repo piggybacks on three upstream/sibling repos. Pin versions live in `refe
 
 1. **`../conn`** (`nckrtl/conn`): The visual and behavioral specification. Every pixel, color role, token formula, layout metric, icon choice, keyboard shortcut, and right-panel surface comes from `../conn/apps/web`, `../conn/apps/desktop`, and `../conn/FORK.md`.
 2. **`../conn-server`** (`hardimpactdev/conn-server`): The Rust server and wire contract. `conn-gpui` directly imports `../conn-server/crates/conn-wire` and `../conn-server/crates/conn-contract` as path dependencies. Never duplicate or hand-roll Effect RPC frame types or contract schemas.
-3. **`.refs/threadbear`** (`mikecann/threadbear`, gitignored; run `scripts/sync-refs.sh` if missing): The GPUI engineering reference. Prefer its proven patterns over inventing from scratch:
+3. **`.refs/threadbear`** (`mikecann/threadbear`, gitignored; run `scripts/sync-refs.sh` if missing): Primary GPUI engineering reference. Prefer its proven patterns over inventing from scratch:
    - `desktop/gpui/src/` for GPUI + `gpui-kit = "=0.9.0"` app structure, window chrome, AppKit shims, `alacritty_terminal` rendering, markdown/diff rows, and scripted `automation.rs`.
    - `desktop/web/` for CEF-on-demand (`cef-rs` + `dlopen` loader + `offscreen.rs` + `devtools.rs`).
    - `desktop/vendor/` and `desktop/Cargo.toml` for known `gpui-kit`/`gpui-base`/`gpui-pre` macOS fixes (popup menus, soft-wrap selection, long paste scroll, file drags, scroll bounce).
+4. **`.refs/rune`** (`anomalyco/rune`, gitignored; synced by `scripts/sync-refs.sh`): Secondary inspiration reference only (do not switch frameworks away from GPUI). Useful for its `research/` notes (GPUI perf/text/scroll/motion analyses), agent-verification patterns, frosted glass/token ideas, and `rune-kit` coding-agent UX patterns.
 
 ## Build and run in `nick-vm` only
 

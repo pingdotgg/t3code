@@ -21,7 +21,8 @@ Pinned in [`references.pin`](references.pin):
 
 - **`../conn`** — Source of truth for Conn's UI, shell tokens, themes, icons, and fork features (`FORK.md`).
 - **`../conn-server`** — Rust backend; provides `conn-wire` and `conn-contract` as direct Cargo path dependencies.
-- **`.refs/threadbear`** — Read-only shallow clone of [`mikecann/threadbear`](https://github.com/mikecann/threadbear) (gitignored). Reference for GPUI + `gpui-kit = "=0.9.0"`, macOS AppKit hooks, `alacritty_terminal`, and `cef-rs` on-demand embedding. Run `scripts/sync-refs.sh` to populate or sync.
+- **`.refs/threadbear`** — Read-only shallow clone of [`mikecann/threadbear`](https://github.com/mikecann/threadbear) (gitignored). Primary reference for GPUI + `gpui-kit = "=0.9.0"`, macOS AppKit hooks, `alacritty_terminal`, and `cef-rs` on-demand embedding.
+- **`.refs/rune`** — Read-only shallow clone of [`anomalyco/rune`](https://github.com/anomalyco/rune) (gitignored). Secondary inspiration reference (rendering/text/perf research notes, frosted-glass & motion ideas, agent visual-verification patterns). Run `scripts/sync-refs.sh` to populate or sync both `.refs/` checkouts.
 
 ## Prerequisites & commands (run in `nick-vm`)
 
