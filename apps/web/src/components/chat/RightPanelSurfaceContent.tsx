@@ -218,6 +218,7 @@ export function RightPanelSurfaceContent(props: {
             key: surface.key,
           }}
           threadRef={threadRef}
+          composerDraftTarget={props.composerDraftTarget}
           onSelectPullRequest={(reference) => {
             useRightPanelStore.getState().openPullRequest(threadRef, {
               projectId: reference.projectId,

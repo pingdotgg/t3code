@@ -36,7 +36,8 @@ vi.mock(import("@tanstack/react-router"), async (original) => ({
 }));
 vi.mock(import("../../state/entities"), async (original) => ({
   ...(await original()),
-  useThreadProjection: (() => ({ projection: state.projection })) as never,
+  useQuietThreadProjection: ((ref: unknown) =>
+    ref === null ? null : { projection: state.projection }) as never,
   useThreadRelationshipShells: ((ref: { readonly environmentId: string }) =>
     (state.shells as ReadonlyArray<{ readonly environmentId: string; readonly source: unknown }>)
       .filter((shell) => shell.environmentId === ref.environmentId)
@@ -575,7 +576,7 @@ it("opens the correct chat for every workflow phase and unphased member", async 
   expect(rendered.match(/1.20K/g)).toHaveLength(7);
   for (const phase of phases) expect(rendered).toContain(phase.title);
   expect(rendered).not.toContain(" phases");
-  expect(rendered).toContain("1|/|2| |agents");
+  expect(rendered).toContain("1/2 agents");
   expect(rendered).toContain("Running");
   expect(rendered).toContain("running");
   expect(buttonsWithLabel((label) => label.endsWith("phase, done"))).toHaveLength(1);

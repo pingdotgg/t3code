@@ -38,6 +38,7 @@ import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { useContext, useState, type ReactNode } from "react";
 
 import { RefreshIcon } from "~/components/ui/refresh-icon";
+import type { DraftId } from "~/composerDraftStore";
 import { m } from "~/i18n/messages";
 import { issueEnvironment, refreshIssueLists } from "~/state/issues";
 import { useProjects } from "~/state/entities";
@@ -69,6 +70,7 @@ import {
 import { IssueCommentComposer } from "./IssueCommentComposer";
 import { IssueDetailGhost } from "./IssueDetailGhost";
 import { IssueThreadLinks } from "./IssueThreadLinks";
+import { IssueWorkActions } from "../issues/IssueWorkActions";
 import { ReactionBar } from "../pullRequest/PullRequestReactions";
 import { PullRequestsUnavailableState } from "../pullRequest/PullRequestsUnavailableState";
 import { issueTrackerPresentation, issueStatePresentation } from "./issuePresentation";
@@ -380,6 +382,7 @@ export function IssueDetailPanel({
   environmentId,
   reference,
   threadRef = null,
+  composerDraftTarget,
   listEntry = null,
   onSelectPullRequest,
 }: {
@@ -388,6 +391,7 @@ export function IssueDetailPanel({
   /** The list row this issue was opened from, shown until the detail arrives. */
   listEntry?: IssueListEntry | null;
   threadRef?: ScopedThreadRef | null;
+  composerDraftTarget?: ScopedThreadRef | DraftId | undefined;
   /** Opens a linked change request beside this one; absent, the link goes to the host. */
   onSelectPullRequest?: ((reference: PullRequestRef) => void) | undefined;
 }) {
@@ -586,6 +590,16 @@ export function IssueDetailPanel({
               <RefreshIcon size="sm" refreshing={detailQuery.isPending} />
             </Button>
           </PullRequestDetailTitleRow>
+          {composerDraftTarget !== undefined ? (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <IssueWorkActions
+                environmentId={environmentId}
+                projectId={reference.projectId}
+                issue={detail}
+                composerDraftTarget={composerDraftTarget}
+              />
+            </div>
+          ) : null}
 
           {detailQuery.error !== null && !detailQuery.isPending ? (
             <div className="mt-2">

@@ -13,26 +13,20 @@ import type {
 import { CircleCheck, CircleDot, Loader2, Plus, RefreshCw, Search, X } from "lucide-react";
 import { useState } from "react";
 
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-
-import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
-import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
-import { toastManager } from "../ui/toast";
+import type { DraftId } from "~/composerDraftStore";
 import { cn } from "~/lib/utils";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { issueEnvironment } from "~/state/issues";
 
 import ChatMarkdown from "../ChatMarkdown";
+import { IssueWorkActions } from "./IssueWorkActions";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { PULL_REQUEST_STATE_PRESENTATION } from "../pullRequest/pullRequestIcons";
 import {
   ISSUE_SORTS,
-  appendIssueContext,
-  issueBranchName,
-  issueContextForComposer,
   ISSUE_STATE_FILTERS,
   formatCommentCount,
   labelColor,
@@ -343,8 +337,6 @@ function IssueDetailView(props: {
   const canSetState = useAtomValue(issueEnvironment.setState.permissionAtom(props.environmentId));
   const comment = useAtomCommand(issueEnvironment.comment, { reportFailure: true });
   const setState = useAtomCommand(issueEnvironment.setState, { reportFailure: true });
-  const newThread = useNewThreadHandler();
-  const [starting, setStarting] = useState(false);
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState<"comment" | "state" | null>(null);
 
@@ -375,38 +367,6 @@ function IssueDetailView(props: {
     if (result._tag === "Success") props.onChanged();
   };
 
-  /**
-   * Opens a thread on this project, on a branch named for the issue, with the issue already in
-   * its composer. Nothing is sent: the reader reads what is there and decides.
-   */
-  const startWork = async () => {
-    if (!detail || starting) return;
-    setStarting(true);
-    const opened = await newThread(scopeProjectRef(props.environmentId, reference.projectId), {
-      branch: issueBranchName(detail),
-    }).then(
-      (result) => result,
-      () => null,
-    );
-    setStarting(false);
-    if (opened === null) {
-      toastManager.add({
-        type: "error",
-        title: gt("Could not open a thread"),
-        description: gt("Try again from the project, or open a thread first."),
-      });
-      return;
-    }
-    const store = useComposerDraftStore.getState();
-    const current = store.getComposerDraft(opened.draftId)?.prompt ?? "";
-    store.setPrompt(opened.draftId, appendIssueContext(current, issueContextForComposer(detail)));
-    toastManager.add({
-      type: "success",
-      title: gt("Thread opened"),
-      description: gt("The issue is in the composer. Read it over, then send."),
-    });
-  };
-
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-border/60 px-3 py-2">
@@ -418,24 +378,12 @@ function IssueDetailView(props: {
         </span>
         <div className="flex-1" />
         {detail !== null ? (
-          <Button variant="ghost" size="xs" disabled={starting} onClick={() => void startWork()}>
-            {starting ? <Loader2 className="size-3 animate-spin" /> : gt("Start work")}
-          </Button>
-        ) : null}
-        {detail !== null && props.composerDraftTarget !== undefined ? (
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={() => {
-              const store = useComposerDraftStore.getState();
-              const target = props.composerDraftTarget;
-              if (target === undefined) return;
-              const current = store.getComposerDraft(target)?.prompt ?? "";
-              store.setPrompt(target, appendIssueContext(current, issueContextForComposer(detail)));
-            }}
-          >
-            <T>Add to thread</T>
-          </Button>
+          <IssueWorkActions
+            environmentId={props.environmentId}
+            projectId={reference.projectId}
+            issue={detail}
+            composerDraftTarget={props.composerDraftTarget}
+          />
         ) : null}
         {detail?.writable && detail.viewerPermissions.setState && targetState ? (
           <Button
