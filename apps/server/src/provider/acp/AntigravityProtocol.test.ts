@@ -573,6 +573,17 @@ describe("Antigravity tool results", () => {
     expect(serialized).not.toContain("image-blob");
     expect(serialized).not.toContain("inline-image");
     expect(serialized).not.toContain("inline-data-url");
+
+    // Leave three UTF-16 units for the retained output.
+    const padding = Object.fromEntries(
+      Array.from({ length: 7 }, (_, index) => [index, "x".repeat(8_000)]),
+    );
+    expect(
+      sanitizeAntigravityToolPayload({
+        rawOutput: { ...padding, tail: "x".repeat(7_997) },
+        item: { aggregatedOutput: "🚀ok" },
+      }),
+    ).toMatchObject({ item: { aggregatedOutput: "[Earlier output truncated]\n\nok" } });
   });
 });
 

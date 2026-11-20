@@ -195,6 +195,7 @@ const COMMAND_TEXT_FIELDS = new Set([
   "command_line",
   "commandLine",
   "command",
+  "aggregatedOutput",
   "combinedOutput",
   "combined_output",
   "output",
