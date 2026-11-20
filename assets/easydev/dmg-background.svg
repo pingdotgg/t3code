@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="864" viewBox="0 0 640 432">
+  <defs>
+    <linearGradient id="veil" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#B7B7B7" stop-opacity="0"/>
+      <stop offset=".55" stop-color="#A5A5A5" stop-opacity=".24"/>
+      <stop offset="1" stop-color="#D1D1D1" stop-opacity=".4"/>
+    </linearGradient>
+    <linearGradient id="silk" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="#C8C8C8"/>
+      <stop offset=".5" stop-color="#DBDBDB"/>
+      <stop offset="1" stop-color="#B5B5B5"/>
+    </linearGradient>
+  </defs>
+  <rect width="640" height="432" fill="#E9E9EB"/>
+  <path d="M-60 293C95 220 214 304 362 256S559 191 707 257" stroke="url(#veil)" stroke-width="146" fill="none" opacity="1" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M-60 306C113 252 223 298 367 272S553 242 707 280" stroke="url(#silk)" stroke-width="86" fill="none" opacity="1" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M-60 266C113 212 223 258 367 232S553 202 707 240" stroke="#F5F5F5" stroke-width="0.8" fill="none" opacity="0.42" stroke-linecap="round" stroke-linejoin="round"/>
+  <svg x="30" y="18" width="28" height="28" viewBox="112 91 287 330" fill="none">
+    <g stroke="#B8922A" stroke-width="22" stroke-miterlimit="10"><path d="M119.5 232L119.5 178L256 99L391.5 178L391.5 334L352 357Z"/><path d="M119.5 282L119.5 334L256 413L302.4 385.9Z"/></g>
+  </svg>
+  <text x="320" y="104" fill="#303034" font-family="Helvetica" font-size="23" font-weight="700" text-anchor="middle">Drag EasyDev Code into Applications.</text>
+  <path d="M270 204Q320 179 370 204M358 190L370 204L351 209" stroke="#505057" stroke-width="2.2" fill="none" opacity="1" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="320" y="367" fill="#626269" font-family="Helvetica" font-size="12" font-weight="400" text-anchor="middle">Once copied, open it from Applications.</text>
+</svg>

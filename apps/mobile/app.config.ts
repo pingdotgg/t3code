@@ -1,6 +1,9 @@
 import type { ExpoConfig } from "expo/config";
 
-import { BRAND_ASSET_PATHS } from "../../scripts/lib/brand-assets.ts";
+import {
+  resolveBrandAssetPaths,
+  STANDALONE_ANDROID_ASSETS,
+} from "../../scripts/lib/brand-assets.ts";
 import { loadRepoEnv, resolveAppScheme } from "../../scripts/lib/public-config.ts";
 
 type AppVariant = "development" | "preview" | "production";
@@ -43,6 +46,8 @@ const observeEndpointUrl = repoEnv.T3CODE_RELAY_URL?.trim()
   : "https://observe.invalid";
 
 const fromRepoRoot = (relativePath: string) => `../../${relativePath}`;
+// From repoEnv, not process.env, so a T3CODE_STANDALONE set only in .env still swaps the artwork.
+const BRAND_ASSET_PATHS = resolveBrandAssetPaths(repoEnv);
 const androidAdaptiveForeground = "./assets/android-icon-foreground.png";
 
 if (
@@ -100,6 +105,19 @@ const RELEASE_ASSETS = {
   androidNotificationColor: "#FFFFFF",
 } as const;
 
+const STANDALONE_ASSETS = {
+  appIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIosIconPng),
+  iosIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIconComposerProject),
+  splashIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIosIconPng),
+  androidAdaptiveForeground: fromRepoRoot(STANDALONE_ANDROID_ASSETS.adaptiveForeground),
+  androidAdaptiveBackgroundColor: STANDALONE_ANDROID_ASSETS.adaptiveBackgroundColor,
+  androidAdaptiveBackgroundImage: fromRepoRoot(STANDALONE_ANDROID_ASSETS.adaptiveBackgroundImage),
+  androidSplashIcon: fromRepoRoot(STANDALONE_ANDROID_ASSETS.splashIcon),
+  androidMonochromeIcon: fromRepoRoot(STANDALONE_ANDROID_ASSETS.monochromeIcon),
+  androidNotificationIcon: fromRepoRoot(STANDALONE_ANDROID_ASSETS.notificationIcon),
+  androidNotificationColor: STANDALONE_ANDROID_ASSETS.notificationColor,
+} as const;
+
 const VARIANT_CONFIG = {
   development: {
     appName: "T3 Code Dev",
@@ -113,14 +131,14 @@ const VARIANT_CONFIG = {
     scheme: `${appScheme}-preview`,
     bundleIdSuffix: ".preview",
     relyingParty: "clerk.t3.codes",
-    assets: PREVIEW_ASSETS,
+    assets: isStandaloneBuild ? STANDALONE_ASSETS : PREVIEW_ASSETS,
   },
   production: {
     appName: "T3 Code",
     scheme: appScheme,
     bundleIdSuffix: "",
     relyingParty: "clerk.t3.codes",
-    assets: RELEASE_ASSETS,
+    assets: isStandaloneBuild ? STANDALONE_ASSETS : RELEASE_ASSETS,
   },
 } as const;
 
@@ -480,6 +498,7 @@ const config: ExpoConfig = {
     ...(!isIosPersonalTeamBuild ? ["./plugins/withWidgetLogoAsset.cjs", widgetsPlugin] : []),
     "./plugins/withAndroidNetworkSecurityConfig.cjs",
     "./plugins/withAndroidGradleHeap.cjs",
+    ...(isStandaloneBuild ? ["./plugins/withStandaloneNotificationMark.cjs"] : []),
     "./plugins/withAndroidInputBackground.cjs",
     "./plugins/withAndroidModernPopupMenu.cjs",
     "./plugins/withAndroidModernAlertDialog.cjs",

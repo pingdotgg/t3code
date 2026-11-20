@@ -183,6 +183,70 @@ const renderSplashIcon = Effect.fn("androidIcons.renderSplashIcon")(function* (
   return yield* composite(`${variant}-splash`, background, [{ input: foreground }]);
 });
 
+// Standalone (EasyDev) builds: one set, rendered from assets/easydev masters into assets/easydev.
+const EASYDEV_DIRECTORY = "assets/easydev";
+const EASYDEV_MARK_BOX = { x: 112, y: 91, width: 287, height: 330 };
+const EASYDEV_MARK_HEIGHT_FRACTION = 0.5;
+const EASYDEV_INK = "#07080D";
+
+const easyDevMark = (source: string, size: number, color: string, fraction: number) => {
+  const scale = (size * fraction) / EASYDEV_MARK_BOX.height;
+  const tx = (size - EASYDEV_MARK_BOX.width * scale) / 2 - EASYDEV_MARK_BOX.x * scale;
+  const ty = (size - EASYDEV_MARK_BOX.height * scale) / 2 - EASYDEV_MARK_BOX.y * scale;
+  const body = source
+    .replace(/^[\s\S]*?<g /, "<g ")
+    .replace(/<\/svg>\s*$/, "")
+    .replace(/stroke="#[0-9A-Fa-f]{6}"/, `stroke="${color}"`);
+  return canvasSvg(
+    size,
+    `<g transform="translate(${tx.toFixed(3)} ${ty.toFixed(3)}) scale(${scale.toFixed(4)})">${body}</g>`,
+  );
+};
+
+const exportEasyDevAndroidIcons = Effect.fn("androidIcons.exportEasyDev")(function* (
+  repositoryRoot: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const read = (file: string) =>
+    fs.readFileString(path.join(repositoryRoot, EASYDEV_DIRECTORY, file));
+  const mark = yield* read("mark.svg");
+  const smallMark = yield* read("mark-small.svg");
+  const icon = yield* read("icon.svg");
+  const gradient = icon.replace(/<g [\s\S]*<\/g>/, "");
+  const background = (size: number) => rasterize("easydev-background", gradient, size);
+  const foreground = (size: number) =>
+    rasterize(
+      "easydev-foreground",
+      easyDevMark(mark, size, EASYDEV_INK, EASYDEV_MARK_HEIGHT_FRACTION),
+      size,
+    );
+  const splash = yield* composite("easydev-splash", yield* background(SPLASH_CANVAS), [
+    { input: yield* foreground(SPLASH_CANVAS) },
+  ]);
+  const outputs = [
+    ["android-icon-foreground.png", yield* foreground(ADAPTIVE_CANVAS)],
+    ["android-icon-background.png", yield* background(ADAPTIVE_CANVAS)],
+    ["android-splash-icon.png", splash],
+    [
+      "android-icon-mark.png",
+      yield* rasterize(
+        "easydev-monochrome",
+        easyDevMark(mark, ADAPTIVE_CANVAS, "#FFFFFF", EASYDEV_MARK_HEIGHT_FRACTION),
+        ADAPTIVE_CANVAS,
+      ),
+    ],
+    [
+      "android-notification-icon.png",
+      yield* rasterize("easydev-notification", easyDevMark(smallMark, 96, "#FFFFFF", 0.92), 96),
+    ],
+  ] as const;
+  for (const [name, contents] of outputs) {
+    yield* fs.writeFile(path.join(repositoryRoot, EASYDEV_DIRECTORY, name), contents);
+    yield* Console.log(`wrote ${EASYDEV_DIRECTORY}/${name}`);
+  }
+});
+
 const exportAndroidIcons = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -205,6 +269,7 @@ const exportAndroidIcons = Effect.gen(function* () {
     yield* fs.writeFile(path.join(repositoryRoot, OUTPUT_DIRECTORY, name), contents);
     yield* Console.log(`wrote ${OUTPUT_DIRECTORY}/${name}`);
   }
+  yield* exportEasyDevAndroidIcons(repositoryRoot);
 });
 
 if (import.meta.main) {

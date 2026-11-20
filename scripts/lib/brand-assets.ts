@@ -1,4 +1,4 @@
-export const BRAND_ASSET_PATHS = {
+const UPSTREAM_BRAND_ASSET_PATHS = {
   developmentIconComposerProject: "assets/dev/app-icon.icon",
   developmentIosIconPng: "assets/dev/blueprint-ios-1024.png",
   developmentUniversalIconPng: "assets/dev/blueprint-universal-1024.png",
@@ -36,6 +36,62 @@ export const BRAND_ASSET_PATHS = {
   developmentWebIcon192Png: "assets/dev/blueprint-web-icon-192x192.png",
   developmentWebIcon512Png: "assets/dev/blueprint-web-icon-512x512.png",
 } as const;
+
+// Standalone (fork) builds ship one EasyDev set for production and nightly; development keeps
+// the upstream artwork so tracked dev assets and apps/web/public never change.
+const STANDALONE_BRAND_ASSET_PATHS = {
+  productionIconComposerProject: "assets/easydev/app-icon.icon",
+  productionIosIconPng: "assets/easydev/easydev-ios-1024.png",
+  productionMacIconPng: "assets/easydev/easydev-macos-1024.png",
+  productionLinuxIconPng: "assets/easydev/easydev-universal-1024.png",
+  productionWindowsIconIco: "assets/easydev/easydev-windows.ico",
+  productionWebFaviconIco: "assets/easydev/easydev-web-favicon.ico",
+  productionWebFavicon16Png: "assets/easydev/easydev-web-favicon-16x16.png",
+  productionWebFavicon32Png: "assets/easydev/easydev-web-favicon-32x32.png",
+  productionWebAppleTouchIconPng: "assets/easydev/easydev-web-apple-touch-180.png",
+  productionWebIcon192Png: "assets/easydev/easydev-web-icon-192x192.png",
+  productionWebIcon512Png: "assets/easydev/easydev-web-icon-512x512.png",
+
+  nightlyIconComposerProject: "assets/easydev/app-icon.icon",
+  nightlyIosIconPng: "assets/easydev/easydev-ios-1024.png",
+  nightlyMacIconPng: "assets/easydev/easydev-macos-1024.png",
+  nightlyLinuxIconPng: "assets/easydev/easydev-universal-1024.png",
+  nightlyWindowsIconIco: "assets/easydev/easydev-windows.ico",
+  nightlyWebFaviconIco: "assets/easydev/easydev-web-favicon.ico",
+  nightlyWebFavicon16Png: "assets/easydev/easydev-web-favicon-16x16.png",
+  nightlyWebFavicon32Png: "assets/easydev/easydev-web-favicon-32x32.png",
+  nightlyWebAppleTouchIconPng: "assets/easydev/easydev-web-apple-touch-180.png",
+  nightlyWebIcon192Png: "assets/easydev/easydev-web-icon-192x192.png",
+  nightlyWebIcon512Png: "assets/easydev/easydev-web-icon-512x512.png",
+} as const satisfies Partial<Record<keyof typeof UPSTREAM_BRAND_ASSET_PATHS, string>>;
+
+export const STANDALONE_DMG_BACKGROUND_SVG = "assets/easydev/dmg-background.svg";
+
+export const STANDALONE_ANDROID_ASSETS = {
+  adaptiveForeground: "assets/easydev/android-icon-foreground.png",
+  adaptiveBackgroundImage: "assets/easydev/android-icon-background.png",
+  adaptiveBackgroundColor: "#D4AF37",
+  splashIcon: "assets/easydev/android-splash-icon.png",
+  monochromeIcon: "assets/easydev/android-icon-mark.png",
+  notificationIcon: "assets/easydev/android-notification-icon.png",
+  notificationColor: "#D4AF37",
+} as const;
+
+type Environment = Readonly<Record<string, string | undefined>>;
+
+export function isStandaloneBrandBuild(env: Environment): boolean {
+  return /^(1|true)$/i.test(env.T3CODE_STANDALONE?.trim() ?? "");
+}
+
+export function resolveBrandAssetPaths(
+  env: Environment,
+): Record<keyof typeof UPSTREAM_BRAND_ASSET_PATHS, string> {
+  return isStandaloneBrandBuild(env)
+    ? { ...UPSTREAM_BRAND_ASSET_PATHS, ...STANDALONE_BRAND_ASSET_PATHS }
+    : UPSTREAM_BRAND_ASSET_PATHS;
+}
+
+export const BRAND_ASSET_PATHS = resolveBrandAssetPaths(process.env);
 
 export type WebAssetBrand = "development" | "nightly" | "production";
 
@@ -121,7 +177,11 @@ export function resolveWebIconOverrides(
   ];
 }
 
-export const DEVELOPMENT_ICON_OVERRIDES = resolveWebIconOverrides("development", "dist/client");
+// Upstream releases replace these at publish time; a standalone CLI build has no such step.
+export const CLI_CLIENT_ICON_OVERRIDES = resolveWebIconOverrides(
+  isStandaloneBrandBuild(process.env) ? "production" : "development",
+  "dist/client",
+);
 
 export const DEVELOPMENT_PUBLIC_ICON_OVERRIDES = resolveWebIconOverrides(
   "development",
