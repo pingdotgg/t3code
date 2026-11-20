@@ -177,3 +177,7 @@ node --test apps/board/plugins/omp-kit/engine/
 ## Plan
 
 The build plan is [docs/plan.md](docs/plan.md).
+
+## Chat formatting
+
+The orchestrator chat renders replies the way T3's web chat does. Fenced code is colored with the `pierre-dark` theme through `@pierre/diffs`, with a language label, wrap toggle, and copy button. A streaming reply is cut into blocks at blank lines (`src/chat/markdownBlocks.ts`), so only its last block renders again as text arrives. Markdown also draws `$skill` chips, GitHub alerts, `<details>`, tables with copy, KaTeX math, and Mermaid diagrams (`pele`). A file link or inline path that names an artifact opens the artifact viewer, and a GitHub or Linear link opens the browser panel. The work log lists each tool call with its icon, and on open its command, output, changed file, and error. Each message has a copy button and the time the thread recorded it, and a running turn shows its elapsed time. The Content Security Policy allows `wasm-unsafe-eval` for the code highlighter.

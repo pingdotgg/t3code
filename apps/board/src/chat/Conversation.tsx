@@ -13,11 +13,14 @@ import {
 
 import { environmentThreads, useEnvironmentThread } from "../state/threads";
 import type { ValidBoard } from "../store/boardFiles";
+import { useArtifacts } from "../artifacts/ArtifactsContext";
+import { ArtifactLookup, ArtifactLookupContext } from "./artifactLookup";
 import { Composer } from "./Composer";
 import { PanelHeader } from "./PanelHeader";
 import { timelineSource } from "./projectionSource";
 import { isRunLive, timelineRows } from "./timeline";
 import { TimelineRowView } from "./TimelineRowView";
+import { SkillsContext, useThreadSkills } from "./skills";
 import { MARK_TOKENS, watchTokens } from "./tokenMarks";
 
 const NO_UNSUBSCRIBE = () => undefined;
@@ -52,6 +55,10 @@ export function Conversation({
     [projection],
   );
   const failure = Option.getOrNull(state.error);
+  const { all: artifacts, open: openArtifact } = useArtifacts();
+  const lookup = useMemo(() => new ArtifactLookup(), []);
+  useLayoutEffect(() => lookup.update(artifacts, openArtifact), [lookup, artifacts, openArtifact]);
+  const skills = useThreadSkills(project, projection?.thread.modelSelection.instanceId);
 
   // A token is stamped as it reaches the thread state, ahead of the render that paints it.
   const stateAtom = environmentThreads.stateAtom(environmentId, threadId);
@@ -73,31 +80,38 @@ export function Conversation({
   });
 
   return (
-    <>
-      <PanelHeader title={listed.board.name} status={statusOf(projection?.runs)} />
-      <div
-        ref={scroller}
-        data-testid="orchestrator-timeline"
-        onScroll={(event) => {
-          const element = event.currentTarget;
-          atBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
-        }}
-        className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-3"
-      >
-        {projection === null && failure !== null && (
-          <p role="alert" className="text-red-400">
-            {failure}
-          </p>
-        )}
-        {projection === null && failure === null && (
-          <p className="text-faint">Connecting to the orchestrator</p>
-        )}
-        {rows.map((row, index) => (
-          <TimelineRowView key={row.id} row={row} brief={index === 0 && row.kind === "user"} />
-        ))}
-        {live && rows.at(-1)?.kind === "user" && <p className="text-faint">Thinking</p>}
-      </div>
-      <Composer project={project} threadId={threadId} projection={projection} live={live} />
-    </>
+    <SkillsContext value={skills}>
+      <ArtifactLookupContext value={lookup}>
+        <PanelHeader title={listed.board.name} status={statusOf(projection?.runs)} />
+        <div
+          ref={scroller}
+          data-testid="orchestrator-timeline"
+          onScroll={(event) => {
+            const element = event.currentTarget;
+            atBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
+          }}
+          className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 py-3"
+        >
+          {projection === null && failure !== null && (
+            <p role="alert" className="text-red-400">
+              {failure}
+            </p>
+          )}
+          {projection === null && failure === null && (
+            <p className="text-faint">Connecting to the orchestrator</p>
+          )}
+          {rows.map((row, index) => (
+            <TimelineRowView
+              key={row.id}
+              row={row}
+              brief={index === 0 && row.kind === "user"}
+              environmentId={environmentId}
+            />
+          ))}
+          {live && rows.at(-1)?.kind === "user" && <p className="text-faint">Thinking</p>}
+        </div>
+        <Composer project={project} threadId={threadId} projection={projection} live={live} />
+      </ArtifactLookupContext>
+    </SkillsContext>
   );
 }

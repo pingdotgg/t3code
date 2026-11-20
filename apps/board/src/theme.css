@@ -53,3 +53,41 @@
 @utility scrollbar-gutter-both {
   scrollbar-gutter: stable both-edges;
 }
+
+/* The colored code of a fence. The highlighter paints each token itself, so the block only
+   supplies the box, the wrapping, and the code face. */
+.board-code pre {
+  margin: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 0.25rem 0.75rem 0.65rem;
+  background: transparent !important;
+  font: 12px/1.5 var(--font-mono);
+  scrollbar-width: thin;
+}
+
+.board-code pre code {
+  font: inherit;
+}
+
+[data-wrap="true"] .board-code pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Diagrams read their colors through these, so they match the board's tokens. */
+.pele {
+  --pele-bg: var(--color-bg);
+  --pele-fg: var(--color-fg);
+  --pele-muted: var(--color-muted);
+  --pele-line: var(--color-muted);
+  --pele-surface: var(--color-panel);
+  --pele-surface-alt: var(--color-hover);
+  --pele-border: color-mix(in srgb, var(--color-fg) 28%, transparent);
+  --pele-accent: var(--color-focus);
+  --pele-critical: #f87171;
+}
+
+.chat-markdown .katex-display {
+  margin: 0;
+}
