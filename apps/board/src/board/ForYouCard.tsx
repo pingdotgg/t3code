@@ -27,7 +27,7 @@ const STATE = {
 
 export interface CardContext {
   readonly target: ForYouTarget;
-  readonly orchestratorThreadId: string;
+  readonly orchestratorThreadId: string | null;
   /** A toast or the sidebar sent the user here. */
   readonly focused: boolean;
 }

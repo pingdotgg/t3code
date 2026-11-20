@@ -74,10 +74,11 @@ const setSent = (target: ForYouTarget, card: ForYouCard, choice: string, remove:
  */
 export async function answerItem(
   target: ForYouTarget,
-  orchestratorThreadId: string,
+  orchestratorThreadId: string | null,
   card: FileCard,
   answer: ForYouAnswer,
 ): Promise<string | null> {
+  if (orchestratorThreadId === null) return "Start this board's orchestrator before answering.";
   performance.mark("board:foryou-click", { detail: { id: card.id } });
   const threadId = ThreadId.make(orchestratorThreadId);
   const { data } = AsyncResult.getOrElse(

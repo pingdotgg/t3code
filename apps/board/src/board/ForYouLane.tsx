@@ -14,7 +14,7 @@ const SENT_POLL_MS = 1_000;
 const RESOLVED_SHOWN = 3;
 const NO_UNSUBSCRIBE = () => undefined;
 
-/** The For-you lane's cards, open ones first, then the latest resolved ones in a line each. */
+/** The For-you lane's cards: waiting ones first, then the latest resolved ones in a line each, then held ones. */
 export function ForYouLane({
   project,
   listed,
@@ -51,14 +51,16 @@ export function ForYouLane({
   );
 
   const resolved = views.filter((view) => view.state === "resolved");
-  // One list, so a card that resolves keeps its element and its marks.
+  // One list, so a card that resolves keeps its element and its marks. The latest resolved ones
+  // sit above the held cards, which can be tall enough to push them off the screen.
   const shown = [
-    ...views.filter((view) => view.state !== "resolved"),
+    ...views.filter((view) => view.state === "open" || view.state === "sent"),
     ...resolved.slice(-RESOLVED_SHOWN),
+    ...views.filter((view) => view.state === "held"),
   ];
   const context = (id: string) => ({
     target: { registry, environmentId: project.environmentId, boardId: board.id },
-    orchestratorThreadId: board.orchestratorThreadId ?? "",
+    orchestratorThreadId: board.orchestratorThreadId,
     focused: id === focusedId,
   });
   return (
