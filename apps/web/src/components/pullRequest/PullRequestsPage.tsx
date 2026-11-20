@@ -1283,7 +1283,7 @@ export function PullRequestsPage() {
     ),
   );
 
-  const prefetchEntry = usePullRequestIntentPrefetch((entry) =>
+  const { prefetch: prefetchEntry, reads: intentReads } = usePullRequestIntentPrefetch((entry) =>
     listedPullRequestsBySurface.has(pullRequestListEntryId(entry)),
   );
   // Stable, so the memoized rows skip the page's re-renders.
@@ -1497,6 +1497,7 @@ export function PullRequestsPage() {
           scrollElement={scrollElement}
         />
       )}
+      {intentReads}
 
       {listError && shownCount > 0 ? (
         <div className="flex items-center justify-between gap-3 rounded-control border border-warning/30 bg-warning-surface px-3 py-2 text-xs">
