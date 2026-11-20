@@ -510,6 +510,15 @@ export function toCanonicalThemeColor(value: unknown): string | null {
   return parsed ? formatOklchThemeColor(parsed.color, parsed.alpha) : null;
 }
 
+/** Combines a color's lightness with a tint's hue and scaled chroma. */
+export function themeColorWithTint(color: string, tint: string, chromaScale: number): string {
+  const base = parseThemeColor(color);
+  const parsedTint = parseThemeColor(tint);
+  if (!base || !parsedTint) return color;
+  const { C, h } = parsedTint.color;
+  return formatOklchThemeColor({ L: base.color.L, C: C * chromaScale, h });
+}
+
 export function themeColorToHex(value: string): string | null {
   const color = parseThemeColor(value);
   const parsed = color ? { rgb: themeOklchToRgb(color.color), alpha: color.alpha } : null;
@@ -669,6 +678,13 @@ function themeOklchToRgb(color: ThemeOklch, round = true): ThemeRgbColor {
   };
 }
 
+function compositeThemeColor(value: string, surface: ThemeRgbColor): ThemeRgbColor {
+  const parsed = parseThemeColor(value);
+  return parsed
+    ? mixThemeRgbColors(surface, themeOklchToRgb(parsed.color, false), parsed.alpha)
+    : surface;
+}
+
 function themeOklchToThemeColor(color: ThemeOklch): string {
   return formatOklchThemeColor(mapThemeOklchToSrgbGamut(color));
 }
@@ -737,12 +753,7 @@ export function contextChipVariables(colors: ThemeColors): Readonly<Record<strin
   // CSS paints surfaces from their unrounded OKLCH, so measure them unrounded.
   const parsedCanvas = parseThemeColor(colors.canvas);
   const canvas = parsedCanvas ? themeOklchToRgb(parsedCanvas.color, false) : THEME_WHITE_FOREGROUND;
-  const onCanvas = (value: string) => {
-    const parsed = parseThemeColor(value);
-    return parsed
-      ? mixThemeRgbColors(canvas, themeOklchToRgb(parsed.color, false), parsed.alpha)
-      : canvas;
-  };
+  const onCanvas = (value: string) => compositeThemeColor(value, canvas);
   const isDark = (color: ThemeRgbColor) => themeRelativeLuminance(color) < 0.179;
   const messageMatchesCanvas = isDark(onCanvas(colors.messageSurface)) === isDark(canvas);
   const surfaces = [canvas, onCanvas(colors.surface), onCanvas(colors.surfaceRaised)];
@@ -1720,6 +1731,22 @@ export function getThemeColorVariable(role: ThemeColorRole): string {
 
 export const THEME_PREVIEW_ID = "__preview";
 
+const MESSAGE_CONTRAST_TARGET_VARIABLE = "--message-contrast-target";
+
+function applyMessageContrastTarget(root: HTMLElement, colors: ThemeColors): void {
+  const canvas = compositeThemeColor(colors.canvas, THEME_WHITE_FOREGROUND);
+  const surface = compositeThemeColor(colors.messageSurface, canvas);
+  const foreground = compositeThemeColor(colors.messageForeground, surface);
+  const foregroundIsLighter = themeRelativeLuminance(foreground) > themeRelativeLuminance(surface);
+  const sameSide = foregroundIsLighter ? THEME_WHITE_FOREGROUND : THEME_BLACK_FOREGROUND;
+  // Preserve the foreground's contrast direction when both endpoints are readable.
+  const useWhite =
+    themeContrastRatio(sameSide, surface) >= 4.5
+      ? foregroundIsLighter
+      : themeRelativeLuminance(surface) < 0.179;
+  root.style.setProperty(MESSAGE_CONTRAST_TARGET_VARIABLE, useWhite ? "white" : "black");
+}
+
 /** Callers must restore the stored theme with refreshTheme when the draft closes. */
 export function applyThemeColorPreview(
   colors: ThemeColors,
@@ -1735,6 +1762,7 @@ export function applyThemeColorPreview(
   for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
     if (isThemeColor(value)) root.style.setProperty(APP_THEME_VARIABLES[role], value);
   }
+  applyMessageContrastTarget(root, colors);
   applyContextChipVariables(root, colors);
   applyThemeCss(css);
   setThemePreviewAppearance(appearance);
@@ -1758,11 +1786,13 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
     for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
       root.style.setProperty(APP_THEME_VARIABLES[role], value);
     }
+    applyMessageContrastTarget(root, colors);
     applyContextChipVariables(root, colors);
     return;
   }
 
   delete root.dataset.themeId;
+  root.style.removeProperty(MESSAGE_CONTRAST_TARGET_VARIABLE);
   for (const variable of Object.values(APP_THEME_VARIABLES)) {
     root.style.removeProperty(variable);
   }

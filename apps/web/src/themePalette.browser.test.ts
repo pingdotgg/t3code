@@ -2,7 +2,13 @@ import { converter } from "culori/fn";
 import { describe, expect, it } from "vite-plus/test";
 
 import "~/index.css";
-import { getStandardPaintedThemeColors } from "./themePalette";
+import { applyAppearanceContrast } from "./appearanceContrast";
+import {
+  applyThemeColorPreview,
+  applyThemePalette,
+  getStandardPaintedThemeColors,
+} from "./themePalette";
+import { parseVsCodeThemeFile } from "./vscodeThemeImport";
 
 const toRgb = converter("rgb");
 
@@ -48,4 +54,50 @@ describe("standard painted theme colors", () => {
       root.classList.remove("dark");
     }
   });
+});
+
+describe("imported user message colors", () => {
+  it.each([
+    { type: "light", canvas: "#ffffff", surface: "#000000", contrast: 200, foreground: 1 },
+    { type: "dark", canvas: "#000000", surface: "#ffffff", contrast: 200, foreground: 0 },
+    { type: "light", canvas: "#ffffff", surface: "#565656", contrast: 100, foreground: 1 },
+  ] as const)(
+    "keeps prose, links, and footnotes readable on $surface in a $type theme at $contrast%",
+    ({ type, canvas, surface, contrast, foreground }) => {
+      const root = document.documentElement;
+      const theme = parseVsCodeThemeFile({
+        type,
+        colors: {
+          "editor.background": canvas,
+          "chat.requestBubbleBackground": surface,
+          descriptionForeground: surface,
+        },
+      });
+      const bubble = document.createElement("div");
+      bubble.className = "bg-message text-message-foreground chat-markdown user-message-markdown";
+      bubble.innerHTML =
+        '<p>Prose <a href="#sample">Link</a></p><section data-footnotes><ol><li><p>Footnote</p></li></ol></section>';
+      document.body.append(bubble);
+      try {
+        applyThemeColorPreview(theme.colors, theme.appearance);
+        applyAppearanceContrast(root, contrast);
+        const paintedSurface = toRgb(getComputedStyle(bubble).backgroundColor)!;
+        const expectedSurface = toRgb(surface)!;
+        expect(paintedSurface.r).toBeCloseTo(expectedSurface.r);
+        expect(paintedSurface.g).toBeCloseTo(expectedSurface.g);
+        expect(paintedSurface.b).toBeCloseTo(expectedSurface.b);
+        for (const element of bubble.querySelectorAll("p, a")) {
+          const painted = toRgb(getComputedStyle(element).color)!;
+          for (const channel of [painted.r, painted.g, painted.b]) {
+            expect(channel, element.textContent ?? "").toBeCloseTo(foreground);
+          }
+        }
+      } finally {
+        bubble.remove();
+        applyAppearanceContrast(root, 100);
+        applyThemePalette("system", "light");
+        root.classList.remove("dark");
+      }
+    },
+  );
 });

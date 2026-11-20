@@ -1689,7 +1689,8 @@ html[data-theme-id="t3-chat"] [data-app-sidebar] {
       var(--message-foreground) var(--appearance-contrast-base),
       var(--message-surface)
     ),
-    var(--appearance-contrast-target) var(--appearance-contrast-boost)
+    var(--message-contrast-target, var(--appearance-contrast-target))
+      var(--appearance-contrast-boost)
   );
   --contrast-sidebar-foreground: color-mix(
     in oklab,
@@ -2148,6 +2149,10 @@ code {
   padding-top: 0.75rem;
   color: var(--contrast-muted-foreground);
   font-size: 0.75rem;
+}
+
+.chat-markdown:where(.user-message-markdown) section[data-footnotes] {
+  color: var(--contrast-message-foreground);
 }
 
 .chat-markdown section[data-footnotes] ol {

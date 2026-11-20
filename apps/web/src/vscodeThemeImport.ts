@@ -1,4 +1,3 @@
-import { converter } from "culori/fn";
 import { parse, type ParseError } from "jsonc-parser";
 import { msg } from "gt-react";
 
@@ -13,6 +12,7 @@ import {
   readableThemeColorOn,
   renameTheme,
   themeColorToHex,
+  themeColorWithTint,
   themeIdFromName,
   THEME_FILE_VERSION,
   type ThemeAppearance,
@@ -22,7 +22,6 @@ import {
 
 // The standard dark bubble stands about 1.26 off its canvas, the light one about 1.19.
 const MESSAGE_SURFACE_CONTRAST = 1.2;
-const toOklch = converter("oklch");
 
 type VsCodeRgba = { r: number; g: number; b: number; a: number };
 type VsCodeRgb = { r: number; g: number; b: number };
@@ -143,9 +142,7 @@ function resolveMessageSurface(tint: VsCodeRgba, canvas: VsCodeRgb, canvasHex: s
   }
 
   // On a colored canvas, a faint blend can take on the canvas's hue.
-  const { l } = toOklch(blended)!;
-  const { c, h } = toOklch(toHex(tint))!;
-  const seed = `oklch(${l} ${c * 0.3} ${h ?? 0})`;
+  const seed = themeColorWithTint(blended, toHex(tint), tint.a);
   return readableThemeColorOn(seed, canvasHex, MESSAGE_SURFACE_CONTRAST);
 }
 

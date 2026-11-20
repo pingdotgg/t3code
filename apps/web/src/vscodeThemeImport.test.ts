@@ -449,22 +449,37 @@ describe("VS Code theme import", () => {
       colors: { "editor.selectionBackground": "#b5890033" },
       source: "#b58900",
     },
-  ])("paints the user's message bubble from $case", ({ type, canvas, colors, source }) => {
-    const theme = parseVsCodeThemeFile({
-      name: "Bubble",
-      type,
-      colors: { "editor.background": canvas, "editor.foreground": "#888888", ...colors },
-    });
-    const hueDistance = Math.abs(
-      oklchParts(theme.colors.messageSurface).hue - oklchParts(toCanonicalThemeColor(source)!).hue,
-    );
-    // Compositing a faint color in sRGB bends its OKLCH hue by a few degrees.
-    expect(Math.min(hueDistance, 360 - hueDistance)).toBeLessThan(8);
-    expect(contrastRatio(theme.colors.messageSurface, canvas)).toBeGreaterThanOrEqual(1.2);
-    expect(
-      contrastRatio(theme.colors.messageForeground, theme.colors.messageSurface),
-    ).toBeGreaterThanOrEqual(4.5);
-  });
+    {
+      case: "an opaque chat bubble color close to the canvas",
+      type: "dark",
+      canvas: "#1e1e1e",
+      colors: { "chat.requestBubbleBackground": "#1f2433" },
+      source: "#1f2433",
+      minChroma: 0.02,
+    },
+  ])(
+    "paints the user's message bubble from $case",
+    ({ type, canvas, colors, source, minChroma }) => {
+      const theme = parseVsCodeThemeFile({
+        name: "Bubble",
+        type,
+        colors: { "editor.background": canvas, "editor.foreground": "#888888", ...colors },
+      });
+      const hueDistance = Math.abs(
+        oklchParts(theme.colors.messageSurface).hue -
+          oklchParts(toCanonicalThemeColor(source)!).hue,
+      );
+      // Compositing a faint color in sRGB bends its OKLCH hue by a few degrees.
+      expect(Math.min(hueDistance, 360 - hueDistance)).toBeLessThan(8);
+      expect(contrastRatio(theme.colors.messageSurface, canvas)).toBeGreaterThanOrEqual(1.2);
+      expect(
+        contrastRatio(theme.colors.messageForeground, theme.colors.messageSurface),
+      ).toBeGreaterThanOrEqual(4.5);
+      if (minChroma !== undefined) {
+        expect(oklchParts(theme.colors.messageSurface).chroma).toBeGreaterThanOrEqual(minChroma);
+      }
+    },
+  );
 
   it("reads wide-gamut color() notation", () => {
     const theme = parseVsCodeThemeFile({
