@@ -13,11 +13,7 @@ import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 
-import {
-  GitCommandError,
-  SourceControlProviderError,
-  type SourceControlCloneRepositoryInput,
-} from "@t3tools/contracts";
+import { GitCommandError, SourceControlProviderError } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -431,7 +427,7 @@ function rejectingSsh(
       Effect.gen(function* () {
         const url = input.args.at(-2)!;
         urls.push(url);
-        if (url.startsWith("https://") && !httpsFails) return processOutput();
+        if (/^https?:\/\//.test(url) && !httpsFails) return processOutput();
         yield* (
           input.progress?.onStderrLine?.(
             url.startsWith("https://")
@@ -452,7 +448,7 @@ function rejectingSsh(
 
 const cloneInTemporaryDirectory = (
   git: Partial<GitVcsDriver.GitVcsDriver["Service"]>,
-  input: Omit<SourceControlCloneRepositoryInput, "destinationPath">,
+  input: Omit<SourceControlRepositoryService.SourceControlCloneInput, "destinationPath">,
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -478,6 +474,20 @@ it.effect("retries a clone over HTTPS when the SSH login is refused", () =>
 
     assert.deepStrictEqual(urls, [CLONE_URLS.sshUrl, "https://github.com/octocat/t3code.git"]);
     assert.strictEqual(result.remoteUrl, "https://github.com/octocat/t3code.git");
+  }),
+);
+
+it.effect("retries over the HTTPS URL the caller resolved instead of guessing one", () =>
+  Effect.gen(function* () {
+    const urls: Array<string> = [];
+    const httpsFallbackUrl = "http://gitlab.internal:9999/group/project.git";
+    const result = yield* cloneInTemporaryDirectory(rejectingSsh(urls, false), {
+      remoteUrl: "git@gitlab.internal:group/project.git",
+      httpsFallbackUrl,
+    });
+
+    assert.deepStrictEqual(urls, ["git@gitlab.internal:group/project.git", httpsFallbackUrl]);
+    assert.strictEqual(result.remoteUrl, httpsFallbackUrl);
   }),
 );
 

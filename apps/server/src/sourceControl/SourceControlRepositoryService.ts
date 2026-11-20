@@ -49,7 +49,7 @@ export class SourceControlRepositoryService extends Context.Service<
       input: SourceControlCloneRepositoryInput,
     ) => Effect.Effect<SourceControlPreparedClone, SourceControlRepositoryError>;
     readonly cloneRepository: (
-      input: SourceControlCloneRepositoryInput,
+      input: SourceControlCloneInput,
       options?: SourceControlCloneOptions,
     ) => Effect.Effect<SourceControlCloneRepositoryResult, SourceControlRepositoryError>;
     readonly discardClone: (
@@ -60,6 +60,11 @@ export class SourceControlRepositoryService extends Context.Service<
     ) => Effect.Effect<SourceControlPublishRepositoryResult, SourceControlRepositoryError>;
   }
 >()("t3/sourceControl/SourceControlRepositoryService") {}
+
+export interface SourceControlCloneInput extends SourceControlCloneRepositoryInput {
+  /** The forge's own HTTP(S) URL for a refused SSH login, which a rewrite cannot guess. */
+  readonly httpsFallbackUrl?: string | undefined;
+}
 
 export interface SourceControlPreparedClone {
   readonly destinationPath: string;
@@ -170,11 +175,13 @@ function publishPushFailureDetail(input: {
  * Explicit SSH requests must not fall back; unknown URL shapes must not be guessed.
  */
 function httpsFallbackUrl(
-  input: SourceControlCloneRepositoryInput,
+  input: SourceControlCloneInput,
   prepared: SourceControlPreparedClone,
 ): string | null {
   if (input.protocol === "ssh" || cloneUrlProtocol(prepared.cloneUrl) !== "ssh") return null;
   if (prepared.repository?.sshUrl === prepared.cloneUrl) return prepared.repository.url;
+  if (input.httpsFallbackUrl && cloneUrlProtocol(input.httpsFallbackUrl) === "https")
+    return input.httpsFallbackUrl.trim();
   return cloneUrlForProtocol(prepared.cloneUrl, "https");
 }
 
@@ -398,7 +405,7 @@ export const make = Effect.gen(function* () {
   });
 
   const cloneRepository = Effect.fn("SourceControlRepositoryService.cloneRepository")(function* (
-    input: SourceControlCloneRepositoryInput,
+    input: SourceControlCloneInput,
     options?: SourceControlCloneOptions,
   ) {
     const prepared = yield* prepareClone(input);

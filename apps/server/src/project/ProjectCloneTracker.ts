@@ -89,6 +89,7 @@ interface TrackedClone {
     readonly destinationPath: string;
     readonly repository: SourceControlRepositoryInfo | null;
     readonly protocol: SourceControlCloneProtocol;
+    readonly httpsFallbackUrl: string | undefined;
   };
 }
 
@@ -224,6 +225,9 @@ export const make = Effect.gen(function* () {
         remoteUrl: tracked.input.cloneUrl,
         destinationPath: tracked.input.destinationPath,
         protocol: tracked.input.protocol,
+        ...(tracked.input.httpsFallbackUrl
+          ? { httpsFallbackUrl: tracked.input.httpsFallbackUrl }
+          : {}),
       },
       {
         onProgress: (update) =>
@@ -314,6 +318,7 @@ export const make = Effect.gen(function* () {
             destinationPath: prepared.destinationPath,
             repository: prepared.repository,
             protocol: input.protocol ?? "auto",
+            httpsFallbackUrl: input.httpsFallbackUrl,
           },
         });
         return [true, next] as const;

@@ -43,6 +43,7 @@ export interface AddProjectToMachineInput {
   readonly projectId: ProjectId;
   readonly title: string;
   readonly remoteUrl: string;
+  readonly httpsFallbackUrl: string | null;
   readonly destinationPath: string;
   readonly files: ReadonlyArray<string>;
 }
@@ -145,6 +146,7 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
         title: input.title,
         createdAt: new Date().toISOString(),
         remoteUrl: input.remoteUrl,
+        ...(input.httpsFallbackUrl ? { httpsFallbackUrl: input.httpsFallbackUrl } : {}),
         destinationPath: input.destinationPath,
       },
     },

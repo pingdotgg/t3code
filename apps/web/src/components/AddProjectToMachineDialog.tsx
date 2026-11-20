@@ -246,6 +246,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
         projectId: newProjectId(),
         title: project.title,
         remoteUrl,
+        httpsFallbackUrl: httpsUrl,
         destinationPath: destinationPath.trim(),
         files: [...selectedFiles.keys()],
       });

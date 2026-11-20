@@ -53,6 +53,8 @@ export const ProjectCloneStartInput = Schema.Struct({
   provider: Schema.optional(SourceControlProviderKind),
   repository: Schema.optional(TrimmedNonEmptyString),
   remoteUrl: Schema.optional(TrimmedNonEmptyString),
+  /** Retried after a refused SSH login; the forge's own HTTP(S) URL, which a rewrite cannot guess. */
+  httpsFallbackUrl: Schema.optional(TrimmedNonEmptyString),
   destinationPath: TrimmedNonEmptyString,
   protocol: Schema.optional(SourceControlCloneProtocol),
 });
