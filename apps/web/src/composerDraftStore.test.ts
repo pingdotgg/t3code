@@ -286,31 +286,6 @@ describe("composerDraftStore addImages", () => {
     expect(draft?.images.map((image) => image.id)).toEqual(["img-a", "img-c"]);
     expect(revokeSpy).toHaveBeenCalledWith("blob:b");
   });
-
-  it("saves recovered image records alongside existing records and drops stale results", async () => {
-    const store = useComposerDraftStore.getState();
-    const saved = {
-      id: "saved",
-      name: "saved.png",
-      mimeType: "image/png",
-      sizeBytes: 1,
-      dataUrl: "data:image/png;base64,AQ==",
-    };
-    const recovered = { ...saved, id: "recovered", dataUrl: "data:image/png;base64,Ag==" };
-    const stale = { ...saved, id: "replaced", dataUrl: "data:image/png;base64,Aw==" };
-    const images = hydrateImagesFromPersisted([saved, recovered, stale]);
-    store.addImages(threadRef, images);
-    await store.syncPersistedAttachments(threadRef, [saved]);
-    store.removeImage(threadRef, stale.id);
-    const replacement = hydrateImagesFromPersisted([
-      { ...stale, dataUrl: "data:image/png;base64,BA==" },
-    ]);
-    expect(store.addImages(threadRef, replacement)).toEqual([stale.id]);
-
-    await store.appendPersistedAttachments(threadRef, images, [recovered, stale]);
-
-    expect(store.getComposerDraft(threadRef)?.persistedAttachments).toEqual([saved, recovered]);
-  });
 });
 
 describe("composerDraftStore copied attachments", () => {

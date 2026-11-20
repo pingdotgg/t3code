@@ -16,6 +16,7 @@ import {
   type ComposerImageAttachment,
   DraftId,
   composerTargetKey,
+  hydrateImagesFromPersisted,
   useComposerDraftStore,
 } from "../../composerDraftStore";
 import { showThreadUndoNotice } from "../../hooks/showThreadUndoNotice";
@@ -208,6 +209,33 @@ it.each(["available", "full", "duplicate"] as const)(
     }
   },
 );
+
+it("saves recovered image records alongside existing records and drops stale results", async () => {
+  const target = DraftId.make("intake-recovery-persisted-records");
+  const store = useComposerDraftStore.getState();
+  using _draft = { [Symbol.dispose]: () => store.clearComposerContent(target) };
+  const saved = {
+    id: "saved",
+    name: "saved.png",
+    mimeType: "image/png",
+    sizeBytes: 1,
+    dataUrl: "data:image/png;base64,AQ==",
+  };
+  const recovered = { ...saved, id: "recovered", dataUrl: "data:image/png;base64,Ag==" };
+  const stale = { ...saved, id: "replaced", dataUrl: "data:image/png;base64,Aw==" };
+  const images = hydrateImagesFromPersisted([saved, recovered, stale]);
+  store.addImages(target, images);
+  await store.syncPersistedAttachments(target, [saved]);
+  store.removeImage(target, stale.id);
+  const replacement = hydrateImagesFromPersisted([
+    { ...stale, dataUrl: "data:image/png;base64,BA==" },
+  ]);
+  expect(store.addImages(target, replacement)).toEqual([stale.id]);
+
+  await store.appendPersistedAttachments(target, images, [recovered, stale]);
+
+  expect(store.getComposerDraft(target)?.persistedAttachments).toEqual([saved, recovered]);
+});
 
 it("prepares a repeated paste without a tile, and still keeps a different image", async () => {
   const target = DraftId.make("intake-repeat-paste");
