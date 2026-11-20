@@ -272,10 +272,15 @@ describe("sidebar thread rename", () => {
     { focus: "another field in the composer", editor: false, renames: false },
     { focus: "a side chat composer", sideChat: true, renames: false },
     { focus: "the composer with the sidebar collapsed", sidebarCollapsed: true, renames: false },
-    { focus: "the composer as a bound shortcut", keys: "{Shift>}{F2}{/Shift}", renames: false },
+    {
+      focus: "the composer as a bound shortcut",
+      keys: "{Shift>}{F2}{/Shift}",
+      opens: "/local/thread-1",
+      renames: false,
+    },
     { focus: "the composer during IME composition", composing: true, renames: false },
   ])("F2 from $focus renames the open thread: $renames", async (row) => {
-    const { renames, keys = "{F2}", composing = false, ...scenario } = row;
+    const { renames, keys = "{F2}", composing = false, opens, ...scenario } = row;
     const { tree } = createTestContext(scenario);
     await using screen = await render(tree);
     const field = screen.getByRole("textbox", { name: "Outside the sidebar" });
@@ -294,6 +299,9 @@ describe("sidebar thread rename", () => {
       // A collapsed sidebar is inert, which hides its content from role queries.
       expect(document.querySelector('input[aria-label="Thread title"]')).toBeNull();
     }
+    if (opens) {
+      await vi.waitFor(() => expect(screen.router?.history.location.pathname).toBe(opens));
+    }
   });
 
   function createTestContext({
@@ -311,6 +319,7 @@ describe("sidebar thread rename", () => {
     vi.mocked(useProjects).mockReturnValue([activeProject]);
     vi.mocked(useQuietThreadShells).mockReturnValue([
       { ...threadShell(activeProject.id, 0), title: "Fix the login redirect" },
+      threadShell(activeProject.id, 1),
     ]);
     vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: routeThreadRef });
     vi.mocked(useHandleNewThread).mockReturnValue({
