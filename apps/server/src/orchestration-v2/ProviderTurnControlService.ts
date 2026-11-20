@@ -23,6 +23,7 @@ import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as RuntimePolicy from "./RuntimePolicy.ts";
 
 const yieldToRuntime = Effect.yieldNow.pipe(
   Effect.andThen(
@@ -118,6 +119,7 @@ export const layer: Layer.Layer<
   | McpAppModelContext.McpAppModelContext
   | ProjectionStore.ProjectionStoreV2
   | ProviderSessionManager.ProviderSessionManagerV2
+  | RuntimePolicy.RuntimePolicyV2
 > = Layer.effect(
   ProviderTurnControlServiceV2,
   Effect.gen(function* () {
@@ -125,6 +127,7 @@ export const layer: Layer.Layer<
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const mcpAppModelContext = yield* McpAppModelContext.McpAppModelContext;
+    const runtimePolicies = yield* RuntimePolicy.RuntimePolicyV2;
 
     const load = Effect.fn("ProviderTurnControlService.load")(function* (input: {
       readonly threadId: ThreadId;
@@ -452,6 +455,11 @@ export const layer: Layer.Layer<
             mcpAppModelContext,
             input.threadId,
           );
+          const { thread } = yield* projections.getThreadRecords(input.threadId, []);
+          // Above the ceiling the turn keeps the policy it started with.
+          const runtimePolicy = yield* runtimePolicies
+            .resolve({ thread, modelSelection: input.modelSelection ?? run.modelSelection })
+            .pipe(Effect.option);
           yield* loaded.session.value
             .steerTurn({
               threadId: input.threadId,
@@ -461,6 +469,7 @@ export const layer: Layer.Layer<
               ...(input.modelSelection === undefined
                 ? {}
                 : { modelSelection: input.modelSelection }),
+              ...(Option.isSome(runtimePolicy) ? { runtimePolicy: runtimePolicy.value } : {}),
               ...(appContext.length === 0 ? {} : { appContext }),
               message: {
                 messageId: message.id,

@@ -193,6 +193,7 @@ const layerProviderTurnControlServiceProvided = ProviderTurnControlService.layer
       McpAppModelContext.layer,
       ProjectionStore.layer,
       layerProviderSessionManagerProvided,
+      layerRuntimePolicyProvided,
     ),
   ),
 );

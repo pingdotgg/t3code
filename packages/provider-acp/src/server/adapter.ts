@@ -1597,7 +1597,7 @@ interface AcpNativeBuildConfiguration {
 }
 
 interface ActiveAcpTurn {
-  readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
+  input: ProviderAdapter.ProviderAdapterV2TurnInput;
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly nativeThreadId: string;
   readonly nativeTurnId: string;
@@ -9522,6 +9522,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           return yield* runtimeTransitionPermit.withPermit(startTurnUnlocked(turnInput));
         });
 
+        // Client-answered permissions follow a mode switched mid-turn; the native session
+        // mode is reconfigured when the next turn starts.
+        const adoptSteerRuntimePolicy = (
+          context: ActiveAcpTurn,
+          turnInput: ProviderAdapter.ProviderAdapterV2SteerInput,
+        ) => {
+          if (turnInput.runtimePolicy === undefined) return;
+          latestRuntimePolicy = turnInput.runtimePolicy;
+          context.input = { ...context.input, runtimePolicy: turnInput.runtimePolicy };
+        };
+
         const steerWithPrompt = Effect.fn("AcpAdapterV2.steerWithPrompt")(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2SteerInput,
         ) {
@@ -9549,6 +9560,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   detail: `Provider turn ${turnInput.providerTurnId} is not active and cannot be steered.`,
                 });
               }
+              adoptSteerRuntimePolicy(context, turnInput);
               const generation = yield* Ref.get(runtimeCallbackGeneration);
               const checkPromptOutcome =
                 flavor.watchPromptOutcome === undefined
@@ -9918,6 +9930,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   detail: `Provider turn ${turnInput.providerTurnId} is not active and cannot be steered.`,
                 });
               }
+              adoptSteerRuntimePolicy(context, turnInput);
               // An agent that drops an early cancel drops an early steer too.
               const startHold = flavor.cancelAfterPromptStarts;
               if (startHold !== undefined) {

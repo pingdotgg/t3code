@@ -997,7 +997,11 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
   /** The prompt launches one agy 1.5 subagent instead; its records live below this profile. */
   detachedChildProfile?: string,
   /** agy 1.5.11 answers a steered prompt once the next one arrives, which runs to `releaseSteer`. */
-  steering?: { readonly agentVersion: string; readonly holdsFirstPrompt: boolean },
+  steering?: {
+    readonly agentVersion: string;
+    readonly holdsFirstPrompt: boolean;
+    readonly runtimeMode?: "approval-required";
+  },
 ) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const path = yield* Path.Path;
@@ -1102,7 +1106,7 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
     ...(detachedChildProfile === undefined ? {} : { profileDirectory: detachedChildProfile }),
   });
   const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-    runtimeMode: "full-access",
+    runtimeMode: steering?.runtimeMode ?? "full-access",
     interactionMode: "default",
     cwd: process.cwd(),
   });
@@ -1338,6 +1342,7 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       const opened = yield* openSessionWithRunningCommand({}, undefined, {
         agentVersion: "1.5.11",
         holdsFirstPrompt: true,
+        runtimeMode: "approval-required",
       });
       const { session, providerThread, command, usage, send, startTurn, until } = opened;
       assert.isTrue(session.providerSession.capabilities.turns.supportsActiveSteering);
@@ -1371,8 +1376,33 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
           createdBy: "user",
           creationSource: "web",
         },
+        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        }),
       });
       assert.equal(opened.cancels(), 0, "a steer must not cancel the agent's work");
+      // Full access chosen with the steer answers the turn's next command itself.
+      assert.deepEqual(
+        yield* opened.requestPermission(
+          {
+            sessionId: "mock-session-1",
+            toolCall: {
+              toolCallId: "call_cat",
+              kind: "execute",
+              title: "cat f1.txt",
+              status: "pending",
+            },
+            options: [
+              { optionId: "allow", name: "Allow", kind: "allow_once" },
+              { optionId: "deny", name: "Deny", kind: "reject_once" },
+            ],
+          },
+          { requestId: "permission-steer", method: "session/request_permission" },
+        ),
+        { outcome: { outcome: "selected", optionId: "allow" } },
+      );
       assert.lengthOf(opened.prompts, 2);
       assert.deepEqual(opened.prompts[1]!.prompt, [
         { type: "text", text: "Use opus subagents from now on" },
