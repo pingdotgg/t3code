@@ -2,7 +2,7 @@
 
 Agent Board is a desktop app for running projects through an orchestrator on the T3 Code engine. The sidebar lists T3 projects, each project lists its boards, and each board shows one orchestrator, its tickets in lanes, the agents working each ticket, artifact cards, and For-you cards. The workflow it shows is the XEO-3330 run from November 2026.
 The rule the program enforces is that the engine stays upstream. No PR edits a file that exists upstream, except `pnpm-lock.yaml`. Every PR passes `apps/board/scripts/check-engine-untouched.mjs`. The repo's lint and dependency standards apply to every file in the repo, and fail only on lines we add or change.
-The PRs, in stack order, are B0, B1, S1, K1, B2, B3, B4, B5, B6, B7, B8, B9, B10, B11, B12, and O1.
+The PRs, in stack order, are B0, B1, S1, K1, B2, U1, B3, W1, B4, B5, B6, B7, B8, B9, B10, B11, B12, and O1.
 
 ## How to read this
 
@@ -11,6 +11,8 @@ One box is one unit of work. Every box names the evidence that checks it. A nest
 The program runs `skill://poteto-mode/playbooks/autopilot-stack.md`. The operator granted standing merge approval. Wherever this plan says the operator lands a PR, the root merges it bottom-up with a merge commit once its verdict is clean, retargets the next PR to `main`, and keeps every remote branch.
 
 Speed comes last, by the operator's call. Each PR still runs its perf probe and records the numbers, which checks its perf boxes. A missed perf rule never blocks a merge. O1, the last PR, fixes every recorded miss.
+
+The board is a UI over T3's engine. Every feature drives a capability T3 already has, and a PR that needs one T3 lacks stops and reports it instead of building engine logic in the board. Screens take their layout and components from Orca, drawn in the board's T3 dark tokens.
 
 Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
@@ -35,10 +37,10 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
 - [ ] Spawn one owner per PR with the full lifecycle the execution playbook names.
 - [ ] Follow this dependency graph. Base each PR on its parent's branch, because the execution playbook stacks.
   - [ ] B0 is first. It branches from `main` of `13kparkin/t3code`.
-  - [ ] B1 after B0. S1 after B1. K1 after S1. B2 after K1. B3 after B2. B4 after B3. B5 after B4. B6 after B5.
+  - [ ] B1 after B0. S1 after B1. K1 after S1. B2 after K1. U1 after B2. B3 after U1. W1 after B3. B4 after W1. B5 after B4. B6 after B5.
   - [ ] B7 after B6. B8 after B7. B9 after B8. B10 after B9. B11 after B10. B12 after B11. O1 after B12.
 - [ ] Hold the file boundaries. Every PR touches only `apps/board/**`, `.github/workflows/agent-board.yml`, and `pnpm-lock.yaml`. S1 also adds `standards/**`, `.vite-hooks/pre-push`, and `.claude/settings.json`, which upstream does not have. K1 and B12 write outside the repo only through their install scripts.
-- [ ] Hold the review gate. B1, B2, B4, B5, B6, B7, B8, B9, B10, and B11 change an interaction. They post their screenshots and video in chat at merge, so the operator can ask for a follow-up PR.
+- [ ] Hold the review gate. B1, B2, U1, W1, B4, B5, B6, B7, B8, B9, B10, and B11 change an interaction. They post their screenshots and video in chat at merge, so the operator can ask for a follow-up PR.
 - [ ] Cap building agents at 2 at once, and run a push as the only heavy job, because this machine has 15 GB of RAM and 4 cores.
 
 ### PR mechanics, for every PR
@@ -395,9 +397,70 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends B2 to the base-branch stack and the operator lands it bottom-up.
 
-## Probe the engine behaviors the board depends on (B3)
+## Style the sidebar like Orca's and add the usage bar (U1)
 
 **Depends on.** B2.
+
+**Files.**
+
+- [ ] Create `apps/board/src/sidebar/SidebarRow.tsx`, `apps/board/src/sidebar/CountChip.tsx`, and `apps/board/src/sidebar/ProjectHeader.tsx`.
+- [ ] Create `apps/board/src/sidebar/AddProject.tsx` and `apps/board/electron/pickFolder.ts`.
+- [ ] Edit `apps/board/src/sidebar/Sidebar.tsx` and `apps/board/src/sidebar/ProjectList.tsx` to use them.
+- [ ] Create `apps/board/src/usage/UsageBar.tsx`, `apps/board/src/usage/usage.ts`, and `apps/board/src/usage/usage.test.ts`.
+- [ ] Edit `apps/board/src/App.tsx` to place the usage bar along the bottom of the window.
+
+**Build.**
+
+- [ ] Match the rows in Orca's sidebar, shown in `/home/kyle/personalDev/main/artifacts/agent-board-prototype/refs/orca-sidebar.png`. That means a section header with small icon buttons, a project header with its mark, bold name, chevron, menu, and add button, and compact rows with a leading icon, a truncated title, and trailing status icons. Nested rows indent one step per level. A count chip shows a child count, a green status dot with its count, and a chevron. A pill row stands for hidden items, and the footer holds settings and help icons. Keep the sidebar's current width, colors, and T3 dark tokens, and change only the rows.
+- [ ] Build the rows and chips as one shared set, so B5's board rows and B7's agent tree reuse them.
+- [ ] Add projects from the sidebar. The `+` in the Projects header opens a folder picker that starts at `\\wsl.localhost\<distro>\home\<user>`, converts the choice to a WSL path with `wslpath -u` through `wslEngine.ts`, and creates the project with `createProject` from `@t3tools/client-runtime/operations/commands`. A typed WSL path works too. A folder that is missing, outside WSL, or already a project shows the reason inline.
+- [ ] In `UsageBar.tsx`, draw a bar under both the sidebar and the canvas, as Orca does. It starts with `Used`, then shows each signed-in provider's glyph, its session or weekly window as a used percent with time to reset, and its model windows, such as `3% Fable`. Read the windows from the engine's server config, `providers[].usageLimits` (`packages/contracts/src/providerUsageLimits.ts`, `packages/contracts/src/server.ts:296`), so T3 does the probing. Never call Anthropic or OpenAI from the board. When `unavailable` is set, show a dash with the reason in a tooltip.
+- [ ] In `usage.ts`, turn windows into bar text. Round percents, print the time to reset as `5d 22h`, or as minutes under an hour, and put the session window before the weekly one and model windows last.
+
+**You see.**
+
+- [ ] The sidebar rows look like Orca's, the Projects header's `+` adds a project from a WSL folder, and a bar along the bottom of the window reads like `Used ✳ 8% 5d 22h · 3% Fable` for Claude Code, followed by Codex.
+
+**Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] `usage.test.ts` formats fixed windows into literal text. A session window at 8% that resets in 5 days 22 hours gives `8% 5d 22h`. A Fable window at 3% gives `3% Fable`. A reset 40 minutes out gives `40m`. An `unavailable` limit gives the dash and its reason. Run `vp test run src/usage/usage.test.ts` from `apps/board`.
+
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe.
+
+- [ ] Lane 1. Regression lane against trunk. Open trunk and head against a lane engine with three projects. Save `u1-trunk.png` and `u1-sidebar.png`. Pass when the head rows match the Orca reference layout and trunk shows the plain list.
+- [ ] Lane 2. Run the Windows app. Save `u1-windows.png` from a full-window capture. Pass when the usage bar spans the bottom under both the sidebar and the canvas.
+- [ ] Lane 3. Use a lane engine with the operator's Claude Code login. Save `u1-claude.png` and the engine's `usageLimits` JSON as `u1-claude.json`. Pass when the bar text equals `usage.ts` applied to that JSON.
+- [ ] Lane 4. Repeat lane 3 with a Codex instance. Save `u1-codex.png` and `u1-codex.json`. Pass when the Codex section matches its JSON.
+- [ ] Lane 5. Use a provider instance that is signed out. Save `u1-unavailable.png`. Pass when its section shows the dash and the tooltip gives the reason.
+- [ ] Lane 6. Run one Claude turn while the app is open. Save `u1-live.txt`. Pass when the bar changes within 2 s of the server config event that carries new limits, with no reload.
+- [ ] Lane 7. Add a project with a 90-character name. Save `u1-truncate.png`. Pass when the title ends in an ellipsis and the trailing icons stay visible.
+- [ ] Lane 8. Hover a row, Tab through the rows, then collapse and expand a project header. Save `u1-focus.png`. Pass when hover and focus each show a visible state, and the collapsed state survives a reload.
+- [ ] Lane 9. Click `+` in the Projects header, pick a WSL folder, then try `C:\Users`. Save `u1-add-project.png`. Pass when the WSL folder appears as a project within 2 s, and `C:\Users` shows the outside-WSL reason with no project created.
+- [ ] Lane 10. Run the boundary check and the standards check at head. Save `u1-checks.txt`. Pass when both exit 0.
+
+**Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] Metric. Sidebar commit time with 50 projects. Trunk renders the plain list, so the budget is absolute.
+- [ ] Probe. Record a React profiler trace of the first sidebar render five times at trunk and at head.
+- [ ] Baseline. Record the trunk numbers first.
+- [ ] Rule. The head median stays under 50 ms, recorded for O1.
+
+**Review gate.** The operator reviews at merge.
+
+- [ ] Copy lane 1, 2, and 3 screenshots into `apps/board/docs/media/u1-review-<slug>.png`.
+- [ ] Record a 30 to 60 second video of the change from a lane. Save it as `apps/board/docs/media/u1-review.mp4`.
+- [ ] Post the screenshots and the video in chat for the operator at merge.
+
+**Merge.**
+
+- [ ] Root's clean verdict at the exact head SHA.
+- [ ] Bugbot triage done.
+- [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
+- [ ] The root appends U1 to the base-branch stack and the operator lands it bottom-up.
+
+## Probe the engine behaviors the board depends on (B3)
+
+**Depends on.** U1.
 
 **Files.**
 
@@ -456,9 +519,68 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends B3 to the base-branch stack and the operator lands it bottom-up.
 
-## Show the engine version and update the engine from the app (B4)
+## Add an Orca-style settings screen with worktree setup and cleanup (W1)
 
 **Depends on.** B3.
+
+**Files.**
+
+- [ ] Create `apps/board/src/settings/SettingsScreen.tsx` and `apps/board/src/settings/SettingsNav.tsx`.
+- [ ] Create `apps/board/src/settings/WorktreesPage.tsx` and `apps/board/src/settings/CleanupPage.tsx`.
+- [ ] Create `apps/board/src/settings/settingsModel.ts` and `apps/board/src/settings/settingsModel.test.ts`.
+- [ ] Edit `apps/board/src/sidebar/Sidebar.tsx` so the footer's settings icon opens the screen.
+
+**Build.**
+
+- [ ] In `SettingsScreen.tsx`, lay the screen out like Orca's settings, with a category list on the left, the selected page on the right, and a back control. Use U1's rows and the board's T3 dark tokens.
+- [ ] In `WorktreesPage.tsx`, edit T3's own worktree settings for the environment, with a per-project override, the way T3's Settings, then Worktrees page does. The fields are the project setup script that runs when T3 creates a worktree (T3's `ProjectSetupScriptRunner`), the worktree location, and the worktree branch naming. Read and write them through the engine's settings RPCs in `@t3tools/contracts`, so T3 runs the script. Edit the script in a multi-line field with a monospace font.
+- [ ] In `CleanupPage.tsx`, drive T3's storage cleanup. Show the automatic cleanup policies (inactive days, after settle, after merge, unchanged, delete with deleted threads, and which local files to keep), with a per-project override. Add **Delete now**, the latest results with each removed or kept worktree and its reason, and T3's manual delete for a single worktree. Follow `docs/user/project-settings.md:229-262`.
+- [ ] In `settingsModel.ts`, turn the engine's settings into page values and back, keeping inherited and overridden values apart.
+
+**You see.**
+
+- [ ] The sidebar's settings icon opens an Orca-style settings screen where the operator edits the worktree setup script, the location, and the branch naming, and cleans up worktrees now or by policy.
+
+**Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] `settingsModel.test.ts` maps a fixed settings payload with one project override into literal page values, marks which ones are inherited, and turns an edited setup script back into the literal RPC input. Run `vp test run src/settings/settingsModel.test.ts` from `apps/board`.
+
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe.
+
+- [ ] Lane 1. Regression lane against trunk. Trunk has no settings screen, so record that fact. Open the screen at head. Save `w1-settings.png`. Pass when the category list and the Worktrees page render in the Orca layout.
+- [ ] Lane 2. Save a setup script for a lane project, then create a worktree for it through the engine. Save `w1-setup-script.txt`. Pass when the script's output appears in the new worktree.
+- [ ] Lane 3. Set a project override for the script, then clear it. Save `w1-override.png`. Pass when the page shows overridden, then inherited.
+- [ ] Lane 4. Change the worktree location to a scratch folder and create a worktree. Save `w1-location.txt`. Pass when the worktree lands in that folder.
+- [ ] Lane 5. Change the branch naming prefix and create a worktree. Save `w1-branch.txt`. Pass when the new branch uses that prefix.
+- [ ] Lane 6. Leave a settled lane thread with a worktree, set settled retention to 0, and click **Delete now**. Save `w1-delete-now.png`. Pass when the results list that worktree as removed and its folder is gone.
+- [ ] Lane 7. Repeat lane 6 with uncommitted changes in the worktree. Save `w1-kept.png`. Pass when the results list it as kept with the local-changes reason.
+- [ ] Lane 8. Delete one worktree by hand from the page. Save `w1-manual.png`. Pass when T3's confirm appears and the worktree is removed after it.
+- [ ] Lane 9. Run the Windows app and open the screen. Save `w1-windows.png` from a full-window capture. Pass when the layout fits the window with the usage bar still at the bottom.
+- [ ] Lane 10. Run the boundary check and the standards check at head. Save `w1-checks.txt`. Pass when both exit 0.
+
+**Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] Metric. Time from clicking the settings icon to the Worktrees page's first paint. Trunk has no screen, so the budget is absolute.
+- [ ] Probe. Log `board:settings-click` and `board:settings-painted` ten times.
+- [ ] Baseline. Record that trunk has no screen, then record the head times.
+- [ ] Rule. The median stays under 300 ms, recorded for O1.
+
+**Review gate.** The operator reviews at merge.
+
+- [ ] Copy lane 1, 6, and 9 screenshots into `apps/board/docs/media/w1-review-<slug>.png`.
+- [ ] Record a 30 to 60 second video of the change from a lane. Save it as `apps/board/docs/media/w1-review.mp4`.
+- [ ] Post the screenshots and the video in chat for the operator at merge.
+
+**Merge.**
+
+- [ ] Root's clean verdict at the exact head SHA.
+- [ ] Bugbot triage done.
+- [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
+- [ ] The root appends W1 to the base-branch stack and the operator lands it bottom-up.
+
+## Show the engine version and update the engine from the app (B4)
+
+**Depends on.** W1.
 
 **Files.**
 
@@ -528,7 +650,7 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] In `domain/board.ts`, define the `board.json` schema with Effect Schema. The fields are `id`, `slug`, `name`, `projectId`, `orchestratorThreadId`, `createdAt`, `archived`, and `builderCap`.
 - [ ] In `boardFiles.ts`, list boards from `.agentboard/*/board.json` in the project with `projects.listEntries` and `projects.readFile`. Create a board with `projects.writeFile`, and write `.agentboard/.gitignore` with the single line `*` so git ignores the whole folder.
 - [ ] In `localState.ts`, keep card positions and the last opened board in the app's user data folder through IPC.
-- [ ] In `BoardList.tsx`, nest boards under their project, hide archived boards, and add a **Show archived** toggle per project.
+- [ ] In `BoardList.tsx`, nest boards under their project with U1's rows. Archived boards collapse into a pill row, `N archived boards`, like Orca's hidden worktrees row, and opening it shows them with a restore action.
 - [ ] To archive a board, stop the orchestrator with `thread.stop` and `stopDelegatedTasks`, archive every thread from `orchestration.getThreadFamily`, then set `archived` to true. Restore reverses each step.
 
 **You see.**
@@ -656,6 +778,7 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] In `Lanes.tsx`, draw the lanes For you, Planned, Building, Reviewing, Verifying, PR and CI, Awaiting approval, Merged, and Off path. A ticket frame sits in the lane of its stage.
 - [ ] In `TicketFrame.tsx`, show the key, title, track, the edge to each `dependsOn` ticket, the branch and base, the PR chip, the short head SHA, the fix round count, and verdict chips with P0 to P3 counts. It holds the ticket's agent cards.
 - [ ] In `AgentCard.tsx`, show the role name from the title and its registry entry, the provider glyph, the run state from the shell, the pending-request flag, and the worktree branch. Flag a role that is not in the registry.
+- [ ] In the sidebar, expand a board's row into its agent tree with U1's rows, one indent step per nesting level, and a count chip on each parent with its child count and a status dot count, as in Orca's sidebar.
 - [ ] In `PeekDrawer.tsx`, show the ticket's `summary` and `why` as one-liners and a read-only log of the selected agent's thread.
 - [ ] Keep frame positions within a lane in local UI state. Only `tickets.json` changes a ticket's stage.
 
@@ -832,6 +955,7 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] In `prStatus.ts`, find each ticket's PR from `tickets.json` or the owner thread's `pullRequests`, and read checks with `pullRequests.checks`.
 - [ ] In `domain/readiness.ts`, compute the six merge-ready conditions from the ticket's verdicts, its fix rounds, the parent ticket's state, its evidence paths, and live CI. Flag a check that has run longer than 20 minutes as stuck.
 - [ ] In `PrChip.tsx`, show the PR number, state, checks state, and mergeability on the ticket frame.
+- [ ] On a merged ticket's frame, offer **Remove worktree**, which runs T3's manual worktree delete with its confirm.
 - [ ] In `ReadinessChecklist.tsx`, show each condition as met or missing in the peek drawer and on merge approval cards.
 
 **You see.**

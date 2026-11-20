@@ -53,16 +53,19 @@ const layerSnapshotLoader = Layer.mergeAll(
   PullRequestDiffLoader.layer,
 );
 
+// Project commands mint their ids from it.
 const layerConnection = layerSnapshotLoader.pipe(
   Layer.provideMerge(Connection.layer),
   Layer.provideMerge(Layer.mergeAll(layerRuntime, ConnectionPlatform.layer)),
+  Layer.provideMerge(SecureRandom.layerWebCrypto),
 );
 
 type ConnectionLayerSource =
   | typeof Connection.layer
   | typeof layerSnapshotLoader
   | typeof layerRuntime
-  | typeof ConnectionPlatform.layer;
+  | typeof ConnectionPlatform.layer
+  | typeof SecureRandom.layerWebCrypto;
 
 export const connectionAtomRuntime: Atom.AtomRuntime<
   Layer.Success<ConnectionLayerSource>,

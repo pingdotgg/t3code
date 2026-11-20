@@ -4,10 +4,11 @@ import * as NodeTimersPromises from "node:timers/promises";
 
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { app, BrowserWindow, ipcMain, safeStorage } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, safeStorage } from "electron";
 
 import { runtimeSupportsClient } from "./runtimeCompatibility";
 import { createEngine, type EngineConfig, type TokenStore } from "./engine";
+import { pickFolder, resolveFolder } from "./pickFolder";
 import {
   createLinuxHost,
   type LinuxHost,
@@ -24,6 +25,7 @@ const sinceStart = (epochMs: number) => Math.round(epochMs - performance.timeOri
 
 const Settings = Schema.Struct({ wslDistro: Schema.optional(Schema.String) });
 const TokenFile = Schema.Record(Schema.String, Schema.String);
+const decodeText = Schema.decodeUnknownOption(Schema.String);
 const decodeSettings = Schema.decodeUnknownOption(Schema.fromJsonString(Settings));
 const decodeTokenFile = Schema.decodeUnknownOption(Schema.fromJsonString(TokenFile));
 
@@ -131,6 +133,30 @@ export function registerEngineIpc(options: {
     answer?.(accepted === true);
     answer = null;
   });
+  ipcMain.handle("board:pick-folder", (event) =>
+    pickFolder({
+      host,
+      platform,
+      choose: async (startAt) => {
+        const parent = BrowserWindow.fromWebContents(event.sender);
+        const dialogOptions = {
+          title: "Add project",
+          properties: ["openDirectory" as const],
+          ...(startAt === undefined ? {} : { defaultPath: startAt }),
+        };
+        const chosen = parent
+          ? await dialog.showOpenDialog(parent, dialogOptions)
+          : await dialog.showOpenDialog(dialogOptions);
+        return chosen.canceled ? null : (chosen.filePaths[0] ?? null);
+      },
+    }),
+  );
+  ipcMain.handle("board:resolve-folder", (_event, text) =>
+    resolveFolder(
+      host,
+      Option.getOrElse(decodeText(text), () => ""),
+    ),
+  );
   ipcMain.on("board:engine-connected", (_event, epochMs) => {
     if (isEpochMs(epochMs)) console.log(`board:engine-connected ${sinceStart(epochMs)} ms`);
   });

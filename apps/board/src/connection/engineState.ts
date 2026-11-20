@@ -21,4 +21,12 @@ export interface BoardBridge {
   readonly engineToken: () => Promise<EngineTokenResult>;
   /** Answers the install or update question the footer is asking. */
   readonly answerPrompt: (accepted: boolean) => void;
+  /** Shows the folder dialog in the user's WSL home. Null when the user cancels. */
+  readonly pickFolder: () => Promise<FolderResult | null>;
+  /** Checks a typed folder and returns its path inside WSL. */
+  readonly resolveFolder: (text: string) => Promise<FolderResult>;
 }
+
+export type FolderResult =
+  | { readonly ok: true; readonly path: string }
+  | { readonly ok: false; readonly reason: string };

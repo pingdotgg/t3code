@@ -1,10 +1,11 @@
 import { Viewport } from "./board/Viewport";
 import { EngineStatus } from "./sidebar/EngineStatus";
 import { Sidebar } from "./sidebar/Sidebar";
+import { UsageBar } from "./usage/UsageBar";
 
 export function App() {
   return (
-    <div className="grid h-full grid-rows-[var(--topbar-height)_minmax(0,1fr)]">
+    <div className="grid h-full grid-rows-[var(--topbar-height)_minmax(0,1fr)_auto]">
       <header className="drag-region border-b border-line bg-bg" />
       <div className="grid min-h-0 grid-cols-[240px_minmax(0,1fr)]">
         <Sidebar footer={<EngineStatus />} />
@@ -12,6 +13,7 @@ export function App() {
           <Viewport />
         </main>
       </div>
+      <UsageBar />
     </div>
   );
 }

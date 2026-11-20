@@ -1,9 +1,23 @@
-import type { BoardBridge, EngineState, EngineTokenResult } from "./engineState";
+import type { BoardBridge, EngineState, EngineTokenResult, FolderResult } from "./engineState";
 
 type EngineBridge = Pick<
   BoardBridge,
-  "engineState" | "onEngineState" | "engineToken" | "answerPrompt"
+  "engineState" | "onEngineState" | "engineToken" | "answerPrompt" | "pickFolder" | "resolveFolder"
 >;
+
+// Without the main process there is no WSL to ask, so the engine rejects a folder that is missing.
+function webFolder(text: string): FolderResult {
+  const path = text.trim();
+  if (/^\/mnt\/[a-z](\/|$)/.test(path) || /^([A-Za-z]:[\\/]|\\\\)/.test(path)) {
+    return {
+      ok: false,
+      reason: "That folder is outside WSL. Pick one inside the Linux distro, such as /home.",
+    };
+  }
+  return path.startsWith("/")
+    ? { ok: true, path: path.replace(/\/+$/, "") || "/" }
+    : { ok: false, reason: "Use an absolute WSL path, such as /home/me/project." };
+}
 
 // `dev:web` has no Electron main process, so the lane scripts pass the engine and a token directly.
 function webBridge(): EngineBridge {
@@ -23,6 +37,12 @@ function webBridge(): EngineBridge {
     onEngineState: () => () => undefined,
     engineToken: () => Promise.resolve(result),
     answerPrompt: () => undefined,
+    pickFolder: () =>
+      Promise.resolve({
+        ok: false,
+        reason: "The folder picker needs the desktop app. Type a WSL path instead.",
+      }),
+    resolveFolder: (text) => Promise.resolve(webFolder(text)),
   };
 }
 
