@@ -1,7 +1,9 @@
 import {
+  ProviderSetupError,
   TrimmedNonEmptyString,
   ServerProviderCompatibilityStatus,
   type ProviderDriverKind,
+  type ProviderInstanceId,
   type ServerProvider,
   type ServerProviderCompatibilityAdvisory,
 } from "@t3tools/contracts";
@@ -22,9 +24,22 @@ const VersionRange = TrimmedNonEmptyString.pipe(
     ),
   ),
 );
+const compilePattern = (pattern: string) => {
+  try {
+    return new RegExp(pattern, "u");
+  } catch {
+    return undefined;
+  }
+};
 const Policy = Schema.Struct({
   driver: TrimmedNonEmptyString,
   t3CodeRange: VersionRange,
+  /** Matches a reported version that is not plain `X.Y.Z`; its first group is the version to rate. */
+  versionPattern: Schema.optionalKey(
+    TrimmedNonEmptyString.pipe(
+      Schema.check(Schema.makeFilter((value) => compilePattern(value) !== undefined)),
+    ),
+  ),
   recommendedRange: Schema.optionalKey(VersionRange),
   recommendedVersion: Schema.optionalKey(StableVersion),
   ranges: Schema.Array(
@@ -65,16 +80,9 @@ export function resolveProviderCompatibility(
   );
   if (!policy) return undefined;
   const unprefixed = version?.replace(/^v/, "");
-  // Strip Cursor build hashes and Muse revisions; leave other prereleases unknown. Antigravity
-  // drops its pre-CLI prefix and prerelease suffix, so a custom launcher below 1.5 resolves broken.
-  const stable =
-    driver === "cursor"
-      ? unprefixed?.replace(/^(\d{4}\.\d{2}\.\d{2})-[a-f0-9]+$/, "$1")
-      : driver === "muse"
-        ? unprefixed?.replace(/^(\d+\.\d+\.\d+)-R\d+(?:\.\d+)?$/, "$1")
-        : driver === "antigravity"
-          ? unprefixed?.replace(/^(?:agy_acp_server_)?(\d+\.\d+\.\d+)(?:-[0-9A-Za-z.-]+)?$/, "$1")
-          : unprefixed;
+  // Without a pattern, build hashes, revisions and prereleases stay unknown.
+  const pattern = policy.versionPattern ? compilePattern(policy.versionPattern) : undefined;
+  const stable = (pattern && unprefixed?.match(pattern)?.[1]) || unprefixed;
   const status =
     stable && /^\d+\.\d+\.\d+$/.test(stable)
       ? (policy.ranges.find((entry) => satisfiesSemverRange(stable, entry.range))?.status ??
@@ -99,6 +107,24 @@ export function resolveProviderCompatibility(
   };
 }
 
+/** The one refusal for a runtime the policy rates `broken`; `action` names how this runtime is updated. */
+export function brokenRuntimeError(input: {
+  readonly instanceId: ProviderInstanceId;
+  readonly name: string;
+  readonly version: string;
+  readonly advisory: ServerProviderCompatibilityAdvisory | undefined;
+  readonly action?: string;
+}): ProviderSetupError | undefined {
+  if (input.advisory?.status !== "broken") return undefined;
+  const target =
+    input.advisory.recommendedVersion ?? input.advisory.recommendedRange ?? "a newer version";
+  return new ProviderSetupError({
+    instanceId: input.instanceId,
+    operation: "runtime",
+    detail: `${input.name} ${input.version} does not work with this T3 Code release. ${input.action ?? `Update ${input.name}`} to ${target}, then retry.`,
+  });
+}
+
 export function applyProviderCompatibility(
   snapshot: ServerProvider,
   policies: ReadonlyArray<ProviderCompatibilityPolicy> | undefined,
@@ -106,14 +132,12 @@ export function applyProviderCompatibility(
 ): ServerProvider {
   const { compatibilityAdvisory: _previous, ...base } = snapshot;
   if (!snapshot.enabled || !snapshot.installed) return base;
-  const advisory =
-    resolveProviderCompatibility(policies, snapshot.driver, snapshot.version) ??
-    resolveProviderCompatibility(fallback, snapshot.driver, snapshot.version);
+  const resolve = (version: string | null) =>
+    resolveProviderCompatibility(policies, snapshot.driver, version) ??
+    resolveProviderCompatibility(fallback, snapshot.driver, version);
+  const advisory = resolve(snapshot.version);
   const latestVersion = snapshot.versionAdvisory?.latestVersion;
-  const latestAdvisory = latestVersion
-    ? (resolveProviderCompatibility(policies, snapshot.driver, latestVersion) ??
-      resolveProviderCompatibility(fallback, snapshot.driver, latestVersion))
-    : undefined;
+  const latestAdvisory = latestVersion ? resolve(latestVersion) : undefined;
   const updateCommand = snapshot.versionAdvisory?.updateCommand;
   // The maintenance resolver emits this command only for confirmed Homebrew installs.
   const needsHomebrewRefresh =

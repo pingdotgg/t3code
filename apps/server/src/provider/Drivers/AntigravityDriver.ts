@@ -34,6 +34,7 @@ import {
 } from "../../textGeneration/AntigravityTextGeneration.ts";
 import { makeAntigravityAuth, type AntigravityAuth } from "../AntigravityAuth.ts";
 import * as AntigravityInstallation from "../AntigravityInstallation.ts";
+import { brokenRuntimeError } from "../providerCompatibility.ts";
 import * as AntigravityUsage from "./AntigravityUsage.ts";
 import {
   antigravityAuthConfigIssue,
@@ -317,19 +318,20 @@ export const AntigravityDriver: ProviderDriver<
       const startCompatible = Effect.fn("AntigravityDriver.startCompatible")(function* () {
         const version = (yield* runtime.initialize()).agentInfo?.version;
         const advisory = version ? yield* installation.compatibility(version) : undefined;
-        if (advisory?.status === "broken") {
-          const target =
-            advisory.recommendedVersion ?? advisory.recommendedRange ?? "a newer version";
-          const update =
-            executable.source === "managed"
-              ? `Update it in Antigravity setup to ${target}`
-              : `Update the Antigravity executable at ${executable.executablePath} to ${target}`;
-          const cause = new ProviderSetupError({
+        const refused =
+          version &&
+          brokenRuntimeError({
             instanceId,
-            operation: "runtime",
-            detail: `Antigravity ${version} does not work with this T3 Code release. ${update}, then retry.`,
+            name: "Antigravity",
+            version,
+            advisory,
+            action:
+              executable.source === "managed"
+                ? "Update it in Antigravity setup"
+                : `Update the Antigravity executable at ${executable.executablePath}`,
           });
-          return yield* new AcpErrors.AcpTransportError({ detail: cause.detail, cause });
+        if (refused) {
+          return yield* new AcpErrors.AcpTransportError({ detail: refused.detail, cause: refused });
         }
         return yield* runtime.start();
       });
