@@ -261,7 +261,7 @@ layer("GitLabCli.layer", (it) => {
       }),
   );
 
-  it.effect("creates same-project MRs without a repository lookup", () =>
+  it.effect("creates same-project MRs without a repository lookup, drafts by title prefix", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const bodyFile = yield* fileSystem.makeTempFileScoped({ prefix: "t3-gitlab-mr-body-" });
@@ -292,6 +292,24 @@ layer("GitLabCli.layer", (it) => {
           ],
         }),
       );
+
+      const draftTitle = (title: string) =>
+        Effect.gen(function* () {
+          mockedRun.mockClear();
+          mockedRun.mockReturnValueOnce(Effect.succeed(processOutput("{}")));
+          yield* glab.createMergeRequest({
+            cwd: "/repo",
+            baseBranch: "main",
+            headSelector: "feature/fix",
+            title,
+            bodyFile,
+            draft: true,
+          });
+          return mockedRun.mock.calls[0]?.[0].args.find((arg) => arg.startsWith("title="));
+        });
+      expect(yield* draftTitle("Fix remote flow")).toBe("title=Draft: Fix remote flow");
+      expect(yield* draftTitle("draft: Fix remote flow")).toBe("title=draft: Fix remote flow");
+      expect(yield* draftTitle("[Draft] Fix remote flow")).toBe("title=[Draft] Fix remote flow");
     }).pipe(Effect.scoped),
   );
 

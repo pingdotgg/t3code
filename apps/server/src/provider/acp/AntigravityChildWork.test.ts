@@ -235,6 +235,31 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
       expect(child?.steps?.length).toBeLessThan(40);
       expect(child?.steps?.at(-1)?.text).toBe("marker 4242 found");
       expect(child?.steps?.[0]?.text?.length).toBeLessThanOrEqual(4_001);
+
+      const lastLine = JSON.stringify(transcriptLines[3]) + "\n";
+      const step = { step_index: 2, type: "VIEW_FILE", content: "" };
+      const remaining = 256 * 1024 - Buffer.byteLength(JSON.stringify(step) + "\n" + lastLine);
+      const firstLine = JSON.stringify({
+        ...step,
+        content: "é".repeat(Math.floor(remaining / 2)) + "x".repeat(remaining % 2),
+      });
+      const aligned = yield* makeProfile({
+        steps: autoApproved,
+        transcript: `${filler}\n${firstLine}\n${lastLine}`,
+      });
+      const [alignedChild] = yield* read(aligned.profile, `${ROOT}:1`);
+      expect(alignedChild).toMatchObject({
+        truncated: true,
+        steps: [{ index: 2 }, { index: 3 }],
+      });
+
+      const paddedLine = firstLine.padEnd(firstLine.length + Buffer.byteLength(lastLine) + 1);
+      const undelimited = yield* makeProfile({
+        steps: autoApproved,
+        transcript: filler + paddedLine,
+      });
+      const [undelimitedChild] = yield* read(undelimited.profile, `${ROOT}:1`);
+      expect(undelimitedChild).toMatchObject({ truncated: true, steps: [] });
     }),
   );
 
