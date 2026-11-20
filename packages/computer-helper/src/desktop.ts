@@ -138,6 +138,10 @@ function center(el) {
   var p = pair(el, 'AXPosition'), s = pair(el, 'AXSize');
   return p && s && s[0] > 0 && s[1] > 0 ? [p[0] + s[0] / 2, p[1] + s[1] / 2] : null;
 }
+function rectOf(el) {
+  var p = pair(el, 'AXPosition'), s = pair(el, 'AXSize');
+  return p && s ? { x: p[0], y: p[1], w: s[0], h: s[1] } : null;
+}
 // The app macOS asks about for Accessibility: the one that launched the helper (Terminal, iTerm),
 // which marks its child processes with its bundle ID. Under the LaunchAgent nothing marks it, and
 // macOS asks about the node binary itself (empty here).
@@ -344,51 +348,76 @@ function showsLoading(el, role) {
   if (role !== 'AXGroup' && role !== 'AXWebArea') return false;
   return plain(el, 'AXElementBusy') === true || LOADER.test(plain(el, 'AXDOMIdentifier') || '');
 }
-// A browser window's page: its first web area, found before the walk so the page, not the tabs, toolbar and bookmarks
-// around it, gets the walk's budget. Refs stay paths from the window.
-function pageOf(win) {
-  var queue = [{ el: win, path: [], depth: 0 }], seen = 0;
+// A browser window's pages: its first web area that is not DevTools, found before the walk so the page, not the tabs,
+// toolbar and bookmarks around it, gets the walk's budget, and the DevTools docked beside it. Refs stay paths from the
+// window. Web areas are not searched inside.
+function webAreas(win) {
+  var queue = [{ el: win, path: [], depth: 0 }], seen = 0, page = null, devtools = [];
   while (queue.length && seen < 600) {
     var node = queue.shift(), kids = children(node.el);
     for (var i = 0; i < kids.length; i++, seen++) {
-      var path = node.path.concat([i]);
-      if (plain(kids[i], 'AXRole') === 'AXWebArea') return { el: kids[i], path: path, depth: node.depth + 1 };
-      if (node.depth < 12) queue.push({ el: kids[i], path: path, depth: node.depth + 1 });
+      var path = node.path.concat([i]), area = { el: kids[i], path: path, depth: node.depth + 1 };
+      if (plain(kids[i], 'AXRole') === 'AXWebArea') {
+        if (/^devtools:/.test(urlOf(kids[i]))) devtools.push(area); else if (!page) page = area;
+      } else if (node.depth < 12) queue.push(area);
     }
   }
-  return null;
+  return { page: page, devtools: devtools };
 }
-var MAX_TEXT = 8000, MAX_NODES = 4000, MAX_CONTROLS = 200;
-function run(argv) {
-  var target = front(argv && argv[0]);
-  if (!target.win) return JSON.stringify({ app: target.name, title: '', controls: [], text: '' });
-  var win = target.win, started = Date.now(), truncated = false, loading = false;
-  var wp = pair(win, 'AXPosition'), ws = pair(win, 'AXSize');
-  var left = wp[0], top = wp[1], right = wp[0] + ws[0], bottom = wp[1] + ws[1];
-  var page = pageOf(win), url = page ? urlOf(page.el) : '';
-  // Depth first, in document order, so text reads as the page does: a heading, then its section.
-  var root = page || { el: win, path: [], depth: 0 };
+function named(kind, el) {
+  var title = clip(plain(el, 'AXTitle') || plain(el, 'AXDescription') || '', 60);
+  return title ? kind + ' “' + title + '”' : kind;
+}
+var WINDOW_KINDS = { AXDialog: 'dialog', AXSystemDialog: 'dialog', AXFloatingWindow: 'panel', AXSystemFloatingWindow: 'panel' };
+// What is open with the window: sheets and popovers attached to it, and the app's other windows that are dialogs,
+// panels or popups (Chrome's bubbles) or show DevTools. Another window's refs start "w<index>:".
+function panelsOf(app, win) {
+  var out = [], kids = children(win);
+  for (var i = 0; i < kids.length; i++) {
+    var role = plain(kids[i], 'AXRole');
+    if (role === 'AXSheet' || role === 'AXPopover')
+      out.push({ window: named(role === 'AXSheet' ? 'sheet' : 'popup', kids[i]), root: { el: kids[i], path: [i], depth: 1 }, prefix: '', text: true });
+  }
+  var wins = attr(app, 'AXWindows');
+  for (var w = 0; wins && w < wins.count; w++) {
+    var other = wins.objectAtIndex(w);
+    if ($.CFEqual(other, win) || plain(other, 'AXRole') === 'AXSheet') continue;
+    var sub = plain(other, 'AXSubrole'), size = pair(other, 'AXSize'), prefix = 'w' + w + ':';
+    if (sub === 'AXStandardWindow') {
+      webAreas(other).devtools.forEach(function (area) { out.push({ window: 'devtools', root: area, prefix: prefix, text: true, devtools: true }); });
+      continue;
+    }
+    var kind = WINDOW_KINDS[sub] || 'popup';
+    // Chrome keeps a 66×20 helper window over its tab strip: not a popup.
+    if (kind === 'popup' && (!size || size[0] < 100 || size[1] < 30)) continue;
+    // A popup's lines are already in \`popup\`: only its controls are listed again.
+    out.push({ window: named(kind, other), root: { el: other, path: [], depth: 0 }, prefix: prefix, text: kind !== 'popup' });
+  }
+  return out;
+}
+var MAX_TEXT = 8000, PANEL_TEXT = 3000, DEVTOOLS_TEXT = 4000, MAX_NODES = 4000, PANEL_NODES = 800, DEVTOOLS_NODES = 1500, MAX_CONTROLS = 200;
+// One root's controls (refs: prefix + path) and text, depth first in document order so text reads as the page does: a
+// heading, then its section. \`bounds\` clips what is outside the root's window; \`edges\` are a page's top and bottom.
+function walk(root, prefix, bounds, edges, limits, state) {
+  var left = bounds.x, top = bounds.y, right = bounds.x + bounds.w, bottom = bounds.y + bounds.h;
   var stack = [{ el: root.el, path: root.path, depth: root.depth, root: true }], visited = 0, controls = [], text = '';
-  // Chrome reports what is scrolled out of view as 1 point tall on the page's top or bottom edge.
-  var pp = page && pair(page.el, 'AXPosition'), psz = page && pair(page.el, 'AXSize');
-  var pageTop = pp ? pp[1] : -1e9, pageBottom = pp && psz ? pp[1] + psz[1] : 1e9;
   while (stack.length) {
-    if (visited >= MAX_NODES || controls.length >= MAX_CONTROLS || Date.now() - started > WALK_MS) { truncated = true; break; }
+    if (visited >= limits.nodes || state.controls >= MAX_CONTROLS || Date.now() - state.started > WALK_MS) { state.truncated = true; break; }
     var node = stack.pop(), el = node.el, role = plain(el, 'AXRole');
     if (!node.root) {
       visited++;
       var p = pair(el, 'AXPosition'), s = pair(el, 'AXSize');
       var sized = p && s && s[0] > 0 && s[1] > 0;
       if (sized && (p[0] >= right || p[1] >= bottom || p[0] + s[0] <= left || p[1] + s[1] <= top)) continue;
-      var pinned = p && s && s[1] <= 1 && (Math.abs(p[1] - pageTop) <= 1 || Math.abs(p[1] + s[1] - pageBottom) <= 1);
-      if (role === 'AXWebArea' && !url) url = urlOf(el);
-      if (!loading && sized && showsLoading(el, role)) loading = true;
+      var pinned = edges && p && s && s[1] <= 1 && (Math.abs(p[1] - edges.top) <= 1 || Math.abs(p[1] + s[1] - edges.bottom) <= 1);
+      if (role === 'AXWebArea' && !state.url && !limits.devtools) state.url = urlOf(el);
+      if (!state.loading && !limits.devtools && sized && showsLoading(el, role)) state.loading = true;
       if (pinned) {
         // Scrolled out of view: neither listed nor read, but its children may be on screen.
       } else if (role === 'AXStaticText') {
         var words = plain(el, 'AXValue');
         // A heading starts its own line, so the links and rows after it read as its section.
-        if (text.length < MAX_TEXT && words) text += node.heading ? (text ? '\\n' : '') + '## ' + clip(words, 200) + '\\n' : (text && !/\\n$/.test(text) ? ' ' : '') + clip(words, 1500);
+        if (text.length < limits.text && words) text += node.heading ? (text ? '\\n' : '') + '## ' + clip(words, 200) + '\\n' : (text && !/\\n$/.test(text) ? ' ' : '') + clip(words, 1500);
       } else if (ROLES[role] && sized) {
         // A password field (subrole AXSecureTextField) is listed so it can be typed into, never with its value.
         var kind = ROLES[role], value = plain(el, 'AXSubrole') === 'AXSecureTextField' ? '' : plain(el, 'AXValue');
@@ -397,12 +426,13 @@ function run(argv) {
           (plain(el, 'AXSubrole') ? plain(el, 'AXRoleDescription') : '') || plain(el, 'AXHelp') || '';
         label = clip(label, 100);
         if (kind !== 'row' || label) {
-          var control = { ref: node.path.join('.'), role: kind, label: label, bounds: { x: p[0], y: p[1], w: s[0], h: s[1] } };
+          var control = { ref: prefix + node.path.join('.'), role: kind, label: label, bounds: { x: p[0], y: p[1], w: s[0], h: s[1] } };
           if (kind === 'textbox') {
             control.value = clip(value, 200);
             if (plain(el, 'AXFocused') === true) control.focused = true;
           }
           controls.push(control);
+          state.controls++;
         }
       }
       if (LEAVES[role] || node.depth + 1 >= MAX_DEPTH) continue;
@@ -410,7 +440,6 @@ function run(argv) {
     var kids = children(el), heading = role === 'AXHeading';
     for (var i = kids.length - 1; i >= 0; i--) stack.push({ el: kids[i], path: node.path.concat([i]), depth: node.depth + 1, heading: heading });
   }
-  if (!url) { var doc = plain(win, 'AXDocument'); if (typeof doc === 'string' && /^(https?|file):/.test(doc)) url = doc; }
   // A web card is often a link wrapping a link to the same place: one control, the outer one.
   controls = controls.filter(function (c, i) {
     return !controls.slice(0, i).some(function (o) {
@@ -419,10 +448,34 @@ function run(argv) {
     });
   });
   controls.sort(function (a, b) { return Math.round(a.bounds.y / 8) - Math.round(b.bounds.y / 8) || a.bounds.x - b.bounds.x; });
-  var out = { app: target.name, title: plain(win, 'AXTitle') || '', controls: controls, text: text.slice(0, MAX_TEXT), window: { x: left, y: top, w: ws[0], h: ws[1] } };
+  return { controls: controls, text: text.slice(0, limits.text) };
+}
+function run(argv) {
+  var target = front(argv && argv[0]);
+  if (!target.win) return JSON.stringify({ app: target.name, title: '', controls: [], text: '' });
+  var win = target.win, bounds = rectOf(win), state = { started: Date.now(), truncated: false, loading: false, controls: 0, url: '' };
+  var areas = webAreas(win), page = areas.page;
+  if (page) state.url = urlOf(page.el);
+  var found = panelsOf(target.app, win).concat(areas.devtools.map(function (area) { return { window: 'devtools', root: area, prefix: '', text: true, devtools: true }; }));
+  var panels = [];
+  function read(panel, nodes, text) {
+    var seen = walk(panel.root, panel.prefix, rectOf(panel.root.el) || bounds, null, { nodes: nodes, text: panel.text ? text : 0, devtools: panel.devtools }, state);
+    if (seen.controls.length || seen.text) panels.push({ window: panel.window, controls: seen.controls, text: seen.text });
+  }
+  // Sheets and popups first: they sit on top, and a sheet blocks the window until it is answered.
+  found.filter(function (panel) { return !panel.devtools; }).forEach(function (panel) { read(panel, PANEL_NODES, PANEL_TEXT); });
+  // Chrome reports what is scrolled out of view as 1 point tall on the page's top or bottom edge.
+  var pr = page && rectOf(page.el);
+  var main = walk(page || { el: win, path: [], depth: 0 }, '', bounds, pr ? { top: pr.y, bottom: pr.y + pr.h } : null, { nodes: MAX_NODES, text: MAX_TEXT }, state);
+  // DevTools last: its Elements tree alone could take the whole budget.
+  found.filter(function (panel) { return panel.devtools; }).forEach(function (panel) { read(panel, DEVTOOLS_NODES, DEVTOOLS_TEXT); });
+  var url = state.url;
+  if (!url) { var doc = plain(win, 'AXDocument'); if (typeof doc === 'string' && /^(https?|file):/.test(doc)) url = doc; }
+  var out = { app: target.name, title: plain(win, 'AXTitle') || '', controls: main.controls, text: main.text, window: bounds };
+  if (panels.length) out.panels = panels;
   if (url) out.url = url;
-  if (truncated) out.truncated = true;
-  if (loading) out.loading = true;
+  if (state.truncated) out.truncated = true;
+  if (state.loading) out.loading = true;
   var popup = [popupText(target.app)].concat(openMenuItems(target.app).filter(function (item) { return plain(item, 'AXEnabled') !== false; }).map(function (item) { return clip(plain(item, 'AXTitle'), 80); })).filter(function (line) { return line; }).join(' | ').slice(0, 600);
   if (popup) out.popup = popup;
   return JSON.stringify(out);
@@ -455,8 +508,16 @@ function frontWindow(name) {
 const ACT_SCRIPT = `${JXA_HELPERS}${FRONT}${WINDOW_LIST}
 // The app an act targets (computer_act's \`app\`); empty is the app in front.
 var TARGET_APP = '';
+// A ref is a path of child indexes from the window; "w<index>:<path>" starts at another window of the same app.
 function resolve(win, ref) {
-  var el = win, parts = String(ref).split('.');
+  var el = win, other = /^w(\\d+):(.*)$/.exec(String(ref));
+  if (other) {
+    var wins = attr(attr(win, 'AXParent'), 'AXWindows'), at = Number(other[1]);
+    if (!wins || at >= wins.count) throw new Error('ADA_GONE');
+    el = wins.objectAtIndex(at);
+    ref = other[2];
+  }
+  var parts = ref === '' ? [] : String(ref).split('.');
   for (var i = 0; i < parts.length; i++) {
     var kids = children(el), index = Number(parts[i]);
     if (!(index >= 0) || index >= kids.length) throw new Error('ADA_GONE');
@@ -586,6 +647,63 @@ function paste(app, text, events) {
     if (back.length) pb.writeObjects($(back));
   }
 }
+function find(root, test, limit) {
+  var queue = [root], seen = 0;
+  while (queue.length && seen < limit) {
+    var kids = children(queue.shift());
+    for (var i = 0; i < kids.length; i++, seen++) { if (test(kids[i])) return kids[i]; queue.push(kids[i]); }
+  }
+  return null;
+}
+function byId(root, id) { return find(root, function (el) { return plain(el, 'AXIdentifier') === id; }, 1500); }
+function waitFor(get, seconds) {
+  for (var t = 0; t < seconds * 10; t++) { var got = get(); if (got) return got; delay(0.1); }
+  return null;
+}
+// The app's open panel (identified "open-panel" by AppKit): a sheet on one of its windows, or a window of its own.
+function filePanel(app) {
+  var wins = attr(app, 'AXWindows');
+  for (var i = 0; wins && i < wins.count; i++) {
+    var w = wins.objectAtIndex(i);
+    if (plain(w, 'AXIdentifier') === 'open-panel') return w;
+    var kids = children(w);
+    for (var k = 0; k < kids.length; k++) if (plain(kids[k], 'AXIdentifier') === 'open-panel') return kids[k];
+  }
+  return null;
+}
+// Open panels run in macOS's panel service, which takes the panel's keys: the service whose window covers the panel,
+// else the app itself (a panel drawn in process).
+function panelPid(app, panel) {
+  var svc = $.NSRunningApplication.runningApplicationsWithBundleIdentifier('com.apple.appkit.xpc.openAndSavePanelService');
+  var r = rectOf(panel), mid = r ? [r.x + r.w / 2, r.y + r.h / 2] : null, pids = [];
+  for (var i = 0; svc && i < svc.count; i++) pids.push(svc.objectAtIndex(i).processIdentifier);
+  if (mid && pids.length) {
+    var list = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionOnScreenOnly, 0))) || [];
+    for (var j = 0; j < list.length; j++) {
+      var b = list[j].kCGWindowBounds;
+      if (pids.indexOf(list[j].kCGWindowOwnerPID) >= 0 && mid[0] >= b.X && mid[0] <= b.X + b.Width && mid[1] >= b.Y && mid[1] <= b.Y + b.Height) return list[j].kCGWindowOwnerPID;
+    }
+  }
+  if (pids.length === 1) return pids[0];
+  var own = Ref();
+  return $.AXUIElementGetPid(app, own) === 0 ? own[0] : 0;
+}
+// Go to Folder (shift-cmd-G) with the path set through accessibility, Return, then the panel's own OK button.
+function chooseFile(app, path, dryrun) {
+  var panel = filePanel(app);
+  if (!panel) throw new Error('ADA_NO_FILE_PANEL');
+  if (dryrun) return { mode: 'background' };
+  var pid = panelPid(app, panel);
+  keyToPid(pid, 5, $.kCGEventFlagMaskCommand | $.kCGEventFlagMaskShift);
+  var field = waitFor(function () { return byId(panel, 'PathTextField'); }, 3);
+  if (!field) throw new Error('ADA_FILE_NOT_PICKED');
+  if ($.AXUIElementSetAttributeValue(field, $('AXValue'), $(path)) !== 0) throw new Error('ADA_FILE_NOT_PICKED');
+  delay(0.2);
+  keyToPid(pid, 36);
+  var ok = waitFor(function () { var b = byId(panel, 'OKButton'); return b && !byId(panel, 'GoToWindow') && plain(b, 'AXEnabled') === true ? b : null; }, 3);
+  if (!ok || $.AXUIElementPerformAction(ok, $('AXPress')) !== 0) throw new Error('ADA_FILE_NOT_PICKED');
+  return { mode: 'background', how: "the open panel's Go to Folder" };
+}
 function run(argv) {
   var op = argv[0], payload = JSON.parse(argv[1] || '{}'), dryrun = payload.dryrun === true;
   TARGET_APP = typeof payload.app === 'string' ? payload.app : '';
@@ -596,9 +714,8 @@ function run(argv) {
     var app = front(TARGET_APP);
     if (dryrun) return JSON.stringify({ mode: 'background' });
     var keyPid = app.name ? pidOf(app.name) : 0;
-    if (!payload.command) keyToPid(keyPid, payload.code);
-    else if (menuCommand(app.app, payload.command, 0)) return JSON.stringify({ mode: 'background', how: 'the app menu item' });
-    else keyToPid(keyPid, payload.code, $.kCGEventFlagMaskCommand);
+    if (payload.command && menuCommand(app.app, payload.command, payload.menu || 0)) return JSON.stringify({ mode: 'background', how: 'the app menu item' });
+    keyToPid(keyPid, payload.code, payload.flags || 0);
     return JSON.stringify({ mode: 'background' });
   }
   if (op === 'scroll') {
@@ -658,6 +775,7 @@ function run(argv) {
     if (!dryrun && $.AXUIElementPerformAction(items[0], $('AXPress')) !== 0) throw new Error('ADA_GONE');
     return JSON.stringify({ mode: 'background', how: 'the menu item' });
   }
+  if (op === 'choose') return JSON.stringify(chooseFile(front(TARGET_APP).app, String(payload.path), dryrun));
   var spot = /^v:(-?[\\d.]+),(-?[\\d.]+)$/.exec(String(payload.ref || '')), point, el = null, ax = null;
   if (spot) {
     point = [Number(spot[1]), Number(spot[2])];
@@ -787,8 +905,8 @@ export function visualControls(lines: OcrLine[], window: Window): ScreenControl[
     .map(({ label, x, y }) => ({ ref: `v:${x},${y}`, role: "text" as const, label }));
 }
 
-/** macOS virtual key codes for the keys a step may press (ANSI positions for the shortcut letters). */
-const KEY_CODES = {
+/** macOS virtual key codes by key name, ANSI positions for characters (a menu item is tried first for a ⌘ chord). */
+const KEY_CODES: Readonly<Record<string, number>> = {
   enter: 36,
   escape: 53,
   tab: 48,
@@ -797,17 +915,108 @@ const KEY_CODES = {
   down: 125,
   left: 123,
   right: 124,
-  "cmd+l": 37,
-  "cmd+t": 17,
-  "cmd+w": 13,
-} as const;
+  delete: 51,
+  forwarddelete: 117,
+  home: 115,
+  end: 119,
+  pageup: 116,
+  pagedown: 121,
+  f1: 122,
+  f2: 120,
+  f3: 99,
+  f4: 118,
+  f5: 96,
+  f6: 97,
+  f7: 98,
+  f8: 100,
+  f9: 101,
+  f10: 109,
+  f11: 103,
+  f12: 111,
+  a: 0,
+  s: 1,
+  d: 2,
+  f: 3,
+  h: 4,
+  g: 5,
+  z: 6,
+  x: 7,
+  c: 8,
+  v: 9,
+  b: 11,
+  q: 12,
+  w: 13,
+  e: 14,
+  r: 15,
+  y: 16,
+  t: 17,
+  "1": 18,
+  "2": 19,
+  "3": 20,
+  "4": 21,
+  "6": 22,
+  "5": 23,
+  "=": 24,
+  "9": 25,
+  "7": 26,
+  "-": 27,
+  "8": 28,
+  "0": 29,
+  "]": 30,
+  o: 31,
+  u: 32,
+  "[": 33,
+  i: 34,
+  p: 35,
+  l: 37,
+  j: 38,
+  "'": 39,
+  k: 40,
+  ";": 41,
+  "\\": 42,
+  ",": 43,
+  "/": 44,
+  n: 45,
+  m: 46,
+  ".": 47,
+  "`": 50,
+};
+
+/** CGEventFlags for each modifier, and the AXMenuItemCmdModifiers bit a menu item shows it with (⌘ itself is 0). */
+const MODIFIERS: Readonly<Record<string, { flag: number; menu: number }>> = {
+  cmd: { flag: 0x100000, menu: 0 },
+  shift: { flag: 0x20000, menu: 1 },
+  alt: { flag: 0x80000, menu: 2 },
+  ctrl: { flag: 0x40000, menu: 4 },
+};
+
+/** A chord (`cmd+shift+g`) as the act script presses it: the key code and flags, and the menu item to try first. */
+function chordPayload(chord: string): object {
+  const parts = chord.split("+");
+  const key = parts.pop() ?? "";
+  const code = KEY_CODES[key];
+  if (code === undefined) throw new Error(`There is no key “${key}” to press.`);
+  let flags = 0;
+  let menu = 0;
+  for (const part of parts) {
+    const modifier = MODIFIERS[part];
+    if (!modifier) throw new Error(`There is no modifier “${part}”.`);
+    flags |= modifier.flag;
+    menu |= modifier.menu;
+  }
+  // Only a ⌘ chord on one character has a menu item to press; its character does not depend on the keyboard layout.
+  const command = parts.includes("cmd") && key.length === 1 ? key.toUpperCase() : null;
+  return {
+    code,
+    ...(flags ? { flags } : {}),
+    ...(command ? { command } : {}),
+    ...(command && menu ? { menu } : {}),
+  };
+}
 
 /** The JSON handed to the act script as argv: key codes for presses, otherwise the action's own fields. */
 function actionPayload(action: ScreenAction): object {
-  if (action.kind === "press")
-    return action.key.startsWith("cmd+")
-      ? { code: KEY_CODES[action.key], command: action.key.slice(4).toUpperCase() }
-      : { code: KEY_CODES[action.key] };
+  if (action.kind === "press") return chordPayload(action.key);
   if (action.kind === "scroll")
     return {
       direction: action.direction,
@@ -816,6 +1025,7 @@ function actionPayload(action: ScreenAction): object {
     };
   if (action.kind === "type") return { ref: action.ref, text: action.text };
   if (action.kind === "pick") return { label: action.label };
+  if (action.kind === "choose_file") return { path: action.path };
   return { ref: action.ref };
 }
 
@@ -917,19 +1127,48 @@ function controlShape(value: unknown, what: string): ScreenControl {
   const text = optional(raw.value, `${what} value`, string);
   const focused = optional(raw.focused, `${what} focused`, boolean);
   const bounds = optional(raw.bounds, `${what} bounds`, rectShape);
+  const window = optional(raw.window, `${what} window`, string);
   if (text !== undefined) control.value = text;
   if (focused !== undefined) control.focused = focused;
   if (bounds !== undefined) control.bounds = bounds;
+  if (window) control.window = window;
   return control;
 }
 
+type Panel = { window: string; controls: ScreenControl[]; text: string };
+
+function panelShape(value: unknown, what: string): Panel {
+  const raw = object(value, what);
+  return {
+    window: string(raw.window, `${what} window`),
+    controls: array(raw.controls, `${what} controls`, controlShape),
+    text: optional(raw.text, `${what} text`, string) ?? "",
+  };
+}
+
+/**
+ * The window's own controls and text with what is open with it: a sheet's or popup's controls ahead of the page's (they
+ * sit on top), DevTools' after, each naming its window, and each one's text under a `## <window>` line.
+ */
 function observationShape(value: unknown): Omit<Observation, "backend"> {
   const raw = object(value, "observation");
+  const panels =
+    optional(raw.panels, "observation panels", (list, what) => array(list, what, panelShape)) ?? [];
+  const tagged = (panel: Panel) =>
+    panel.controls.map((control) => ({ ...control, window: panel.window }));
+  const devtools = (panel: Panel) => panel.window === "devtools";
   const seen: Omit<Observation, "backend"> = {
     app: string(raw.app, "observation app"),
     title: string(raw.title, "observation title"),
-    controls: array(raw.controls, "observation controls", controlShape),
-    text: string(raw.text, "observation text"),
+    controls: [
+      ...panels.filter((panel) => !devtools(panel)).flatMap(tagged),
+      ...array(raw.controls, "observation controls", controlShape),
+      ...panels.filter(devtools).flatMap(tagged),
+    ],
+    text: [
+      string(raw.text, "observation text"),
+      ...panels.filter((panel) => panel.text).map((panel) => `## ${panel.window}\n${panel.text}`),
+    ].join("\n\n"),
   };
   const url = optional(raw.url, "observation url", string);
   const window = optional(raw.window, "observation window", rectShape);
@@ -1098,6 +1337,7 @@ export class DesktopBackend implements ScreenBackend {
     const signal = options.signal;
     if (signal?.aborted) throw stopped(signal);
     if (action.kind === "type") return this.type(action.ref, action.text, options);
+    if (action.kind === "choose_file") return this.chooseFile(action.path, options);
     const payload = {
       ...actionPayload(action),
       ...(options.allowPointer ? { allow: true } : {}),
@@ -1151,6 +1391,24 @@ export class DesktopBackend implements ScreenBackend {
         ? "clicked into the field, typed keys"
         : "clicked into the field, pasted",
     };
+  }
+
+  /** The file at `path` in the app's open panel, checked on this Mac first. Keys go to the panel, not the person's keyboard. */
+  private async chooseFile(path: string, options: ActOptions): Promise<ActResult> {
+    const full = path.startsWith("~/") ? NodePath.join(NodeOS.homedir(), path.slice(2)) : path;
+    if (!NodePath.isAbsolute(full))
+      throw new Error(`Give the file's full path (from / or ~/), not “${path}”.`);
+    if (
+      !(await NodeFSP.stat(full).then(
+        () => true,
+        () => false,
+      ))
+    )
+      throw new Error(`Nothing is at ${full} on this Mac.`);
+    const payload = { path: full, ...(options.app ? { app: options.app } : {}) };
+    return resultOf(
+      await this.call(ACT_SCRIPT, ["choose", JSON.stringify(payload)], options.signal),
+    );
   }
 
   private async readValue(
@@ -1309,6 +1567,12 @@ function explain(message: string): Error | null {
     return new Error("That control is off screen; scroll it into view first.");
   const needs = message.match(/ADA_NEEDS_POINTER:([^:]*):/);
   if (needs) return new NeedsPointer((needs[1] ?? "").trim() || "it has no accessible action");
+  if (message.includes("ADA_NO_FILE_PANEL"))
+    return new Error(
+      "No file panel is open in that app: click the page's or app's file button first, then choose the file.",
+    );
+  if (message.includes("ADA_FILE_NOT_PICKED"))
+    return new Error("The open panel did not select that file, so nothing was chosen; look again.");
   if (message.includes("ADA_NOT_FOCUSED"))
     return new Error("The text box did not take the typing focus, so nothing was typed.");
   if (message.includes("ADA_NEWLINE"))

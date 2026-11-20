@@ -2,10 +2,16 @@ import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contr
 import type * as Effect from "effect/Effect";
 
 /**
- * Sent by MCP clients that cannot defer tools themselves. The T3 MCP server then
- * lists only a core set plus `tool_search`, which lists the rest on demand.
+ * Sent by MCP clients that cannot list every tool. `deferred`: the client has no tool search of
+ * its own, so T3 lists a core set plus `tool_search`, which lists the rest on demand. `budgeted`:
+ * the client drops tools past a size budget, so T3 lists only what fits, most important first.
  */
 export const MCP_TOOL_EXPOSURE_HEADER = "t3-tool-exposure";
+
+export type McpToolExposureMode = "deferred" | "budgeted";
+
+export const isMcpToolExposureMode = (value: unknown): value is McpToolExposureMode =>
+  value === "deferred" || value === "budgeted";
 
 export interface McpProviderSessionConfig {
   readonly environmentId: EnvironmentId;

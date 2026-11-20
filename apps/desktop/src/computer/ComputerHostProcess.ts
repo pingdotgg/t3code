@@ -129,6 +129,7 @@ type ChildAction =
   | { readonly kind: "scroll"; readonly direction: string }
   | { readonly kind: "surface"; readonly what: string; readonly name: string }
   | { readonly kind: "open_url"; readonly url: string }
+  | { readonly kind: "choose_file"; readonly path: string }
   | {
       readonly kind: "pointer";
       readonly step: string;
@@ -214,6 +215,8 @@ const toComputerAction = (action: ChildAction): ComputerAction => {
       return { kind: "surface", what: action.what, name: action.name };
     case "open_url":
       return { kind: "open_url", url: action.url };
+    case "choose_file":
+      return { kind: "choose_file", path: action.path };
     case "pointer":
       return {
         kind: "pointer",

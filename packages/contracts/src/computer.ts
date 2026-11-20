@@ -42,7 +42,7 @@ export const ComputerAction = Schema.Struct({
   label: Schema.optionalKey(Schema.String),
   /** `type`: the exact text to type. The only text computer use ever types. */
   text: Schema.optionalKey(Schema.String),
-  /** `press`: enter, space, escape, tab. */
+  /** `press`: a key or chord, such as enter or cmd+shift+g. */
   key: Schema.optionalKey(Schema.String),
   /** `press`: the field typed into before it, if any. */
   fieldRole: Schema.optionalKey(Schema.String),
@@ -57,6 +57,8 @@ export const ComputerAction = Schema.Struct({
   why: Schema.optionalKey(Schema.String),
   /** `open_url`: the address handed to the default browser. */
   url: Schema.optionalKey(Schema.String),
+  /** `choose_file`: the file picked in an open panel. */
+  path: Schema.optionalKey(Schema.String),
 });
 export type ComputerAction = typeof ComputerAction.Type;
 
@@ -260,21 +262,71 @@ export const ComputerControl = Schema.Struct({
 });
 export type ComputerControl = typeof ComputerControl.Type;
 
-const COMPUTER_ACT_ACTIONS = ["click", "type", "key", "scroll", "menu", "open_url"] as const;
-const COMPUTER_KEYS = [
-  "return",
-  "tab",
-  "escape",
-  "space",
-  "up",
-  "down",
-  "left",
-  "right",
-  "cmd+l",
-  "cmd+t",
-  "cmd+w",
+const COMPUTER_ACT_ACTIONS = [
+  "click",
+  "type",
+  "key",
+  "scroll",
+  "menu",
+  "open_url",
+  "choose_file",
 ] as const;
-export const ComputerKey = Schema.Literals(COMPUTER_KEYS);
+const CHORD_MODIFIERS: Readonly<Record<string, string>> = {
+  cmd: "cmd",
+  command: "cmd",
+  ctrl: "ctrl",
+  control: "ctrl",
+  alt: "alt",
+  opt: "alt",
+  option: "alt",
+  shift: "shift",
+};
+const MODIFIER_ORDER = ["cmd", "ctrl", "alt", "shift"];
+const NAMED_KEYS: Readonly<Record<string, string>> = {
+  enter: "enter",
+  return: "enter",
+  tab: "tab",
+  escape: "escape",
+  esc: "escape",
+  space: "space",
+  up: "up",
+  down: "down",
+  left: "left",
+  right: "right",
+  delete: "delete",
+  backspace: "delete",
+  forwarddelete: "forwarddelete",
+  home: "home",
+  end: "end",
+  pageup: "pageup",
+  pagedown: "pagedown",
+  ...Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`f${i + 1}`, `f${i + 1}`])),
+};
+const CHORD_CHARACTER = /^[a-z0-9`\-=[\]\\;',./]$/;
+
+/**
+ * A key or chord in its one spelling (`cmd+shift+g`, `enter`): modifiers cmd, ctrl, alt, shift in that order, then
+ * a named key or one character. Null when it is not one.
+ */
+export function computerChord(input: string): string | null {
+  const parts = input
+    .toLowerCase()
+    .split("+")
+    .map((part) => part.trim());
+  const key = parts.pop() ?? "";
+  const named = NAMED_KEYS[key] ?? (CHORD_CHARACTER.test(key) ? key : null);
+  const modifiers = parts.map((part) => CHORD_MODIFIERS[part]);
+  if (named === null || modifiers.some((m) => m === undefined)) return null;
+  if (new Set(modifiers).size !== modifiers.length) return null;
+  return [...MODIFIER_ORDER.filter((m) => modifiers.includes(m)), named].join("+");
+}
+
+export const ComputerKey = Schema.String.check(
+  Schema.makeFilter((value) => computerChord(value) !== null, {
+    message:
+      "Expected a key (enter, tab, escape, space, an arrow, delete, home, end, pageup, pagedown, f1-f12, or one character), optionally after cmd, ctrl, alt or shift joined by +",
+  }),
+);
 export type ComputerKey = typeof ComputerKey.Type;
 
 /**
@@ -295,6 +347,8 @@ export const ComputerAct = Schema.Struct({
   /** `scroll` up or down: how many screens, 1 to 10; one when left out. */
   amount: Schema.optionalKey(Schema.Finite),
   url: Schema.optionalKey(Schema.String),
+  /** `choose_file`: the absolute path (or ~/…) of the file to pick in the open panel. */
+  path: Schema.optionalKey(Schema.String),
   /** The app whose window to act on, as computer_look reads it; defaults to the app in front. */
   app: Schema.optionalKey(Schema.String),
 });
@@ -313,7 +367,10 @@ export const ComputerLook = Schema.Struct({
   app: Schema.String,
   title: Schema.String,
   url: Schema.optionalKey(Schema.String),
-  /** The visible text (a browser's page, not its tabs and toolbar), at most 8,000 characters. */
+  /**
+   * The visible text (a browser's page, not its tabs and toolbar), at most 8,000 characters, then a `## <window>`
+   * section for each sheet, dialog or DevTools open with it.
+   */
   text: Schema.String,
   controls: Schema.Array(
     Schema.Struct({
@@ -323,6 +380,8 @@ export const ComputerLook = Schema.Struct({
       value: Schema.optionalKey(Schema.String),
       focused: Schema.optionalKey(Schema.Boolean),
       bounds: Schema.optionalKey(ComputerRect),
+      /** The sheet, dialog, popup or DevTools it sits in, when not the window's own content. */
+      window: Schema.optionalKey(Schema.String),
     }),
   ),
   /** The walk ran out of budget: more is on screen than is listed. */

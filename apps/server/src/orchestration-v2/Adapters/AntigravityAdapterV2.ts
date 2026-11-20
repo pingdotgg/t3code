@@ -220,6 +220,8 @@ export function makeAntigravityAcpAdapterFlavor(
     supportsNativeGoals: options.supportsNativeGoals ?? Effect.succeed(false),
     // Agents that advertise HTTP MCP skip the stdio bridge process; others keep stdio.
     mcpOverHttp: true,
+    // Antigravity drops the largest MCP tools past a size budget it shares with skills.
+    mcpToolExposure: "budgeted",
     sessionCarriesPullRequestLinking: antigravityAppendsSystemPrompt,
     makeRuntime,
     buildAttachmentPrompt: ({

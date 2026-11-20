@@ -240,6 +240,85 @@ describe("DesktopBackend", () => {
     expect(calls[1]?.argv).toEqual(["Calculator"]);
   });
 
+  it("lists an app's sheets, dialogs, popups and DevTools ahead of the page, each control naming its window", async () => {
+    const { runner } = fakeRunner(() =>
+      JSON.stringify({
+        ...observation,
+        panels: [
+          {
+            window: "sheet “open”",
+            text: "Favourites Downloads",
+            controls: [{ ref: "4.12", role: "button", label: "Open" }],
+          },
+          {
+            window: "popup “Save password?”",
+            controls: [{ ref: "w1:0.3", role: "button", label: "Save" }],
+          },
+          {
+            window: "devtools",
+            text: "Failed to load resource: net::ERR_NAME_NOT_RESOLVED",
+            controls: [{ ref: "0.0.1.2", role: "tab", label: "Network" }],
+          },
+        ],
+      }),
+    );
+    const seen = await new DesktopBackend(runner).observe();
+    expect(seen.controls).toEqual([
+      { ref: "4.12", role: "button", label: "Open", window: "sheet “open”" },
+      { ref: "w1:0.3", role: "button", label: "Save", window: "popup “Save password?”" },
+      ...observation.controls,
+      { ref: "0.0.1.2", role: "tab", label: "Network", window: "devtools" },
+    ]);
+    expect(seen.text).toBe(
+      "Inbox 3 unread\n\n## sheet “open”\nFavourites Downloads\n\n## devtools\nFailed to load resource: net::ERR_NAME_NOT_RESOLVED",
+    );
+  });
+
+  it("chooses a file in the open panel, and says why when there is no panel or no such file", async () => {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "ada-choose-"));
+    const file = NodePath.join(dir, "report.pdf");
+    NodeFS.writeFileSync(file, "pdf");
+    const picked = fakeRunner(() =>
+      JSON.stringify({ mode: "background", how: "the open panel's Go to Folder" }),
+    );
+    expect(
+      await new DesktopBackend(picked.runner).act(
+        { kind: "choose_file", path: file },
+        { app: "Google Chrome" },
+      ),
+    ).toEqual({ mode: "background", how: "the open panel's Go to Folder" });
+    expect(picked.calls[0]?.argv).toEqual([
+      "choose",
+      JSON.stringify({ path: file, app: "Google Chrome" }),
+    ]);
+
+    const missing = fakeRunner(() => "{}");
+    await expect(
+      new DesktopBackend(missing.runner).act({
+        kind: "choose_file",
+        path: NodePath.join(dir, "gone.pdf"),
+      }),
+    ).rejects.toThrow(/Nothing is at .*gone\.pdf on this Mac/);
+    await expect(
+      new DesktopBackend(missing.runner).act({ kind: "choose_file", path: "report.pdf" }),
+    ).rejects.toThrow(/full path/);
+    expect(missing.calls).toEqual([]);
+
+    const noPanel = fakeRunner(
+      () => new Error("execution error: Error: ADA_NO_FILE_PANEL (-2700)"),
+    );
+    await expect(
+      new DesktopBackend(noPanel.runner).act({ kind: "choose_file", path: file }),
+    ).rejects.toThrow(/No file panel is open/);
+    const notPicked = fakeRunner(
+      () => new Error("execution error: Error: ADA_FILE_NOT_PICKED (-2700)"),
+    );
+    await expect(
+      new DesktopBackend(notPicked.runner).act({ kind: "choose_file", path: file }),
+    ).rejects.toThrow(/did not select/);
+    NodeFS.rmSync(dir, { recursive: true, force: true });
+  });
+
   it("scales a Retina window capture to the longest edge asked for, and says how image pixels map to points", async () => {
     let resized = false;
     const { runner, calls } = fakeRunner((call) => {
@@ -322,6 +401,10 @@ describe("DesktopBackend", () => {
     await desktop.act({ kind: "press", key: "space" });
     await desktop.act({ kind: "press", key: "up" });
     await desktop.act({ kind: "press", key: "cmd+l" });
+    await desktop.act({ kind: "press", key: "cmd+shift+g" });
+    await desktop.act({ kind: "press", key: "cmd+alt+i" });
+    await desktop.act({ kind: "press", key: "shift+tab" });
+    await desktop.act({ kind: "press", key: "cmd+left" });
     expect(calls.map((call) => call.argv)).toEqual([
       ["setvalue", JSON.stringify({ ref: "0.2.4", text })],
       ["value", JSON.stringify({ ref: "0.2.4" })],
@@ -332,7 +415,11 @@ describe("DesktopBackend", () => {
       ["scroll", JSON.stringify({ direction: "down", amount: 3 })],
       ["press", JSON.stringify({ code: 49 })],
       ["press", JSON.stringify({ code: 126 })],
-      ["press", JSON.stringify({ code: 37, command: "L" })],
+      ["press", JSON.stringify({ code: 37, flags: 0x100000, command: "L" })],
+      ["press", JSON.stringify({ code: 5, flags: 0x120000, command: "G", menu: 1 })],
+      ["press", JSON.stringify({ code: 34, flags: 0x180000, command: "I", menu: 2 })],
+      ["press", JSON.stringify({ code: 48, flags: 0x20000 })],
+      ["press", JSON.stringify({ code: 123, flags: 0x100000 })],
     ]);
     // The value and text travel as argv on stdin, never spliced into the script source.
     expect(calls[0]?.script).not.toContain("Finder");

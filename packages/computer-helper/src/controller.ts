@@ -35,16 +35,18 @@ export type ComputerTask = {
 
 /** An agent's own step on the window in front; a `type` step types the task's `text`. */
 export type ComputerAct = {
-  action: "click" | "type" | "key" | "scroll" | "menu" | "open_url";
+  action: "click" | "type" | "key" | "scroll" | "menu" | "open_url" | "choose_file";
   ref?: string;
   label?: string;
   x?: number;
   y?: number;
-  key?: Key | "return";
+  key?: Key;
   direction?: "up" | "down" | "top" | "bottom";
   /** `scroll` up or down: how many screens. */
   amount?: number;
   url?: string;
+  /** `choose_file`: the file's absolute path. */
+  path?: string;
   /** The app whose window to act on; the app in front when left out. */
   app?: string;
 };
@@ -73,6 +75,7 @@ export type AuthorizeAction =
       field?: { role: ScreenControl["role"]; label: string };
     }
   | { kind: "open_url"; url: string }
+  | { kind: "choose_file"; path: string }
   | { kind: "scroll"; direction: "up" | "down" | "top" | "bottom" }
   | { kind: "surface"; what: "tab" | "app"; name: string }
   /** The real pointer and keyboard for one step that cannot be done in the background (`step`: the action, `why`: the backend's reason). */
@@ -156,7 +159,7 @@ const host = (url: string) => {
   }
 };
 const describeControl = (control: ScreenControl) =>
-  `${control.role} “${clip(control.label || "(no label)", 90)}”${control.value ? ` containing “${clip(control.value, 60)}”` : ""}${control.focused ? " (focused)" : ""}`;
+  `${control.role} “${clip(control.label || "(no label)", 90)}”${control.value ? ` containing “${clip(control.value, 60)}”` : ""}${control.focused ? " (focused)" : ""}${control.window ? ` in the ${control.window}` : ""}`;
 const summary = (screen: Observation): ObservationSummary => ({
   app: screen.app,
   title: screen.title,
@@ -787,6 +790,8 @@ export class ComputerUse {
       }
       case "pick":
         return { kind: "click", ref: "menu", role: "menuitem", label: action.label };
+      case "choose_file":
+        return { kind: "choose_file", path: action.path };
     }
   }
 
@@ -1188,8 +1193,7 @@ function actOn(
     }
     case "key": {
       if (!act.key) return { stop: "Name the key to press." };
-      const key = act.key === "return" ? "enter" : act.key;
-      return { screen, action: { kind: "press", key }, said: `pressed ${act.key}` };
+      return { screen, action: { kind: "press", key: act.key }, said: `pressed ${act.key}` };
     }
     case "scroll": {
       const direction = act.direction ?? "down";
@@ -1208,6 +1212,13 @@ function actOn(
         said: `scrolled ${direction}${pages > 1 ? ` ${pages} pages` : ""}`,
       };
     }
+    case "choose_file":
+      if (!act.path) return { stop: "Give the `path` of the file to choose." };
+      return {
+        screen,
+        action: { kind: "choose_file", path: act.path },
+        said: `chose the file “${clip(act.path, 120)}”`,
+      };
     case "open_url":
       return { stop: "Opening a web address is not a step on the screen." };
   }
@@ -1286,6 +1297,8 @@ function actionKey(action: ScreenAction): string {
       return `${action.kind}:${action.ref}`;
     case "pick":
       return `pick:${action.label}`;
+    case "choose_file":
+      return `choose_file:${action.path}`;
     case "press":
       return `press:${action.key}`;
     case "scroll":
@@ -1522,9 +1535,12 @@ function tabNames(goal: string): string[] {
 }
 
 /** The one on-screen control a quoted name refers to, or null when none or several match. */
+/** The one control with this name; when the page and a popup or sheet over it both have one, the one on top. */
 function matchControl(controls: ScreenControl[], name: string): ScreenControl | null {
   const matches = controls.filter((control) => sameName(control.label, name));
-  return matches.length === 1 ? (matches[0] ?? null) : null;
+  if (matches.length === 1) return matches[0] ?? null;
+  const above = matches.filter((control) => control.window && control.window !== "devtools");
+  return above.length === 1 ? (above[0] ?? null) : null;
 }
 
 /** A goal that is only going to an address: nothing to do on the page once it is there. */

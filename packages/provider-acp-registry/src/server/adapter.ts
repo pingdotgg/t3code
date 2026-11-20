@@ -315,7 +315,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
       ? {}
       : {
           clientCapabilitiesMeta: copilotClientCapabilitiesMeta,
-          deferMcpTools: true,
+          mcpToolExposure: "deferred",
           registerExtensions: copilotRouting.registerExtensions,
           normalizeSessionUpdate: copilotRouting.normalizeSessionUpdate,
           extractSubagentUpdate: extractCopilotSubagentUpdate,
@@ -326,6 +326,8 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           alwaysSetModel: true,
         }),
     mcpOverHttp: useHttpMcpServers,
+    // Antigravity drops the largest MCP tools past a size budget it shares with skills.
+    ...(isAntigravityCli ? { mcpToolExposure: "budgeted" as const } : {}),
     makeRuntime: options.makeRuntime ?? makeAcpRegistryRuntime(runtimeOptions, catalog),
     ...(runtimeCoordinator === undefined
       ? {}
