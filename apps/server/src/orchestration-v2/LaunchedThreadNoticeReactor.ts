@@ -81,9 +81,10 @@ const make = Effect.gen(function* () {
           providerTurnAttemptIds: run.activeAttemptId === null ? [] : [run.activeAttemptId],
         },
       );
-      // Its own pull request watch or Monitor woke this run: the launcher did not ask for it.
+      // The user typed this run's message there, or its own pull request watch or Monitor woke it:
+      // the launcher did not ask for it.
       const wake = child.messages.find((message) => message.id === run.userMessageId);
-      if (wake?.notification?.source.kind === "monitor") return;
+      if (wake?.createdBy === "user" || wake?.notification?.source.kind === "monitor") return;
       const label = `Launched thread ${child.thread.id} (${child.thread.title}) [${run.status}]`;
       const result = subagentResultForRun(child, run).text;
       const text =
