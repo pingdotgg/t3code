@@ -68,6 +68,7 @@ export interface McpToolSessionOptions {
   readonly endpoint: string;
   readonly authorization: string;
   readonly clientName: string;
+  readonly headers?: Readonly<Record<string, string>>;
   readonly fetchImplementation?: (url: string, init?: RequestInit) => Promise<Response>;
 }
 
@@ -92,6 +93,7 @@ export const mcpToolSession = (
   let nextId = 0;
 
   const headers = () => ({
+    ...options.headers,
     accept: "application/json, text/event-stream",
     authorization: options.authorization,
     ...(sessionId === null ? {} : { "mcp-session-id": sessionId }),

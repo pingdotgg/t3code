@@ -6,6 +6,7 @@ import {
   PreviewAutomationUnavailableError,
   type ProviderInstanceId,
   type ProviderInteractionMode,
+  type OrchestrationV2Actor,
   type OrchestrationV2LinkedSender,
   type RuntimeMode,
   type ThreadId,
@@ -51,6 +52,8 @@ export interface McpClientCaller {
    * another environment passing on the limits of the agent it calls for.
    */
   readonly narrowedTo?: ClientModes | undefined;
+  /** The request says a person typed what it sends (`T3-Typed-By-User`). */
+  readonly typedByUser?: boolean | undefined;
   /** A linked environment's thread this request is made for (`T3-Sender-Thread`). */
   readonly senderThread?: OrchestrationV2LinkedSender | undefined;
   /** An outside client's thread links go through this hosted app, as Copy thread's do. */
@@ -77,6 +80,13 @@ export const LINK_EXPIRES_AT_HEADER = "t3-link-expires-at";
  * it. Read only from a linked client.
  */
 export const SENDER_THREAD_HEADER = "t3-sender-thread";
+
+/**
+ * `T3-Typed-By-User: 1`: a person typed the message this request sends, as in the `t3` CLI or an
+ * app that passes on what its user types. Honored only from a client outside any thread that is
+ * not a linked environment (`mcpMessageActor`).
+ */
+export const TYPED_BY_USER_HEADER = "t3-typed-by-user";
 
 export interface ClientModes {
   readonly runtimeMode: RuntimeMode;
@@ -160,6 +170,20 @@ export interface McpInvocationScope {
   /** False when the calling thread's project is on no forge T3 reads; `/mcp` reads it per request. */
   readonly forge?: boolean;
 }
+
+/**
+ * Outside agents sign in as MCP clients too, so a client's message is the user's only on a request
+ * that says a person typed it. A thread's agent or a linked environment cannot say so.
+ */
+export const mcpMessageActor = (
+  scope: Pick<McpInvocationScope, "thread" | "client">,
+): OrchestrationV2Actor =>
+  scope.client?.typedByUser === true &&
+  scope.thread === undefined &&
+  scope.client !== undefined &&
+  scope.client.linked !== true
+    ? "user"
+    : "agent";
 
 /**
  * T3 Code renders `t3-thread://` links as thread chips. Other MCP clients cannot open them, so

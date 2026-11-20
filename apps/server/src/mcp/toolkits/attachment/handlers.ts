@@ -110,7 +110,9 @@ export const layer = McpToolAccess.toLayer(
               text: input.message ?? "",
               attachments,
               mode: "auto",
-              createdBy: "agent",
+              createdBy: McpInvocationContext.mcpMessageActor(
+                yield* McpInvocationContext.McpInvocationContext,
+              ),
               creationSource: "mcp",
             }).pipe(
               Effect.mapError((error) =>

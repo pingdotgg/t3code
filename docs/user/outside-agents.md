@@ -95,6 +95,9 @@ T3 Code.
   `projectId` or `threadId`.
 - To list threads across projects, call `t3_thread_list` with
   `allProjects: true`, or use `t3_thread_search`.
+- Messages an outside agent sends reach the thread's agent marked as not from
+  you. An app that passes on what you type sends the `T3-Typed-By-User: 1`
+  header with those requests, and the thread's agent then reads them as yours.
 
 ## Claude Code
 

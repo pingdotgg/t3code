@@ -5129,7 +5129,7 @@ describe("OrchestratorMcpService thread lookup", () => {
     }),
   );
 
-  it.effect("records the linked environment's thread that sent a message", () =>
+  it.effect("records who sent a message: a linked environment's thread, or the user", () =>
     Effect.gen(function* () {
       const target = liveThreadShell(ThreadId.make("thread:target"));
       const sender = {
@@ -5175,6 +5175,12 @@ describe("OrchestratorMcpService thread lookup", () => {
       assert.deepStrictEqual(fromLink?.linkedSender, sender);
       assert.isUndefined(fromLink?.senderThreadId);
       assert.isUndefined((yield* sendAs(linked()))?.linkedSender);
+      assert.strictEqual((yield* sendAs(client))?.createdBy, "agent");
+      const typed: McpInvocationScope = {
+        ...client,
+        client: { sessionId: "app", label: "T3 WoW", access: "full-access", typedByUser: true },
+      };
+      assert.strictEqual((yield* sendAs(typed))?.createdBy, "user");
     }),
   );
 

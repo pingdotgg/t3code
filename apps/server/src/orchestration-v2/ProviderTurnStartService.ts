@@ -742,9 +742,11 @@ export const layer: Layer.Layer<
                   records: providerMessage.context?.records ?? [],
                 }),
                 hasAttachments: false,
-                // A scheduled delivery keeps its task author's createdBy.
+                // A scheduled delivery keeps its task author's createdBy. An MCP client's own
+                // word that a person typed a message does not reach provider sign-out.
                 sentByPerson:
                   providerMessage.createdBy === "user" &&
+                  providerMessage.creationSource !== "mcp" &&
                   providerMessage.scheduledTaskId === undefined,
               }),
             );

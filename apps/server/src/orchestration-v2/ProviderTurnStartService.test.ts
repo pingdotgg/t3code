@@ -468,6 +468,7 @@ function makeLocalCommandHarness(input: {
   readonly previousNativeSession?: boolean;
   readonly previousMessages?: ReadonlyArray<string>;
   readonly createdBy?: "agent" | "system";
+  readonly creationSource?: "mcp";
   readonly scheduledTaskId?: ScheduledTaskId;
   readonly logoutFailure?: string;
   readonly openFailure?: unknown;
@@ -568,7 +569,7 @@ function makeLocalCommandHarness(input: {
     attachments: [],
     streaming: false,
     createdBy: input.createdBy ?? "user",
-    creationSource: input.createdBy === undefined ? "web" : "mcp",
+    creationSource: input.creationSource ?? (input.createdBy === undefined ? "web" : "mcp"),
     ...(input.scheduledTaskId === undefined ? {} : { scheduledTaskId: input.scheduledTaskId }),
     createdAt: now,
     updatedAt: now,
@@ -3332,6 +3333,8 @@ effectIt.effect.each([
   { name: "an agent", createdBy: "agent" as const },
   // A scheduled delivery keeps its task author's createdBy.
   { name: "a scheduled task", scheduledTaskId: ScheduledTaskId.make("task") },
+  // An MCP client's word that a person typed it (`T3-Typed-By-User`) does not reach sign-out.
+  { name: "an MCP client's message typed by the user", creationSource: "mcp" as const },
 ])("does not let $name sign a provider out", ({ name: _name, ...sender }) =>
   Effect.gen(function* () {
     const harness = makeLocalCommandHarness({

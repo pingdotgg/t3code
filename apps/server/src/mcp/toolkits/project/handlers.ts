@@ -429,7 +429,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                   attachments,
                 },
               }),
-          createdBy: "agent",
+          createdBy: McpInvocationContext.mcpMessageActor(scope),
           creationSource: "mcp",
           ...(linkOrigin === undefined ? {} : { linkOrigin }),
           // Kept only alongside linkOrigin: thread.create drops it otherwise.
