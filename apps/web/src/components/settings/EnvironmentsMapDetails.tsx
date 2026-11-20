@@ -29,7 +29,9 @@ import {
   type FleetLinkEdge,
   type FleetNode,
   type FleetStack,
+  fleetLinkBackOffered,
   fleetSummary,
+  fleetTwoWayLinks,
   isLinkEdge,
   linkNeedsAttention,
 } from "./environmentsMap.logic";
@@ -120,6 +122,8 @@ export interface FleetDetailsProps {
   readonly onSelect: (focus: FleetFocus | null) => void;
   /** Opens the link flow from an environment, with no target picked yet. */
   readonly onLinkFrom: (sourceId: string) => void;
+  /** Opens the link flow from a one-way link's target back to its source. */
+  readonly onLinkBack: (edge: FleetLinkEdge) => void;
   readonly onToggleStack: (stackId: string) => void;
   /** The list's own row for a saved environment, or null where the list has none. */
   readonly renderSavedEnvironment: (environment: EnvironmentPresentation) => ReactNode;
@@ -142,6 +146,7 @@ export function FleetDetails(props: FleetDetailsProps) {
   const stack =
     selection?.kind === "stack" ? stacks.find((entry) => entry.id === selection.id) : undefined;
   const labelOf = (id: string) => graph.nodes.find((entry) => entry.id === id)?.label ?? "";
+  const pair = edge === undefined ? undefined : fleetTwoWayLinks(graph).get(edge.id);
   // Choosing inside the panel replaces the control that was pressed, so focus stays on the panel.
   const selectWithin = (focus: FleetFocus) => {
     onSelect(focus);
@@ -168,7 +173,27 @@ export function FleetDetails(props: FleetDetailsProps) {
           </Button>
         </div>
       ) : null}
-      {edge ? (
+      {pair ? (
+        <div className={SECTION}>
+          <p className="mb-3 max-w-2xl text-muted-foreground">
+            {gt(
+              "{source} and {target} link to each other with the same access, so the map draws both links as one line. Each is its own link, and is forgotten on its own.",
+              { source: labelOf(pair.forward.from), target: labelOf(pair.forward.to) },
+            )}
+          </p>
+          <div className="space-y-4">
+            {[pair.forward, pair.back].map((link) => (
+              <LinkDetails
+                key={link.id}
+                edge={link}
+                sourceLabel={labelOf(link.from)}
+                targetLabel={labelOf(link.to)}
+                onSelect={selectWithin}
+              />
+            ))}
+          </div>
+        </div>
+      ) : edge ? (
         <div className={SECTION}>
           <LinkDetails
             key={edge.id}
@@ -176,6 +201,9 @@ export function FleetDetails(props: FleetDetailsProps) {
             sourceLabel={labelOf(edge.from)}
             targetLabel={labelOf(edge.to)}
             onSelect={selectWithin}
+            {...(fleetLinkBackOffered(graph, edge)
+              ? { onLinkBack: () => props.onLinkBack(edge) }
+              : {})}
           />
         </div>
       ) : stack ? (
@@ -765,11 +793,14 @@ function LinkDetails({
   sourceLabel,
   targetLabel,
   onSelect,
+  onLinkBack,
 }: {
   readonly edge: FleetLinkEdge;
   readonly sourceLabel: string;
   readonly targetLabel: string;
   readonly onSelect: (focus: FleetFocus) => void;
+  /** Set where this app can link the target back to the source with no pasted code. */
+  readonly onLinkBack?: () => void;
 }) {
   const gt = useGT();
   const m = useMessages();
@@ -807,16 +838,25 @@ function LinkDetails({
             {targetLabel}
           </button>
         </h3>
-        {canUnlink ? (
-          <Button
-            size="xs"
-            variant="destructive-outline"
-            disabled={busy}
-            onClick={() => void forget()}
-          >
-            {busy ? gt("Forgetting…") : gt("Forget")}
-          </Button>
-        ) : null}
+        <div className="flex items-center gap-2">
+          {onLinkBack ? (
+            <Button size="xs" variant="outline" onClick={onLinkBack}>
+              {gt("Link back…", {
+                $context: "button: also link the second machine to the first one",
+              })}
+            </Button>
+          ) : null}
+          {canUnlink ? (
+            <Button
+              size="xs"
+              variant="destructive-outline"
+              disabled={busy}
+              onClick={() => void forget()}
+            >
+              {busy ? gt("Forgetting…") : gt("Forget")}
+            </Button>
+          ) : null}
+        </div>
       </div>
       <dl className="grid max-w-2xl grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
         <dt className={term}>{gt("Access", { $context: "access level" })}</dt>

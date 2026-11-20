@@ -2,6 +2,7 @@ import type {
   ConnectionRouteKind,
   EnvironmentConnectionPhase,
 } from "@t3tools/client-runtime/connection";
+import { linkBackOffer } from "@t3tools/client-runtime/link-batch";
 import { peerLinkHealth, type PeerLinkHealth } from "@t3tools/client-runtime/state/peerLinks";
 import {
   AuthMcpClientAccess,
@@ -94,6 +95,8 @@ export type FleetNode =
       readonly linking: FleetLinking;
       /** The client can mint a pairing code there itself, so linking to it asks for none. */
       readonly mintable: boolean;
+      readonly canWriteAccess: boolean;
+      readonly hasLinkAddress: boolean;
     }
   | {
       readonly id: string;
@@ -207,6 +210,8 @@ export function buildFleetGraph(input: {
         environment.phase === "connected" &&
         environment.canWriteAccess &&
         environment.hasLinkAddress,
+      canWriteAccess: environment.canWriteAccess,
+      hasLinkAddress: environment.hasLinkAddress,
     });
     for (const route of environment.routes) {
       const edgeId = `route:${id}:${route.id}`;
@@ -276,6 +281,82 @@ export function buildFleetGraph(input: {
 
 export const isLinkEdge = (edge: FleetEdge): edge is FleetLinkEdge => edge.kind === "link";
 export const isRouteEdge = (edge: FleetEdge): edge is FleetRouteEdge => edge.kind === "route";
+
+/** Two machines linked to each other at the same access: two links the map draws as one line. */
+export interface FleetTwoWayLink {
+  /** The one the line is drawn and selected as: from the machine listed first. */
+  readonly forward: FleetLinkEdge;
+  readonly back: FleetLinkEdge;
+}
+
+/**
+ * Every two-way link, under the id of each of its two links. Links at different access levels
+ * say different things, so they stay two lines.
+ */
+export function fleetTwoWayLinks(graph: FleetGraph): ReadonlyMap<string, FleetTwoWayLink> {
+  const links = new Map(graph.edges.filter(isLinkEdge).map((edge) => [edge.id, edge]));
+  const pairs = new Map<string, FleetTwoWayLink>();
+  for (const forward of links.values()) {
+    const back = links.get(`link:${forward.to}>${forward.from}`);
+    if (back === undefined || back.link.access !== forward.link.access || pairs.has(forward.id)) {
+      continue;
+    }
+    const pair = { forward, back };
+    pairs.set(forward.id, pair).set(back.id, pair);
+  }
+  return pairs;
+}
+
+/** The link whose line stands for `edge`: itself, or the other half of its two-way link. */
+export const fleetDrawnLinkId = (pairs: ReadonlyMap<string, FleetTwoWayLink>, edgeId: string) =>
+  pairs.get(edgeId)?.forward.id ?? edgeId;
+
+/** Worst first: expired, failing, not answering, expiring soon, fine. */
+export const linkTroubleRank = (health: PeerLinkHealth) =>
+  health.kind === "expired"
+    ? 0
+    : health.kind === "failing"
+      ? 1
+      : health.kind === "unreachable"
+        ? 2
+        : health.expiresInDays === null
+          ? 4
+          : 3;
+
+/** The health a two-way link's one label wears: that of the direction in more trouble. */
+export const worseLinkHealth = (left: PeerLinkHealth, right: PeerLinkHealth) =>
+  linkTroubleRank(right) < linkTroubleRank(left) ? right : left;
+
+/**
+ * Whether the map offers to link a one-way link's target back to its source: the same rule
+ * the link dialogs use, read from what the map knows of the two machines.
+ */
+export function fleetLinkBackOffered(graph: FleetGraph, edge: FleetLinkEdge): boolean {
+  const source = graph.nodes.find((node) => node.id === edge.from);
+  const target = graph.nodes.find((node) => node.id === edge.to);
+  if (source?.kind !== "environment" || target?.kind !== "environment") return false;
+  const offer = linkBackOffer({
+    source: {
+      environmentId: source.environmentId,
+      connected: source.phase === "connected",
+      writable: source.canWriteAccess,
+      urls: source.hasLinkAddress ? [""] : [],
+    },
+    target: {
+      connected: target.phase === "connected",
+      offersLinks: target.linking !== "off",
+      writable: target.canWriteAccess,
+      links:
+        target.outgoing === "loaded"
+          ? graph.edges
+              .filter(isLinkEdge)
+              .filter((other) => other.from === target.id)
+              .map((other) => other.link)
+          : null,
+    },
+  });
+  return offer.kind === "offered";
+}
 
 /**
  * The setup in two numbers. `links` is null when the total is not known: a list still loading,
@@ -486,12 +567,14 @@ export function fleetNeighborhood(
   const sources = new Set<string>();
   const stack = focus.kind === "stack" ? stacks.find((entry) => entry.id === focus.id) : undefined;
   const stackEdges = new Set(stack?.edgeIds);
+  // A two-way link is one line: either of its links brings the other with it.
+  const pair = focus.kind === "edge" ? fleetTwoWayLinks(graph).get(focus.id) : undefined;
   for (const edge of graph.edges) {
     const touches =
       focus.kind === "stack"
         ? stackEdges.has(edge.id)
         : focus.kind === "edge"
-          ? edge.id === focus.id
+          ? edge.id === focus.id || edge.id === pair?.forward.id || edge.id === pair?.back.id
           : edge.from === focus.id || edge.to === focus.id;
     if (!touches) continue;
     edges.add(edge.id);
@@ -618,10 +701,26 @@ export interface FleetRouteGeometry {
  */
 export type FleetLinkBadge = FleetRect & { readonly side: 1 | -1; readonly onDemand: boolean };
 
+export interface FleetArrow {
+  readonly x: number;
+  readonly y: number;
+  readonly dir: 1 | -1;
+}
+
 export interface FleetLinkGeometry {
   readonly d: string;
   /** Arrowhead tip and the horizontal direction it points. */
-  readonly arrow: { readonly x: number; readonly y: number; readonly dir: 1 | -1 };
+  readonly arrow: FleetArrow;
+  /**
+   * Set for a two-way link, which is one line with an arrowhead at each end. `arrow` and
+   * `forward` are the half leading into the machine the drawn link reaches; `backArrow` and
+   * `back` the half leading into the one it leaves, which is the other link's.
+   */
+  readonly twoWay: {
+    readonly backArrow: FleetArrow;
+    readonly forward: string;
+    readonly back: string;
+  } | null;
   /** Where a link between two environments names its access; a target's card shows its own. */
   readonly badge: FleetLinkBadge | null;
 }
@@ -790,6 +889,20 @@ function elbowPath(x0: number, y0: number, viaX: number, x1: number, y1: number)
     `Q${viaX} ${y1} ${viaX + outX * r} ${y1}`,
     `H${x1}`,
   ].join("");
+}
+
+/** `elbowPath` cut halfway along its vertical run: the half it starts with, then the other. */
+function elbowHalves(x0: number, y0: number, viaX: number, x1: number, y1: number) {
+  const dy = y1 - y0;
+  const mid = (y0 + y1) / 2;
+  const r = Math.min(CORNER, Math.abs(dy) / 2, Math.abs(viaX - x0), Math.abs(x1 - viaX));
+  const sy = Math.sign(dy);
+  const inX = Math.sign(viaX - x0);
+  const outX = Math.sign(x1 - viaX);
+  return [
+    `M${x0} ${y0}H${viaX - inX * r}Q${viaX} ${y0} ${viaX} ${y0 + sy * r}V${mid}`,
+    `M${viaX} ${mid}V${y1 - sy * r}Q${viaX} ${y1} ${viaX + outX * r} ${y1}H${x1}`,
+  ] as const;
 }
 
 /** Straight to `fanX`, across any lanes so they only ever meet it square, then a curve. */
@@ -995,8 +1108,16 @@ function layoutFleetGraphAt(
   const reach = (link: FleetLinkEdge) => Math.abs(indexOf(link.to) - indexOf(link.from));
   const low = (link: FleetLinkEdge) => Math.min(indexOf(link.from), indexOf(link.to));
   const high = (link: FleetLinkEdge) => Math.max(indexOf(link.from), indexOf(link.to));
+  // A two-way link is drawn once, as the link from the machine listed first.
+  const pairs = fleetTwoWayLinks(graph);
+  const twoWay = (link: FleetLinkEdge) => pairs.has(link.id);
   const between = links
-    .filter((link) => hostIndex.has(link.from) && hostIndex.has(link.to))
+    .filter(
+      (link) =>
+        hostIndex.has(link.from) &&
+        hostIndex.has(link.to) &&
+        fleetDrawnLinkId(pairs, link.id) === link.id,
+    )
     .toSorted((left, right) => reach(left) - reach(right) || (left.id < right.id ? -1 : 1));
   const betweenLanes: FleetLinkEdge[][] = [];
   const betweenLane = new Map<string, number>();
@@ -1012,15 +1133,16 @@ function layoutFleetGraphAt(
     betweenLane.set(link.id, index);
     (betweenLanes[index] ??= []).push(link);
   }
-  // Such links meet a card's left edge above its routes when the other machine is above, and
-  // below them when it is below. Each link in has its own port, the outer lane's nearer the
-  // middle so two turning at one card never cross. The links out on a side share one port, as
-  // they share the handle on the right, so a card pays for its arrowheads only.
+  // Such a link meets a card's left edge above its routes when the other machine is above,
+  // below them when it is below. Each arrowhead has its own port, the outer lane's nearer the
+  // middle so two never cross. Links out on a side share one port; a two-way link arrives at
+  // both its cards.
   const leaves = new Set<string>();
   const arrivalsOf = new Map<string, FleetLinkEdge[]>();
   for (const link of between) {
     const down = Math.sign(indexOf(link.to) - indexOf(link.from));
-    leaves.add(`${link.from}:${down}`);
+    if (twoWay(link)) pushTo(arrivalsOf, `${link.from}:${down}`, link);
+    else leaves.add(`${link.from}:${down}`);
     pushTo(arrivalsOf, `${link.to}:${-down}`, link);
   }
   for (const ports of arrivalsOf.values()) {
@@ -1200,7 +1322,9 @@ function layoutFleetGraphAt(
     const side = Math.sign(indexOf(link.from === hostId ? link.to : link.from) - indexOf(hostId));
     const key = `${hostId}:${side}`;
     const port =
-      link.from === hostId ? 0 : Number(leaves.has(key)) + arrivalsOf.get(key)!.indexOf(link);
+      link.from === hostId && !twoWay(link)
+        ? 0
+        : Number(leaves.has(key)) + arrivalsOf.get(key)!.indexOf(link);
     return (
       centerOf(hostId) +
       side *
@@ -1281,6 +1405,7 @@ function layoutFleetGraphAt(
         linkGeometry.set(entry.key, {
           d: line.d,
           arrow: { ...line.arrow, dir: 1 },
+          twoWay: null,
           badge: null,
         });
       }
@@ -1438,9 +1563,12 @@ function layoutFleetGraphAt(
       (option) => clearOfNames(option) && clearOfLanes(option) && clearOfRoutes(option),
     );
     if (clear !== undefined) badges.push(clear);
+    const startX = twoWay(link) ? cardX - ARROW_LENGTH : cardX;
+    const [back, forward] = elbowHalves(startX, run.from, x, cardX - ARROW_LENGTH, run.to);
     linkGeometry.set(link.id, {
-      d: elbowPath(cardX, run.from, x, cardX - ARROW_LENGTH, run.to),
+      d: elbowPath(startX, run.from, x, cardX - ARROW_LENGTH, run.to),
       arrow: { x: cardX, y: run.to, dir: 1 },
+      twoWay: twoWay(link) ? { backArrow: { x: cardX, y: run.from, dir: 1 }, forward, back } : null,
       badge: clear ?? { ...options[0]!, onDemand: true },
     });
   }
@@ -1496,6 +1624,16 @@ export type FleetLinkAction =
       readonly sourceEnvironmentId: EnvironmentId;
       readonly environmentIds: ReadonlyArray<EnvironmentId>;
     }
+  /**
+   * None of the machines dropped on can be linked from here in one go: this client has no
+   * session on any of them, so each needs a pairing code. `machineIds` are the map's nodes.
+   */
+  | {
+      readonly kind: "code-only";
+      readonly sourceId: string;
+      readonly sourceEnvironmentId: EnvironmentId;
+      readonly machineIds: ReadonlyArray<string>;
+    }
   /** The single link flow; `offer` is null when no machine was named. */
   | {
       readonly kind: "single";
@@ -1520,14 +1658,20 @@ export function fleetLinkAction(
   const sourceEnvironmentId = source.environmentId;
   const batch = (picked: Iterable<string>): FleetLinkAction | null => {
     const environmentIds = new Set<EnvironmentId>();
+    const machineIds: string[] = [];
+    let known = false;
     for (const id of picked) {
       const node = byId.get(id);
       if (node === undefined || node.kind === "client" || node.id === source.id) continue;
+      if (!environmentIds.has(node.environmentId)) machineIds.push(node.id);
       environmentIds.add(node.environmentId);
+      known ||= node.kind !== "target";
     }
-    return environmentIds.size === 0
-      ? null
-      : { kind: "batch", sourceEnvironmentId, environmentIds: [...environmentIds] };
+    if (environmentIds.size === 0) return null;
+    // One such machine is the single flow's, which asks for its code.
+    return known || machineIds.length < 2
+      ? { kind: "batch", sourceEnvironmentId, environmentIds: [...environmentIds] }
+      : { kind: "code-only", sourceId: source.id, sourceEnvironmentId, machineIds };
   };
   const stack = targetId === null ? undefined : stacks.find((entry) => entry.id === targetId);
   if (stack !== undefined) return batch(stack.memberIds);

@@ -20,6 +20,7 @@ import * as Option from "effect/Option";
 import { useGT, useMessages } from "gt-react";
 import {
   AppWindowIcon,
+  ArrowUpDownIcon,
   CheckIcon,
   CloudIcon,
   GlobeIcon,
@@ -30,6 +31,7 @@ import {
   TriangleAlertIcon,
   UnfoldVerticalIcon,
   FoldVerticalIcon,
+  XIcon,
 } from "lucide-react";
 import {
   memo,
@@ -74,9 +76,11 @@ import {
   fitFleetLayout,
   fleetCanvasHeight,
   FLEET_CLIENT_NODE_ID,
+  fleetDrawnLinkId,
   fleetEnvironmentNodeId,
   fleetFocusRects,
   fleetLinkAction,
+  fleetLinkOffer,
   fleetMoreNodeId,
   fleetNeighborhood,
   fleetNodesInBox,
@@ -85,6 +89,8 @@ import {
   fleetShapeKey,
   fleetStackPartial,
   fleetStacks,
+  fleetTwoWayLinks,
+  type FleetArrow,
   type FleetColumn,
   type FleetDirection,
   type FleetEnvironmentInput,
@@ -95,6 +101,7 @@ import {
   type FleetLayout,
   type FleetLinkAction,
   type FleetLinkEdge,
+  type FleetLinkOffer,
   type FleetNode,
   type FleetRect,
   type FleetRouteEdge,
@@ -104,6 +111,9 @@ import {
   isLinkEdge,
   isRouteEdge,
   layoutFleetGraph,
+  linkNeedsAttention,
+  linkTroubleRank,
+  worseLinkHealth,
   zoomFleetView,
   nextFleetNode,
 } from "./environmentsMap.logic";
@@ -147,19 +157,9 @@ function healthDash(health: PeerLinkHealth): string | undefined {
   return health.kind === "unreachable" ? "5 4" : undefined;
 }
 
-const troubleRank = (health: PeerLinkHealth) =>
-  health.kind === "expired"
-    ? 0
-    : health.kind === "failing"
-      ? 1
-      : health.kind === "unreachable"
-        ? 2
-        : health.expiresInDays === null
-          ? 4
-          : 3;
 /** Worst first: a machine several hosts link to wears the health of its most troubled link. */
 const byTrouble = (left: FleetLinkEdge, right: FleetLinkEdge) =>
-  troubleRank(left.health) - troubleRank(right.health);
+  linkTroubleRank(left.health) - linkTroubleRank(right.health);
 
 /** A machine's outline carries its link's health too. */
 function healthBorder(health: PeerLinkHealth): string {
@@ -372,8 +372,13 @@ interface BatchRequest {
   readonly serial: number;
   readonly environmentId: EnvironmentId;
   readonly preset: ReadonlyArray<EnvironmentId>;
+  /** The machines were dropped on or selected for this link, so the dialog lists only them. */
+  readonly presetOnly: boolean;
   readonly open: boolean;
 }
+
+/** A drop the client cannot link in one go, explained where it happened. */
+type CodeOnlyDrop = Extract<FleetLinkAction, { kind: "code-only" }>;
 
 /**
  * Every machine this app knows about, how it reaches each one, and which of them are linked.
@@ -396,7 +401,9 @@ export function EnvironmentsMap(
   const [found, setFound] = useState<string | null>(null);
   const [linkRequest, setLinkRequest] = useState<LinkRequest | null>(null);
   const [batchRequest, setBatchRequest] = useState<BatchRequest | null>(null);
-  const selection =
+  const [dropped, setDropped] = useState<CodeOnlyDrop | null>(null);
+  const pairs = fleetTwoWayLinks(graph);
+  const present =
     picked === null
       ? null
       : (picked.kind === "stack"
@@ -407,6 +414,9 @@ export function EnvironmentsMap(
           ).some((item) => item.id === picked.id)
         ? picked
         : null;
+  // Either link of a two-way link selects the one line drawn for both.
+  const selection =
+    present?.kind === "edge" ? { ...present, id: fleetDrawnLinkId(pairs, present.id) } : present;
   // A machine that left the map leaves the selection with it.
   const selected =
     ticked.size === 0
@@ -427,23 +437,14 @@ export function EnvironmentsMap(
       }
       return next;
     });
-  // One way in for every gesture: the handle, a drop, the details and the toolbar.
-  const requestLink = (sourceId: string, targetId: string | null) => {
-    const action = fleetLinkAction(graph, stacks, selected, sourceId, targetId);
-    if (action === null) return;
-    if (action.kind === "batch") {
-      setBatchRequest((current) => ({
-        serial: (current?.serial ?? 0) + 1,
-        environmentId: action.sourceEnvironmentId,
-        preset: action.environmentIds,
-        open: true,
-      }));
-      return;
-    }
-    const { offer } = action;
+  const openLinkDialog = (
+    environmentId: EnvironmentId,
+    offer: Extract<FleetLinkOffer, { kind: "link" }> | null,
+  ) => {
+    setDropped(null);
     setLinkRequest((current) => ({
       serial: (current?.serial ?? 0) + 1,
-      environmentId: action.sourceEnvironmentId,
+      environmentId,
       open: true,
       prefill:
         offer === null
@@ -453,14 +454,42 @@ export function EnvironmentsMap(
             : { choice: ANOTHER_ADDRESS, address: offer.target.address ?? "" },
     }));
   };
+  /** One link from `sourceId` to `targetId`, whatever is selected. */
+  const requestOneLink = (sourceId: string, targetId: string) => {
+    const offer = fleetLinkOffer(graph, sourceId, targetId);
+    if (offer.kind === "link") openLinkDialog(offer.sourceEnvironmentId, offer);
+  };
+  // One way in for every gesture: the handle, a drop, the details and the toolbar.
+  const requestLink = (sourceId: string, targetId: string | null) => {
+    const action = fleetLinkAction(graph, stacks, selected, sourceId, targetId);
+    if (action === null) return;
+    if (action.kind === "code-only") {
+      setDropped(action);
+      return;
+    }
+    if (action.kind === "batch") {
+      setDropped(null);
+      setBatchRequest((current) => ({
+        serial: (current?.serial ?? 0) + 1,
+        environmentId: action.sourceEnvironmentId,
+        preset: action.environmentIds,
+        presetOnly: true,
+        open: true,
+      }));
+      return;
+    }
+    openLinkDialog(action.sourceEnvironmentId, action.offer);
+  };
   const requestBatch = (sourceId: string) => {
     const source = graph.nodes.find((node) => node.id === sourceId);
     if (source?.kind !== "environment" || source.linking !== "ready") return;
     const action = fleetLinkAction(graph, stacks, selected, sourceId, null);
+    setDropped(null);
     setBatchRequest((current) => ({
       serial: (current?.serial ?? 0) + 1,
       environmentId: source.environmentId,
       preset: action?.kind === "batch" ? action.environmentIds : [],
+      presetOnly: false,
       open: true,
     }));
   };
@@ -482,6 +511,9 @@ export function EnvironmentsMap(
         onClearTicked={() => setTicked(NO_SELECTION)}
         onLink={requestLink}
         onLinkSeveral={requestBatch}
+        dropped={dropped}
+        onLinkOne={requestOneLink}
+        onDismissDropped={() => setDropped(null)}
         onToggleStack={toggleStack}
         onFind={(stackId, memberId) => {
           setPicked({ kind: "stack", id: stackId });
@@ -499,6 +531,7 @@ export function EnvironmentsMap(
           found={found}
           onSelect={select}
           onLinkFrom={(sourceId) => requestLink(sourceId, null)}
+          onLinkBack={(edge) => requestOneLink(edge.to, edge.from)}
           onToggleStack={toggleStack}
         />
       </SettingsSearchTarget>
@@ -519,6 +552,7 @@ export function EnvironmentsMap(
           environmentId={batchRequest.environmentId}
           open={batchRequest.open}
           preset={batchRequest.preset}
+          presetOnly={batchRequest.presetOnly}
           onOpenChange={(open) =>
             setBatchRequest((current) => (current === null ? null : { ...current, open }))
           }
@@ -547,6 +581,9 @@ interface FleetCanvasProps extends Omit<FleetSceneProps, "layout"> {
   readonly shapeKey: string;
   readonly onClearTicked: () => void;
   readonly onLinkSeveral: (sourceId: string) => void;
+  readonly dropped: CodeOnlyDrop | null;
+  readonly onLinkOne: (sourceId: string, targetId: string) => void;
+  readonly onDismissDropped: () => void;
   /** A search landed on a machine drawn only inside a stack. */
   readonly onFind: (stackId: string, memberId: string) => void;
 }
@@ -555,6 +592,9 @@ function FleetCanvas({
   shapeKey: graphKey,
   onClearTicked,
   onLinkSeveral,
+  dropped,
+  onLinkOne,
+  onDismissDropped,
   onFind,
   ...scene
 }: FleetCanvasProps) {
@@ -871,6 +911,14 @@ function FleetCanvas({
           )}
         </div>
       </div>
+      {dropped === null ? null : (
+        <CodeOnlyNotice
+          graph={graph}
+          dropped={dropped}
+          onLinkOne={onLinkOne}
+          onDismiss={onDismissDropped}
+        />
+      )}
       <div
         ref={setCanvas}
         data-dragging={dragging || undefined}
@@ -916,7 +964,7 @@ function FleetCanvas({
       </div>
       {/* Below the canvas, not over it: nothing on the map can end up under the controls. */}
       <div className="flex items-end justify-between gap-3 bg-background/50 px-3 pb-2">
-        <FleetLegend />
+        <FleetLegend twoWay={fleetTwoWayLinks(graph).size > 0} />
         <div className="flex shrink-0 items-center gap-1 rounded-lg border border-border/60 bg-popover/90 p-0.5 shadow-xs/5">
           <Button
             size="icon-xs"
@@ -950,7 +998,7 @@ function FleetCanvas({
 }
 
 /** How the two families of line are read: routes by state, links by weight. */
-function FleetLegend() {
+function FleetLegend({ twoWay }: { readonly twoWay: boolean }) {
   const gt = useGT();
   const sample = (state: FleetRouteState) => (
     <svg aria-hidden viewBox="0 0 18 4" className={cn("h-1 w-4.5", ROUTE_STYLES[state].wire)}>
@@ -985,6 +1033,15 @@ function FleetLegend() {
         </svg>
         {gt("Link, heavier with more access")}
       </li>
+      {twoWay ? (
+        <li className="flex items-center gap-1.5">
+          <svg aria-hidden viewBox="0 0 22 8" className="h-2 w-5.5 text-foreground/70">
+            <path d="M5 4H17" stroke="currentColor" strokeWidth="1.75" />
+            <path d="M0 4L6 0.5V7.5ZM22 4L16 0.5V7.5Z" fill="currentColor" />
+          </svg>
+          {gt("Two links, one each way")}
+        </li>
+      ) : null}
     </ul>
   );
 }
@@ -1064,8 +1121,103 @@ function linkSummary(edge: FleetLinkEdge, gt: GT, m: Messages): string {
   return `${m(accessConfig[edge.link.access].label)}, ${healthLabel(edge.health, gt)}`;
 }
 
+/** A link in words, for the pointer and for assistive tech. A two-way link names each direction. */
+function linkName(
+  edge: FleetLinkEdge,
+  back: FleetLinkEdge | undefined,
+  labelOf: (id: string) => string,
+  gt: GT,
+  m: Messages,
+): string {
+  const source = labelOf(edge.from);
+  const target = labelOf(edge.to);
+  return back === undefined
+    ? gt("Link from {source} to {target}: {summary}", {
+        source,
+        target,
+        summary: linkSummary(edge, gt, m),
+      })
+    : gt(
+        "Two-way link between {source} and {target}, {access}. {source} to {target}: {forward}. {target} to {source}: {back}",
+        {
+          source,
+          target,
+          access: m(accessConfig[edge.link.access].label),
+          forward: healthLabel(edge.health, gt),
+          back: healthLabel(back.health, gt),
+        },
+      );
+}
+
+/**
+ * Says in place why a drop cannot be linked in one go, and offers what works: one machine at
+ * a time, with a pairing code from it.
+ */
+function CodeOnlyNotice({
+  graph,
+  dropped,
+  onLinkOne,
+  onDismiss,
+}: {
+  readonly graph: FleetGraph;
+  readonly dropped: CodeOnlyDrop;
+  readonly onLinkOne: (sourceId: string, targetId: string) => void;
+  readonly onDismiss: () => void;
+}) {
+  const gt = useGT();
+  const byId = new Map(graph.nodes.map((node) => [node.id, node]));
+  const source = byId.get(dropped.sourceId);
+  const machines = dropped.machineIds.flatMap((id) => byId.get(id) ?? []);
+  if (source === undefined || machines.length === 0) return null;
+  return (
+    <div
+      role="status"
+      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-border/60 bg-background/50 px-3 py-2 text-xs"
+    >
+      <p className="min-w-0 flex-1 basis-64 text-muted-foreground">
+        <span className="font-medium text-foreground">
+          {gt(
+            "{count, plural, one {{source} was not linked to # machine.} other {{source} was not linked to # machines.}}",
+            { count: machines.length, source: source.label },
+          )}
+        </span>{" "}
+        {gt(
+          "{count, plural, one {This app is not connected to it, so it needs a pairing code.} other {This app is not connected to them, so each needs a pairing code. Link them one at a time.}}",
+          { count: machines.length },
+        )}
+      </p>
+      {/* Linking through an environment that already reaches these machines would be offered here. */}
+      <Menu>
+        <MenuTrigger
+          render={
+            <Button size="xs" variant="outline">
+              {gt("Link one with a code…")}
+            </Button>
+          }
+        />
+        <MenuPopup align="end">
+          {machines.map((machine) => (
+            <MenuItem key={machine.id} onClick={() => onLinkOne(dropped.sourceId, machine.id)}>
+              {machine.label}
+            </MenuItem>
+          ))}
+        </MenuPopup>
+      </Menu>
+      <Button size="icon-xs" variant="ghost" aria-label={gt("Dismiss")} onClick={onDismiss}>
+        <XIcon />
+      </Button>
+    </div>
+  );
+}
+
 function actionText(action: FleetLinkAction | null, target: string, gt: GT): string {
   if (action === null) return gt("Cannot link to this");
+  if (action.kind === "code-only") {
+    return gt(
+      "{count, plural, one {This app is not connected to # machine here. It needs a pairing code} other {This app is not connected to these # machines. Each needs a pairing code}}",
+      { count: action.machineIds.length },
+    );
+  }
   if (action.kind === "batch") {
     return gt(
       "{count, plural, one {Link to # machine. Pick which in the next step} other {Link to # machines. Pick which in the next step}}",
@@ -1153,6 +1305,10 @@ const FleetScene = memo(function FleetScene({
     ]),
   );
   const links = graph.edges.filter(isLinkEdge);
+  const pairs = fleetTwoWayLinks(graph);
+  const labelOf = (id: string) => nodeById.get(id)?.label ?? "";
+  /** The other link of the two-way link `edge` is drawn for. */
+  const backOf = (edge: FleetLinkEdge) => pairs.get(edge.id)?.back;
   const routeEdges = graph.edges.filter(isRouteEdge);
   const focusRects = fleetFocusRects(layout);
   const tabStop = focusRects.has(roving) ? roving : FLEET_CLIENT_NODE_ID;
@@ -1419,31 +1575,48 @@ const FleetScene = memo(function FleetScene({
         {paintOrder.map((edge) => {
           const geometry = layout.links.get(edge.id);
           if (geometry === undefined) return null;
-          const { arrow } = geometry;
           const selected = isSelected("edge", edge.id);
           const level = accessLevel(edge.link.access);
-          const healthy = edge.health.kind === "reachable" && edge.health.expiresInDays === null;
+          const back = backOf(edge);
+          // A two-way link is drawn in halves, each leading into the machine its link reaches,
+          // so a direction in trouble shows at its own end.
+          const parts: ReadonlyArray<readonly [string, FleetArrow, PeerLinkHealth]> =
+            geometry.twoWay !== null && back !== undefined
+              ? [
+                  [geometry.twoWay.forward, geometry.arrow, edge.health],
+                  [geometry.twoWay.back, geometry.twoWay.backArrow, back.health],
+                ]
+              : [[geometry.d, geometry.arrow, edge.health]];
           return (
             <g
               key={edge.id}
-              className={cn(
-                "pointer-events-none",
-                selected ? "text-primary" : healthy ? "text-foreground" : healthTone(edge.health),
-                fadeLine(lit !== null && !linkLit(edge)),
-              )}
+              className={cn("pointer-events-none", fadeLine(lit !== null && !linkLit(edge)))}
               opacity={linkLit(edge) ? 1 : ACCESS_STROKE_OPACITIES[level]}
             >
-              <path
-                d={geometry.d}
-                stroke="currentColor"
-                // Selection also thickens the line, for when colour is forced.
-                strokeWidth={(ACCESS_STROKE_WIDTHS[level] ?? 2) + (selected ? 1 : 0)}
-                strokeDasharray={healthDash(edge.health)}
-              />
-              <path
-                d={`M${arrow.x - arrow.dir * 7} ${arrow.y - 4}L${arrow.x} ${arrow.y}L${arrow.x - arrow.dir * 7} ${arrow.y + 4}Z`}
-                fill="currentColor"
-              />
+              {parts.map(([d, arrow, health]) => (
+                <g
+                  key={d}
+                  className={
+                    selected
+                      ? "text-primary"
+                      : linkNeedsAttention(health)
+                        ? healthTone(health)
+                        : "text-foreground"
+                  }
+                >
+                  <path
+                    d={d}
+                    stroke="currentColor"
+                    // Selection also thickens the line, for when colour is forced.
+                    strokeWidth={(ACCESS_STROKE_WIDTHS[level] ?? 2) + (selected ? 1 : 0)}
+                    strokeDasharray={healthDash(health)}
+                  />
+                  <path
+                    d={`M${arrow.x - arrow.dir * 7} ${arrow.y - 4}L${arrow.x} ${arrow.y}L${arrow.x - arrow.dir * 7} ${arrow.y + 4}Z`}
+                    fill="currentColor"
+                  />
+                </g>
+              ))}
             </g>
           );
         })}
@@ -1465,13 +1638,7 @@ const FleetScene = memo(function FleetScene({
               onClick={() => onSelect(selected ? null : { kind: "edge", id: edge.id })}
               {...hoverProps({ kind: "edge", id: edge.id })}
             >
-              <title>
-                {gt("Link from {source} to {target}: {summary}", {
-                  source: nodeById.get(edge.from)?.label ?? "",
-                  target: nodeById.get(edge.to)?.label ?? "",
-                  summary: linkSummary(edge, gt, m),
-                })}
-              </title>
+              <title>{linkName(edge, backOf(edge), labelOf, gt, m)}</title>
             </path>
           );
         })}
@@ -1512,6 +1679,8 @@ const FleetScene = memo(function FleetScene({
         const badge = layout.links.get(edge.id)?.badge;
         if (!badge) return null;
         const target = { kind: "edge", id: edge.id } as const;
+        const back = backOf(edge);
+        const health = back === undefined ? edge.health : worseLinkHealth(edge.health, back.health);
         // With no clear place of its own, the name shows only while its link is the one in focus.
         if (
           badge.onDemand &&
@@ -1527,11 +1696,7 @@ const FleetScene = memo(function FleetScene({
             data-fleet-item=""
             tabIndex={-1}
             aria-pressed={isSelected("edge", edge.id)}
-            aria-label={gt("Link from {source} to {target}: {summary}", {
-              source: nodeById.get(edge.from)?.label ?? "",
-              target: nodeById.get(edge.to)?.label ?? "",
-              summary: linkSummary(edge, gt, m),
-            })}
+            aria-label={linkName(edge, back, labelOf, gt, m)}
             // Hangs off its own lane and grows away from the lanes beside it.
             style={{
               top: badge.y,
@@ -1543,7 +1708,7 @@ const FleetScene = memo(function FleetScene({
             }}
             className={cn(
               "absolute flex cursor-pointer items-center gap-1.5 rounded-full border border-border bg-card px-1.5 text-2xs leading-none outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset aria-pressed:border-primary aria-pressed:text-primary",
-              lit === null || lit.edges.has(edge.id) ? healthTone(edge.health) : null,
+              lit === null || lit.edges.has(edge.id) ? healthTone(health) : null,
               badge.onDemand && "z-10 shadow-sm/5",
               fadeName(lit !== null && !lit.edges.has(edge.id)),
             )}
@@ -1552,6 +1717,9 @@ const FleetScene = memo(function FleetScene({
             onBlur={() => setHover(null)}
             {...hoverProps(target)}
           >
+            {back === undefined ? null : (
+              <ArrowUpDownIcon aria-hidden className="size-3 shrink-0" />
+            )}
             <AccessMeter
               access={edge.link.access}
               className={cn(lit !== null && !lit.edges.has(edge.id) && "opacity-45")}

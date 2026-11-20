@@ -477,12 +477,20 @@ manage it, or switch to **List** for the same controls as rows. To link from
 the map, drag the plus on an environment onto another machine, or press it and
 pick one. If this app is connected to both machines it needs no pairing code.
 
+A link goes one way. To let the other machine's agents work back, tick **Also
+link … back** when you create the link, or select a one-way link and use
+**Link back…**. It is offered when this app is connected to both machines and
+may manage access on each. Two machines linked to each other at the same access
+are drawn as one line with an arrowhead at each end; they are still two links,
+and each is forgotten on its own.
+
 To link one environment to several machines at once, Shift-click the machines
 (or Shift-drag a box around them, or press Space on a focused machine), then
 drag the environment's plus onto any of them, or use **Link several…** above
 the map. Dropping the plus on a stack offers the stack's machines. The dialog
 ticks the machines it can link without a pairing code and says why for the
-rest.
+rest. When this app is connected to none of them, each needs a pairing code,
+so the map says so and offers to link one at a time instead.
 
 Large setups fold: machines known only through links that share the same
 linking environments and access levels become one stack, and once this app

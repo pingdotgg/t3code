@@ -1,4 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
+import {
+  linkBackBlockLabel,
+  linkBatchFailureLabel,
+  linkWithMintedCode,
+} from "@t3tools/client-runtime/link-batch";
 import { ANOTHER_ADDRESS, linkRequestFailureMessage } from "@t3tools/client-runtime/link-request";
 import {
   AuthAccessWriteScope,
@@ -21,7 +26,7 @@ import { type ReactNode, useId, useRef, useState } from "react";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { useEnvironment } from "~/state/environments";
 import { mintPairingCodeOn } from "~/state/peerPairingCode";
-import { peerLinkEnvironment, useLinkableMachines } from "~/state/peerLinks";
+import { peerLinkEnvironment, useLinkableMachines, useLinkBackOffers } from "~/state/peerLinks";
 import { useEnvironments } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope, usePreparedConnection } from "~/state/session";
@@ -29,6 +34,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { accessConfig } from "../auth/ConnectAgentSurface";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
 import {
   Dialog,
   DialogClose,
@@ -233,6 +239,7 @@ export function LinkEnvironmentDialog({
   readonly prefill?: LinkEnvironmentPrefill;
 }) {
   const gt = useGT();
+  const m = useMessages();
   const setOpen = onOpenChange;
   // Named in the title: from the map, nothing else on screen says which machine is linking.
   const source = useEnvironment(environmentId);
@@ -249,6 +256,13 @@ export function LinkEnvironmentDialog({
   const inFlight = useRef(false);
   const formId = useId();
   const link = useAtomCommand(peerLinkEnvironment.link, { label: LINK_COMMAND_LABEL });
+  const linkOnTarget = useAtomCommand(peerLinkEnvironment.link, {
+    label: "link environment back",
+    // The failure cause holds the request, and with it the code; keep it out of the console.
+    reportFailure: false,
+    reportDefect: false,
+  });
+  const [alsoLinkBack, setAlsoLinkBack] = useState(false);
   const selected = choice ?? (machines.length === 0 ? ANOTHER_ADDRESS : null);
   const machine = machines.find((candidate) => candidate.environmentId === selected) ?? null;
   const targetId = machine?.environmentId ?? null;
@@ -265,6 +279,8 @@ export function LinkEnvironmentDialog({
     Option.isSome(connected) &&
     mayMint &&
     !mintFailed.has(targetId);
+  const linkBack = useLinkBackOffers(environmentId, targetId === null ? [] : [targetId], open);
+  const backOffer = linkBack.offerFor(targetId);
   const ready =
     selected !== null &&
     (!needsAddress || address.trim().length > 0) &&
@@ -277,6 +293,7 @@ export function LinkEnvironmentDialog({
       setPairingCode("");
       setAccess("approval-required");
       setMintFailed(new Set());
+      setAlsoLinkBack(false);
     }
   };
   // Settles to the code to link with, or null after reporting why there is none.
@@ -314,14 +331,43 @@ export function LinkEnvironmentDialog({
               access,
             },
           });
+    // The link back is its own link, made on the other machine: it never undoes this one.
+    const back =
+      result?._tag === "Success" &&
+      alsoLinkBack &&
+      backOffer.kind === "offered" &&
+      linkBack.source !== null &&
+      targetId !== null
+        ? await linkWithMintedCode({
+            machine: linkBack.source,
+            access,
+            mint: mintPairingCodeOn,
+            link: async (input) => {
+              const reverse = await linkOnTarget({ environmentId: targetId, input });
+              return reverse._tag === "Success"
+                ? Result.succeed(reverse.value)
+                : Result.fail(squashAtomCommandFailure(reverse));
+            },
+          })
+        : null;
     inFlight.current = false;
     setBusy(false);
     if (result === null) return;
     if (result._tag === "Success") {
+      const names = { source: source?.label ?? "", target: result.value.label };
       toastManager.add({
         type: "success",
-        title: gt("Linked {label}", { label: result.value.label }),
+        title:
+          back?.kind === "linked"
+            ? gt("Linked {source} and {target} both ways", names)
+            : gt("Linked {label}", { label: result.value.label }),
       });
+      if (back?.kind === "failed") {
+        failureToast(
+          gt("Could not link {target} back to {source}", names),
+          back.detail ?? linkBatchFailureLabel(back.failure, m),
+        );
+      }
       handleOpenChange(false);
     } else if (!isAtomCommandInterrupted(result)) {
       failureToast(gt("Could not link the environment"), String(squashAtomCommandFailure(result)));
@@ -435,6 +481,37 @@ export function LinkEnvironmentDialog({
               </label>
             )}
             <LinkAccessPicker value={access} onChange={setAccess} disabled={busy} />
+            {machine === null || source === null ? null : backOffer.kind === "offered" ? (
+              <label className="flex cursor-pointer items-start gap-2.5 text-sm has-data-disabled:cursor-default">
+                <Checkbox
+                  checked={alsoLinkBack}
+                  disabled={busy}
+                  onCheckedChange={setAlsoLinkBack}
+                />
+                <span className="min-w-0 space-y-0.5">
+                  <span className="block font-medium text-foreground">
+                    {gt("Also link {target} back to {source}", {
+                      source: source.label,
+                      target: machine.label,
+                    })}
+                  </span>
+                  <span className="block text-xs text-muted-foreground">
+                    {gt(
+                      "Agents on {target} can then work on {source} too, with the same access. This is a second link, made on {target}.",
+                      { source: source.label, target: machine.label },
+                    )}
+                  </span>
+                </span>
+              </label>
+            ) : backOffer.kind === "blocked" ? (
+              <p className="text-xs text-muted-foreground">
+                {linkBackBlockLabel(
+                  backOffer.reason,
+                  { source: source.label, target: machine.label },
+                  m,
+                )}
+              </p>
+            ) : null}
           </form>
         </DialogPanel>
         <DialogFooter variant="bare">

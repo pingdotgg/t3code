@@ -15,7 +15,9 @@ import {
   FLEET_ROUTE_PITCH,
   FLEET_STACK_SHOWN_MAX,
   fleetFocusRects,
+  fleetDrawnLinkId,
   fleetLinkAction,
+  fleetLinkBackOffered,
   fleetLinkOffer,
   fleetMoreNodeId,
   fleetNeighborhood,
@@ -24,6 +26,8 @@ import {
   fleetShapeKey,
   fleetStacks,
   fleetSummary,
+  fleetTwoWayLinks,
+  isLinkEdge,
   isRouteEdge,
   layoutFleetGraph,
   nextFleetNode,
@@ -549,9 +553,19 @@ describe("fleetLinkAction", () => {
     ).toMatchObject({ kind: "single" });
   });
 
-  it("links to every machine of a stack dropped on, and offers nothing from a host that cannot link", () => {
+  it("opens no batch for machines the client has no session on, and offers nothing from a host that cannot link", () => {
+    const members = ["fs-1", "fs-2", "fs-3", "fs-4", "fs-5", "fs-6"].map(node);
+    // A stack of machines known only through links: each needs a code, so no batch can link one.
     expect(fleetLinkAction(graph, stacks, new Set(), node("cups"), stacks[0]!.id)).toEqual({
-      ...batch(["fs-1", "fs-2", "fs-3", "fs-4", "fs-5", "fs-6"]),
+      kind: "code-only",
+      sourceId: node("cups"),
+      sourceEnvironmentId: id("cups"),
+      machineIds: members,
+    });
+    // One the client is connected to among them makes it a batch, which says why for the rest.
+    const mixed = new Set([node("fs-1"), node("fs-2"), node("mbp")]);
+    expect(fleetLinkAction(graph, stacks, mixed, node("cups"), node("mbp"))).toEqual({
+      ...batch(["fs-1", "fs-2", "mbp"]),
       sourceEnvironmentId: id("cups"),
     });
     for (const source of ["mbp", "vps"]) {
@@ -559,6 +573,66 @@ describe("fleetLinkAction", () => {
       expect(fleetLinkAction(graph, stacks, new Set(), node(source), null)).toBeNull();
     }
     expect(fleetLinkAction(graph, stacks, new Set(), node("nucbox"), node("nucbox"))).toBeNull();
+  });
+});
+
+describe("fleetTwoWayLinks", () => {
+  const graph = build([
+    environment("a", [link("b"), link("c", { access: "full-access" }), link("d")]),
+    environment("b", [link("a", { status: "unreachable" })]),
+    environment("c", [link("a", { access: "auto" })]),
+    environment("d"),
+  ]);
+  const pairs = fleetTwoWayLinks(graph);
+  const edge = (from: string, to: string) => `link:${node(from)}>${node(to)}`;
+
+  it("merges two links between the same machines only at the same access", () => {
+    expect([...pairs.keys()].toSorted()).toEqual([edge("a", "b"), edge("b", "a")]);
+    // Both links select the one line, drawn as the link from the machine listed first.
+    expect(fleetDrawnLinkId(pairs, edge("b", "a"))).toBe(edge("a", "b"));
+    expect(fleetDrawnLinkId(pairs, edge("a", "b"))).toBe(edge("a", "b"));
+    // Different access says two different things, and a one-way link has no other half.
+    expect(fleetDrawnLinkId(pairs, edge("c", "a"))).toBe(edge("c", "a"));
+    expect(fleetDrawnLinkId(pairs, edge("a", "d"))).toBe(edge("a", "d"));
+  });
+
+  it("keeps each direction's own health, and counts both links", () => {
+    const pair = pairs.get(edge("a", "b"))!;
+    expect(pair.forward.health.kind).toBe("reachable");
+    expect(pair.back.health.kind).toBe("unreachable");
+    expect(fleetSummary(graph).links).toBe(5);
+  });
+
+  it("lights both links and both machines' routes from either one", () => {
+    const lit = fleetNeighborhood(graph, [], { kind: "edge", id: edge("a", "b") });
+    expect(lit.edges.has(edge("a", "b")) && lit.edges.has(edge("b", "a"))).toBe(true);
+    expect(lit.edges.has(`route:${node("a")}:tailnet`)).toBe(true);
+    expect(lit.edges.has(`route:${node("b")}:tailnet`)).toBe(true);
+    expect(lit.edges.has(edge("a", "d"))).toBe(false);
+  });
+
+  it("offers the link back on a one-way link only where the client can make it", () => {
+    const linkEdge = (from: ReturnType<typeof build>, source: string, target: string) =>
+      from.edges.filter(isLinkEdge).find((entry) => entry.id === edge(source, target))!;
+    expect(fleetLinkBackOffered(graph, linkEdge(graph, "a", "d"))).toBe(true);
+    // Already linked back, at whatever access.
+    expect(fleetLinkBackOffered(graph, linkEdge(graph, "a", "c"))).toBe(false);
+    for (const target of [
+      environment("d", "unknown", { phase: "offline" }),
+      environment("d", "off", { offersLinks: false }),
+      environment("d", [], { canWriteAccess: false }),
+      environment("d", "loading"),
+    ]) {
+      const other = build([environment("a", [link("d")]), target]);
+      expect(fleetLinkBackOffered(other, linkEdge(other, "a", "d"))).toBe(false);
+    }
+    for (const source of [{ canWriteAccess: false }, { hasLinkAddress: false }]) {
+      const other = build([environment("a", [link("d")], source), environment("d")]);
+      expect(fleetLinkBackOffered(other, linkEdge(other, "a", "d"))).toBe(false);
+    }
+    // A machine known only through the link is not one the client can link from.
+    const unknown = build([environment("a", [link("x")])]);
+    expect(fleetLinkBackOffered(unknown, linkEdge(unknown, "a", "x"))).toBe(false);
   });
 });
 
@@ -665,8 +739,9 @@ describe("layoutFleetGraph", () => {
   it("names the access of links between environments on their own lane, clear of everything", () => {
     const graph = build([
       environment("a", [link("b"), link("c"), link("x")]),
-      environment("b", [link("a"), link("x")]),
-      environment("c", [link("a")]),
+      // At another access than the links back, so each of the four is its own line.
+      environment("b", [link("a", { access: "auto" }), link("x")]),
+      environment("c", [link("a", { access: "auto" })]),
     ]);
     const layout = layoutFleetGraph(graph);
     const geometry = (from: string, to: string) =>
@@ -893,6 +968,10 @@ describe("layoutFleetGraph", () => {
         expect(leaves).toBeGreaterThan(from.y);
         expect(leaves).toBeLessThan(from.y + from.height);
         arrivals.set(edge.to, [...(arrivals.get(edge.to) ?? []), geometry.arrow.y]);
+        if (geometry.twoWay !== null) {
+          const into = arrivals.get(edge.from) ?? [];
+          arrivals.set(edge.from, [...into, geometry.twoWay.backArrow.y]);
+        }
       }
       for (const [id, heights] of arrivals) {
         const card = layout.nodes.get(id)!;
@@ -909,6 +988,44 @@ describe("layoutFleetGraph", () => {
         }
       }
     }
+  });
+
+  it("draws a two-way link once, on one lane, with an arrowhead into each card", () => {
+    const setup = (back: Partial<PeerLinkSummary>) =>
+      build([environment("a", [link("b")]), environment("b", [link("a", back)])]);
+    const merged = setup({});
+    const apart = setup({ access: "auto" });
+    const forward = `link:${node("a")}>${node("b")}`;
+    const reverse = `link:${node("b")}>${node("a")}`;
+    const layout = layoutFleetGraph(merged);
+    const two = layoutFleetGraph(apart);
+    expect([...layout.links.keys()]).toEqual([forward]);
+    expect([...two.links.keys()].toSorted()).toEqual([forward, reverse]);
+    // Two lines need two lanes left of the cards; the merged one needs a single lane.
+    expect(two.nodes.get(node("a"))!.x - layout.nodes.get(node("a"))!.x).toBeGreaterThan(0);
+    expect(two.links.get(forward)!.twoWay).toBeNull();
+    const geometry = layout.links.get(forward)!;
+    const { twoWay } = geometry;
+    expect(twoWay).not.toBeNull();
+    for (const [arrow, cardId] of [
+      [geometry.arrow, "b"],
+      [twoWay!.backArrow, "a"],
+    ] as const) {
+      const card = layout.nodes.get(node(cardId))!;
+      expect(arrow.x).toBe(card.x);
+      expect(arrow.y).toBeGreaterThan(card.y);
+      expect(arrow.y).toBeLessThan(card.y + card.height);
+    }
+    // Each half ends at its own arrowhead and the two meet, so one direction's state shows at
+    // its end without a gap in the line.
+    const forwardHalf = samplePath(twoWay!.forward);
+    const backHalf = samplePath(twoWay!.back);
+    expect(forwardHalf.at(-1)!.y).toBe(geometry.arrow.y);
+    expect(backHalf[0]!.y).toBe(twoWay!.backArrow.y);
+    expect(backHalf.at(-1)).toEqual(forwardHalf[0]);
+    expect(geometry.badge?.onDemand).toBe(false);
+    // Health is no part of the shape: one direction failing redraws nothing.
+    expect(fleetShapeKey(setup({ status: "unreachable" }), [])).toBe(fleetShapeKey(merged, []));
   });
 
   it("shows a link's name only on demand where it has no clear place", () => {
