@@ -2831,101 +2831,105 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  const devinPlanApproval = Effect.fn("devinPlanApproval")(function* (
+    agentId: string | Record<string, unknown>,
+  ) {
+    const session = yield* openClaudeReplaySession(
+      [
+        ...claudeFrames.open.map((entry) =>
+          entry.frame.method === "initialize" && entry.type === "emit_inbound"
+            ? {
+                ...entry,
+                frame: {
+                  ...entry.frame,
+                  result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] },
+                },
+              }
+            : entry,
+        ),
+        {
+          type: "expect_outbound",
+          frame: { kind: "request", method: "session/prompt", params: "<any>" },
+        },
+        claudeFrames.update(CLAUDE_ROOT_SESSION, {
+          sessionUpdate: "tool_call",
+          toolCallId: "exit-plan",
+          title: "Exit plan mode",
+          kind: "switch_mode",
+          status: "pending",
+        }),
+        {
+          type: "emit_inbound",
+          frame: {
+            kind: "request",
+            method: "session/request_permission",
+            params: {
+              sessionId: CLAUDE_ROOT_SESSION,
+              toolCall: { toolCallId: "exit-plan" },
+              // Devin gives both plan approvals allow_once and does not promise their order.
+              options: [
+                {
+                  optionId: "plan_bypass",
+                  name: "Yes, implement plan and bypass permissions",
+                  kind: "allow_once",
+                },
+                {
+                  optionId: "plan_accept_edits",
+                  name: "Yes, implement plan and accept edits",
+                  kind: "allow_once",
+                },
+                { optionId: "reject_once", name: "No, plan needs changes", kind: "reject_once" },
+              ],
+            },
+          },
+        },
+        {
+          type: "expect_outbound",
+          frame: {
+            kind: "response",
+            method: "session/request_permission",
+            result: { outcome: { outcome: "selected", optionId: "<any>" } },
+          },
+        },
+        {
+          type: "emit_inbound",
+          frame: {
+            kind: "response",
+            method: "session/prompt",
+            result: { stopReason: "end_turn" },
+          },
+        },
+        claudeFrames.closeRequest,
+        claudeFrames.closed,
+      ],
+      undefined,
+      false,
+      agentId,
+    );
+    yield* session.runtime.startTurn(session.turnInput(1)).pipe(Effect.forkScoped);
+    const seen = yield* session.until(
+      (event) =>
+        event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+    );
+    const request = seen.at(-1)!;
+    if (request.type !== "runtime_request.updated") throw new Error("Missing request");
+    yield* session.runtime.respondToRuntimeRequest({
+      requestId: request.runtimeRequest.id,
+      decision: "accept",
+    });
+    let answer: unknown;
+    while (answer === undefined) {
+      const frame = (yield* Queue.take(session.outgoing)) as {
+        readonly result?: { readonly outcome?: { readonly optionId?: string } };
+      };
+      answer = frame.result?.outcome;
+    }
+    assert.deepEqual(answer, { outcome: "selected", optionId: "plan_accept_edits" });
+    assert.equal((yield* session.terminal).status, "completed");
+  });
+
   it.effect("approves Devin's plan without choosing a bypass option it lists first", () =>
-    Effect.gen(function* () {
-      const session = yield* openClaudeReplaySession(
-        [
-          ...claudeFrames.open.map((entry) =>
-            entry.frame.method === "initialize" && entry.type === "emit_inbound"
-              ? {
-                  ...entry,
-                  frame: {
-                    ...entry.frame,
-                    result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] },
-                  },
-                }
-              : entry,
-          ),
-          {
-            type: "expect_outbound",
-            frame: { kind: "request", method: "session/prompt", params: "<any>" },
-          },
-          claudeFrames.update(CLAUDE_ROOT_SESSION, {
-            sessionUpdate: "tool_call",
-            toolCallId: "exit-plan",
-            title: "Exit plan mode",
-            kind: "switch_mode",
-            status: "pending",
-          }),
-          {
-            type: "emit_inbound",
-            frame: {
-              kind: "request",
-              method: "session/request_permission",
-              params: {
-                sessionId: CLAUDE_ROOT_SESSION,
-                toolCall: { toolCallId: "exit-plan" },
-                // Devin gives both plan approvals allow_once and does not promise their order.
-                options: [
-                  {
-                    optionId: "plan_bypass",
-                    name: "Yes, implement plan and bypass permissions",
-                    kind: "allow_once",
-                  },
-                  {
-                    optionId: "plan_accept_edits",
-                    name: "Yes, implement plan and accept edits",
-                    kind: "allow_once",
-                  },
-                  { optionId: "reject_once", name: "No, plan needs changes", kind: "reject_once" },
-                ],
-              },
-            },
-          },
-          {
-            type: "expect_outbound",
-            frame: {
-              kind: "response",
-              method: "session/request_permission",
-              result: { outcome: { outcome: "selected", optionId: "<any>" } },
-            },
-          },
-          {
-            type: "emit_inbound",
-            frame: {
-              kind: "response",
-              method: "session/prompt",
-              result: { stopReason: "end_turn" },
-            },
-          },
-          claudeFrames.closeRequest,
-          claudeFrames.closed,
-        ],
-        undefined,
-        false,
-        "devin",
-      );
-      yield* session.runtime.startTurn(session.turnInput(1)).pipe(Effect.forkScoped);
-      const seen = yield* session.until(
-        (event) =>
-          event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
-      );
-      const request = seen.at(-1)!;
-      if (request.type !== "runtime_request.updated") throw new Error("Missing request");
-      yield* session.runtime.respondToRuntimeRequest({
-        requestId: request.runtimeRequest.id,
-        decision: "accept",
-      });
-      let answer: unknown;
-      while (answer === undefined) {
-        const frame = (yield* Queue.take(session.outgoing)) as {
-          readonly result?: { readonly outcome?: { readonly optionId?: string } };
-        };
-        answer = frame.result?.outcome;
-      }
-      assert.deepEqual(answer, { outcome: "selected", optionId: "plan_accept_edits" });
-      assert.equal((yield* session.terminal).status, "completed");
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
+    devinPlanApproval("devin").pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect("counts per-turn usage for a local glm command", () =>
@@ -3051,99 +3055,10 @@ describe("AcpRegistryAdapterV2", () => {
   );
 
   it.effect("filters Devin's bypass option for a local devin command", () =>
-    Effect.gen(function* () {
-      const session = yield* openClaudeReplaySession(
-        [
-          ...claudeFrames.open.map((entry) =>
-            entry.frame.method === "initialize" && entry.type === "emit_inbound"
-              ? {
-                  ...entry,
-                  frame: {
-                    ...entry.frame,
-                    result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] },
-                  },
-                }
-              : entry,
-          ),
-          {
-            type: "expect_outbound",
-            frame: { kind: "request", method: "session/prompt", params: "<any>" },
-          },
-          claudeFrames.update(CLAUDE_ROOT_SESSION, {
-            sessionUpdate: "tool_call",
-            toolCallId: "exit-plan",
-            title: "Exit plan mode",
-            kind: "switch_mode",
-            status: "pending",
-          }),
-          {
-            type: "emit_inbound",
-            frame: {
-              kind: "request",
-              method: "session/request_permission",
-              params: {
-                sessionId: CLAUDE_ROOT_SESSION,
-                toolCall: { toolCallId: "exit-plan" },
-                options: [
-                  {
-                    optionId: "plan_bypass",
-                    name: "Yes, implement plan and bypass permissions",
-                    kind: "allow_once",
-                  },
-                  {
-                    optionId: "plan_accept_edits",
-                    name: "Yes, implement plan and accept edits",
-                    kind: "allow_once",
-                  },
-                  { optionId: "reject_once", name: "No, plan needs changes", kind: "reject_once" },
-                ],
-              },
-            },
-          },
-          {
-            type: "expect_outbound",
-            frame: {
-              kind: "response",
-              method: "session/request_permission",
-              result: { outcome: { outcome: "selected", optionId: "<any>" } },
-            },
-          },
-          {
-            type: "emit_inbound",
-            frame: {
-              kind: "response",
-              method: "session/prompt",
-              result: { stopReason: "end_turn" },
-            },
-          },
-          claudeFrames.closeRequest,
-          claudeFrames.closed,
-        ],
-        undefined,
-        false,
-        { source: "local", commandPath: "/opt/devin/bin/devin" },
-      );
-      yield* session.runtime.startTurn(session.turnInput(1)).pipe(Effect.forkScoped);
-      const seen = yield* session.until(
-        (event) =>
-          event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
-      );
-      const request = seen.at(-1)!;
-      if (request.type !== "runtime_request.updated") throw new Error("Missing request");
-      yield* session.runtime.respondToRuntimeRequest({
-        requestId: request.runtimeRequest.id,
-        decision: "accept",
-      });
-      let answer: unknown;
-      while (answer === undefined) {
-        const frame = (yield* Queue.take(session.outgoing)) as {
-          readonly result?: { readonly outcome?: { readonly optionId?: string } };
-        };
-        answer = frame.result?.outcome;
-      }
-      assert.deepEqual(answer, { outcome: "selected", optionId: "plan_accept_edits" });
-      assert.equal((yield* session.terminal).status, "completed");
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
+    devinPlanApproval({ source: "local", commandPath: "/opt/devin/bin/devin" }).pipe(
+      Effect.provide(layerTest),
+      Effect.scoped,
+    ),
   );
 
   it.effect("keeps stopped child tools interrupted when a late output chunk arrives", () =>
