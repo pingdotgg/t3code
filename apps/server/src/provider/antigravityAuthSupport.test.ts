@@ -30,6 +30,7 @@ import {
   isAntigravitySignInRequiredError,
   makeAntigravityStderrHandler,
   makeAntigravityStdoutTransform,
+  antigravityLoginResponse,
   parseAntigravityAuthorizationUrl,
   prepareAntigravityProfile,
   resolveAntigravityInstanceDirectories,
@@ -55,7 +56,7 @@ describe("Antigravity process environment", () => {
     browserCommand: "managed-browser-helper",
   };
 
-  it("isolates the profile and harness after merging overrides without changing the base environment", () => {
+  it("runs `agy acp` with an isolated profile without changing the base environment", () => {
     const baseEnv = {
       HOME: "/home/developer",
       PATH: "/usr/bin",
@@ -71,7 +72,6 @@ describe("Antigravity process environment", () => {
       GEMINI_HOME: "/shared-gemini-home",
       gemini_home: "/alias-shared-home",
       AGY_ACP_FORCE_FILE_STORAGE: "0",
-      ANTIGRAVITY_HARNESS_PATH: "/wrong-version/harness",
       BROWSER: "open-real-browser",
       browser: "another-real-browser",
       PYTHONUNBUFFERED: "0",
@@ -82,7 +82,7 @@ describe("Antigravity process environment", () => {
     };
     const original = { ...baseEnv };
     const spawn = buildAntigravityAcpSpawnInput({
-      installation: { executablePath: "/release/acp", harnessPath: "/release/harness" },
+      installation: { executablePath: "/usr/bin/agy" },
       profile,
       cwd: "/project",
       baseEnv,
@@ -90,8 +90,8 @@ describe("Antigravity process environment", () => {
 
     expect(baseEnv).toEqual(original);
     expect(spawn).toEqual({
-      command: "/release/acp",
-      args: ["--uid="],
+      command: "/usr/bin/agy",
+      args: ["acp", "--gemini-dir", profile.geminiHome, "--app-data-dir", "antigravity-acp"],
       cwd: "/project",
       extendEnv: false,
       env: {
@@ -100,7 +100,6 @@ describe("Antigravity process environment", () => {
         CUSTOM_SETTING: "keep-this",
         GEMINI_HOME: profile.geminiHome,
         AGY_ACP_FORCE_FILE_STORAGE: "1",
-        ANTIGRAVITY_HARNESS_PATH: "/release/harness",
         BROWSER: profile.browserCommand,
         PYTHONUNBUFFERED: "1",
         ELECTRON_RUN_AS_NODE: "1",
@@ -109,31 +108,11 @@ describe("Antigravity process environment", () => {
     });
   });
 
-  it("runs the agy CLI as `agy acp` without a harness", () => {
-    const spawn = buildAntigravityAcpSpawnInput({
-      installation: { executablePath: "/usr/bin/agy", harnessPath: null },
-      profile,
-      cwd: "/project",
-      baseEnv: { PATH: "/usr/bin", ANTIGRAVITY_HARNESS_PATH: "/stale/harness" },
-    });
-
-    expect(spawn.command).toBe("/usr/bin/agy");
-    expect(spawn.args).toEqual([
-      "acp",
-      "--gemini-dir",
-      profile.geminiHome,
-      "--app-data-dir",
-      "antigravity-acp",
-    ]);
-    expect(spawn.env).not.toHaveProperty("ANTIGRAVITY_HARNESS_PATH");
-    expect(spawn.env).toMatchObject({ GEMINI_HOME: profile.geminiHome, PATH: "/usr/bin" });
-  });
-
   it("passes only the configured method's credential and keeps the GCP pair out of the environment", () => {
     const baseEnv = { PATH: "/usr/bin", GOOGLE_API_KEY: "ambient-key" };
     const spawnFor = (auth: AntigravityAuthConfig) =>
       buildAntigravityAcpSpawnInput({
-        installation: { executablePath: "/release/acp", harnessPath: "/release/harness" },
+        installation: { executablePath: "/usr/bin/agy" },
         profile,
         cwd: "/project",
         baseEnv,
@@ -179,10 +158,7 @@ describe("Antigravity process environment", () => {
       browserCommand: "managed-browser-helper",
     };
     const input = {
-      installation: {
-        executablePath: "C:\\release\\agy_acp_server.exe",
-        harnessPath: "C:\\release\\localharness_external.exe",
-      },
+      installation: { executablePath: "C:\\release\\agy.exe" },
       profile: windowsProfile,
       cwd: "C:\\project",
       baseEnv: { PATH: "C:\\Windows\\system32", TEMP: "C:\\Users\\user\\AppData\\Local\\Temp" },
@@ -272,9 +248,57 @@ describe("Antigravity authorization URL", () => {
   );
 });
 
+describe("Antigravity code sign-in", () => {
+  const loginUrl =
+    "https://accounts.google.com/o/oauth2/auth?access_type=offline&code_challenge_method=S256&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&response_type=code&state=login-state";
+
+  it.effect("accepts the agy CLI's link and only a code or page URL for that sign-in", () =>
+    Effect.gen(function* () {
+      const pending = yield* parseAntigravityAuthorizationUrl(loginUrl, "code");
+      expect(pending.redirectUri).toBe("https://antigravity.google/oauth-callback");
+      for (const other of [
+        loginUrl.replace("antigravity.google", "antigravity.google.example.invalid"),
+        loginUrl.replace("/o/oauth2/auth", "/o/oauth2/v2/auth"),
+      ]) {
+        expect(
+          Result.isFailure(
+            yield* parseAntigravityAuthorizationUrl(other, "code").pipe(Effect.result),
+          ),
+        ).toBe(true);
+      }
+      expect(
+        Result.isFailure(yield* parseAntigravityAuthorizationUrl(loginUrl).pipe(Effect.result)),
+      ).toBe(true);
+
+      const page = "https://antigravity.google/oauth-callback?state=login-state&code=4%2F0Ab-c";
+      expect(antigravityLoginResponse(pending, " 4/0Ab-code_1.x~ ")).toBe("4/0Ab-code_1.x~");
+      expect(antigravityLoginResponse(pending, page)).toBe(page);
+      for (const invalid of [
+        "",
+        "4/0Ab code",
+        "4/0Ab\nsecond line",
+        page.replace("login-state", "other-state"),
+        page.replace("antigravity.google", "evil.example"),
+        page.replace("&code=4%2F0Ab-c", ""),
+        `${page}&code=again`,
+      ]) {
+        expect(antigravityLoginResponse(pending, invalid)).toBeUndefined();
+      }
+    }),
+  );
+});
+
 describe("Antigravity sign-in errors", () => {
   it("recognizes native auth-required errors and the blocked-login transport error", () => {
     expect(isAntigravitySignInRequiredError(AcpErrors.AcpRequestError.authRequired())).toBe(true);
+    // The 1.5 CLI's `authenticate` answer when it has no sign-in and no display to open a browser on.
+    expect(
+      isAntigravitySignInRequiredError(
+        AcpErrors.AcpRequestError.internalError(
+          "No browser is available here (no graphical display is available to open a browser). Run `agy acp --login` in a terminal on this machine, then retry; or use a Gemini API key.",
+        ),
+      ),
+    ).toBe(true);
     expect(
       isAntigravitySignInRequiredError(
         new AcpErrors.AcpTransportError({
@@ -494,7 +518,7 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
       }),
     );
     return buildAntigravityAcpSpawnInput({
-      installation: { executablePath: "/release/acp", harnessPath: "/release/harness" },
+      installation: { executablePath: "/usr/bin/agy" },
       profile,
       cwd: directory,
       baseEnv,

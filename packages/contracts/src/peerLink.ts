@@ -70,8 +70,24 @@ export class PeerLinkError extends Schema.TaggedError<PeerLinkError>()("PeerLink
     "disabled",
   ]),
   message: Schema.String,
+  /** The environment that answered at the addresses of the one the user picked, when one did. */
+  answeredAs: Schema.optionalKey(Schema.String),
   cause: Schema.optionalKey(Schema.Defect()),
 }) {}
+
+/** What went wrong with one link, as a batch reports it per machine. */
+export type PeerLinkFailureKind = "unreachable" | "code_refused" | "wrong_environment" | "other";
+
+export const peerLinkFailureKind = (
+  error: Pick<PeerLinkError, "reason" | "answeredAs">,
+): PeerLinkFailureKind =>
+  error.answeredAs !== undefined
+    ? "wrong_environment"
+    : error.reason === "unreachable" || error.reason === "not_a_t3_environment"
+      ? "unreachable"
+      : error.reason === "pairing_rejected"
+        ? "code_refused"
+        : "other";
 
 /**
  * The user's answer to an agent asking to link an environment. The pairing
