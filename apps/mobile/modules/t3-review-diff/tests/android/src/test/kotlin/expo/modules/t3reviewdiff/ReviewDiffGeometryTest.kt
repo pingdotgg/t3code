@@ -150,6 +150,18 @@ class ReviewDiffGeometryTest {
   }
 
   @Test
+  fun viewedCheckboxHitTargetSpansTheHeaderHeightAndTrailingEdge() {
+    val drawing = ReviewDiffCanvasDrawing(RuntimeEnvironment.getApplication())
+    val style = DiffStyle.defaults(1f)
+    val glyph = drawing.fileHeaderCheckboxRect(100, 144, 320, style)
+    val hit = drawing.fileHeaderCheckboxHitRect(100, 144, 320, style)
+    assertTrue(hit.contains(glyph))
+    assertTrue(hit.contains(glyph.left - 13f, 101f))
+    assertTrue(hit.contains(319f, 143f))
+    assertTrue(!hit.contains(glyph.left - 15f, 122f))
+  }
+
+  @Test
   fun asciiWidthCacheDoesNotRetainPerRowMeasurementObjects() {
     val drawing = ReviewDiffCanvasDrawing(RuntimeEnvironment.getApplication())
     val rows = List(10000) { row("row:$it", "const value = $it") }
