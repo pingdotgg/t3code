@@ -2158,7 +2158,7 @@
   "7a1fdec255a0049d": "Iso",
   "23f357e0c9a3c1a6": "Ajustar",
   "fb7e26f0d6f9e65f": "Toque no modelo para fixar",
-  "6c7029c866931ed4": "{count, plural, one {Enviar 1 ao chat} other {Enviar # ao chat}}",
+  "6c7029c866931ed4": "{count, plural, one {Enviar # ao chat} other {Enviar # ao chat}}",
   "09af12cc6ccfdd12": "{format} · {count} triângulos · {size}",
   "3d2907abe354161f": "{count, plural, one {O modelo mudou depois que 1 nota foi colocada. Ela mantém o texto, mas não está mais fixada à superfície.} other {O modelo mudou depois que # notas foram colocadas. Elas mantêm o texto, mas não estão mais fixadas à superfície.}}",
   "35d235e816e6f4b0": "Vista 3D de {name}",
@@ -4216,7 +4216,7 @@
       "v": "v"
     }
   ],
-  "db1b7e1cec1473ea": "{count, plural, one {1 nota} other {# notas}}",
+  "db1b7e1cec1473ea": "{count, plural, one {# nota} other {# notas}}",
   "12ba9fa1445f92a2": "Trabalho de subagentes",
   "eaa6c91a05d95ce7": "Atualizar",
   "4740c38b2edd194d": "Somente leitura. Estes subagentes não aceitam mensagens.",

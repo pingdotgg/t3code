@@ -118,7 +118,11 @@ export default function ModelViewer(props: {
   const editorRef = useRef<HTMLDivElement>(null);
   const statusRef = useRef<HTMLSpanElement>(null);
   const pointerDown = useRef<{ x: number; y: number } | null>(null);
-  const [scene, setScene] = useState<ModelScene | null>(null);
+  const [sceneState, setSceneState] = useState<{
+    readonly scene: ModelScene;
+    readonly signal: AbortSignal;
+  } | null>(null);
+  const scene = sceneState?.scene ?? null;
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [notes, setNotes] = useState<ReadonlyArray<ModelNote>>([]);
@@ -188,7 +192,7 @@ export default function ModelViewer(props: {
           status: statusRef,
         };
         loaded.setFrameListener(() => placeOverlays(loaded, overlays));
-        setScene(loaded);
+        setSceneState({ scene: loaded, signal: controller.signal });
       })
       .catch((cause: unknown) => {
         if (!controller.signal.aborted) {
@@ -208,16 +212,16 @@ export default function ModelViewer(props: {
         earlierCapture: earlierCaptureRef.current,
       });
       mounted.dispose();
-      setScene(null);
+      setSceneState(null);
     };
   }, [props.src, props.format, props.memoryKey, viewRequestKey, attempt]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves the WebGL camera when a clicked chat link asks for a saved view while this model is open
   useEffect(() => {
-    if (!scene || !viewRequest || viewRequestKey === null) return;
-    scene.setView(viewRequest);
+    if (!sceneState || sceneState.signal.aborted || !viewRequest || viewRequestKey === null) return;
+    sceneState.scene.setView(viewRequest);
     useModelPreviewStore.getState().consumeView(viewRequestKey);
-  }, [scene, viewRequest, viewRequestKey]);
+  }, [sceneState, viewRequest, viewRequestKey]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves the open editor when its pinned point changes
   useEffect(() => {
