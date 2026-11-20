@@ -22,7 +22,7 @@ import {
   sourceControlClients,
   type ReferenceAutolink,
 } from "@t3tools/client-runtime/source-control-clients";
-import { linkReferenceAutolinks } from "./pullRequestAutolinks";
+import { nativePullRequestMarkdown } from "./pullRequestAutolinks";
 
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
@@ -43,6 +43,7 @@ const AutolinksContext = createContext<((text: string) => ReadonlyArray<Referenc
   null,
 );
 const LineBreaksContext = createContext(false);
+const GithubEmojiContext = createContext(false);
 const ChangeRequestContext = createContext<{
   readonly provider: string;
   readonly url: string;
@@ -72,13 +73,15 @@ export function PullRequestMarkdownRepository(props: {
     : null;
   return (
     <AutolinksContext value={autolinks}>
-      <LineBreaksContext value={lineBreaks}>
-        <ChangeRequestContext
-          value={provider === undefined || url === undefined ? null : { provider, url }}
-        >
-          <PullRequestMediaContext value={media}>{props.children}</PullRequestMediaContext>
-        </ChangeRequestContext>
-      </LineBreaksContext>
+      <GithubEmojiContext value={provider === "github"}>
+        <LineBreaksContext value={lineBreaks}>
+          <ChangeRequestContext
+            value={provider === undefined || url === undefined ? null : { provider, url }}
+          >
+            <PullRequestMediaContext value={media}>{props.children}</PullRequestMediaContext>
+          </ChangeRequestContext>
+        </LineBreaksContext>
+      </GithubEmojiContext>
     </AutolinksContext>
   );
 }
@@ -165,18 +168,21 @@ function PullRequestBodySegmentView(props: {
   readonly onTaskListUndone: () => void;
 }) {
   const { segment, onTaskListChange } = props;
+  const autolinks = useContext(AutolinksContext);
+  const githubEmoji = useContext(GithubEmojiContext);
   if (segment.kind === "markdown") {
+    const prose = nativePullRequestMarkdown(segment.text, autolinks, githubEmoji);
     return (
       <PullRequestMarkdownContent
         key={props.undoneTicks}
-        markdown={segment.text}
+        markdown={prose.markdown}
         gallery={props.gallery}
         lineBreaks={props.lineBreaks}
         onTaskListItemPress={
           onTaskListChange
             ? (event) => {
                 const offset = markdownTaskMarkerOffset(
-                  segment.text,
+                  prose.markdown,
                   event.index,
                   event.text,
                   event.checked,
@@ -184,7 +190,7 @@ function PullRequestBodySegmentView(props: {
                 const kept =
                   offset !== null &&
                   onTaskListChange({
-                    markerOffset: segment.sourceOffset + offset,
+                    markerOffset: segment.sourceOffset + prose.sourceOffset(offset),
                     checked: event.checked,
                   });
                 if (!kept) props.onTaskListUndone();
@@ -223,12 +229,10 @@ function PullRequestMarkdownContent(props: {
   readonly onTaskListItemPress?: SelectableMarkdownTextProps["onTaskListItemPress"];
 }) {
   const hostLineBreaks = useContext(LineBreaksContext);
-  const autolinks = useContext(AutolinksContext);
   const mediaContext = useContext(PullRequestMediaContext);
   const changeRequest = useContext(ChangeRequestContext);
   const resolveMediaUrl = (href: string) =>
     changeRequest ? resolveChangeRequestMediaUrl(href, changeRequest) : href;
-  const markdown = linkReferenceAutolinks(props.markdown, autolinks);
   const openPullRequest = useOpenPullRequest();
   const openLink = (href: string) => {
     void openPullRequest(resolveMediaUrl(href));
@@ -241,7 +245,7 @@ function PullRequestMarkdownContent(props: {
   return (
     <FilePreviewGallery value={props.gallery}>
       <SelectableMarkdownText
-        markdown={markdown}
+        markdown={props.markdown}
         preserveSoftBreaks={props.lineBreaks ?? hostLineBreaks}
         textStyle={styles.nativeTextStyle}
         onLinkPress={openLink}

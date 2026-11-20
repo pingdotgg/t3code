@@ -338,6 +338,12 @@ describe("question answer paths", () => {
     ["group open", String.raw`{\rtf1\ansi\u945{Z}}`, "αZ"],
     ["hex byte", String.raw`{\rtf1\ansi\u945\'3fZ}`, "αZ"],
     ["escaped symbol", String.raw`{\rtf1\ansi\u945\{Z}`, "αZ"],
+    ["Macintosh text", String.raw`{\rtf1\mac Caf\'8e Cr\'8fme}`, "Café Crème"],
+    [
+      "explicit Macintosh code page",
+      String.raw`{\rtf1\mac\ansicpg10000 Caf\'8e Cr\'8fme}`,
+      "Café Crème",
+    ],
     ["destination symbol", String.raw`{\rtf1\ansi\u945\*Z}`, "αZ"],
     ["multiple units", String.raw`{\rtf1\ansi\uc4\u945?\tab\'3f\~Z}`, "αZ"],
     ["binary unit", String.raw`{\rtf1\ansi\u945\bin3 abcZ}`, "αZ"],
@@ -424,8 +430,12 @@ describe("question answer paths", () => {
             cell_type: "code",
             source: ["print(43 * 7)"],
             outputs: [
-              { text: ["301\n"] },
-              { data: { "text/plain": ["42"] } },
+              { output_type: "stream", name: "stdout", text: "\u001b[32m301\u001b[0m\n" },
+              {
+                output_type: "display_data",
+                data: { "text/plain": ["\u001b[", "33m42\u001b[0m\n", "Next line"] },
+                metadata: {},
+              },
               {
                 output_type: "error",
                 ename: "ZeroDivisionError",
@@ -449,9 +459,9 @@ describe("question answer paths", () => {
       });
       expect(answers.q).toContain(`text extracted to: ${JSON.stringify(path + ".txt")}`);
       expect(NodeFS.readFileSync(`${path}.txt`, "utf8")).toContain("Vessel: Larkspur");
-      expect(NodeFS.readFileSync(`${path}.txt`, "utf8")).toContain("301");
-      expect(NodeFS.readFileSync(`${path}.txt`, "utf8")).toContain("42");
       const extracted = NodeFS.readFileSync(`${path}.txt`, "utf8");
+      expect(extracted).toContain("Output:\n301\n");
+      expect(extracted).toContain("42\nNext line");
       expect(extracted).toContain(`## Cell 3 (raw)\n${rawSource}`);
       expect(extracted).toContain(
         "ZeroDivisionError: division by zero\nCell In[1], line 1\n----> 1 1 / 0\nZeroDivisionError: division by zero",

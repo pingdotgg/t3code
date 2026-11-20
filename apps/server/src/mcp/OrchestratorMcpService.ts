@@ -397,6 +397,37 @@ const advertisedModel = (provider: ServerProvider, model: string) =>
     candidate.aliases?.some((alias) => alias.toLowerCase() === model.toLowerCase()),
   );
 
+/** Antigravity 1.3 IDs append the thinking level (`gemini-3.8-flash-high`); the agent still accepts them. */
+function antigravitySuffixedModel(provider: ServerProvider, model: string) {
+  if (provider.driver !== "antigravity" || advertisedModel(provider, model)) return;
+  const separator = model.lastIndexOf("-");
+  if (separator === -1) return;
+  const family = model.slice(0, separator);
+  const value = model.slice(separator + 1);
+  const thinking = provider.models
+    .find((candidate) => candidate.slug === family)
+    ?.capabilities?.optionDescriptors?.find(
+      (descriptor) => descriptor.type === "select" && descriptor.role === "reasoning",
+    );
+  if (thinking?.type === "select" && thinking.options.some((choice) => choice.id === value)) {
+    return { model: family, thinking: { id: thinking.id, value } };
+  }
+}
+
+/** A folder's own provider config can add models that only its workspace snapshot lists. */
+export const withWorkspaceModels = (
+  providers: ReadonlyArray<ServerProvider>,
+  cwd: string | undefined,
+): ReadonlyArray<ServerProvider> =>
+  cwd === undefined
+    ? providers
+    : providers.map((provider) => {
+        const models = provider.workspaceSnapshots?.find(
+          (snapshot) => snapshot.cwd === cwd,
+        )?.models;
+        return models === undefined ? provider : { ...provider, models };
+      });
+
 const withV = (version: string) => (version.startsWith("v") ? version : `v${version}`);
 
 /** A provider that lists no models accepts any slug. */
@@ -934,6 +965,14 @@ function threadStatus(
   return backgroundWorkHoldsCompletion(pendingBackgroundTasks ?? []) ? "waiting" : settledStatus;
 }
 
+const LIVE_LISTED_THREAD_STATUSES: ReadonlySet<OrchestratorMcpThreadListItem["status"]> = new Set([
+  "queued",
+  "preparing",
+  "starting",
+  "running",
+  "waiting",
+]);
+
 function listedThreadStatus(shell: OrchestrationV2ThreadShell) {
   return threadStatus(shell.activityRunStatus, shell.status, shell.pendingBackgroundTasks);
 }
@@ -1463,6 +1502,27 @@ const make = Effect.gen(function* () {
       : Effect.void;
   };
 
+  // A background subagent keeps calling tools after the run that started it settles. Its
+  // delegations join that latest run, whose completion cohort wakes the thread once they finish.
+  const backgroundSubagentRun = Effect.fn("OrchestratorMcpService.backgroundSubagentRun")(
+    function* (scope: McpInvocationScope, threadId: ThreadId) {
+      const shell = yield* threadManagement
+        .getThreadShell(threadId)
+        .pipe(Effect.mapError(threadManagementFailure));
+      if (
+        shell?.activeRunId !== null ||
+        shell.latestRunId === null ||
+        !isLiveCallerShell(shell, scope.thread?.providerInstanceId)
+      ) {
+        return undefined;
+      }
+      const { runs } = yield* loadThreadRecords(threadId, ["runs"], {
+        runIds: [shell.latestRunId],
+      });
+      return runs[0];
+    },
+  );
+
   const loadReadableThread = Effect.fn("OrchestratorMcpService.loadReadableThread")(function* (
     scope: McpInvocationScope,
     threadId: ThreadId,
@@ -1517,6 +1577,26 @@ const make = Effect.gen(function* () {
 
   const loadProviders = providerRegistry.getProviders;
 
+  /** The folder the composer's model picker scans for this thread. */
+  const parentWorkspaceCwd = (parent: Pick<OrchestrationV2ThreadProjection, "thread">) =>
+    parent.thread.worktreePath
+      ? Effect.succeed(parent.thread.worktreePath)
+      : projects.getById(parent.thread.projectId).pipe(
+          Effect.map((project) =>
+            Option.getOrUndefined(Option.map(project, ({ workspaceRoot }) => workspaceRoot)),
+          ),
+          Effect.orElseSucceed(() => undefined),
+        );
+
+  const scanWorkspace = (instanceId: ServerProvider["instanceId"], cwd: string) =>
+    projects
+      .workspaceScanDirectory(cwd)
+      .pipe(
+        Effect.flatMap((scanCwd) =>
+          providerRegistry.refreshWorkspaceSnapshot({ instanceId, cwd, scanCwd }),
+        ),
+      );
+
   const loadOrchestrationCapableInstanceIds = () =>
     providerAdapters.list().pipe(Effect.map((instanceIds) => new Set(instanceIds)));
 
@@ -1534,21 +1614,33 @@ const make = Effect.gen(function* () {
       })
       .pipe(Effect.mapError(threadManagementFailure));
 
-  const resolveTargetRechecking = (input: Parameters<typeof resolveTarget>[0]) => {
+  const resolveTargetRechecking = (
+    input: Parameters<typeof resolveTarget>[0] & { readonly cwd: string | undefined },
+  ) => {
     const instanceId =
       input.target?.providerInstanceId ??
       (input.target?.driverKind === undefined
         ? input.parent.thread.modelSelection.instanceId
         : undefined);
-    const resolved = resolveTarget(input);
+    const resolved = resolveTarget({
+      ...input,
+      providers: withWorkspaceModels(input.providers, input.cwd),
+    });
     if (instanceId === undefined) return resolved;
     return resolved.pipe(
       Effect.catchIf(
         (error) => error.code === "provider_unavailable" || error.code === "model_unavailable",
         () =>
-          providerRegistry
-            .refreshInstance(instanceId)
-            .pipe(Effect.flatMap((providers) => resolveTarget({ ...input, providers }))),
+          (input.cwd === undefined
+            ? providerRegistry.refreshInstance(instanceId)
+            : providerRegistry
+                .refreshInstance(instanceId)
+                .pipe(Effect.andThen(scanWorkspace(instanceId, input.cwd)))
+          ).pipe(
+            Effect.flatMap((providers) =>
+              resolveTarget({ ...input, providers: withWorkspaceModels(providers, input.cwd) }),
+            ),
+          ),
       ),
     );
   };
@@ -1636,7 +1728,10 @@ const make = Effect.gen(function* () {
 
     const inheritedSelection = input.parent.thread.modelSelection;
     const requestedModel = input.target?.model;
+    const antigravityTarget =
+      requestedModel === undefined ? undefined : antigravitySuffixedModel(provider, requestedModel);
     const model =
+      antigravityTarget?.model ??
       requestedModel ??
       (instanceId === inheritedSelection.instanceId
         ? inheritedSelection.model
@@ -1647,7 +1742,7 @@ const make = Effect.gen(function* () {
         `Provider ${instanceId} has no model available for inheritance.`,
       );
     }
-    if (requestedModel !== undefined) yield* requireAdvertisedModel(provider, requestedModel);
+    if (requestedModel !== undefined) yield* requireAdvertisedModel(provider, model);
     const advertised = advertisedModel(provider, model);
     const descriptors = advertised?.capabilities?.optionDescriptors;
     const requestedOptions = withLegacyUltracodeEffort(descriptors, input.target?.options);
@@ -1671,14 +1766,17 @@ const make = Effect.gen(function* () {
           descriptors,
         )
       : undefined;
-    if (requestedOptions !== undefined) {
+    if (requestedOptions !== undefined || antigravityTarget !== undefined) {
       const selections = new Map(
-        (requestedOptions.length === 0 ? [] : (options ?? [])).map((selection) => [
+        (requestedOptions?.length === 0 ? [] : (options ?? [])).map((selection) => [
           selection.id,
           selection,
         ]),
       );
-      for (const selection of requestedOptions) {
+      if (antigravityTarget !== undefined && requestedOptions?.length !== 0) {
+        selections.set(antigravityTarget.thinking.id, antigravityTarget.thinking);
+      }
+      for (const selection of requestedOptions ?? []) {
         selections.set(selection.id, selection);
       }
       options = [...selections.values()];
@@ -2465,7 +2563,7 @@ const make = Effect.gen(function* () {
       }
       const runId = run.id;
       const nodeId = run.rootNodeId;
-      const key = yield* requestKey(input.clientRequestId);
+      const key = `${runId}:${yield* requestKey(input.clientRequestId)}`;
       const turnItemId = TurnItemId.make(
         `turn-item:secret-request:${stablePart(threadId)}:${stablePart(key)}`,
       );
@@ -2534,6 +2632,13 @@ const make = Effect.gen(function* () {
             yield* record("cancelled");
             return "cancelled" as const;
           }
+          // A steering restart replaced the run's root, so this request belonged to
+          // the superseded attempt: its card can never be answered into that attempt,
+          // and the call must stop blocking the agent's turn.
+          if (current.rootNodeId !== nodeId) {
+            yield* record("cancelled");
+            return "cancelled" as const;
+          }
           yield* Effect.sleep(Duration.millis(SECRET_REQUEST_POLL_INTERVAL_MS));
         }
       }).pipe(
@@ -2586,7 +2691,26 @@ const make = Effect.gen(function* () {
 
     capabilities: Effect.fn("OrchestratorMcpService.capabilities")(function* (scope, input = {}) {
       const { parent, limits } = yield* loadCaller(scope, []);
-      const providers = yield* loadProviders;
+      const cwd = parent === undefined ? undefined : yield* parentWorkspaceCwd(parent);
+      const machineProviders = yield* loadProviders;
+      const unscanned =
+        cwd === undefined
+          ? []
+          : machineProviders.filter(
+              (provider) =>
+                provider.enabled &&
+                !provider.workspaceSnapshots?.some((snapshot) => snapshot.cwd === cwd),
+            );
+      if (cwd !== undefined && unscanned.length > 0) {
+        yield* Effect.forEach(unscanned, (provider) => scanWorkspace(provider.instanceId, cwd), {
+          concurrency: "unbounded",
+          discard: true,
+        });
+      }
+      const providers = withWorkspaceModels(
+        unscanned.length > 0 ? yield* loadProviders : machineProviders,
+        cwd,
+      );
       const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
       const settings = yield* serverSettings.getSettings.pipe(
         Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
@@ -2695,9 +2819,9 @@ const make = Effect.gen(function* () {
           "A local task runs in this thread's project. Omit target.projectId, or pass target.environmentId to run it in that environment's project.",
         );
       }
-      const parentRun = parent.runs
-        .filter(ThreadManagementService.isActiveRun)
-        .toSorted((left, right) => right.ordinal - left.ordinal)[0];
+      const parentRun =
+        ThreadManagementService.latestActiveRun(parent) ??
+        (yield* backgroundSubagentRun(scope, parent.thread.id));
       if (
         parentRun === undefined ||
         parentRun.rootNodeId === null ||
@@ -2720,6 +2844,7 @@ const make = Effect.gen(function* () {
         parent,
         target: input.target,
         providers,
+        cwd: yield* parentWorkspaceCwd(parent),
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
       });
       const runtimeMode = yield* resolveRuntimeMode(
@@ -3061,6 +3186,7 @@ const make = Effect.gen(function* () {
         }
         const parentNodeId = parentRun.rootNodeId;
         const providers = yield* loadProviders;
+        const cwd = yield* parentWorkspaceCwd(parent);
         const key = yield* requestKey(input.clientRequestId);
         const created = yield* Effect.forEach(
           input.threads,
@@ -3093,6 +3219,7 @@ const make = Effect.gen(function* () {
                         providerInstanceId: committedThread.modelSelection.instanceId,
                       },
                 providers,
+                cwd,
                 skipProjectEnablementFilter: isRetryOfAcceptedCreation,
               });
               const runtimeMode = yield* resolveRuntimeMode(
@@ -3280,7 +3407,21 @@ const make = Effect.gen(function* () {
           ? null
           : new Set(input.statuses);
       const titleContains = input.titleContains?.toLocaleLowerCase();
+      // A live status needs a source the index's mayBeLive covers, so a live-only filter
+      // skips building shells for every thread that cannot match.
+      const mayBeLiveIds =
+        statuses !== null &&
+        [...statuses].every((status) => LIVE_LISTED_THREAD_STATUSES.has(status))
+          ? new Set(
+              (yield* threadManagement
+                .listActiveShellIndex()
+                .pipe(Effect.mapError(listFailure))).flatMap((entry) =>
+                entry.mayBeLive ? [entry.id] : [],
+              ),
+            )
+          : null;
       const candidates = projectThreads
+        .filter((thread) => mayBeLiveIds === null || mayBeLiveIds.has(thread.id))
         .filter(
           (thread) =>
             input.settled === undefined || threadSettlement(thread).settled === input.settled,
