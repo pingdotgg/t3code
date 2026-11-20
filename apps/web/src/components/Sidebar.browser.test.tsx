@@ -265,10 +265,12 @@ describe("sidebar thread rename", () => {
 
   // Opening a thread moves focus from its row to the composer, where F2 used to do nothing.
   it.each([
-    { focus: "the composer", area: "composer", renames: true },
+    { focus: "the composer", renames: true },
     { focus: "another text field", area: "details", renames: false },
-  ])("F2 from $focus renames the open thread: $renames", async ({ area, renames }) => {
-    const { tree } = createTestContext({ area });
+    { focus: "a side chat composer", sideChat: true, renames: false },
+    { focus: "the composer with the sidebar collapsed", sidebarCollapsed: true, renames: false },
+  ])("F2 from $focus renames the open thread: $renames", async ({ renames, ...scenario }) => {
+    const { tree } = createTestContext(scenario);
     await using screen = await render(tree);
     await userEvent.click(screen.getByRole("textbox", { name: "Outside the sidebar" }));
 
@@ -279,11 +281,16 @@ describe("sidebar thread rename", () => {
       await expect.element(input).toHaveValue("Fix the login redirect");
       await expect.element(input).toHaveFocus();
     } else {
-      await expect.element(input).not.toBeInTheDocument();
+      // A collapsed sidebar is inert, which hides its content from role queries.
+      expect(document.querySelector('input[aria-label="Thread title"]')).toBeNull();
     }
   });
 
-  function createTestContext({ area }: { area: string }) {
+  function createTestContext({
+    area = "composer",
+    sideChat = false,
+    sidebarCollapsed = false,
+  }: { area?: string; sideChat?: boolean; sidebarCollapsed?: boolean } = {}) {
     const activeProject = project("active");
     const routeThreadRef: ScopedThreadRef = {
       environmentId: activeProject.environmentId,
@@ -310,11 +317,15 @@ describe("sidebar thread rename", () => {
     });
     const tree = (
       <>
-        <SidebarProvider>
-          <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
-        </SidebarProvider>
-        <div data-workspace-area={area}>
-          <textarea aria-label="Outside the sidebar" />
+        <div inert={sidebarCollapsed}>
+          <SidebarProvider>
+            <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+          </SidebarProvider>
+        </div>
+        <div {...(sideChat ? { "data-side-chat-pane": "side-thread" } : {})}>
+          <div data-workspace-area={area}>
+            <textarea aria-label="Outside the sidebar" />
+          </div>
         </div>
       </>
     );
