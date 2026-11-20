@@ -334,7 +334,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           ...(investigate ? ["--setting-sources", "user"] : []),
           "--disable-slash-commands",
           // Safe mode isolates customizations while retaining subscription authentication.
-          ...(isolated ? ["--safe-mode", "--disallowedTools", "*", "--setting-sources", ""] : []),
+          // `--tools ""` already removes every tool; `--disallowedTools *` would also block the
+          // internal tool that returns `structured_output`, so every isolated run would fail.
+          ...(isolated ? ["--safe-mode", "--setting-sources", ""] : []),
           ...(noSessionPersistence ? [NO_SESSION_PERSISTENCE] : []),
           // managed-mcp.json already isolates servers and makes Claude reject this flag.
           ...(managedMcpConfig ? [] : ["--strict-mcp-config"]),
