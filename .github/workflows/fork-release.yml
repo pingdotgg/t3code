@@ -266,6 +266,15 @@ jobs:
 
       - name: Publish release
         run: |
+          tag="v$VERSION"
+          release_is_published() {
+            [ "$(gh release view "$tag" --json isDraft --jq '.isDraft' 2>/dev/null)" = false ] &&
+              [ "$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq '.sha')" = "$SHA" ]
+          }
+          if release_is_published; then
+            echo "$tag is already published for $SHA."
+            exit 0
+          fi
           previous="$(gh release list --limit 1 --json tagName --jq '.[0].tagName // empty')"
           {
             if [ -n "$previous" ]; then echo "## What's new since ${previous#v}"; else echo "## What's new"; fi
@@ -306,7 +315,7 @@ jobs:
             echo
             echo "For WebStorm 2026.3 or later, download the JetBrains plugin ZIP below and use Settings → Plugins → Install Plugin from Disk. Use this matching desktop release, then connect the plugin to the shared server."
           } > release-notes.md
-          gh release create "v$VERSION" \
+          if ! gh release create "$tag" \
             "release/T3-Code-$VERSION-x64.exe" \
             "release/T3-Code-$VERSION-x64.exe.blockmap" \
             release/latest.yml \
@@ -314,7 +323,9 @@ jobs:
             --target "$SHA" \
             --title "T3 Code $VERSION" \
             --notes-file release-notes.md \
-            --latest
+            --latest; then
+            release_is_published
+          fi
 
   sync-blocked:
     name: Upstream sync blocked
