@@ -152,7 +152,53 @@ it.effect("curates only the selected project's automatic facts and protects user
     const beta = ProjectId.make("beta");
     yield* createProject(alpha);
     yield* createProject(beta);
-    yield* createFact(alpha, "alpha-auto", "Deployment is limited to the current task.");
+    const automatic = yield* createFact(
+      alpha,
+      "alpha-auto",
+      "Deployment is limited to the current task.",
+    );
+    const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+    const reviewedBy = automatic.origin;
+    const previous = yield* knowledge.mutate(
+      {
+        action: "feedback",
+        commandId: CommandId.make("rate-old"),
+        projectId: alpha,
+        factId: automatic.id,
+        expectedRevision: automatic.revision,
+        helpful: "irrelevant",
+      },
+      reviewedBy,
+    );
+    let rated = yield* knowledge.mutate(
+      {
+        action: "edit",
+        commandId: CommandId.make("revise"),
+        projectId: alpha,
+        factId: automatic.id,
+        expectedRevision: previous.revision,
+        kind: "decision",
+        content: "Deployment is limited to the current task on staging.",
+        entities: [],
+        tags: [],
+        sources: [],
+      },
+      reviewedBy,
+    );
+    for (const helpful of [true, false, "irrelevant"] as const) {
+      rated = yield* knowledge.mutate(
+        {
+          action: "feedback",
+          commandId: CommandId.make(`rate-${helpful}`),
+          projectId: alpha,
+          factId: automatic.id,
+          expectedRevision: rated.revision,
+          helpful,
+        },
+        reviewedBy,
+      );
+    }
+    assert.closeTo(rated.trust, 0.45, 1e-9);
     yield* createFact(alpha, "alpha-user", "Deployment approvals always require the owner.", true);
     yield* createFact(
       alpha,
@@ -181,7 +227,9 @@ it.effect("curates only the selected project's automatic facts and protects user
         [`${owner}-auto`],
       );
     }
-    const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+    const reviewed = calls.flatMap((call) => call.facts).find((fact) => fact.id === automatic.id)!;
+    assert.deepEqual(reviewed.feedback, { helpful: 1, unhelpful: 1, irrelevant: 1 });
+    assert.equal(reviewed.trust, rated.trust);
     assert.equal(
       (yield* knowledge.readFact({ projectId: alpha, factId: ProjectFactId.make("alpha-auto") }))
         .fact.status,

@@ -575,13 +575,14 @@ export const makeStore = Effect.gen(function* () {
         (SELECT COUNT(*) FROM recallable WHERE trust < ${recallThreshold}) AS "belowRecallThreshold",
         (SELECT COALESCE(SUM(retrieval_count), 0) FROM project_knowledge_facts
           WHERE project_id = ${projectId} AND status != 'forgotten') AS retrievals`;
-    const feedback = yield* sql<{ readonly helpful: number; readonly count: number }>`
+    const feedback = yield* sql<{ readonly helpful: number | null; readonly count: number }>`
       SELECT helpful, COUNT(*) AS count FROM project_knowledge_fact_history
       WHERE project_id = ${projectId} AND event = 'feedback' GROUP BY helpful`;
     return {
       ...facts!,
       helpful: feedback.find((row) => row.helpful === 1)?.count ?? 0,
       unhelpful: feedback.find((row) => row.helpful === 0)?.count ?? 0,
+      irrelevant: feedback.find((row) => row.helpful === null)?.count ?? 0,
     };
   });
   /** Citations of active facts, for whole-project source checks. */

@@ -285,6 +285,28 @@ const make = Effect.gen(function* () {
           sourceBudget -= excerpt.length;
         }
       }
+      const feedbackRows = yield* sql<{
+        readonly id: ProjectFactId;
+        readonly helpful: number;
+        readonly unhelpful: number;
+        readonly irrelevant: number;
+      }>`
+        WITH history AS (
+          SELECT fact_id, event, helpful, sequence,
+            MAX(sequence) FILTER (WHERE event = 'edited') OVER (PARTITION BY fact_id) AS last_edit
+          FROM project_knowledge_fact_history
+          WHERE project_id = ${projectId} AND ${sql.in(
+            "fact_id",
+            facts.map((fact) => fact.id),
+          )}
+            AND event IN ('feedback', 'edited')
+        )
+        SELECT fact_id AS id, COUNT(*) FILTER (WHERE helpful = 1) AS helpful,
+          COUNT(*) FILTER (WHERE helpful = 0) AS unhelpful,
+          COUNT(*) FILTER (WHERE helpful IS NULL) AS irrelevant
+        FROM history WHERE event = 'feedback' AND sequence > COALESCE(last_edit, 0)
+        GROUP BY fact_id`;
+      const feedbackById = new Map(feedbackRows.map(({ id, ...counts }) => [id, counts]));
       const candidateIds = new Set(candidates.map((fact) => fact.id));
       let packetSourceBudget = MAX_SOURCE_CHARS;
       const reviewedSources = new Map<string, KnowledgeMessageRef>();
@@ -293,6 +315,8 @@ const make = Effect.gen(function* () {
         revision: fact.revision,
         kind: fact.kind,
         content: fact.content,
+        trust: fact.trust,
+        feedback: feedbackById.get(fact.id) ?? { helpful: 0, unhelpful: 0, irrelevant: 0 },
         protected: !candidateIds.has(fact.id),
         sources: fact.sources.flatMap((source) => {
           const evidence = source.kind === "message" ? verified.get(sourceKey(source)) : undefined;

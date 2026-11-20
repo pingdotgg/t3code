@@ -2053,7 +2053,7 @@ it.effect(
       assert.deepEqual(
         composer.items.map((item) => item.text),
         [
-          "Historical claims from project automatic-recall; may be stale. Current direct human instructions override conflicts. Rate facts you rely on via t3_knowledge_mutate feedback: helpful, or unhelpful if misleading.\n[fact fact-one rev 1, from user] Cache keys include tenant IDs.",
+          'Project history may be stale. Follow current human instructions. Call t3_knowledge_mutate with mutation {action:"feedback",projectId:"automatic-recall",commandId:<new id>,factId,expectedRevision,helpful}. Use true if useful, false if misleading, "irrelevant" if off-task.\n[factId=fact-one expectedRevision=1, from user] Cache keys include tenant IDs.',
         ],
       );
       assert.include(composer.text, composer.items[0]!.text);
@@ -2175,7 +2175,10 @@ it.effect(
         records: long!.records,
       });
       const [longText] = sentLong.items.map((item) => item.text);
-      assert.include(longText, "[fact long rev 1, from user] Cache keys include tenant IDs.");
+      assert.include(
+        longText,
+        "[factId=long expectedRevision=1, from user] Cache keys include tenant IDs.",
+      );
       assert.include(longText, "t3_knowledge_read_fact");
       assert.isAtMost(longText!.length, 1100);
     }).pipe(Effect.provide(layerTest)),
@@ -2379,7 +2382,10 @@ it.effect("does not recall a fact the thread's agent has already been shown", ()
       text: elsewhere!.text,
       records: elsewhere!.records,
     });
-    assert.include(delivered.text, "[fact cited rev 1, from user] Cache keys include tenant IDs");
+    assert.include(
+      delivered.text,
+      "[factId=cited expectedRevision=1, from user] Cache keys include tenant IDs",
+    );
     assert.notInclude(delivered.text, "sha256");
   }).pipe(Effect.provide(layerTest)),
 );
@@ -3677,6 +3683,10 @@ it.effect("summarizes memory health by status, trust, feedback and lost sources"
       { ...existing(agentFact, "praise"), action: "feedback", helpful: true },
       { kind: "user" },
     );
+    yield* knowledge.mutate(
+      { ...existing(distrusted, "off-task"), action: "feedback", helpful: "irrelevant" },
+      { kind: "user" },
+    );
     const forgotten = yield* knowledge.mutate(createFact(projectId, "forgotten"), {
       kind: "user",
     });
@@ -3720,7 +3730,7 @@ it.effect("summarizes memory health by status, trust, feedback and lost sources"
     assert.deepEqual(status.counts, { saved: 7, superseded: 1, forgotten: 1 });
     assert.deepEqual(status.trustBands, { low: 1, guarded: 0, steady: 4, high: 0 });
     assert.equal(status.belowRecallThreshold, 1);
-    assert.deepEqual(status.feedback, { helpful: 1, unhelpful: 3 });
+    assert.deepEqual(status.feedback, { helpful: 1, unhelpful: 3, irrelevant: 1 });
     assert.equal(status.unavailableSources, 1);
     assert.equal(status.unavailableSourcesCoverage, "complete");
     assert.deepEqual(

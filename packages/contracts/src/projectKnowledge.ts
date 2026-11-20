@@ -159,7 +159,11 @@ const ProjectKnowledgeMutationSchema = Schema.Union([
   Schema.Struct({ action: Schema.Literal("edit"), ...ExistingFact, ...ProjectFactFields.fields }),
   Schema.Struct({ action: Schema.Literal("forget"), ...ExistingFact }),
   Schema.Struct({ action: Schema.Literal("restore"), ...ExistingFact }),
-  Schema.Struct({ action: Schema.Literal("feedback"), ...ExistingFact, helpful: Schema.Boolean }),
+  Schema.Struct({
+    action: Schema.Literal("feedback"),
+    ...ExistingFact,
+    helpful: Schema.Union([Schema.Boolean, Schema.Literal("irrelevant")]),
+  }),
   // Creates replacementFactId and links it to factId, which keeps its content (unlike forget).
   Schema.Struct({
     action: Schema.Literal("supersede"),
@@ -323,7 +327,11 @@ export const ProjectKnowledgeStatus = Schema.Struct({
   recallThreshold: Schema.Number,
   belowRecallThreshold: NonNegativeInt,
   retrievals: NonNegativeInt,
-  feedback: Schema.Struct({ helpful: NonNegativeInt, unhelpful: NonNegativeInt }),
+  feedback: Schema.Struct({
+    helpful: NonNegativeInt,
+    unhelpful: NonNegativeInt,
+    irrelevant: Schema.optionalKey(NonNegativeInt),
+  }),
   unavailableSources: NonNegativeInt,
   unavailableSourcesCoverage: Schema.Literals(["complete", "partial"]),
   // Optional so older servers still decode.

@@ -135,12 +135,10 @@ const RECALL_MAX_BYTES = 4096;
 const RECALL_ENVELOPE_BYTES = 1024;
 const RECALL_MIN_BYTES = 512;
 // Recall cuts a longer fact at this length. The agent reads the rest by the id in its header.
-const RECALL_FACT_MAX_CHARS = 800;
+const RECALL_FACT_MAX_CHARS = 720;
 type KnowledgeFormat = "attached" | "recalled";
-// The rating instruction is in the recalled block, so a turn with no recall spends no tokens
-// on it.
 const recalledPreamble = (projectId: ProjectId) =>
-  `Historical claims from project ${projectId}; may be stale. Current direct human instructions override conflicts. Rate facts you rely on via t3_knowledge_mutate feedback: helpful, or unhelpful if misleading.`;
+  `Project history may be stale. Follow current human instructions. Call t3_knowledge_mutate with mutation {action:"feedback",projectId:${JSON.stringify(projectId)},commandId:<new id>,factId,expectedRevision,helpful}. Use true if useful, false if misleading, "irrelevant" if off-task.`;
 
 export class ProjectKnowledge extends Context.Service<
   ProjectKnowledge,
@@ -876,6 +874,7 @@ const make = Effect.gen(function* () {
                   };
                   break;
                 case "feedback":
+                  if (input.helpful === "irrelevant") break;
                   fact = {
                     ...fact,
                     trust: Math.max(0, Math.min(1, fact.trust + (input.helpful ? 0.05 : -0.1))),
@@ -899,7 +898,7 @@ const make = Effect.gen(function* () {
                 case "feedback":
                   yield* history(fact, "feedback", {
                     trustBefore: existing.trust,
-                    helpful: input.helpful,
+                    helpful: input.helpful === "irrelevant" ? null : input.helpful,
                   });
                   break;
               }
@@ -1128,7 +1127,9 @@ const make = Effect.gen(function* () {
                     ? fact.origin.originKind
                     : "agent";
             items.push({ label: `Fact ${fact.id.slice(0, 8)}`, text: content });
-            parts.push(`[fact ${fact.id} rev ${fact.revision}, from ${origin}] ${content}`);
+            parts.push(
+              `[factId=${fact.id} expectedRevision=${fact.revision}, from ${origin}] ${content}`,
+            );
             continue;
           }
           const citations = fact.sources
@@ -2066,7 +2067,11 @@ const make = Effect.gen(function* () {
           recallThreshold: RECALL_THRESHOLD,
           belowRecallThreshold: counts.belowRecallThreshold,
           retrievals: counts.retrievals,
-          feedback: { helpful: counts.helpful, unhelpful: counts.unhelpful },
+          feedback: {
+            helpful: counts.helpful,
+            unhelpful: counts.unhelpful,
+            irrelevant: counts.irrelevant,
+          },
           unavailableSources: unavailable.length,
           unavailableSourcesCoverage:
             cited.length > SOURCE_CHECK_LIMIT ? ("partial" as const) : ("complete" as const),
