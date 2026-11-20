@@ -12131,15 +12131,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     failureHint,
                     usageLimited,
                   );
-            const gatewayResetAt =
-              resultFailure?.class === "usage_limit" ? resultFailure.resetAt : undefined;
+            const resultResetAt =
+              resultFailure?.class === "usage_limit" ? resultFailure.resetAt : null;
             // An untimed, typeless SDK rejection can describe the same gateway 429.
             const countsTowardReset = (type: string, resetAt: string | null | undefined) =>
               resetAt !== undefined &&
-              (gatewayResetAt == null || type !== "unknown" || resetAt !== null);
-            const resetTimes = Array.from(context.rateLimitResetTimes.entries())
-              .filter(([type, resetAt]) => countsTowardReset(type, resetAt))
-              .map(([, resetAt]) => resetAt);
+              (resultResetAt == null || type !== "unknown" || resetAt !== null);
+            const resetTimes = Array.from(context.rateLimitResetTimes)
+              .filter(([type, time]) => countsTowardReset(type, time))
+              .map(([, time]) => time);
             const assistantLimit = context.latestAssistantRateLimit;
             if (
               assistantLimit?.type != null &&
@@ -12151,8 +12151,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ) {
               resetTimes.push(assistantLimit.resetAt);
             }
-            if (gatewayResetAt != null) {
-              resetTimes.push(gatewayResetAt);
+            if (resultResetAt != null) {
+              resetTimes.push(resultResetAt);
             }
             const resetAt =
               resetTimes.length > 0 && resetTimes.every((time) => time !== null)

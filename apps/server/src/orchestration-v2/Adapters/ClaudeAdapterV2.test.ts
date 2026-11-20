@@ -9728,15 +9728,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     { status: 429, cooldown: "1h2m3s", seconds: 0, proxy: true, sdkResetSeconds: null },
     {
       status: 429,
-      cooldown: "2h26m17s with an untimed SDK event",
-      seconds: 8777,
-      proxy: true,
-      sdkResetSeconds: null,
-      sdkRateLimitUntyped: true,
-      result: gatewayLimitWithCountdown,
-    },
-    {
-      status: 429,
       cooldown: "2h26m17s with an untimed assistant rejection",
       seconds: 8777,
       proxy: true,
@@ -9749,7 +9740,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       seconds: 9000,
       proxy: true,
       sdkResetSeconds: null,
-      sdkRateLimitUntyped: true,
+      sdkLimitType: null,
       assistantResetSeconds: 9000,
       result: gatewayLimitWithCountdown,
     },
@@ -9759,7 +9750,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       seconds: 0,
       proxy: true,
       sdkResetSeconds: null,
-      sdkRateLimitUntyped: true,
+      sdkLimitType: null,
       result: `${gatewayLimitMessage} (last error: rate_limit_error (reset after 1h))`,
     },
     {
@@ -9768,7 +9759,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       seconds: 60,
       proxy: true,
       sdkResetSeconds: null,
-      sdkRateLimitUntyped: true,
+      sdkLimitType: null,
       result: `${gatewayLimitMessage} (last error: rate_limit_error (reset after 1h)) (reset after 1m)`,
     },
     {
@@ -9786,6 +9777,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       proxy: true,
       result:
         "API Error: Request rejected (429) · All credentials for model claude-opus-5-5 are cooling down (reset after 1m) (last error: All credentials for model upstream are cooling down (reset after 1h))",
+    },
+    {
+      status: 429,
+      cooldown: "untyped rejection",
+      seconds: 8777,
+      proxy: true,
+      sdkResetSeconds: null,
+      sdkLimitType: null,
+      result: gatewayLimitWithCountdown,
     },
   ])("recovers wrapped gateway limits with status $status and cooldown $cooldown", (input) =>
     Effect.gen(function* () {
@@ -9808,7 +9808,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 type: "rate_limit_event",
                 rate_limit_info: {
                   status: "rejected",
-                  ...(input.sdkRateLimitUntyped
+                  ...(input.sdkLimitType === null
                     ? { isUsingOverage: false }
                     : { rateLimitType: "five_hour" }),
                   ...(input.sdkResetSeconds === null

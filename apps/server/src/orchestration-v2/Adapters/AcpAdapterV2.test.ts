@@ -206,16 +206,16 @@ describe("acpPerTurnPromptUsage", () => {
         reasoningTokens: 3,
       },
     );
-    // Antigravity 1.4.5: its harness reports prompt tokens without the 24 cached ones.
+    // Antigravity 1.5+: inputTokens excludes cached reads, while outputTokens already includes thinking.
     assert.deepEqual(
       acpPerTurnPromptUsage(
         {
-          inputTokens: 42,
-          outputTokens: 3,
-          totalTokens: 54,
-          cachedReadTokens: 24,
+          inputTokens: 2181,
+          outputTokens: 23,
+          totalTokens: 14323,
+          cachedReadTokens: 12119,
           cachedWriteTokens: 0,
-          thoughtTokens: 9,
+          thoughtTokens: 19,
         },
         false,
         "completed",
@@ -225,11 +225,11 @@ describe("acpPerTurnPromptUsage", () => {
         usageScope: "main_agent",
         usageStatus: "complete",
         hasSubagents: false,
-        inputTokens: 66,
-        outputTokens: 12,
-        cachedInputTokens: 24,
+        inputTokens: 14300,
+        outputTokens: 23,
+        cachedInputTokens: 12119,
         cacheCreationTokens: 0,
-        reasoningTokens: 9,
+        reasoningTokens: 19,
       },
     );
   });
