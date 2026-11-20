@@ -63,6 +63,7 @@ it.effect.each([
 );
 
 for (const operation of [
+  "getDiffStat",
   "getMergeability",
   "listChecks",
   "getRepositoryPermission",
@@ -70,7 +71,7 @@ for (const operation of [
   "listCommits",
 ] as const) {
   it.effect.each(["response", "body read"])(
-    `preserves rate limits from ${operation} on %s errors while recovering other optional-read failures`,
+    `${operation} on %s errors: detail still loads the pull request; activity keeps rate limits`,
     (variant) =>
       Effect.gen(function* () {
         const pullRequest = Result.getOrThrow(
@@ -119,10 +120,14 @@ for (const operation of [
             number: 1,
             host: "bitbucket.org",
           };
-          const result = yield* operation === "listComments" || operation === "listCommits"
+          const activity = operation === "listComments" || operation === "listCommits";
+          const result = yield* activity
             ? Effect.result(provider.getChangeRequestActivity(reference))
             : Effect.result(provider.getChangeRequest(reference));
-          if (status === 429) {
+          if (!activity) {
+            // A rate-limited secondary read must not fail the detail the PR read already answered.
+            expect(result).toMatchObject({ _tag: "Success", success: { title: "Check polling" } });
+          } else if (status === 429) {
             expect(result).toMatchObject({
               _tag: "Failure",
               failure: { reason: "rate-limited", retryAt: 120_000 },
