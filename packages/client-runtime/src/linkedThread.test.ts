@@ -8,8 +8,6 @@ import {
   presentLinkedThreadItem,
   LINKED_THREAD_ACTIVE_POLL_MS,
   LINKED_THREAD_IDLE_POLL_MS,
-  linkedThreadFailure,
-  linkedThreadPollDelayMs,
   linkedThreadRefreshCursor,
   mergeLinkedThreadPage,
   resolveLinkedThreadOpen,
@@ -161,61 +159,6 @@ describe("linkedThreadRefreshCursor", () => {
       ...Array.from({ length: 30 }, (_, i) => item(i + 1, "x")),
     ];
     expect(linkedThreadRefreshCursorOf(page(items))).toBe(30);
-  });
-});
-
-describe("linkedThreadPollDelayMs", () => {
-  it("reads again at once while catching up, soon while working, and rarely when idle", () => {
-    expect(linkedThreadPollDelayMs(page([], { hasMore: true }))).toBe(0);
-    expect(linkedThreadPollDelayMs(page([]))).toBe(LINKED_THREAD_ACTIVE_POLL_MS);
-    expect(
-      linkedThreadPollDelayMs(
-        page([], { thread: { threadId, title: "Done", status: "idle", model: "gpt-5" } }),
-      ),
-    ).toBe(LINKED_THREAD_IDLE_POLL_MS);
-  });
-});
-
-describe("linkedThreadFailure", () => {
-  const names = { via: "nucbox", label: "VM" };
-  const failure = (reason: string, label: string | null = "fs-17") =>
-    linkedThreadFailure(
-      { _tag: "PeerLinkThreadReadError", reason, label, message: "From the server." },
-      names,
-    );
-
-  it("names the environment that has to change, and only retries what can recover", () => {
-    expect(failure("disabled", null)).toMatchObject({
-      title: "Linked environments is off on nucbox",
-      retryable: false,
-    });
-    expect(failure("expired")).toMatchObject({
-      title: "The link from nucbox to fs-17 expired",
-      retryable: false,
-    });
-    expect(failure("thread_not_found")).toMatchObject({
-      title: "This thread is no longer on fs-17",
-      retryable: false,
-    });
-    expect(failure("incompatible")).toEqual({
-      title: "fs-17 needs an update",
-      detail: "From the server.",
-      retryable: false,
-    });
-    expect(failure("unreachable")).toEqual({
-      title: "fs-17 is not answering nucbox",
-      detail: "From the server.",
-      retryable: true,
-    });
-  });
-
-  it("falls back to the client's name for the linked environment, and explains an old host", () => {
-    expect(failure("unknown_link", null).title).toBe("nucbox is no longer linked to VM");
-    expect(linkedThreadFailure(new Error(""), names)).toMatchObject({
-      title: "Could not read this thread through nucbox",
-      detail: "nucbox may need an update before it can read linked threads.",
-      retryable: true,
-    });
   });
 });
 

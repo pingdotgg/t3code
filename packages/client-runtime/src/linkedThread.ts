@@ -103,7 +103,7 @@ export const LINKED_THREAD_ACTIVE_POLL_MS = 2_500;
 export const LINKED_THREAD_IDLE_POLL_MS = 15_000;
 
 /** How long an open view waits before its next read: none while catching up, short while the thread works. */
-export function linkedThreadPollDelayMs(transcript: Pick<Page, "hasMore" | "thread">): number {
+function linkedThreadPollDelayMs(transcript: Pick<Page, "hasMore" | "thread">): number {
   if (transcript.hasMore) return 0;
   return ACTIVE_THREAD_STATUSES.has(transcript.thread.status)
     ? LINKED_THREAD_ACTIVE_POLL_MS
