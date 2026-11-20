@@ -284,8 +284,10 @@ const agentList = {
       hidden: false,
       permissions: [
         { action: "*", resource: "*", effect: "allow" },
-        { action: "shell", resource: "rm *", effect: "ask" },
+        { action: "shell", resource: "*", effect: "ask" },
+        { action: "shell", resource: "rm *", effect: "allow" },
         { action: "shell", resource: "printf *", effect: "allow" },
+        { action: "shell", resource: "*", effect: "deny" },
         ...buildPaths,
       ],
     },
@@ -298,14 +300,16 @@ const supervisedRules = [
   ...buildPaths,
   ...mcpRules,
 ];
-// Auto keeps the shared asks, then applies the agent's action-specific rules. The default
-// catch-all allow is intentionally absent so Auto stays stricter than Full access.
+// Auto keeps the shared asks, then the agent's rules in native order (last match wins), minus
+// the catch-all allow so Auto stays stricter than Full access.
 const autoRules = [
   { action: "shell", resource: "*", effect: "ask" },
   { action: "edit", resource: "*", effect: "ask" },
   { action: "external_directory", resource: "*", effect: "ask" },
-  { action: "shell", resource: "rm *", effect: "ask" },
+  { action: "shell", resource: "*", effect: "ask" },
+  { action: "shell", resource: "rm *", effect: "allow" },
   { action: "shell", resource: "printf *", effect: "allow" },
+  { action: "shell", resource: "*", effect: "deny" },
   ...buildPaths,
   ...mcpRules,
 ];

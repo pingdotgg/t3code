@@ -4079,13 +4079,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         known = new Map(listed.value.data.map((agent) => [agent.id, agent.permissions]));
         agentRules.set(directory, known);
       }
-      const rules = new Map<string, Rule>();
-      for (const agent of agents) {
-        for (const entry of known.get(agent) ?? []) {
-          rules.set(`${entry.action}\u0000${entry.resource}`, entry);
-        }
-      }
-      return [...rules.values()];
+      // Keep native order: OpenCode's last matching rule wins, so deduplicating would reorder it.
+      return agents.flatMap((agent) => known.get(agent) ?? []);
     });
 
     const rulesFor = Effect.fnUntraced(function* (
