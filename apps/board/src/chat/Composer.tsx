@@ -7,7 +7,13 @@ import {
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { threadSupportsProviderHandoff } from "@t3tools/client-runtime/state/thread-workflows";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
-import { MessageId, type OrchestrationV2ThreadProjection, type ThreadId } from "@t3tools/contracts";
+import {
+  type ModelSelection,
+  MessageId,
+  type OrchestrationV2ThreadProjection,
+  ProviderInstanceId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { SendHorizontal, Square } from "lucide-react";
 import { flushSync } from "react-dom";
 import {
@@ -20,15 +26,18 @@ import {
   useState,
 } from "react";
 
+import { baseInstanceId } from "../orchestrator/orchestratorInstance";
 import {
   modelSelectionOf,
   NO_PICK,
   pickableInstances,
   type PickerValue,
   pickOf,
+  selectionOf,
 } from "../providers/providers";
 import { failureText } from "../settings/failureText";
 import { newId } from "../state/boards";
+import { ensureOrchestratorInstance } from "../state/orchestrator";
 import { engineProvidersAtom, serverEnvironment } from "../state/server";
 import { interruptTurn, startTurn } from "../state/threads";
 import { ModelPicker } from "./ModelPicker";
@@ -79,7 +88,15 @@ export function Composer({
   const providersForCwd = useMemo(() => resolveProvidersForCwd(providers, cwd), [providers, cwd]);
   const instances = useMemo(() => pickableInstances(providersForCwd), [providersForCwd]);
   const thread = projection?.thread ?? null;
-  const shown = override ?? (thread === null ? NO_PICK : pickOf(instances, thread.modelSelection));
+  // The thread runs on an orchestrator instance, which the picker shows as the instance it copies.
+  const shown =
+    override ??
+    (thread === null
+      ? NO_PICK
+      : pickOf(instances, {
+          ...thread.modelSelection,
+          instanceId: ProviderInstanceId.make(baseInstanceId(thread.modelSelection.instanceId)),
+        }));
   const provider = providersForCwd.find((entry) => entry.instanceId === shown.instanceId);
   const { refresh } = useWorkspaceSnapshot(environmentId, provider?.instanceId, cwd);
   const canFresh =
@@ -90,7 +107,7 @@ export function Composer({
     thread !== null &&
     projection.runs.length > 0 &&
     !threadSupportsProviderHandoff(projection)
-      ? { reason: SWITCH_BLOCKED, stayOn: thread.modelSelection.instanceId }
+      ? { reason: SWITCH_BLOCKED, stayOn: baseInstanceId(thread.modelSelection.instanceId) }
       : null;
 
   const query = slashQuery(draft, cursor);
@@ -149,8 +166,22 @@ export function Composer({
     event?.preventDefault();
     const text = draft.trim();
     if (text === "" || projection === null) return;
-    const selection = override === null ? null : modelSelectionOf(instances, override);
     setError(null);
+    // Every turn goes out on the orchestrator instance, which also moves a board that started before it existed.
+    let selection: ModelSelection | null = null;
+    const picked = selectionOf(instances, shown);
+    const base = modelSelectionOf(instances, shown);
+    if (picked !== null && base !== null) {
+      try {
+        const instanceId = await ensureOrchestratorInstance(registry, environmentId, picked);
+        if (override !== null || instanceId !== projection.thread.modelSelection.instanceId) {
+          selection = { ...base, instanceId: ProviderInstanceId.make(instanceId) };
+        }
+      } catch (failure) {
+        setError(failure instanceof Error ? failure.message : String(failure));
+        return;
+      }
+    }
     setDraft("");
     setCursor(0);
     const result = await runAtomCommand(

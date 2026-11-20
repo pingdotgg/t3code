@@ -1,42 +1,72 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { orchestratorStats, renderBrief } from "./brief";
+import { orchestratorStats, renderBrief, renderFacts, renderRules } from "./brief";
 import { resolveRoles, ROLES } from "./roles";
 
-describe("the orchestrator brief", () => {
-  it("Given a board folder and a cap of 2, when the brief renders, then it names the folder and the cap", () => {
-    const brief = renderBrief({ boardDir: "/p/.agentboard/x", builderCap: 2 });
-    expect(brief).toContain("/p/.agentboard/x");
-    expect(brief).toContain("at most 2 building agents");
-    expect(brief).not.toContain("{{");
+const FACTS = {
+  boardDir: "/p/.agentboard/x",
+  builderCap: 2,
+  project: "slugkit",
+  projectDir: "/p",
+};
+
+describe("the orchestrator's standing rules and board facts", () => {
+  it("Given a board, when the facts render, then they name the folder, the cap, and the project and nothing else", () => {
+    const facts = renderFacts(FACTS);
+    expect(facts).toContain("`/p/.agentboard/x`");
+    expect(facts).toContain("at most 2 building agents");
+    expect(facts).toContain("`slugkit`, at `/p`");
+    expect(facts).not.toContain("{{");
+    expect(facts).not.toContain("delegate_task");
   });
 
-  it("Given the registry, when the brief renders, then every role is listed with its delegate_task arguments", () => {
-    const brief = renderBrief({ boardDir: "/p/.agentboard/x", builderCap: 2 });
-    expect(brief).toContain(
+  it("Given the standing rules, when they render, then they hold no board's folder, cap, or project", () => {
+    const rules = renderRules();
+    expect(rules).not.toContain("{{");
+    expect(rules).not.toContain("# Board facts");
+    expect(rules).toContain("Read <board folder>/roles/<role>.md and act as that role.");
+    expect(rules).toContain("`printenv T3CODE_THREAD_ID`");
+    expect(rules).toContain("`.agentboard/*/board.json`");
+    expect(rules).toContain("`orchestratorThreadId`");
+  });
+
+  it("Given the registry, when the rules render, then every role is listed with its delegate_task arguments", () => {
+    const rules = renderRules();
+    expect(rules).toContain(
       '| `scout` | MUST be used for exploratory codebase research, rapid code analysis, and broad pattern searches. | `research` | `shared` | `{"model":"claude-sonnet-5-5","options":{"effort":"medium"}}` | yes |',
     );
-    expect(brief).toContain("Read /p/.agentboard/x/roles/<role>.md and act as that role.");
-    expect(ROLES.filter((role) => !brief.includes(`| \`${role.name}\` |`))).toEqual([]);
+    expect(ROLES.filter((role) => !rules.includes(`| \`${role.name}\` |`))).toEqual([]);
   });
 
-  it("Given a Codex orchestrator, when the brief renders, then no role carries a target", () => {
+  it("Given a Codex orchestrator, when the rules render, then no role carries a target", () => {
     const roles = resolveRoles(ROLES, { instanceId: "codex", driver: "codex", offered: [] });
-    const brief = renderBrief({ boardDir: "/p/.agentboard/x", builderCap: 3, roles });
-    expect(brief).toContain("at most 3 building agents");
-    expect(brief).not.toContain('"options":{"effort"');
+    expect(renderRules(roles)).not.toContain('"options":{"effort"');
   });
 
-  it("Given an instance that lacks a model, when the brief renders, then the fallback is stated under the table", () => {
+  it("Given an instance that lacks a model, when the rules render, then the fallback is stated under the table", () => {
     const roles = resolveRoles(ROLES, {
       instanceId: "claudeAgent",
       driver: "claudeAgent",
       offered: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
     });
-    const brief = renderBrief({ boardDir: "/p/.agentboard/x", builderCap: 2, roles });
-    expect(brief).toContain(
+    expect(renderRules(roles)).toContain(
       "- claude-fable-5-1 is not offered by claudeAgent, so it uses the orchestrator's model.",
     );
+  });
+
+  it("Given the rules and the facts, when the whole brief renders, then it is the rules, then the facts", () => {
+    const brief = renderBrief(FACTS);
+    expect(brief).toBe(`${renderRules()}\n\n${renderFacts(FACTS)}`);
+  });
+
+  it("Given the rules, when they render, then they require the real clock, every stage, a named PR base, and evidence", () => {
+    const rules = renderRules();
+    expect(rules).toContain("`date -u +%Y-%m-%dT%H:%M:%SZ`");
+    expect(rules).toContain("Move a ticket here the moment you open its pull request");
+    expect(rules).toContain("Open each pull request against the base the user named.");
+    expect(rules).toContain("<its worktree>/.omp/artifacts/<ticket key>/");
+    expect(rules).toContain("<board folder>/artifacts/<ticket key>/");
+    expect(rules).toContain("`met`, `evidence`, and `note` are all required");
   });
 });
 

@@ -49,6 +49,7 @@ function harness(answers: ReadonlyArray<LaunchProjection>) {
       launched.push(request);
       return "thread-1";
     },
+    orchestratorInstance: async (selection) => `board-orchestrator-${selection.instanceId}`,
     projection: async () => answers[Math.min(polls++, answers.length - 1)] ?? PENDING,
     discard: async (id) => void discarded.push(id),
     sleep: async () => undefined,
@@ -61,10 +62,10 @@ const boardJson = (store: Map<string, string>) => {
   return Result.isSuccess(parsed) ? parsed.success : null;
 };
 
-const target = { cwd: CWD, folder: "claude-connector", board: BOARD };
+const target = { cwd: CWD, folder: "claude-connector", board: BOARD, project: "Connector" };
 
 describe("launching an orchestrator", () => {
-  it("Given a board, when the orchestrator launches, then the roles are copied, the brief names the folder, and the thread id is saved", async () => {
+  it("Given a board, when the orchestrator launches, then the roles are copied, the first message holds only the board facts, it runs on the orchestrator instance, and the thread id is saved", async () => {
     const { ports, store, launched } = harness([
       { ...PENDING, messages: [{ role: "assistant", text: "Ready." }] },
     ]);
@@ -76,13 +77,15 @@ describe("launching an orchestrator", () => {
     }
     expect(launched).toHaveLength(1);
     expect(launched[0]).toMatchObject({
-      instanceId: "claudeAgent",
+      instanceId: "board-orchestrator-claudeAgent",
       model: "claude-sonnet-5-5",
       options: [{ id: "effort", value: "medium" }],
       title: "Orchestrator: Claude connector",
     });
-    expect(launched[0]?.brief).toContain("/work/project/.agentboard/claude-connector");
-    expect(launched[0]?.brief).toContain("at most 2 building agents");
+    expect(launched[0]?.firstMessage).toContain("/work/project/.agentboard/claude-connector");
+    expect(launched[0]?.firstMessage).toContain("at most 2 building agents");
+    expect(launched[0]?.firstMessage).toContain("`Connector`, at `/work/project`");
+    expect(launched[0]?.firstMessage).not.toContain("delegate_task");
   });
 
   it("Given a model the instance does not offer, when the first run fails, then the engine's reason is thrown and the board has no orchestrator", async () => {

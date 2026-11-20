@@ -111,6 +111,18 @@ describe("the provider picker's instances", () => {
     expect(listed?.defaultModel).toBe("claude-opus-5-5");
   });
 
+  it("Given a legacy model, when the instance is listed, then the picker drops it but the instance still offers it to a role", () => {
+    const [listed] = pickableInstances([
+      provider({
+        instanceId: "claudeAgent",
+        driver: "claudeAgent",
+        models: [{ slug: "claude-fable-5-1", isLegacy: true }, { slug: "claude-opus-5-5" }],
+      }),
+    ]);
+    expect(listed?.models.map((model) => model.slug)).toEqual(["claude-opus-5-5"]);
+    expect(listed?.offered).toEqual(["claude-fable-5-1", "claude-opus-5-5"]);
+  });
+
   it("Given a signed-out managed Codex and a signed-in Claude Code, when they are listed, then each shows its sign-in state and account", () => {
     const listed = pickableInstances([
       provider({ instanceId: "claudeAgent", driver: "claudeAgent", email: "me@example.com" }),

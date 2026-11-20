@@ -4,8 +4,8 @@ import * as Schema from "effect/Schema";
 
 import { BOARDS_DIR, type Board } from "../domain/board";
 import { type ProjectFiles, writeBoard } from "../store/boardFiles";
-import { renderBrief } from "./brief";
-import { type OrchestratorModel, resolveRoles, ROLES, roleFiles } from "./roles";
+import { renderFacts } from "./brief";
+import { type OrchestratorModel, ROLES, roleFiles } from "./roles";
 
 export interface OrchestratorSelection extends OrchestratorModel {
   readonly model: string;
@@ -15,7 +15,8 @@ export interface OrchestratorSelection extends OrchestratorModel {
 
 export interface LaunchRequest {
   readonly title: string;
-  readonly brief: string;
+  /** The first message, which holds the board facts. The standing rules ride on the instance. */
+  readonly firstMessage: string;
   readonly instanceId: string;
   readonly model: string;
   readonly options: ReadonlyArray<ProviderOptionSelection>;
@@ -24,6 +25,8 @@ export interface LaunchRequest {
 /** The engine calls that start the orchestrator and watch its first run. */
 export interface LaunchPorts {
   readonly files: ProjectFiles;
+  /** The orchestrator instance for the picked instance, created or updated with the standing rules. */
+  readonly orchestratorInstance: (selection: OrchestratorSelection) => Promise<string>;
   readonly launchThread: (request: LaunchRequest) => Promise<string>;
   readonly projection: (threadId: string) => Promise<LaunchProjection>;
   /** Archives the thread of a launch that failed, so it does not stay in the thread list. */
@@ -78,16 +81,23 @@ const POLL_MS = 500;
 const SIGNAL_TIMEOUT_MS = 60_000;
 
 /**
- * Copies the roles into the board folder, starts the orchestrator on the brief, and saves its
- * thread id in `board.json`. It returns once the orchestrator has started, or throws with the
- * engine's reason when the first run fails, and then the board has no orchestrator again.
+ * Copies the roles into the board folder, starts the orchestrator on the orchestrator instance
+ * with the board facts, and saves its thread id in `board.json`. It returns once the orchestrator
+ * has started, or throws with the engine's reason when the first run fails, and then the board
+ * has no orchestrator again.
  */
 export async function launchOrchestrator(
   ports: LaunchPorts,
-  target: { readonly cwd: string; readonly folder: string; readonly board: Board },
+  target: {
+    readonly cwd: string;
+    readonly folder: string;
+    readonly board: Board;
+    /** The project's title. */
+    readonly project: string;
+  },
   selection: OrchestratorSelection,
 ): Promise<Board> {
-  const { cwd, folder, board } = target;
+  const { cwd, folder, board, project } = target;
   const boardPath = `${BOARDS_DIR}/${folder}`;
   for (const role of ROLES) {
     const text = roleFiles.get(role.file);
@@ -95,15 +105,16 @@ export async function launchOrchestrator(
     await ports.files.write(cwd, `${boardPath}/roles/${role.file}`, text);
   }
 
-  const brief = renderBrief({
-    boardDir: `${cwd}/${boardPath}`,
-    builderCap: board.builderCap,
-    roles: resolveRoles(ROLES, selection),
-  });
+  const instanceId = await ports.orchestratorInstance(selection);
   const threadId = await ports.launchThread({
     title: `Orchestrator: ${board.name}`,
-    brief,
-    instanceId: selection.instanceId,
+    firstMessage: renderFacts({
+      boardDir: `${cwd}/${boardPath}`,
+      builderCap: board.builderCap,
+      project,
+      projectDir: cwd,
+    }),
+    instanceId,
     model: selection.model,
     options: selection.options,
   });

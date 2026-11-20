@@ -46,6 +46,8 @@ export interface PickableInstance {
   /** What the engine says about the instance, such as how to sign in outside T3. */
   readonly message: string | null;
   readonly models: ReadonlyArray<PickableModel>;
+  /** Every model the instance runs, legacy ones too, though the picker lists only `models`. A role may name a legacy model. */
+  readonly offered: ReadonlyArray<string>;
   readonly defaultModel: string | null;
 }
 
@@ -107,6 +109,7 @@ export function pickableInstances(
         canSignIn: provider.setup?.canAuthenticate === true,
         unavailable: provider.installed ? null : "Not installed on the machine that runs T3",
         message: provider.message ?? null,
+        offered: provider.models.map((model) => model.slug),
         models: models.map((model) => ({
           slug: model.slug,
           name: model.name,
@@ -205,7 +208,7 @@ export function selectionOf(
     instanceId: instance.instanceId,
     driver: instance.driver,
     model,
-    offered: instance.models.map((entry) => entry.slug),
+    offered: instance.offered,
     options,
   };
 }

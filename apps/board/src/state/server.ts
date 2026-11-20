@@ -4,6 +4,7 @@ import { createServerEnvironmentAtoms } from "@t3tools/client-runtime/state/serv
 import { Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
+import { isOrchestratorInstance } from "../orchestrator/orchestratorInstance";
 import { engineEnvironmentIdAtom, environmentCatalog } from "./projects";
 
 export const environmentSession = createEnvironmentSessionAtoms(connectionAtomRuntime);
@@ -14,13 +15,16 @@ export const serverEnvironment = createServerEnvironmentAtoms(connectionAtomRunt
 
 const NO_PROVIDERS: ReadonlyArray<ServerProvider> = [];
 
-/** The providers T3 reports for the engine, with the usage limits it probed. */
+/**
+ * The providers T3 reports for the engine, with the usage limits it probed. The orchestrator
+ * instances are left out: each copies an instance the user already sees, and shares its account.
+ */
 export const engineProvidersAtom = Atom.make((get): ReadonlyArray<ServerProvider> => {
   const [entry] = get(environmentCatalog.catalogValueAtom).entries.values();
   if (entry === undefined) return NO_PROVIDERS;
-  return (
-    get(serverEnvironment.configValueAtom(entry.target.environmentId))?.providers ?? NO_PROVIDERS
-  );
+  const providers =
+    get(serverEnvironment.configValueAtom(entry.target.environmentId))?.providers ?? NO_PROVIDERS;
+  return providers.filter((provider) => !isOrchestratorInstance(provider.instanceId));
 }).pipe(Atom.withLabel("engine-providers"));
 
 /** The engine's settings, which the settings screen edits through `server.updateSettings`. */

@@ -1,5 +1,6 @@
 import {
   CommandId,
+  type EnvironmentId,
   ORCHESTRATION_V2_WS_METHODS,
   ProviderInstanceId,
   ThreadId,
@@ -11,15 +12,18 @@ import * as Option from "effect/Option";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { BOARDS_DIR } from "../domain/board";
-import type { StoreFiles } from "../orchestrator/brief";
+import { renderRules, type StoreFiles } from "../orchestrator/brief";
 import {
   launchOrchestrator,
   type LaunchPorts,
   type OrchestratorSelection,
 } from "../orchestrator/launch";
+import { planOrchestratorInstance } from "../orchestrator/orchestratorInstance";
+import { resolveRoles, ROLES } from "../orchestrator/roles";
 import type { ValidBoard } from "../store/boardFiles";
 import { boardEngine, newId, projectBoardsAtom } from "./boards";
 import { engineConnectionAtom, engineEnvironmentIdAtom, environmentProjects } from "./projects";
+import { engineSettingsAtom, serverEnvironment } from "./server";
 
 const launchThread = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "board:thread:launch",
@@ -30,7 +34,36 @@ const threadProjection = createEnvironmentRpcCommand(connectionAtomRuntime, {
   tag: ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
 });
 
-type BoardProject = Pick<EnvironmentProject, "id" | "environmentId" | "workspaceRoot">;
+type BoardProject = Pick<EnvironmentProject, "id" | "environmentId" | "workspaceRoot" | "title">;
+
+/**
+ * The orchestrator instance for the picked instance, with the standing rules in its launch
+ * arguments. The engine's settings are written only when the instance is missing or its rules differ.
+ */
+export async function ensureOrchestratorInstance(
+  registry: AtomRegistry.AtomRegistry,
+  environmentId: EnvironmentId,
+  selection: OrchestratorSelection,
+): Promise<string> {
+  const settings = registry.get(engineSettingsAtom);
+  if (settings === null) throw new Error("The engine's settings have not loaded yet.");
+  const { instanceId, mutation } = planOrchestratorInstance({
+    providerInstances: settings.providerInstances,
+    base: { instanceId: selection.instanceId, driver: selection.driver },
+    rules: renderRules(resolveRoles(ROLES, selection)),
+  });
+  if (mutation !== null) {
+    await boardEngine(registry, environmentId).run(
+      runAtomCommand(
+        registry,
+        serverEnvironment.updateSettings,
+        { environmentId, input: { patch: {}, providerInstanceMutation: mutation } },
+        { reportFailure: false },
+      ),
+    );
+  }
+  return instanceId;
+}
 
 /** Starts the board's orchestrator on the chosen instance and model, and saves its thread in `board.json`. */
 export async function startBoardOrchestrator(
@@ -43,6 +76,7 @@ export async function startBoardOrchestrator(
   const { files, threads, run } = boardEngine(registry, environmentId);
   const ports: LaunchPorts = {
     files,
+    orchestratorInstance: (picked) => ensureOrchestratorInstance(registry, environmentId, picked),
     launchThread: async (request) =>
       (
         await run(
@@ -63,7 +97,7 @@ export async function startBoardOrchestrator(
                 runtimeMode: "full-access",
                 interactionMode: "default",
                 workspaceStrategy: { type: "root" },
-                initialMessage: { text: request.brief, attachments: [] },
+                initialMessage: { text: request.firstMessage, attachments: [] },
               },
             },
             { reportFailure: false },
@@ -91,7 +125,12 @@ export async function startBoardOrchestrator(
   try {
     const board = await launchOrchestrator(
       ports,
-      { cwd: project.workspaceRoot, folder: listed.folder, board: listed.board },
+      {
+        cwd: project.workspaceRoot,
+        folder: listed.folder,
+        board: listed.board,
+        project: project.title,
+      },
       selection,
     );
     return { ...listed, board };
