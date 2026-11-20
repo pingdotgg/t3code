@@ -2,12 +2,18 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import { ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
+import { BOARD_KEY, useArtifacts } from "../artifacts/ArtifactsContext";
 import { isRunLive } from "../chat/timeline";
 import { STAGE_LABEL, TICKET_STAGES } from "../domain/ticket";
 import type { OrchestratorStats } from "../orchestrator/brief";
 import { useEnvironmentThread } from "../state/threads";
 import type { ValidBoard } from "../store/boardFiles";
+import { ArtifactCards } from "./ArtifactCards";
+import { ArtifactCount } from "./ArtifactCount";
 import { ORCHESTRATOR_BOX } from "./layout";
+
+/** Cards stack in columns this tall, which is as many as fit beside the card. */
+const ARTIFACT_ROWS = 5;
 
 /** A board's orchestrator on the canvas: its tickets by stage, what waits on the user, and its builders against the cap. */
 export function OrchestratorCard({
@@ -27,6 +33,7 @@ export function OrchestratorCard({
       board.orchestratorThreadId === null ? null : ThreadId.make(board.orchestratorThreadId),
     ).data,
   );
+  const { groups, expanded } = useArtifacts();
   const status =
     board.orchestratorThreadId === null
       ? "Not started"
@@ -65,6 +72,9 @@ export function OrchestratorCard({
             {stats.forYouOpen}
           </span>
         </span>
+        <span className="inline-flex items-center gap-1 text-muted">
+          Artifacts <ArtifactCount id={BOARD_KEY} count={groups.board.length} />
+        </span>
         <span className="text-muted">
           Builders{" "}
           <span data-testid="builders" className="text-fg">
@@ -82,6 +92,11 @@ export function OrchestratorCard({
           {problem}
         </p>
       ))}
+      {expanded.has(BOARD_KEY) && groups.board.length > 0 && (
+        <div className="absolute top-0" style={{ left: "calc(100% + 16px)" }}>
+          <ArtifactCards artifacts={groups.board} rows={ARTIFACT_ROWS} />
+        </div>
+      )}
     </section>
   );
 }

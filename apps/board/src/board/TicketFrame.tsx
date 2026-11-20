@@ -1,10 +1,14 @@
 import { ArrowRight, GitBranch, RotateCcw } from "lucide-react";
 import { useRef } from "react";
 
+import { useArtifacts } from "../artifacts/ArtifactsContext";
 import type { Ticket } from "../domain/ticket";
+import { NO_ARTIFACTS } from "../state/artifacts";
 import type { TicketView } from "../state/boardModel";
 import { AgentCard } from "./AgentCard";
-import { CARD_GAP, FRAME_PAD, type FrameBox, hasChips } from "./layout";
+import { ArtifactCards } from "./ArtifactCards";
+import { ArtifactCount } from "./ArtifactCount";
+import { artifactsHeight, CARD_GAP, FRAME_PAD, type FrameBox, hasChips } from "./layout";
 import { useViewScale } from "./Viewport";
 
 const DRAG_THRESHOLD_PX = 4;
@@ -57,6 +61,8 @@ export function TicketFrame({
 }) {
   const { ticket, agents } = view;
   const scale = useViewScale();
+  const { groups, expanded } = useArtifacts();
+  const artifacts = groups.byTicket.get(ticket.key) ?? NO_ARTIFACTS;
   const press = useRef<{ startY: number; dragging: boolean } | null>(null);
   const seen = new Map<string, number>();
   const verdicts = (ticket.verdicts ?? []).map((verdict) => {
@@ -117,6 +123,8 @@ export function TicketFrame({
           {ticket.track != null && (
             <span className="min-w-0 truncate text-[11px] text-faint">{ticket.track}</span>
           )}
+          <span className="flex-1" />
+          <ArtifactCount id={ticket.key} count={artifacts.length} />
         </div>
         <button
           type="button"
@@ -180,6 +188,14 @@ export function TicketFrame({
           ))
         )}
       </div>
+      {expanded.has(ticket.key) && artifacts.length > 0 && (
+        <div
+          className="border-t border-line"
+          style={{ height: artifactsHeight(artifacts.length), padding: FRAME_PAD }}
+        >
+          <ArtifactCards artifacts={artifacts} />
+        </div>
+      )}
     </article>
   );
 }
