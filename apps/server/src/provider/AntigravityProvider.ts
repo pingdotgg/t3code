@@ -40,7 +40,6 @@ import {
   isCommandMissingCause,
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
-import { resolveUsageLimitsAfterProbe } from "@t3tools/provider-core/server/usageLimits";
 
 import { antigravityThinkingConfig } from "./acp/AntigravityAcpSupport.ts";
 
@@ -265,10 +264,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
             ...state,
             draft: {
               ...state.draft,
-              usageLimits: resolveUsageLimitsAfterProbe({
-                published: state.draft.usageLimits,
-                probed,
-              }),
+              usageLimits: probed,
             },
           })),
         ),
@@ -382,6 +378,8 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     haveSettingsChanged: () => false,
     initialSnapshot: () => getSnapshot,
     checkProvider: checkProvider(),
+    // A failed read is shown as failed; the CLI token expires, so old limits would mislead.
+    retainUsageLimitsOnProbeFailure: false,
     enrichSnapshot: ({ publishSnapshot }) =>
       SubscriptionRef.changes(metadata).pipe(
         Stream.runForEach((state) =>

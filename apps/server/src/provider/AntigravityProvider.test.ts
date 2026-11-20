@@ -715,59 +715,59 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
     }),
   );
 
-  it.effect(
-    "publishes limits, retains a successful read on failure, and clears them on sign-out",
-    () =>
-      Effect.gen(function* () {
-        const limits: ServerProviderUsageLimits = {
-          checkedAt: "2026-10-09T12:00:00.000Z",
-          windows: [
-            {
-              id: "3p-weekly",
-              kind: "weekly",
-              label: "Claude & GPT (shared) · Weekly",
-              usedPercent: 75,
-            },
-          ],
-        };
-        const usage = yield* Ref.make(limits);
-        const harness = yield* makeHarness({ probeUsage: Ref.get(usage) });
-        const published = yield* harness.nextPublish((snapshot) => !!snapshot.usageLimits);
-        yield* harness.initialize;
-        expect((yield* published)?.usageLimits).toEqual(limits);
-        // The second health check is the one the failed background read triggers.
-        const checks = yield* Ref.make(0);
-        const failedReadApplied = yield* Deferred.make<void>();
-        yield* Ref.set(
-          harness.probe,
-          Ref.updateAndGet(checks, (count) => count + 1).pipe(
-            Effect.tap((count) =>
-              count === 2 ? Deferred.succeed(failedReadApplied, undefined) : Effect.void,
-            ),
-            Effect.as(initializeResult),
-          ),
-        );
-        yield* Ref.set(usage, {
-          checkedAt: "2026-10-09T12:01:00.000Z",
-          windows: [],
-          unavailable: { reason: "probeFailed" },
-        });
-        yield* harness.provider.snapshot.refresh;
-        yield* Deferred.await(failedReadApplied);
-        expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toEqual(limits);
-        yield* harness.provider.onSignedOut;
-        expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
-        yield* Ref.set(usage, {
-          checkedAt: "2026-10-09T12:02:00.000Z",
-          windows: [],
-          unavailable: { reason: "unsupported" },
-        });
-        const unsupported = yield* harness.nextPublish(
-          (snapshot) => snapshot.usageLimits?.unavailable?.reason === "unsupported",
-        );
-        yield* harness.provider.snapshot.refresh;
-        expect((yield* unsupported)?.usageLimits?.windows).toEqual([]);
-      }),
+  it.effect("publishes limits, shows a failed read as failed, and clears them on sign-out", () =>
+    Effect.gen(function* () {
+      const limits: ServerProviderUsageLimits = {
+        checkedAt: "2026-10-09T12:00:00.000Z",
+        windows: [
+          {
+            id: "3p-weekly",
+            kind: "weekly",
+            label: "Claude & GPT (shared) · Weekly",
+            usedPercent: 75,
+          },
+        ],
+      };
+      const usage = yield* Ref.make(limits);
+      const harness = yield* makeHarness({ probeUsage: Ref.get(usage) });
+      const published = yield* harness.nextPublish((snapshot) => !!snapshot.usageLimits);
+      yield* harness.initialize;
+      expect((yield* published)?.usageLimits).toEqual(limits);
+      const failedRead: ServerProviderUsageLimits = {
+        checkedAt: "2026-10-09T12:01:00.000Z",
+        windows: [],
+        unavailable: { reason: "probeFailed" },
+      };
+      // The second health check is the republish the failed background read triggers.
+      let checks = 0;
+      yield* Ref.set(harness.probe, Effect.sync(() => checks++).pipe(Effect.as(initializeResult)));
+      yield* Ref.set(usage, failedRead);
+      const failed = yield* harness.nextPublish(() => checks === 2);
+      yield* harness.provider.snapshot.refresh;
+      expect((yield* failed)?.usageLimits).toEqual(failedRead);
+      const recovered: ServerProviderUsageLimits = {
+        ...limits,
+        checkedAt: "2026-10-09T12:01:30.000Z",
+      };
+      yield* Ref.set(usage, recovered);
+      const recoveredPublish = yield* harness.nextPublish(
+        (snapshot) => snapshot.usageLimits?.checkedAt === recovered.checkedAt,
+      );
+      yield* harness.provider.snapshot.refresh;
+      expect((yield* recoveredPublish)?.usageLimits).toEqual(recovered);
+      yield* harness.provider.onSignedOut;
+      expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
+      yield* Ref.set(usage, {
+        checkedAt: "2026-10-09T12:02:00.000Z",
+        windows: [],
+        unavailable: { reason: "unsupported" },
+      });
+      const unsupported = yield* harness.nextPublish(
+        (snapshot) => snapshot.usageLimits?.unavailable?.reason === "unsupported",
+      );
+      yield* harness.provider.snapshot.refresh;
+      expect((yield* unsupported)?.usageLimits?.windows).toEqual([]);
+    }),
   );
 
   it.effect("a quota read finishing after sign-out cannot restore account limits", () =>
