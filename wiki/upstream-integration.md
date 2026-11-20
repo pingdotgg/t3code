@@ -6,22 +6,20 @@ tags: [upstream, fork, integration]
 status: stable
 generated:
   by: opencode/gpt-6.2-astra
-  at: 2026-11-19T17:06:56+00:00
+  at: 2026-11-20T17:04:44+00:00
 verified:
   - by: opencode/gpt-6.2-astra
-    at: 2026-11-19T17:06:56+00:00
+    at: 2026-11-20T17:04:44+00:00
 snapshot:
-  at: 2026-11-19T17:06:56+00:00
-  fork_main: c0024320aef4d012e6d9d0161a237c65dbedef1b
-  upstream_main: e37e45fd5bba464f689b9c1a9c0509c299698995
-  shared_baseline: 8cf97b5f06f30a872ce30ab8a888f2ff012365a2
-  last_main_integration: 84c7171b300a5aa6aa0217ad7ac187011085daa4
-  last_main_upstream: 8cf97b5f06f30a872ce30ab8a888f2ff012365a2
-  missing_upstream_on_main: 186
-  missing_upstream_at_integrated_tip: 0
-  branch_integration: 9bd07b098ffb7c109f71c809f45fb21bdd528d38
-  branch_parent: c0024320aef4d012e6d9d0161a237c65dbedef1b
-  branch_code_tip: 9bd07b098ffb7c109f71c809f45fb21bdd528d38
+  at: 2026-11-20T17:04:44+00:00
+  fork_main: 98d34be73e5072e6e6842590c529a18a4f70f66a
+  upstream_main: ccc1feb15572c422fbdce26ba6077b91459cfd47
+  shared_baseline: f03ce68691014011a68e2339a414a550a51b604f
+  last_main_integration: 235fe05403e03136f71025a497899ce8368fe5fd
+  last_main_upstream: f03ce68691014011a68e2339a414a550a51b604f
+  missing_upstream_on_main: 214
+  branch_integration: 31470394d9bf8b86a1bab2efef9846f661f76c66
+  branch_code_tip: 55e5e9230fb43242ca715c932dd2dc7757b5887e
   missing_upstream_on_branch: 0
 sources:
   - id: november-19-integration
@@ -435,6 +433,10 @@ sources:
 ---
 
 # Upstream integration
+
+The November 20 candidate merges 214 commits through [upstream `ccc1feb155`](https://github.com/pingdotgg/t3code/commit/ccc1feb15572c422fbdce26ba6077b91459cfd47). Draft creation flows through the shared change-request step; checkpoint timeouts retain fork exclusion data. Paired Android notifications now persist through the same preference command as other mobile settings. The snapshot distinguishes the candidate from fork `main` before merge.
+
+## November 19 sync
 
 [PR #86](https://github.com/NicholasZolton/t3code/pull/86) integrates the 186 commits from fork `main`'s shared baseline `8cf97b5f06` through upstream `e37e45fd5b`. At the snapshot above, fork `main` was `c0024320ae` and the integration was on the PR branch at `9bd07b098f`. See the PR for its current merge and verification status.
 

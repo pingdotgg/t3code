@@ -7,7 +7,7 @@ import {
   type AndroidNavigationStyle,
 } from "../../../lib/androidNavigationStyle";
 
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import { Atom, AsyncResult } from "effect/reactivity";
 
 import { ScopedTheme, ScopedVariables, Uniwind } from "uniwind";
@@ -18,7 +18,8 @@ import {
   type ResolvedAppearance,
 } from "../../../lib/appearancePreferences";
 import { appAtomRegistry } from "../../../state/atom-registry";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../../state/preferences";
+import { useAtomCommand } from "../../../state/use-atom-command";
 import type { Preferences } from "../../../persistence/mobile-preferences";
 import {
   isSystemColorsAvailable,
@@ -187,7 +188,7 @@ export function installAppearanceRuntime(): () => void {
 
 export function AppearancePreferencesProvider(props: { readonly children: ReactNode }) {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   const systemColorScheme = useColorScheme() === "dark" ? "dark" : "light";
   const storedPreferences = AsyncResult.isSuccess(preferencesResult)
     ? preferencesResult.value
@@ -224,11 +225,13 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   );
   const isReady = AsyncResult.isSuccess(preferencesResult);
   const updatePreferences = (patch: Partial<Preferences>) => {
-    startTransition(() => savePreferences(patch));
+    startTransition(() => {
+      void savePreferences(patch);
+    });
   };
 
   const updateThemePreferences = (patch: Partial<Preferences>) => {
-    savePreferences(patch);
+    void savePreferences(patch);
   };
 
   const setThemeIdForAppearance = (appearance: MobileThemeAppearance, value: MobileThemeId) => {

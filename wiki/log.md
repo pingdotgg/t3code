@@ -1,5 +1,9 @@
 # Wiki update log
 
+## 2026-11-20
+
+- Recorded the [upstream integration candidate](upstream-integration.md) through `ccc1feb155`, including the mobile preferences and VCS compatibility decisions.
+
 ## 2026-11-19
 
 - Recorded the [local macOS build](local-macos-signing.md) from fork `main` after a PR merges.

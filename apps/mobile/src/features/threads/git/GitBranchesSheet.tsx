@@ -93,7 +93,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
             const branch = sanitizeFeatureBranchName(newBranchName.trim());
             if (branch.length === 0) return;
             void gitActions.onCreateSelectedThreadBranch(branch).then((result) => {
-              if (result === null) return;
+              if (result === null || !navigation.isFocused()) return;
               setNewBranchName("");
               navigation.goBack();
             });
@@ -145,7 +145,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
             void gitActions
               .onCreateSelectedThreadWorktree({ baseBranch, newBranch })
               .then((result) => {
-                if (result === null) return;
+                if (result === null || !navigation.isFocused()) return;
                 setWorktreeBranchName("");
                 navigation.goBack();
               });
@@ -209,7 +209,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
               disabled={!canChangeThreadBranch || busy || disabled}
               onPress={() => {
                 void gitActions.onCheckoutSelectedThreadBranch(branch.name).then((result) => {
-                  if (result === null) return;
+                  if (result === null || !navigation.isFocused()) return;
                   navigation.goBack();
                 });
               }}
