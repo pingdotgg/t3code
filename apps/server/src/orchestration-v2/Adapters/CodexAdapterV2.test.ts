@@ -3572,6 +3572,82 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
+  it.effect(
+    "leaves the root turn model unknown when Codex only echoes the requested settings",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const nativeThreadId = "settings-echo-thread";
+          const nativeTurnId = "settings-echo-turn";
+          const transcript = makeCodexReplayTranscript({
+            scenario: "codex-settings-echo",
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Reply with PONG." }),
+              {
+                type: "emit_inbound",
+                label: "settings echo",
+                frame: {
+                  method: "thread/settings/updated",
+                  params: {
+                    threadId: nativeThreadId,
+                    threadSettings: {
+                      model: "gpt-6-luna",
+                      effort: "high",
+                      serviceTier: null,
+                      modelProvider: "openai",
+                      cwd: "/workspace",
+                      approvalPolicy: "never",
+                      approvalsReviewer: "user",
+                      collaborationMode: { mode: "default", settings: { model: "gpt-6-luna" } },
+                      sandboxPolicy: { type: "dangerFullAccess" },
+                    },
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "complete",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                  },
+                },
+              },
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(transcript);
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("settings-echo-attempt"),
+              text: "Reply with PONG.",
+            }),
+          );
+          yield* harness.firstTerminal;
+          const completed = harness.events.find(
+            (event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+          );
+          assert.equal(completed?.type, "provider_turn.updated");
+          if (completed?.type !== "provider_turn.updated") return;
+          assert.equal(completed.providerTurn.model, undefined);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+      ),
+  );
+
   it.effect("stops asking for commands the user allowed for the session", () =>
     Effect.gen(function* () {
       const nativeThreadId = "session-approval-thread";
