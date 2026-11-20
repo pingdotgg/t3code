@@ -1,12 +1,14 @@
 import {
   ContextHandoffId,
   ProviderInstanceId,
+  ProviderThreadId,
   RunId,
   type OrchestrationV2ThreadProjection,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  isRecoveryHandoff,
   resolveHandoffEndpoints,
   resolveModelSwitchChange,
   resolvePendingHandoff,
@@ -17,6 +19,8 @@ const from = ProviderInstanceId.make("codex_personal");
 const to = ProviderInstanceId.make("claudeAgent");
 const item = {
   runId: RunId.make("target"),
+  fromProviderThreadIds: [ProviderThreadId.make("source-thread")],
+  toProviderThreadId: ProviderThreadId.make("target-thread"),
   fromProviderInstanceIds: [from],
   toProviderInstanceId: to,
 };
@@ -72,6 +76,17 @@ describe("handoff endpoints shared by web and mobile", () => {
     expect(
       resolveHandoffEndpoints(item, [run("target", 2, from, "wrong-model")]).to.model,
     ).toBeUndefined();
+  });
+
+  it("treats a provider conversation restarted in a fresh session of itself as a recovery", () => {
+    const sameModel = { fromModelSelections: [{ instanceId: to, model: "same" }], toModel: "same" };
+    const recovery = { ...item, ...sameModel, fromProviderThreadIds: [item.toProviderThreadId] };
+    expect(isRecoveryHandoff(recovery)).toBe(true);
+    expect(resolveHandoffEndpoints(recovery, []).from).toEqual([]);
+    // A fork or merge-back between two conversations on one model is still a handoff.
+    const fork = { ...item, ...sameModel };
+    expect(isRecoveryHandoff(fork)).toBe(false);
+    expect(resolveHandoffEndpoints(fork, []).from).toEqual(sameModel.fromModelSelections);
   });
 });
 

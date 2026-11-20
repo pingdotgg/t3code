@@ -2,6 +2,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
+  isRecoveryHandoff,
   resolveHandoffEndpoints,
   resolveModelSwitchChange,
   type HandoffEndpoints,
@@ -100,7 +101,7 @@ export function ThreadHandoffRow(props: {
       endpoints={endpoints}
       iconColor={color}
       surfaceColor={props.surfaceColor}
-      label={gt("Context handoff")}
+      label={isRecoveryHandoff(item) ? gt("Recovered context") : gt("Context handoff")}
       failed={item.status === "failed"}
     />
   );
