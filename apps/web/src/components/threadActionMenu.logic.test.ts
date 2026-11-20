@@ -26,6 +26,38 @@ const baseState: ThreadActionMenuState = {
 };
 
 describe("buildThreadActionMenuItems", () => {
+  it("attaches the open thread's shortcuts to the matching items", () => {
+    const shortcut = (key: string) => ({
+      key,
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: true,
+      altKey: false,
+      modKey: true,
+    });
+    const shortcuts = {
+      find: shortcut("f"),
+      pin: shortcut("p"),
+      settle: shortcut("s"),
+      regenerateTitle: null,
+    };
+    const shortcutKeys = (state: ThreadActionMenuState) =>
+      buildThreadActionMenuItems(state)
+        .filter((item) => item.shortcut)
+        .map((item) => [item.id, item.shortcut?.key]);
+
+    expect(shortcutKeys({ ...baseState, canFind: true, shortcuts })).toEqual([
+      ["find", "f"],
+      ["pin", "p"],
+      ["settle", "s"],
+    ]);
+    expect(shortcutKeys({ ...baseState, isPinned: true, isSettled: true, shortcuts })).toEqual([
+      ["unpin", "p"],
+      ["unsettle", "s"],
+    ]);
+    expect(shortcutKeys({ ...baseState, canFind: true })).toEqual([]);
+  });
+
   it.each([false, true])(
     "disables both lifecycle directions without permission (reversed: %s)",
     (reversed) => {

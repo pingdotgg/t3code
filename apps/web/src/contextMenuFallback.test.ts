@@ -274,4 +274,19 @@ describe("showContextMenuFallback", () => {
     expect(button?.textContent).toBe("In 1 hour3:00 PM");
     expect(button?.attributes.get("aria-label")).toBe("In 1 hour, 3:00 PM");
   });
+
+  it("shows an item's shortcut beside its label", () => {
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    const shortcut = {
+      key: "s",
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: true,
+      altKey: false,
+      modKey: true,
+    };
+    void showContextMenuFallback([{ id: "settle", label: "Settle thread", shortcut }]);
+
+    expect(findButton("Settle thread")?.textContent).toBe("Settle thread⇧⌘S");
+  });
 });

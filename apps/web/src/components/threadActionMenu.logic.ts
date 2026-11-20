@@ -1,8 +1,13 @@
-import type { ContextMenuItem } from "@t3tools/contracts";
+import type {
+  ContextMenuItem,
+  KeybindingShortcut,
+  ResolvedKeybindingsConfig,
+} from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "../i18n/messages";
+import { findEffectiveShortcutForCommand } from "../keybindings";
 
 export type ThreadActionMenuId =
   | "find"
@@ -123,6 +128,33 @@ export interface ThreadActionMenuState {
   readonly canShareWithGuest?: boolean;
   /** A No project thread with its own folder, on a server that can promote it. */
   readonly canTurnIntoProject?: boolean;
+  /** These shortcuts act on the open thread, so only that thread's menu passes them. */
+  readonly shortcuts?: ThreadActionShortcuts;
+}
+
+export interface ThreadActionShortcuts {
+  readonly find: KeybindingShortcut | null;
+  readonly pin: KeybindingShortcut | null;
+  readonly settle: KeybindingShortcut | null;
+  readonly regenerateTitle: KeybindingShortcut | null;
+}
+
+export function resolveThreadActionShortcuts(
+  keybindings: ResolvedKeybindingsConfig,
+): ThreadActionShortcuts {
+  return {
+    find: findEffectiveShortcutForCommand(keybindings, "chat.find"),
+    pin: findEffectiveShortcutForCommand(keybindings, "thread.pin"),
+    settle: findEffectiveShortcutForCommand(keybindings, "thread.settle"),
+    regenerateTitle: findEffectiveShortcutForCommand(keybindings, "thread.regenerateTitle"),
+  };
+}
+
+function withShortcut<T extends ContextMenuItem<ThreadActionMenuId>>(
+  item: T,
+  shortcut: KeybindingShortcut | null | undefined,
+): T {
+  return shortcut ? { ...item, shortcut } : item;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -147,7 +179,12 @@ export function buildThreadActionMenuItems(
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
   const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
     ...(state.canFind
-      ? [{ id: "find" as const, label: resolve(msg("Find in thread")), icon: "text-search" }]
+      ? [
+          withShortcut(
+            { id: "find" as const, label: resolve(msg("Find in thread")), icon: "text-search" },
+            state.shortcuts?.find,
+          ),
+        ]
       : []),
     ...(state.branch
       ? [
@@ -160,20 +197,30 @@ export function buildThreadActionMenuItems(
       : []),
     ...(state.supports.pinning
       ? [
-          state.isPinned
-            ? { id: "unpin" as const, label: resolve(msg("Unpin thread")), icon: "pin-off" }
-            : { id: "pin" as const, label: resolve(msg("Pin thread")), icon: "pin" },
+          withShortcut(
+            state.isPinned
+              ? { id: "unpin" as const, label: resolve(msg("Unpin thread")), icon: "pin-off" }
+              : { id: "pin" as const, label: resolve(msg("Pin thread")), icon: "pin" },
+            state.shortcuts?.pin,
+          ),
         ]
       : []),
     ...(state.supports.settlement
       ? [
-          state.isSettled
-            ? {
-                id: "unsettle" as const,
-                label: resolve(msg("Un-settle thread")),
-                icon: "circle-check",
-              }
-            : { id: "settle" as const, label: resolve(msg("Settle thread")), icon: "circle-check" },
+          withShortcut(
+            state.isSettled
+              ? {
+                  id: "unsettle" as const,
+                  label: resolve(msg("Un-settle thread")),
+                  icon: "circle-check",
+                }
+              : {
+                  id: "settle" as const,
+                  label: resolve(msg("Settle thread")),
+                  icon: "circle-check",
+                },
+            state.shortcuts?.settle,
+          ),
         ]
       : []),
     ...(state.supports.snooze
@@ -209,14 +256,17 @@ export function buildThreadActionMenuItems(
     },
     ...(state.supports.titleRegeneration
       ? [
-          {
-            id: "regenerate-title" as const,
-            label: state.isRegeneratingTitle
-              ? resolve(msg("Regenerating…"))
-              : resolve(msg("Regenerate title")),
-            icon: "refresh-cw",
-            disabled: state.isRegeneratingTitle,
-          },
+          withShortcut(
+            {
+              id: "regenerate-title" as const,
+              label: state.isRegeneratingTitle
+                ? resolve(msg("Regenerating…"))
+                : resolve(msg("Regenerate title")),
+              icon: "refresh-cw",
+              disabled: state.isRegeneratingTitle,
+            },
+            state.shortcuts?.regenerateTitle,
+          ),
         ]
       : []),
     { id: "mark-unread", label: resolve(msg("Mark unread")), icon: "mail-open" },

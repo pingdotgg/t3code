@@ -178,6 +178,7 @@ import { ProjectRowActions } from "./ProjectComboboxRow";
 import {
   buildDraftActionMenuItems,
   buildThreadActionMenuItems,
+  resolveThreadActionShortcuts,
   threadActionRequiresOperate,
 } from "./threadActionMenu.logic";
 import {
@@ -2685,6 +2686,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               ),
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
               canRename: !fromSearch,
+              ...(threadKey === routeThreadKey
+                ? { shortcuts: resolveThreadActionShortcuts(keybindings) }
+                : {}),
               supports: {
                 settlement: configLoaded,
                 autoSettleOptOut: supportsAutoSettleOptOut,

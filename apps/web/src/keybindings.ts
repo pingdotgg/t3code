@@ -159,7 +159,7 @@ export function effectiveShortcutsForCommand(
   return effective;
 }
 
-function findEffectiveShortcutForCommand(
+export function findEffectiveShortcutForCommand(
   keybindings: ResolvedKeybindingsConfig,
   command: KeybindingCommand,
   options?: ShortcutMatchOptions,
