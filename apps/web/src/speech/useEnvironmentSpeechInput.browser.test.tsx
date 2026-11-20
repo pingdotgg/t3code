@@ -437,6 +437,29 @@ it("keeps a stopped recording local while disconnected and retries it on reconne
   expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("dictated", expect.anything());
 });
 
+it("keeps a recording alive when its last connected holder unmounts while offline", async () => {
+  setup({ destination: "env-a" });
+  mocks.storedDraft = "";
+  const view = (editor: boolean, indicator: boolean) => (
+    <>
+      {editor ? <Probe ownerKey="thread-a" persistent /> : null}
+      {indicator ? <GlobalVoiceInputIndicator /> : null}
+    </>
+  );
+  await using screen = await render(view(true, false));
+  await act(() => mocks.voice.start());
+  mocks.connected.delete("env-a");
+  mocks.prepared.delete("env-a");
+  // The indicator mounts offline, then the recording's editor unmounts.
+  await screen.rerender(view(true, true));
+  await screen.rerender(view(false, true));
+  mocks.connected.add("env-a");
+  await screen.rerender(view(false, true));
+  await page.getByRole("button", { name: "Finish voice input" }).click();
+  await vi.waitFor(() => expect(mocks.storedDraft).toBe("dictated"));
+  expect(mocks.transcribeCalls).toEqual(["env-a"]);
+});
+
 it.each(["authorization", "capability"] as const)(
   "abandons a recording when connected destination %s is lost",
   async (loss) => {

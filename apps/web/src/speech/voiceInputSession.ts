@@ -334,9 +334,13 @@ function findSession(key: SessionKey): VoiceInputSession | null {
   return null;
 }
 
-/** Every holder of a destination shares one session; the last release disposes it. */
-function retainVoiceInputSession(key: SessionKey, prepared: PreparedConnection) {
-  const session = findSession(key) ?? new VoiceInputSession(key, prepared);
+/**
+ * Every holder of a destination shares one session; the last release disposes it. Offline,
+ * a holder joins an existing session but never creates one.
+ */
+function retainVoiceInputSession(key: SessionKey, prepared: PreparedConnection | null) {
+  const session = findSession(key) ?? (prepared ? new VoiceInputSession(key, prepared) : null);
+  if (!session) return null;
   session.updatePrepared(prepared);
   sessions.set(session, (sessions.get(session) ?? 0) + 1);
   for (const listener of registryListeners) listener();
@@ -377,7 +381,7 @@ export function useRetainedVoiceInputSession(input: {
   readonly cloudModel?: CloudSpeechModelId | undefined;
 }): VoiceInputSession | null {
   const { environmentId, prepared, grantId, retainOnDisconnect, cloudProvider, cloudModel } = input;
-  const leaseRef = useRef<ReturnType<typeof retainVoiceInputSession> | null>(null);
+  const leaseRef = useRef<ReturnType<typeof retainVoiceInputSession>>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases the shared recording session on unmount
   useEffect(
     () => () => {
@@ -396,7 +400,7 @@ export function useRetainedVoiceInputSession(input: {
       leaseRef.current = null;
     }
     if (leaseRef.current) leaseRef.current.session.updatePrepared(prepared);
-    else if (key && prepared && retainOnDisconnect && typeof navigator !== "undefined")
+    else if (key && retainOnDisconnect && typeof navigator !== "undefined")
       leaseRef.current = retainVoiceInputSession(key, prepared);
   }, [environmentId, grantId, cloudProvider, cloudModel, prepared, retainOnDisconnect]);
   return useSyncExternalStore(subscribeRegistry, () =>
