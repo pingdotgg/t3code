@@ -400,49 +400,52 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     const before = yield* SubscriptionRef.get(metadata);
     const supportsTextGeneration = yield* options.supportsTextGeneration;
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
-    yield* SubscriptionRef.update(metadata, (state) => {
+    const applied = yield* SubscriptionRef.modify(metadata, (state) => {
       if (
         state.authRevision !== before.authRevision &&
         state.draft.auth.status === "unauthenticated"
       ) {
-        return state;
+        return [false, state] as const;
       }
       const { message: _previousMessage, ...draft } = state.draft;
       const workspaces = draft.workspaceSnapshots ?? [];
       const workspace = cwd ? workspaces.find((entry) => entry.cwd === cwd) : undefined;
-      return {
-        authRevision: state.authRevision + 1,
-        draft: {
-          ...draft,
-          installed: true,
-          status: "ready",
-          version: started.initializeResult.agentInfo?.version || draft.version,
-          auth: {
-            status: "authenticated",
-            type: options.auth?.type ?? "oauth-personal",
-            label: options.auth?.label ?? "Google account",
+      return [
+        true,
+        {
+          authRevision: state.authRevision + 1,
+          draft: {
+            ...draft,
+            installed: true,
+            status: "ready",
+            version: started.initializeResult.agentInfo?.version || draft.version,
+            auth: {
+              status: "authenticated",
+              type: options.auth?.type ?? "oauth-personal",
+              label: options.auth?.label ?? "Google account",
+            },
+            checkedAt: updatedAt,
+            models: buildAntigravityModelsFromSession(started.sessionSetupResult, thinkingLevels),
+            supportedRuntimeModes: antigravityRuntimeModes(started.sessionSetupResult),
+            supportsTextGeneration,
+            ...(cwd
+              ? {
+                  workspaceSnapshots: [
+                    ...workspaces.filter((entry) => entry.cwd !== cwd),
+                    {
+                      cwd,
+                      checkedAt: updatedAt,
+                      slashCommands: workspace?.slashCommands ?? draft.slashCommands,
+                      skills: workspace?.skills ?? discoveredSkills.get(cwd) ?? [],
+                    },
+                  ].slice(-MAX_WORKSPACE_SNAPSHOTS),
+                }
+              : {}),
           },
-          checkedAt: updatedAt,
-          models: buildAntigravityModelsFromSession(started.sessionSetupResult, thinkingLevels),
-          supportedRuntimeModes: antigravityRuntimeModes(started.sessionSetupResult),
-          supportsTextGeneration,
-          ...(cwd
-            ? {
-                workspaceSnapshots: [
-                  ...workspaces.filter((entry) => entry.cwd !== cwd),
-                  {
-                    cwd,
-                    checkedAt: updatedAt,
-                    slashCommands: workspace?.slashCommands ?? draft.slashCommands,
-                    skills: workspace?.skills ?? discoveredSkills.get(cwd) ?? [],
-                  },
-                ].slice(-MAX_WORKSPACE_SNAPSHOTS),
-              }
-            : {}),
-        },
-      } satisfies AntigravityProviderState;
+        } satisfies AntigravityProviderState,
+      ] as const;
     });
-    if (!before.draft.usageLimits || before.draft.usageLimits.unavailable) yield* refreshUsage();
+    if (applied) yield* refreshUsage();
   });
 
   const onConfigOptionsUpdated = Effect.fn("AntigravityProvider.onConfigOptionsUpdated")(function* (
