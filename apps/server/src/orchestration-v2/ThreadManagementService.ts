@@ -601,6 +601,27 @@ function latestSteerableRun(
     .toSorted((left, right) => right.ordinal - left.ordinal)[0];
 }
 
+// Steering into a turn blocked on the user's answer can abort the question,
+// and the provider asks it again with the user's typed answers gone.
+function runAwaitsUser(
+  projection: Pick<OrchestrationV2ThreadProjection, "providerTurns" | "runtimeRequests">,
+  run: OrchestrationV2Run,
+): boolean {
+  if (!isActiveRun(run)) return false;
+  const turnIds = new Set(
+    projection.providerTurns
+      .filter((turn) => turn.runAttemptId === run.activeAttemptId)
+      .map((turn) => turn.id),
+  );
+  return projection.runtimeRequests.some(
+    (request) =>
+      request.status === "pending" &&
+      request.responseCapability.type === "live" &&
+      request.providerTurnId !== null &&
+      turnIds.has(request.providerTurnId),
+  );
+}
+
 const SETTLE_AFTER_RUN_WAIT_MS = 24 * 60 * 60 * 1_000;
 const FORCE_STOP_REASON = "Force stopped by user";
 const FORCE_STOP_RELEASE_WAIT = "10 seconds";
@@ -869,7 +890,11 @@ const make = Effect.gen(function* () {
   const sendToThread: ThreadManagementServiceShape["sendToThread"] = Effect.fn(
     "ThreadManagementService.sendToThread",
   )(function* (input) {
-    const target = yield* getProjectThreadRecords(input, ["runs", "providerTurns"]);
+    const target = yield* getProjectThreadRecords(input, [
+      "runs",
+      "providerTurns",
+      "runtimeRequests",
+    ]);
     if (target.thread.archivedAt !== null) {
       return yield* new ThreadManagementThreadArchivedError({
         threadId: input.threadId,
@@ -878,7 +903,8 @@ const make = Effect.gen(function* () {
     const steerableRun = latestSteerableRun(target);
     // A fresh send never joins a running turn, so it needs none to steer or restart.
     const mode =
-      input.freshContext && (input.mode === "steer" || input.mode === "restart")
+      (input.freshContext && (input.mode === "steer" || input.mode === "restart")) ||
+      (input.mode === "auto" && target.runs.some((run) => runAwaitsUser(target, run)))
         ? "queue"
         : input.mode;
     const explicitSteer = mode === "steer" || mode === "restart";
