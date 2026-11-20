@@ -81,6 +81,7 @@ const Fields = Schema.Struct({
   "System.ChangedDate": Schema.optional(Schema.NullOr(Schema.String)),
   "Microsoft.VSTS.Common.ClosedDate": Schema.optional(Schema.NullOr(Schema.String)),
   "System.Description": Schema.optional(Schema.NullOr(Schema.String)),
+  "Microsoft.VSTS.TCM.ReproSteps": Schema.optional(Schema.NullOr(Schema.String)),
   "System.Tags": Schema.optional(Schema.NullOr(Schema.String)),
   "System.TeamProject": Schema.optional(Schema.NullOr(Schema.String)),
   "System.WorkItemType": Schema.optional(Schema.NullOr(Schema.String)),
@@ -162,6 +163,7 @@ function toLabels(tags: string | null | undefined): ReadonlyArray<IssueLabel> {
 
 export interface AzureDevOpsWorkItem extends TrackerIssueSummary {
   readonly body: string;
+  readonly bodyField: "System.Description" | "Microsoft.VSTS.TCM.ReproSteps" | null;
   readonly project: string | null;
   readonly workItemType: string | null;
   readonly relations: ReadonlyArray<typeof Relation.Type>;
@@ -179,6 +181,13 @@ function toWorkItem(raw: typeof WorkItem.Type, closed: ClosedStates): AzureDevOp
     return null;
   }
   const assignee = toActor(fields["System.AssignedTo"]);
+  // Agile and CMMI Bugs have no Description on their form and keep their text in Repro Steps.
+  const bodyField =
+    trimmed(fields["System.Description"]) !== null
+      ? "System.Description"
+      : trimmed(fields["Microsoft.VSTS.TCM.ReproSteps"]) !== null
+        ? "Microsoft.VSTS.TCM.ReproSteps"
+        : null;
   return {
     key: String(raw.id),
     displayKey: `#${raw.id}`,
@@ -192,7 +201,8 @@ function toWorkItem(raw: typeof WorkItem.Type, closed: ClosedStates): AzureDevOp
     assignees: assignee === null ? [] : [assignee],
     labels: toLabels(fields["System.Tags"]),
     commentCount: Math.max(0, fields["System.CommentCount"] ?? 0),
-    body: fields["System.Description"] ?? "",
+    body: fields[bodyField ?? "System.Description"] ?? "",
+    bodyField,
     project,
     workItemType: trimmed(fields["System.WorkItemType"]),
     relations: raw.relations ?? [],

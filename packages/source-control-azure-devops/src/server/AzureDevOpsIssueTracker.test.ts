@@ -41,6 +41,7 @@ const WORK_ITEM_TYPES = {
     { name: "Epic", states: [{ name: "Funded", category: "Proposed" }] },
     {
       name: "Bug",
+      hasReproSteps: true,
       states: [
         { name: "Active", category: "InProgress" },
         { name: "Shipped", category: "Completed" },
@@ -498,6 +499,54 @@ describe("AzureDevOpsIssueTracker", () => {
         ["update", "--description=@-", "@notes"],
         ["create", "--title=@-", "@/etc/hostname"],
         ["update", "--description=@-", "@notes"],
+      ]);
+    }),
+  );
+
+  it.effect("reads and edits a Bug's text in Repro Steps when it has no Description", () =>
+    Effect.gen(function* () {
+      const reproSteps =
+        "## Steps\n\n1. Open the composer\n2. Type a message\n\n```\nfocus lost\n```";
+      // An Agile or CMMI Bug as `az boards work-item show` answers it: no Description key at all.
+      const bug = {
+        ...WORK_ITEM,
+        fields: {
+          ...WORK_ITEM.fields,
+          "System.Description": undefined,
+          "Microsoft.VSTS.TCM.ReproSteps": reproSteps,
+        },
+        multilineFieldsFormat: { "Microsoft.VSTS.TCM.ReproSteps": "markdown" },
+      };
+      let shown: unknown = bug;
+      const writes: Array<{ args: string[]; stdin: string | undefined }> = [];
+      const api = yield* tracker((args, stdin) => {
+        if (args[0] === "boards" && args[2] !== "show") writes.push({ args: [...args], stdin });
+        return args[0] === "boards" && args[2] === "show" ? encode(shown) : answer(args);
+      });
+      const own = { cwd: "/w", host: "dev.azure.com", scope: "acme/Web App", key: "7" };
+      expect((yield* api.getIssue(own)).body).toBe(reproSteps);
+      shown = { ...bug, fields: { ...bug.fields, "System.Description": "<p>Both.</p>" } };
+      expect((yield* api.getIssue(own)).body).toBe("<p>Both.</p>");
+
+      // A Description written to this Bug would hide its Repro Steps on the next read.
+      shown = bug;
+      yield* api.update!({ ...own, body: "1. Type", labels: ["ui"] });
+      yield* api.update!({ ...own, title: "@title", body: "@body" });
+      // With both fields blank, the type decides: a Bug's form shows Repro Steps, an Epic's Description.
+      const blank = { ...bug.fields, "Microsoft.VSTS.TCM.ReproSteps": "" };
+      shown = { ...bug, fields: blank };
+      yield* api.update!({ ...own, body: "First text" });
+      shown = { ...bug, fields: { ...blank, "System.WorkItemType": "Epic" } };
+      yield* api.update!({ ...own, body: "First text" });
+      expect(
+        writes.map((write) => [write.args.slice(write.args.indexOf("--id") + 2, -3), write.stdin]),
+      ).toEqual([
+        // az keeps only the last `--fields`, so the labels share the one the body goes in.
+        [["--fields", "Microsoft.VSTS.TCM.ReproSteps=1. Type", "System.Tags=ui"], undefined],
+        [["--title=@-"], "@title"],
+        [["--fields", "Microsoft.VSTS.TCM.ReproSteps=@-"], "@body"],
+        [["--fields", "Microsoft.VSTS.TCM.ReproSteps=First text"], undefined],
+        [["--description=First text"], undefined],
       ]);
     }),
   );

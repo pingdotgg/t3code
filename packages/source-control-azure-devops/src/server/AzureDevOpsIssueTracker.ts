@@ -104,6 +104,7 @@ const decodeTypes = Schema.decodeUnknownResult(
       Schema.Struct({
         name: Schema.String,
         isDisabled: Schema.optional(Schema.Boolean),
+        hasReproSteps: Schema.optional(Schema.Boolean),
         states: Schema.optional(
           Schema.Array(Schema.Struct({ name: Schema.String, category: Schema.String })),
         ),
@@ -355,7 +356,7 @@ export const make: Effect.Effect<
       args: [
         ...invokeArgs({ ...input, resource: "workitemtypes" }),
         "--query",
-        "{value: value[].{name: name, isDisabled: isDisabled || `false`, states: (states || `[]`)[].{name: name, category: category}}}",
+        "{value: value[].{name: name, isDisabled: isDisabled || `false`, states: (states || `[]`)[].{name: name, category: category}, hasReproSteps: contains((fields || `[]`)[].referenceName, 'Microsoft.VSTS.TCM.ReproSteps')}}",
       ],
       decode: decodeAs(decodeTypes),
     }).pipe(Effect.map((types) => types.value));
@@ -569,7 +570,7 @@ export const make: Effect.Effect<
     operation: string,
     cwd: string,
     scope: { readonly organization: string; readonly project: string; readonly number: number },
-  ) => workItem({ ...scope, cwd, operation, closed: new Set() }).pipe(Effect.as(scope));
+  ) => workItem({ ...scope, cwd, operation, closed: new Set() });
 
   /** Azure keeps tags as one `; `-joined field and takes exactly one assignee. */
   const fieldArgs = (
@@ -594,9 +595,7 @@ export const make: Effect.Effect<
         refused(operation, "Azure DevOps takes no label or assignee that starts with `@`."),
       );
     }
-    return Effect.succeed(
-      fields.length === 0 ? [] : ["--fields", ...fields.map(([name, value]) => `${name}=${value}`)],
-    );
+    return Effect.succeed(fields.map(([name, value]) => `${name}=${value}`));
   };
 
   return {
@@ -792,7 +791,7 @@ export const make: Effect.Effect<
                   type,
                   title.arg,
                   ...(body === undefined || bodyFollows ? [] : [body.arg]),
-                  ...fields,
+                  ...(fields.length === 0 ? [] : ["--fields", ...fields]),
                 ],
                 stdin: title.stdin ?? body?.stdin,
                 decode: (raw) => decodeWorkItemJson(raw, closed),
@@ -840,39 +839,71 @@ export const make: Effect.Effect<
         Effect.asVoid,
       ),
 
-    update: (input) => {
-      const texts = [
-        ...(input.title === undefined ? [] : [AzureDevOpsCli.textOption("--title", input.title)]),
-        ...(input.body === undefined
-          ? []
-          : [AzureDevOpsCli.textOption("--description", input.body)]),
-      ];
-      // az has one stdin, so each value read from it needs its own call.
-      const batches =
-        texts.filter((text) => text.stdin !== undefined).length > 1
-          ? texts.map((text) => [text])
-          : [texts];
-      return target("update", input).pipe(
+    update: (input) =>
+      target("update", input).pipe(
         Effect.flatMap((scope) =>
           fieldArgs("update", input).pipe(Effect.map((fields) => ({ scope, fields }))),
         ),
-        Effect.tap(({ scope }) => owned("update", input.cwd, scope)),
         Effect.flatMap(({ scope, fields }) =>
-          Effect.forEach(
+          owned("update", input.cwd, scope).pipe(
+            Effect.flatMap((item) =>
+              item.bodyField !== null || input.body === undefined
+                ? Effect.succeed(item.bodyField ?? "System.Description")
+                : // With both fields blank, only the type says which one its form shows.
+                  workItemTypes({ ...scope, cwd: input.cwd, operation: "update" }).pipe(
+                    Effect.map((types) =>
+                      types.find(
+                        (type) => type.name.toLowerCase() === item.workItemType?.toLowerCase(),
+                      )?.hasReproSteps
+                        ? "Microsoft.VSTS.TCM.ReproSteps"
+                        : "System.Description",
+                    ),
+                  ),
+            ),
+            Effect.map((bodyField) => ({ scope, fields, bodyField })),
+          ),
+        ),
+        Effect.flatMap(({ scope, fields, bodyField }) => {
+          const texts = [
+            ...(input.title === undefined
+              ? []
+              : [{ ...AzureDevOpsCli.textOption("--title", input.title), field: false }]),
+            ...(input.body === undefined
+              ? []
+              : [
+                  bodyField === "System.Description"
+                    ? { ...AzureDevOpsCli.textOption("--description", input.body), field: false }
+                    : { ...AzureDevOpsCli.textOption(bodyField, input.body), field: true },
+                ]),
+          ];
+          // az has one stdin, so each value read from it needs its own call.
+          const batches =
+            texts.filter((text) => text.stdin !== undefined).length > 1
+              ? texts.map((text) => [text])
+              : [texts];
+          return Effect.forEach(
             batches,
-            (batch, index) =>
-              update({
+            (batch, index) => {
+              // az keeps only the last `--fields`, so every field of a call goes in one.
+              const values = [
+                ...batch.flatMap((text) => (text.field ? [text.arg] : [])),
+                ...(index === 0 ? fields : []),
+              ];
+              return update({
                 ...scope,
                 cwd: input.cwd,
                 operation: "update",
-                args: [...batch.map((text) => text.arg), ...(index === 0 ? fields : [])],
+                args: [
+                  ...batch.flatMap((text) => (text.field ? [] : [text.arg])),
+                  ...(values.length === 0 ? [] : ["--fields", ...values]),
+                ],
                 stdin: batch.find((text) => text.stdin !== undefined)?.stdin,
-              }),
+              });
+            },
             { discard: true },
-          ),
-        ),
-      );
-    },
+          );
+        }),
+      ),
 
     setState: (input) =>
       target("setState", input).pipe(
