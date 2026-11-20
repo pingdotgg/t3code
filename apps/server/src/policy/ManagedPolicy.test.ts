@@ -64,6 +64,7 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
     assert.notInclude(paths, "backgroundActivity.overrides");
     assert.notInclude(paths, "projectSettingsOverrides");
     assert.notInclude(paths, "compactIdleThreads");
+    assert.notOk(paths.some((path) => path.startsWith("observability")));
     for (const [path, value] of listed) {
       if (value === undefined) continue;
       const managed = ManagedSettings.makeManagedSettings({ [path]: { value, locked: false } });

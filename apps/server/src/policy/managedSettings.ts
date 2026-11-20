@@ -266,7 +266,12 @@ export function listManageableSettings() {
       : [[path, value]];
   };
   return Object.entries(ServerSettings.fields)
-    .filter(([key]) => !UNMANAGEABLE_KEYS.has(key) && !DERIVED_FROM.has(key))
+    .filter(
+      ([key]) =>
+        !UNMANAGEABLE_KEYS.has(key) &&
+        !ENVIRONMENT_OVERRIDDEN_KEYS.has(key) &&
+        !DERIVED_FROM.has(key),
+    )
     .flatMap(([key, field]) => leaves(key, getPath(builtIn, [key]), field.ast))
     .toSorted(([left], [right]) => left.localeCompare(right));
 }
