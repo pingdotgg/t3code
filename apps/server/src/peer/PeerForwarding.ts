@@ -237,6 +237,17 @@ const make = Effect.gen(function* () {
     Effect.flatMap((enabled) => (enabled ? Effect.void : Effect.fail(linkedEnvironmentsOff))),
   );
 
+  // A linked server reads a cursorless call oldest first, as the CLI and older delegated-task
+  // result scans expect, so an agent's read names the newest page explicitly.
+  const newestFirstRead = (
+    input: OrchestratorMcpThreadReadInput,
+  ): OrchestratorMcpThreadReadInput =>
+    input.afterPosition === undefined &&
+    input.beforePosition === undefined &&
+    input.itemId === undefined
+      ? { ...input, beforePosition: Number.MAX_SAFE_INTEGER }
+      : input;
+
   const call: PeerForwarding["Service"]["call"] = (scope, tool, environmentId, params) => {
     const forwarded: Effect.Effect<
       Tool.Success<typeof tool>,
@@ -247,7 +258,16 @@ const make = Effect.gen(function* () {
           environmentId,
           params as OrchestratorMcpThreadWaitInput,
         ) as Effect.Effect<Tool.Success<typeof tool>, OrchestratorMcpFailure>)
-      : forward(scope, tool.name, tool.parametersSchema, tool.successSchema, environmentId, params);
+      : forward(
+          scope,
+          tool.name,
+          tool.parametersSchema,
+          tool.successSchema,
+          environmentId,
+          tool.name === "t3_thread_read" && scope.thread !== undefined
+            ? newestFirstRead(params as OrchestratorMcpThreadReadInput)
+            : params,
+        );
     return Effect.andThen(requireEnabled, forwarded);
   };
 

@@ -3508,12 +3508,10 @@ const make = Effect.gen(function* () {
       const view = input.view ?? "messages";
       const limit = input.limit ?? DEFAULT_THREAD_READ_LIMIT;
       const maxChars = input.maxCharsPerItem ?? DEFAULT_THREAD_ITEM_MAX_CHARS;
-      // Agents, here or on a linked environment, read newest first. Other clients (the CLI)
-      // page forward from a cursorless read.
+      // Client callers (the CLI, older linked environments) page forward from a cursorless read.
       const newestFirst =
         input.beforePosition !== undefined ||
-        (input.afterPosition === undefined &&
-          (scope.thread !== undefined || scope.client?.senderThread !== undefined));
+        (input.afterPosition === undefined && scope.thread !== undefined);
       const timeline = yield* threadManagement
         .getTimelinePage(input.threadId, {
           ...(input.afterPosition === undefined ? {} : { afterPosition: input.afterPosition }),

@@ -632,7 +632,7 @@ const make = Effect.gen(function* () {
         // Keep the first and expected final activity pages whole. A result on a
         // middle page then needs an extra text read after the scan.
         maxCharsPerItem: failed && remainingItems > 100 ? 1 : 20_000,
-        afterPosition: afterPosition ?? -1,
+        ...(afterPosition === undefined ? {} : { afterPosition }),
       });
       run ??= read.recentRuns.find((candidate) => candidate.runId === runId);
       reply =
