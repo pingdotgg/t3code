@@ -406,7 +406,6 @@ export async function pickComposerMedia(input: {
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly error: string | null;
 }> {
-  const source = input.source ?? "library";
   const remainingSlots = PROVIDER_SEND_TURN_MAX_ATTACHMENTS - input.existingCount;
   if (remainingSlots <= 0) {
     return {
@@ -425,39 +424,23 @@ export async function pickComposerMedia(input: {
   } catch (error) {
     return {
       attachments: [],
-      error:
-        errorDisplayMessage(error, m) ??
-        m(
-          source === "camera"
-            ? msg("The camera is unavailable right now.")
-            : msg("The photo library is unavailable right now."),
-        ),
+      error: errorDisplayMessage(error, m) ?? m(msg("The photo library is unavailable right now.")),
     };
   }
 
-  if (source === "camera") {
-    const permission = await imagePicker.requestCameraPermissionsAsync();
-    if (!permission.granted) {
-      return {
-        attachments: [],
-        error: m(msg("Camera access is required to take a photo.")),
-      };
-    }
-  }
-
-  // Android pickers report background state; guard against deferred restarts mid-pick.
+  // Android pickers and permission prompts report background state; guard against deferred restarts mid-pick.
   const endHandoff = beginForegroundHandoff();
   let result: Awaited<ReturnType<typeof imagePicker.launchImageLibraryAsync>>;
   try {
+    if (input.source === "camera" && !(await imagePicker.requestCameraPermissionsAsync()).granted) {
+      return {
+        attachments: [],
+        error: m(msg("Camera access was denied for this app. Open Settings to enable it.")),
+      };
+    }
     result =
-      source === "camera"
-        ? await imagePicker.launchCameraAsync({
-            mediaTypes: ["images"],
-            allowsMultipleSelection: false,
-            // Base64 makes iOS decode full-size photos and stalls JS with large strings; read bytes only as needed.
-            base64: false,
-            quality: 1,
-          })
+      input.source === "camera"
+        ? await imagePicker.launchCameraAsync()
         : await imagePicker.launchImageLibraryAsync({
             mediaTypes: input.maxVideoBytes === undefined ? ["images"] : ["images", "videos"],
             allowsMultipleSelection: true,
@@ -473,7 +456,7 @@ export async function pickComposerMedia(input: {
       error:
         errorDisplayMessage(error, m) ??
         m(
-          source === "camera"
+          input.source === "camera"
             ? msg("Could not open the camera.")
             : msg("Could not open the photo library."),
         ),

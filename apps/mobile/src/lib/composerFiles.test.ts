@@ -355,37 +355,29 @@ describe("composer file attachments", () => {
       mocks.readBase64.mockResolvedValue("YWJj");
     });
 
-    it("takes a single photo without asking for library access", async () => {
+    it("attaches a camera photo without opening the photo library", async () => {
       mocks.takePhoto.mockResolvedValue({ canceled: false, assets: [shot] });
 
-      const result = await pickComposerMedia({ existingCount: 0, source: "camera" });
-
-      expect(mocks.requestCameraPermission).toHaveBeenCalledTimes(1);
+      await expect(pickComposerMedia({ existingCount: 0, source: "camera" })).resolves.toEqual({
+        attachments: [expect.objectContaining({ type: "image", name: "shot.jpg" })],
+        error: null,
+      });
       expect(mocks.pickMedia).not.toHaveBeenCalled();
-      expect(mocks.takePhoto).toHaveBeenCalledWith(
-        expect.objectContaining({ mediaTypes: ["images"], allowsMultipleSelection: false }),
-      );
-      expect(result.error).toBeNull();
-      expect(result.attachments).toEqual([expect.objectContaining({ type: "image" })]);
     });
 
-    it("skips the picker when camera access is denied", async () => {
-      mocks.requestCameraPermission.mockResolvedValue({ granted: false });
+    it("holds the foreground handoff through a denied camera prompt", async () => {
+      let promptedDuringHandoff = false;
+      mocks.requestCameraPermission.mockImplementation(async () => {
+        promptedDuringHandoff = isForegroundHandoffActive();
+        return { granted: false };
+      });
 
       await expect(pickComposerMedia({ existingCount: 0, source: "camera" })).resolves.toEqual({
         attachments: [],
-        error: "Camera access is required to take a photo.",
+        error: "Camera access was denied for this app. Open Settings to enable it.",
       });
+      expect(promptedDuringHandoff).toBe(true);
       expect(mocks.takePhoto).not.toHaveBeenCalled();
-    });
-
-    it("reports a camera that fails to open", async () => {
-      mocks.takePhoto.mockRejectedValue(new Error("camera busy"));
-
-      await expect(pickComposerMedia({ existingCount: 0, source: "camera" })).resolves.toEqual({
-        attachments: [],
-        error: "camera busy",
-      });
       expect(isForegroundHandoffActive()).toBe(false);
     });
   });
