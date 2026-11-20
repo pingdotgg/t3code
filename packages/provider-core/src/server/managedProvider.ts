@@ -4,6 +4,7 @@ import {
   ServerSettingsError,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -62,6 +63,14 @@ const laterLimitedUntil = (
     : until;
 
 const FAILED_CHECK_RECHECK_DELAY = "30 seconds";
+
+/**
+ * True inside a `checkProvider` whose failure over a ready provider is discarded for a recheck.
+ * A provider that also records check results in its own state must leave that failure out of it.
+ */
+export const DeferringFailedCheck = Context.Reference<boolean>("t3/provider/DeferringFailedCheck", {
+  defaultValue: () => false,
+});
 
 export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(function* <
   Settings,
@@ -201,7 +210,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
 
     // A probe without usage must not erase a report published while its I/O was in flight.
     const usageBeforeProbe = (yield* Ref.get(snapshotStateRef)).snapshot.usageLimits;
-    const probedSnapshot = yield* input.checkProvider;
+    const probedSnapshot = yield* input.checkProvider.pipe(
+      Effect.provideService(DeferringFailedCheck, options?.deferFailure === true),
+    );
     // One failed periodic check over a ready provider is often transient; recheck before showing it.
     if (
       options?.deferFailure === true &&

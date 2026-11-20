@@ -56,7 +56,7 @@ export const TranscriptRecord = Schema.Struct({
   ),
 });
 
-export function isTextContentBlock(block: typeof TranscriptContentBlock.Type): boolean {
+function isTextContentBlock(block: typeof TranscriptContentBlock.Type): boolean {
   return block.type === "text" || block.type === "input_text" || block.type === "output_text";
 }
 
@@ -74,6 +74,44 @@ export function extractText(
 
 export function isHiddenClaudeRecord(record: DecodedTranscriptRecord): boolean {
   return record.isSidechain === true || record.isMeta === true || record.isCompactSummary === true;
+}
+
+// Claude Code records its own UI as user turns: slash commands, `!` shell runs and
+// their output, task notifications. Keep what the user typed, as they typed it.
+const CLAUDE_UI_OUTPUT =
+  /^(?:<(?:task-notification|local-command-stdout|local-command-stderr|local-command-caveat|bash-stdout|bash-stderr)>|\[Request interrupted by user(?: for tool use)?\]$)/;
+
+/**
+ * A slash command as typed. Its arguments may name the thread; a bare command
+ * leaves that to a later prompt. Null for any other text.
+ */
+function claudeCommand(text: string): { readonly text: string; readonly titleText: string } | null {
+  if (!/^<command-(?:name|message)>/.test(text)) return null;
+  const name =
+    /<command-name>([^<]*)<\/command-name>/.exec(text)?.[1]?.trim() ||
+    `/${/<command-message>([^<]*)<\/command-message>/.exec(text)?.[1]?.trim() ?? ""}`;
+  const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(text)?.[1]?.trim() ?? "";
+  return { text: args.length === 0 ? name : `${name} ${args}`, titleText: args };
+}
+
+/** What a Claude user turn shows the user typed, and the part of it that may name the thread. */
+function claudeUserText(text: string): { readonly text: string; readonly titleText: string } {
+  if (CLAUDE_UI_OUTPUT.test(text)) return { text: "", titleText: "" };
+  const shellInput = /^<bash-input>([\s\S]*)<\/bash-input>$/.exec(text)?.[1];
+  if (shellInput !== undefined) return { text: `!${shellInput}`, titleText: "" };
+  return claudeCommand(text) ?? { text, titleText: text };
+}
+
+export function claudeVisibleText(record: DecodedTranscriptRecord) {
+  const text = extractText(record.message?.content);
+  return record.type === "user" ? claudeUserText(text) : { text, titleText: text };
+}
+
+/** Saved titles can be the raw markup of a user turn, such as the command that opened the session. */
+function claudeTitle(title: string | undefined): string | undefined {
+  const trimmed = title?.trim();
+  if (!trimmed) return undefined;
+  return claudeUserText(trimmed).text === trimmed ? trimmed : undefined;
 }
 
 export interface ClaudeFields {
@@ -98,10 +136,12 @@ export function foldClaudeFields(
   const model = record.message?.model?.trim();
   return {
     sessionId: record.sessionId?.trim() || fields.sessionId,
-    title: record.aiTitle?.trim() || fields.title,
+    title: claudeTitle(record.aiTitle) ?? fields.title,
     // Claude flushes the AI title after the user's rename; an empty rename clears it.
     customTitle:
-      record.customTitle === undefined ? fields.customTitle : record.customTitle.trim() || null,
+      record.customTitle === undefined
+        ? fields.customTitle
+        : (claudeTitle(record.customTitle) ?? null),
     model: model && model !== "<synthetic>" ? model : fields.model,
   };
 }

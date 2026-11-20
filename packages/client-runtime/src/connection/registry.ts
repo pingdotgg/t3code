@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { translatableDetail } from "../errors/translatable.ts";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -583,7 +585,12 @@ export const make = Effect.gen(function* () {
     ) {
       return yield* new ConnectionBlockedError({
         reason: "configuration",
-        detail: `That address claims to be ${saved.target.label}, which is already saved. Add it as a route from that environment's settings instead.`,
+        ...translatableDetail(
+          msg(
+            "That address claims to be {host}, which is already saved. Add it as a route from that environment's settings instead.",
+            { host: saved.target.label },
+          ),
+        ),
       });
     }
   });
@@ -599,7 +606,12 @@ export const make = Effect.gen(function* () {
         input.environmentId,
         Effect.gen(function* () {
           const current = yield* credentials.get(input.parentId);
-          if (Option.isNone(current) || current.value.token !== input.parentToken) return;
+          if (
+            Option.isNone(current) ||
+            current.value._tag !== "BearerConnectionCredential" ||
+            current.value.token !== input.parentToken
+          )
+            return;
           yield* credentials.put(
             lanCredentialConnectionId(input.parentId),
             new BearerConnectionCredential({ token: input.token }),
@@ -652,13 +664,15 @@ export const make = Effect.gen(function* () {
           if (registration._tag !== "BearerConnectionRegistration") return undefined;
           const stored = yield* Effect.exit(credentials.get(registration.target.connectionId));
           if (Exit.isFailure(stored) || Option.isNone(stored.value)) return undefined;
-          return stored.value.value.token;
+          const credential = stored.value.value;
+          return credential._tag === "BearerConnectionCredential" ? credential.token : undefined;
         });
         yield* registrations.register(registration, persistedRoutes(entry));
         if (
           registration._tag === "BearerConnectionRegistration" &&
           previousToken !== undefined &&
-          previousToken !== registration.credential.token
+          (registration.credential._tag !== "BearerConnectionCredential" ||
+            previousToken !== registration.credential.token)
         ) {
           yield* credentials
             .remove(lanCredentialConnectionId(registration.target.connectionId))
@@ -671,7 +685,7 @@ export const make = Effect.gen(function* () {
               return httpBaseUrl === null ? [] : [{ httpBaseUrl }];
             }),
           });
-          if (parentId !== null) {
+          if (parentId !== null && registration.credential._tag === "BearerConnectionCredential") {
             remint = {
               parentId,
               parentToken: registration.credential.token,
@@ -832,7 +846,11 @@ export const make = Effect.gen(function* () {
 
           yield* installEntryLocked(entry, { retainEquivalentRuntime: true });
 
-          if (bearerReplaced && registration._tag === "BearerConnectionRegistration") {
+          if (
+            bearerReplaced &&
+            registration._tag === "BearerConnectionRegistration" &&
+            registration.credential._tag === "BearerConnectionCredential"
+          ) {
             yield* credentials
               .remove(lanCredentialConnectionId(registration.target.connectionId))
               .pipe(Effect.ignore);
@@ -1088,7 +1106,7 @@ export const make = Effect.gen(function* () {
       const credentialId = lanCredentialConnectionId(parentId);
       if (Option.isSome(yield* credentials.get(credentialId))) return true;
       const parent = yield* credentials.get(parentId);
-      if (Option.isNone(parent)) return false;
+      if (Option.isNone(parent) || parent.value._tag !== "BearerConnectionCredential") return false;
       const parentToken = parent.value.token;
       const token = yield* driver.mintLanCredential({
         httpBaseUrl,
@@ -1273,7 +1291,7 @@ export const make = Effect.gen(function* () {
         if (reordered.length !== routes.length || new Set(routeIds).size !== routes.length) {
           return yield* new ConnectionBlockedError({
             reason: "configuration",
-            detail: "The route order must list every saved route once.",
+            ...translatableDetail(msg("The route order must list every saved route once.")),
           });
         }
         if (reordered.every((route, index) => route === routes[index])) return;

@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages } from "gt-react-native";
 import { Button } from "../../components/ui/Button";
 import {
   AuthSettingsWriteScope,
@@ -7,7 +8,7 @@ import {
 import { useEnvironmentsWithScope } from "../../state/session";
 import { AutoSettleDaysField } from "./components/AutoSettleDaysField";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import { SettingsRow } from "./components/SettingsRow";
 import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
@@ -21,7 +22,7 @@ import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useEnvironments } from "../../state/environments";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "./components/SettingsSection";
@@ -36,11 +37,12 @@ import {
 } from "./settings-scoped-server";
 
 export function SettingsLabsRouteScreen() {
+  const gt = useGT();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
 
   return (
-    <SettingsScreen title="Labs">
+    <SettingsScreen title={gt("Labs")}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
@@ -48,10 +50,10 @@ export function SettingsLabsRouteScreen() {
         contentContainerClassName="gap-6 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
-        <SettingsSection title="Zack">
+        <SettingsSection title={gt("Zack")}>
           <SettingsRow
             icon="slider.horizontal.3"
-            label="Zack settings"
+            label={gt("Zack settings")}
             value="Memory, summaries, skills, thread suggestions, evaluations"
             onPress={() => navigation.navigate("SettingsZack")}
           />
@@ -59,25 +61,31 @@ export function SettingsLabsRouteScreen() {
         <ToolCallVisibilitySection />
         <LegacySettingsSection />
         <MachineBetaSection
-          title="Linked environments"
+          title={gt("Linked environments")}
           icon="link"
           capability="peerLinks"
           setting="linkedEnvironmentsEnabled"
-          description="Let agents on a machine work on your other machines, and theirs on it. Turn it on for each machine. While off, nothing new starts over a link; running tasks finish."
+          description={gt(
+            "Let agents on a machine work on your other machines, and theirs on it. Turn it on for each machine. While off, nothing new starts over a link; running tasks finish.",
+          )}
         />
         <MachineBetaSection
-          title="Fast worktree checkout"
+          title={gt("Fast worktree checkout")}
           icon="bolt.circle"
           capability="fastWorktreeCheckout"
           setting="fastWorktreeCheckout"
-          description="On a Mac, clone new worktrees from a checkout cached in the T3 home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache."
+          description={gt(
+            "On a Mac, clone new worktrees from a checkout cached in the T3 home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache.",
+          )}
         />
         <MachineBetaSection
-          title="Automatic code indexing"
+          title={gt("Automatic code indexing")}
           icon="magnifyingglass"
           capability="projectCode"
           setting="autoCodeIndexEnabled"
-          description="Index a project when you add it, and a worktree while an agent works in it. A worktree's index is removed when its thread settles. While this is off, a checkout only indexes when something asks it a code question."
+          description={gt(
+            "Index a project when you add it, and a worktree while an agent works in it. A worktree's index is removed when its thread settles. While this is off, a checkout only indexes when something asks it a code question.",
+          )}
         />
       </ScrollView>
     </SettingsScreen>
@@ -94,6 +102,7 @@ export function AutoSettleSettingsRows(props: {
   readonly write: (patch: ServerSettingsPatch) => void;
   readonly pending: boolean;
 }) {
+  const gt = useGT();
   const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
   const selectedProject = projectGroups.find((group) => group.key === selectedProjectKey);
   const writableEnvironments = useEnvironmentsWithScope(selectedTargets, AuthSettingsWriteScope);
@@ -142,42 +151,46 @@ export function AutoSettleSettingsRows(props: {
 
   const disabled = !canWriteSettings || props.pending;
   const disabledFor = (...keys: string[]) =>
-    disabled || managedSettingReason(displayTargets, ...keys) !== undefined;
+    disabled || managedSettingReason(displayTargets, keys) !== undefined;
   const afterDays = referenceSettings.sidebarAutoSettleAfterDays;
 
   return (
     <View className="gap-6">
       {!projectSelected ? (
-        <SettingsSection title="Usage limits">
+        <SettingsSection title={gt("Usage limits")}>
           <SettingsSwitchRow
             icon="clock"
-            label="Resume after usage limits"
-            subtitle="Automatically resume threads when their usage limits reset. You can cancel auto-resume in each thread."
+            label={gt("Resume after usage limits")}
+            subtitle={gt(
+              "Automatically resume threads when their usage limits reset. You can cancel auto-resume in each thread.",
+            )}
             value={uniformMobileSetting(displayTargets, "autoResumeLimitedThreads")}
             disabled={disabledFor("autoResumeLimitedThreads")}
             onValueChange={(value) => writeToAll({ autoResumeLimitedThreads: value })}
           />
           <SettingsSwitchRow
             icon="clock"
-            label="Snooze until limits reset"
-            subtitle="Snooze threads until their usage limits reset. Enable auto-resume to continue the agent after the reset."
+            label={gt("Snooze until limits reset")}
+            subtitle={gt(
+              "Snooze threads until their usage limits reset. Enable auto-resume to continue the agent after the reset.",
+            )}
             value={uniformMobileSetting(displayTargets, "snoozeLimitedThreads")}
             disabled={disabledFor("snoozeLimitedThreads")}
             onValueChange={(value) => writeToAll({ snoozeLimitedThreads: value })}
           />
         </SettingsSection>
       ) : null}
-      <SettingsSection title="Auto-settle">
+      <SettingsSection title={gt("Auto-settle")}>
         <SettingsSwitchRow
           icon="arrow.triangle.branch"
-          label="Auto-settle merged threads"
+          label={gt("Auto-settle merged threads")}
           value={referenceSettings.sidebarAutoSettleOnMerge}
           disabled={disabledFor("sidebarAutoSettleOnMerge")}
           onValueChange={(value) => writeToAll({ sidebarAutoSettleOnMerge: value })}
         />
         <SettingsSwitchRow
           icon="clock"
-          label="Auto-settle inactive threads"
+          label={gt("Auto-settle inactive threads")}
           value={afterDays !== null}
           disabled={disabledFor("sidebarAutoSettleAfterDays")}
           onValueChange={(value) =>
@@ -187,7 +200,9 @@ export function AutoSettleSettingsRows(props: {
         {afterDays !== null ? (
           <View className="flex-row items-center gap-4 px-4 py-4 android:min-h-14 android:py-3">
             <View className="w-[22px] android:w-6" />
-            <Text className="flex-1 text-foreground text-lg android:text-base">Inactive days</Text>
+            <Text className="flex-1 text-foreground text-lg android:text-base">
+              <T>Inactive days</T>
+            </Text>
             <AutoSettleDaysField
               value={afterDays}
               disabled={disabledFor("sidebarAutoSettleAfterDays")}
@@ -197,14 +212,16 @@ export function AutoSettleSettingsRows(props: {
         ) : null}
       </SettingsSection>
       {!props.pending && mismatches.length > 0 ? (
-        <SettingsSection title="Across environments">
+        <SettingsSection title={gt("Across environments")}>
           <View className="gap-3 p-4">
-            <Text className="text-base text-foreground">Auto-settle defaults differ</Text>
+            <Text className="text-base text-foreground">
+              <T>Auto-settle defaults differ</T>
+            </Text>
             <Text className="text-sm text-foreground-muted">
               {mismatches.map((mismatch) => mismatch.label).join(", ")}
             </Text>
             <Button
-              label="Apply auto-settle defaults"
+              label={gt("Apply auto-settle defaults")}
               tone="secondary"
               disabled={disabledFor("sidebarAutoSettleOnMerge", "sidebarAutoSettleAfterDays")}
               onPress={() => writeToAll(autoSettlePatch)}
@@ -217,44 +234,52 @@ export function AutoSettleSettingsRows(props: {
 }
 
 export function WorkingSectionSettings() {
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const gt = useGT();
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   const preferences = useAtomValue(mobilePreferencesAtom);
   const workingShelfEnabled =
     AsyncResult.isSuccess(preferences) && preferences.value.workingShelfEnabled !== false;
 
   return (
     <View className="gap-3">
-      <SettingsSection title="Sidebar">
+      <SettingsSection title={gt("Sidebar")}>
         <SettingsSwitchRow
           icon="bolt.circle"
-          label="Working section"
+          label={gt("Working section")}
           value={workingShelfEnabled}
-          onValueChange={(value) => savePreferences({ workingShelfEnabled: value })}
+          onValueChange={(value) => {
+            void savePreferences({ workingShelfEnabled: value });
+          }}
         />
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
-        Fold working and monitoring threads into a Working section. They return to the top of the
-        list when they need you. While this is on, active threads are ordered by time and cannot be
-        moved.
+        <T>
+          Fold working and monitoring threads into a Working section. They return to the top of the
+          list when they need you. While this is on, active threads are ordered by time and cannot
+          be moved.
+        </T>
       </Text>
     </View>
   );
 }
 
 export function NewThreadSettingsSection() {
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const gt = useGT();
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   const preferences = useAtomValue(mobilePreferencesAtom);
   const useLastProject =
     AsyncResult.isSuccess(preferences) && preferences.value.useLastProjectForNewThreads !== false;
 
   return (
-    <SettingsSection title="New threads">
+    <SettingsSection title={gt("New threads")}>
       <SettingsSwitchRow
         icon="square.and.pencil"
-        label="Use last project"
-        subtitle="Start new threads in the last project you used on this device."
+        label={gt("Use last project")}
+        subtitle={gt("Start new threads in the last project you used on this device.")}
         value={useLastProject}
-        onValueChange={(value) => savePreferences({ useLastProjectForNewThreads: value })}
+        onValueChange={(value) => {
+          void savePreferences({ useLastProjectForNewThreads: value });
+        }}
       />
     </SettingsSection>
   );
@@ -279,6 +304,7 @@ function MachineBetaSection({
   readonly setting: MachineBetaSetting;
   readonly description: string;
 }) {
+  const gt = useGT();
   const { environments } = useEnvironments();
   const supported = environments.filter(
     (environment) =>
@@ -293,7 +319,7 @@ function MachineBetaSection({
   if (supported.length === 0) return null;
   return (
     <View className="gap-3">
-      <SettingsSection title={`Beta: ${title}`}>
+      <SettingsSection title={gt("Beta: {feature}", { feature: title })}>
         {supported.map((environment) => {
           const policy = environment.serverConfig?.managedPolicy;
           const managed = isManagedSettingPath(policy, setting);
@@ -302,7 +328,13 @@ function MachineBetaSection({
               key={environment.environmentId}
               icon={icon}
               label={environment.label}
-              {...(managed ? { subtitle: `Managed by ${policy?.organization}.` } : {})}
+              {...(managed
+                ? {
+                    subtitle: gt("Managed by {organization}.", {
+                      organization: policy?.organization,
+                    }),
+                  }
+                : {})}
               value={
                 setting === "autoCodeIndexEnabled"
                   ? environment.serverConfig?.settings[setting] !== false
@@ -335,14 +367,16 @@ const TOOL_CALL_VISIBILITY_OPTIONS: ReadonlyArray<{
   readonly value: ToolCallVisibility;
   readonly label: string;
 }> = [
-  { value: "showAll", label: "Show all" },
-  { value: "hideSuccessful", label: "Hide successful" },
-  { value: "hideAll", label: "Hide all" },
-  { value: "zen", label: "Zen" },
+  { value: "showAll", label: msg("Show all") },
+  { value: "hideSuccessful", label: msg("Hide successful") },
+  { value: "hideAll", label: msg("Hide all") },
+  { value: "zen", label: msg("Zen") },
 ];
 
 function ToolCallVisibilitySection() {
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const gt = useGT();
+  const m = useMessages();
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   const preferences = useAtomValue(mobilePreferencesAtom);
   const selected = AsyncResult.isSuccess(preferences)
     ? (preferences.value.toolCallVisibility ?? "showAll")
@@ -350,11 +384,11 @@ function ToolCallVisibilitySection() {
 
   return (
     <View className="gap-3">
-      <SettingsSection title="Beta: Tool calls in chat">
+      <SettingsSection title={gt("Beta: Tool calls in chat")}>
         {TOOL_CALL_VISIBILITY_OPTIONS.map((option, index) => (
           <ListChoiceRow
             key={option.value}
-            label={option.label}
+            label={m(option.label)}
             selected={selected === option.value}
             separated={index > 0}
             disabled={selected === null}
@@ -363,32 +397,37 @@ function ToolCallVisibilitySection() {
         ))}
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
-        Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows
-        only final answers. Approvals, questions, and errors always show.
+        <T>
+          Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen
+          shows only final answers. Approvals, questions, and errors always show.
+        </T>
       </Text>
     </View>
   );
 }
 
 function LegacySettingsSection() {
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const gt = useGT();
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   const preferences = useAtomValue(mobilePreferencesAtom);
   const planModeEnabled =
     AsyncResult.isSuccess(preferences) && preferences.value.planModeEnabled === true;
 
   return (
     <View className="gap-3">
-      <SettingsSection title="Legacy">
+      <SettingsSection title={gt("Legacy")}>
         <SettingsSwitchRow
           icon="hammer"
-          label="Plan Mode"
+          label={gt("Plan Mode")}
           value={planModeEnabled}
           onValueChange={(value) => savePreferences({ planModeEnabled: value })}
         />
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
-        Opt into retired interfaces kept for compatibility. Plan Mode restores the Build/Plan
-        control; otherwise every task runs in Build mode.
+        <T>
+          Opt into retired interfaces kept for compatibility. Plan Mode restores the Build/Plan
+          control; otherwise every task runs in Build mode.
+        </T>
       </Text>
     </View>
   );

@@ -95,21 +95,54 @@ export function hasInstanceBadge(entries: ReadonlyArray<ProviderInstanceEntry>):
 }
 
 /** Disabled instances may retain ready status until reconciliation. */
-export function isProviderInstancePickerReady(
+function isProviderInstanceEligible(
   entry: Pick<ProviderInstanceEntry, "enabled" | "isAvailable" | "status" | "snapshot">,
 ): boolean {
-  return isProviderInstancePickerVisible(entry) && entry.status === "ready";
+  return (
+    entry.enabled &&
+    entry.isAvailable &&
+    entry.status !== "disabled" &&
+    providerLimitedUntilMs(entry.snapshot, Date.now()) === null
+  );
+}
+
+/** A warning still offers models from sub-providers that report no problem of their own. */
+function isProviderInstanceHealthy(entry: ProviderInstanceEntry): boolean {
+  if (!isProviderInstanceEligible(entry)) return false;
+  if (entry.status === "ready") return true;
+  if (entry.status !== "warning") return false;
+  const usable = new Set(
+    entry.snapshot.subProviders?.flatMap((subProvider) =>
+      subProvider.unavailableReason === undefined ? [subProvider.name] : [],
+    ),
+  );
+  return entry.models.some(
+    (model) => model.subProvider !== undefined && usable.has(model.subProvider),
+  );
+}
+
+/** Also true after a check that only failed or ran late: an earlier check's models stay offered. */
+export function isProviderInstancePickerReady(entry: ProviderInstanceEntry): boolean {
+  if (isProviderInstanceHealthy(entry)) return true;
+  const { subProviders, auth, modelsRetained } = entry.snapshot;
+  if (!isProviderInstanceEligible(entry) || subProviders !== undefined) return false;
+  if (modelsRetained === true) return true;
+  // The sign-in was confirmed, so the warning is about something else, such as a late catalog.
+  return (
+    entry.status === "warning" &&
+    entry.installed &&
+    auth.status === "authenticated" &&
+    entry.models.length > 0
+  );
 }
 
 export function isProviderInstancePickerVisible(
   entry: Pick<ProviderInstanceEntry, "enabled" | "isAvailable" | "status" | "snapshot">,
 ): boolean {
   return (
-    entry.enabled &&
-    entry.isAvailable &&
-    entry.status !== "error" &&
-    entry.status !== "disabled" &&
-    providerLimitedUntilMs(entry.snapshot, Date.now()) === null
+    isProviderInstanceEligible(entry) &&
+    (entry.status !== "error" ||
+      (entry.snapshot.modelsRetained === true && entry.snapshot.subProviders === undefined))
   );
 }
 
@@ -304,7 +337,7 @@ export function resolveSelectableProviderInstanceEntry(
     }
   }
   return (
-    entries.find(isProviderInstancePickerReady) ??
+    entries.find(isProviderInstanceHealthy) ??
     entries.find((entry) => isSelectableProviderInstanceEntry(entry) && entry.status !== "error")
   );
 }

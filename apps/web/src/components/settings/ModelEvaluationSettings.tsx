@@ -35,7 +35,7 @@ import { toastManager } from "../ui/toast";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SETTINGS_PICKER_TRIGGER_CLASSNAME, SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import {
   useScopedSettings,
@@ -44,6 +44,7 @@ import {
 } from "./useScopedSettings";
 
 export function ModelEvaluationSettings() {
+  const setting = useSearchableSetting();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const { environment, connectedEnvironments, targets } = useSettingsScope();
@@ -123,7 +124,7 @@ export function ModelEvaluationSettings() {
       <SettingsRow
         serverScoped
         settingKeys={["enableModelEvaluations"]}
-        {...searchableSetting("blind-model-evaluations")}
+        {...setting("blind-model-evaluations")}
         description={
           <>
             Score completed tasks with an extra model call to build guidance. Labels are removed
@@ -170,7 +171,7 @@ export function ModelEvaluationSettings() {
         serverScoped
         settingKeys={["modelEvaluationModelSelection"]}
         mixed={mixedJudge}
-        {...searchableSetting("model-evaluation-judge")}
+        {...setting("model-evaluation-judge")}
         description={
           <>
             Choose a judge, or use this environment's text generation model.

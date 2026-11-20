@@ -3,6 +3,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { skillsLibraryIssueSummary } from "@t3tools/client-runtime/skills-library-issues";
 import { SkillsLibraryIssuesDialog } from "./SkillsLibraryIssuesDialog";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import { useGT } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 
 import { useEnvironmentQuery } from "../../state/query";
@@ -12,7 +13,7 @@ import { Button } from "../ui/button";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { SettingsScopeProvider, useSettingsScope } from "./SettingsScopeContext";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
 /**
@@ -49,6 +50,7 @@ function SkillsLibraryRow({
   readonly label: string | null;
   readonly isSearchTarget: boolean;
 }) {
+  const gt = useGT();
   const enabled = useScopedSettings((settings) => settings.skillsLibraryEnabled);
   const updateSettings = useUpdateScopedSettings();
   const canRefresh = useAtomValue(
@@ -77,7 +79,8 @@ function SkillsLibraryRow({
     refreshStatus();
   };
 
-  const searchable = searchableSetting("skills-library");
+  const setting = useSearchableSetting();
+  const searchable = setting("skills-library");
   const issueSummary = status.data ? skillsLibraryIssueSummary(status.data) : null;
   return (
     <SettingsRow
@@ -105,7 +108,7 @@ function SkillsLibraryRow({
       resetAction={
         enabled !== DEFAULT_UNIFIED_SETTINGS.skillsLibraryEnabled ? (
           <SettingResetButton
-            label="skills library"
+            ariaLabel={gt("Reset skills library to default")}
             onClick={() =>
               updateSettings({
                 skillsLibraryEnabled: DEFAULT_UNIFIED_SETTINGS.skillsLibraryEnabled,

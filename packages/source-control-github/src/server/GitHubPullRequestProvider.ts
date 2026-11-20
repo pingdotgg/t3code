@@ -564,11 +564,13 @@ export const make = Effect.gen(function* () {
     },
   );
   const writing =
-    <I extends PullRequestRef, A, E>(write: (input: I) => Effect.Effect<A, E>) =>
+    <I extends NonNullable<ReadScope> & { readonly stackNumber?: number }, A, E>(
+      write: (input: I) => Effect.Effect<A, E>,
+    ) =>
     (input: I) => {
       const invalidate = forgetChangeRequestReads({
         repository: input.repository,
-        ...("stackNumber" in input && input.stackNumber !== undefined
+        ...(input.stackNumber !== undefined || input.number === undefined
           ? {}
           : { number: input.number }),
       });
@@ -932,10 +934,18 @@ export const make = Effect.gen(function* () {
           ...(input.expectedStackHeads === undefined
             ? {}
             : { expectedStackHeads: input.expectedStackHeads }),
+          ...(input.expectedHeadSha === undefined
+            ? {}
+            : { expectedHeadSha: input.expectedHeadSha }),
           ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
           ...(input.updateMethod === undefined ? {} : { updateMethod: input.updateMethod }),
         })
         .pipe(Effect.mapError(fail("runAction"))),
+    ),
+
+    getCheckLogs: (input) => cli.readCheckLogs(input).pipe(Effect.mapError(fail("getCheckLogs"))),
+    rerunChecks: writing((input) =>
+      cli.rerunChecks(input).pipe(Effect.mapError(fail("rerunChecks"))),
     ),
 
     updateChangeRequest: writing((input) =>

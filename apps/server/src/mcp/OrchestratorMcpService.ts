@@ -344,7 +344,7 @@ function listCapabilityModels(input: {
 }) {
   const rank = new Map(input.preferences?.modelOrder.map((slug, index) => [slug, index]));
   const visible = input.provider.models
-    .filter((model) => isCapabilityModelVisible(model, input.preferences))
+    .filter((model) => !model.isUnavailable && isCapabilityModelVisible(model, input.preferences))
     .toSorted((a, b) => (rank.get(a.slug) ?? rank.size) - (rank.get(b.slug) ?? rank.size));
   const { instanceId, driver, displayName } = input.provider;
   const providerText = `${instanceId} ${driver} ${displayName ?? ""}`.toLowerCase();
@@ -382,19 +382,21 @@ function listCapabilityModels(input: {
 
 /** Names advertised slugs to retry with: same last `/` segment first, else a short list. */
 function advertisedModelsHint(models: ReadonlyArray<ServerProviderModel>, requested: string) {
+  const available = models.filter((model) => !model.isUnavailable);
+  if (available.length === 0) return "No models are currently available.";
   const lastSegment = (slug: string) => slug.slice(slug.lastIndexOf("/") + 1).toLowerCase();
   const wanted = lastSegment(requested);
-  const close = models.filter((model) => lastSegment(model.slug) === wanted);
+  const close = available.filter((model) => lastSegment(model.slug) === wanted);
   if (close.length > 0) {
     return `Did you mean ${close
       .slice(0, LISTED_MODEL_LIMIT)
       .map((model) => model.slug)
       .join(", ")}?`;
   }
-  const listed = models
+  const listed = available
     .toSorted((a, b) => Number(a.isLegacy ?? false) - Number(b.isLegacy ?? false))
     .slice(0, LISTED_MODEL_LIMIT);
-  const omitted = models.length - listed.length;
+  const omitted = available.length - listed.length;
   return `Advertised models: ${listed.map((model) => model.slug).join(", ")}${
     omitted > 0 ? ` and ${omitted} more; orchestrator_capabilities with search finds them` : ""
   }.`;
@@ -412,10 +414,43 @@ function capabilityModelOption(descriptor: ProviderOptionDescriptor): Orchestrat
 }
 
 const advertisedModel = (provider: ServerProvider, model: string) =>
-  provider.models.find((candidate) => candidate.slug === model) ??
-  provider.models.find((candidate) =>
-    candidate.aliases?.some((alias) => alias.toLowerCase() === model.toLowerCase()),
+  provider.models.find((candidate) => !candidate.isUnavailable && candidate.slug === model) ??
+  provider.models.find(
+    (candidate) =>
+      !candidate.isUnavailable &&
+      candidate.aliases?.some((alias) => alias.toLowerCase() === model.toLowerCase()),
   );
+
+/** Antigravity 1.3 IDs append the thinking level (`gemini-3.8-flash-high`); the agent still accepts them. */
+function antigravitySuffixedModel(provider: ServerProvider, model: string) {
+  if (provider.driver !== "antigravity" || advertisedModel(provider, model)) return;
+  const separator = model.lastIndexOf("-");
+  if (separator === -1) return;
+  const family = model.slice(0, separator);
+  const value = model.slice(separator + 1);
+  const thinking = provider.models
+    .find((candidate) => !candidate.isUnavailable && candidate.slug === family)
+    ?.capabilities?.optionDescriptors?.find(
+      (descriptor) => descriptor.type === "select" && descriptor.role === "reasoning",
+    );
+  if (thinking?.type === "select" && thinking.options.some((choice) => choice.id === value)) {
+    return { model: family, thinking: { id: thinking.id, value } };
+  }
+}
+
+/** A folder's own provider config can add models that only its workspace snapshot lists. */
+export const withWorkspaceModels = (
+  providers: ReadonlyArray<ServerProvider>,
+  cwd: string | undefined,
+): ReadonlyArray<ServerProvider> =>
+  cwd === undefined
+    ? providers
+    : providers.map((provider) => {
+        const models = provider.workspaceSnapshots?.find(
+          (snapshot) => snapshot.cwd === cwd,
+        )?.models;
+        return models === undefined ? provider : { ...provider, models };
+      });
 
 const withV = (version: string) => (version.startsWith("v") ? version : `v${version}`);
 
@@ -892,6 +927,14 @@ function threadStatus(
   if (settledStatus === "failed") return settledStatus;
   return backgroundWorkHoldsCompletion(pendingBackgroundTasks ?? []) ? "waiting" : settledStatus;
 }
+
+const LIVE_LISTED_THREAD_STATUSES: ReadonlySet<OrchestratorMcpThreadListItem["status"]> = new Set([
+  "queued",
+  "preparing",
+  "starting",
+  "running",
+  "waiting",
+]);
 
 function listedThreadStatus(shell: OrchestrationV2ThreadShell) {
   return threadStatus(shell.activityRunStatus, shell.status, shell.pendingBackgroundTasks);
@@ -1483,15 +1526,27 @@ const make = Effect.gen(function* () {
     return { parent, target, shell, runCount } as const;
   });
 
-  const loadProviders = providerRegistry.getProviders.pipe(
-    Effect.map((providers) =>
-      providers.map((provider) =>
-        provider.models.some((model) => model.isUnavailable)
-          ? { ...provider, models: provider.models.filter((model) => !model.isUnavailable) }
-          : provider,
-      ),
-    ),
-  );
+  const loadProviders = providerRegistry.getProviders;
+
+  /** The folder the composer's model picker scans for this thread. */
+  const parentWorkspaceCwd = (parent: Pick<OrchestrationV2ThreadProjection, "thread">) =>
+    parent.thread.worktreePath
+      ? Effect.succeed(parent.thread.worktreePath)
+      : projects.getById(parent.thread.projectId).pipe(
+          Effect.map((project) =>
+            Option.getOrUndefined(Option.map(project, ({ workspaceRoot }) => workspaceRoot)),
+          ),
+          Effect.orElseSucceed(() => undefined),
+        );
+
+  const scanWorkspace = (instanceId: ServerProvider["instanceId"], cwd: string) =>
+    projects
+      .workspaceScanDirectory(cwd)
+      .pipe(
+        Effect.flatMap((scanCwd) =>
+          providerRegistry.refreshWorkspaceSnapshot({ instanceId, cwd, scanCwd }),
+        ),
+      );
 
   const loadOrchestrationCapableInstanceIds = () =>
     readOrchestrationProviders().pipe(
@@ -1514,21 +1569,33 @@ const make = Effect.gen(function* () {
       })
       .pipe(Effect.mapError(threadManagementFailure));
 
-  const resolveTargetRechecking = (input: Parameters<typeof resolveTarget>[0]) => {
+  const resolveTargetRechecking = (
+    input: Parameters<typeof resolveTarget>[0] & { readonly cwd: string | undefined },
+  ) => {
     const instanceId =
       input.target?.providerInstanceId ??
       (input.target?.driverKind === undefined
         ? input.parent.thread.modelSelection.instanceId
         : undefined);
-    const resolved = resolveTarget(input);
+    const resolved = resolveTarget({
+      ...input,
+      providers: withWorkspaceModels(input.providers, input.cwd),
+    });
     if (instanceId === undefined) return resolved;
     return resolved.pipe(
       Effect.catchIf(
         (error) => error.code === "provider_unavailable" || error.code === "model_unavailable",
         () =>
-          providerRegistry.refreshInstance(instanceId).pipe(
+          (input.cwd === undefined
+            ? providerRegistry.refreshInstance(instanceId)
+            : providerRegistry
+                .refreshInstance(instanceId)
+                .pipe(Effect.andThen(scanWorkspace(instanceId, input.cwd)))
+          ).pipe(
             Effect.andThen(loadProviders),
-            Effect.flatMap((providers) => resolveTarget({ ...input, providers })),
+            Effect.flatMap((providers) =>
+              resolveTarget({ ...input, providers: withWorkspaceModels(providers, input.cwd) }),
+            ),
           ),
       ),
     );
@@ -1546,11 +1613,14 @@ const make = Effect.gen(function* () {
     const inheritedSelection = input.parent.thread.modelSelection;
     const requestedModel = input.target?.model;
     const rawRequestedOptions = input.target?.options;
+    const requestedModelFor = (provider: ServerProvider) =>
+      requestedModel === undefined ? undefined : antigravitySuffixedModel(provider, requestedModel);
     const modelFor = (provider: ServerProvider) =>
+      requestedModelFor(provider)?.model ??
       requestedModel ??
       (provider.instanceId === inheritedSelection.instanceId
         ? inheritedSelection.model
-        : provider.models[0]?.slug);
+        : provider.models.find((model) => !model.isUnavailable)?.slug);
     const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
     const nowMs = yield* Clock.currentTimeMillis;
     const constraintsFor = (provider: ServerProvider) =>
@@ -1587,10 +1657,12 @@ const make = Effect.gen(function* () {
         ...healthyCandidates.filter((candidate) => !preferred.includes(candidate)),
       ];
       if (requestedModel !== undefined) {
+        const advertisesRequestedModel = (provider: ServerProvider) =>
+          advertisedModel(provider, requestedModelFor(provider)?.model ?? requestedModel) !==
+          undefined;
         orderedCandidates.sort(
           (left, right) =>
-            Number(right.models.some((model) => model.slug === requestedModel)) -
-            Number(left.models.some((model) => model.slug === requestedModel)),
+            Number(advertisesRequestedModel(right)) - Number(advertisesRequestedModel(left)),
         );
       }
       let firstEnabled: ServerProvider | undefined;
@@ -1604,7 +1676,7 @@ const make = Effect.gen(function* () {
         if (!enabledForProject) continue;
         firstEnabled ??= candidate;
         const model = modelFor(candidate);
-        const advertised = candidate.models.find((entry) => entry.slug === model);
+        const advertised = model === undefined ? undefined : advertisedModel(candidate, model);
         if (
           model === undefined ||
           (requestedModel !== undefined &&
@@ -1657,6 +1729,7 @@ const make = Effect.gen(function* () {
       );
     }
 
+    const antigravityTarget = requestedModelFor(provider);
     const model = modelFor(provider);
     if (model === undefined) {
       return yield* failure(
@@ -1664,7 +1737,7 @@ const make = Effect.gen(function* () {
         `Provider ${instanceId} has no model available for inheritance.`,
       );
     }
-    if (requestedModel !== undefined) yield* requireAdvertisedModel(provider, requestedModel);
+    if (requestedModel !== undefined) yield* requireAdvertisedModel(provider, model);
     const advertised = advertisedModel(provider, model);
     const descriptors = advertised?.capabilities?.optionDescriptors;
     const requestedOptions = withLegacyUltracodeEffort(descriptors, rawRequestedOptions);
@@ -1688,14 +1761,17 @@ const make = Effect.gen(function* () {
           descriptors,
         )
       : undefined;
-    if (requestedOptions !== undefined) {
+    if (requestedOptions !== undefined || antigravityTarget !== undefined) {
       const selections = new Map(
-        (requestedOptions.length === 0 ? [] : (options ?? [])).map((selection) => [
+        (requestedOptions?.length === 0 ? [] : (options ?? [])).map((selection) => [
           selection.id,
           selection,
         ]),
       );
-      for (const selection of requestedOptions) {
+      if (antigravityTarget !== undefined && requestedOptions?.length !== 0) {
+        selections.set(antigravityTarget.thinking.id, antigravityTarget.thinking);
+      }
+      for (const selection of requestedOptions ?? []) {
         selections.set(selection.id, selection);
       }
       options = [...selections.values()];
@@ -2482,7 +2558,7 @@ const make = Effect.gen(function* () {
       }
       const runId = run.id;
       const nodeId = run.rootNodeId;
-      const key = yield* requestKey(input.clientRequestId);
+      const key = `${runId}:${yield* requestKey(input.clientRequestId)}`;
       const turnItemId = TurnItemId.make(
         `turn-item:secret-request:${stablePart(threadId)}:${stablePart(key)}`,
       );
@@ -2551,6 +2627,13 @@ const make = Effect.gen(function* () {
             yield* record("cancelled");
             return "cancelled" as const;
           }
+          // A steering restart replaced the run's root, so this request belonged to
+          // the superseded attempt: its card can never be answered into that attempt,
+          // and the call must stop blocking the agent's turn.
+          if (current.rootNodeId !== nodeId) {
+            yield* record("cancelled");
+            return "cancelled" as const;
+          }
           yield* Effect.sleep(Duration.millis(SECRET_REQUEST_POLL_INTERVAL_MS));
         }
       }).pipe(
@@ -2603,7 +2686,26 @@ const make = Effect.gen(function* () {
 
     capabilities: Effect.fn("OrchestratorMcpService.capabilities")(function* (scope, input = {}) {
       const { parent, limits } = yield* loadCaller(scope, []);
-      const providers = yield* loadProviders;
+      const cwd = parent === undefined ? undefined : yield* parentWorkspaceCwd(parent);
+      const machineProviders = yield* loadProviders;
+      const unscanned =
+        cwd === undefined
+          ? []
+          : machineProviders.filter(
+              (provider) =>
+                provider.enabled &&
+                !provider.workspaceSnapshots?.some((snapshot) => snapshot.cwd === cwd),
+            );
+      if (cwd !== undefined && unscanned.length > 0) {
+        yield* Effect.forEach(unscanned, (provider) => scanWorkspace(provider.instanceId, cwd), {
+          concurrency: "unbounded",
+          discard: true,
+        });
+      }
+      const providers = withWorkspaceModels(
+        unscanned.length > 0 ? yield* loadProviders : machineProviders,
+        cwd,
+      );
       const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
       const settings = yield* serverSettings.getSettings.pipe(
         Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
@@ -2787,6 +2889,7 @@ const make = Effect.gen(function* () {
         parent,
         target: input.target,
         providers,
+        cwd: yield* parentWorkspaceCwd(parent),
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
       });
       const runtimeMode = yield* resolveRuntimeMode(
@@ -3128,6 +3231,7 @@ const make = Effect.gen(function* () {
         }
         const parentNodeId = parentRun.rootNodeId;
         const providers = yield* loadProviders;
+        const cwd = yield* parentWorkspaceCwd(parent);
         const key = yield* requestKey(input.clientRequestId);
         const created = yield* Effect.forEach(
           input.threads,
@@ -3170,6 +3274,7 @@ const make = Effect.gen(function* () {
                         providerInstanceId: committedThread.modelSelection.instanceId,
                       },
                 providers,
+                cwd,
                 skipProjectEnablementFilter: isRetryOfAcceptedWork,
               });
               const runtimeMode = yield* resolveRuntimeMode(
@@ -3352,7 +3457,21 @@ const make = Effect.gen(function* () {
           ? null
           : new Set(input.statuses);
       const titleContains = input.titleContains?.toLocaleLowerCase();
+      // A live status needs a source the index's mayBeLive covers, so a live-only filter
+      // skips building shells for every thread that cannot match.
+      const mayBeLiveIds =
+        statuses !== null &&
+        [...statuses].every((status) => LIVE_LISTED_THREAD_STATUSES.has(status))
+          ? new Set(
+              (yield* threadManagement
+                .listActiveShellIndex()
+                .pipe(Effect.mapError(listFailure))).flatMap((entry) =>
+                entry.mayBeLive ? [entry.id] : [],
+              ),
+            )
+          : null;
       const candidates = projectThreads
+        .filter((thread) => mayBeLiveIds === null || mayBeLiveIds.has(thread.id))
         .filter(
           (thread) =>
             input.settled === undefined || threadSettlement(thread).settled === input.settled,

@@ -26,6 +26,8 @@ import { chooseRecordingMicrophone } from "./browserMicrophones";
 import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 import { bindAudioGrant, readCleanupGrant } from "./voiceConsent";
+import { msg } from "gt-react";
+import { m } from "../i18n/messages";
 
 export const IDLE_VOICE_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
 
@@ -127,7 +129,7 @@ export class VoiceInputSession {
         DEFAULT_CLIENT_SETTINGS.speechStreaming,
       getTranscriptionOptions: (): SpeechTranscriptionOptions => {
         const context = this.target?.readContext();
-        if (!context) throw new Error("Voice input has no draft to record into.");
+        if (!context) throw new Error(m(msg("Voice input has no draft to record into.")));
         const settings = context.clientSettings;
         const cleanupGrant = context.cleanup ? readCleanupGrant() : null;
         const cleanupEnabled = cleanupGrant !== null;
@@ -163,8 +165,8 @@ export class VoiceInputSession {
       onText: (preview) => {
         if (!this.disposed) this.publishActivity({ ...this.activity, preview });
       },
-      onError: (message) => {
-        if (!this.disposed) void this.controller.interruptRecording(message);
+      onError: (message, code) => {
+        if (!this.disposed) void this.controller.interruptRecording(message, null, code);
       },
     });
     const postProcess: NonNullable<VoiceInputControllerDependencies["postProcess"]> = (
@@ -181,7 +183,7 @@ export class VoiceInputSession {
         return null;
       if (!preferences.cleanupPrepared)
         return Promise.reject(
-          new Error("The draft's environment is unavailable for transcript cleanup."),
+          new Error(m(msg("The draft's environment is unavailable for transcript cleanup."))),
         );
       return runEnvironmentSpeech(
         postProcessEnvironmentTranscript(
@@ -195,6 +197,7 @@ export class VoiceInputSession {
       ).then((result) => result.text);
     };
     this.controller = new VoiceInputController({
+      resolve: m,
       retryFailedRecording: true,
       recorder: platform.recorder,
       getTranscriber: () => platform.transcriber,
@@ -206,8 +209,8 @@ export class VoiceInputSession {
       onPostProcessingError: () =>
         toastManager.add({
           type: "warning",
-          title: "Transcript cleanup failed",
-          description: "The original transcript was added.",
+          title: m(msg("Transcript cleanup failed")),
+          description: m(msg("The original transcript was added.")),
         }),
       readDraft: (): VoiceDraftSnapshot | null => {
         const target = this.target;

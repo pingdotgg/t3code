@@ -135,6 +135,8 @@ function makeHarness(reply: (requestNumber: number) => Response | Promise<Respon
     authorizeDpop: () => Effect.die("HTTP requests must not prepare a WebSocket connection."),
     authorizeLanDpop: () => Effect.die("HTTP requests must not prepare a WebSocket connection."),
     mintLanCredential: () => Effect.die("HTTP requests must not mint a LAN credential."),
+    authorizeDirectDpop: () => Effect.die("HTTP requests must not prepare a WebSocket connection."),
+    authorizeDirectDpopHttp: () => Effect.die("Unexpected direct DPoP authorization."),
     authorizeDpopHttp: (input) =>
       Effect.sync(() => {
         authorizations.push(input);

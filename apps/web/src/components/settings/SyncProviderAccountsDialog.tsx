@@ -29,7 +29,7 @@ import { Dialog } from "../ui/dialog";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup } from "../ui/wizard";
 import { SettingsRow, SettingsSearchTarget } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 const accountSyncStatesAtom = environmentAtomList(
   "web-provider-account-sync",
@@ -391,6 +391,7 @@ export function SyncProviderAccountsAction({
   readonly readOnly: boolean;
   readonly instanceIds?: ReadonlyArray<ProviderInstanceId>;
 }) {
+  const setting = useSearchableSetting();
   const [open, setOpen] = useState(false);
   const { environments } = useEnvironments();
   const canExport = useAtomValue(providerAccountSync.canExportAtom(sourceEnvironmentId));
@@ -439,7 +440,7 @@ export function SyncProviderAccountsAction({
       </>
     );
   }
-  const search = searchableSetting("provider-account-sync");
+  const search = setting("provider-account-sync");
   return (
     <>
       <SettingsSearchTarget id={search.id} className="inline-flex">

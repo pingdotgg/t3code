@@ -5,6 +5,7 @@ import {
   MIN_CONTEXT_RESTART_ABOVE_TOKENS,
 } from "@t3tools/contracts/settings";
 import { Link } from "@tanstack/react-router";
+import { useGT } from "gt-react";
 
 import { useEnvironments } from "~/state/environments";
 import { ExternalHistoryButton } from "../externalHistory/ExternalHistoryDialog";
@@ -19,7 +20,7 @@ import {
 } from "./scopedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
-import { hasInferenceProxyEnvironment, searchableSetting } from "./settingsSearch";
+import { hasInferenceProxyEnvironment, useSearchableSetting } from "./settingsSearch";
 import { SkillsLibraryRows } from "./SkillsLibrarySettings";
 import {
   useScopedSettings,
@@ -64,6 +65,8 @@ function useIsProjectScope() {
 }
 
 function AssistedLearningRow() {
+  const gt = useGT();
+  const setting = useSearchableSetting();
   const { target, connectedEnvironments } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -79,7 +82,7 @@ function AssistedLearningRow() {
       serverScoped
       settingKeys={["enableAssistedLearning"]}
       mixed={mixed}
-      {...searchableSetting("assisted-learning")}
+      {...setting("assisted-learning")}
       description={
         unavailableReason ??
         (isProjectScope
@@ -90,7 +93,7 @@ function AssistedLearningRow() {
         unavailableReason === null &&
         settings.enableAssistedLearning !== DEFAULT_SERVER_SETTINGS.enableAssistedLearning ? (
           <SettingResetButton
-            label="automatic memory"
+            ariaLabel={gt("Reset automatic memory to default")}
             tooltip="Reset automatic memory to on"
             onClick={() =>
               updateSettings({
@@ -114,6 +117,8 @@ function AssistedLearningRow() {
 }
 
 function MemoryCurationRow() {
+  const gt = useGT();
+  const setting = useSearchableSetting();
   const { targets, connectedEnvironments } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -126,7 +131,7 @@ function MemoryCurationRow() {
     <SettingsRow
       serverScoped
       settingKeys={["enableMemoryCuration"]}
-      {...searchableSetting("memory-curation")}
+      {...setting("memory-curation")}
       description={
         unavailableReason ??
         "Review saved agent memories within each project. Background batches set aside task notes and link duplicates or replaced decisions. Original content and review reasons remain available, and you can restore a memory. Uses your text generation model."
@@ -134,7 +139,7 @@ function MemoryCurationRow() {
       resetAction={
         unavailableReason === null && !settings.enableMemoryCuration ? (
           <SettingResetButton
-            label="memory curation"
+            ariaLabel={gt("Reset memory curation to default")}
             tooltip="Reset memory curation to on"
             onClick={() => updateSettings({ enableMemoryCuration: true })}
           />
@@ -154,6 +159,8 @@ function MemoryCurationRow() {
 }
 
 function ConversationSummariesRow() {
+  const gt = useGT();
+  const setting = useSearchableSetting();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const mixed = useScopedSettingsMixed(["enableConversationSummaries"]);
@@ -163,7 +170,7 @@ function ConversationSummariesRow() {
       serverScoped
       settingKeys={["enableConversationSummaries"]}
       mixed={mixed}
-      {...searchableSetting("conversation-summaries")}
+      {...setting("conversation-summaries")}
       description={
         isProjectScope
           ? "After turns complete in this project, your text model summarizes older messages so switches and forks keep the gist of history that no longer fits. Each summary costs one model call."
@@ -172,7 +179,7 @@ function ConversationSummariesRow() {
       resetAction={
         settings.enableConversationSummaries ? (
           <SettingResetButton
-            label="conversation summaries"
+            ariaLabel={gt("Reset conversation summaries to default")}
             tooltip="Reset conversation summaries to off"
             onClick={() => updateSettings({ enableConversationSummaries: false })}
           />
@@ -191,6 +198,8 @@ function ConversationSummariesRow() {
 }
 
 function ContextRestartRow() {
+  const gt = useGT();
+  const setting = useSearchableSetting();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const mixed = useScopedSettingsMixed(["contextRestartAboveTokens"]);
@@ -200,12 +209,12 @@ function ContextRestartRow() {
       serverScoped
       settingKeys={["contextRestartAboveTokens"]}
       mixed={mixed}
-      {...searchableSetting("context-restart")}
+      {...setting("context-restart")}
       description="When a Codex thread's context reaches this many tokens, continue in a fresh conversation built from summaries and the newest messages. Needs summaries. Empty is off."
       resetAction={
         current !== null ? (
           <SettingResetButton
-            label="restart from summaries"
+            ariaLabel={gt("Reset restart from summaries to default")}
             tooltip="Reset restart from summaries to off"
             onClick={() => updateSettings({ contextRestartAboveTokens: null })}
           />
@@ -242,6 +251,7 @@ function ContextRestartRow() {
 }
 
 function ExternalHistoryRow() {
+  const setting = useSearchableSetting();
   const { connectedEnvironments } = useSettingsScope();
   const isProjectScope = useIsProjectScope();
   if (
@@ -254,7 +264,7 @@ function ExternalHistoryRow() {
   }
   return (
     <SettingsRow
-      {...searchableSetting("external-history")}
+      {...setting("external-history")}
       description="Automatically find and search agent conversations on an environment. Sources stay in place."
       control={
         <div className="flex flex-wrap gap-2">
@@ -272,18 +282,20 @@ function ExternalHistoryRow() {
 }
 
 function PstackRow() {
+  const gt = useGT();
+  const setting = useSearchableSetting();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   return (
     <SettingsRow
       serverScoped
       settingKeys={["pstackEnabled"]}
-      {...searchableSetting("pstack")}
+      {...setting("pstack")}
       description="Offer Lauren Tan's pstack workflows as skills in every provider. Run $pstack:setup-pstack once to choose models."
       resetAction={
         settings.pstackEnabled !== DEFAULT_UNIFIED_SETTINGS.pstackEnabled ? (
           <SettingResetButton
-            label="pstack"
+            ariaLabel={gt("Reset pstack to default")}
             onClick={() =>
               updateSettings({ pstackEnabled: DEFAULT_UNIFIED_SETTINGS.pstackEnabled })
             }
@@ -303,19 +315,21 @@ function PstackRow() {
 }
 
 function GroupConversationsRow() {
+  const gt = useGT();
+  const setting = useSearchableSetting();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   return (
     <SettingsRow
       serverScoped
       settingKeys={["groupConversationsEnabled"]}
-      {...searchableSetting("group-conversations")}
+      {...setting("group-conversations")}
       description="Invite models from any provider into one thread. Talk to all of them or one with @, and let them answer each other. Off stops new invites; a running group keeps its End and Remove controls."
       resetAction={
         settings.groupConversationsEnabled !==
         DEFAULT_UNIFIED_SETTINGS.groupConversationsEnabled ? (
           <SettingResetButton
-            label="group conversations"
+            ariaLabel={gt("Reset group conversations to default")}
             onClick={() =>
               updateSettings({
                 groupConversationsEnabled: DEFAULT_UNIFIED_SETTINGS.groupConversationsEnabled,
@@ -339,18 +353,20 @@ function GroupConversationsRow() {
 }
 
 function AgentGitHubReadGateRow() {
+  const gt = useGT();
+  const setting = useSearchableSetting();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   return (
     <SettingsRow
       serverScoped
       settingKeys={["enableAgentGitHubReadGate"]}
-      {...searchableSetting("agent-github-reads")}
+      {...setting("agent-github-reads")}
       description="T3 sends supported gh reads from local agent sessions to its shared PR tools. Turn this off to allow direct reads. The change applies when an agent session next starts."
       resetAction={
         settings.enableAgentGitHubReadGate !== DEFAULT_SERVER_SETTINGS.enableAgentGitHubReadGate ? (
           <SettingResetButton
-            label="default GitHub read gate"
+            ariaLabel={gt("Reset default GitHub read gate to default")}
             onClick={() =>
               updateSettings({
                 enableAgentGitHubReadGate: DEFAULT_SERVER_SETTINGS.enableAgentGitHubReadGate,

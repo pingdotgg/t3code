@@ -13,6 +13,7 @@ import {
 import { vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
@@ -149,14 +150,14 @@ const makeHarness = Effect.fn("makeProviderAccountSyncHarness")(function* (
   const registry = AtomRegistry.make();
   yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
   for (const environmentId of supervisors.keys()) {
+    yield* AtomRegistry.mount(registry, sessions(environmentId));
     registry.set(sessions(environmentId), AsyncResult.success(grant(true)));
   }
   const command = createProviderAccountSyncCommand(runtime);
   const sync = (request: ProviderAccountSyncRequest) =>
-    Effect.promise(() => command.run(registry, request)).pipe(
+    command.run(registry, request).pipe(
       Effect.map((result) => {
-        if (!AsyncResult.isSuccess(result)) throw new Error("sync must settle every cell");
-        return result.value.cells.map((cell) => {
+        return result.cells.map((cell) => {
           const key = `${cell.instanceId}->${cell.destinationEnvironmentId}`;
           switch (cell.status) {
             case "synced":
@@ -214,15 +215,28 @@ describe("providerAccountSync command", () => {
   it.effect("coalesces an identical double submit but runs a different request on its own", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const h = yield* makeHarness({ [laptop]: {}, [studio]: {}, [server]: {} });
-        const [codexReport, cursorReport, repeated] = yield* Effect.all(
-          [
-            h.sync(request([workCodex], [studio])),
-            h.sync(request([defaultCursor], [studio])),
-            h.sync(request([workCodex], [studio])),
-          ],
-          { concurrency: "unbounded" },
-        );
+        const exportStarted = yield* Deferred.make<void>();
+        const releaseExport = yield* Deferred.make<void>();
+        const h = yield* makeHarness({
+          [laptop]: {
+            exportAccount: (instanceId) =>
+              (instanceId === workCodex
+                ? Deferred.succeed(exportStarted, undefined).pipe(
+                    Effect.andThen(Deferred.await(releaseExport)),
+                  )
+                : Effect.void
+              ).pipe(Effect.as(exportOf(instanceId))),
+          },
+          [studio]: {},
+        });
+        const codexRequest = request([workCodex], [studio]);
+        const first = yield* Effect.forkChild(h.sync(codexRequest));
+        yield* Deferred.await(exportStarted);
+        const duplicate = yield* Effect.forkChild(h.sync(codexRequest), { startImmediately: true });
+        const cursorReport = yield* h.sync(request([defaultCursor], [studio]));
+        yield* Deferred.succeed(releaseExport, undefined);
+        const codexReport = yield* Fiber.join(first);
+        const repeated = yield* Fiber.join(duplicate);
         expect(codexReport).toEqual([`${workCodex}->${studio} synced created`]);
         expect(cursorReport).toEqual([`${defaultCursor}->${studio} synced created`]);
         expect(repeated).toEqual(codexReport);
@@ -358,11 +372,12 @@ describe("providerAccountSync command", () => {
           },
           [studio]: {},
         });
-        void h.command.run(h.registry, request([workCodex], [studio]));
+        const fiber = yield* Effect.forkChild(
+          h.command.run(h.registry, request([workCodex], [studio])),
+        );
         yield* Deferred.await(exportStarted);
-        h.registry.dispose();
+        yield* Fiber.interrupt(fiber);
         yield* Deferred.await(exportInterrupted);
-        yield* Effect.yieldNow;
         expect(h.calls).toEqual([`export:${laptop}:${workCodex}`]);
       }),
     ),

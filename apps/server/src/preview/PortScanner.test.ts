@@ -847,7 +847,8 @@ effectIt.effect.each(["linux", "darwin"] as const)(
   (platform) => {
     const agentPort = 43_124;
     const otherPort = 43_125;
-    const agentListener = `p4242\ncnode\nn127.0.0.1:${agentPort}\n`;
+    // The agent CLI has the thread in its environment too; its own port is not a server.
+    const agentListener = `p4242\ncnode\nn127.0.0.1:${agentPort}\np4300\ncagy\nn127.0.0.1:43126\n`;
     const otherListener = `p5000\ncpostgres\nn127.0.0.1:${otherPort}\n`;
     let lsofStdout = otherListener;
     let lsofFails = false;
@@ -860,11 +861,18 @@ effectIt.effect.each(["linux", "darwin"] as const)(
       "/proc/4242/environ": `PATH=/usr/bin\0${PortScanner.AGENT_THREAD_ENV}=thread-agent\0`,
       "/proc/5000/environ": "PATH=/usr/bin\0",
     };
+    const procAgent: Record<string, string> = {
+      "/proc/4242/stat": "4242 (node) S 4300 4300 4300 0",
+      "/proc/4300/environ": `${PortScanner.AGENT_THREAD_ENV}=thread-agent\0`,
+      "/proc/4300/stat": `4300 (agy acp) S ${SERVER_PID} 4300 4300 0`,
+    };
     const layer = layerScanner.pipe(
       Layer.provide(
         Layer.mergeAll(
           FileSystem.layerNoop({
             readFileString: (path) => {
+              const agent = procAgent[path];
+              if (agent !== undefined) return Effect.succeed(agent);
               const content = procEnviron[path];
               if (content === undefined) return missing.readFileString(path);
               environmentReads += 1;
@@ -886,9 +894,9 @@ effectIt.effect.each(["linux", "darwin"] as const)(
                     )
                   : Effect.succeed(processOutput(lsofStdout));
               }
-              // A direct child of the server, so stop refuses it without signaling anything.
+              // In its agent CLI's process group, so stop refuses it without signaling anything.
               if (input.args[0] === "-A") {
-                return Effect.succeed(processOutput(`4242 ${SERVER_PID} 4242\n`));
+                return Effect.succeed(processOutput(`4242 4300 4300\n4300 ${SERVER_PID} 4300\n`));
               }
               if (environmentFails) {
                 return Effect.fail(
@@ -899,16 +907,26 @@ effectIt.effect.each(["linux", "darwin"] as const)(
                   }),
                 );
               }
-              if (!input.args.includes("-E")) {
-                return Effect.succeed(
-                  processOutput("  4242 node server.js\n  5000 postgres -D /data\n"),
-                );
-              }
-              environmentReads += 1;
+              const withParents = input.args.includes("pid=,ppid=,command=");
+              const withEnvironment = input.args.includes("-E");
+              if (withEnvironment) environmentReads += 1;
+              const row = (pid: number, parent: number, command: string, env: string) =>
+                `  ${pid} ${withParents ? `${parent} ` : ""}${command}${withEnvironment ? ` ${env}` : ""}\n`;
               return Effect.succeed(
                 processOutput(
-                  `  4242 node server.js PATH=/usr/bin ${PortScanner.AGENT_THREAD_ENV}=thread-agent HOME=/Users/dev\n` +
-                    "  5000 postgres -D /data PATH=/usr/bin\n",
+                  row(
+                    4242,
+                    4300,
+                    "node server.js",
+                    `PATH=/usr/bin ${PortScanner.AGENT_THREAD_ENV}=thread-agent HOME=/Users/dev`,
+                  ) +
+                    row(
+                      4300,
+                      SERVER_PID,
+                      "agy acp",
+                      `${PortScanner.AGENT_THREAD_ENV}=thread-agent`,
+                    ) +
+                    row(5000, 1, "postgres -D /data", "PATH=/usr/bin"),
                 ),
               );
             },

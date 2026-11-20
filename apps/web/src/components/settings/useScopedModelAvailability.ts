@@ -6,6 +6,7 @@ import {
   type UnifiedSettings,
 } from "@t3tools/contracts";
 import { isModelEvaluationJudge } from "@t3tools/client-runtime/modelEvaluations";
+import { useGT } from "gt-react";
 
 import { mergeEnvironmentSettings } from "../../hooks/useSettings";
 import {
@@ -39,6 +40,7 @@ export function useScopedModelDisabledReason(
   entries: readonly ProviderInstanceEntry[],
   requiredOperations: readonly TextGenerationOperation[] = [],
 ) {
+  const gt = useGT();
   const { targets } = useSettingsScope();
   const { environments } = useEnvironments();
   const providersByEnvironment = useEnvironmentProviders();
@@ -49,7 +51,14 @@ export function useScopedModelDisabledReason(
       const environment = environments.find(
         (entry) => entry.environmentId === candidate.environmentId,
       );
-      const unavailable = `This model is unavailable on ${environment?.label ?? "a selected environment"}. Select that environment to choose its model separately.`;
+      const unavailable = environment
+        ? gt(
+            "This model is unavailable on {environment}. Select that environment to choose its model separately.",
+            { environment: environment.label },
+          )
+        : gt(
+            "This model is unavailable on a selected environment. Select that environment to choose its model separately.",
+          );
       const generator = textGeneratorForSelection(candidate.settings, instanceId);
       if (shownGenerator !== undefined || generator !== undefined) {
         if (requiredOperations.includes("generateReviewGuide"))

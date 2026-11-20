@@ -68,6 +68,7 @@ describe("Enriched link presentation", () => {
       "Try (model:codex/gpt-6.1).",
       "Try [model:codex/gpt-6.1] next",
       '"model:codex/gpt-6.1"',
+      "‏model:codex/gpt-6.1 هذا شرح",
     ]) {
       const source = regex?.exec(text)?.[0];
       expect(source, text).toBe("model:codex/gpt-6.1");

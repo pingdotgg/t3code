@@ -85,7 +85,7 @@ describe("modelSwitchSince", () => {
           turnItems: [
             first!,
             { ...pending!, inputIntent: "queued_turn", status: "pending" },
-            compact!,
+            { ...compact!, createdBy: "agent", creationSource: "mcp" },
             answer!,
           ] as OrchestrationV2ThreadProjection["turnItems"],
         },

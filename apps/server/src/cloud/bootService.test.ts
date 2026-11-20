@@ -22,6 +22,7 @@ import { serviceLauncherLockPath } from "../serviceLauncher.ts";
 import * as BootService from "./bootService.ts";
 import { pinnedRuntimePaths } from "./pinnedRuntime.ts";
 import {
+  decodeServiceUnit,
   disabledServiceTask,
   parseServiceState,
   serviceTaskIsDisabled,
@@ -256,7 +257,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         input.command === "schtasks" && input.args[0] !== "/Create" && control.task === undefined;
       if (input.command === "schtasks" && !failed) {
         if (input.args[0] === "/Create") {
-          const xml = yield* fs.readFileString(input.args[2] ?? "");
+          const xml = decodeServiceUnit(yield* fs.readFile(input.args[2] ?? ""));
           control.task = { xml, enabled: !serviceTaskIsDisabled(xml) };
         }
         if (control.task !== undefined && input.args[0] === "/Change") {
@@ -1443,7 +1444,7 @@ process.disconnect();
       const { service, fs, statePath, commands, control, runtime } = yield* makeHarness("win32");
       const path = yield* Path.Path;
       const plan = yield* service.install();
-      const task = yield* fs.readFileString(plan.unitPath);
+      const task = decodeServiceUnit(yield* fs.readFile(plan.unitPath));
 
       expect(plan.unitPath).toBe(
         path.join(path.dirname(plan.baseDir), "AppData", "Local", "t3code", "t3code-task.xml"),
@@ -1452,6 +1453,8 @@ process.disconnect();
       expect(BootService.bootServiceBaseDirOf(task)).toBe(plan.baseDir);
       expect(task).toContain("<UserId>PC\\theo</UserId>");
       expect(task).toContain("<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>");
+      // schtasks decodes undeclared UTF-8 with the ANSI code page; UTF-16LE with a BOM is read as is.
+      expect([...(yield* fs.readFile(plan.unitPath)).subarray(0, 2)]).toEqual([0xff, 0xfe]);
       expect(parseServiceState(yield* fs.readFileString(statePath))).toEqual({
         protocol: SERVICE_LAUNCHER_PROTOCOL,
         activeVersion: "1.2.3",
@@ -1498,7 +1501,7 @@ process.disconnect();
       const launcher = new NodeSqlite.DatabaseSync(serviceLauncherLockPath(plan.baseDir));
       launcher.exec("BEGIN EXCLUSIVE");
       control.launcher = launcher;
-      const headlessTask = (yield* fs.readFileString(plan.unitPath)).replace(
+      const headlessTask = decodeServiceUnit(yield* fs.readFile(plan.unitPath)).replace(
         "<LogonType>InteractiveToken</LogonType>",
         "<LogonType>S4U</LogonType>",
       );
@@ -1509,7 +1512,9 @@ process.disconnect();
       // Task Scheduler runs its own copy of the task, so a deferred restart registers the new one.
       const newer = yield* makeService(undefined, "1.2.4");
       yield* newer.install({ start: false });
-      expect(yield* fs.readFileString(plan.unitPath)).toContain("<LogonType>S4U</LogonType>");
+      expect(decodeServiceUnit(yield* fs.readFile(plan.unitPath))).toContain(
+        "<LogonType>S4U</LogonType>",
+      );
       expect(control.task?.xml).toContain("<LogonType>S4U</LogonType>");
       const newerRuntime = pinnedRuntimePaths(yield* Path.Path, plan.baseDir, "1.2.4", "win32");
       expect(BootService.bootServiceProgramOf(control.task?.xml ?? "")).toBe(
@@ -1561,7 +1566,7 @@ process.disconnect();
       ).toBe("1.2.4\n");
 
       control.task = {
-        xml: (yield* fs.readFileString(plan.unitPath)).replace(
+        xml: decodeServiceUnit(yield* fs.readFile(plan.unitPath)).replace(
           "<LogonType>InteractiveToken</LogonType>",
           "<LogonType>S4U</LogonType>",
         ),
@@ -1571,7 +1576,9 @@ process.disconnect();
       expect(yield* inside.restart).toBe("queued");
       expect(commands).toEqual(["schtasks /Query /TN t3code-PC-theo /XML", ...handoff]);
       expect(control.task.xml).toContain("<LogonType>S4U</LogonType>");
-      expect(yield* fs.readFileString(plan.unitPath)).toContain("<LogonType>S4U</LogonType>");
+      expect(decodeServiceUnit(yield* fs.readFile(plan.unitPath))).toContain(
+        "<LogonType>S4U</LogonType>",
+      );
 
       control.task.xml = control.task.xml.replace(
         "<LogonType>S4U</LogonType>",
@@ -1579,7 +1586,7 @@ process.disconnect();
       );
       expect(yield* service.restart).toBe("restarted");
       expect(control.task.xml).toContain("<LogonType>InteractiveToken</LogonType>");
-      expect(yield* fs.readFileString(plan.unitPath)).toContain(
+      expect(decodeServiceUnit(yield* fs.readFile(plan.unitPath))).toContain(
         "<LogonType>InteractiveToken</LogonType>",
       );
     }),

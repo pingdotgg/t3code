@@ -230,6 +230,7 @@ it.layer(NodeServices.layer)("SkillsLibrary", (it) => {
             (yield* discoverAntigravitySkills({
               cwd: path.join(home, "project"),
               userHome: home,
+              profileDirectory,
             })).map((entry) => entry.name),
           ).toEqual(["review"]);
           expect(yield* fs.exists(path.join(home, ".gemini", "config", "mcp_config.json"))).toBe(
@@ -307,6 +308,7 @@ it.layer(NodeServices.layer)("SkillsLibrary", (it) => {
             (yield* discoverAntigravitySkills({
               cwd: path.join(home, "project"),
               userHome: home,
+              profileDirectory: path.join(home, "private-profile"),
             })).map((skill) => skill.name),
           ).toEqual(["antigravity-only", "claude-only", "shared"]);
           expect(yield* read(path.join(claude, "synced", "org_account"), "synced-skill")).toContain(
