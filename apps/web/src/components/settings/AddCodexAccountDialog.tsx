@@ -85,10 +85,8 @@ export function AddCodexAccountDialog({
   return (
     <Dialog
       open={!connected}
-      onOpenChange={(open, eventDetails) => {
-        if (open) return;
-        if (pending) return eventDetails.cancel();
-        onClose();
+      onOpenChange={(open) => {
+        if (!open && !pending) onClose();
       }}
       onOpenChangeComplete={(open) => {
         if (!open && connected) onClose();
