@@ -44,6 +44,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ActivityIcon,
   FileDiff,
   Files,
   Globe2,
@@ -144,6 +145,7 @@ export interface RightPanelTabsProps {
   /** Keep separate from the DOM click handler so a MouseEvent cannot become a profile id. */
   onAddBrowserInProfile: (profileId: string) => void;
   onAddTerminal: () => void;
+  onAddActivity: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
   onAddPullRequest: () => void;
@@ -153,6 +155,7 @@ export interface RightPanelTabsProps {
   onAddSideChat?: (() => void) | undefined;
   browserAvailable: boolean;
   terminalAvailable: boolean;
+  activityAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
@@ -182,6 +185,7 @@ function shouldOpenDefaultBrowserProfileFromMenuClick(pointerType: string | unde
 const SURFACE_DISABLED_REASONS = {
   browser: msg("Browser previews are only available in the T3 Code desktop app."),
   terminal: msg("Terminal surfaces are only available from a project thread."),
+  activity: msg("Activity is only available for threads that have started."),
   files: msg("Files are only available when a project is open."),
   diff: msg("Diff is only available for server threads in Git repositories."),
   pullRequest: msg("This thread's branch has no pull request yet."),
@@ -207,6 +211,7 @@ const LAUNCHER_SHORTCUT_BLOCKING_LAYERS = [
 const SURFACE_UNAVAILABLE_HINTS = {
   browser: msg("Only available in the desktop app."),
   terminal: msg("Available when a project is open."),
+  activity: msg("Available once the thread has started."),
   files: msg("Available when a project is open."),
   diff: msg("Available for Git repositories."),
   pullRequest: msg("No pull request on this branch yet."),
@@ -328,6 +333,7 @@ function RightPanelEmptyState(props: {
   onAddBrowserInProfile: (profileId: string) => void;
   browserProfiles: ReadonlyArray<{ readonly id: string; readonly name: string }>;
   onAddTerminal: () => void;
+  onAddActivity: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
   onAddPullRequest: () => void;
@@ -337,6 +343,7 @@ function RightPanelEmptyState(props: {
   onAddSideChat?: (() => void) | undefined;
   browserAvailable: boolean;
   terminalAvailable: boolean;
+  activityAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
@@ -373,6 +380,14 @@ function RightPanelEmptyState(props: {
       available: props.filesAvailable,
       disabledReason: messages(SURFACE_UNAVAILABLE_HINTS.files),
       onClick: props.onAddFiles,
+    },
+    {
+      label: msg("Activity"),
+      icon: ActivityIcon,
+      shortcut: "A",
+      available: props.activityAvailable,
+      disabledReason: messages(SURFACE_UNAVAILABLE_HINTS.activity),
+      onClick: props.onAddActivity,
     },
     {
       label: msg("Diff"),
@@ -590,6 +605,8 @@ function surfaceTitle(
   resolve: MessageResolver = m,
 ): string {
   switch (surface.kind) {
+    case "activity":
+      return resolve(msg("Activity"));
     case "diff":
       return resolve(msg("Diff"));
     case "files":
@@ -679,6 +696,8 @@ function SurfaceIcon({
       return <PreviewFavicon capturedUrl={previewCapturedUrl} url={previewUrl} />;
     case "diff":
       return <FileDiff className="size-3 shrink-0" />;
+    case "activity":
+      return <ActivityIcon className="size-3 shrink-0" />;
     case "files":
       return <Files className="size-3 shrink-0" />;
     case "file":
@@ -1194,6 +1213,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       onClick: props.onAddFiles,
     },
     {
+      label: msg("Activity"),
+      icon: ActivityIcon,
+      shortcut: "A",
+      available: props.activityAvailable,
+      disabledReason: messages(SURFACE_DISABLED_REASONS.activity),
+      onClick: props.onAddActivity,
+    },
+    {
       label: msg("Diff"),
       icon: FileDiff,
       shortcut: "D",
@@ -1637,6 +1664,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddBrowserInProfile={props.onAddBrowserInProfile}
             browserProfiles={browserProfiles}
             onAddTerminal={props.onAddTerminal}
+            onAddActivity={props.onAddActivity}
             onAddDiff={props.onAddDiff}
             onAddFiles={props.onAddFiles}
             onAddPullRequest={props.onAddPullRequest}
@@ -1645,6 +1673,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddSideChat={props.onAddSideChat}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
+            activityAvailable={props.activityAvailable}
             diffAvailable={props.diffAvailable}
             filesAvailable={props.filesAvailable}
             pullRequestAvailable={props.pullRequestAvailable}

@@ -102,6 +102,7 @@ describe("RightPanelTabs", () => {
           onAddBrowser={noop}
           onAddBrowserInProfile={noop}
           onAddTerminal={noop}
+          onAddActivity={() => undefined}
           onAddDiff={noop}
           onAddFiles={noop}
           onAddPullRequest={noop}
@@ -109,6 +110,7 @@ describe("RightPanelTabs", () => {
           onAddDevice={noop}
           browserAvailable={false}
           terminalAvailable
+          activityAvailable={false}
           diffAvailable={false}
           filesAvailable={false}
           pullRequestAvailable={false}
@@ -175,6 +177,7 @@ function panel(activeSurface: RightPanelSurface) {
     onAddBrowser: noop,
     onAddBrowserInProfile: noop,
     onAddTerminal: noop,
+    onAddActivity: () => undefined,
     onAddDiff: noop,
     onAddFiles: noop,
     onAddPullRequest: noop,
@@ -182,6 +185,7 @@ function panel(activeSurface: RightPanelSurface) {
     onAddDevice: noop,
     browserAvailable: true,
     terminalAvailable: true,
+    activityAvailable: false,
     diffAvailable: true,
     filesAvailable: true,
     pullRequestAvailable: true,

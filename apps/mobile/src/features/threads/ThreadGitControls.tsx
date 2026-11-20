@@ -266,6 +266,13 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     });
   };
 
+  const openActivity = () => {
+    navigation.navigate("ThreadActivity", {
+      environmentId: String(environmentId),
+      threadId: String(threadId),
+    });
+  };
+
   const openGitInspector = () => {
     if (props.onOpenGitInspector) {
       props.onOpenGitInspector();
@@ -280,6 +287,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   return {
     currentBranchLabel,
     isRepo,
+    openActivity,
     openGitInspector,
     openReview,
     quickAction,
@@ -398,6 +406,17 @@ export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMen
             },
           ]
         : []),
+      {
+        id: "git-activity",
+        title: gt("Activity"),
+        icon: "list.number",
+        disabled: props.hasThread === false,
+        subtitle:
+          props.hasThread === false
+            ? gt("Available after the first message")
+            : gt("What the agent is doing, finished, and changed"),
+        onPress: model.openActivity,
+      },
       {
         id: "git-more",
         title: gt("More", { $context: "menu item that opens more git actions" }),
