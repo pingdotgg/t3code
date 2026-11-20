@@ -1,5 +1,6 @@
 import {
   WS_METHODS,
+  IssueOperationError,
   type EnvironmentId,
   type IssueAssigneeCandidate,
   type IssueCandidates,
@@ -17,6 +18,7 @@ import type * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import {
@@ -29,7 +31,28 @@ import {
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
-import { request } from "../rpc/client.ts";
+import { currentSession, request, requestInSession, runStreamInSession } from "../rpc/client.ts";
+
+const readFirstIssues = Effect.fnUntraced(function* (
+  input: IssueListInput,
+  emit: (result: IssueListResult) => Effect.Effect<void>,
+) {
+  const session = yield* currentSession();
+  const config = yield* Effect.option(session.initialConfig);
+  if (Option.isNone(config) || config.value.environment.capabilities.progressiveIssueList !== true)
+    return yield* requestInSession(session, WS_METHODS.issuesList, input);
+
+  const completed = yield* runStreamInSession(session, WS_METHODS.issuesListProgress, input).pipe(
+    Stream.tap((event) => (event._tag === "preview" ? emit(event.list) : Effect.void)),
+    Stream.filter((event) => event._tag === "complete"),
+    Stream.runHead,
+  );
+  if (Option.isSome(completed)) return completed.value.list;
+  return yield* new IssueOperationError({
+    operation: "list",
+    detail: "The issue list ended before the complete result arrived.",
+  });
+});
 
 /** One row's identity across list pages and detail reads; hosts compare case-insensitively. */
 export function issueEntryKey(
@@ -194,12 +217,14 @@ export function createIssueEnvironmentAtoms<R, E>(
     AtomRegistry.AtomRegistry,
     WeakMap<Atom.Atom<unknown>, symbol>
   >();
-  type ListRequest = ReturnType<typeof request<typeof WS_METHODS.issuesList>>;
+  type ListRequest = ReturnType<typeof readFirstIssues>;
   const list = createEnvironmentQueryAtomFamily(runtime, {
     label: "environment-data:issues:list",
     staleTimeMs: 30_000,
     execute: Effect.fnUntraced(function* (
       input: IssueListInput,
+      emit: (result: IssueListResult) => Effect.Effect<void>,
+      previous: Option.Option<IssueListResult>,
     ): Effect.fn.Return<
       IssueListResult,
       Effect.Error<ListRequest>,
@@ -210,10 +235,14 @@ export function createIssueEnvironmentAtoms<R, E>(
         target: { environmentId },
       } = yield* EnvironmentSupervisor.EnvironmentSupervisor;
       const pending = pendingListRefreshes.get(registry);
-      if (pending === undefined) return yield* request(WS_METHODS.issuesList, input);
+      const read = () =>
+        Option.isNone(previous) && input.cursors === undefined && input.refresh !== true
+          ? readFirstIssues(input, emit)
+          : request(WS_METHODS.issuesList, input);
+      if (pending === undefined) return yield* read();
       const atom = list({ environmentId, input });
       const intent = pending.get(atom);
-      if (intent === undefined) return yield* request(WS_METHODS.issuesList, input);
+      if (intent === undefined) return yield* read();
       return yield* request(WS_METHODS.issuesList, { ...input, refresh: true }).pipe(
         // Invalidation interrupts the read; its replacement still owes the explicit refresh.
         Effect.onExit((exit) =>

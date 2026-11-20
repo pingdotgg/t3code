@@ -643,6 +643,7 @@ export const WS_METHODS = {
 
   // Issue tracking methods
   issuesList: "issues.list",
+  issuesListProgress: "issues.listProgress",
   issuesDetail: "issues.detail",
   issuesComments: "issues.comments",
   issuesTemplates: "issues.templates",
@@ -1381,6 +1382,16 @@ const WsIssuesListRpc = Rpc.make(WS_METHODS.issuesList, {
   payload: IssueListInput,
   success: IssueListResult,
   error: IssueRpcError,
+});
+
+const WsIssuesListProgressRpc = Rpc.make(WS_METHODS.issuesListProgress, {
+  payload: IssueListInput,
+  success: Schema.Union([
+    Schema.TaggedStruct("preview", { list: IssueListResult }),
+    Schema.TaggedStruct("complete", { list: IssueListResult }),
+  ]),
+  error: IssueRpcError,
+  stream: true,
 });
 
 const WsIssuesDetailRpc = Rpc.make(WS_METHODS.issuesDetail, {
@@ -2302,6 +2313,7 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
 
 export const WsRpcGroup = RpcGroup.make(
   WsIssuesListRpc,
+  WsIssuesListProgressRpc,
   WsIssuesDetailRpc,
   WsIssuesCommentsRpc,
   WsIssuesTemplatesRpc,
