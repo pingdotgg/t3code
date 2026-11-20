@@ -5,6 +5,7 @@ import { type ReactNode, useState } from "react";
 import { updateNoticeAtom } from "../state/updatesAtoms";
 import { Tooltip } from "../ui/Tooltip";
 import { AddProject } from "./AddProject";
+import { BrowserRow } from "./BrowserRow";
 import { ForYouRow } from "./ForYouRow";
 import { ForYouToasts } from "./ForYouToasts";
 import { ProjectList } from "./ProjectList";
@@ -35,6 +36,7 @@ export function Sidebar({
         Agent Board
       </div>
       <ForYouRow />
+      <BrowserRow />
       <ForYouToasts />
       <Section
         title="Projects"

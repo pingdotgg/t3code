@@ -2,6 +2,9 @@ import { memo } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import { openInPanel } from "../browser/panel";
+import { isWebLink } from "../browser/tabs";
+
 const components: Components = {
   p: (props) => <p className="my-1.5 first:mt-0 last:mb-0" {...props} />,
   ul: (props) => <ul className="my-1.5 list-disc pl-5" {...props} />,
@@ -11,11 +14,17 @@ const components: Components = {
   h2: (props) => <h4 className="mt-3 mb-1 text-[14px] font-semibold" {...props} />,
   h3: (props) => <h4 className="mt-2 mb-1 font-semibold" {...props} />,
   h4: (props) => <h4 className="mt-2 mb-1 font-semibold" {...props} />,
-  a: (props) => (
+  a: ({ href, ...props }) => (
     <a
       className="text-focus underline underline-offset-2"
+      href={href}
       target="_blank"
       rel="noopener noreferrer"
+      onClick={(event) => {
+        if (href === undefined || !isWebLink(href)) return;
+        event.preventDefault();
+        openInPanel(href);
+      }}
       {...props}
     />
   ),
