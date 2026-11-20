@@ -1,5 +1,126 @@
+diff --git a/out/differentialDownloader/DifferentialDownloader.js b/out/differentialDownloader/DifferentialDownloader.js
+index c6e948a79d1bb85122b21d8ddd61a5a842ca2e8d..df016d23efad23dc21212912a70ae8066cf8d974 100644
+--- a/out/differentialDownloader/DifferentialDownloader.js
++++ b/out/differentialDownloader/DifferentialDownloader.js
+@@ -17,6 +17,20 @@ class DifferentialDownloader {
+         this.options = options;
+         this.fileMetadataBuffer = null;
+         this.logger = options.logger;
++        this.openRequests = new Set();
++    }
++    // Upstream never handed the cancellation token to range requests, so a cancelled download kept
++    // them open and kept AppUpdater's downloadPromise reserved until they ended.
++    createRequest(requestOptions, callback) {
++        const request = this.httpExecutor.createRequest(requestOptions, callback);
++        this.openRequests.add(request);
++        request.on("close", () => this.openRequests.delete(request));
++        return request;
++    }
++    abortRequests() {
++        for (const request of this.openRequests) {
++            request.abort();
++        }
+     }
+     createRequestOptions() {
+         const result = {
+@@ -98,7 +112,12 @@ class DifferentialDownloader {
+         const newFileFd = await (0, fs_extra_1.open)(this.options.newFile, "w");
+         fdList.push({ descriptor: newFileFd, path: this.options.newFile });
+         const fileOut = (0, fs_1.createWriteStream)(this.options.newFile, { fd: newFileFd });
+-        await new Promise((resolve, reject) => {
++        await this.options.cancellationToken.createPromise((resolve, reject, onCancel) => {
++            let pause = null;
++            onCancel(() => {
++                clearTimeout(pause);
++                this.abortRequests();
++            });
+             const streams = [];
+             // Create our download info transformer if we have one
+             let downloadInfoTransform = undefined;
+@@ -163,6 +182,9 @@ class DifferentialDownloader {
+             requestOptions.redirect = "manual";
+             w = (index) => {
+                 var _a, _b;
++                if (this.options.cancellationToken.cancelled) {
++                    return;
++                }
+                 if (index >= tasks.length) {
+                     if (this.fileMetadataBuffer != null) {
+                         firstStream.write(this.fileMetadataBuffer);
+@@ -186,7 +208,7 @@ class DifferentialDownloader {
+                 if (downloadInfoTransform) {
+                     downloadInfoTransform.beginRangeDownload();
+                 }
+-                const request = this.httpExecutor.createRequest(requestOptions, response => {
++                const request = this.createRequest(requestOptions, response => {
+                     response.on("error", reject);
+                     response.on("aborted", () => {
+                         reject(new Error("response has been aborted by the server"));
+@@ -205,7 +227,7 @@ class DifferentialDownloader {
+                         }
+                         if (++downloadOperationCount === 100) {
+                             downloadOperationCount = 0;
+-                            setTimeout(() => w(index), 1000);
++                            pause = setTimeout(() => w(index), 1000);
+                         }
+                         else {
+                             w(index);
+@@ -239,8 +261,9 @@ class DifferentialDownloader {
+         return buffer;
+     }
+     request(requestOptions, dataHandler) {
+-        return new Promise((resolve, reject) => {
+-            const request = this.httpExecutor.createRequest(requestOptions, response => {
++        return this.options.cancellationToken.createPromise((resolve, reject, onCancel) => {
++            onCancel(() => this.abortRequests());
++            const request = this.createRequest(requestOptions, response => {
+                 if (!(0, multipleRangeDownloader_1.checkIsRangesSupported)(response, reject)) {
+                     return;
+                 }
+diff --git a/out/differentialDownloader/multipleRangeDownloader.js b/out/differentialDownloader/multipleRangeDownloader.js
+index 56adc38fe831b39d8430ad8aabe8fd7a35c36b9f..436086963c64fbe8bd5126685375dc54e669faf9 100644
+--- a/out/differentialDownloader/multipleRangeDownloader.js
++++ b/out/differentialDownloader/multipleRangeDownloader.js
+@@ -7,6 +7,9 @@ const DataSplitter_1 = require("./DataSplitter");
+ const downloadPlanBuilder_1 = require("./downloadPlanBuilder");
+ function executeTasksUsingMultipleRangeRequests(differentialDownloader, tasks, out, oldFileFd, reject) {
+     const w = (taskOffset) => {
++        if (differentialDownloader.options.cancellationToken.cancelled) {
++            return;
++        }
+         if (taskOffset >= tasks.length) {
+             if (differentialDownloader.fileMetadataBuffer != null) {
+                 out.write(differentialDownloader.fileMetadataBuffer);
+@@ -43,6 +46,9 @@ function doExecuteTasks(differentialDownloader, options, out, resolve, reject) {
+     if (partCount <= 1) {
+         // the only remote range - copy
+         const w = (index) => {
++            if (differentialDownloader.options.cancellationToken.cancelled) {
++                return;
++            }
+             if (index >= options.end) {
+                 resolve();
+                 return;
+@@ -54,7 +60,7 @@ function doExecuteTasks(differentialDownloader, options, out, resolve, reject) {
+             else {
+                 const requestOptions = differentialDownloader.createRequestOptions();
+                 requestOptions.headers.Range = `bytes=${task.start}-${task.end - 1}`;
+-                const request = differentialDownloader.httpExecutor.createRequest(requestOptions, response => {
++                const request = differentialDownloader.createRequest(requestOptions, response => {
+                     response.on("error", reject);
+                     if (!checkIsRangesSupported(response, reject)) {
+                         return;
+@@ -73,7 +79,7 @@ function doExecuteTasks(differentialDownloader, options, out, resolve, reject) {
+     }
+     const requestOptions = differentialDownloader.createRequestOptions();
+     requestOptions.headers.Range = ranges.substring(0, ranges.length - 2);
+-    const request = differentialDownloader.httpExecutor.createRequest(requestOptions, response => {
++    const request = differentialDownloader.createRequest(requestOptions, response => {
+         if (!checkIsRangesSupported(response, reject)) {
+             return;
+         }
 diff --git a/out/electronHttpExecutor.js b/out/electronHttpExecutor.js
-index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..e6fb0b8aafda6ae0797d3127b5aa661b0d202ca5 100644
+index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..b13c07b415f24b5551d7b31aa279c7f12ce26764 100644
 --- a/out/electronHttpExecutor.js
 +++ b/out/electronHttpExecutor.js
 @@ -3,7 +3,34 @@ Object.defineProperty(exports, "__esModule", { value: true });
@@ -37,7 +158,7 @@ index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..e6fb0b8aafda6ae0797d3127b5aa661b
  function getNetSession() {
      return require("electron").session.fromPartition(exports.NET_SESSION_NAME, {
          cache: false,
-@@ -16,27 +43,133 @@ class ElectronHttpExecutor extends builder_util_runtime_1.HttpExecutor {
+@@ -16,27 +43,140 @@ class ElectronHttpExecutor extends builder_util_runtime_1.HttpExecutor {
          this.cachedSession = null;
      }
      async download(url, destination, options) {
@@ -97,6 +218,7 @@ index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..e6fb0b8aafda6ae0797d3127b5aa661b
 +            let fileOut = null;
 +            let upstream = null;
 +            let settled = false;
++            let abortRequest = null;
 +            const callback = error => {
 +                if (settled) {
 +                    return;
@@ -115,9 +237,12 @@ index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..e6fb0b8aafda6ae0797d3127b5aa661b
 +                    fileOut.end();
 +                }
 +            };
-+            // doDownload never calls onCancel, so a cancel settles here once the file is closed, and a
-+            // response that arrives after it is not written. The request runs on until its idle timeout.
-+            const cancel = () => callback(new builder_util_runtime_1.CancellationError());
++            // A cancel aborts the request (builder-util-runtime's patched doDownload hands it over) and
++            // settles here once the file is closed; a response that arrives after it is not written.
++            const cancel = () => {
++                abortRequest?.();
++                callback(new builder_util_runtime_1.CancellationError());
++            };
 +            cancellationToken.onCancel(cancel);
 +            if (settled) {
 +                return;
@@ -127,6 +252,9 @@ index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..e6fb0b8aafda6ae0797d3127b5aa661b
 +                    destination,
 +                    options,
 +                    callback,
++                    onCancel: abort => {
++                        abortRequest = abort;
++                    },
 +                    responseHandler: response => {
 +                        if (settled) {
 +                            return;
@@ -187,7 +315,7 @@ index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..e6fb0b8aafda6ae0797d3127b5aa661b
          });
      }
      createRequest(options, callback) {
-@@ -61,6 +194,35 @@ class ElectronHttpExecutor extends builder_util_runtime_1.HttpExecutor {
+@@ -61,6 +201,35 @@ class ElectronHttpExecutor extends builder_util_runtime_1.HttpExecutor {
          }
          return request;
      }

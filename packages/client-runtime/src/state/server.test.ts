@@ -1,4 +1,5 @@
 import {
+  AuthOrchestrationReadScope,
   EnvironmentId,
   ProviderDriverKind,
   ServerSelfUpdateError,
@@ -74,6 +75,7 @@ import {
 } from "./server.ts";
 import { runAtomCommand } from "./runtime.ts";
 import { applyServerConfigProjection } from "./serverConfigProjection.ts";
+import { createEnvironmentSessionAtoms } from "./session.ts";
 
 const CONFIG = {
   availableEditors: [],
@@ -1854,6 +1856,82 @@ describe("provider setup commands", () => {
       );
       yield* TestClock.adjust(Duration.seconds(1));
       expect(yield* Fiber.join(saved)).toBe(true);
+    }),
+  );
+
+  it.effect("lets a manual provider refresh outlast a minute", () =>
+    Effect.gen(function* () {
+      using _timers = { [Symbol.dispose]: () => vi.useRealTimers() };
+      vi.useFakeTimers();
+      // Antigravity model discovery may take up to 90 seconds on the server.
+      const client = {
+        [WS_METHODS.serverRefreshProviders]: () =>
+          Effect.sleep("75 seconds").pipe(Effect.as({ providers: [] })),
+      } as unknown as WsRpcProtocolClient;
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target: TARGET,
+        state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+        session: yield* SubscriptionRef.make(Option.some(session(client))),
+        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+      const runtime = Atom.runtime(
+        Layer.mergeAll(
+          Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, {
+            run: (_environmentId, effect) =>
+              Effect.provideService(
+                effect,
+                EnvironmentSupervisor.EnvironmentSupervisor,
+                supervisor,
+              ),
+          } as EnvironmentRegistry.EnvironmentRegistry["Service"]),
+          Layer.succeed(
+            Persistence.EnvironmentCacheStore,
+            {} as Persistence.EnvironmentCacheStore["Service"],
+          ),
+        ),
+      );
+      const atoms = createServerEnvironmentAtoms(runtime, {
+        initialConfigValueAtom: () => Atom.make(CONFIG),
+      });
+      const sessionState = createEnvironmentSessionAtoms(runtime).sessionStateAtom(
+        TARGET.environmentId,
+      );
+      const registry = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          AtomRegistry.make({
+            initialValues: [
+              [
+                sessionState,
+                AsyncResult.success({
+                  authenticated: true,
+                  auth: {
+                    policy: "remote-reachable",
+                    bootstrapMethods: [],
+                    sessionMethods: [],
+                    sessionCookieName: "test",
+                  },
+                  scopes: [AuthOrchestrationReadScope],
+                }),
+              ],
+            ],
+          }),
+        ),
+        (registry) => Effect.sync(() => registry.dispose()),
+      );
+
+      const refresh = runAtomCommand(registry, atoms.refreshProviders, {
+        environmentId: TARGET.environmentId,
+        input: { refreshModels: true },
+      });
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(75_000));
+
+      expect(yield* Effect.promise(() => refresh)).toMatchObject({
+        _tag: "Success",
+        value: { providers: [] },
+      });
     }),
   );
 });

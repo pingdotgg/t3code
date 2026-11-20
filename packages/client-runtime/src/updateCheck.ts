@@ -13,6 +13,7 @@ import { compareSemverVersions } from "@t3tools/shared/semver";
 
 import {
   type AtomCommandResult,
+  type AtomCommandOptions,
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "./state/runtime.ts";
@@ -43,9 +44,11 @@ type Target<Input> = { readonly environmentId: EnvironmentId; readonly input: In
 export interface UpdateCheckCommands {
   readonly lookupNpmRelease: (
     target: Target<{ readonly spec: "latest" | "nightly" }>,
+    run: Pick<AtomCommandOptions, "signal">,
   ) => Promise<AtomCommandResult<ServerNpmRelease | null, unknown>>;
   readonly refreshProviders: (
     target: Target<{ readonly refreshModels: true }>,
+    run: Pick<AtomCommandOptions, "signal">,
   ) => Promise<AtomCommandResult<{ readonly providers: ReadonlyArray<ServerProvider> }, unknown>>;
   readonly timeoutMs?: number;
 }
@@ -59,25 +62,23 @@ function reasonOf(error: unknown): string {
   return error instanceof Error && error.message.length > 0 ? error.message : "The check failed.";
 }
 
-async function succeeded<A>(command: Promise<AtomCommandResult<A, unknown>>): Promise<A> {
-  const result = await command;
-  if (result._tag === "Success") return result.value;
-  throw isAtomCommandInterrupted(result)
-    ? new Error("The check was cancelled.")
-    : squashAtomCommandFailure(result);
-}
-
-// A hung request must not hold the whole check, and its spinner, forever.
-async function withTimeout<A>(request: Promise<A>, timeoutMs: number): Promise<A> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error(`No answer after ${Math.round(timeoutMs / 1000)} seconds.`)),
-      timeoutMs,
-    );
-  });
+// A hung request must not hold the whole check, and its spinner, forever. The deadline interrupts
+// the request itself, so a repeat check never overlaps one that is still running.
+async function answered<A>(
+  command: (run: Pick<AtomCommandOptions, "signal">) => Promise<AtomCommandResult<A, unknown>>,
+  timeoutMs: number,
+): Promise<A> {
+  const deadline = new AbortController();
+  const timer = setTimeout(() => deadline.abort(), timeoutMs);
   try {
-    return await Promise.race([request, timeout]);
+    const result = await command({ signal: deadline.signal });
+    if (result._tag === "Success") return result.value;
+    if (deadline.signal.aborted) {
+      throw new Error(`No answer after ${Math.round(timeoutMs / 1000)} seconds.`);
+    }
+    throw isAtomCommandInterrupted(result)
+      ? new Error("The check was cancelled.")
+      : squashAtomCommandFailure(result);
   } finally {
     clearTimeout(timer);
   }
@@ -97,13 +98,15 @@ async function checkServer(
   const channel = cliReleaseChannelOf(current);
   if (channel === "preview") return failed("Preview builds have no update track.");
   try {
-    const latest = await withTimeout(
-      succeeded(
-        commands.lookupNpmRelease({
-          environmentId: environment.environmentId,
-          input: { spec: channel === "nightly" ? "nightly" : "latest" },
-        }),
-      ),
+    const latest = await answered(
+      (run) =>
+        commands.lookupNpmRelease(
+          {
+            environmentId: environment.environmentId,
+            input: { spec: channel === "nightly" ? "nightly" : "latest" },
+          },
+          run,
+        ),
       timeoutMs,
     );
     if (latest === null) return failed(`No ${channel} release was found.`);
@@ -152,13 +155,12 @@ async function checkProviders(
     return [{ subject, result: failed("You do not have permission to manage them.") }];
   }
   try {
-    const { providers } = await withTimeout(
-      succeeded(
-        commands.refreshProviders({
-          environmentId: environment.environmentId,
-          input: { refreshModels: true },
-        }),
-      ),
+    const { providers } = await answered(
+      (run) =>
+        commands.refreshProviders(
+          { environmentId: environment.environmentId, input: { refreshModels: true } },
+          run,
+        ),
       timeoutMs,
     );
     return providerUpdateItems(environment.label, providers);

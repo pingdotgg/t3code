@@ -1,0 +1,24 @@
+diff --git a/out/httpExecutor.js b/out/httpExecutor.js
+index 8d9114761ab0cf92bf56668e8cac8139bc0d71d5..7d03adcb35cc2a1f0a5b40b0f2ceb594f39f776c 100644
+--- a/out/httpExecutor.js
++++ b/out/httpExecutor.js
+@@ -270,6 +270,10 @@ Please double check that your authentication token is correct. Due to security r
+         this.addRedirectHandlers(request, requestOptions, options.callback, redirectCount, requestOptions => {
+             this.doDownload(requestOptions, options, redirectCount++);
+         });
++        // Cancelling rejected the download but left its request open.
++        if (options.onCancel != null) {
++            options.onCancel(() => request.abort());
++        }
+         request.end();
+     }
+     createMaxRedirectError() {
+@@ -473,6 +477,8 @@ function configurePipes(options, response) {
+         streams.push(new DigestTransform(options.options.sha2, "sha256", "hex"));
+     }
+     const fileOut = (0, fs_1.createWriteStream)(options.destination);
++    // pipe() never ends its destination when the response is aborted, so the file stayed open.
++    response.on("aborted", () => fileOut.destroy());
+     streams.push(fileOut);
+     let lastStream = response;
+     for (const stream of streams) {
