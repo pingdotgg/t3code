@@ -236,8 +236,6 @@ const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E,
         // the project's default mode, never at this ceiling by default.
         access: "full-access",
         peerLink: false,
-        // A person types what this command sends, so the model reads it as theirs.
-        actsForUser: true,
         client: { deviceType: "bot" },
       }),
       (session) =>
@@ -872,6 +870,7 @@ const threadStartCommand = Command.make("start", {
               projectId: project.id,
               title,
               message,
+              typedByUser: true,
               ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
               ...(modelSelection === undefined ? {} : { modelSelection }),
             },
@@ -914,7 +913,7 @@ const threadSendCommand = Command.make("send", {
           const followWakes = flags.wait ? yield* threadIsIdle(tools, threadId) : false;
           const sent = yield* tools.call(
             "t3_thread_send",
-            { threadId, message, mode: "queue" },
+            { threadId, message, mode: "queue", typedByUser: true },
             OrchestratorMcpThreadSendResult,
           );
           if (flags.wait) {

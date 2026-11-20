@@ -8,6 +8,7 @@ import {
   ThreadId,
   OrchestrationV2RunStatus,
   OrchestratorMcpFailure,
+  OrchestratorMcpTypedByUser,
 } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as FileSystem from "effect/FileSystem";
@@ -59,6 +60,7 @@ const AttachmentSendTool = Tool.make("t3_thread_send_attachments", {
       Schema.isMinLength(1),
       Schema.isMaxLength(8),
     ),
+    typedByUser: OrchestratorMcpTypedByUser,
   }),
   success: Schema.Struct({
     threadId: ThreadId,

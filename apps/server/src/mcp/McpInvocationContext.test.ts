@@ -95,3 +95,17 @@ it("acts at an administrator's ceiling for a client approved above it", () => {
   expect(modes(scope("auto-accept-edits"), "auto").runtimeMode).toBe("auto-accept-edits");
   expect(modes(scope("full-access")).runtimeMode).toBe("full-access");
 });
+
+it("takes a message as the user's only from an outside client that says a person typed it", () => {
+  const client = { sessionId: "s", label: "T3 WoW", access: "full-access" } as const;
+  const thread = {
+    threadId: ThreadId.make("thread-1"),
+    providerSessionId: "provider-session-1",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+  };
+  const actor = McpInvocationContext.mcpMessageActor;
+  expect(actor({ thread: undefined, client }, true)).toBe("user");
+  expect(actor({ thread: undefined, client }, undefined)).toBe("agent");
+  expect(actor({ thread: undefined, client: { ...client, linked: true } }, true)).toBe("agent");
+  expect(actor({ thread, client: undefined }, true)).toBe("agent");
+});

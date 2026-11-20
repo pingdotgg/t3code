@@ -3646,7 +3646,7 @@ const make = Effect.gen(function* () {
           attachments: [],
           mode,
           ...(input.freshContext ? { freshContext: true } : {}),
-          createdBy: mcpMessageActor(scope),
+          createdBy: mcpMessageActor(scope, input.typedByUser),
           creationSource: "mcp",
         })
         .pipe(

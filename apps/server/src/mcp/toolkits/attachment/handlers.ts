@@ -112,6 +112,7 @@ export const layer = McpToolAccess.toLayer(
               mode: "auto",
               createdBy: McpInvocationContext.mcpMessageActor(
                 yield* McpInvocationContext.McpInvocationContext,
+                input.typedByUser,
               ),
               creationSource: "mcp",
             }).pipe(

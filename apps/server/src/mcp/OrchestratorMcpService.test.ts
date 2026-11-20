@@ -5129,7 +5129,7 @@ describe("OrchestratorMcpService thread lookup", () => {
     }),
   );
 
-  it.effect("records whether the user or a linked environment's thread sent a message", () =>
+  it.effect("records who sent a message: a linked environment's thread, or the user", () =>
     Effect.gen(function* () {
       const target = liveThreadShell(ThreadId.make("thread:target"));
       const sender = {
@@ -5147,13 +5147,13 @@ describe("OrchestratorMcpService thread lookup", () => {
           ...(senderThread === undefined ? {} : { senderThread }),
         },
       });
-      const sendAs = (scope: McpInvocationScope) =>
+      const sendAs = (scope: McpInvocationScope, typedByUser?: true) =>
         Effect.gen(function* () {
           const inputs: Array<ThreadManagementService.ThreadManagementSendInput> = [];
           const sent = yield* Ref.make(0);
           yield* Effect.gen(function* () {
             const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
-            yield* mcp.sendToThread(scope, { threadId: target.id, message: "hello" });
+            yield* mcp.sendToThread(scope, { threadId: target.id, message: "hello", typedByUser });
           }).pipe(
             Effect.provide(
               service([target], sent, {
@@ -5174,22 +5174,9 @@ describe("OrchestratorMcpService thread lookup", () => {
       const fromLink = yield* sendAs(linked(sender));
       assert.deepStrictEqual(fromLink?.linkedSender, sender);
       assert.isUndefined(fromLink?.senderThreadId);
-      assert.strictEqual(fromLink?.createdBy, "agent");
-      const fromBareLink = yield* sendAs(linked());
-      assert.isUndefined(fromBareLink?.linkedSender);
-      assert.strictEqual(fromBareLink?.createdBy, "agent");
-      // An outside agent signed in over OAuth is not the user; the `t3` CLI's own session is.
+      assert.isUndefined((yield* sendAs(linked()))?.linkedSender);
       assert.strictEqual((yield* sendAs(client))?.createdBy, "agent");
-      const typedByUser: McpInvocationScope = {
-        ...client,
-        client: {
-          sessionId: "cli",
-          label: "t3 thread cli",
-          access: "full-access",
-          actsForUser: true,
-        },
-      };
-      assert.strictEqual((yield* sendAs(typedByUser))?.createdBy, "user");
+      assert.strictEqual((yield* sendAs(client, true))?.createdBy, "user");
     }),
   );
 

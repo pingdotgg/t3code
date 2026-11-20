@@ -591,29 +591,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
     );
 
-    it.effect("marks only an MCP session issued as the user's own client as acting for them", () =>
-      Effect.gen(function* () {
-        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-        const actsForUser = (asUser: boolean) =>
-          serverAuth
-            .issueMcpClientSession({
-              label: asUser ? "t3 thread cli" : "Claude Code",
-              access: "full-access",
-              peerLink: false,
-              ...(asUser ? { actsForUser: true } : {}),
-              client: requestMetadata,
-            })
-            .pipe(
-              Effect.flatMap((session) =>
-                serverAuth.authenticateMcpClient(makeBearerRequest(session.token)),
-              ),
-              Effect.map((client) => client.actsForUser),
-            );
-        expect(yield* actsForUser(true)).toBe(true);
-        expect(yield* actsForUser(false)).toBe(false);
-      }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
-    );
-
     it.effect("preserves pairing grants after rejecting scopes they do not grant", () =>
       Effect.gen(function* () {
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
