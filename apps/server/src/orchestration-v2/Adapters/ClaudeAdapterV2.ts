@@ -12838,6 +12838,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           live.selection = selection;
         });
 
+        const shouldResumeNativeSession = Effect.fn("ClaudeAdapterV2.shouldResumeNativeSession")(
+          function* (
+            turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+            nativeThreadId: string,
+            resumeSessionAt: string | undefined,
+          ) {
+            // Idle release loses openedNativeThreads; persisted turns still require resume to avoid "already in use".
+            return (
+              resumeSessionAt !== undefined ||
+              (yield* Ref.get(openedNativeThreads)).has(nativeThreadId) ||
+              (turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1)
+            );
+          },
+        );
+
         const openQuery = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           nativeThreadId: string,
@@ -12981,12 +12996,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
           }
 
-          const openedWithResume = (yield* Ref.get(openedNativeThreads)).has(nativeThreadId);
-          // Idle release loses openedNativeThreads; persisted turns still require resume to avoid "already in use".
-          const hasPersistedProviderTurn =
-            turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1;
-          const shouldResume =
-            resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
+          const shouldResume = yield* shouldResumeNativeSession(
+            turnInput,
+            nativeThreadId,
+            resumeSessionAt,
+          );
           const gitHubReadGate = Option.isSome(serverSettings)
             ? yield* serverSettings.value.getSettings.pipe(
                 Effect.map((settings) => settings.enableAgentGitHubReadGate),
@@ -13258,10 +13272,26 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         });
 
         const startTurn = Effect.fn("ClaudeAdapterV2.startTurn")(
-          function* (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
+          function* (requestedTurn: ProviderAdapter.ProviderAdapterV2TurnInput) {
             modelCatalog = yield* loadModelCatalog;
             const startedAt = yield* DateTime.now;
-            const nativeThreadId = yield* getNativeThreadId(turnInput.providerThread);
+            const nativeThreadId = yield* getNativeThreadId(requestedTurn.providerThread);
+            const live = yield* Ref.get(queryContext);
+            // A new session has no wake output to drain, and Claude saves no conversation it was never prompted with.
+            const continuationStartsSession =
+              isClaudeProviderContinuationTurn(requestedTurn) &&
+              !(live?.nativeThreadId === nativeThreadId && !live.stopping) &&
+              !(yield* shouldResumeNativeSession(
+                requestedTurn,
+                nativeThreadId,
+                yield* getNativeConversationHeadId(requestedTurn.providerThread),
+              ));
+            const turnInput = continuationStartsSession
+              ? {
+                  ...requestedTurn,
+                  message: { ...requestedTurn.message, creationSource: "server" as const },
+                }
+              : requestedTurn;
             const nativeTurnId = `turn:${turnInput.attemptId}`;
             // Use fresh uuids: native sessions can outlive this database, and Claude skips previously recorded prompts.
             const promptUuid = isClaudeProviderContinuationTurn(turnInput)
