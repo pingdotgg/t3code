@@ -182,11 +182,11 @@ import {
 } from "@t3tools/shared/composerContextReferences";
 import { appAtomRegistry } from "./atom-registry";
 import { startComposerDraftOperation } from "./composerDraftOperations";
+import { questionAttachmentDraftKey } from "./question-attachments";
 import {
   pickQuestionAttachments,
-  questionAttachmentDraftKey,
   resolveQuestionImagePreparations,
-} from "./question-attachments";
+} from "./question-attachment-preparation";
 import { threadOutboxManager } from "./thread-outbox";
 import {
   appendComposerDraftAttachments,

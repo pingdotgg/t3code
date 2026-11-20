@@ -25,11 +25,11 @@ import {
   composerDraftsAtom,
   removeComposerDraftAttachment,
 } from "../../state/use-composer-drafts";
+import { questionAttachmentDraftKey } from "../../state/question-attachments";
 import {
   pickQuestionAttachments,
-  questionAttachmentDraftKey,
   startQuestionImagePreparation,
-} from "../../state/question-attachments";
+} from "../../state/question-attachment-preparation";
 
 export function QuestionAttachments(props: {
   requestId: string;

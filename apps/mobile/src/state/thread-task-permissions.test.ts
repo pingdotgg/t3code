@@ -246,7 +246,8 @@ vi.mock("./use-remote-environment-registry", () => ({ setPendingConnectionError:
 import { Alert } from "react-native";
 import { useThreadComposerState } from "./use-thread-composer-state";
 import { useSelectedThreadRequests } from "./use-selected-thread-requests";
-import { questionAttachmentDraftKey, startQuestionImagePreparation } from "./question-attachments";
+import { questionAttachmentDraftKey } from "./question-attachments";
+import { startQuestionImagePreparation } from "./question-attachment-preparation";
 import { abortComposerDraftOperations } from "./composerDraftOperations";
 
 const NO_SIDE_CHATS = { startSideChat: async () => false };

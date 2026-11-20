@@ -3,12 +3,14 @@ import { msg } from "gt-react-native";
 import { m } from "../i18n/messages";
 import { useServerConfigs } from "./entities";
 import {
-  appendUnsentQuestionAttachments,
   questionAttachmentDraftKey,
   questionAttachmentDraftPrefix,
   questionAttachmentPreparationAtom,
-  resolveQuestionImagePreparations,
 } from "./question-attachments";
+import {
+  appendUnsentQuestionAttachments,
+  resolveQuestionImagePreparations,
+} from "./question-attachment-preparation";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import {
   clearComposerDraft,
