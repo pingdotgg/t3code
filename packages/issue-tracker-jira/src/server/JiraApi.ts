@@ -39,7 +39,28 @@ const Status = Schema.Struct({
 });
 export type JiraStatus = typeof Status.Type;
 
-const Transition = Schema.Struct({ id: Schema.String, name: Schema.String, to: Status });
+const TransitionField = Schema.Struct({
+  name: Schema.optional(Schema.String),
+  required: Schema.optional(Schema.Boolean),
+  schema: Schema.optional(
+    Schema.Struct({
+      type: Schema.optional(Schema.String),
+      items: Schema.optional(Schema.String),
+      custom: Schema.optional(Schema.String),
+      system: Schema.optional(Schema.String),
+    }),
+  ),
+  operations: Schema.optional(Schema.Array(Schema.String)),
+  allowedValues: Schema.optional(Schema.Array(Schema.Json)),
+});
+export type JiraTransitionField = typeof TransitionField.Type;
+const Transition = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  to: Status,
+  hasScreen: Schema.optional(Schema.Boolean),
+  fields: Schema.optional(Schema.Record(Schema.String, TransitionField)),
+});
 export type JiraTransition = typeof Transition.Type;
 
 const History = Schema.Struct({
@@ -71,7 +92,6 @@ const Issue = Schema.Struct({
     resolutiondate: Schema.optional(Schema.NullOr(Schema.String)),
     description: Schema.optional(Schema.Unknown),
   }),
-  transitions: Schema.optional(Schema.Array(Transition)),
   changelog: Schema.optional(Schema.Struct({ histories: Schema.Array(History) })),
 });
 export type JiraIssue = typeof Issue.Type;
@@ -183,8 +203,12 @@ export class JiraApi extends Context.Service<
       { readonly issues: ReadonlyArray<JiraIssue>; readonly nextPageToken: string | null },
       IssueTrackerError
     >;
-    /** With the description, the transitions the account may make, and the change history. */
+    /** With the description and the change history. */
     readonly getIssue: (key: string) => Effect.Effect<JiraIssue, IssueTrackerError>;
+    /** The transitions the account may make, each with the fields its screen asks for. */
+    readonly getTransitions: (
+      key: string,
+    ) => Effect.Effect<ReadonlyArray<JiraTransition>, IssueTrackerError>;
     /** Newest first, `startAt` counting from the newest. */
     readonly getComments: (input: {
       readonly key: string;
@@ -212,7 +236,11 @@ export class JiraApi extends Context.Service<
       key: string,
       fields: Record<string, unknown>,
     ) => Effect.Effect<void, IssueTrackerError>;
-    readonly transition: (key: string, id: string) => Effect.Effect<void, IssueTrackerError>;
+    readonly transition: (
+      key: string,
+      id: string,
+      values: { readonly fields?: Readonly<Record<string, unknown>>; readonly comment?: AdfNode },
+    ) => Effect.Effect<void, IssueTrackerError>;
     readonly addComment: (key: string, body: AdfNode) => Effect.Effect<void, IssueTrackerError>;
     readonly labels: Effect.Effect<
       { readonly names: ReadonlyArray<string>; readonly truncated: boolean },
@@ -384,9 +412,16 @@ export const make = Effect.gen(function* () {
       path: `/rest/api/3/issue/${encodeURIComponent(key)}`,
       query: {
         fields: [...ISSUE_FIELDS, "description"].join(","),
-        expand: "transitions,changelog",
+        expand: "changelog",
       },
     });
+
+  const getTransitions: JiraApi["Service"]["getTransitions"] = (key) =>
+    send("getTransitions", Schema.Struct({ transitions: Schema.Array(Transition) }), {
+      method: "GET",
+      path: `/rest/api/3/issue/${encodeURIComponent(key)}/transitions`,
+      query: { expand: "transitions.fields" },
+    }).pipe(Effect.map((page) => page.transitions));
 
   const getComments: JiraApi["Service"]["getComments"] = (input) =>
     send("getComments", Schema.Struct({ comments: Schema.Array(Comment), total: Schema.Number }), {
@@ -454,11 +489,17 @@ export const make = Effect.gen(function* () {
       body: { fields },
     });
 
-  const transition: JiraApi["Service"]["transition"] = (key, id) =>
+  const transition: JiraApi["Service"]["transition"] = (key, id, values) =>
     send("transition", Schema.Void, {
       method: "POST",
       path: `/rest/api/3/issue/${encodeURIComponent(key)}/transitions`,
-      body: { transition: { id } },
+      body: {
+        transition: { id },
+        ...(values.fields === undefined ? {} : { fields: values.fields }),
+        ...(values.comment === undefined
+          ? {}
+          : { update: { comment: [{ add: { body: values.comment } }] } }),
+      },
     });
 
   const addComment: JiraApi["Service"]["addComment"] = (key, body) =>
@@ -498,6 +539,7 @@ export const make = Effect.gen(function* () {
     projects,
     search,
     getIssue,
+    getTransitions,
     getComments,
     permissions,
     issueTypes,

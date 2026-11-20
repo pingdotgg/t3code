@@ -52,6 +52,38 @@ export const IssueState = Schema.Struct({
 });
 export type IssueState = typeof IssueState.Type;
 
+/** A field a workflow transition asks for. `unsupported` needs the tracker's own editor. */
+export const IssueTransitionField = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  required: Schema.Boolean,
+  type: Schema.Literals([
+    "text",
+    "multiline",
+    "number",
+    "date",
+    "datetime",
+    "select",
+    "multiselect",
+    "unsupported",
+  ]),
+  options: Schema.Array(Schema.Struct({ value: Schema.String, label: Schema.String })),
+});
+export type IssueTransitionField = typeof IssueTransitionField.Type;
+
+/** A named workflow action; several can lead to the same state. */
+export const IssueTransition = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  to: IssueState,
+  fields: Schema.Array(IssueTransitionField),
+});
+export type IssueTransition = typeof IssueTransition.Type;
+
+/** Answers by field id: a string, a number, or an array of option values. */
+export const IssueTransitionFields = Schema.Record(Schema.String, Schema.Json);
+export type IssueTransitionFields = typeof IssueTransitionFields.Type;
+
 /** What a listing asks for: either category, or both. */
 export const IssueListState = Schema.Literals(["all", "open", "closed"]);
 export type IssueListState = typeof IssueListState.Type;
@@ -193,6 +225,8 @@ export const IssueCapabilities = Schema.Struct({
   events: Schema.Boolean,
   /** The tracker narrows a listing by free text itself. */
   search: Schema.Boolean,
+  /** The tracker moves an issue by the named `transitions` on its detail, not by state alone. */
+  transitionForms: Schema.optional(Schema.Boolean),
 });
 export type IssueCapabilities = typeof IssueCapabilities.Type;
 
@@ -223,6 +257,8 @@ export const IssueDetail = Schema.Struct({
    * Empty means its state cannot be changed from here.
    */
   states: Schema.Array(IssueState),
+  /** The workflow actions this account can take from here, when the tracker has `transitionForms`. */
+  transitions: Schema.optional(Schema.Array(IssueTransition)),
   /** The signed-in account, so a comment edit is offered only on the viewer's own remarks. */
   viewer: Schema.NullOr(TrimmedNonEmptyString),
   body: Schema.String,
@@ -359,6 +395,10 @@ export const IssueSetStateInput = Schema.Struct({
   ...IssueRef.fields,
   /** The name of one of the issue's `states`. */
   state: TrimmedNonEmptyString,
+  /** One of the detail's `transitions`, whose `to` is `state`. */
+  transitionId: Schema.optional(TrimmedNonEmptyString),
+  /** Answers to that transition's fields. */
+  fields: Schema.optional(IssueTransitionFields),
 });
 export type IssueSetStateInput = typeof IssueSetStateInput.Type;
 

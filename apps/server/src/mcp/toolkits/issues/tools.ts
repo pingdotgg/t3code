@@ -3,6 +3,8 @@ import {
   IssueListState,
   IssueOperationError,
   IssueState,
+  IssueSetStateInput,
+  IssueTransition,
   IssueTrackerKind,
   IssueUnavailableError,
   McpCapabilityUnavailableError,
@@ -172,6 +174,7 @@ export const ReadIssueResult = Schema.Struct({
   writable: Schema.Boolean,
   capabilities: IssueCapabilities,
   states: Schema.Array(IssueState),
+  transitions: Schema.optional(Schema.Array(IssueTransition)),
   author: Schema.NullOr(Schema.String),
   assignees: Schema.Array(Schema.String),
   labels: Schema.Array(Schema.String),
@@ -316,12 +319,15 @@ const CommentOnIssueTool = Tool.make("comment_on_issue", {
   .annotate(Tool.OpenWorld, true);
 
 const SetIssueStateTool = Tool.make("set_issue_state", {
-  description: "Move an issue to one of its states. read_issue lists them under states.",
+  description:
+    "Move an issue using read_issue's states or transitions. For a transition, pass its exact transitionId and advertised field IDs. Ask the user for any required value they have not supplied; never choose a resolution or other required answer for them.",
   parameters: Schema.Struct({
     ...IssueTargetInput.fields,
     state: TrimmedNonEmptyString.annotate({
-      description: "A state name from read_issue's states.",
+      description: "A state name from read_issue's states, or the chosen transition's to.name.",
     }),
+    transitionId: IssueSetStateInput.fields.transitionId,
+    fields: IssueSetStateInput.fields.fields,
   }),
   success: IssueWriteResult,
   failure: IssueToolError,
@@ -330,7 +336,7 @@ const SetIssueStateTool = Tool.make("set_issue_state", {
   .annotate(Tool.Title, "Set issue state")
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.Idempotent, false)
   .annotate(Tool.OpenWorld, true);
 
 const LinkIssueTool = Tool.make("link_issue", {

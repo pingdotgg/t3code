@@ -9,6 +9,7 @@ import type {
   IssueReaction,
   IssueState,
   IssueSummary,
+  IssueTransition,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useRef, useState } from "react";
@@ -26,6 +27,7 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { Menu } from "../../components/ui/Menu";
 import { RefreshControl } from "../../components/ui/RefreshControl";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
+import { I18nProvider } from "../../i18n/I18nProvider";
 import { useComposerBottomInset } from "../../components/ComposerSurface";
 import { ANDROID_READING_MAX_WIDTH, CHAT_CONTENT_MAX_WIDTH } from "../../lib/layout";
 import { relativeTime } from "../../lib/time";
@@ -51,6 +53,7 @@ import { PullRequestSectionHeading } from "../pull-requests/PullRequestSectionHe
 import { pullRequestStatus } from "../pull-requests/pullRequestStatus";
 import { usePullRequestConnected } from "../pull-requests/usePullRequestConnected";
 import { IssueCommentComposer } from "./IssueCommentComposer";
+import { IssueTransitionDialog } from "./IssueTransitionDialog";
 import { issueIdentity, issueParamsKey, issueTarget, type IssueParams } from "./issueParams";
 import {
   IssueLabelPill,
@@ -97,11 +100,18 @@ function IssueReactions(props: {
 function IssueStateControl(props: {
   readonly state: IssueState;
   readonly states: ReadonlyArray<IssueState>;
+  /** The tracker's workflow actions, which replace `states` when it has them. */
+  readonly transitions: ReadonlyArray<IssueTransition> | null;
   readonly busy: boolean;
   readonly onMove: (state: string) => void;
+  readonly onTransition: (transition: IssueTransition) => void;
 }) {
   const status = issueStatus(props.state);
-  const moves = props.states;
+  // A state's name is its id: unique within a workflow, and a NUL separator would end the native
+  // string. A workflow action has its own id, since two can reach one state.
+  const moves =
+    props.transitions?.map((transition) => ({ id: transition.id, title: transition.name })) ??
+    props.states.map((state) => ({ id: state.name, title: state.name }));
   const trigger = (
     <Pressable
       accessibilityRole={moves.length ? "button" : undefined}
@@ -122,11 +132,12 @@ function IssueStateControl(props: {
     <View className="self-start">
       <Menu
         title="Issue state"
-        // The name is the id: unique within a workflow, and a NUL separator would end the native string.
-        actions={moves.map((move) => ({ id: move.name, title: move.name }))}
+        actions={moves}
         onPressAction={({ nativeEvent }) => {
-          if (moves.some((move) => move.name === nativeEvent.event))
-            props.onMove(nativeEvent.event);
+          if (!moves.some((move) => move.id === nativeEvent.event)) return;
+          const transition = props.transitions?.find((move) => move.id === nativeEvent.event);
+          if (transition === undefined) props.onMove(nativeEvent.event);
+          else props.onTransition(transition);
         }}
       >
         {trigger}
@@ -140,6 +151,7 @@ function IssueIdentity(props: {
   readonly access: IssueAccess | null;
   readonly busy: boolean;
   readonly onMove: (state: string) => void;
+  readonly onTransition: (transition: IssueTransition) => void;
   readonly onEditLabels: () => void;
   readonly onEditAssignees: () => void;
 }) {
@@ -151,8 +163,10 @@ function IssueIdentity(props: {
       <IssueStateControl
         state={issue.state}
         states={access?.states ?? []}
+        transitions={access?.transitions ?? null}
         busy={props.busy}
         onMove={props.onMove}
+        onTransition={props.onTransition}
       />
       <Text selectable className="text-xl font-t3-bold leading-7">
         {issue.title}
@@ -328,7 +342,11 @@ function IssueLoadingBody() {
 
 // Selecting another issue reuses this route, so the draft, older comments and errors are keyed.
 export function IssueRouteScreen({ route }: StaticScreenProps<IssueParams>) {
-  return <IssueRoute key={issueParamsKey(route.params)} params={route.params} />;
+  return (
+    <I18nProvider>
+      <IssueRoute key={issueParamsKey(route.params)} params={route.params} />
+    </I18nProvider>
+  );
 }
 
 function IssueRoute({ params }: { readonly params: IssueParams }) {
@@ -366,6 +384,7 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
   const [busy, setBusy] = useState<"older" | "comment" | "state" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [composerHeight, setComposerHeight] = useState(0);
+  const [transitionDialog, setTransitionDialog] = useState<IssueTransition | null>(null);
 
   // Older pages are tied to the cursor the detail was read with; a refreshed detail starts over.
   const olderComments = detail && older?.seed === detail.commentsCursor ? older.comments : [];
@@ -434,6 +453,16 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
       : Promise.resolve(false);
   const moveTo = (state: string) =>
     void run("state", () => setState({ ...target, input: { ...target.input, state } }));
+  const beginTransition = (transition: IssueTransition) => {
+    if (transition.fields.length > 0) setTransitionDialog(transition);
+    else
+      void run("state", () =>
+        setState({
+          ...target,
+          input: { ...target.input, state: transition.to.name, transitionId: transition.id },
+        }),
+      );
+  };
 
   const showComposer = detail?.capabilities.comment === true;
   const commentBlocked =
@@ -554,6 +583,7 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
                 access={access}
                 busy={busy === "state"}
                 onMove={moveTo}
+                onTransition={beginTransition}
                 onEditLabels={() => navigation.navigate("IssueLabels", identity)}
                 onEditAssignees={() => navigation.navigate("IssueAssignees", identity)}
               />
@@ -617,6 +647,29 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
             </View>
           )}
         </NativeScrollView>
+        {transitionDialog && detail ? (
+          <IssueTransitionDialog
+            transition={transitionDialog}
+            issueKey={detail.displayKey}
+            issueUrl={detail.url}
+            onClose={() => setTransitionDialog(null)}
+            onSubmit={async (fields) => {
+              const failure = issueCommandError(
+                await setState({
+                  ...target,
+                  input: {
+                    ...target.input,
+                    state: transitionDialog.to.name,
+                    transitionId: transitionDialog.id,
+                    fields,
+                  },
+                }),
+              );
+              if (failure === null) refreshIssueLists(target.environmentId);
+              return failure;
+            }}
+          />
+        ) : null}
         {showComposer ? (
           <KeyboardStickyView
             // On the unfolded Duo the sidebar's search shares the keyboard; follow it only for ours.

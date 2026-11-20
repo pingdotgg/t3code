@@ -321,6 +321,15 @@ describe("IssueService", () => {
 
       // The state is the tracker's own name, passed through: the tracker is what proves it.
       yield* service.setState({ ...ref, state: "In Review" });
+      const transition = yield* service
+        .setState({
+          ...ref,
+          state: "In Review",
+          transitionId: "31",
+          fields: { resolution: "fixed" },
+        })
+        .pipe(Effect.flip);
+      expect(transition._tag).toBe("IssueOperationError");
       const reaction = yield* Effect.flip(
         service.react({ ...ref, content: "heart", reacted: true }),
       );

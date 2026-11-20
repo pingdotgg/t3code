@@ -577,6 +577,11 @@ const make = Effect.gen(function* () {
       Effect.flatMap((project) => {
         if (project.api.setState === undefined)
           return Effect.fail(unsupported("setState", "changing an issue's state"));
+        if (
+          (input.transitionId !== undefined || input.fields !== undefined) &&
+          !project.api.capabilities.transitionForms
+        )
+          return Effect.fail(unsupported("setState", "workflow transition fields"));
         return project.api
           .setState({
             cwd: project.project.workspaceRoot,
@@ -584,6 +589,8 @@ const make = Effect.gen(function* () {
             scope: project.scope,
             key: input.key,
             state: input.state,
+            transitionId: input.transitionId,
+            fields: input.fields,
           })
           .pipe(Effect.mapError(toIssueError("setState")));
       }),

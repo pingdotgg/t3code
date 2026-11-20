@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./issue-transitions": {
+      "types": "./src/issueTransitions.ts",
+      "default": "./src/issueTransitions.ts"
+    },
     "./pull-request-diff-fold": {
       "types": "./src/pullRequestDiffFold.ts",
       "default": "./src/pullRequestDiffFold.ts"
