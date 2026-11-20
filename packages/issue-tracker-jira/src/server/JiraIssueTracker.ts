@@ -12,6 +12,7 @@ import {
   type IssueComment,
   type IssueEvent,
   type IssueInvolvement,
+  type IssueLinkedPullRequest,
   type IssueState,
   type IssueViewerPermissions,
   type StandaloneIssueTrackerDescriptor,
@@ -25,7 +26,7 @@ import type {
 import { adfToMarkdown, hasUnwritableContent, markdownToAdf } from "./adf.ts";
 import * as JiraApi from "./JiraApi.ts";
 
-const DESCRIPTOR: StandaloneIssueTrackerDescriptor = {
+export const DESCRIPTOR: StandaloneIssueTrackerDescriptor = {
   tracker: JiraApi.KIND,
   displayName: "Jira",
   // Every Jira Cloud site; the one this server reads is part of the saved credential.
@@ -39,10 +40,15 @@ const DESCRIPTOR: StandaloneIssueTrackerDescriptor = {
       { key: "email", label: "Account email", placeholder: "you@example.com" },
     ],
   },
+  environmentLogin: {
+    label: "TWG",
+    description: "Uses the TWG login on this environment. Run twg login there first.",
+    fields: [{ key: "site", label: "Site", placeholder: "yourteam.atlassian.net" }],
+  },
 };
 
-/** No reactions or development panel: Jira Cloud's public API serves neither. */
-const CAPABILITIES: IssueCapabilities = {
+/** No reactions: Jira Cloud's public API serves none. */
+export const CAPABILITIES: IssueCapabilities = {
   create: true,
   edit: true,
   comment: true,
@@ -50,7 +56,7 @@ const CAPABILITIES: IssueCapabilities = {
   assignees: true,
   reactions: false,
   templates: false,
-  linkedPullRequests: false,
+  linkedPullRequests: true,
   events: true,
   search: true,
 };
@@ -199,6 +205,38 @@ function toEvents(histories: ReadonlyArray<JiraApi.JiraHistory>): IssueEvent[] {
     }
   }
   return events;
+}
+
+/** The repository path and number in a pull or merge request's address on the common hosts. */
+const PULL_REQUEST_PATH =
+  /^\/(.+?)\/(?:pull|pull-requests|-\/merge_requests|pullrequest)\/(\d+)(?:\/|$)/u;
+
+function toLinkedPullRequests(
+  pullRequests: ReadonlyArray<JiraApi.JiraDevelopmentPullRequest>,
+): IssueLinkedPullRequest[] {
+  const seen = new Set<string>();
+  return pullRequests.flatMap((pullRequest) => {
+    const url = pullRequest.url?.trim() ?? "";
+    const parsed = URL.parse(url);
+    if (parsed === null || !/^https?:$/u.test(parsed.protocol) || seen.has(url)) return [];
+    seen.add(url);
+    const path = PULL_REQUEST_PATH.exec(parsed.pathname);
+    const repository = path?.[1] ?? pullRequest.repositoryName?.trim();
+    const number = Number(path?.[2] ?? /^\D*(\d+)$/u.exec(pullRequest.id ?? "")?.[1]);
+    if (!repository || !Number.isSafeInteger(number) || number < 1) return [];
+    const status = pullRequest.status?.toUpperCase();
+    return [
+      {
+        repository,
+        number,
+        title: pullRequest.name?.trim() || url,
+        url,
+        state: status === "MERGED" ? "merged" : status === "DECLINED" ? "closed" : "open",
+        isDraft: status === "DRAFT",
+        closesIssue: false,
+      } as const,
+    ];
+  });
 }
 
 /** A JQL string literal. */
@@ -369,10 +407,18 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
 
       getIssue: Effect.fn("JiraIssueTracker.getIssue")(function* (input) {
         const key = yield* requireKey("getIssue", input.key);
-        const [origin, issue, page, allowed, me] = yield* Effect.all(
+        const [origin, { issue, pullRequests }, page, allowed, me] = yield* Effect.all(
           [
             jira.origin,
-            jira.getIssue(key),
+            jira.getIssue(key).pipe(
+              Effect.flatMap((issue) =>
+                jira.developmentPullRequests(issue.id).pipe(
+                  // The API is undocumented; when it fails the issue still opens, without them.
+                  Effect.orElseSucceed(() => []),
+                  Effect.map((pullRequests) => ({ issue, pullRequests })),
+                ),
+              ),
+            ),
             jira.getComments({ key, startAt: 0, limit: COMMENTS_PAGE }),
             jira
               .permissions(key, [
@@ -405,7 +451,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
           comments: page.comments.map((comment) => toComment(comment, summary.url)),
           commentsCursor: page.total > page.comments.length ? String(page.comments.length) : null,
           events: toEvents(issue.changelog?.histories ?? []),
-          linkedPullRequests: [],
+          linkedPullRequests: toLinkedPullRequests(pullRequests),
         };
       }),
 

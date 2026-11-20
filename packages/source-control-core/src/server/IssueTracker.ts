@@ -19,6 +19,7 @@ import type {
   IssueReaction,
   IssueReactionContent,
   IssueSummary,
+  IssueTrackerAuthentication,
   IssueTemplateList,
   IssueTrackerKind,
   IssueTrackerScope,
@@ -188,8 +189,12 @@ export interface IssueTrackerApi {
   ) => Effect.Effect<IssueCandidates, IssueTrackerError>;
 }
 
-/** What a user saved to reach a standalone tracker: the secret, and the descriptor's fields. */
+/**
+ * What a user saved to reach a standalone tracker: the secret and the descriptor's fields, or for
+ * an environment login no secret and that login's fields.
+ */
 export interface IssueTrackerCredential {
+  readonly authentication?: IssueTrackerAuthentication | undefined;
   readonly token: string;
   readonly fields: Readonly<Record<string, string>>;
 }

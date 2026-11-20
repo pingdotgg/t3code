@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type { IssueTrackerKind } from "@t3tools/contracts";
+import { IssueTrackerAuthentication, type IssueTrackerKind } from "@t3tools/contracts";
 import {
   IssueTrackerError,
   type IssueTrackerCredential,
@@ -22,7 +22,11 @@ export function issueTrackerSecretName(tracker: IssueTrackerKind): string {
 }
 
 const StoredCredential = Schema.fromJsonString(
-  Schema.Struct({ token: Schema.String, fields: Schema.Record(Schema.String, Schema.String) }),
+  Schema.Struct({
+    token: Schema.String,
+    fields: Schema.Record(Schema.String, Schema.String),
+    authentication: Schema.optional(IssueTrackerAuthentication),
+  }),
 );
 const decodeStored = Schema.decodeUnknownOption(StoredCredential);
 const encodeStored = Schema.encodeSync(StoredCredential);
@@ -31,11 +35,13 @@ const encoder = new TextEncoder();
 
 /**
  * A key alone is stored as itself, which is how Linear's was saved before trackers had fields;
- * one with fields is stored as JSON, which no API key reads as.
+ * one with fields, or an environment login, is stored as JSON, which no API key reads as.
  */
 export function encodeIssueTrackerCredential(credential: IssueTrackerCredential): Uint8Array {
   return encoder.encode(
-    Object.keys(credential.fields).length === 0 ? credential.token : encodeStored(credential),
+    Object.keys(credential.fields).length === 0 && credential.authentication !== "environment"
+      ? credential.token
+      : encodeStored(credential),
   );
 }
 

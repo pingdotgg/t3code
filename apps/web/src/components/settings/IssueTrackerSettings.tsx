@@ -1,10 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useGT } from "gt-react";
 import { issueTrackerSummary } from "@t3tools/client-runtime/state/issue-trackers";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { ChevronDownIcon, ExternalLinkIcon, XIcon } from "lucide-react";
 import { useState, type ElementType } from "react";
 import type {
   EnvironmentId,
+  IssueTrackerAuthentication,
   IssueTrackerConnection,
   IssueTrackerConnectionList,
   ProjectId,
@@ -97,6 +99,7 @@ function TrackerRow({
   readonly tracker: IssueTrackerConnection;
   readonly bindings: IssueTrackerConnectionList["bindings"];
 }) {
+  const gt = useGT();
   const Icon = TRACKER_ICONS[tracker.tracker];
   const canEdit = useAtomValue(issueTrackerEnvironment.connect.permissionAtom(environmentId));
   const connect = useAtomCommand(issueTrackerEnvironment.connect, {
@@ -105,10 +108,16 @@ function TrackerRow({
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
-  const fields = tracker.credential.fields ?? [];
+  const login = tracker.environmentLogin;
+  const [authentication, setAuthentication] = useState<IssueTrackerAuthentication>(
+    tracker.authentication ?? "token",
+  );
+  const environment = authentication === "environment" && login !== undefined;
+  const fields = environment ? login.fields : (tracker.credential.fields ?? []);
   const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>(tracker.fields ?? {});
 
-  const submit = async (token: string | null) => {
+  /** A null token disconnects; none connects with the environment's login. */
+  const submit = async (token: string | null | undefined) => {
     const missing = fields.find((field) => !drafts[field.key]?.trim());
     if (token !== null && missing !== undefined) {
       setFailure(`Enter the ${missing.label.toLowerCase()} first.`);
@@ -120,7 +129,7 @@ function TrackerRow({
       environmentId,
       input: {
         tracker: tracker.tracker,
-        token,
+        ...(token === undefined ? { authentication: "environment" as const } : { token }),
         ...(token === null || fields.length === 0
           ? {}
           : {
@@ -183,6 +192,36 @@ function TrackerRow({
           {/* Locked while saving, so an edit made mid-request is not overwritten by the saved value. */}
           <fieldset disabled={!canEdit || busy} className="contents">
             <div className="px-3 pb-4 pt-1 sm:px-4">
+              {login ? (
+                <SettingsRow
+                  title={gt("Authentication")}
+                  control={
+                    <Select
+                      value={authentication}
+                      onValueChange={(value) => {
+                        if (value === "token" || value === "environment") {
+                          setAuthentication(value);
+                          setFailure(null);
+                        }
+                      }}
+                    >
+                      <SelectTrigger
+                        size="sm"
+                        aria-label={gt("Authentication")}
+                        className="w-full @min-[32rem]/settings-row:w-56"
+                      >
+                        <SelectValue>
+                          {environment ? login.label : tracker.credential.label}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectPopup>
+                        <SelectItem value="token">{tracker.credential.label}</SelectItem>
+                        <SelectItem value="environment">{login.label}</SelectItem>
+                      </SelectPopup>
+                    </Select>
+                  }
+                />
+              ) : null}
               {fields.map((field) => (
                 <SettingsRow
                   key={field.key}
@@ -205,11 +244,17 @@ function TrackerRow({
                 />
               ))}
               <SettingsRow
-                title={<label htmlFor={inputId}>{tracker.credential.label}</label>}
+                title={
+                  environment ? (
+                    login.label
+                  ) : (
+                    <label htmlFor={inputId}>{tracker.credential.label}</label>
+                  )
+                }
                 description={
                   <>
-                    Stored on the server.
-                    {tracker.credential.helpUrl ? (
+                    {environment ? login.description : "Stored on the server."}
+                    {!environment && tracker.credential.helpUrl ? (
                       <>
                         {" "}
                         <InlineButton
@@ -231,16 +276,27 @@ function TrackerRow({
                 }
                 control={
                   <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-56">
-                    <SecretInput
-                      id={inputId}
-                      size="sm"
-                      className="min-w-0 flex-1"
-                      configured={tracker.connected}
-                      value=""
-                      onCommit={(next) => {
-                        if (next.trim()) void submit(next.trim());
-                      }}
-                    />
+                    {environment ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => void submit(undefined)}
+                      >
+                        {gt("Connect")}
+                      </Button>
+                    ) : (
+                      <SecretInput
+                        id={inputId}
+                        size="sm"
+                        className="min-w-0 flex-1"
+                        configured={tracker.connected}
+                        value=""
+                        onCommit={(next) => {
+                          if (next.trim()) void submit(next.trim());
+                        }}
+                      />
+                    )}
                     {tracker.connected ? (
                       <Button
                         type="button"

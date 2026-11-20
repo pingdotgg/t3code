@@ -9,10 +9,12 @@ import {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import type { ReactNode } from "react";
+import { useGT } from "gt-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
+import { I18nProvider } from "../../i18n/I18nProvider";
 import { useEnvironments } from "../../state/environments";
 import { issueTrackerEnvironment } from "../../state/issueTrackers";
 import { useEnvironmentQuery } from "../../state/query";
@@ -145,12 +147,21 @@ export function SettingsSourceControlProviderRouteScreen({
   );
 }
 
-export function SettingsIssueTrackerRouteScreen({
-  route,
-}: StaticScreenProps<{
+type IssueTrackerRouteProps = StaticScreenProps<{
   readonly environmentId: EnvironmentId;
   readonly tracker: string;
-}>) {
+}>;
+
+export function SettingsIssueTrackerRouteScreen(props: IssueTrackerRouteProps) {
+  return (
+    <I18nProvider>
+      <IssueTrackerRouteScreen {...props} />
+    </I18nProvider>
+  );
+}
+
+function IssueTrackerRouteScreen({ route }: IssueTrackerRouteProps) {
+  const gt = useGT();
   const { environmentId } = route.params;
   const { environment, canWrite } = useDetailEnvironment(environmentId);
   const query = useEnvironmentQuery(
@@ -169,7 +180,9 @@ export function SettingsIssueTrackerRouteScreen({
           <Text selectable className="px-2 text-sm text-foreground-muted">
             {issueTrackerSummary(tracker, query.data?.bindings ?? {})}
           </Text>
-          <SettingsSection title={tracker.credential.label}>
+          <SettingsSection
+            title={tracker.environmentLogin ? gt("Authentication") : tracker.credential.label}
+          >
             <IssueTrackerCredentialForm
               environmentId={environmentId}
               tracker={tracker}

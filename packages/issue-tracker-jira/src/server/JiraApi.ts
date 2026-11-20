@@ -1,6 +1,7 @@
 /**
  * Jira Cloud's REST API (v3), signed with the account email and API token saved in Settings and
- * sent to the site saved beside them. Jira writes its refusals for people, so they pass through.
+ * sent to the site saved beside them, or with a session the environment's own login supplies.
+ * Jira writes its refusals for people, so they pass through.
  */
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -8,7 +9,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import * as Redacted from "effect/Redacted";
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { IssueTrackerKind } from "@t3tools/contracts";
 import {
   IssueTrackerError,
@@ -84,6 +86,39 @@ const Comment = Schema.Struct({
 });
 export type JiraComment = typeof Comment.Type;
 
+/** A pull request as the issue's development panel lists it. */
+const DevelopmentPullRequest = Schema.Struct({
+  id: Schema.optional(Schema.NullOr(Schema.String)),
+  name: Schema.optional(Schema.NullOr(Schema.String)),
+  url: Schema.optional(Schema.NullOr(Schema.String)),
+  status: Schema.optional(Schema.NullOr(Schema.String)),
+  repositoryName: Schema.optional(Schema.NullOr(Schema.String)),
+});
+export type JiraDevelopmentPullRequest = typeof DevelopmentPullRequest.Type;
+
+const DevelopmentSummary = Schema.Struct({
+  summary: Schema.Struct({
+    pullrequest: Schema.optional(
+      Schema.NullOr(
+        Schema.Struct({
+          byInstanceType: Schema.Record(
+            Schema.String,
+            Schema.Struct({ count: Schema.optional(Schema.Number) }),
+          ),
+        }),
+      ),
+    ),
+  }),
+});
+
+const DevelopmentDetail = Schema.Struct({
+  detail: Schema.Array(
+    Schema.Struct({
+      pullRequests: Schema.optional(Schema.NullOr(Schema.Array(DevelopmentPullRequest))),
+    }),
+  ),
+});
+
 const ISSUE_FIELDS = [
   "summary",
   "status",
@@ -105,10 +140,47 @@ const ErrorBody = Schema.fromJsonString(
 );
 const decodeErrorBody = Schema.decodeUnknownOption(ErrorBody);
 
+/** Atlassian's gateway answers a token that lacks a scope with 401, as it does a dead one. */
+const missingScope = (response: HttpClientResponse.HttpClientResponse, body: string) =>
+  /insufficient[_ ]scope|scope does not match/iu.test(
+    `${response.headers["www-authenticate"] ?? ""}\n${body}`,
+  );
+
+/** A Jira session an environment login supplies, such as TWG's, held in memory only. */
+export interface JiraSession {
+  /** The site, as `siteOrigin` spells it. */
+  readonly origin: string;
+  /** Where requests go: the site, or Atlassian's API gateway for an OAuth session. */
+  readonly apiOrigin: string;
+  readonly authorization: Redacted.Redacted<string>;
+  /** The account, which must not change within one operation. */
+  readonly identity: string;
+  readonly profile: string | null;
+  readonly oauth: boolean;
+  readonly expiresAt: number;
+}
+
+/** Sessions for one tracker operation, which keeps the first it resolves. */
+export class JiraSessions extends Context.Service<
+  JiraSessions,
+  {
+    /** Given the session Jira refused, a fresh one for the same account. */
+    readonly resolve: (rejected?: JiraSession) => Effect.Effect<JiraSession, IssueTrackerError>;
+    /** Stops later operations from reusing a session Jira refused. */
+    readonly reject: (session: JiraSession) => Effect.Effect<void>;
+    /** An issue's linked pull requests, read by the login itself for an OAuth session. */
+    readonly linkedPullRequests: (
+      session: JiraSession,
+      issueId: string,
+    ) => Effect.Effect<ReadonlyArray<JiraDevelopmentPullRequest>, IssueTrackerError>;
+  }
+>()("@t3tools/issue-tracker-jira/server/JiraApi/JiraSessions") {}
+
 interface JiraSite {
   readonly origin: string;
   readonly email: string;
   readonly token: string;
+  readonly session?: JiraSession | undefined;
 }
 
 export const fail = (
@@ -228,12 +300,41 @@ export class JiraApi extends Context.Service<
     readonly findUsers: (
       query: string,
     ) => Effect.Effect<ReadonlyArray<JiraUser>, IssueTrackerError>;
+    /**
+     * The pull requests the development panel shows for an issue, by its numeric id. Jira serves
+     * them only through `dev-status`, the undocumented API behind that panel, which Atlassian's
+     * gateway does not serve to an OAuth session; the session's login reads those instead.
+     */
+    readonly developmentPullRequests: (
+      issueId: string,
+    ) => Effect.Effect<ReadonlyArray<JiraDevelopmentPullRequest>, IssueTrackerError>;
   }
 >()("@t3tools/issue-tracker-jira/server/JiraApi") {}
 
 export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const host = yield* IssueTrackerHost.IssueTrackerHost;
+  const sessions = yield* Effect.serviceOption(JiraSessions);
+
+  const resolveSite = Effect.fn("JiraApi.resolveSite")(function* (
+    operation: string,
+    credential: IssueTrackerCredential,
+  ) {
+    if (credential.authentication !== "environment") return yield* toSite(operation, credential);
+    const origin = siteOrigin(credential.fields["site"] ?? "");
+    if (origin === null) {
+      return yield* fail(
+        operation,
+        "unauthenticated",
+        "Enter the Jira site as yourteam.atlassian.net.",
+      );
+    }
+    if (Option.isNone(sessions)) {
+      return yield* fail(operation, "unauthenticated", "This environment cannot sign in to Jira.");
+    }
+    const session = yield* sessions.value.resolve();
+    return { origin, email: "", token: "", session } satisfies JiraSite;
+  });
 
   const storedSite = (operation: string) =>
     host.credentials.get(KIND).pipe(
@@ -242,15 +343,16 @@ export const make = Effect.gen(function* () {
           fail(operation, "unauthenticated", "Jira is not connected on this server."),
         ),
       ),
-      Effect.flatMap((credential) => toSite(operation, credential)),
+      Effect.flatMap((credential) => resolveSite(operation, credential)),
     );
 
   const refusal = Effect.fn("JiraApi.refusal")(function* (
     operation: string,
     response: HttpClientResponse.HttpClientResponse,
+    body: string,
+    session: JiraSession | undefined,
   ): Effect.fn.Return<never, IssueTrackerError> {
     const now = yield* Clock.currentTimeMillis;
-    const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
     const said = Option.match(decodeErrorBody(body), {
       onNone: () => undefined,
       onSome: (error) =>
@@ -263,8 +365,17 @@ export const make = Effect.gen(function* () {
         retryAt: retryAt(response.headers["retry-after"], now),
       });
     }
+    if (response.status === 401 && session !== undefined && missingScope(response, body)) {
+      return yield* fail(operation, "failed", "This environment's Jira login may not do that.");
+    }
     if (response.status === 401) {
-      return yield* fail(operation, "unauthenticated", "Jira rejected the email or API token.");
+      return yield* fail(
+        operation,
+        "unauthenticated",
+        session === undefined
+          ? "Jira rejected the email or API token."
+          : "Jira rejected this environment's login. Sign in there again.",
+      );
     }
     if (response.status === 404) {
       return yield* fail(operation, "not-found", said ?? "Jira has nothing at that address.");
@@ -294,25 +405,62 @@ export const make = Effect.gen(function* () {
     const site =
       request.credential === undefined
         ? yield* storedSite(operation)
-        : yield* toSite(operation, request.credential);
-    const base = HttpClientRequest.make(request.method)(`${site.origin}${request.path}`, {
-      urlParams: Object.entries(request.query ?? {}).flatMap(([key, value]) =>
-        value === undefined ? [] : [[key, String(value)] as const],
-      ),
-    }).pipe(HttpClientRequest.acceptJson, HttpClientRequest.basicAuth(site.email, site.token));
-    const response = yield* httpClient
-      .execute(
-        request.body === undefined
-          ? base
-          : base.pipe(HttpClientRequest.bodyJsonUnsafe(request.body)),
-      )
-      .pipe(
-        Effect.timeout(REQUEST_TIMEOUT),
-        Effect.mapError((cause) =>
-          fail(operation, "failed", "Jira could not be reached.", { cause }),
-        ),
+        : yield* resolveSite(operation, request.credential);
+    const execute = (session: JiraSession | undefined) => {
+      const base = HttpClientRequest.make(request.method)(
+        `${session?.apiOrigin ?? site.origin}${request.path}`,
+        {
+          urlParams: Object.entries(request.query ?? {}).flatMap(([key, value]) =>
+            value === undefined ? [] : [[key, String(value)] as const],
+          ),
+        },
+      ).pipe(
+        HttpClientRequest.acceptJson,
+        session === undefined
+          ? HttpClientRequest.basicAuth(site.email, site.token)
+          : HttpClientRequest.setHeader("authorization", Redacted.value(session.authorization)),
       );
-    if (response.status < 200 || response.status >= 300) return yield* refusal(operation, response);
+      return httpClient
+        .execute(
+          request.body === undefined
+            ? base
+            : base.pipe(HttpClientRequest.bodyJsonUnsafe(request.body)),
+        )
+        .pipe(
+          // A session's credential does not follow a redirect anywhere.
+          Effect.provideService(
+            FetchHttpClient.RequestInit,
+            session === undefined ? {} : { redirect: "manual" },
+          ),
+          Effect.timeout(REQUEST_TIMEOUT),
+          Effect.mapError((cause) =>
+            fail(operation, "failed", "Jira could not be reached.", { cause }),
+          ),
+        );
+    };
+    // Search is a POST that changes nothing.
+    const read = request.method === "GET" || request.path === "/rest/api/3/search/jql";
+    let session = site.session;
+    let response: HttpClientResponse.HttpClientResponse;
+    for (let retried = false; ; retried = true) {
+      response = yield* execute(session);
+      if (response.status >= 200 && response.status < 300) break;
+      const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
+      if (
+        response.status === 401 &&
+        session !== undefined &&
+        Option.isSome(sessions) &&
+        !missingScope(response, body)
+      ) {
+        yield* sessions.value.reject(session);
+        // A read is retried once on a fresh session; a write is never replayed.
+        if (read && !retried) {
+          session = yield* sessions.value.resolve(session);
+          continue;
+        }
+      }
+      return yield* refusal(operation, response, body, session);
+    }
     // A write answers 204 with no body; `Schema.Void` reads nothing.
     if (response.status === 204) return undefined as S["Type"];
     return yield* HttpClientResponse.schemaBodyJson(schema)(response).pipe(
@@ -492,6 +640,37 @@ export const make = Effect.gen(function* () {
       query: { query, maxResults: 20 },
     });
 
+  const developmentPullRequests: JiraApi["Service"]["developmentPullRequests"] = Effect.fn(
+    "JiraApi.developmentPullRequests",
+  )(function* (issueId) {
+    const site = yield* storedSite("developmentPullRequests");
+    if (site.session?.oauth === true && Option.isSome(sessions)) {
+      return yield* sessions.value.linkedPullRequests(site.session, issueId);
+    }
+    // The detail is read per integration; the summary names those holding pull requests.
+    const summary = yield* send("developmentSummary", DevelopmentSummary, {
+      method: "GET",
+      path: "/rest/dev-status/latest/issue/summary",
+      query: { issueId },
+    });
+    const integrations = Object.entries(summary.summary.pullrequest?.byInstanceType ?? {})
+      .filter(([, instance]) => instance.count !== 0)
+      .map(([applicationType]) => applicationType);
+    const details = yield* Effect.forEach(
+      integrations,
+      (applicationType) =>
+        send("developmentPullRequests", DevelopmentDetail, {
+          method: "GET",
+          path: "/rest/dev-status/latest/issue/detail",
+          query: { issueId, applicationType, dataType: "pullrequest" },
+        }),
+      { concurrency: "unbounded" },
+    );
+    return details.flatMap((answer) =>
+      answer.detail.flatMap((instance) => instance.pullRequests ?? []),
+    );
+  });
+
   return JiraApi.of({
     origin: storedSite("origin").pipe(Effect.map((site) => site.origin)),
     myself,
@@ -508,6 +687,7 @@ export const make = Effect.gen(function* () {
     labels,
     assignable,
     findUsers,
+    developmentPullRequests,
   });
 });
 
