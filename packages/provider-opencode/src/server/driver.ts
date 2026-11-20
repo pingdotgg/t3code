@@ -38,6 +38,7 @@ import { loadOpenCode2Catalog, loadOpenCode2DirectoryCatalog } from "./openCode2
 import {
   checkOpenCodeProviderStatus,
   loadOpenCode2Workspace,
+  makeOpenCode2AgentLoader,
   makeOpenCode2ModelLoader,
   makePendingOpenCodeProvider,
   openCode2CommandsToServerProviderSlashCommands,
@@ -404,6 +405,22 @@ export const OpenCodeDriver: ProviderDriver<
       ),
       processEnv,
     );
+    const loadOpenCode2Agents = yield* makeOpenCode2AgentLoader(
+      openCode2Server.withConnection(({ client }) =>
+        client.agent.list({ location: { directory: host.paths.cwd } }).pipe(
+          Effect.map((response) => response.data),
+          Effect.timeout(resolveProviderProbeTimeoutMs("opencode", 10_000, processEnv)),
+          Effect.mapError(
+            (cause) =>
+              new OpenCodeRuntime.OpenCodeRuntimeError({
+                operation: "agent.list",
+                detail: "The OpenCode server could not list its agents.",
+                cause,
+              }),
+          ),
+        ),
+      ),
+    );
     const listOpenCode2Workspace = (cwd: string) =>
       openCode2Server.withConnection(({ client, events }) =>
         Effect.gen(function* () {
@@ -525,6 +542,7 @@ export const OpenCodeDriver: ProviderDriver<
           loadOpenCode2Models,
           processEnv,
           host.compatibility,
+          loadOpenCode2Agents.read,
         ).pipe(
           Effect.annotateLogs({ providerInstanceId: instanceId }),
           Effect.annotateSpans({ providerInstanceId: instanceId }),
@@ -713,15 +731,23 @@ export const OpenCodeDriver: ProviderDriver<
                     [
                       snapshot.getSnapshot,
                       // A project's opencode.jsonc can define its own providers.
-                      readSettledOpenCode2Catalog(
-                        openCode2Server.withConnection(({ client }) =>
-                          loadOpenCode2DirectoryCatalog(client, cwd),
-                        ),
-                        processEnv,
+                      Effect.all(
+                        {
+                          catalog: readSettledOpenCode2Catalog(
+                            openCode2Server.withConnection(({ client }) =>
+                              loadOpenCode2DirectoryCatalog(client, cwd),
+                            ),
+                            processEnv,
+                          ),
+                          // A project's models must carry the same agent options as the machine
+                          // catalog, or the snapshot reports them as a workspace override.
+                          agents: loadOpenCode2Agents.latest,
+                        },
+                        { concurrency: 2 },
                       ).pipe(
-                        Effect.map(
-                          Option.map((catalog) =>
-                            openCode2ProviderModels(effectiveConfig, catalog),
+                        Effect.map(({ catalog, agents }) =>
+                          Option.map(catalog, (project) =>
+                            openCode2ProviderModels(effectiveConfig, project, agents),
                           ),
                         ),
                       ),
