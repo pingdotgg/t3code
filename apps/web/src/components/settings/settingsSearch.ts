@@ -1056,6 +1056,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/scheduled-tasks",
   },
   {
+    id: "scheduled-tasks-webhook-public-url",
+    title: "Public webhook address",
+    to: "/settings/scheduled-tasks",
+    scope: "environment-defaults",
+    searchTerms: ["webhook public url base address https tailscale funnel reverse proxy tunnel"],
+  },
+  {
     id: "agent-browser-access",
     title: "Agent browser access",
     to: "/settings/browser",

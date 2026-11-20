@@ -173,6 +173,7 @@ const withService = <A, E>(
     readonly gate?: Deferred.Deferred<void>;
     readonly gateForTask?: (input: LaunchInput) => Deferred.Deferred<void> | undefined;
     readonly relayHookBaseUrl?: string;
+    readonly publicHookBaseUrl?: string;
     readonly sql?: SqlClient.SqlClient;
     readonly workers?: Map<string, Effect.Effect<void>>;
     readonly policy?: ManagedPolicyDocument;
@@ -252,7 +253,10 @@ const withService = <A, E>(
       }),
       Layer.succeed(
         ScheduledTaskService.ScheduledTaskWebhookOrigin,
-        Effect.succeed({ relayHookBaseUrl: options.relayHookBaseUrl ?? null }),
+        Effect.succeed({
+          relayHookBaseUrl: options.relayHookBaseUrl ?? null,
+          publicHookBaseUrl: options.publicHookBaseUrl ?? null,
+        }),
       ),
       ManagedPolicy.layerTest(options.policy),
     );
@@ -342,6 +346,60 @@ it.effect("gives webhook tasks a relay URL when the environment has a managed tu
       }),
     { relayHookBaseUrl: "https://relay.example.com/v1/hooks/0123456789abcdef" },
   ),
+);
+
+it("builds the public hook base from a valid origin setting only", () => {
+  assert.equal(
+    ScheduledTaskService.publicHookBaseUrl(" https://laptop.example.ts.net:8443/ "),
+    "https://laptop.example.ts.net:8443/api/hooks",
+  );
+  assert.equal(
+    ScheduledTaskService.publicHookBaseUrl("http://127.0.0.1:3773"),
+    "http://127.0.0.1:3773/api/hooks",
+  );
+  for (const setting of [
+    "",
+    "laptop.example.ts.net",
+    "http://laptop.example.ts.net",
+    "https://laptop.example.ts.net/api/hooks",
+    "https://laptop.example.ts.net/?a=1",
+    "https://user:pass@laptop.example.ts.net",
+  ]) {
+    assert.isNull(ScheduledTaskService.publicHookBaseUrl(setting));
+  }
+});
+
+it.effect("gives webhook tasks the configured public URL, and the relay URL when both exist", () =>
+  Effect.gen(function* () {
+    const publicHookBaseUrl = "https://laptop.example.ts.net:8443/api/hooks";
+    yield* withService(
+      ({ service }) =>
+        Effect.gen(function* () {
+          const { task } = yield* service.upsert(yield* webhookTaskInput());
+          assert.equal(
+            task.webhook?.url,
+            `https://laptop.example.ts.net:8443${task.webhook?.path}`,
+          );
+          // A call forwarded from the public address is an ordinary direct request.
+          const result = yield* service.triggerWebhook(
+            requestFor(task, { headers: { host: "laptop.example.ts.net:8443" } }),
+          );
+          assert.equal(result._tag, "accepted");
+        }),
+      { publicHookBaseUrl },
+    );
+    yield* withService(
+      ({ service }) =>
+        Effect.gen(function* () {
+          const { task } = yield* service.upsert(yield* webhookTaskInput());
+          assert.match(task.webhook?.url ?? "", /^https:\/\/relay\.example\.com\/v1\/hooks\//);
+        }),
+      {
+        publicHookBaseUrl,
+        relayHookBaseUrl: "https://relay.example.com/v1/hooks/0123456789abcdef",
+      },
+    );
+  }),
 );
 
 it.effect("answers not found for a wrong token or unknown hook without logging", () =>

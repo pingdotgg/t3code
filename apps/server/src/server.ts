@@ -171,8 +171,10 @@ import * as HeldHooksWaker from "./relay/HeldHooksWaker.ts";
 import * as McpOAuth from "./auth/McpOAuth.ts";
 import * as McpOAuthHttp from "./auth/mcpOAuthHttp.ts";
 import {
+  publicHookBaseUrl,
   relayHookBaseUrl,
   ScheduledTaskWebhookOrigin,
+  ScheduledTaskWebhookOriginChanges,
 } from "./scheduledTasks/ScheduledTaskService.ts";
 import {
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
@@ -587,28 +589,45 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
   ScheduledTaskWebhookOrigin,
   Effect.gen(function* () {
     const secrets = yield* ServerSecretStore.ServerSecretStore;
-    return Effect.gen(function* () {
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const readRelayHookBaseUrl = Effect.gen(function* () {
       const [relayUrl, tunnelConfig] = yield* Effect.all([
         secrets.get(RELAY_URL_SECRET),
         secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
       ]).pipe(Effect.orElseSucceed(() => [Option.none(), Option.none()] as const));
-      if (Option.isNone(relayUrl) || Option.isNone(tunnelConfig)) {
-        return { relayHookBaseUrl: null };
-      }
+      if (Option.isNone(relayUrl) || Option.isNone(tunnelConfig)) return null;
       const config = decodeRuntimeConfig(new TextDecoder().decode(tunnelConfig.value));
-      return {
-        relayHookBaseUrl: relayHookBaseUrl({
-          relayUrl: new TextDecoder().decode(relayUrl.value),
-          tunnelName: Option.isSome(config) ? config.value.tunnelName : undefined,
-        }),
-      };
+      return relayHookBaseUrl({
+        relayUrl: new TextDecoder().decode(relayUrl.value),
+        tunnelName: Option.isSome(config) ? config.value.tunnelName : undefined,
+      });
     });
+    return Effect.all({
+      relayHookBaseUrl: readRelayHookBaseUrl,
+      publicHookBaseUrl: settings.getSettings.pipe(
+        Effect.map((current) => publicHookBaseUrl(current.webhookPublicBaseUrl)),
+        Effect.orElseSucceed(() => null),
+      ),
+    });
+  }),
+);
+
+const layerScheduledTaskWebhookOriginChanges = Layer.effect(
+  ScheduledTaskWebhookOriginChanges,
+  Effect.gen(function* () {
+    const settings = yield* ServerSettings.ServerSettingsService;
+    return settings.streamChanges.pipe(
+      Stream.map((current) => current.webhookPublicBaseUrl),
+      Stream.changes,
+      Stream.map((): void => undefined),
+    );
   }),
 );
 
 const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
   Layer.provide(UsageLimitSources.layerResetFallback),
   Layer.provide(layerScheduledTaskWebhookOrigin),
+  Layer.provide(layerScheduledTaskWebhookOriginChanges),
   Layer.provide(ProviderUsageAnalytics.layer),
   Layer.provide(layerCheckpointStore),
   Layer.provide(layerGitWorkflow),

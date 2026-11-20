@@ -163,6 +163,18 @@ it("drops a hand-edited non-string hidden tag and keeps the rest of the settings
   expect(settings.hideTaggedThreads).toBe(true);
 });
 
+it("refuses a webhook public address patch that is not an origin, but still loads a stored one", () => {
+  for (const webhookPublicBaseUrl of ["", "https://laptop.example.ts.net:8443"]) {
+    expect(decodeServerSettingsPatch({ webhookPublicBaseUrl })).toEqual({ webhookPublicBaseUrl });
+  }
+  for (const webhookPublicBaseUrl of ["http://example.com", "https://example.com/api/hooks"]) {
+    expect(() => decodeServerSettingsPatch({ webhookPublicBaseUrl })).toThrow();
+  }
+  expect(decodeServerSettings({ webhookPublicBaseUrl: "nonsense" }).webhookPublicBaseUrl).toBe(
+    "nonsense",
+  );
+});
+
 describe("ServerSettings secret providers", () => {
   const onePassword = (account: string) => ({
     kind: "one_password",

@@ -1,6 +1,7 @@
 import {
   CommandId,
   MessageId,
+  normalizeWebhookPublicBaseUrl,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type ProjectId,
   ScheduledTask,
@@ -104,6 +105,8 @@ const LEGACY_DELIVERY_OUTCOMES: ReadonlySet<string> = new Set([
 
 interface WebhookOrigin {
   readonly relayHookBaseUrl: string | null;
+  /** From the webhookPublicBaseUrl setting; used when T3 Connect gives no relay URL. */
+  readonly publicHookBaseUrl: string | null;
 }
 
 const ENDPOINT_KEY = /^[0-9a-f]{16}$/;
@@ -120,11 +123,22 @@ export function relayHookBaseUrl(input: {
   return `${relayUrl}/v1/hooks/${endpointKey}`;
 }
 
+export function publicHookBaseUrl(setting: string): string | null {
+  const origin = normalizeWebhookPublicBaseUrl(setting);
+  return origin === null ? null : `${origin}${WEBHOOK_ROUTE_PREFIX}`;
+}
+
 export class ScheduledTaskWebhookOrigin extends Context.Reference<Effect.Effect<WebhookOrigin>>(
   "t3/scheduledTasks/ScheduledTaskWebhookOrigin",
   {
-    defaultValue: () => Effect.succeed({ relayHookBaseUrl: null }),
+    defaultValue: () => Effect.succeed({ relayHookBaseUrl: null, publicHookBaseUrl: null }),
   },
+) {}
+
+/** Emits when the webhook origin changes, so open task lists show the new URLs. */
+export class ScheduledTaskWebhookOriginChanges extends Context.Reference<Stream.Stream<void>>(
+  "t3/scheduledTasks/ScheduledTaskWebhookOriginChanges",
+  { defaultValue: () => Stream.empty },
 ) {}
 
 class WebhookDeliverySkipped extends Schema.TaggedError<WebhookDeliverySkipped>()(
@@ -384,7 +398,7 @@ function webhookEndpoint(
   origin: WebhookOrigin | null,
 ): ScheduledTask["webhook"] {
   if (row.webhook_token === null) return undefined;
-  const base = origin?.relayHookBaseUrl ?? null;
+  const base = origin?.relayHookBaseUrl ?? origin?.publicHookBaseUrl ?? null;
   return {
     path: webhookPath(row.task_id, row.webhook_token),
     url: base === null ? null : `${base}/${encodeURIComponent(row.task_id)}/${row.webhook_token}`,
@@ -483,6 +497,7 @@ export const layer = Layer.effect(
     const secretRequests = yield* SecretRequests.SecretRequests;
     const scheduler = yield* Scheduler.Scheduler;
     const readWebhookOrigin = yield* ScheduledTaskWebhookOrigin;
+    const webhookOriginChanges = yield* ScheduledTaskWebhookOriginChanges;
     const managedPolicy = yield* ManagedPolicy.ManagedPolicy;
     const webhookPolicyOrganization = ManagedPolicy.deniedBy(managedPolicy, "webhookTasks");
     // Existing webhook tasks stay stored but report why they do not run.
@@ -1379,7 +1394,10 @@ export const layer = Layer.effect(
           const subscription = yield* PubSub.subscribe(changesPubSub);
           return Stream.concat(
             Stream.fromEffect(list()),
-            Stream.fromSubscription(subscription).pipe(Stream.mapEffect(() => list())),
+            Stream.fromSubscription(subscription).pipe(
+              Stream.merge(webhookOriginChanges),
+              Stream.mapEffect(() => list()),
+            ),
           );
         }),
       );

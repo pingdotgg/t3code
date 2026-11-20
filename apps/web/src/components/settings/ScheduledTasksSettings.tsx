@@ -39,9 +39,11 @@ import {
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   MAX_WEBHOOK_FILTERS,
   MIN_SCHEDULED_TASK_INTERVAL_MS,
+  normalizeWebhookPublicBaseUrl,
   ProviderInstanceId,
   resolveEnvironmentMachineKind,
   scheduledTaskThreadMode,
+  WEBHOOK_PUBLIC_BASE_URL_INVALID,
 } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -147,11 +149,17 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { searchableSetting } from "./settingsSearch";
 import {
+  SettingResetButton,
   SettingsPageContainer,
   SettingsRow,
   SettingsSection,
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
 } from "./settingsLayout";
+import {
+  useScopedSettings,
+  useScopedSettingsMixed,
+  useUpdateScopedSettings,
+} from "./useScopedSettings";
 
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
 const WEEKDAY_SHORT = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as const;
@@ -369,6 +377,72 @@ function statusVariant(status: ScheduledTask["lastRunStatus"]) {
   return "outline";
 }
 
+function WebhookPublicBaseUrlSection() {
+  const { scope, connectedEnvironments, targets } = useSettingsScope();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const mixed = useScopedSettingsMixed(["webhookPublicBaseUrl"]);
+  if (
+    scope.kind === "project" ||
+    scope.kind === "checkout" ||
+    connectedEnvironments.length === 0 ||
+    connectedEnvironments.some(
+      (environment) =>
+        environment.serverConfig?.environment.capabilities.webhookPublicBaseUrl !== true,
+    )
+  )
+    return null;
+  const scopeKey = targets.map((target) => target.environmentId).join(",");
+
+  return (
+    <SettingsSection title="Webhooks">
+      <SettingsRow
+        {...searchableSetting("scheduled-tasks-webhook-public-url")}
+        description="HTTPS address that forwards /api/hooks to this environment, such as a Tailscale Funnel or reverse proxy. Webhook URLs are shown on it unless T3 Connect gives one. Leave empty for the local address."
+        serverScoped
+        settingKeys={["webhookPublicBaseUrl"]}
+        resetAction={
+          mixed || settings.webhookPublicBaseUrl !== "" ? (
+            <SettingResetButton
+              label="public webhook address"
+              onClick={() => updateSettings({ webhookPublicBaseUrl: "" })}
+            />
+          ) : null
+        }
+        control={
+          <Input
+            key={`${scopeKey}:${mixed}:${settings.webhookPublicBaseUrl}`}
+            aria-label="Public webhook address"
+            type="url"
+            autoCapitalize="none"
+            spellCheck={false}
+            placeholder={mixed ? "Mixed" : "https://example.com:8443"}
+            defaultValue={mixed ? "" : settings.webhookPublicBaseUrl}
+            onBlur={(event) => {
+              const value = event.target.value.trim();
+              if (value === (mixed ? "" : settings.webhookPublicBaseUrl)) return;
+              const origin = value === "" ? "" : normalizeWebhookPublicBaseUrl(value);
+              if (origin === null) {
+                event.target.value = mixed ? "" : settings.webhookPublicBaseUrl;
+                toastManager.add(
+                  stackedThreadToast({
+                    type: "error",
+                    title: "Public webhook address not saved",
+                    description: WEBHOOK_PUBLIC_BASE_URL_INVALID,
+                  }),
+                );
+                return;
+              }
+              event.target.value = origin;
+              updateSettings({ webhookPublicBaseUrl: origin });
+            }}
+          />
+        }
+      />
+    </SettingsSection>
+  );
+}
+
 export function ScheduledTasksSettings(target: {
   readonly environmentId?: EnvironmentId;
   readonly taskId?: ScheduledTaskId | undefined;
@@ -486,6 +560,7 @@ export function ScheduledTasksSettings(target: {
           </div>
         )}
       </SettingsSection>
+      <WebhookPublicBaseUrlSection />
       {editor ? (
         <ScheduledTaskEditorDialog
           key={`${editor.environmentId}:${editor.task?.id ?? "new"}`}

@@ -127,6 +127,12 @@ GitHub on a new pull request or a CI job that failed. A public URL needs a
 its URL from the editor. Without one, the editor shows only the URL's path.
 **Rotate** replaces the URL and the old one stops working.
 
+If you publish the environment yourself, for example with Tailscale Funnel or a
+reverse proxy that forwards `/api/hooks` to it, set **Public webhook address**
+at the bottom of **Settings → Scheduled tasks** to that HTTPS origin, such as
+`https://example.com:8443`. Webhook URLs are then shown on that address. A
+T3 Connect URL takes priority when the environment has one.
+
 The prompt decides what the agent sees. Placeholders pull values out of the
 request: `{{body.path}}` for a JSON or form field, `{{headers.name}}`,
 `{{query.name}}`, `{{body}}` for the raw body, and `{{request}}` for everything.
