@@ -12139,8 +12139,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Run ${command.runId} was not asked for a result.`,
       });
     }
-    // The service picks the active run, but the run can end before this command is its turn.
-    if (!isActiveRun(run)) {
+    // The service picks the active run, but the run can end before this command is its turn. A
+    // turn that completed without its result still owes it, and a later turn may give it.
+    const owes = run.status === "completed" && run.output === undefined;
+    if (!isActiveRun(run) && !owes) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,

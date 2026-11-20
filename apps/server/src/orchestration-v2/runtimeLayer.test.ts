@@ -11659,6 +11659,78 @@ it.layer(layerSharedApplicationDataPlaneTest)("pending provider interruption", (
 });
 
 it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) => {
+  it.effect("takes a result a completed turn still owes from the turn after it", () =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectService.ProjectService;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+      const projectId = ProjectId.make("runtime-layer-owed-output-project");
+      const threadId = ThreadId.make("runtime-layer-owed-output-thread");
+      yield* projects.create({
+        commandId: CommandId.make("runtime-layer-owed-output-project-create"),
+        projectId,
+        title: "Owed output project",
+        workspaceRoot: "/tmp/runtime-layer-owed-output-project",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-owed-output-create"),
+        threadId,
+        projectId,
+        title: "Owed output",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const send = (key: string, outputSchema?: { readonly type: "object" }) =>
+        orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`runtime-layer-owed-output-${key}`),
+          threadId,
+          messageId: MessageId.make(`runtime-layer-owed-output-${key}`),
+          text: key,
+          attachments: [],
+          modelSelection,
+          ...(outputSchema === undefined ? {} : { outputSchema }),
+          dispatchMode: { type: "start_immediately" },
+        });
+      yield* send("asked", { type: "object" });
+      const asked = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+      // The agent ended its turn to wait for something, without the result.
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}-asked-completed`),
+            type: "run.updated",
+            threadId,
+            runId: asked.id,
+            occurredAt: asked.requestedAt,
+            payload: { ...asked, status: "completed", completedAt: asked.requestedAt },
+          },
+        ],
+      });
+      yield* send("woken");
+
+      const accepted = yield* threadManagement.submitRunOutput({
+        threadId,
+        commandId: CommandId.make("runtime-layer-owed-output-submit"),
+        json: '{"head":"abc"}',
+      });
+      assert.equal(accepted.runId, asked.id);
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(after.runs.find((run) => run.id === asked.id)?.output?.value, {
+        head: "abc",
+      });
+    }),
+  );
+
   it.effect("turns down a provider command asked for a result", () =>
     Effect.gen(function* () {
       const projects = yield* ProjectService.ProjectService;
