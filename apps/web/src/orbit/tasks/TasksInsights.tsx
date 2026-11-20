@@ -10,6 +10,7 @@ import {
   type OrbitTaskInsights,
   type OrbitTaskInsightsPeriod,
   type OrbitTasksResult,
+  type TrendPoint,
 } from "@t3tools/client-runtime/orbit-gateway";
 import { msg, useGT, useMessages } from "gt-react";
 import { TrendingDownIcon, TrendingUpIcon, XIcon } from "lucide-react";
@@ -180,7 +181,7 @@ function InsightCard(props: {
   spec: InsightSpec;
   label: string;
   result: InsightResult;
-  trend: ReadonlyArray<{ date: string; value: number | null }> | null;
+  trend: ReadonlyArray<TrendPoint> | null;
   hint: string;
   scope: string;
   onExpand: () => void;
