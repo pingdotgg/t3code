@@ -2,6 +2,7 @@ import { proposedPlanTitle, stripDisplayedPlanMarkdown } from "@t3tools/shared/p
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { memo, useState, useId } from "react";
 import { findRevealRef } from "./markdownFindContext";
+import { useExpandRevealedEntry } from "./entryReveal";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -40,23 +41,29 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 
 export const ProposedPlanCard = memo(function ProposedPlanCard({
+  entryId,
   planMarkdown,
   environmentId,
   threadRef,
   cwd,
   workspaceRoot,
   findActive = false,
+  pin = null,
 }: {
+  entryId: string;
   planMarkdown: string;
   environmentId: EnvironmentId;
   threadRef?: ScopedThreadRef | undefined;
   cwd: string | undefined;
   workspaceRoot: string | undefined;
   findActive?: boolean;
+  pin?: { readonly pinned: boolean; readonly toggle: () => void } | null;
 }) {
+  const revealExpansion = useExpandRevealedEntry(entryId);
   const gt = useGT();
   const messages = useMessages();
   const [expanded, setExpanded] = useState(false);
+  if (revealExpansion && !expanded) setExpanded(true);
   const canWriteFiles = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
   const [lastSavePath, setLastSavePath] = useState("");
@@ -189,6 +196,11 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
             <MenuItem onClick={handleDownload}>
               <T>Download as markdown</T>
             </MenuItem>
+            {pin ? (
+              <MenuItem onClick={pin.toggle}>
+                {pin.pinned ? gt("Unpin plan") : gt("Pin plan")}
+              </MenuItem>
+            ) : null}
             <MenuItem
               onClick={openSaveDialog}
               disabled={!canWriteFiles || !workspaceRoot || isSavingToWorkspace}
