@@ -957,6 +957,26 @@ describe("CursorAdapterV2", () => {
         "a model change resends runtime instructions",
       );
       assert.deepEqual(
+        yield* send(),
+        told(false, false, true),
+        "reverting after a failed model-change run resends runtime instructions",
+      );
+      assert.include(sentMessages.at(-1)!, "as composer-2.5");
+      assert.deepEqual(
+        yield* send(false, undefined, { status: "error" }),
+        told(false, false, false),
+        "an unchanged turn omits runtime instructions even when it fails",
+      );
+      assert.deepEqual(
+        yield* send(),
+        told(false, false, false),
+        "a failed unchanged turn keeps delivered runtime instructions",
+      );
+      assert.deepEqual(
+        yield* send(false, undefined, { model: "gemini-4-neon", status: "error" }),
+        told(false, false, true),
+      );
+      assert.deepEqual(
         yield* send(false, undefined, { model: "gemini-4-neon" }),
         told(false, false, true),
         "a failed turn does not record runtime instructions as delivered",
@@ -1058,6 +1078,7 @@ describe("CursorAdapterV2", () => {
       // Cursor keeps a cancelled run in the conversation only once it saved a checkpoint.
       const checkpointedRuns = new Set<string>();
       const runEnds: Array<Deferred.Deferred<"finished" | "cancelled">> = [];
+      const runDeltas: Array<(update: InteractionUpdate) => Effect.Effect<void>> = [];
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-steer-thread");
       const modelSelection = { instanceId, model: "composer-2.5" };
@@ -1092,6 +1113,7 @@ describe("CursorAdapterV2", () => {
                   const runId = `native-cursor-run-${sentMessages.length}`;
                   const ended = yield* Deferred.make<"finished" | "cancelled">();
                   runEnds.push(ended);
+                  runDeltas.push((update) => input.onDelta!(update).pipe(Effect.orDie));
                   return {
                     agentId: "native-cursor-steer",
                     runId,
@@ -1277,6 +1299,39 @@ describe("CursorAdapterV2", () => {
       yield* interruptRunning;
       yield* runtime.resumeTurn!(resumeInput(9));
       assert.deepEqual(resumedRuns, [5, 6, 8, 9]);
+
+      // Compaction before a checkpointed stop invalidates the interrupted run's runtime instructions,
+      // so a subsequent native resume completion must not suppress them on the follow-up turn.
+      yield* Deferred.succeed(runEnds[8]!, "finished");
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal" && event.status === "completed"),
+        Stream.runHead,
+      );
+      const neonSelection = { instanceId, model: "gemini-4-neon" };
+      yield* runtime.startTurn({
+        ...turnInput(10, "Switch model."),
+        modelSelection: neonSelection,
+      });
+      assert.include(sentMessages[9]!, "as gemini-4-neon");
+      yield* runDeltas[9]!({ type: "summary-completed" });
+      checkpointedRuns.add("native-cursor-run-10");
+      yield* interruptRunning;
+      yield* runtime.resumeTurn!({ ...resumeInput(11), modelSelection: neonSelection });
+      assert.strictEqual(sentMessages[10], "");
+      yield* Deferred.succeed(runEnds[10]!, "finished");
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal" && event.status === "completed"),
+        Stream.runHead,
+      );
+      yield* runtime.startTurn({
+        ...turnInput(12, "After resume."),
+        modelSelection: neonSelection,
+      });
+      assert.include(
+        sentMessages[11]!,
+        "as gemini-4-neon",
+        "native resume after compaction must not mark invalidated runtime instructions delivered",
+      );
     }).pipe(
       Effect.scoped,
       Effect.provide(

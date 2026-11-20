@@ -2293,6 +2293,11 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   device: false,
                   runtime: undefined,
                 });
+                yield* Ref.update(interruptedPrompt, (current) =>
+                  current?.agent === context.run.agentId
+                    ? { ...current, runtimeInstructions: undefined }
+                    : current,
+                );
               }
               return;
             case "shell-output-delta": {
@@ -2478,14 +2483,14 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   threadDisposition,
                 },
           );
-          if (
-            input.status === "completed" &&
-            !input.context.compacted &&
-            input.context.runtimeInstructions !== undefined
-          ) {
+          if (input.context.runtimeInstructions !== undefined) {
+            const deliveredRuntime =
+              input.status === "completed" && !input.context.compacted
+                ? input.context.runtimeInstructions
+                : undefined;
             yield* Ref.update(told, (current) =>
               current?.agent === input.context.run.agentId
-                ? { ...current, runtime: input.context.runtimeInstructions }
+                ? { ...current, runtime: deliveredRuntime }
                 : current,
             );
           }
@@ -2495,7 +2500,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               runId: input.context.run.runId,
               text: input.context.prompt,
               message: input.context.message,
-              runtimeInstructions: input.context.runtimeInstructions,
+              runtimeInstructions: input.context.compacted
+                ? undefined
+                : input.context.runtimeInstructions,
             });
           }
           yield* Ref.update(activeTurn, (current) =>
