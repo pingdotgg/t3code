@@ -1,9 +1,12 @@
 import { WorkspaceNoTabs } from "./WorkspaceNoTabs";
+import { isSharedSlotTab } from "./navigation-tab-order";
+import { SharedSlotTitle } from "./SharedSlotTitle";
 import { WORKSPACE_TAB_LABELS, useEnabledNavigationTabs } from "./navigation-tabs";
 import { WorkspaceExtraTab } from "./WorkspaceExtraTab";
 import { WorkspaceSettingsList } from "../../settings/SettingsRouteScreen";
 import { WorkspaceSectionToolbar } from "./WorkspaceSectionToolbar";
 import { useNavigation } from "@react-navigation/native";
+import { useGT, useMessages } from "gt-react-native";
 import { use } from "react";
 import { View, useWindowDimensions } from "react-native";
 import { useKeyboardState } from "react-native-keyboard-controller";
@@ -27,6 +30,7 @@ import { HomeRouteScreen } from "../../home/HomeRouteScreen";
 import { WorkspaceConnectionTitle } from "../../home/WorkspaceConnectionTitle";
 import { useAdaptiveWorkspaceLayout } from "../AdaptiveWorkspaceLayout";
 import { PullRequestsScreen } from "../../pull-requests/PullRequestsScreen";
+import { IssuesScreen } from "../../issues/IssuesScreen";
 import {
   WorkspaceTabsContext,
   WorkspaceTabsProvider,
@@ -48,18 +52,29 @@ function WorkspaceRootTitle(props: {
   readonly columnWidth: number;
   readonly onOpenEnvironments: () => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const { state, settingsOpen } = useWorkspaceTabs()!;
   const maxWidth = Math.max(0, props.columnWidth - (use(HeaderItemsWidthContext) ?? 160));
   const enabled = useEnabledNavigationTabs();
   const tabTitle = settingsOpen
-    ? "Settings"
+    ? gt("Settings")
     : enabled.length
-      ? TAB_TITLES[state.selectedTab]
-      : "Navigation";
+      ? m(TAB_TITLES[state.selectedTab])
+      : gt("Navigation", { $context: "screen title when every navigation tab is hidden" });
   return (
     <View style={{ width: maxWidth, minHeight: 32, justifyContent: "center" }}>
       <WorkspaceConnectionTitle
-        brand={<CompactBrandTitle accessibilityLabel={`T3 Code, ${tabTitle}`} fit />}
+        brand={
+          !settingsOpen && isSharedSlotTab(state.selectedTab) ? (
+            <SharedSlotTitle tab={state.selectedTab} />
+          ) : (
+            <CompactBrandTitle
+              accessibilityLabel={gt("{product}, {title}", { product: "T3 Code", title: tabTitle })}
+              fit
+            />
+          )
+        }
         maxWidth={maxWidth}
         onPress={props.onOpenEnvironments}
       />
@@ -68,6 +83,8 @@ function WorkspaceRootTitle(props: {
 }
 
 function WorkspaceRootContent() {
+  const gt = useGT();
+  const m = useMessages();
   const navigation = useNavigation();
   const { width: windowWidth } = useWindowDimensions();
   const { layout, startNewTask } = useAdaptiveWorkspaceLayout();
@@ -129,10 +146,12 @@ function WorkspaceRootContent() {
           ]}
           options={{
             title: settingsOpen
-              ? "Settings"
+              ? gt("Settings")
               : enabled.length
-                ? TAB_TITLES[state.selectedTab]
-                : "Navigation",
+                ? m(TAB_TITLES[state.selectedTab])
+                : gt("Navigation", {
+                    $context: "screen title when every navigation tab is hidden",
+                  }),
             headerShown: true,
             headerTransparent: NATIVE_LIQUID_GLASS_SUPPORTED,
             headerStyle: NATIVE_LIQUID_GLASS_SUPPORTED
@@ -161,6 +180,8 @@ function WorkspaceRootContent() {
             <HomeRouteScreen />
           ) : state.selectedTab === "pullRequests" ? (
             <PullRequestsScreen />
+          ) : state.selectedTab === "issues" ? (
+            <IssuesScreen />
           ) : (
             <WorkspaceExtraTab tab={state.selectedTab} />
           )}
@@ -169,8 +190,7 @@ function WorkspaceRootContent() {
           <WorkspaceSidebarTabs />
         ) : null}
         {enabled.length === 0 && !settingsOpen ? null : settingsOpen ||
-          state.selectedTab === "threads" ||
-          state.selectedTab === "pullRequests" ? (
+          state.selectedTab !== "usage" ? (
           <WorkspaceToolbar sidebar={sidebarNavigation} onNewTask={startNewTask} />
         ) : (
           <WorkspaceSectionToolbar onNewTask={startNewTask} showCompose={false} />

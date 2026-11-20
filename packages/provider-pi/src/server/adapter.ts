@@ -126,6 +126,7 @@ const PiProviderCapabilitiesV2 = {
     emitsTurnStarted: true,
     emitsTurnCompleted: true,
     supportsInterrupt: true,
+    supportsNativeResume: false,
     supportsActiveSteering: true,
     supportsSteeringByInterruptRestart: false,
     supportsQueuedMessages: true,
@@ -327,6 +328,7 @@ interface PiStreamItemState {
   text: string;
   completed: boolean;
   flushScheduled: boolean;
+  published: boolean;
   readonly startedAt: DateTime.Utc;
 }
 
@@ -409,6 +411,17 @@ interface PendingPiPrompt {
   runtimeRequest: OrchestrationV2RuntimeRequest;
   readonly node: OrchestrationV2ExecutionNode;
   readonly turnItem: OrchestrationV2TurnItem;
+  readonly customAnswerRoute: PiCustomAnswerRoute | undefined;
+}
+
+/**
+ * The ask_user_question extension misreads typed text sent as a select value, so a custom answer
+ * picks the select's last "Type something." line and answers the input dialog that follows.
+ */
+interface PiCustomAnswerRoute {
+  readonly lines: ReadonlyArray<unknown>;
+  readonly sentinel: string;
+  readonly followUpTitlePrefix: string;
 }
 
 function piApprovalRequestKind(title: string): "command" | "file-change" {
@@ -509,7 +522,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           Effect.orElseSucceed(() => undefined),
         );
         if (header === undefined) return true;
-        const sessionCwd = recordString(Option.getOrUndefined(decodeSessionHeader(header)), "cwd");
+        const sessionCwd = recordString(Option.getOrUndefined(decodeSessionLine(header)), "cwd");
         if (sessionCwd === undefined || sessionCwd === cwd) return true;
         const realCwd = yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => cwd));
         return sessionCwd === realCwd;
@@ -552,6 +565,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             cwd,
             env: launch.env,
           });
+          // Its tools carry T3CODE_THREAD_ID, so port discovery must scan while Pi runs.
+          const trackAgent = host.trackAgent;
+          if (trackAgent !== undefined) {
+            yield* Effect.acquireRelease(Effect.sync(trackAgent), (release) =>
+              Effect.sync(release),
+            );
+          }
           // Detached children can keep stdout open after Pi exits.
           if (scopeUnit !== undefined) {
             yield* connection.exited.pipe(
@@ -601,6 +621,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         ProviderAdapter.ProviderAdapterV2Error | Cause.Done
       >();
       const pendingPrompts = new Map<string, PendingPiPrompt>();
+      // Custom answers waiting for their ask_user_question follow-up input, keyed by title prefix.
+      // FIFO per prefix: the extension asks each follow-up right after its own select is answered.
+      const customAnswerFollowUps = new Map<string, string[]>();
       const sessionApprovals = new Set<string>();
       // Async pi-subagents runs launched in this session, by async id, until they settle.
       const piAsyncRuns = new Map<
@@ -1182,6 +1205,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           item: PiStreamItemState,
           streaming: boolean,
         ) {
+          item.published = true;
           const emittedAt = yield* DateTime.now;
           const base = baseItemFields(turn, item.nativeItemId, item.startedAt, emittedAt);
           yield* emitItemNode(
@@ -1265,12 +1289,15 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           );
         });
 
+      const streamItemId = (turn: ActivePiTurn, contentIndex: number) =>
+        `${turn.providerTurn.id}:m${turn.messageOrdinal}:c${contentIndex}`;
+
       const streamItemFor = Effect.fnUntraced(function* (
         turn: ActivePiTurn,
         kind: PiStreamItemState["kind"],
         contentIndex: number,
       ) {
-        const nativeItemId = `${turn.providerTurn.id}:m${turn.messageOrdinal}:c${contentIndex}`;
+        const nativeItemId = streamItemId(turn, contentIndex);
         const existing = turn.streamItems.get(nativeItemId);
         if (existing !== undefined) return existing;
         const startedAt = yield* DateTime.now;
@@ -1280,6 +1307,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           text: "",
           completed: false,
           flushScheduled: false,
+          published: false,
           startedAt,
         };
         turn.streamItems.set(nativeItemId, item);
@@ -1292,7 +1320,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           if (item.completed) return Effect.void;
           item.completed = true;
           if (text !== undefined && text.length > 0) item.text = text;
-          return item.text.length === 0 ? Effect.void : emitStreamItem(turn, item, false);
+          // A block that was shown and then started again empty still replaces what it showed.
+          return item.text.length === 0 && !item.published
+            ? Effect.void
+            : emitStreamItem(turn, item, false);
         });
 
       const completeOpenStreamItems = (turn: ActivePiTurn) =>
@@ -1587,12 +1618,14 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         run: unknown,
       ) {
         const children = recordField(run, "children");
+        let childrenSettled = true;
         for (const child of Array.isArray(children) ? children : []) {
           const id = recordString(child, "id");
           const agent = recordString(child, "agent");
           const status = piAsyncSubagentStatus(recordString(child, "state"));
           if (recordString(child, "kind") !== "step" || id === undefined) continue;
           if (agent === undefined || status === undefined) continue;
+          if (status === "running" || status === "pending") childrenSettled = false;
           const model = recordString(child, "model") ?? null;
           const key = `${status}:${model}`;
           if (tracked.emitted.get(id) === key) continue;
@@ -1607,6 +1640,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         }
         const runStatus = piAsyncSubagentStatus(recordString(run, "state"));
         if (runStatus === undefined || runStatus === "running" || runStatus === "pending") return;
+        // pi-subagents can settle the run one snapshot before its last step.
+        if (!childrenSettled) return;
         piAsyncRuns.delete(runId);
         const providerTurnId = tracked.turn.providerTurn.id;
         for (const other of piAsyncRuns.values()) {
@@ -1685,6 +1720,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       ) {
         const pending = Array.from(pendingPrompts.values());
         pendingPrompts.clear();
+        customAnswerFollowUps.clear();
         yield* Effect.forEach(pending, (prompt) => cancelPrompt(prompt, resolvedAt), {
           discard: true,
         });
@@ -1777,6 +1813,24 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           return;
         }
         if (nativeRequestId === undefined) return;
+        // The extension's follow-up input has an empty placeholder; its multi-select input does not.
+        const inputTitle =
+          method === "input" && event["placeholder"] === ""
+            ? (recordString(event, "title") ?? "")
+            : "";
+        const followUpPrefix = Array.from(customAnswerFollowUps.keys())
+          .filter((prefix) => inputTitle.startsWith(prefix))
+          .reduce<string | undefined>(
+            (longest, prefix) => (prefix.length > (longest?.length ?? -1) ? prefix : longest),
+            undefined,
+          );
+        if (followUpPrefix !== undefined) {
+          const queued = customAnswerFollowUps.get(followUpPrefix) ?? [];
+          const value = queued.shift() ?? "";
+          if (queued.length === 0) customAnswerFollowUps.delete(followUpPrefix);
+          yield* connection.send({ type: "extension_ui_response", id: nativeRequestId, value });
+          return;
+        }
         const approvalTitle = recordString(event, "title") ?? "";
         const approvalKey = `${approvalTitle.length}:${approvalTitle}${recordString(event, "message") ?? ""}`;
         if (method === "confirm" && sessionApprovals.has(approvalKey)) {
@@ -1851,6 +1905,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           completedAt: null,
           updatedAt: createdAt,
         };
+        const askUser =
+          method === "select" && turn !== null
+            ? piAskUserSingleSelectQuestion(nativeRequestId, title, event, turn.toolArgs)
+            : undefined;
         const turnItem: OrchestrationV2TurnItem =
           method === "confirm"
             ? {
@@ -1864,7 +1922,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 ...itemBase,
                 type: "user_input_request",
                 requestId,
-                questions: [piQuestion(nativeRequestId, method, title, event)],
+                questions: [askUser?.question ?? piQuestion(nativeRequestId, method, title, event)],
               };
         const pending: PendingPiPrompt = {
           nativeRequestId,
@@ -1876,6 +1934,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           runtimeRequest,
           node,
           turnItem,
+          customAnswerRoute: askUser?.customAnswerRoute,
         };
         pendingPrompts.set(String(requestId), pending);
         yield* emit({
@@ -2029,6 +2088,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             ...(treeRefs === null || treeRefs.nativeTurnRef === undefined
               ? {}
               : { nativeTurnRef: treeRefs.nativeTurnRef }),
+            ...(state.providerThread.nativeThreadRef === null
+              ? {}
+              : { nativeThreadRef: state.providerThread.nativeThreadRef }),
             status: interrupted ? "interrupted" : failure !== null ? "failed" : "completed",
             completedAt,
             ...(tokenUsage === undefined ? {} : { tokenUsage }),
@@ -2105,6 +2167,20 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           });
         }
       });
+
+      // Extensions can move Pi to another session file (ctx.newSession); resume that one.
+      const adoptLiveSessionFile = (state: PiThreadState, stateData: unknown) => {
+        const sessionFile = recordString(stateData, "sessionFile");
+        const previousFile = state.providerThread.nativeThreadRef?.nativeId;
+        if (sessionFile === undefined || sessionFile === previousFile) return;
+        if (previousFile != null) state.supersededSessionFiles.add(previousFile);
+        state.supersededSessionFiles.delete(sessionFile);
+        state.providerThread = {
+          ...state.providerThread,
+          nativeThreadRef: providerRef(sessionFile),
+        };
+        lastNativeThreadId = sessionFile;
+      };
 
       const scheduleSettleProbe = (
         turn: ActivePiTurn,
@@ -2257,6 +2333,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             const delta = event["assistantMessageEvent"];
             const deltaType = recordString(delta, "type");
             const contentIndex = recordNumber(delta, "contentIndex") ?? 0;
+            if (deltaType === "text_start" || deltaType === "thinking_start") {
+              // A provider that reconnects mid-block starts it again; its earlier text is abandoned.
+              const restarted = turn.streamItems.get(streamItemId(turn, contentIndex));
+              if (restarted !== undefined && !restarted.completed) restarted.text = "";
+              return;
+            }
             if (deltaType === "text_delta" || deltaType === "thinking_delta") {
               const item = yield* streamItemFor(
                 turn,
@@ -2463,7 +2545,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           }
           case "agent_settled": {
             if (turn?.interrupted === true) {
-              if (state !== null) yield* finalizeTurn(state);
+              if (state === null) return;
+              const liveState = yield* request({ type: "get_state" }, 2_000).pipe(
+                Effect.orElseSucceed(() => undefined),
+              );
+              adoptLiveSessionFile(state, liveState);
+              yield* finalizeTurn(state);
               return;
             }
             if (turn !== null) {
@@ -2697,18 +2784,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             ) {
               turn.settleWhenIdle = false;
               if (state === null) return;
-              // Extensions can move Pi to another session file (ctx.newSession); resume that one.
-              const sessionFile = recordString(data, "sessionFile");
-              const previousFile = state.providerThread.nativeThreadRef?.nativeId;
-              if (sessionFile !== undefined && sessionFile !== previousFile) {
-                if (previousFile != null) state.supersededSessionFiles.add(previousFile);
-                state.supersededSessionFiles.delete(sessionFile);
-                state.providerThread = {
-                  ...state.providerThread,
-                  nativeThreadRef: providerRef(sessionFile),
-                };
-                lastNativeThreadId = sessionFile;
-              }
+              adoptLiveSessionFile(state, data);
               yield* finalizeTurn(state);
             }
             return;
@@ -2888,6 +2964,68 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             return file;
           }),
         ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+      });
+
+      // Old records hold entry IDs without a session file. Recover only when both
+      // timestamped user entries are on the same branch in a sibling session.
+      const findHistoricalForkSession = Effect.fnUntraced(function* (
+        currentFile: string,
+        boundary: Extract<PiForkBoundary, { type: "entry" }>,
+      ) {
+        const targetId = piTurnEntryId(boundary.target);
+        const startedAt = boundary.target?.startedAt;
+        const completedAt = boundary.target?.completedAt;
+        const boundaryEnd = boundary.turn.completedAt;
+        if (
+          targetId === undefined ||
+          startedAt == null ||
+          completedAt == null ||
+          boundaryEnd === null
+        ) {
+          return undefined;
+        }
+        const from = DateTime.toEpochMillis(startedAt);
+        const between = DateTime.toEpochMillis(completedAt);
+        const to = DateTime.toEpochMillis(boundaryEnd);
+        const dir = path.dirname(currentFile);
+        const siblings = yield* fileSystem
+          .readDirectoryEntries(dir)
+          .pipe(Effect.orElseSucceed(() => []));
+        const files = siblings
+          .filter((entry) => entry.type === "File" && entry.name.endsWith(".jsonl"))
+          .map((entry) => path.join(dir, entry.name))
+          .sort()
+          .reverse();
+        for (const file of files) {
+          if (file === currentFile) continue;
+          const entries = new Map<string, PiSessionEntry>();
+          let leafId: string | null = null;
+          const readable = yield* fileSystem.stream(file).pipe(
+            Stream.decodeText(),
+            Stream.splitLines,
+            Stream.runForEach((line) =>
+              Effect.sync(() => {
+                const entry = readPiSessionEntry(Option.getOrUndefined(decodeSessionLine(line)));
+                if (entry === null) return;
+                const [id, value] = entry;
+                entries.set(id, value);
+                leafId = id;
+              }),
+            ),
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+          );
+          if (
+            readable &&
+            piUserEntryInWindow(entries.get(targetId), from, between) &&
+            piUserEntryInWindow(entries.get(boundary.entryId), between, to) &&
+            walkPiBranch(entries, leafId, boundary.entryId)?.reachedStop === true &&
+            walkPiBranch(entries, boundary.entryId, targetId)?.reachedStop === true
+          ) {
+            return file;
+          }
+        }
+        return undefined;
       });
 
       const sessionFileInCwd = Effect.fnUntraced(function* (
@@ -3197,6 +3335,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           return sessionEntity;
         },
         events: Stream.fromQueue(events),
+        backgroundTasksEndWithProcess: true,
         hasPendingBackgroundWork: Effect.sync(() => pendingWake !== null),
         hasPendingBackgroundWorkForThread: (providerThread) =>
           Effect.sync(
@@ -3308,6 +3447,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               nodeId: turnInput.rootNodeId,
               runAttemptId: turnInput.attemptId,
               nativeTurnRef: providerRef(syntheticNativeTurnId, "weak"),
+              ...(state.providerThread.nativeThreadRef === null
+                ? {}
+                : { nativeThreadRef: state.providerThread.nativeThreadRef }),
               ordinal: turnInput.providerTurnOrdinal,
               status: "running",
               startedAt,
@@ -3527,11 +3669,20 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 yield* clearNativeQueue(turn);
                 yield* request({ type: "abort" }, 2_000).pipe(Effect.ignore);
               }
-              // Read rollback tree refs before termination breaks requests; the permit lets in-flight capture finish.
+              // Capture session identity and rollback refs while Pi can still answer; serialize with settlement.
               yield* sessionEventPermit.withPermits(1)(
                 Effect.gen(function* () {
-                  if (threadState?.activeTurn === turn && turn.stopTreeRefs === undefined) {
-                    turn.stopTreeRefs = yield* captureTurnTreeRefs(2_000);
+                  const state = threadState;
+                  if (state?.activeTurn === turn) {
+                    // Probes answered before Stop may carry a session file the extension already left.
+                    turn.settleProbeGeneration += 1;
+                    const liveState = yield* request({ type: "get_state" }, 2_000).pipe(
+                      Effect.orElseSucceed(() => undefined),
+                    );
+                    adoptLiveSessionFile(state, liveState);
+                    if (turn.stopTreeRefs === undefined) {
+                      turn.stopTreeRefs = yield* captureTurnTreeRefs(2_000);
+                    }
                   }
                   yield* connection.terminate;
                 }),
@@ -3575,7 +3726,20 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 `Pi extension request ${requestInput.requestId} has expired`,
               );
             }
-            const response = piUiResponse(pending, requestInput.decision, requestInput.answers);
+            let response = piUiResponse(pending, requestInput.decision, requestInput.answers);
+            const route = pending.customAnswerRoute;
+            if (
+              route !== undefined &&
+              typeof response["value"] === "string" &&
+              response["value"].trim().length > 0 &&
+              !route.lines.includes(response["value"])
+            ) {
+              customAnswerFollowUps.set(route.followUpTitlePrefix, [
+                ...(customAnswerFollowUps.get(route.followUpTitlePrefix) ?? []),
+                response["value"],
+              ]);
+              response = { value: route.sentinel };
+            }
             yield* connection.send({
               type: "extension_ui_response",
               id: pending.nativeRequestId,
@@ -3844,8 +4008,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               return yield* protocolError("Cannot fork while a Pi turn is active");
             }
             const source = forkInput.sourceProviderThread;
-            const sourceFile = source.nativeThreadRef?.nativeId;
-            if (sourceFile == null)
+            const currentFile = source.nativeThreadRef?.nativeId;
+            if (currentFile == null)
               return yield* protocolError("Pi fork source has no session file");
             const sourceTurns = (forkInput.sourceProviderTurns ?? []).filter(
               (turn) => turn.providerThreadId === source.id,
@@ -3854,14 +4018,39 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (forkInput.providerTurnId !== undefined && target === undefined) {
               return yield* protocolError("Pi fork target turn is missing");
             }
+            const targetFile = target?.nativeThreadRef?.nativeId ?? undefined;
             const boundary: PiForkBoundary =
               target === undefined
                 ? { type: "nothing" }
                 : piForkBoundary({
                     target: { type: "provider_turn", providerTurn: target },
                     providerThreadTurns: sourceTurns,
+                    sessionFile: targetFile,
                   });
-            const nativeId = yield* forkSessionIntoCwd(sourceFile, boundary, source.createdAt);
+            const boundaryFile =
+              boundary.type === "nothing" ? undefined : boundary.turn.nativeThreadRef?.nativeId;
+            const sourceFile = targetFile ?? boundaryFile ?? currentFile;
+            const nativeId = yield* forkSessionIntoCwd(sourceFile, boundary, source.createdAt).pipe(
+              Effect.catchTags({
+                PiRpcError: (error) => {
+                  if (
+                    boundary.type !== "entry" ||
+                    boundaryFile != null ||
+                    error.operation !== "fork" ||
+                    error.detail !== "Invalid entry ID for forking"
+                  ) {
+                    return Effect.fail(error);
+                  }
+                  return findHistoricalForkSession(currentFile, boundary).pipe(
+                    Effect.flatMap((file) =>
+                      file === undefined
+                        ? Effect.fail(error)
+                        : forkSessionIntoCwd(file, boundary, source.createdAt),
+                    ),
+                  );
+                },
+              }),
+            );
             const now = yield* DateTime.now;
             return yield* registerThread(
               {
@@ -3915,7 +4104,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
   });
 });
 
-const decodeSessionHeader = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
+const decodeSessionLine = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 interface PiSessionEntry {
   readonly parentId: string | null;
@@ -3938,15 +4127,24 @@ function piSessionListing(data: unknown): PiSessionListing | null {
 }
 
 function piSessionEntries(entries: unknown): ReadonlyMap<string, PiSessionEntry> | null {
-  const byId = new Map<string, PiSessionEntry>();
   if (!Array.isArray(entries)) return null;
-  for (const entry of entries) {
-    const id = recordString(entry, "id");
-    const parentId = recordField(entry, "parentId");
-    if (id === undefined || byId.has(id) || (parentId !== null && typeof parentId !== "string"))
-      return null;
-    const timestamp = recordString(entry, "timestamp");
-    byId.set(id, {
+  const byId = new Map<string, PiSessionEntry>();
+  for (const raw of entries) {
+    const entry = readPiSessionEntry(raw);
+    if (entry === null || byId.has(entry[0])) return null;
+    byId.set(...entry);
+  }
+  return byId;
+}
+
+function readPiSessionEntry(entry: unknown): [string, PiSessionEntry] | null {
+  const id = recordString(entry, "id");
+  const parentId = recordField(entry, "parentId");
+  if (id === undefined || (parentId !== null && typeof parentId !== "string")) return null;
+  const timestamp = recordString(entry, "timestamp");
+  return [
+    id,
+    {
       parentId,
       isUserMessage:
         recordField(entry, "type") === "message" &&
@@ -3955,9 +4153,22 @@ function piSessionEntries(entries: unknown): ReadonlyMap<string, PiSessionEntry>
         timestamp === undefined
           ? null
           : Option.getOrNull(Option.map(DateTime.make(timestamp), DateTime.toEpochMillis)),
-    });
-  }
-  return byId;
+    },
+  ];
+}
+
+function piUserEntryInWindow(entry: PiSessionEntry | undefined, from: number, to: number): boolean {
+  return (
+    entry?.isUserMessage === true &&
+    entry.timestamp !== null &&
+    entry.timestamp >= from &&
+    entry.timestamp <= to
+  );
+}
+
+function piTurnEntryId(turn: OrchestrationV2ProviderTurn | null | undefined): string | undefined {
+  const ref = turn?.nativeTurnRef;
+  return ref?.strength === "strong" ? (ref.nativeId ?? undefined) : undefined;
 }
 
 function walkPiBranch(
@@ -3984,7 +4195,12 @@ function walkPiBranch(
 }
 
 type PiForkBoundary =
-  | { readonly type: "entry"; readonly entryId: string }
+  | {
+      readonly type: "entry";
+      readonly entryId: string;
+      readonly turn: OrchestrationV2ProviderTurn;
+      readonly target: OrchestrationV2ProviderTurn | null;
+    }
   | { readonly type: "nothing" }
   | {
       readonly type: "uncaptured";
@@ -4002,15 +4218,22 @@ function piForkBoundary(input: {
     | { readonly type: "thread_start" }
     | { readonly type: "provider_turn"; readonly providerTurn: OrchestrationV2ProviderTurn };
   readonly providerThreadTurns: ReadonlyArray<OrchestrationV2ProviderTurn>;
+  /** Only turns recorded in this session can bound a fork from it. */
+  readonly sessionFile?: string | undefined;
 }): PiForkBoundary {
   const target = input.target.type === "thread_start" ? null : input.target.providerTurn;
   const boundary = input.providerThreadTurns
-    .filter((turn) => turn.ordinal > (target?.ordinal ?? 0) && turn.nativeTurnRef !== null)
+    .filter(
+      (turn) =>
+        turn.ordinal > (target?.ordinal ?? 0) &&
+        turn.nativeTurnRef !== null &&
+        (input.sessionFile === undefined || turn.nativeThreadRef?.nativeId === input.sessionFile),
+    )
     .sort((a, b) => a.ordinal - b.ordinal)[0];
   const ref = boundary?.nativeTurnRef;
   if (boundary === undefined || ref == null) return { type: "nothing" };
   return ref.strength === "strong" && ref.nativeId !== null
-    ? { type: "entry", entryId: ref.nativeId }
+    ? { type: "entry", entryId: ref.nativeId, turn: boundary, target }
     : { type: "uncaptured", turn: boundary, target };
 }
 
@@ -4168,6 +4391,98 @@ function piQuestion(
     ...(method === "editor" ? { initialAnswer: recordString(event, "prefill") ?? "" } : {}),
     options,
   };
+}
+
+/** The extension normalizes line terminators in each question field before building the dialog. */
+const rpivField = (input: unknown, key: string) =>
+  recordString(input, key)?.replace(/\r\n/g, "\n").replace(/\r/g, "");
+
+const rpivOptionLine = (option: unknown, index: number) =>
+  // oxlint-disable-next-line t3code/no-em-dash-copy -- Matches the extension's option line format.
+  `${index + 1}. ${rpivField(option, "label")} — ${rpivField(option, "description")}`;
+
+/** The extension folds option previews into the select title, the only place clients show them. */
+const rpivPreviewBlock = (options: ReadonlyArray<unknown>) => {
+  const blocks = options.flatMap((option, index) => {
+    const preview = rpivField(option, "preview");
+    return preview
+      ? [`--- ${index + 1}. ${rpivField(option, "label")} preview ---\n${preview.slice(0, 600)}`]
+      : [];
+  });
+  return blocks.length > 0 ? `\n\n${blocks.join("\n\n")}` : "";
+};
+
+/** Mirrors the extension's `prepareQuestionArguments`: some models JSON-encode nested args. */
+const rpivDecoded = (value: unknown, isShape: (parsed: unknown) => boolean) => {
+  if (typeof value !== "string") return value;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return isShape(parsed) ? parsed : value;
+  } catch {
+    return value;
+  }
+};
+
+/**
+ * @juicesharp/rpiv-ask-user-question asks a single-select question over RPC as a select of
+ * "N. label — description" lines plus a trailing "Type something." entry. Rebuild the question
+ * from the tool call's arguments; each option answers with its original line, which the extension
+ * maps back to that option.
+ */
+function piAskUserSingleSelectQuestion(
+  questionId: string,
+  title: string,
+  event: PiRpcRecord,
+  toolArgs: ReadonlyMap<string, unknown>,
+):
+  | { question: OrchestrationV2UserInputQuestion; customAnswerRoute: PiCustomAnswerRoute }
+  | undefined {
+  const lines = event["options"];
+  if (!Array.isArray(lines) || lines.length < 2) return undefined;
+  const sentinel = lines.at(-1);
+  if (typeof sentinel !== "string") return undefined;
+  for (const args of toolArgs.values()) {
+    const questions = rpivDecoded(recordField(args, "questions"), Array.isArray);
+    if (!Array.isArray(questions)) continue;
+    for (const entry of questions) {
+      const question = rpivDecoded(entry, Predicate.isObject);
+      const text = rpivField(question, "question");
+      const header = rpivField(question, "header");
+      if (recordField(question, "multiSelect") === true || !text?.trim()) continue;
+      const prefix = header ? `[${header}] ` : "";
+      if (!title.startsWith(`${prefix}${text}`)) continue;
+      const encodedOptions = rpivDecoded(recordField(question, "options"), Array.isArray);
+      if (!Array.isArray(encodedOptions) || encodedOptions.length !== lines.length - 1) continue;
+      const options = encodedOptions.map((option) => rpivDecoded(option, Predicate.isObject));
+      const body = `${text}${rpivPreviewBlock(options)}`;
+      if (title !== `${prefix}${body}`) continue;
+      if (!options.every((option, index) => lines[index] === rpivOptionLine(option, index))) {
+        continue;
+      }
+      return {
+        question: {
+          id: questionId,
+          header: header?.trim() || "Question",
+          question: body.trim(),
+          options: options.map((option, index) => {
+            const label = rpivField(option, "label")?.trim() || `Option ${index + 1}`;
+            return {
+              label,
+              description: rpivField(option, "description")?.trim() || label,
+              value: rpivOptionLine(option, index),
+            };
+          }),
+        },
+        // The follow-up repeats the option lines; only its trailing instruction is localized.
+        customAnswerRoute: {
+          lines,
+          sentinel,
+          followUpTitlePrefix: `${prefix}${text}\n\n${lines.slice(0, -1).join("\n")}\n\n`,
+        },
+      };
+    }
+  }
+  return undefined;
 }
 
 function piUiResponse(
