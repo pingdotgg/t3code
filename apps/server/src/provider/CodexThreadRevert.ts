@@ -6,13 +6,15 @@ import * as Effect from "effect/Effect";
 export const revertCodexThread = Effect.fn("revertCodexThread")(function* (
   client: Pick<CodexClient.CodexAppServerClient["Service"], "request">,
   threadId: string,
-  numTurns: number,
+  boundary: number | { readonly afterTurnId: string },
 ) {
-  let remaining = numTurns;
+  let remaining = typeof boundary === "number" ? boundary : undefined;
+  const afterTurnId = typeof boundary === "number" ? undefined : boundary.afterTurnId;
   let beforeTurnId: string | undefined;
   let cursor: string | null = null;
   const visited = new Set<string | null>();
-  while (remaining > 0) {
+  let found = afterTurnId === undefined;
+  scan: while (remaining === undefined || remaining > 0) {
     if (visited.has(cursor)) {
       return yield* CodexErrors.CodexAppServerRequestError.internalError(
         "Thread history pagination repeated a cursor.",
@@ -24,16 +26,27 @@ export const revertCodexThread = Effect.fn("revertCodexThread")(function* (
     const page: CodexSchema.V2ThreadTurnsListResponse = yield* client.request("thread/turns/list", {
       threadId,
       cursor,
-      limit: Math.min(remaining, 100),
+      limit: remaining === undefined ? 32 : Math.min(remaining, 100),
       sortDirection: "desc",
-      itemsView: "summary",
+      itemsView: afterTurnId === undefined ? "summary" : "notLoaded",
     });
     for (const turn of page.data) {
+      if (turn.id === afterTurnId) {
+        found = true;
+        break scan;
+      }
       beforeTurnId = turn.id;
-      if (--remaining === 0) break;
+      if (remaining !== undefined && --remaining === 0) break scan;
     }
     cursor = page.nextCursor ?? null;
     if (cursor === null) break;
+  }
+  if (!found) {
+    return yield* CodexErrors.CodexAppServerRequestError.internalError(
+      `Checkpoint turn ${afterTurnId} is missing from the native Codex history.`,
+      undefined,
+      { method: "thread/turns/list", operation: "decode-payload" },
+    );
   }
   return beforeTurnId === undefined
     ? yield* client.request("thread/read", { threadId, includeTurns: false })

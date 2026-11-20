@@ -1,5 +1,11 @@
 import * as Schema from "effect/Schema";
-import { IsoDateTime, NonNegativeInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 export const AgentSessionSource = Schema.Literals(["claudeAgent", "codex", "pi"]);
@@ -77,6 +83,8 @@ export const AgentSessionImportResult = Schema.Struct({
   skippedCount: NonNegativeInt,
 });
 export type AgentSessionImportResult = typeof AgentSessionImportResult.Type;
+
+export const AgentSessionRefreshCodexHistoryInput = Schema.Struct({ threadId: ThreadId });
 
 export class AgentSessionScanError extends Schema.TaggedError<AgentSessionScanError>()(
   "AgentSessionScanError",

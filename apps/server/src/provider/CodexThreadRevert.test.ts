@@ -11,6 +11,7 @@ const page = (
   limit: number,
   turns: string[],
   nextCursor: string | null,
+  itemsView = "summary",
 ) => [
   {
     type: "expect_outbound" as const,
@@ -22,7 +23,7 @@ const page = (
         cursor,
         limit,
         sortDirection: "desc",
-        itemsView: "summary",
+        itemsView,
       },
     },
   },
@@ -84,6 +85,26 @@ it.effect("rejects repeated cursors instead of looping or reverting incomplete h
         version: "test",
         scenario: "revert-loop",
         entries: [...page(1, null, 3, ["newest"], "again"), ...page(2, "again", 2, [], "again")],
+      }),
+    ),
+  ),
+);
+
+it.effect("refuses to revert when the native checkpoint is missing", () =>
+  Effect.gen(function* () {
+    const client = yield* CodexClient.CodexAppServerClient;
+    const result = yield* revertCodexThread(client, "thread", {
+      afterTurnId: "checkpoint",
+    }).pipe(Effect.flip);
+    assert.include(result.message, "Checkpoint turn checkpoint is missing");
+  }).pipe(
+    Effect.provide(
+      CodexReplay.layerReplay({
+        provider: "codex",
+        protocol: "codex.app-server",
+        version: "test",
+        scenario: "revert-missing-checkpoint",
+        entries: [...page(1, null, 32, ["newest"], null, "notLoaded")],
       }),
     ),
   ),

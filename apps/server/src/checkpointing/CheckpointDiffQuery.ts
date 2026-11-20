@@ -163,15 +163,16 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      // Capture compares against the preceding scope ordinal, even when that
-      // checkpoint belongs to a stopped run or has no run.
+      // Imported turns can move app ordinals while existing checkpoint refs stay in place.
       const parentCheckpoint =
         input.fromTurnCount === input.toTurnCount - 1
           ? projection.checkpoints.find(
               (checkpoint) =>
                 checkpoint.status === "ready" &&
                 checkpoint.scopeId === toCheckpoint.scopeId &&
-                checkpoint.ordinalWithinScope === toCheckpoint.ordinalWithinScope - 1,
+                (toCheckpoint.parentCheckpointId === null
+                  ? checkpoint.ordinalWithinScope === toCheckpoint.ordinalWithinScope - 1
+                  : checkpoint.id === toCheckpoint.parentCheckpointId),
             )
           : undefined;
 
