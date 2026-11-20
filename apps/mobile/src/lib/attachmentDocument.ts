@@ -8,7 +8,11 @@ import { m } from "../i18n/messages";
 import { filePreviewDelimiter, parseDelimitedPreview } from "@t3tools/shared/delimitedPreview";
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
 import { readFilePreviewResponse } from "@t3tools/client-runtime/file-preview";
-import { filePreviewKind, FILE_TEXT_PREVIEW_MAX_BYTES } from "@t3tools/shared/filePreview";
+import {
+  filePreviewKind,
+  FILE_TEXT_PREVIEW_MAX_BYTES,
+  modelPreviewKind,
+} from "@t3tools/shared/filePreview";
 import { fetch } from "expo/fetch";
 import { File } from "expo-file-system";
 import * as Effect from "effect/Effect";
@@ -98,7 +102,8 @@ export function useAttachmentDocument(input: {
   readonly attachment: FileBackedComposerAttachment | null;
 }) {
   const resolve = useMessages();
-  const kind = filePreviewKind(input, { richDocuments: false });
+  const modelKind = modelPreviewKind(input);
+  const kind = modelKind ? "model" : filePreviewKind(input, { richDocuments: false });
   const delimiter = filePreviewDelimiter(input);
   const shareController = useRef<AbortController | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- aborts the in-flight attachment share download when the component unmounts
@@ -180,6 +185,7 @@ export function useAttachmentDocument(input: {
   };
   return {
     kind,
+    modelKind,
     ...presentation,
     uri,
     /** Native viewers resolve their own fresh URL from this instead of reusing `uri`. */

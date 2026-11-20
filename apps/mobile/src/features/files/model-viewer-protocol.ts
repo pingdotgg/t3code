@@ -89,6 +89,7 @@ export type ModelViewerEvent =
     };
 
 const MODEL_VIEWER_REPLY_TIMEOUT_MS = 15_000;
+const MODEL_VIEWER_LOAD_TIMEOUT_MS = 45_000;
 
 /** One load owns its replies. Closing it cancels transfer and settles any pending capture. */
 export function createModelViewerRequests(
@@ -97,6 +98,7 @@ export function createModelViewerRequests(
 ) {
   const controller = new AbortController();
   let settleChunk: ((error?: unknown) => void) | null = null;
+  let settleLoad: ((error?: unknown) => void) | null = null;
   let chunkError: Error | null = null;
   let nextCaptureId = 0;
   let pendingCapture: {
@@ -128,6 +130,25 @@ export function createModelViewerRequests(
         }
       });
     },
+    finish(format: ModelPreviewKind, view: ModelCameraView | null) {
+      return new Promise<void>((resolve, reject) => {
+        controller.signal.throwIfAborted();
+        if (settleLoad) throw new Error("The model viewer is still loading.");
+        const timeout = setTimeout(
+          () => settleLoad?.(new Error("The model viewer timed out loading the model.")),
+          MODEL_VIEWER_LOAD_TIMEOUT_MS,
+        );
+        settleLoad = (error) => {
+          clearTimeout(timeout);
+          settleLoad = null;
+          if (error === undefined) resolve();
+          else reject(error);
+        };
+        if (!post({ type: "end", id, format, view })) {
+          settleLoad?.(new Error("The model viewer is unavailable."));
+        }
+      });
+    },
     capture(notes: ReadonlyArray<ModelNote>) {
       return new Promise<ModelPinCapture | null>((resolve) => {
         if (controller.signal.aborted || pendingCapture) {
@@ -145,10 +166,12 @@ export function createModelViewerRequests(
         if (!post({ type: "capture", id, requestId, notes })) pendingCapture?.settle(null);
       });
     },
-    receive(event: Extract<ModelViewerEvent, { type: "ack" | "captured" }>) {
+    receive(event: Extract<ModelViewerEvent, { type: "ack" | "captured" | "loaded" }>) {
       if (event.id !== id) return;
       if (event.type === "ack") {
         settleChunk?.();
+      } else if (event.type === "loaded") {
+        settleLoad?.();
       } else if (pendingCapture?.requestId === event.requestId) {
         pendingCapture.settle(event.result);
       }
@@ -156,6 +179,7 @@ export function createModelViewerRequests(
     close() {
       controller.abort();
       settleChunk?.(controller.signal.reason);
+      settleLoad?.(controller.signal.reason);
       pendingCapture?.settle(null);
     },
   };

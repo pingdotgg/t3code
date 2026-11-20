@@ -216,9 +216,11 @@ function setup() {
 }
 
 it.each([
-  ["archive.zip", null],
-  ["model.3mf", "3mf"],
-])("opens a chat attachment named %s in its file viewer", async (name, modelFormat) => {
+  ["archive.zip", "application/zip", null],
+  ["model.3mf", "application/zip", "3mf"],
+  ["model.3mf", "application/vnd.ms-package.3dmanufacturing-3dmodel+xml", "3mf"],
+  ["model.stl", "text/plain", "stl"],
+])("opens %s (%s) in its viewer", async (name, mimeType, modelFormat) => {
   const screen = setup();
   server.capabilities = {
     repositoryIdentity: false,
@@ -239,7 +241,7 @@ it.each([
             threadId: "thread-1",
             attachmentId: "attachment-1",
             name,
-            mimeType: "application/zip",
+            mimeType,
             sizeBytes: "200",
           },
         }}
@@ -247,8 +249,10 @@ it.each([
     ),
   );
   if (modelFormat !== null) {
-    expect(screen.container.querySelector(`[aria-label="3D view of ${name}"]`)?.textContent).toBe(
-      modelFormat,
+    await screen.settle(() =>
+      expect(screen.container.querySelector(`[aria-label="3D view of ${name}"]`)?.textContent).toBe(
+        modelFormat,
+      ),
     );
     return;
   }

@@ -79,6 +79,13 @@ async function parseModel(
     case "stl": {
       const { STLLoader } = await import("three/examples/jsm/loaders/STLLoader.js");
       signal.throwIfAborted();
+      if (bytes.byteLength < 84) throw new ModelPreviewError({ code: "model-invalid" });
+      const faces = new DataView(bytes).getUint32(80, true);
+      // Match STLLoader's ASCII detection before trusting a binary face count for allocations.
+      const asciiHeader = String.fromCharCode(...new Uint8Array(bytes, 0, 9)).includes("solid");
+      if (84 + faces * 50 > bytes.byteLength && !asciiHeader) {
+        throw new ModelPreviewError({ code: "model-invalid" });
+      }
       const geometry = new STLLoader().parse(bytes);
       // Many exporters write zero face normals, which light as black; derive them instead.
       geometry.computeVertexNormals();
@@ -178,7 +185,7 @@ function countTriangles(root: Object3D): number {
     if (!(object instanceof Mesh)) return;
     const geometry = object.geometry as BufferGeometry;
     const count = geometry.index?.count ?? geometry.getAttribute("position")?.count ?? 0;
-    triangles += Math.floor(count / 3);
+    triangles += Math.floor(count / 3) * (object instanceof InstancedMesh ? object.count : 1);
   });
   return triangles;
 }

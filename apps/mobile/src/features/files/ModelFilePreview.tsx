@@ -29,7 +29,7 @@ import {
   useState,
   type Ref,
 } from "react";
-import { Platform, Pressable, TextInput, View } from "react-native";
+import { Platform, Pressable, ScrollView, TextInput, View } from "react-native";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
@@ -276,10 +276,7 @@ export function ModelFilePreview({
       reader = await openModelReader(uri, signal);
       signal.throwIfAborted();
       await streamModelChunks(reader, signal, requests.sendChunk);
-      signal.throwIfAborted();
-      if (!post({ type: "end", id, format, view: startView() })) {
-        throw new Error("The model viewer is unavailable.");
-      }
+      await requests.finish(format, startView());
     })()
       .catch((cause: unknown) => {
         if (signal.aborted) return;
@@ -390,6 +387,7 @@ export function ModelFilePreview({
         return;
       case "loaded": {
         if (event.id !== current?.requests.id || current.requests.signal.aborted) return;
+        current.requests.receive(event);
         const previous = summaryRef.current;
         const remembered = rememberedModels[memoryKey];
         const restored = restoreModelPins(
@@ -642,21 +640,25 @@ export function ModelFilePreview({
               { count: staleNotes.length },
             )}
           </Text>
-          {staleNotes.map((note) => (
-            <View key={note.id} className="min-h-9 flex-row items-center gap-2">
-              <Text className="min-w-0 flex-1 text-xs text-warning-foreground" numberOfLines={1}>
-                {note.number}. {note.text}
-              </Text>
-              <Pressable
-                accessibilityRole="button"
-                disabled={busy || loading || failure !== null}
-                onPress={() => deleteNote(note.id)}
-                className="h-9 justify-center px-2"
-              >
-                <Text className="text-xs font-t3-bold text-danger-foreground">{gt("Remove")}</Text>
-              </Pressable>
-            </View>
-          ))}
+          <ScrollView className="max-h-36" nestedScrollEnabled>
+            {staleNotes.map((note) => (
+              <View key={note.id} className="min-h-9 flex-row items-center gap-2">
+                <Text className="min-w-0 flex-1 text-xs text-warning-foreground" numberOfLines={1}>
+                  {note.number}. {note.text}
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={busy || loading || failure !== null}
+                  onPress={() => deleteNote(note.id)}
+                  className="h-9 justify-center px-2"
+                >
+                  <Text className="text-xs font-t3-bold text-danger-foreground">
+                    {gt("Remove")}
+                  </Text>
+                </Pressable>
+              </View>
+            ))}
+          </ScrollView>
         </View>
       ) : null}
       <View className="flex-1">

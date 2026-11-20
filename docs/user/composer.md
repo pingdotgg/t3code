@@ -444,7 +444,8 @@ STL previews assume millimeters and display colors stored with the Magics extens
 accepts STL and self-contained GLB files up to 128 MiB.
 
 3MF previews omit print settings. They accept up to 2,048 archive entries, with limits of
-50 MiB for the archive and its expanded contents, 10 MiB per entry, and 8 MiB per XML part.
+50 MiB for the archive and its expanded contents, 10 MiB per entry, and 8 MiB for entries ending
+in `.xml`.
 The expanded contents can be up to 200 times the archive size.
 
 Choose **Annotate** and click or tap the model to pin numbered notes. **Send to chat** adds them to

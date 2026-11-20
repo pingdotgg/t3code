@@ -203,7 +203,10 @@ it.each([
 it("previews embedded GLB data and refuses a reference to a separate file", async () => {
   const vertices = new Float32Array([0, 0, 0, 1, 0, 1, 0, 1, 0]);
   function modelBytes(uri?: string, instanceDepth?: number) {
-    const instances = instanceDepth === undefined ? null : new Float32Array([1, 1, instanceDepth]);
+    const instances =
+      instanceDepth === undefined
+        ? null
+        : new Float32Array([1, 1, instanceDepth, 1, 1, instanceDepth]);
     const byteLength = vertices.byteLength + (instances?.byteLength ?? 0);
     const json = new TextEncoder().encode(
       JSON.stringify({
@@ -237,7 +240,7 @@ it("previews embedded GLB data and refuses a reference to a separate file", asyn
             min: [0, 0, 0],
             max: [1, 1, 1],
           },
-          ...(instances ? [{ bufferView: 1, componentType: 5126, count: 1, type: "VEC3" }] : []),
+          ...(instances ? [{ bufferView: 1, componentType: 5126, count: 2, type: "VEC3" }] : []),
         ],
       }),
     );
@@ -278,7 +281,7 @@ it("previews embedded GLB data and refuses a reference to a separate file", asyn
   ] as const) {
     const scene = await load(undefined, undefined, instanceDepth);
     using _scene = { [Symbol.dispose]: () => scene.dispose() };
-    expect(scene.summary.triangles).toBe(1);
+    expect(scene.summary.triangles).toBe(instanceDepth === undefined ? 1 : 2);
     scene.setPreset("front");
     const [center] = scene.project([{ point: [2 / 3, 1 / 3, rise / 3], normal: [0, 0, 1] }]);
     const normal = scene.pick(rect.left + center!.x, rect.top + center!.y)?.normal;

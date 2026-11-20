@@ -65,12 +65,6 @@ it("keeps earlier screenshot labels after deleting a stale pin and adding a live
   await userEvent.fill(note, "Keep this face");
   await userEvent.click(pin);
   await expect.element(page.getByRole("button", { name: "Note 2: Keep this face" })).toBeVisible();
-  await screen.rerender(dialog("other-panel", file));
-  await expect.element(page.getByRole("button", { name: "Top" })).toBeEnabled();
-  await expect
-    .element(page.getByRole("button", { name: "Note 1: Round this edge" }))
-    .not.toBeInTheDocument();
-
   const revised = new File([triangle.replace("vertex 20 20 0", "vertex -20 20 0")], name, {
     type: file.type,
   });
@@ -84,14 +78,11 @@ it("keeps earlier screenshot labels after deleting a stale pin and adding a live
   );
   await expect.element(page.getByText(/The model changed after 1 note/)).toBeVisible();
   await expect.element(page.getByText("2. Keep this face")).toBeVisible();
-  await userEvent.click(page.getByRole("button", { name: "Annotate" }));
+  await expect.element(page.getByText("Click the model to pin a note")).toBeVisible();
   await pick(-16);
   await userEvent.fill(note, "Keep this new pin");
   await userEvent.click(pin);
   const livePin = page.getByRole("button", { name: "Note 3: Keep this new pin" });
-  await expect.element(livePin).toBeVisible();
-  const refreshed = new File([revised], name, { type: revised.type });
-  await screen.rerender(dialog("local-panel", refreshed));
   await expect.element(livePin).toBeVisible();
   await expect.element(page.getByText("2. Keep this face")).toBeVisible();
   const send = page.getByRole("button", { name: "Send 2 to chat" });

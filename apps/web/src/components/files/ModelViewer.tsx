@@ -406,18 +406,18 @@ export default function ModelViewer(props: {
           <span className="min-w-0 flex-1 truncate">
             <T>Click the model to pin a note</T>
           </span>
-          <span className="shrink-0 text-muted-foreground">
-            {gt("{count, plural, one {1 note} other {# notes}}", { count: notes.length })}
-          </span>
-          <Button
-            size="xs"
-            disabled={sending || !scene || notes.length === 0}
-            onClick={() => void sendToChat()}
-          >
-            {gt("{count, plural, one {Send 1 to chat} other {Send # to chat}}", {
-              count: notes.length,
-            })}
-          </Button>
+          {notes.length > 0 ? (
+            <>
+              <span className="shrink-0 text-muted-foreground">
+                {gt("{count, plural, one {1 note} other {# notes}}", { count: notes.length })}
+              </span>
+              <Button size="xs" disabled={sending || !scene} onClick={() => void sendToChat()}>
+                {gt("{count, plural, one {Send 1 to chat} other {Send # to chat}}", {
+                  count: notes.length,
+                })}
+              </Button>
+            </>
+          ) : null}
           <Button
             size="xs"
             variant="ghost-muted"

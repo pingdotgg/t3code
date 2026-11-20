@@ -128,3 +128,24 @@ it("settles lost replies and accepts a new capture after the deadline", async ()
   await expect(nextCapture).resolves.toEqual(result);
   expect(vi.getTimerCount()).toBe(0);
 });
+
+it("waits for the current model to load, with a deadline and teardown", async () => {
+  vi.useFakeTimers();
+  using _timers = { [Symbol.dispose]: () => vi.useRealTimers() };
+  const view = { position: [1, 2, 3], target: [0, 0, 0] } as const;
+  const summary = { format: "stl", triangles: 1, size: [1, 1, 1], fingerprint: "abc" } as const;
+  const viewer = createModelViewerRequests(1, () => true);
+  const outcome = viewer.finish("stl", view);
+  viewer.receive({ type: "loaded", id: 2, view, summary });
+  const timeout = expect(outcome).rejects.toThrow(/timed out/i);
+  await vi.runOnlyPendingTimersAsync();
+  await timeout;
+  const retry = createModelViewerRequests(2, () => true);
+  const loaded = retry.finish("stl", view);
+  retry.receive({ type: "loaded", id: 2, view, summary });
+  await loaded;
+  const cancelled = retry.finish("stl", view);
+  retry.close();
+  await expect(cancelled).rejects.toMatchObject({ name: "AbortError" });
+  expect(vi.getTimerCount()).toBe(0);
+});

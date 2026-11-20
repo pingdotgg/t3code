@@ -7,7 +7,6 @@ import {
 } from "@t3tools/client-runtime/state/attachments";
 import { msg, useGT } from "gt-react-native";
 import { useRef, useState } from "react";
-import { modelPreviewKind } from "@t3tools/shared/filePreview";
 import { View } from "react-native";
 
 import { AppBar, type AppBarMenu } from "../../components/ui/AppBar";
@@ -64,7 +63,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     attachment: localAttachment,
   });
   const [nativeOpen, setNativeOpen] = useState(false);
-  const modelKind = modelPreviewKind(params);
+  const { modelKind } = document;
   const modelControls = useModelViewerControls();
   // Models render in place; the native viewer is only for formats this app cannot show.
   const nativeKind = modelKind ? null : nativeViewerKind(document.kind);
@@ -236,7 +235,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     environmentId && params.threadId
       ? scopedThreadKey(environmentId, ThreadId.make(params.threadId))
       : null;
-  if (!modelKind && document.kind === "archive" && isZipFile(params) && !document.error) {
+  if (document.kind === "archive" && isZipFile(params) && !document.error) {
     return (
       <ZipArchiveView
         name={params.name}
