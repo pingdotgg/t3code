@@ -9710,6 +9710,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  const gatewayLimitWithCountdown =
+    "API Error: Server is temporarily limiting requests (not your usage limit) · All credentials for model claude-opus-5-5 are cooling down (last error: rate_limit_error: This request would exceed your account's rate limit. Please try again later.) (reset after 2h26m17s)";
+
   it.effect.each([
     { status: 503, cooldown: "4m 6s", seconds: 246 },
     { status: 503, cooldown: "1h 2m 3s", seconds: 3723 },
@@ -9722,6 +9725,33 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     { status: 429, cooldown: "1h2m3s", seconds: 3723, proxy: true, sdkResetSeconds: 60 },
     { status: 429, cooldown: "1h2m3s", seconds: 7200, proxy: true, sdkResetSeconds: 7200 },
     { status: 429, cooldown: "1h2m3s", seconds: 0, proxy: true, sdkResetSeconds: null },
+    {
+      status: 429,
+      cooldown: "2h26m17s with an untimed SDK event",
+      seconds: 8777,
+      proxy: true,
+      sdkResetSeconds: null,
+      sdkRateLimitUntyped: true,
+      result: gatewayLimitWithCountdown,
+    },
+    {
+      status: 429,
+      cooldown: "2h26m17s with an untimed assistant rejection",
+      seconds: 8777,
+      proxy: true,
+      assistantResetSeconds: null,
+      result: gatewayLimitWithCountdown,
+    },
+    {
+      status: 429,
+      cooldown: "2h26m17s with a later assistant reset",
+      seconds: 9000,
+      proxy: true,
+      sdkResetSeconds: null,
+      sdkRateLimitUntyped: true,
+      assistantResetSeconds: 9000,
+      result: gatewayLimitWithCountdown,
+    },
     {
       status: 429,
       cooldown: "nested 1h",
@@ -9759,7 +9789,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 type: "rate_limit_event",
                 rate_limit_info: {
                   status: "rejected",
-                  rateLimitType: "five_hour",
+                  ...(input.sdkRateLimitUntyped
+                    ? { isUsingOverage: false }
+                    : { rateLimitType: "five_hour" }),
                   ...(input.sdkResetSeconds === null
                     ? {}
                     : {
@@ -9774,6 +9806,22 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         makeAssistantErrorFrame({
           uuid: "00000000-0000-4000-8000-000000000652",
           error: input.proxy ? "rate_limit" : "server_error",
+          ...(input.assistantResetSeconds !== undefined
+            ? {
+                apiErrorParams: {
+                  rate_limit_info: {
+                    status: "rejected",
+                    isUsingOverage: false,
+                    ...(input.assistantResetSeconds === null
+                      ? {}
+                      : {
+                          resetsAt:
+                            DateTime.toEpochMillis(now) / 1000 + input.assistantResetSeconds,
+                        }),
+                  },
+                },
+              }
+            : {}),
         }),
         makeResultFrame({
           uuid: "00000000-0000-4000-8000-000000000653",
