@@ -37,51 +37,73 @@ export function useAppForeground(): boolean {
   return useSyncExternalStore(subscribeAppState, isAppForeground);
 }
 
-// Null until the native seed resolves; read as reduced so animated consumers
-// never start motion a reduce-motion user has turned off.
-let reduceMotionEnabled: boolean | null = null;
-const reduceMotionListeners = new Set<Listener>();
-let reduceMotionSubscription: { remove: () => void } | null = null;
+type AccessibilityFlagEvent = "reduceMotionChanged" | "screenReaderChanged";
 
-function setReduceMotionEnabled(next: boolean) {
-  if (next === reduceMotionEnabled) return;
-  reduceMotionEnabled = next;
-  for (const listener of reduceMotionListeners) listener();
-}
+function createAccessibilityFlagStore(
+  event: AccessibilityFlagEvent,
+  readNative: () => Promise<boolean>,
+  valueWhileUnknown: boolean,
+) {
+  let enabled: boolean | null = null;
+  const listeners = new Set<Listener>();
+  let nativeSubscription: { remove: () => void } | null = null;
 
-export function subscribeReduceMotion(onChange: Listener): () => void {
-  reduceMotionListeners.add(onChange);
-  if (reduceMotionSubscription === null) {
-    const subscription = AccessibilityInfo.addEventListener(
-      "reduceMotionChanged",
-      setReduceMotionEnabled,
-    );
-    reduceMotionSubscription = subscription;
-    // The native event only reports changes; seed the current value once per
-    // observation, and drop a seed that resolves after observation stopped.
-    void AccessibilityInfo.isReduceMotionEnabled().then(
-      (enabled) => {
-        if (reduceMotionSubscription === subscription) setReduceMotionEnabled(enabled);
-      },
-      () => undefined,
-    );
+  function setEnabled(next: boolean) {
+    if (next === enabled) return;
+    enabled = next;
+    for (const listener of listeners) listener();
   }
-  return () => {
-    reduceMotionListeners.delete(onChange);
-    if (reduceMotionListeners.size === 0) {
-      reduceMotionSubscription?.remove();
-      reduceMotionSubscription = null;
-      // Changes made while nobody observed were never reported, so the cached
-      // value can be stale; the next subscriber reseeds from native.
-      reduceMotionEnabled = null;
+
+  function subscribe(onChange: Listener): () => void {
+    listeners.add(onChange);
+    if (nativeSubscription === null) {
+      const subscription = AccessibilityInfo.addEventListener(event, setEnabled);
+      nativeSubscription = subscription;
+      // The native event only reports changes; seed the current value once per
+      // observation, and drop a seed that resolves after observation stopped.
+      void readNative().then(
+        (value) => {
+          if (nativeSubscription === subscription) setEnabled(value);
+        },
+        () => undefined,
+      );
     }
-  };
+    return () => {
+      listeners.delete(onChange);
+      if (listeners.size === 0) {
+        nativeSubscription?.remove();
+        nativeSubscription = null;
+        // Changes made while nobody observed were never reported, so the cached
+        // value can be stale; the next subscriber reseeds from native.
+        enabled = null;
+      }
+    };
+  }
+
+  return { subscribe, read: () => enabled ?? valueWhileUnknown };
 }
 
-export function readReduceMotionEnabled(): boolean {
-  return reduceMotionEnabled ?? true;
-}
+// Unknown reads as reduced so animated consumers never start motion a
+// reduce-motion user has turned off.
+const reduceMotionStore = createAccessibilityFlagStore(
+  "reduceMotionChanged",
+  () => AccessibilityInfo.isReduceMotionEnabled(),
+  true,
+);
+
+export const subscribeReduceMotion = reduceMotionStore.subscribe;
+export const readReduceMotionEnabled = reduceMotionStore.read;
 
 export function useReduceMotionEnabled(): boolean {
   return useSyncExternalStore(subscribeReduceMotion, readReduceMotionEnabled);
+}
+
+const screenReaderStore = createAccessibilityFlagStore(
+  "screenReaderChanged",
+  () => AccessibilityInfo.isScreenReaderEnabled(),
+  false,
+);
+
+export function useScreenReaderEnabled(): boolean {
+  return useSyncExternalStore(screenReaderStore.subscribe, screenReaderStore.read);
 }

@@ -7,6 +7,7 @@ import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
+import { useScreenReaderEnabled } from "../../lib/appState";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
 import { resolveNativeReviewDiffView } from "../diffs/nativeReviewDiffSurface";
@@ -54,7 +55,8 @@ export const ReviewCommentCard = memo(function ReviewCommentCard(props: {
   const markdownStyles = useMarkdownPreviewStyles();
   const { themeAppearance: appearanceScheme, themeId } = useAppearancePreferences();
   const appTheme = useUniwindTheme();
-  const [NativeReviewDiffView] = useState(() => resolveNativeReviewDiffView());
+  const [nativeReviewDiffView] = useState(() => resolveNativeReviewDiffView());
+  const NativeReviewDiffView = useScreenReaderEnabled() ? null : nativeReviewDiffView;
   const patch = useMemo(() => buildReviewCommentPatch(props.comment), [props.comment]);
   const parsedDiff = useMemo(
     () => buildReviewParsedDiff(patch, `thread-review-comment:${props.comment.id}`, messages),
