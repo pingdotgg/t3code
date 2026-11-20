@@ -87,13 +87,13 @@ export function SidebarEnvironmentScopeMenu({
         ) : null}
       </MenuTrigger>
       <MenuPopup align="start" className="w-[min(18rem,var(--available-width))]">
-        <MenuGroupLabel>{gt("Show threads from")}</MenuGroupLabel>
         <MenuRadioGroup
           value={value ?? ALL_ENVIRONMENTS}
           onValueChange={(next: string) =>
             onValueChange(next === ALL_ENVIRONMENTS ? null : (next as EnvironmentId))
           }
         >
+          <MenuGroupLabel>{gt("Show threads from")}</MenuGroupLabel>
           <MenuRadioItem value={ALL_ENVIRONMENTS} closeOnClick>
             <span className="flex min-w-0 items-center gap-2">
               <MonitorSmartphoneIcon className="size-4" aria-hidden />
