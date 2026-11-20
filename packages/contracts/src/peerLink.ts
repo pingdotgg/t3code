@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { AuthMcpClientAccess } from "./auth.ts";
+import { AuthEnvironmentScope, AuthMcpClientAccess } from "./auth.ts";
 import { EnvironmentId, ThreadId, TrimmedNonEmptyString, TurnItemId } from "./baseSchemas.ts";
 
 /**
@@ -31,6 +31,16 @@ export const PeerLinkSummary = Schema.Struct({
   status: PeerLinkStatus,
 });
 export type PeerLinkSummary = typeof PeerLinkSummary.Type;
+
+/**
+ * A link's name only, for a client that may read threads here but not manage access: enough to
+ * name and open a linked environment's threads, without its addresses, access or health.
+ */
+export const PeerLinkName = Schema.Struct({
+  environmentId: EnvironmentId,
+  label: Schema.String,
+});
+export type PeerLinkName = typeof PeerLinkName.Type;
 
 export const PeerLinkCreateInput = Schema.Struct({
   /** Where the peer answers: an https, Tailscale, LAN or loopback base URL. */
@@ -88,6 +98,117 @@ export const peerLinkFailureKind = (
       : error.reason === "pairing_rejected"
         ? "code_refused"
         : "other";
+
+/**
+ * Where an environment serves one of its threads to an environment linked to it, signed in with
+ * the link's own session as on `/mcp`. The stream carries the same items the owner's thread
+ * subscription does; history pages and item detail are the owner's too.
+ */
+const PEER_LINK_THREAD_ROUTE_PREFIX = "/api/links/thread";
+export const PEER_LINK_THREAD_STREAM_ROUTE = `${PEER_LINK_THREAD_ROUTE_PREFIX}/stream`;
+export const PEER_LINK_THREAD_HISTORY_ROUTE = `${PEER_LINK_THREAD_ROUTE_PREFIX}/history`;
+export const PEER_LINK_THREAD_ITEM_ROUTE = `${PEER_LINK_THREAD_ROUTE_PREFIX}/item`;
+
+/** A thread on a linked environment, as a client of this environment names it. */
+export const PeerLinkThreadInput = Schema.Struct({
+  /** The linked environment the thread lives in. */
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+});
+export type PeerLinkThreadInput = typeof PeerLinkThreadInput.Type;
+
+export const PeerLinkThreadHistoryInput = Schema.Struct({
+  ...PeerLinkThreadInput.fields,
+  /** The `historyCursor` of the snapshot or of the page before. */
+  cursor: TrimmedNonEmptyString,
+});
+export type PeerLinkThreadHistoryInput = typeof PeerLinkThreadHistoryInput.Type;
+
+export const PeerLinkThreadItemInput = Schema.Struct({
+  ...PeerLinkThreadInput.fields,
+  itemId: TurnItemId,
+  /** Unused by the server; a client keys its cache on it, as for its own threads' items. */
+  revision: Schema.optional(Schema.String),
+});
+export type PeerLinkThreadItemInput = typeof PeerLinkThreadItemInput.Type;
+
+/** Why a linked environment's thread could not be read, with the reason in words. */
+export class PeerLinkThreadReadError extends Schema.TaggedError<PeerLinkThreadReadError>()(
+  "PeerLinkThreadReadError",
+  {
+    reason: Schema.Literals([
+      /** Linked environments is off here. */
+      "disabled",
+      "unknown_link",
+      "expired",
+      /** The linked environment no longer accepts the link, or refuses the read. */
+      "rejected",
+      "unreachable",
+      "thread_not_found",
+      /** The linked environment runs a version that does not serve its threads to a link. */
+      "incompatible",
+    ]),
+    /** What this environment calls the linked one, when it still has the link. */
+    label: Schema.NullOr(Schema.String),
+    message: Schema.String,
+    /** The failure underneath, when the read got as far as the link or the linked environment. */
+    cause: Schema.optionalKey(Schema.Defect()),
+  },
+) {}
+
+/** A client of this environment asks to pair with one it links to, without typing a code. */
+export const PeerLinkClientPairingInput = Schema.Struct({ environmentId: EnvironmentId });
+export type PeerLinkClientPairingInput = typeof PeerLinkClientPairingInput.Type;
+
+const peerLinkClientPairingTarget = {
+  environmentId: EnvironmentId,
+  label: Schema.String,
+  /** The addresses this environment reaches the linked one at; the client tries them itself. */
+  urls: Schema.Array(TrimmedNonEmptyString),
+};
+
+/**
+ * A one-time pairing credential from the linked environment, or why this link cannot get one, in
+ * which case the user pairs there with a code of their own.
+ */
+export const PeerLinkClientPairingResult = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("credential"),
+    ...peerLinkClientPairingTarget,
+    credential: TrimmedNonEmptyString,
+    expiresAt: Schema.DateTimeUtc,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("unsupported"),
+    ...peerLinkClientPairingTarget,
+    reason: Schema.Literals([
+      /** The link is below full access, so it may not hand out a client's access. */
+      "link_access",
+      /** The linked environment runs a version from before this. */
+      "version",
+      /** The linked environment refused: the beta is off there, or its policy forbids pairing. */
+      "refused",
+      /** This environment could not reach the linked one; the client still might. */
+      "unreachable",
+    ]),
+  }),
+]);
+export type PeerLinkClientPairingResult = typeof PeerLinkClientPairingResult.Type;
+
+/** What a linking environment asks of the linked one, over the link, for one of its clients. */
+export const PeerLinkClientPairingRequest = Schema.Struct({
+  /** The client's scopes on the linking environment. The credential never carries more. */
+  scopes: Schema.Array(AuthEnvironmentScope),
+  /** The client's name there, shown in Connections here. */
+  clientLabel: TrimmedNonEmptyString,
+});
+export type PeerLinkClientPairingRequest = typeof PeerLinkClientPairingRequest.Type;
+
+export const PeerLinkClientPairingCredential = Schema.Struct({
+  credential: TrimmedNonEmptyString,
+  expiresAt: Schema.DateTimeUtc,
+});
+export type PeerLinkClientPairingCredential = typeof PeerLinkClientPairingCredential.Type;
 
 /**
  * The user's answer to an agent asking to link an environment. The pairing

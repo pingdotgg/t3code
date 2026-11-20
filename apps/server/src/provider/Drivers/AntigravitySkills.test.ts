@@ -367,4 +367,79 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
       }
     }),
   );
+
+  it.effect(
+    "reads skills declared in global and workspace skills.json with filters and inherits",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const input = yield* makeWorkspace();
+
+        const sharedSkills = path.join(input.userHome, ".agents", "skills");
+        const keptPath = yield* writeSkill(
+          path.join(sharedSkills, "yagni"),
+          "---\nname: yagni\ndescription: Keep it simple.\n---\n",
+        );
+        yield* writeSkill(
+          path.join(sharedSkills, "experimental-draft"),
+          "---\nname: experimental-draft\n---\n",
+        );
+
+        const inheritedSkills = path.join(input.userHome, "inherited-skills");
+        const inheritedPath = yield* writeSkill(
+          path.join(inheritedSkills, "linter"),
+          "---\nname: linter\n---\n",
+        );
+        yield* writeSkill(path.join(inheritedSkills, "skipped"), "---\nname: skipped\n---\n");
+        // Backtracks exponentially under RegExp against the pattern below.
+        yield* writeSkill(
+          path.join(inheritedSkills, "a".repeat(40)),
+          "---\nname: backtrack\n---\n",
+        );
+
+        const projectSkills = path.join(input.cwd, "tools", "skills");
+        const projectPath = yield* writeSkill(
+          path.join(projectSkills, "deploy"),
+          "---\nname: deploy\n---\n",
+        );
+
+        const globalConfigDir = path.join(input.userHome, ".gemini", "config");
+        const inheritedConfigPath = path.join(input.userHome, "shared-skills.json");
+        yield* fileSystem.makeDirectory(globalConfigDir, { recursive: true });
+        yield* fileSystem.makeDirectory(path.join(input.cwd, ".agents"), { recursive: true });
+        yield* fileSystem.writeFileString(
+          inheritedConfigPath,
+          JSON.stringify({
+            inherits: [{ path: path.join(globalConfigDir, "skills.json") }],
+            entries: [{ path: "~/inherited-skills" }],
+          }),
+        );
+        yield* fileSystem.writeFileString(
+          path.join(globalConfigDir, "skills.json"),
+          JSON.stringify({
+            inherits: [{ path: inheritedConfigPath, include_only: ["linter", "(a*)*b"] }],
+            entries: [{ path: sharedSkills, exclude: ["experimental-.*"] }],
+          }),
+        );
+        yield* fileSystem.writeFileString(
+          path.join(input.cwd, ".agents", "skills.json"),
+          JSON.stringify({
+            entries: [{ path: "tools/skills" }],
+          }),
+        );
+
+        assert.deepEqual(yield* discoverAntigravitySkills(input), [
+          { name: "deploy", path: projectPath, scope: "project", enabled: true },
+          { name: "linter", path: inheritedPath, scope: "user", enabled: true },
+          {
+            name: "yagni",
+            description: "Keep it simple.",
+            path: keptPath,
+            scope: "user",
+            enabled: true,
+          },
+        ]);
+      }),
+  );
 });
