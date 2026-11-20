@@ -152,7 +152,7 @@ jobs:
         env:
           APP_NAME: ${{ vars.T3CODE_APP_NAME }}
           APP_SCHEME: ${{ vars.T3CODE_APP_SCHEME }}
-          UPDATE_REPOSITORY: ${{ vars.T3CODE_DESKTOP_UPDATE_REPOSITORY || github.repository }}
+          UPDATE_REPOSITORY: ${{ github.repository }}
         run: |
           {
             echo "T3CODE_STANDALONE=1"

@@ -38,7 +38,7 @@ jobs:
       T3CODE_APP_SCHEME: ${{ vars.T3CODE_APP_SCHEME }}
       T3CODE_APP_NAME: ${{ vars.T3CODE_APP_NAME }}
       T3CODE_HOSTED_APP_URL: ${{ vars.T3CODE_HOSTED_APP_URL }}
-      RELEASE_REPOSITORY: ${{ vars.T3CODE_DESKTOP_UPDATE_REPOSITORY || github.repository }}
+      RELEASE_REPOSITORY: ${{ github.repository }}
     steps:
       - name: Require the fork's app scheme
         run: |
@@ -115,7 +115,7 @@ jobs:
       T3CODE_STANDALONE: "1"
       T3CODE_APP_NAME: ${{ vars.T3CODE_APP_NAME }}
       T3CODE_APP_SCHEME: ${{ vars.T3CODE_APP_SCHEME }}
-      T3CODE_DESKTOP_UPDATE_REPOSITORY: ${{ vars.T3CODE_DESKTOP_UPDATE_REPOSITORY || github.repository }}
+      T3CODE_DESKTOP_UPDATE_REPOSITORY: ${{ github.repository }}
       T3CODE_HOSTED_APP_URL: ${{ vars.T3CODE_HOSTED_APP_URL }}
     steps:
       - name: Checkout
@@ -240,7 +240,7 @@ jobs:
 
   release:
     name: Draft GitHub release
-    needs: [config, build, desktop_linux, desktop_mac]
+    needs: [config, build, build_bundle, desktop_linux, desktop_mac]
     # desktop_mac is skipped until the Apple signing secrets exist.
     if: ${{ !cancelled() && needs.config.result == 'success' && !contains(needs.*.result, 'failure') }}
     runs-on: ubuntu-24.04
