@@ -417,6 +417,48 @@ describe("VS Code theme import", () => {
     ).toBeGreaterThanOrEqual(4.5);
   });
 
+  it.each([
+    {
+      case: "its chat bubble color over its selection",
+      type: "dark",
+      canvas: "#1e1e1e",
+      colors: {
+        "chat.requestBubbleBackground": "#1f3b2a",
+        "editor.selectionBackground": "#7a1f1f",
+      },
+      source: "#1f3b2a",
+    },
+    {
+      case: "a faint selection color, lifted off the canvas",
+      type: "dark",
+      canvas: "#1e1e1e",
+      colors: { "editor.selectionBackground": "#2ea04366" },
+      source: "#2ea043",
+    },
+    {
+      case: "a faint selection color, deepened on a light canvas",
+      type: "light",
+      canvas: "#ffffff",
+      colors: { "editor.selectionBackground": "#cb4b1633" },
+      source: "#cb4b16",
+    },
+  ])("paints the user's message bubble from $case", ({ type, canvas, colors, source }) => {
+    const theme = parseVsCodeThemeFile({
+      name: "Bubble",
+      type,
+      colors: { "editor.background": canvas, "editor.foreground": "#888888", ...colors },
+    });
+    const hueDistance = Math.abs(
+      oklchParts(theme.colors.messageSurface).hue - oklchParts(toCanonicalThemeColor(source)!).hue,
+    );
+    // Compositing a faint color in sRGB bends its OKLCH hue by a few degrees.
+    expect(Math.min(hueDistance, 360 - hueDistance)).toBeLessThan(8);
+    expect(contrastRatio(theme.colors.messageSurface, canvas)).toBeGreaterThanOrEqual(1.2);
+    expect(
+      contrastRatio(theme.colors.messageForeground, theme.colors.messageSurface),
+    ).toBeGreaterThanOrEqual(4.5);
+  });
+
   it("reads wide-gamut color() notation", () => {
     const theme = parseVsCodeThemeFile({
       name: "Vibrant",
