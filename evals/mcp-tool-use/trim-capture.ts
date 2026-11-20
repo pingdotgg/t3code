@@ -39,7 +39,7 @@ const CLAUDE_AGENTS = new Set(["Explore", "general-purpose", "Plan", "statusline
 // Codex skill roots: r1 is Codex's bundled skills, r0 and r2 the user's and the repo's.
 const USER_SKILL_LINE = /^- `r[02]` = |\(file: r[02]\//;
 // The models run.ts offers delegates. spawn_agent lists others, with details not yet public.
-const CODEX_MODELS = new Set(["gpt-6.1-sol", "gpt-6-astra", "gpt-6-luna"]);
+const CODEX_MODELS = new Set(["gpt-6.2-sol", "gpt-6.2-astra", "gpt-6-luna"]);
 
 /** Keeps only the ids in CODEX_MODELS in spawn_agent's model list. */
 const trimModelList = (tool: unknown): unknown => {

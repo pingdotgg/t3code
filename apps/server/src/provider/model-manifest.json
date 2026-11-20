@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-11-20T00:34:00Z",
+  "updatedAt": "2026-11-20T22:56:34Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -133,8 +133,8 @@
   ],
   "currentModels": {
     "codex": [
-      "gpt-6-astra",
-      "gpt-6.1-sol",
+      "gpt-6.2-astra",
+      "gpt-6.2-sol",
       "gpt-6-luna",
       "gpt-daybreak-blue-latest",
       "gpt-daybreak-red-latest"
@@ -154,15 +154,27 @@
       "profiles": {},
       "models": [
         {
+          "slug": "gpt-6.2-sol",
+          "name": "GPT-6.2 Sol",
+          "status": "current",
+          "adapter": { "codex": { "minVersion": "0.171.0" } }
+        },
+        {
+          "slug": "gpt-6.2-astra",
+          "name": "GPT-6.2 Astra",
+          "status": "current",
+          "adapter": { "codex": { "minVersion": "0.171.0" } }
+        },
+        {
           "slug": "gpt-6.1-sol",
           "name": "GPT-6.1 Sol",
-          "status": "current",
+          "status": "legacy",
           "adapter": { "codex": { "minVersion": "0.153.0" } }
         },
         {
           "slug": "gpt-6-astra",
           "name": "GPT-6 Astra",
-          "status": "current",
+          "status": "legacy",
           "adapter": { "codex": { "minVersion": "0.153.0" } }
         },
         {
