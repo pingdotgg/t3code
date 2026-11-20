@@ -5404,7 +5404,9 @@ body {
    which multiplied idle GPU cost. The overlay's 0.035 opacity lives in the
    SVG rect instead. Surfaces that float over the body (e.g. the inset main
    card) must opt in via the surface-grain utility, or they lose the
-   grain's subtle brightening and stand out against the body. */
+   grain's subtle brightening and stand out against the body.
+   surfaceGrainTile.ts swaps the SVG for the same pixels as a bitmap once
+   the app is idle: raster re-runs the noise filter on every repainted tile. */
 :root {
   --surface-grain: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
   --surface-grain-size: 256px 256px;
