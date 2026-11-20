@@ -25,6 +25,17 @@ describe("local state", () => {
     expect(await createLocalState(fakeStorage("{ nope").storage).read()).toEqual(EMPTY_LOCAL_STATE);
   });
 
+  it("Given a file saved before frames could move, when read, then the last board is kept and no frame is moved", async () => {
+    const saved = JSON.stringify({
+      lastOpenedBoard: { projectId: "p1", folder: "a" },
+      cardPositions: {},
+    });
+    expect(await createLocalState(fakeStorage(saved).storage).read()).toEqual({
+      lastOpenedBoard: { projectId: "p1", folder: "a" },
+      frameOrder: {},
+    });
+  });
+
   it("Given a last opened board, when the app reads again, then it is still there", async () => {
     const { storage } = fakeStorage();
     await createLocalState(storage).update((state) => ({
@@ -46,11 +57,11 @@ describe("local state", () => {
       })),
       local.update((state) => ({
         ...state,
-        cardPositions: { ...state.cardPositions, b1: { c1: { x: 10, y: 20 } } },
+        frameOrder: { ...state.frameOrder, b1: { building: ["T-2", "T-1"] } },
       })),
     ]);
     const state = await local.read();
     expect(state.lastOpenedBoard?.folder).toBe("a");
-    expect(state.cardPositions["b1"]?.["c1"]).toEqual({ x: 10, y: 20 });
+    expect(state.frameOrder["b1"]?.["building"]).toEqual(["T-2", "T-1"]);
   });
 });

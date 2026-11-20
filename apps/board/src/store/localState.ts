@@ -1,18 +1,20 @@
+import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-
-const CardPosition = Schema.Struct({ x: Schema.Finite, y: Schema.Finite });
 
 const LocalState = Schema.Struct({
   lastOpenedBoard: Schema.NullOr(
     Schema.Struct({ projectId: Schema.String, folder: Schema.String }),
   ),
-  /** Card positions by board id, then card id. */
-  cardPositions: Schema.Record(Schema.String, Schema.Record(Schema.String, CardPosition)),
+  /** The ticket keys in the order the user dragged them to, by board id, then lane. */
+  frameOrder: Schema.Record(
+    Schema.String,
+    Schema.Record(Schema.String, Schema.Array(Schema.String)),
+  ).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
 });
 export type LocalState = typeof LocalState.Type;
 
-export const EMPTY_LOCAL_STATE: LocalState = { lastOpenedBoard: null, cardPositions: {} };
+export const EMPTY_LOCAL_STATE: LocalState = { lastOpenedBoard: null, frameOrder: {} };
 
 const decode = Schema.decodeUnknownOption(Schema.fromJsonString(LocalState));
 

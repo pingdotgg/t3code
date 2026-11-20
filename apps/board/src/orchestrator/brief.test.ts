@@ -97,14 +97,14 @@ describe("orchestrator stats", () => {
   it("Given a bad stage and a bad line, when the stats are counted, then both are reported and the good lines count", () => {
     const stats = orchestratorStats(
       {
-        tickets: '[{"key":"T-1","stage":"done"}]',
+        tickets: '[{"key":"T-1","title":"a","stage":"done"}]',
         forYou: '{"id":"a","status":"open"}\n\nnot json\n',
         decisions: null,
       },
       2,
     );
     expect(stats.problems).toEqual([
-      "tickets.json is not a list of tickets with a valid stage",
+      expect.stringContaining("tickets.json is invalid: "),
       "foryou.jsonl line 3 is not an item",
     ]);
     expect(stats.forYouOpen).toBe(1);

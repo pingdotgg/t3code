@@ -17,7 +17,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { connectionAtomRuntime } from "../connection/runtime";
 
 export const environmentCatalog = createEnvironmentCatalogAtoms(connectionAtomRuntime);
-const environmentShell = createEnvironmentShellAtoms(connectionAtomRuntime);
+export const environmentShell = createEnvironmentShellAtoms(connectionAtomRuntime);
 export const environmentSnapshotAtom = createEnvironmentSnapshotAtom(environmentShell.stateAtom);
 
 export const environmentProjects = createEnvironmentProjectAtoms({

@@ -1,6 +1,8 @@
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
+import { parseTickets, type TicketStage } from "../domain/ticket";
 import template from "./brief.md?raw";
 import { DEFAULT_ROLES, type ResolvedRole } from "./roles";
 
@@ -43,18 +45,6 @@ export function renderBrief(input: BriefInput): string {
     .replaceAll("{{roles}}", rolesTable(input.roles ?? DEFAULT_ROLES));
 }
 
-export const TICKET_STAGES = [
-  "planned",
-  "building",
-  "reviewing",
-  "verifying",
-  "pr",
-  "awaiting_approval",
-  "merged",
-  "off_path",
-] as const;
-export type TicketStage = (typeof TICKET_STAGES)[number];
-
 export interface StoreFiles {
   /** The text of each store file, or null when the orchestrator has not written it yet. */
   readonly tickets: string | null;
@@ -74,10 +64,8 @@ export interface OrchestratorStats {
   readonly problems: ReadonlyArray<string>;
 }
 
-const Tickets = Schema.Array(Schema.Struct({ stage: Schema.Literals(TICKET_STAGES) }));
 const ForYouLine = Schema.Struct({ id: Schema.String, status: Schema.String });
 
-const decodeTickets = Schema.decodeUnknownOption(Schema.fromJsonString(Tickets));
 const decodeForYouLine = Schema.decodeUnknownOption(Schema.fromJsonString(ForYouLine));
 
 /**
@@ -98,10 +86,9 @@ export function orchestratorStats(files: StoreFiles, builderCap: number): Orches
   };
 
   if (files.tickets !== null) {
-    const tickets = decodeTickets(files.tickets);
-    if (Option.isNone(tickets))
-      problems.push("tickets.json is not a list of tickets with a valid stage");
-    else for (const ticket of tickets.value) stages[ticket.stage] += 1;
+    const tickets = parseTickets(files.tickets);
+    if (Result.isFailure(tickets)) problems.push(tickets.failure.message);
+    else for (const ticket of tickets.success) stages[ticket.stage] += 1;
   }
 
   const latestStatus = new Map<string, string>();

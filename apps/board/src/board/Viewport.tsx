@@ -1,11 +1,24 @@
 import { Minus, Plus, Scan } from "lucide-react";
-import { useCallback, useRef, useState, type PointerEvent, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useRef,
+  useState,
+  type PointerEvent,
+  type ReactNode,
+} from "react";
 
 import { INITIAL_VIEW, fitToContent, panBy, zoomAt, type Rect, type View } from "./viewport";
 
 const GRID_SPACING = 22;
 const BUTTON_ZOOM_STEP = 1.2;
 const WHEEL_ZOOM_RATE = 0.01;
+
+const ViewScaleContext = createContext(1);
+
+/** The canvas zoom, so a child that drags converts screen pixels to canvas pixels. */
+export const useViewScale = () => useContext(ViewScaleContext);
 
 const zoomButton = "grid h-[30px] w-8 place-items-center text-muted hover:bg-hover hover:text-fg";
 
@@ -89,7 +102,7 @@ export function Viewport({ content, children }: { content?: Rect; children?: Rea
           className="absolute top-0 left-0 origin-top-left"
           style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})` }}
         >
-          {children}
+          <ViewScaleContext.Provider value={view.k}>{children}</ViewScaleContext.Provider>
         </div>
       </div>
       <div className="absolute top-3.5 right-3.5 flex flex-col overflow-hidden rounded-lg border border-line bg-panel shadow-panel">
