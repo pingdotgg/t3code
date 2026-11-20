@@ -482,6 +482,7 @@ const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const FLAGGED_INDEX_ENTRIES_MAX_BYTES = 1024 * 1024;
 const CHECKPOINT_RECOVERY_MAX_CANDIDATES = 64;
 const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
+const SUBMODULE_CAPTURE_BUDGET = "5 seconds";
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 // Reflog subjects that only point a ref at an existing commit. Anything else counts as creating
 // one, so an unknown subject keeps its commit attributed.
@@ -1809,27 +1810,55 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       if (!hasSubmodules) return;
       // A submodule that cannot be captured drops its ref, so restore leaves it alone.
       yield* listSubmodules(input.cwd).pipe(
-        Effect.flatMap((submodules) =>
-          Effect.forEach(
+        Effect.flatMap((submodules) => {
+          const pending = new Set(submodules);
+          return Effect.forEach(
             submodules,
             (cwd) =>
-              checkpoints
-                .captureCheckpoint({ cwd, checkpointRef: input.checkpointRef })
-                .pipe(
-                  Effect.catch((cause) =>
-                    Effect.logWarning("submodule checkpoint capture failed", { cwd, cause }).pipe(
-                      Effect.andThen(
-                        checkpoints
-                          .deleteCheckpointRefs({ cwd, checkpointRefs: [input.checkpointRef] })
-                          .pipe(Effect.ignore),
-                      ),
+              checkpoints.captureCheckpoint({ cwd, checkpointRef: input.checkpointRef }).pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("submodule checkpoint capture failed", { cwd, cause }).pipe(
+                    Effect.andThen(
+                      checkpoints
+                        .deleteCheckpointRefs({ cwd, checkpointRefs: [input.checkpointRef] })
+                        .pipe(Effect.ignore),
                     ),
                   ),
                 ),
+                Effect.andThen(Effect.sync(() => pending.delete(cwd))),
+              ),
             // Each submodule has its own Git dir, index and object store; process spawns dominate.
             { concurrency: 4, discard: true },
-          ),
-        ),
+          ).pipe(
+            // Callers hold the workspace lock, so many submodules must not stall the next turn.
+            Effect.timeoutOption(SUBMODULE_CAPTURE_BUDGET),
+            Effect.flatMap(
+              Option.match({
+                onSome: () => Effect.void,
+                onNone: () =>
+                  Effect.logWarning("submodule checkpoint capture exceeded its budget", {
+                    cwd: input.cwd,
+                    uncaptured: pending.size,
+                  }).pipe(
+                    // Restore skips a submodule without the ref, and with it that submodule's own.
+                    Effect.andThen(
+                      Effect.forEach(
+                        pending,
+                        (cwd) =>
+                          execute({
+                            operation: "GitVcsDriver.checkpoints.deleteCheckpointRefs",
+                            cwd,
+                            args: ["update-ref", "-d", input.checkpointRef],
+                            allowNonZeroExit: true,
+                          }).pipe(Effect.ignore),
+                        { concurrency: 4, discard: true },
+                      ),
+                    ),
+                  ),
+              }),
+            ),
+          );
+        }),
         Effect.catch((cause) =>
           Effect.logWarning("submodule checkpoint capture failed", { cwd: input.cwd, cause }),
         ),
