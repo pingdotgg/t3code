@@ -20,8 +20,15 @@ import { SidebarInset } from "../components/ui/sidebar";
 import { StatusDot } from "../components/ui/status-dot";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useScrollingWorkspacesEnabled } from "../hooks/useSettings";
-import { cn, isMacPlatform } from "../lib/utils";
-import { scrollTabStripFromRow, sidewaysWheelScrollsStrip, wheelDeltaPx } from "../motion/gesture";
+import { cn } from "../lib/utils";
+import {
+  layoutChordHeld,
+  listenLayoutWheel,
+  scrollTabStripFromRow,
+  sidewaysWheelStripScroll,
+  WHEEL_STREAM_IDLE_MS,
+  wheelDeltaPx,
+} from "../motion/gesture";
 import { noteStripScroll, PaneMotionSnapshot, usePaneMotion } from "../motion/paneMotion";
 import {
   ChatPanelAnimationSuppressionProvider,
@@ -140,6 +147,8 @@ const USER_SCROLL_END_MS = 250;
  * recently; a fling keeps scrolling a while after the touch ends.
  */
 const USER_SCROLL_SETTLE_WINDOW_MS = 2000;
+/** A strip scroll this soon after a sideways wheel is the wheel's: about one busy frame. */
+const USER_WHEEL_SCROLL_MS = 100;
 /** The first off-screen pane an agent opened on each side of the window. */
 interface UnseenPeeks {
   left: string | null;
@@ -1006,36 +1015,54 @@ export function LayoutSurfaceHost({
   // Hold alt+cmd and the strip follows the wheel sideways and a middle-button
   // drag, wherever the pointer is (pen ZlxmK). Up and down switch workspaces
   // (motion/workspaceSwitch.ts). Any sideways scroll of the user's takes the
-  // camera over from a spring in flight.
+  // camera over from a spring in flight. A plain sideways wheel scrolls the
+  // strip natively, on the compositor, so a busy main thread never stalls it.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own wheel and swipe subscriptions on the mounted workspace scroller.
   useEffect(() => {
     const scroller = scrollerRef.current;
     if (!scrollingWorkspaces || !scroller) return;
-    const mac = isMacPlatform(navigator.platform);
-    const held = (event: MouseEvent) =>
-      mac ? event.metaKey && event.altKey : event.ctrlKey && event.altKey;
-    const moveStrip = (event: WheelEvent, delta: number) => {
+    const onWheel = (event: WheelEvent) => {
+      if (!layoutChordHeld(event) || Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return;
       event.preventDefault();
+      settleStripCamera();
+      noteUserStripScroll();
+      scroller.scrollLeft += wheelDeltaPx(event.deltaX, event);
+    };
+    // Decided once per wheel stream, as the browser latches a scroll to one target.
+    let stream: { at: number; scroll: "native" | "script" | null } | null = null;
+    let sidewaysWheelAt = Number.NEGATIVE_INFINITY;
+    const onSidewaysWheel = (event: WheelEvent) => {
+      if (event.defaultPrevented || layoutChordHeld(event)) return;
+      const now = performance.now();
+      const shifted = event.shiftKey && event.deltaX === 0;
+      const delta = shifted ? event.deltaY : event.deltaX;
+      if (!stream || now - stream.at > WHEEL_STREAM_IDLE_MS) {
+        stream = {
+          at: now,
+          scroll: sidewaysWheelStripScroll(
+            event.composedPath(),
+            scroller,
+            delta,
+            shifted ? 0 : event.deltaY,
+          ),
+        };
+      }
+      stream.at = now;
+      if (stream.scroll === "native") sidewaysWheelAt = now;
+      if (stream.scroll !== "script") return;
+      // Past a code block that ends the browser's scroll chain, script moves the strip.
       settleStripCamera();
       noteUserStripScroll();
       scroller.scrollLeft += wheelDeltaPx(delta, event);
     };
-    const onWheel = (event: WheelEvent) => {
-      if (held(event) && Math.abs(event.deltaX) > Math.abs(event.deltaY))
-        moveStrip(event, event.deltaX);
-    };
-    const onSidewaysWheel = (event: WheelEvent) => {
-      if (event.defaultPrevented) return;
-      const shifted = event.shiftKey && event.deltaX === 0;
-      const delta = shifted ? event.deltaY : event.deltaX;
-      if (
-        sidewaysWheelScrollsStrip(event.composedPath(), scroller, delta, shifted ? 0 : event.deltaY)
-      ) {
-        moveStrip(event, delta);
-      }
+    // The strip itself moved right after a sideways wheel: the user's scroll.
+    const onScroll = () => {
+      if (performance.now() - sidewaysWheelAt > USER_WHEEL_SCROLL_MS) return;
+      settleStripCamera();
+      noteUserStripScroll();
     };
     const onPointerDown = (event: PointerEvent) => {
-      if (event.button !== 1 || !held(event)) return;
+      if (event.button !== 1 || !layoutChordHeld(event)) return;
       event.preventDefault();
       settleStripCamera();
       const startX = event.clientX;
@@ -1058,13 +1085,15 @@ export function LayoutSurfaceHost({
       settleStripCamera();
       noteUserStripScroll();
     };
-    scroller.addEventListener("wheel", onWheel, { passive: false, capture: true });
-    scroller.addEventListener("wheel", onSidewaysWheel, { passive: false });
+    const chordWheel = listenLayoutWheel(scroller, onWheel, { capture: true });
+    scroller.addEventListener("wheel", onSidewaysWheel, { passive: true });
+    scroller.addEventListener("scroll", onScroll, { passive: true });
     scroller.addEventListener("pointerdown", onPointerDown, true);
     scroller.addEventListener("touchmove", onTouchMove, { passive: true });
     return () => {
-      scroller.removeEventListener("wheel", onWheel, true);
+      chordWheel.stop();
       scroller.removeEventListener("wheel", onSidewaysWheel);
+      scroller.removeEventListener("scroll", onScroll);
       scroller.removeEventListener("pointerdown", onPointerDown, true);
       scroller.removeEventListener("touchmove", onTouchMove);
     };
