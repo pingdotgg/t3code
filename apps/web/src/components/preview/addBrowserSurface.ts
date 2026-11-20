@@ -26,7 +26,7 @@ export async function addBrowserSurface<E>(input: {
           ...(source.navStatus._tag === "Idle" ? {} : { url: source.navStatus.url }),
           ...(source.profileId === undefined ? {} : { profileId: source.profileId }),
           ...(source.viewport === undefined ? {} : { viewport: source.viewport }),
-          ...(source.runtime === undefined ? {} : { runtime: source.runtime }),
+          runtime: source.runtime ?? "desktop",
         }),
   });
   return mapAtomCommandResult(result, (snapshot) => {

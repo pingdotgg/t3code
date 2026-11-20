@@ -104,6 +104,14 @@ describe("openPreviewSession", () => {
     });
     expect(failed._tag).toBe("Failure");
     expect(useRightPanelStore.getState().byThreadKey).toBe(state.byThreadKey);
+
+    vi.spyOn(previewRuntime, "previewRuntimeFor").mockReturnValue("server");
+    const clientRendered = { ...source, runtime: undefined };
+    await addBrowserSurface({ threadRef, openPreview, duplicateFrom: clientRendered });
+    expect(openPreview).toHaveBeenLastCalledWith({
+      environmentId: threadRef.environmentId,
+      input: expect.not.objectContaining({ runtime: expect.anything() }),
+    });
   });
 
   it.each(["session", "link"] as const)(
