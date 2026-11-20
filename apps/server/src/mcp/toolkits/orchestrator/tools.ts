@@ -145,7 +145,7 @@ const WorkflowStopTool = Tool.make("t3_workflow_stop", {
 
 const BackgroundWaitTool = Tool.make("t3_background_wait", {
   description:
-    "Keep this thread in Working while background work runs. Pass its task ID once started. Not for work left running (dev server, watcher). `waiting=false` clears. Doesn't stop tasks. Claude/OpenCode only.",
+    "Keep this thread Working for awaited work. Pass `taskIds` after launch (Codex: exec session ID). `waiting=false` clears without stopping tasks. Not for dev servers/watchers. Claude/Codex/OpenCode.",
   parameters: Schema.Struct({
     taskIds: Schema.Array(TrimmedNonEmptyString).check(
       Schema.isMinLength(1),
