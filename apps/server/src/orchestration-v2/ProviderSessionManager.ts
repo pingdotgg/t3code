@@ -2365,12 +2365,22 @@ export const layerWithOptions = (
           effect: Effect.Effect<A, ProviderAdapter.ProviderAdapterV2Error>,
         ): Effect.Effect<A, ProviderAdapter.ProviderAdapterV2Error> => {
           const threadId = providerThread.appThreadId;
-          if (threadId === null) {
-            return observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
-              Effect.andThen(effect),
-            );
-          }
-          return observeActivity(
+          const passThrough = observeActivity(
+            providerSessionId,
+            touchActivity(providerSessionId),
+          ).pipe(Effect.andThen(effect));
+          if (threadId === null) return passThrough;
+          // A historical app on another instance must not rotate the credential the thread's live provider holds.
+          const attachedToOtherInstance = Ref.get(sessions).pipe(
+            Effect.map((current) =>
+              Array.from(current.values()).some(
+                (entry) =>
+                  entry.runtime.instanceId !== runtime.instanceId &&
+                  entry.attachedThreadIds.has(threadId),
+              ),
+            ),
+          );
+          const prepared = observeActivity(
             providerSessionId,
             ensureThreadAttached({
               providerSessionId,
@@ -2390,6 +2400,9 @@ export const layerWithOptions = (
                 () => scheduleThreadUnload(providerSessionId, providerThread.id),
               ),
             ),
+          );
+          return attachedToOtherInstance.pipe(
+            Effect.flatMap((elsewhere) => (elsewhere ? passThrough : prepared)),
           );
         };
         const turnMetrics = (operation: string, model?: string) =>
