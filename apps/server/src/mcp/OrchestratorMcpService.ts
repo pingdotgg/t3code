@@ -473,11 +473,6 @@ function providerConstraints(
   if (provider.auth.status === "unauthenticated") {
     constraints.push("Provider is not authenticated.");
   }
-  if (provider.compatibilityAdvisory?.status === "broken") {
-    constraints.push(
-      provider.compatibilityAdvisory.message ?? "Provider version does not work with T3 Code.",
-    );
-  }
   return constraints;
 }
 

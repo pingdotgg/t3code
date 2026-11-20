@@ -235,7 +235,6 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       { name: "GOOGLE_APPLICATION_CREDENTIALS", value: "/must-not-be-used.json" },
       { name: "GOOGLE_GENAI_USE_VERTEXAI", value: "true" },
       { name: "GEMINI_HOME", value: "/must-not-be-used" },
-      { name: "ANTIGRAVITY_HARNESS_PATH", value: "/must-not-be-used" },
       { name: "BROWSER", value: "must-not-run" },
       ...(options.environment ?? []),
     ].map((variable) => ({ ...variable, sensitive: false })),
