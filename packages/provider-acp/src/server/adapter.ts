@@ -8746,6 +8746,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 context.lastProgressAt = yield* Clock.currentTimeMillis;
                 return "rearm" as const;
               }
+              const progressCheckedAt = yield* Clock.currentTimeMillis;
+              if (context.lastProgressAt + timeoutMillis > progressCheckedAt) {
+                return "rearm" as const;
+              }
               context.inactivityWatchdog = undefined;
               openAgentRequests.clear();
               yield* quarantineNativeTransportAtGeneration(generation);
