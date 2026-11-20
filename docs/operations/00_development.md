@@ -42,6 +42,7 @@ With `origin` on the mirror, use `src` instead of `gh`. PRs into `main` still me
 - Pass flags directly after the task name (e.g. `vp run dev --home-dir /tmp/t3code-dev`, `--browser`).
 - **State and ports:** Linked worktrees default to `<worktree>/.t3/userdata` (outranking `T3CODE_HOME`) and seed on first start from a read-only snapshot of `~/.t3/userdata/statev2.sqlite` when it is at most 500 MiB (`--no-seed` or `T3CODE_DEV_SEED=0` skips; `vp run migrate-dev-db` refreshes manually). Plain clones and the main checkout default to `~/.t3/dev`. Never point a dev server at `~/.t3/userdata`. Read actual ports from `[dev-runner]` output (`T3CODE_PORT_OFFSET` / `T3CODE_DEV_INSTANCE` override).
 - **Resource monitor:** First start builds `native/resource-monitor` via Cargo when missing; without Rust, dev starts without process telemetry.
+- **Phone passkeys (Linux):** Desktop dev builds `native/phone-passkeys`, which needs Rust 1.88+ and `libudev` dev headers; a failed build warns and Chromium handles WebAuthn instead.
 - **Sharing:** `vp run dev --share` exposes the web port over Tailscale and prints a pairing URL. Add `--built` to serve `apps/web/dist` via `vp build --watch` (no HMR, faster over slow links). Never set `VITE_HTTP_URL` or `VITE_WS_URL` in dev—Vite proxies `/api` and `/ws` single-origin.
 - **Startup profiling:** `vp run profile:startup` captures the first 20 s of Node processes under `.t3/startup-profiles/<timestamp>`.
 
@@ -82,14 +83,14 @@ Run `vp run dist:desktop:artifact --help` for `--arch`, `--signed`, and `--keep-
 
 ### Linux AppImage prerequisites
 
-Build on Linux (the browser-secret helper links against `libsecret`). Install Rust stable (`rustup`), C/C++ build tools, `libsecret` dev headers, `pkg-config`, ImageMagick, and Electron runtime libs (`gtk3`, `nss`, `alsa`, `gbm`):
+Build on Linux (the browser-secret helper links against `libsecret`). Install Rust stable (`rustup`), C/C++ build tools, `libsecret` and `libudev` dev headers, `pkg-config`, ImageMagick, and Electron runtime libs (`gtk3`, `nss`, `alsa`, `gbm`):
 
 ```sh
 # Ubuntu 24.04 / Debian 13 (on 22.04/Debian 12 use libgtk-3-0 and libasound2)
-sudo apt-get install build-essential libsecret-1-dev pkg-config imagemagick libgtk-3-0t64 libnss3 libasound2t64 libgbm1
+sudo apt-get install build-essential libsecret-1-dev libudev-dev pkg-config imagemagick libgtk-3-0t64 libnss3 libasound2t64 libgbm1
 
 # Fedora
-sudo dnf install gcc gcc-c++ make libsecret-devel pkgconf-pkg-config ImageMagick gtk3 nss alsa-lib mesa-libgbm
+sudo dnf install gcc gcc-c++ make libsecret-devel systemd-devel pkgconf-pkg-config ImageMagick gtk3 nss alsa-lib mesa-libgbm
 
 # Arch
 sudo pacman -S base-devel libsecret pkgconf imagemagick gtk3 nss alsa-lib mesa
