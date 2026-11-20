@@ -219,6 +219,9 @@ pub trait EngineHost: Send + Sync {
 
     /// A thread was archived, deleted or settled; end what it holds open (terminals).
     fn thread_closed(&self, _thread_id: &str, _reason: ThreadClose) {}
+
+    /// A remote task of `thread_id` now owes its thread in a linked environment a stop.
+    fn remote_task_changed(&self, _thread_id: &str, _task_id: &str) {}
 }
 
 /// A provider session asking for agent tools.
@@ -455,6 +458,24 @@ pub trait Engine: Send + Sync {
         Box::pin(std::future::ready(Err(
             "Secret requests are not supported.".into(),
         )))
+    }
+
+    /// A task in a linked environment (`delegated_task.remote.request`, `.complete`, `.stop`):
+    /// internal commands, so they never go through [`Engine::dispatch`]. `Err` when the engine
+    /// refused it or it changed nothing; the caller reads the task to learn which.
+    fn remote_task(&self, _command: Value) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(std::future::ready(Err(
+            "Tasks in linked environments are not supported.".into(),
+        )))
+    }
+
+    /// `(parentThreadId, taskId)` of each remote task a follower still owes something, at most
+    /// `limit` (`getOpenRemoteDelegatedTasks`).
+    fn open_remote_tasks(
+        &self,
+        _limit: usize,
+    ) -> BoxFuture<'_, Result<Vec<(String, String)>, String>> {
+        Box::pin(std::future::ready(Ok(vec![])))
     }
 
     /// Closes every provider session before the server exits, so no provider process, nor a

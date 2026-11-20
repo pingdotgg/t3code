@@ -11,7 +11,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use super::{
-    Args, Cx, ToolResult, fail, projects, str_arg,
+    Args, Cx, ToolError, ToolResult, fail, projects, str_arg,
     threads::{self, MAX_WAIT_MS},
 };
 use crate::{Caller, view};
@@ -54,21 +54,68 @@ fn options_array(options: Option<&Value>) -> Option<Value> {
     }
 }
 
+/// TS `taskPrompt`.
+fn task_prompt(args: &Args) -> String {
+    let task = str_arg(args, "task").unwrap_or_default();
+    match str_arg(args, "role") {
+        None | Some("general") => task.to_owned(),
+        Some(role) => format!("Act as the {role} sub-agent for this task.\n\n{task}"),
+    }
+}
+
+/// `timeoutMs` of a task wait, within the MCP wait cap.
+fn wait_timeout(args: &Args) -> Duration {
+    let ms = args
+        .get("timeoutMs")
+        .and_then(Value::as_f64)
+        .map_or(DEFAULT_TASK_WAIT_MS, |ms| {
+            (ms.max(1.0) as u64).min(MAX_WAIT_MS)
+        });
+    Duration::from_millis(ms)
+}
+
+/// `delegate_task` with `target.environmentId`: the child runs as an ordinary thread there;
+/// this thread keeps the task (`RemoteDelegation.delegate`).
+async fn delegate_remote(cx: &Cx<'_>, args: &Args, environment: &str) -> ToolResult {
+    let caller = cx.require_thread("delegate_task")?.clone();
+    let task_id = crate::remote_tasks::delegate(cx, args, environment, &task_prompt(args)).await?;
+    let mut timed_out = false;
+    if str_arg(args, "mode") == Some("wait") {
+        timed_out = crate::remote_tasks::wait_for_result(
+            cx,
+            &caller.thread_id,
+            &task_id,
+            wait_timeout(args),
+        )
+        .await?;
+        if timed_out {
+            // After a wait times out, a later completion wakes the parent (`upgradeWake`).
+            let _ = cx
+                .dispatch(json!({
+                    "type": "delegated_task.wake-policy",
+                    "commandId": format!("{task_id}:wake-always"),
+                    "parentThreadId": caller.thread_id,
+                    "taskId": task_id,
+                    "completionWake": "always",
+                }))
+                .await;
+        }
+    }
+    read_task(cx, &caller.thread_id, &task_id, timed_out).await
+}
+
 pub(super) async fn delegate(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let caller = cx.require_thread("delegate_task")?;
-    // TS `actsAsCaller`: the calling thread, then `writingCaller`.
-    cx.writing_caller().await?;
-    let parent = cx.projection(&caller.thread_id).await?;
-    let parent_thread = &parent["thread"];
     let target = args.get("target").cloned().unwrap_or(Value::Null);
     if let Some(environment) = target["environmentId"].as_str()
         && environment != cx.config().environment_id
     {
-        return Err(fail(
-            "capability_denied",
-            "Linked environments is off on this machine. Leave out target.environmentId to run the task here.",
-        ));
+        return delegate_remote(cx, args, environment).await;
     }
+    // TS `actsAsCaller`: the calling thread, then `writingCaller`.
+    cx.writing_caller().await?;
+    let parent = cx.projection(&caller.thread_id).await?;
+    let parent_thread = &parent["thread"];
     if let Some(project) = target["projectId"].as_str()
         && parent_thread["projectId"] != project
     {
@@ -150,11 +197,7 @@ pub(super) async fn delegate(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let command_id = cx.stable_id("command", "delegate-task", &key);
     let task_id = format!("{TASK_PREFIX}{command_id}");
     let child = format!("thread:delegated-task:{command_id}");
-    let task = str_arg(args, "task").unwrap_or_default();
-    let prompt = match str_arg(args, "role") {
-        None | Some("general") => task.to_owned(),
-        Some(role) => format!("Act as the {role} sub-agent for this task.\n\n{task}"),
-    };
+    let prompt = task_prompt(args);
     let wait = str_arg(args, "mode") == Some("wait");
     let mut command = json!({
         "type": "delegated_task.request",
@@ -181,17 +224,11 @@ pub(super) async fn delegate(cx: &Cx<'_>, args: &Args) -> ToolResult {
     cx.dispatch(command).await?;
 
     if wait {
-        let timeout = args
-            .get("timeoutMs")
-            .and_then(Value::as_f64)
-            .map_or(DEFAULT_TASK_WAIT_MS, |ms| {
-                (ms.max(1.0) as u64).min(MAX_WAIT_MS)
-            });
         let (_, timed_out, _) = threads::wait_for_run(
             cx,
             &child,
             None,
-            Duration::from_millis(timeout),
+            wait_timeout(args),
             threads::Until::EndedOrWaiting,
         )
         .await?;
@@ -228,6 +265,10 @@ pub(super) async fn cancel(cx: &Cx<'_>, args: &Args) -> ToolResult {
     // TS `actsAsCaller`: the calling thread, then `writingCaller`.
     cx.writing_caller().await?;
     let task_id = str_arg(args, "taskId").unwrap_or_default();
+    // The task runs in a linked environment: its thread there is stopped through the link.
+    if let Some(row) = remote_row(cx, &caller.thread_id, task_id).await? {
+        return crate::remote_tasks::cancel(cx, &caller.thread_id, &row, args).await;
+    }
     let current = read_task(cx, &caller.thread_id, task_id, false).await?;
     if TERMINAL.contains(&current["status"].as_str().unwrap_or_default()) {
         return Ok(json!({"taskId": task_id, "status": current["status"]}));
@@ -244,8 +285,27 @@ pub(super) async fn cancel(cx: &Cx<'_>, args: &Args) -> ToolResult {
     Ok(json!({"taskId": task_id, "status": "cancel_requested"}))
 }
 
+/// The parent's row of `task_id` when the task runs in a linked environment.
+async fn remote_row(cx: &Cx<'_>, parent: &str, task_id: &str) -> Result<Option<Value>, ToolError> {
+    let projection = cx.projection(parent).await?;
+    Ok(projection["subagents"]
+        .as_array()
+        .and_then(|rows| {
+            rows.iter().find(|row| {
+                row["id"] == task_id
+                    && row["origin"] == "app_owned"
+                    && crate::remote_tasks::is_remote(row)
+            })
+        })
+        .cloned())
+}
+
 /// `OrchestratorMcpDelegateTaskResult` for a task of `parent`.
 async fn read_task(cx: &Cx<'_>, parent: &str, task_id: &str, wait_timed_out: bool) -> ToolResult {
+    if let Some(row) = remote_row(cx, parent, task_id).await? {
+        let projection = cx.projection(parent).await?;
+        return crate::remote_tasks::read_task(cx, &projection, &row, wait_timed_out, true).await;
+    }
     let not_found = || {
         fail(
             "task_not_found",

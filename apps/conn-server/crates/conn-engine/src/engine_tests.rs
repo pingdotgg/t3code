@@ -5482,3 +5482,187 @@ fn transcript_queries_use_their_indexes() {
     assert!(interrupts.contains("turn_item_interrupts"), "{interrupts}");
     assert!(!interrupts.contains("TEMP B-TREE"), "{interrupts}");
 }
+
+fn remote(command: &str, kind: &str, extra: Value) -> Value {
+    let mut c =
+        json!({"type": kind, "commandId": command, "threadId": "t1", "parentThreadId": "t1"});
+    if let (Some(c), Some(extra)) = (c.as_object_mut(), extra.as_object()) {
+        c.extend(extra.clone());
+    }
+    c
+}
+
+/// A task in a linked environment: recorded on the parent without a child thread, completed by
+/// its follower (which wakes the parent once), and a Stop of the parent after its result owes
+/// its thread there a stop, which a `stopped` report with the current count settles.
+#[tokio::test(flavor = "current_thread")]
+async fn a_remote_task_is_recorded_completed_and_owes_a_stop() {
+    let db = TempDb::new("remote-task");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+
+    let request = remote(
+        "r1",
+        "delegated_task.remote.request",
+        json!({
+            "parentRunId": "run:t1:1", "parentNodeId": "node:run:t1:1:root", "task": "look there",
+            "title": "There", "driver": "remote",
+            "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-4-5"},
+            "remoteChild": {"environmentId": "env:b", "threadId": "thread:b", "label": "B", "runId": "run:b"},
+            "completionWake": "always",
+        }),
+    );
+    engine.remote_task(request.clone()).await.unwrap();
+    // A replay of the same command is accepted once and records nothing more.
+    engine.remote_task(request).await.unwrap();
+    let task = "node:delegated-task:r1";
+    let p = projection(&engine, "t1").await;
+    let row = p["subagents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == task)
+        .unwrap()
+        .clone();
+    assert_eq!(row["childThreadId"], Value::Null);
+    assert_eq!(row["driver"], "remote");
+    assert_eq!(row["remoteChild"]["threadId"], "thread:b");
+    assert_eq!(row["status"], "running");
+    assert_eq!(
+        engine.open_remote_tasks(10).await.unwrap(),
+        vec![("t1".to_owned(), task.to_owned())]
+    );
+    // Not a client command.
+    assert!(
+        engine
+            .remote_task(json!({"type": "thread.create"}))
+            .await
+            .is_err()
+    );
+
+    engine
+        .remote_task(remote(
+            "rc1",
+            "delegated_task.remote.complete",
+            json!({"taskId": task, "status": "completed", "result": "done there", "stoppedThere": "ran-out"}),
+        ))
+        .await
+        .unwrap();
+    let p = projection(&engine, "t1").await;
+    let row = p["subagents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == task)
+        .unwrap()
+        .clone();
+    assert_eq!(row["status"], "completed");
+    assert_eq!(row["result"], "done there");
+    assert_eq!(row["remoteChild"]["stoppedThere"], true);
+    assert_eq!(row["completionDelivery"]["state"], "delivered");
+    let wakes = p["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["text"].as_str().is_some_and(|t| t.contains(task)))
+        .count();
+    assert_eq!(wakes, 1, "the parent is woken once");
+    assert!(engine.open_remote_tasks(10).await.unwrap().is_empty());
+    // A second report changes nothing, so it is refused; the first result stands.
+    assert!(
+        engine
+            .remote_task(remote(
+                "rc2",
+                "delegated_task.remote.complete",
+                json!({"taskId": task, "status": "failed", "result": "late", "stoppedThere": "ran-out"}),
+            ))
+            .await
+            .is_err()
+    );
+
+    // Stopping the parent owes the finished task's thread there a stop.
+    dispatch(
+        &engine,
+        json!({"type": "thread.stop", "commandId": "s1", "threadId": "t1", "reason": "enough"}),
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    let row = p["subagents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == task)
+        .unwrap()
+        .clone();
+    assert_eq!(row["result"], "done there");
+    assert_eq!(row["remoteChild"]["stoppedThere"], false);
+    assert_eq!(row["remoteChild"]["stopCount"], 1);
+    assert_eq!(engine.open_remote_tasks(10).await.unwrap().len(), 1);
+    // A stop sent for an older count does not settle it; the current one does.
+    let stopped = |command: &str, count: u64| {
+        remote(
+            command,
+            "delegated_task.remote.complete",
+            json!({"taskId": task, "status": "completed", "result": "done there",
+                   "stoppedThere": "stopped", "stopCount": count}),
+        )
+    };
+    assert!(engine.remote_task(stopped("rs0", 0)).await.is_err());
+    engine.remote_task(stopped("rs1", 1)).await.unwrap();
+    let p = projection(&engine, "t1").await;
+    let row = p["subagents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == task)
+        .unwrap()
+        .clone();
+    assert_eq!(row["remoteChild"]["stoppedThere"], true);
+    assert!(engine.open_remote_tasks(10).await.unwrap().is_empty());
+}
+
+/// A Stop of the parent ends an open remote task here as interrupted, without a wake.
+#[tokio::test(flavor = "current_thread")]
+async fn a_parent_stop_interrupts_an_open_remote_task() {
+    let db = TempDb::new("remote-stop");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    engine
+        .remote_task(remote(
+            "r1",
+            "delegated_task.remote.request",
+            json!({
+                "parentRunId": "run:t1:1", "parentNodeId": "node:run:t1:1:root", "task": "x",
+                "driver": "remote", "modelSelection": {"instanceId": "claudeAgent", "model": "m"},
+                "remoteChild": {"environmentId": "env:b", "threadId": "thread:b", "label": "B"},
+            }),
+        ))
+        .await
+        .unwrap();
+    dispatch(
+        &engine,
+        json!({"type": "thread.stop", "commandId": "s1", "threadId": "t1"}),
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    let row = &p["subagents"][0];
+    assert_eq!(row["status"], "interrupted");
+    assert_eq!(row["result"], "Stopped with its parent.");
+    assert_eq!(row["completionDelivery"]["state"], "disposed");
+    // Its follower still owes the stop there.
+    assert_eq!(engine.open_remote_tasks(10).await.unwrap().len(), 1);
+}

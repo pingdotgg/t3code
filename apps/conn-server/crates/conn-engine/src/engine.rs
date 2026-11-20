@@ -696,6 +696,12 @@ impl Inner {
             Some(crate::secret_requests::record as commands::Handler)
         } else if command_type == "link_request.record" {
             Some(crate::link_requests::record as commands::Handler)
+        } else if command_type == "delegated_task.remote.request" {
+            Some(crate::families::remote_request as commands::Handler)
+        } else if command_type == "delegated_task.remote.complete" {
+            Some(crate::families::remote_complete as commands::Handler)
+        } else if command_type == "delegated_task.remote.stop" {
+            Some(crate::families::remote_stop as commands::Handler)
         } else if command_type == "thread.pull-request-watch.sync" {
             Some(commands::pull_request_watch_sync as commands::Handler)
         } else if command_type == "thread.pull-request-watch.checks-reopen" {
@@ -864,6 +870,11 @@ impl Inner {
                     host.cleanup_html_attachments(ids).await;
                 }
             }
+            Effect::RemoteTaskChanged { thread_id, task_id } => {
+                if let Some(host) = &self.host {
+                    host.remote_task_changed(&thread_id, &task_id);
+                }
+            }
             Effect::ThreadClosed { thread_id, reason } => {
                 // T3 revokes an archived or deleted thread's credentials
                 // (`revokeMcpCredential`), also one a shared process still holds.
@@ -1011,6 +1022,9 @@ impl Inner {
             // The link a linked caller acts for: the thread carries it (`startsThreads`).
             if let Some(origin) = input.get("linkOrigin").filter(|o| o.is_object()) {
                 create["linkOrigin"] = origin.clone();
+                if let Some(from) = input.get("delegatedFrom").filter(|d| d.is_object()) {
+                    create["delegatedFrom"] = from.clone();
+                }
             }
             let (_, replayed) = self.dispatch_value(create).await.map_err(to_err)?;
             resumed = replayed;
@@ -1173,6 +1187,44 @@ impl Engine for SqliteEngine {
                 .map_err(|e| match e {
                     DispatchError::Rejected(e) | DispatchError::Internal(e) => e,
                 })
+        })
+    }
+
+    fn remote_task(&self, command: Value) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(async move {
+            if !matches!(
+                command["type"].as_str(),
+                Some(
+                    "delegated_task.remote.request"
+                        | "delegated_task.remote.complete"
+                        | "delegated_task.remote.stop"
+                )
+            ) {
+                return Err("Not a remote task command.".into());
+            }
+            self.inner
+                .dispatch_value(command)
+                .await
+                .map(|_| ())
+                .map_err(|e| match e {
+                    DispatchError::Rejected(e) | DispatchError::Internal(e) => e,
+                })
+        })
+    }
+
+    fn open_remote_tasks(
+        &self,
+        limit: usize,
+    ) -> BoxFuture<'_, Result<Vec<(String, String)>, String>> {
+        Box::pin(async move {
+            self.inner
+                .db(move |store| -> Result<Vec<(String, String)>, String> {
+                    let tx = store.tx()?;
+                    let open = tx.open_remote_tasks(limit);
+                    tx.rollback();
+                    open
+                })
+                .await
         })
     }
 

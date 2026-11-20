@@ -16,6 +16,7 @@ pub mod managed;
 pub mod methods;
 pub mod model_manifest;
 pub mod oauth;
+pub mod orbit_link;
 pub mod peers;
 mod project;
 pub mod restart;

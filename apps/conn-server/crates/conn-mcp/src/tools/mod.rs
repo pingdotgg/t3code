@@ -36,6 +36,7 @@ mod tasks;
 mod test_logins;
 mod themes;
 mod threads;
+pub(crate) use threads::{resolve_interaction_mode, resolve_runtime_mode};
 mod workflows;
 pub(crate) mod worktree;
 
@@ -224,6 +225,12 @@ pub(crate) async fn call(
             _ => None,
         };
         if let Some(target) = target {
+            // There the thread's parent is here, so only this side can make a follow-up a task.
+            if name == "t3_thread_send" {
+                let request = args.clone();
+                let sent = cx.forward(name, args, target.clone()).await?;
+                return crate::remote_tasks::follow_up(&cx, &target, &request, sent).await;
+            }
             return cx.forward(name, args, target).await;
         }
     }
@@ -476,7 +483,7 @@ impl Cx<'_> {
         }
     }
 
-    async fn shell(&self) -> ToolResult {
+    pub(crate) async fn shell(&self) -> ToolResult {
         self.engine()
             .shell_snapshot()
             .await
@@ -632,7 +639,7 @@ impl Cx<'_> {
     }
 
     /// Dispatches one contract command; returns the sequence of its last event.
-    async fn dispatch(&self, command: Value) -> Result<u64, ToolError> {
+    pub(crate) async fn dispatch(&self, command: Value) -> Result<u64, ToolError> {
         let command: Command =
             from_json(command).map_err(|e| internal(format!("bad command: {e}")))?;
         match self.engine().dispatch(command).await {
@@ -658,7 +665,7 @@ impl Cx<'_> {
     }
 
     /// TS `stableCommandId`: `command:mcp:<namespace>:<operation>:<key>`, each part encoded.
-    fn stable_id(&self, prefix: &str, operation: &str, key: &str) -> String {
+    pub(crate) fn stable_id(&self, prefix: &str, operation: &str, key: &str) -> String {
         format!(
             "{prefix}:mcp:{}:{}:{}",
             encode(&self.caller.namespace()),

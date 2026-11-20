@@ -28,6 +28,7 @@ mod http_limits {
 pub use http_limits::MAX_MCP_BODY_BYTES;
 mod links;
 mod peers;
+mod remote_tasks;
 mod sessions;
 pub mod snapshot;
 mod time;
@@ -182,7 +183,7 @@ impl ClientCaller {
 
 impl Caller {
     /// Keys idempotent writes and MCP sessions to the credential, as TS `requestNamespace` does.
-    fn namespace(&self) -> String {
+    pub(crate) fn namespace(&self) -> String {
         match self {
             Caller::Thread(thread) => thread.provider_session_id.clone(),
             Caller::Client(client) => format!("client:{}", client.session_id),
@@ -281,6 +282,8 @@ pub struct McpService {
     /// Whether each calling thread's project is on a forge (`forgeOfThread`): read per request,
     /// kept a minute, at most 1,000 threads.
     forges: Mutex<std::collections::HashMap<String, (bool, std::time::Instant)>>,
+    /// Followers of tasks that run in linked environments.
+    remote: remote_tasks::Followers,
 }
 
 impl std::fmt::Debug for McpService {
@@ -318,6 +321,7 @@ impl McpService {
             upload_owners: Mutex::new(tools::attachments::UploadOwners::default()),
             handoffs: Mutex::new(std::collections::HashSet::new()),
             forges: Mutex::new(std::collections::HashMap::new()),
+            remote: remote_tasks::Followers::default(),
         })
     }
 

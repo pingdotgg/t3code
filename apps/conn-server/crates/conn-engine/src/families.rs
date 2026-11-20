@@ -359,6 +359,23 @@ fn deliver(tx: &mut Tx<'_>, thread_id: &str, settled: bool) -> StoreResult<Vec<E
 pub(crate) fn stop_children(tx: &mut Tx<'_>, thread_id: &str) -> StoreResult<Vec<Effect>> {
     let mut effects = vec![];
     for mut row in tx.entities(thread_id, "subagents")? {
+        // A task in a linked environment ends here; its follower then stops it there. One
+        // with its result keeps it, but its thread there may run follow-up work.
+        if row["origin"] == "app_owned" && row["remoteChild"].is_object() {
+            if row["result"].is_string() {
+                effects.push(owe_remote_stop(tx, thread_id, row)?);
+            } else {
+                effects.extend(finish_remote(
+                    tx,
+                    thread_id,
+                    row,
+                    "interrupted",
+                    "Stopped with its parent.",
+                    "disposed",
+                )?);
+            }
+            continue;
+        }
         let Some(child) = row["childThreadId"].as_str().map(str::to_owned) else {
             continue;
         };
@@ -418,4 +435,239 @@ pub(crate) fn completion_delivery(tx: &mut Tx<'_>, c: Value) -> Outcome {
     let run = row["runId"].as_str().map(str::to_owned);
     tx.append(Draft::new(&parent, "subagent.updated", row).run(run.as_deref()))?;
     Ok(vec![])
+}
+
+/// `followUpOwnerRun`: the thread's newest active run, else the newest run that ran.
+pub(crate) fn follow_up_owner_run(tx: &Tx<'_>, thread_id: &str) -> StoreResult<Option<Value>> {
+    let runs = tx.entities(thread_id, "runs")?;
+    let ordinal = |run: &Value| run["ordinal"].as_u64().unwrap_or(0);
+    let active = runs
+        .iter()
+        .filter(|run| commands::is_active(run))
+        .max_by_key(|run| ordinal(run));
+    if let Some(run) = active {
+        return Ok(Some(run.clone()));
+    }
+    Ok(runs
+        .iter()
+        .filter(|run| {
+            run["status"] != "queued"
+                && !(run["status"] == "cancelled" && run["startedAt"].is_null())
+        })
+        .max_by_key(|run| ordinal(run))
+        .cloned())
+}
+
+fn same_remote_thread(task: &Value, remote: &Value) -> bool {
+    task["remoteChild"]["environmentId"] == remote["environmentId"]
+        && task["remoteChild"]["threadId"] == remote["threadId"]
+}
+
+/// `delegated_task.remote.request` (T3 `dispatchRemoteDelegatedTaskRequest`): a task whose
+/// child is a thread in a linked environment. The parent gets the task node, its `subagents`
+/// row and turn item, as for a local task, but no child thread here. A follow-up to a finished
+/// task there binds to the run a follow-up here would (`followUpOwnerRun`).
+pub(crate) fn remote_request(tx: &mut Tx<'_>, c: Value) -> Outcome {
+    let command_id = c["commandId"].as_str().unwrap_or_default().to_owned();
+    let parent_id = c["parentThreadId"].as_str().unwrap_or_default().to_owned();
+    let parent_run_id = c["parentRunId"].as_str().unwrap_or_default().to_owned();
+    let task = c["task"].as_str().unwrap_or_default().trim().to_owned();
+    let remote = c["remoteChild"].clone();
+    if task.is_empty() || !remote["environmentId"].is_string() || !remote["threadId"].is_string() {
+        return reject("A remote task needs a task and the thread it runs on.");
+    }
+    let Some(parent) = tx.thread(&parent_id)? else {
+        return reject(format!("Thread {parent_id} does not exist."));
+    };
+    let follows_up = tx
+        .entities(&parent_id, "subagents")?
+        .iter()
+        .any(|row| !row["result"].is_null() && same_remote_thread(row, &remote));
+    let run = tx.entity(&parent_id, "runs", &parent_run_id)?;
+    let bound = match &run {
+        Some(run) if follows_up => {
+            follow_up_owner_run(tx, &parent_id)?.is_some_and(|owner| owner["id"] == run["id"])
+        }
+        Some(run) => commands::is_active(run),
+        None => false,
+    };
+    let Some(parent_run) = run.filter(|run| bound && !run["rootNodeId"].is_null()) else {
+        return reject(format!("Parent run {parent_run_id} is not active."));
+    };
+    let node_id = task_node_id(&command_id);
+    let now = tx.now().to_owned();
+    let model = commands::normalize_model_selection(&c["modelSelection"]);
+    let title = c["title"].as_str().map(str::to_owned);
+    let driver = c["driver"].clone();
+    let draft = |event_type, payload| {
+        Draft::new(&parent_id, event_type, payload)
+            .run(Some(&parent_run_id))
+            .node(Some(&node_id))
+            .command(Some(&command_id))
+    };
+    tx.append(draft(
+        "node.updated",
+        json!({
+            "id": node_id, "threadId": parent_id, "runId": parent_run_id,
+            "parentNodeId": c["parentNodeId"], "rootNodeId": parent_run["rootNodeId"],
+            "kind": "subagent", "status": "running", "countsForRun": false,
+            "providerThreadId": null, "providerTurnId": null, "nativeItemRef": null,
+            "runtimeRequestId": null, "checkpointScopeId": null, "startedAt": now,
+            "completedAt": null,
+        }),
+    ))?;
+    let mut row = json!({
+        "id": node_id, "threadId": parent_id, "runId": parent_run_id,
+        "parentNodeId": c["parentNodeId"], "origin": "app_owned", "createdBy": "agent",
+        "driver": driver, "providerInstanceId": model["instanceId"], "providerThreadId": null,
+        "childThreadId": null, "remoteChild": remote, "nativeTaskRef": null, "prompt": task,
+        "title": title, "model": model["model"], "modelSelection": model, "status": "running",
+        "result": null, "startedAt": now, "completedAt": null, "updatedAt": now,
+    });
+    if c["completionWake"].is_string() {
+        row["completionWake"] = c["completionWake"].clone();
+    }
+    tx.append(draft("subagent.updated", row))?;
+    let parent_title = parent["title"].as_str().unwrap_or("Thread");
+    tx.append(draft(
+        "turn-item.updated",
+        json!({
+            "id": format!("turn-item:delegated-task:{command_id}"), "threadId": parent_id,
+            "runId": parent_run_id, "nodeId": node_id,
+            "providerThreadId": parent_run["providerThreadId"], "providerTurnId": null,
+            "nativeItemRef": null, "parentItemId": null, "ordinal": 0, "status": "running",
+            "title": title.unwrap_or_else(|| child_title(None, &task, parent_title)),
+            "startedAt": now, "completedAt": null, "updatedAt": now, "type": "subagent",
+            "subagentId": node_id, "origin": "app_owned", "driver": driver,
+            "providerInstanceId": model["instanceId"], "childThreadId": null,
+            "remoteChild": remote, "prompt": task, "result": null,
+        }),
+    ))?;
+    Ok(vec![])
+}
+
+fn remote_task_row(tx: &Tx<'_>, c: &Value) -> Result<(String, Value), CommandError> {
+    let (parent, row) = task_row(tx, c)?;
+    if !row["remoteChild"].is_object() {
+        return reject(format!(
+            "Delegated task {} is not a remote task of thread {parent}.",
+            row["id"].as_str().unwrap_or_default()
+        ));
+    }
+    Ok((parent, row))
+}
+
+/// The task now owes a stop to its thread there: only `remoteChild` changes, so a result and
+/// its delivery stand (`emitRemoteStopOwed`).
+fn owe_remote_stop(tx: &mut Tx<'_>, parent: &str, mut row: Value) -> StoreResult<Effect> {
+    let task_id = row["id"].as_str().unwrap_or_default().to_owned();
+    let count = row["remoteChild"]["stopCount"].as_u64().unwrap_or(0);
+    row["remoteChild"]["stoppedThere"] = json!(false);
+    row["remoteChild"]["stopCount"] = json!(count + 1);
+    row["updatedAt"] = json!(tx.now());
+    let run = row["runId"].as_str().map(str::to_owned);
+    tx.append(Draft::new(parent, "subagent.updated", row).run(run.as_deref()))?;
+    Ok(Effect::RemoteTaskChanged {
+        thread_id: parent.to_owned(),
+        task_id,
+    })
+}
+
+/// Ends a remote task here with its result: the row, its node and turn item. `delivery` is the
+/// wake state: `pending` wakes the parent, `disposed` (a Stop of the parent) does not.
+fn finish_remote(
+    tx: &mut Tx<'_>,
+    parent: &str,
+    mut row: Value,
+    status: &str,
+    result: &str,
+    delivery: &str,
+) -> StoreResult<Vec<Effect>> {
+    let now = tx.now().to_owned();
+    row["status"] = json!(status);
+    row["result"] = json!(result);
+    row["completedAt"] = json!(now);
+    row["updatedAt"] = json!(now);
+    row["completionDelivery"] = json!({"state": delivery, "observedByRunId": null});
+    let node_id = row["id"].as_str().unwrap_or_default().to_owned();
+    let parent_run = row["runId"].as_str().map(str::to_owned);
+    let draft = |event_type, payload| {
+        Draft::new(parent, event_type, payload)
+            .run(parent_run.as_deref())
+            .node(Some(&node_id))
+    };
+    tx.append(draft("subagent.updated", row))?;
+    if let Some(mut node) = tx.entity(parent, "nodes", &node_id)? {
+        node["status"] = json!(status);
+        node["completedAt"] = json!(now);
+        tx.append(draft("node.updated", node))?;
+    }
+    let item_id = format!("turn-item:{}", node_id.replacen("node:", "", 1));
+    if let Some(mut item) = tx.entity(parent, "turnItems", &item_id)? {
+        item["status"] = json!(status);
+        item["result"] = json!(result);
+        item["completedAt"] = json!(now);
+        item["updatedAt"] = json!(now);
+        tx.append(draft("turn-item.updated", item))?;
+    }
+    if delivery == "pending" {
+        return deliver(tx, parent, false);
+    }
+    Ok(vec![])
+}
+
+/// `delegated_task.remote.complete` (T3 `dispatchRemoteDelegatedTaskComplete`): the result its
+/// thread there ended with. The first result stands. `stoppedThere` records that nothing is
+/// left to stop there; a report that changes nothing is refused.
+pub(crate) fn remote_complete(tx: &mut Tx<'_>, c: Value) -> Outcome {
+    let (parent, mut row) = remote_task_row(tx, &c)?;
+    let stopped_there = c["stoppedThere"].as_str();
+    let stop_count = c["stopCount"].as_u64().unwrap_or(0);
+    if stopped_there == Some("stopped")
+        && stop_count != row["remoteChild"]["stopCount"].as_u64().unwrap_or(0)
+    {
+        return reject("A later stop is owed there.");
+    }
+    if row["result"].is_string() {
+        // A Stop or cancel here that lost the race to the result still owes its stop.
+        if stopped_there.is_none() {
+            return Ok(vec![owe_remote_stop(tx, &parent, row)?]);
+        }
+        let status = row["status"].as_str().unwrap_or_default();
+        let owes = matches!(status, "cancelled" | "interrupted")
+            || row["remoteChild"]["stoppedThere"] == false;
+        if row["remoteChild"]["stoppedThere"] == true || (owes && stopped_there != Some("stopped"))
+        {
+            return reject("The task already has its result.");
+        }
+        row["remoteChild"]["stoppedThere"] = json!(true);
+        row["updatedAt"] = json!(tx.now());
+        let run = row["runId"].as_str().map(str::to_owned);
+        tx.append(Draft::new(&parent, "subagent.updated", row).run(run.as_deref()))?;
+        return Ok(vec![]);
+    }
+    let status = match c["status"].as_str() {
+        Some(status @ ("completed" | "failed" | "cancelled" | "interrupted")) => status,
+        _ => return reject("A remote task ends completed, failed, cancelled or interrupted."),
+    };
+    if stopped_there.is_some() {
+        row["remoteChild"]["stoppedThere"] = json!(true);
+    }
+    if let Some(model) = c["executedModel"].as_str() {
+        row["executedModel"] = json!(model);
+    }
+    let result = c["result"].as_str().unwrap_or_default().to_owned();
+    Ok(finish_remote(tx, &parent, row, status, &result, "pending")?)
+}
+
+/// `delegated_task.remote.stop`: a finished remote task owes its thread there a stop.
+pub(crate) fn remote_stop(tx: &mut Tx<'_>, c: Value) -> Outcome {
+    let (parent, row) = remote_task_row(tx, &c)?;
+    if !row["result"].is_string() {
+        return reject(format!(
+            "Delegated task {} is not a finished remote task of thread {parent}.",
+            row["id"].as_str().unwrap_or_default()
+        ));
+    }
+    Ok(vec![owe_remote_stop(tx, &parent, row)?])
 }

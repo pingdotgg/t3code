@@ -341,6 +341,15 @@ impl PeerLinks {
     ) -> Result<T, PeerLinkError> {
         let _disk = self.disk.lock().await;
         self.blocking(move |file, _| {
+            // Another process (`environment link-orbit`) may change the file too: one lock
+            // file holds every read-modify-write across processes. Released when dropped.
+            let lock = std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .open(file.with_extension("lock"))
+                .map_err(storage)?;
+            lock.lock().map_err(storage)?;
             let mut rows = read_file(&file)?;
             let out = change(&mut rows);
             write_file(&file, rows)?;

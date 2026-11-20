@@ -427,7 +427,7 @@ fn resolve_mode(
     Ok(resolved.to_owned())
 }
 
-pub(super) fn resolve_runtime_mode(
+pub(crate) fn resolve_runtime_mode(
     limit: &str,
     requested: Option<&str>,
 ) -> Result<String, ToolError> {
@@ -440,7 +440,7 @@ pub(super) fn resolve_runtime_mode(
     )
 }
 
-pub(super) fn resolve_interaction_mode(
+pub(crate) fn resolve_interaction_mode(
     limit: &str,
     requested: Option<&str>,
 ) -> Result<String, ToolError> {
@@ -549,6 +549,10 @@ pub(super) async fn launch(cx: &Cx<'_>, args: &Args) -> ToolResult {
     }
     if let Some(origin) = cx.link_origin().await? {
         input["linkOrigin"] = origin;
+        // Only stamped work names a remote parent, so a client cannot claim one.
+        if let Some(from) = args.get("delegatedFrom").filter(|d| d.is_object()) {
+            input["delegatedFrom"] = from.clone();
+        }
     }
     let projection = launch_thread(cx, input).await?;
     let thread = &projection["thread"];

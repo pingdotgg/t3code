@@ -65,6 +65,12 @@ pub(crate) enum Effect {
         thread_id: String,
         ids: Vec<(String, String)>,
     },
+    /// Tells the host a remote task of `thread_id` now owes its thread there a stop, so its
+    /// follower runs again (T3's `RemoteDelegation.start` stream of `subagent.updated`).
+    RemoteTaskChanged {
+        thread_id: String,
+        task_id: String,
+    },
     /// Tells the host a thread was archived, deleted or settled (its terminals close).
     ThreadClosed {
         thread_id: String,
@@ -94,7 +100,9 @@ impl Effect {
             | Self::ApplyModelSelection { thread_id, .. }
             | Self::CleanupHtmlAttachments { thread_id, .. }
             | Self::ThreadClosed { thread_id, .. } => Some(thread_id),
-            Self::GenerateTitle { .. } | Self::AbandonStart { .. } => None,
+            Self::GenerateTitle { .. }
+            | Self::AbandonStart { .. }
+            | Self::RemoteTaskChanged { .. } => None,
         }
     }
 }
@@ -263,6 +271,7 @@ struct ThreadCreate {
 fn thread_create(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let initial_message = command.get("initialMessage").cloned();
     let link_origin = command.get("linkOrigin").cloned();
+    let delegated_from = command.get("delegatedFrom").cloned();
     let c: ThreadCreate = decode(command)?;
     if tx.thread(&c.thread_id)?.is_some() {
         return reject(format!("Thread {} already exists.", c.thread_id));
@@ -299,6 +308,10 @@ fn thread_create(tx: &mut Tx<'_>, command: Value) -> Outcome {
     });
     if let Some(origin) = link_origin {
         thread["linkOrigin"] = origin;
+        // Only stamped work names a remote parent.
+        if let Some(from) = delegated_from.filter(Value::is_object) {
+            thread["delegatedFrom"] = from;
+        }
     }
     tx.append(Draft::new(&c.thread_id, "thread.created", thread).command(Some(&c.command_id)))?;
     if let Some(mut message) = initial_message {

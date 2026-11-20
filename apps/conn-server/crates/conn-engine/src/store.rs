@@ -1269,6 +1269,34 @@ impl Tx<'_> {
             .map_err(err)
     }
 
+    /// Remote delegated tasks a follower still owes something (`getOpenRemoteDelegatedTasks`):
+    /// no result yet, a cancel or Stop not yet carried there, or a stop owed after the result.
+    /// Returns `(parentThreadId, taskId)` pairs, at most `limit`.
+    pub(crate) fn open_remote_tasks(&self, limit: usize) -> StoreResult<Vec<(String, String)>> {
+        let mut statement = self
+            .tx
+            .prepare(
+                "SELECT e.thread_id, e.id FROM entities e JOIN threads t ON t.id = e.thread_id
+                 WHERE e.kind = 'subagents' AND t.deleted = 0
+                   AND json_extract(e.body, '$.origin') = 'app_owned'
+                   AND json_type(e.body, '$.remoteChild') = 'object'
+                   AND (
+                     json_type(e.body, '$.result') IS NOT 'text'
+                     OR (json_extract(e.body, '$.status') IN ('cancelled', 'interrupted')
+                         AND json_type(e.body, '$.remoteChild.stoppedThere') IS NOT 'true')
+                     OR json_type(e.body, '$.remoteChild.stoppedThere') = 'false'
+                   )
+                 ORDER BY e.first_seq LIMIT ?1",
+            )
+            .map_err(err)?;
+        let rows = statement
+            .query_map([i64::try_from(limit).unwrap_or(i64::MAX)], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(err)?;
+        rows.map(|row| row.map_err(err)).collect()
+    }
+
     /// Whether `thread_id` was ever used, deleted or not: a row in `threads` or any event.
     pub(crate) fn thread_id_used(&self, thread_id: &str) -> StoreResult<bool> {
         self.tx

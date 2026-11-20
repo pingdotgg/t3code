@@ -91,6 +91,68 @@ itself, so nothing new is advertised.
   after another (T3: four at a time). `preview_act` input is not decoded per action before it
   reaches the desktop (T3 answers `invalid_request` first).
 
+## Remote delegation and the Orbit Gateway link (2026-11-20)
+
+An agent here can delegate to, and message, threads in another linked environment, as in T3
+(`RemoteDelegation.ts`). This server can also link a server that Orbit lists
+(`OrbitEnvironmentLink.ts`).
+
+- **Delegation** (`conn-mcp/src/remote_tasks.rs`): `delegate_task` with `target.environmentId`
+  launches the child there with `t3_thread_launch` and `delegatedFrom`, then records the task
+  here without a child thread. Internal engine commands do the recording:
+  `delegated_task.remote.request`, `.complete` and `.stop` (`Engine::remote_task`). They
+  never reach client dispatch. Provider, model and modes inherit as in T3. The project there
+  is matched by repository or named. `isolation: worktree` is refused with T3's text.
+- **The follower**: one per open task, at most 1,024. It waits on the thread there in 45 s
+  steps (the forwarder's cap) and races each step against the task ending here. It reads the
+  last reply, paging and following truncated text. Then it completes the task, which wakes
+  the parent as a local child does. A final refusal (link revoked or forgotten, thread or run
+  gone) fails the task. Any other failure is retried with back-off up to 5 min. After three
+  engine failures in a row the task fails, naming its thread there. On start, the server
+  follows every open task again (`Engine::open_remote_tasks`).
+- **Stop and cancel**: a Stop of the parent ends an open remote task as interrupted, without a
+  wake. A task that already has its result then owes a stop there. The engine tells the host
+  (`EngineHost::remote_task_changed`), and the follower sends that stop at once.
+  `task_cancel` stops the thread there, then records the cancel. A machine that is down
+  still cancels here, and the follower sends the stop later.
+- **Follow-up record**: a forwarded `t3_thread_send` that started or queued a run on a
+  finished task's thread becomes a new task here. The send returns its `taskId`, and the task
+  is completed the same way.
+- **`delegatedFrom`**: a thread that a link launches keeps the parent named in the launch
+  (thread and shell row). Only stamped work gets it, as in T3.
+- **Orbit link** (`conn-server/src/orbit_link.rs`): `conn-server environment link-orbit <id>
+  [--access] [--gateway-url]`. As its own Node, the server asks the Gateway
+  (`/api/v1/conn/environments`, the pairing and its Operation) for a one-time pairing link
+  through the system `curl`, as T3 does. It takes the code and links with the expected
+  environment id. The code never reaches output, an error or storage. The codes and messages
+  are T3's (`node_access_required`, `session_expired`, `pairing_pending`, `pairing_failed`,
+  `environment_not_found`, `gateway_unreachable`, `links_off`, `target_links_off`,
+  `link_failed`).
+
+Proof:
+- `crates/conn-server/tools/remote-delegation-diff.mjs` (in `tools/check.sh`) runs 20 steps
+  T3 → T3, Conn → Conn, Conn → T3 and T3 → Conn. Steps: the refusals, a delegated task
+  that finishes there and wakes the agent here, a retry, the thread there naming its parent,
+  the parent's task row, a forwarded send that becomes a follow-up task and finishes, a
+  retried send, a send to a thread that is no task, and a cancel of a finished task. All
+  equal.
+- `crates/conn-server/tools/orbit-link-diff.mjs` (in `tools/check.sh`) runs 14 cases of both
+  command lines against a stand-in Gateway on loopback, in the same four pairings. All equal.
+- `parity.mjs` compares `delegate_task` and `t3_thread_send` with an `environmentId` from an
+  outside client, with links on.
+- `cargo test -p conn-engine remote_task` covers the record, the replay, the completion and
+  its single wake, a refused second report, the stop a Stop owes, stop counts, and a Stop of
+  an open task.
+- By hand on mini, the CLI linked a Conn and a T3 server on the WireGuard address 10.44.0.9
+  through a stand-in Gateway. It printed T3's line, and the link lists as reachable.
+
+Known differences: both servers refuse to send an Orbit code to a loopback address
+(`answeringAs`), so the checks prove a successful Orbit link only up to that refusal; the
+hand run proves it. A follower waits in 45 s steps where T3 asks for 10 min; the forwarder
+caps both at 45 s. A remote task's `task_status` acknowledges the result as T3's does; a
+local one still does not. `environment link`, `list` and `unlink` on the command line are not
+built.
+
 ## Antigravity (2026-11-20)
 
 Google Antigravity runs as an agent: the `agy` CLI over ACP (`agy acp`), as T3's Antigravity
@@ -440,10 +502,9 @@ wake messages, unlink. All equal. `parity.mjs` compares the 4 tools with links o
 Known differences: no `cause` on `PeerLinkRequestError`; probe failures name fewer Node error
 codes and no certificate code; `T3-Sender-Thread` is read but not stored (the engine has no
 `linkedSender`); a bearer session that is not an MCP client still works on `/mcp` (as before).
-Not built: remote delegation (`delegate_task` with `target.environmentId`,
-`RemoteDelegation.ts`) and the follow-up record of a forwarded `t3_thread_send`; the browser
-OAuth approval page and the `.well-known` OAuth metadata (no browser sessions here); Orbit's
-Gateway link (`OrbitEnvironmentLink.ts`); MCP approval codes (`AUTO-…`).
+Not built: the browser OAuth approval page and the `.well-known` OAuth metadata (no browser
+sessions here); MCP approval codes (`AUTO-…`). Remote delegation and the Orbit Gateway link
+were built on 2026-11-20 (see that section).
 
 Review fixes (Codex, 6 findings, each with a test that fails without it): MCP client tokens
 are refused on native bearer, ticket and WebSocket paths, as T3's `rejectMcpClientAudience`;

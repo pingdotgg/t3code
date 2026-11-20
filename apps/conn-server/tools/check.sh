@@ -212,6 +212,12 @@ run 3 180 "parity" \
 # Peer links between two servers: T3 → T3 against Conn → Conn, Conn → T3 and T3 → Conn.
 run 3 180 "peer-links-diff" \
   node crates/conn-server/tools/peer-links-diff.mjs "$release/examples/replay_server"
+# Remote delegation: delegate_task and a follow-up send to a linked environment, same four pairs.
+run 3 240 "remote-delegation-diff" \
+  node crates/conn-server/tools/remote-delegation-diff.mjs "$release/examples/replay_server"
+# `environment link-orbit` on both command lines against a stand-in Orbit Gateway.
+run 3 240 "orbit-link-diff" \
+  node crates/conn-server/tools/orbit-link-diff.mjs "$release/examples/replay_server"
 # Devices: both servers on stand-in ssh and npm (a stand-in Mac, hub and daemon); no device.
 run 3 240 "device conformance" \
   node crates/conn-devices/tools/conformance.mjs "$release/examples/replay_server"

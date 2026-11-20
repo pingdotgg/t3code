@@ -126,7 +126,7 @@ Where they differ, because the engine does not do it yet:
   child (lineage `subagent`) and wakes the parent (`always`; `settled_only` for `mode: wait`,
   upgraded when the wait gives up). Task ids are `node:delegated-task:<commandId>`. No
   `isolation: worktree`: the engine's `delegated_task.request` takes no workspace strategy
-  yet. No remote targets.
+  yet. Remote targets: see "Linked environments".
 - `orchestrator_capabilities`: no option descriptors, favourites or model preferences.
 - `send_to_user` stores nothing, as in T3: the provider records the call as a `dynamic_tool`
   item, and the client shows its `sentMessage`. Our engine sends tool items whole (no wire
@@ -249,8 +249,18 @@ port). Reference: `PeerForwarding.ts`, `McpToolAccess.routed`, the link handlers
   `t3_environment_unlink` are hidden while links are off (`src/links-hidden.txt`).
   `t3_environment_preferences_update` patches the settings; `t3_environment_read` reports them
   over T3's defaults (`src/preference-defaults.json`).
-- Not built: remote delegation (`delegate_task` with `target.environmentId`) and the local
-  record of a forwarded `t3_thread_send` (`RemoteDelegation.followUp`).
+- Remote delegation (`src/remote_tasks.rs`, T3's `RemoteDelegation.ts`): `delegate_task` with
+  `target.environmentId` launches the child there with `t3_thread_launch` (`delegatedFrom`
+  names the parent) and records the task here with the engine's internal
+  `delegated_task.remote.request` (no child thread). A follower per open task waits on the
+  thread there (`t3_thread_wait`, `untilDelegatedWorkSettled`, 45 s steps raced against the
+  task ending here), reads its last reply (`t3_thread_read`) and completes the task
+  (`delegated_task.remote.complete`), which wakes the parent as a local child does.
+  `task_status` and `task_cancel` read and stop remote tasks; a Stop of the parent, or a
+  cancel, stops the thread there, and the follower carries an unsent stop across restarts.
+  A forwarded `t3_thread_send` that started or queued a run on a finished task's thread is a
+  follow-up: a new task here, whose `taskId` the send returns (`RemoteDelegation.followUp`).
+  At most 1,024 followers run at once. Proof: `crates/conn-server/tools/remote-delegation-diff.mjs`.
 
 `tools.implemented` is the served set. `agent_texts_name_only_known_unserved_tools` checks
 which unserved tools the agent instructions mention.

@@ -331,6 +331,10 @@ pub async fn serve_with_instances(
     println!("providers: {provider_names}");
     // Probes spawn provider CLIs; T3 starts them once the server is ready, too.
     crate::methods::provider::start_status_refresh(&state.deps);
+    // Tasks in linked environments: their followers, again after a restart.
+    if let Some(mcp) = &state.deps.mcp {
+        mcp.start_remote_tasks();
+    }
     // Pull request watches: a sweep every two minutes, as T3's `PullRequestWatchReactor`.
     crate::methods::pull_requests::start_watches(&state.deps);
     // `model-manifest.json`, fetched and cached as the T3 server's provider checks do.

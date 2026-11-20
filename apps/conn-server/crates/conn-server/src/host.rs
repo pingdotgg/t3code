@@ -231,6 +231,12 @@ impl EngineHost for Host {
         })
     }
 
+    fn remote_task_changed(&self, thread_id: &str, task_id: &str) {
+        if let Some(mcp) = self.mcp.get() {
+            mcp.follow_remote_task(thread_id, task_id);
+        }
+    }
+
     fn thread_closed(&self, thread_id: &str, reason: ThreadClose) {
         match reason {
             ThreadClose::Settled => self.terminals.close_on_settle(thread_id),

@@ -158,7 +158,7 @@ pub trait Peers: Send + Sync {
     fn request_link(&self, ask: LinkAsk) -> BoxFuture<'_, Result<Value, PeerFailure>>;
 }
 
-fn peer_failure(error: PeerFailure) -> ToolError {
+pub(crate) fn peer_failure(error: PeerFailure) -> ToolError {
     fail(failure_code(&error.code), error.message)
 }
 
@@ -378,21 +378,7 @@ impl Cx<'_> {
         }
         // Every caller here reaches the peer as the one link session, so a retry key is
         // scoped to its caller before it leaves.
-        if let Some(Value::String(id)) = args.get("clientRequestId") {
-            let digest = Sha256::digest(format!("{}\n{id}", self.caller.namespace()).as_bytes());
-            let scoped = format!("fwd:{}", conn_support::hex::hex(&digest));
-            args.insert("clientRequestId".into(), json!(scoped));
-        }
-        if tool == "t3_thread_wait" {
-            let asked = args
-                .get("timeoutMs")
-                .and_then(Value::as_i64)
-                .unwrap_or(DEFAULT_WAIT_TIMEOUT_MS);
-            args.insert(
-                "timeoutMs".into(),
-                json!(asked.clamp(1, MAX_WAIT_TIMEOUT_MS)),
-            );
-        }
+        scope_request(&mut args, tool, &self.caller.namespace());
         peers
             .call(PeerCall {
                 environment_id: target,
@@ -406,6 +392,26 @@ impl Cx<'_> {
             })
             .await
             .map_err(peer_failure)
+    }
+}
+
+/// `scopedRequestId` and `waitForThread`'s cap: every caller here reaches the peer as the one
+/// link session, so a retry key is scoped to its caller (`namespace`) before it leaves.
+pub(crate) fn scope_request(args: &mut Args, tool: &str, namespace: &str) {
+    if let Some(Value::String(id)) = args.get("clientRequestId") {
+        let digest = Sha256::digest(format!("{namespace}\n{id}").as_bytes());
+        let scoped = format!("fwd:{}", conn_support::hex::hex(&digest));
+        args.insert("clientRequestId".into(), json!(scoped));
+    }
+    if tool == "t3_thread_wait" {
+        let asked = args
+            .get("timeoutMs")
+            .and_then(Value::as_i64)
+            .unwrap_or(DEFAULT_WAIT_TIMEOUT_MS);
+        args.insert(
+            "timeoutMs".into(),
+            json!(asked.clamp(1, MAX_WAIT_TIMEOUT_MS)),
+        );
     }
 }
 

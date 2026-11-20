@@ -1023,6 +1023,9 @@ if (noModel) {
     ["t3_environment_read", {}],
     ["t3_environment_preferences_update", { defaultThreadEnvMode: null, newWorktreesStartFromOrigin: true, backgroundActivity: { profile: "balanced" } }],
     ["t3_environment_preferences_update", { environmentId: "environment:none" }],
+    // Remote delegation needs a calling thread; an outside client is refused before any link.
+    ["delegate_task", { task: "x", target: { environmentId: "environment:none", projectId: "p" } }],
+    ["t3_thread_send", { environmentId: "environment:none", threadId: "thread:none", message: "x" }],
   ];
   for (const [tool, args] of linkSteps) {
     const results = await Promise.all(sessions.map(async (session) => outcome(await session.callTool(tool, args))));

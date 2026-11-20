@@ -13,22 +13,7 @@ pub(crate) fn thread_link(
     match caller {
         // A peer link is another T3 Code environment: it renders thread chips too.
         Caller::Thread(_) | Caller::Client(crate::ClientCaller { linked: true, .. }) => {
-            let href = format!("t3-thread://v2/{}/{thread_id}", config.environment_id);
-            let destination = if href.contains(['(', ')']) {
-                format!("<{href}>")
-            } else {
-                href.clone()
-            };
-            let label = title
-                .replace(['[', ']', '\\', '\r', '\n'], " ")
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ");
-            if label.is_empty() {
-                format!("<{href}>")
-            } else {
-                format!("[{label}]({destination})")
-            }
+            chip(&config.environment_id, thread_id, title)
         }
         Caller::Client(_) => format!(
             "{}/threads/{}/{}",
@@ -36,6 +21,26 @@ pub(crate) fn thread_link(
             segment(&config.environment_id),
             segment(thread_id)
         ),
+    }
+}
+
+/// `formatThreadLink`: a `t3-thread://` chip for a thread in `environment_id`.
+pub(crate) fn chip(environment_id: &str, thread_id: &str, title: &str) -> String {
+    let href = format!("t3-thread://v2/{environment_id}/{thread_id}");
+    let destination = if href.contains(['(', ')']) {
+        format!("<{href}>")
+    } else {
+        href.clone()
+    };
+    let label = title
+        .replace(['[', ']', '\\', '\r', '\n'], " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if label.is_empty() {
+        format!("<{href}>")
+    } else {
+        format!("[{label}]({destination})")
     }
 }
 
