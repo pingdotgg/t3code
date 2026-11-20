@@ -50,7 +50,7 @@ import {
 import { EmptyState } from "../../components/ui/EmptyState";
 import { FloatingActionButton } from "../../components/ui/FloatingActionButton";
 import type { WorkspaceEnvironment, WorkspaceState } from "../../state/workspaceModel";
-import type { SnoozeThreadOptions } from "./useThreadListActions";
+import type { SnoozeChoice } from "@t3tools/client-runtime/state/thread-settled";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
@@ -134,8 +134,7 @@ interface HomeScreenProps {
   readonly onSettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onSnoozeThread: (
     thread: EnvironmentThreadShell,
-    snoozedUntil: string,
-    options?: SnoozeThreadOptions,
+    choice: SnoozeChoice,
   ) => Promise<boolean>;
   readonly onUnsnoozeThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onUnsettleThread: (thread: EnvironmentThreadShell) => void;

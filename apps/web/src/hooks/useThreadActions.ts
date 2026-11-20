@@ -8,7 +8,7 @@ import {
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   canSnooze,
-  type SnoozePreset,
+  type SnoozeChoice,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
@@ -955,10 +955,7 @@ export function useThreadActions() {
     });
   };
 
-  const snoozeThread = async (
-    target: ScopedThreadRef,
-    choice: Pick<SnoozePreset, "snoozedUntil" | "wakesOnPullRequest">,
-  ) => {
+  const snoozeThread = async (target: ScopedThreadRef, choice: SnoozeChoice) => {
     if (!readEnvironmentServerConfigLoaded(target.environmentId)) {
       return AsyncResult.failure(
         Cause.fail(

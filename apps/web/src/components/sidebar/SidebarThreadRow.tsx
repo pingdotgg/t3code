@@ -60,7 +60,6 @@ import {
   XIcon,
 } from "lucide-react";
 import {
-  Fragment,
   memo,
   useRef,
   useState,
@@ -115,7 +114,7 @@ import {
   useLinkedThreadPullRequest,
   ThreadSearchPullRequestNumber,
 } from "../ThreadStatusIndicators";
-import { pickSnoozePreset, resolveSnoozePresets, type SnoozePreset } from "../Sidebar.snooze";
+import { pickSnoozePreset, resolveSnoozePresets, type SnoozeChoice } from "../Sidebar.snooze";
 import { readEnvironmentSupportsPullRequestSnooze, useThreadShell } from "../../state/entities";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { ThreadSearchMatchExcerpt } from "../ThreadSearchMatch";
@@ -400,7 +399,7 @@ function SidebarThreadTooltip({
 function SnoozeMenuButton(props: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSnooze: (preset: Pick<SnoozePreset, "snoozedUntil" | "wakesOnPullRequest">) => void;
+  onSnooze: (preset: SnoozeChoice) => void;
   timestampFormat: TimestampFormat;
   environmentId: EnvironmentId;
   /** The thread has an open pull request, so "Until PR activity" can wait on it. */
@@ -447,19 +446,17 @@ function SnoozeMenuButton(props: {
       </Tooltip>
       <MenuPopup side="bottom" align="end">
         {presets.map((preset) => (
-          <Fragment key={preset.id}>
-            {preset.wakesOnPullRequest === true ? <MenuSeparator /> : null}
-            <MenuItem
-              onClick={(event) => {
-                event.stopPropagation();
-                const picked = pickSnoozePreset(presets, preset.id, timestampFormat, environmentId);
-                if (picked) onSnooze(picked);
-              }}
-            >
-              {preset.label}
-              <MenuItemDetail>{preset.whenLabel}</MenuItemDetail>
-            </MenuItem>
-          </Fragment>
+          <MenuItem
+            key={preset.id}
+            onClick={(event) => {
+              event.stopPropagation();
+              const picked = pickSnoozePreset(presets, preset.id, timestampFormat, environmentId);
+              if (picked) onSnooze(picked);
+            }}
+          >
+            {preset.label}
+            <MenuItemDetail>{preset.whenLabel}</MenuItemDetail>
+          </MenuItem>
         ))}
         {presets.length > 0 ? <MenuSeparator /> : null}
         <MenuItem
@@ -640,10 +637,7 @@ type SidebarThreadRowProps = {
     event: PointerEvent,
   ) => void;
   onUnsettle: (threadRef: ScopedThreadRef) => void;
-  onSnooze: (
-    threadRef: ScopedThreadRef,
-    preset: Pick<SnoozePreset, "snoozedUntil" | "wakesOnPullRequest">,
-  ) => void;
+  onSnooze: (threadRef: ScopedThreadRef, preset: SnoozeChoice) => void;
   onUnsnooze: (threadRef: ScopedThreadRef) => void;
   onUnpin: (threadRef: ScopedThreadRef) => void;
   onAcknowledgeWoke: (threadRef: ScopedThreadRef, visitedAt: string) => void;
@@ -979,9 +973,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     event.stopPropagation();
     onUnpin(threadRef);
   };
-  const handleSnoozePreset = (
-    preset: Pick<SnoozePreset, "snoozedUntil" | "wakesOnPullRequest">,
-  ) => {
+  const handleSnoozePreset = (preset: SnoozeChoice) => {
     onSnooze(threadRef, preset);
   };
   const [snoozeMenuOpenRaw, setSnoozeMenuOpen] = useState(false);

@@ -11,11 +11,9 @@ export function visibleThreadPullRequests(
   return links.filter((link) => link.source !== "stack-dismissed");
 }
 
-/** Whether a linked pull request is still open, or not read yet, so a snooze can wait on it. */
+/** Whether a linked pull request was last read open, so a snooze can wait on it. */
 export function hasOpenThreadPullRequest(links: ReadonlyArray<ThreadPullRequestLink>): boolean {
-  return visibleThreadPullRequests(links).some(
-    (link) => link.snapshot === null || link.snapshot.state === "open",
-  );
+  return visibleThreadPullRequests(links).some((link) => link.snapshot?.state === "open");
 }
 
 /**
@@ -31,8 +29,12 @@ export function pullRequestSyncWakesSnooze(input: {
   const { previous, next } = input;
   const updatedAtMs = next.updatedAt === null ? Number.NaN : Date.parse(next.updatedAt);
   if (updatedAtMs > input.snoozedAtMs) return true;
-  if (previous !== null && previous.state !== next.state) return true;
-  return next.mergeability === "conflicting" && previous?.mergeability !== "conflicting";
+  // A first read has nothing to compare, so only a pull request that already ended is news.
+  if (previous === null) return next.state !== "open";
+  return (
+    previous.state !== next.state ||
+    (next.mergeability === "conflicting" && previous.mergeability !== "conflicting")
+  );
 }
 
 export function threadPullRequestUpdatedAtMs(link: ThreadPullRequestLink): number {

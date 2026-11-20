@@ -254,17 +254,16 @@ describe("thread list operation permissions", () => {
       const actions = useThreadListActions();
       state.scopes.get(primaryEnvironmentId)!.clear();
 
-      await actions[handler](makeThread(), "2099-01-01T00:00:00.000Z");
+      await actions[handler](makeThread(), { snoozedUntil: "2099-01-01T00:00:00.000Z" });
 
       expect(state.requests).toEqual([]);
     },
   );
 
   it.each(mutationCases)("%s requires the target environment's permission", async (handler) => {
-    await useThreadListActions()[handler](
-      makeThread({ environmentId: otherEnvironmentId }),
-      "2099-01-01T00:00:00.000Z",
-    );
+    await useThreadListActions()[handler](makeThread({ environmentId: otherEnvironmentId }), {
+      snoozedUntil: "2099-01-01T00:00:00.000Z",
+    });
 
     expect(state.requests).toEqual([]);
   });
@@ -429,9 +428,11 @@ describe("thread action undo", () => {
     async (handler, action, notice, inverse) => {
       const actions = useThreadListActions();
       const thread = makeThread();
-      const first = actions[handler](thread, "2099-01-01T09:00:00.000Z");
+      const first = actions[handler](thread, { snoozedUntil: "2099-01-01T09:00:00.000Z" });
 
-      expect(await actions[handler](thread, "2099-01-01T09:00:00.000Z")).toBe(false);
+      expect(await actions[handler](thread, { snoozedUntil: "2099-01-01T09:00:00.000Z" })).toBe(
+        false,
+      );
       expect(await first).toBe(true);
       expect(state.requests.map(({ action }) => action)).toEqual([action]);
       expect(readThreadUndoNotice()?.action).toBe(notice);
@@ -507,7 +508,7 @@ describe("thread action undo", () => {
   // regression: #21401 restore archive and thread action undo
   it("wakes a snoozed thread through the undo action", async () => {
     const thread = makeThread();
-    await useThreadListActions().snoozeThread(thread, "2099-01-01T09:00:00.000Z");
+    await useThreadListActions().snoozeThread(thread, { snoozedUntil: "2099-01-01T09:00:00.000Z" });
     expect(readThreadUndoNotice()?.action).toBe("Snoozed");
     await readThreadUndoNotice()!.undo();
     expect(state.requests.at(-1)).toMatchObject({

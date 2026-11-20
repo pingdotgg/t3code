@@ -32,8 +32,11 @@ import {
 } from "@t3tools/contracts";
 import { toServerClock } from "@t3tools/client-runtime/clock";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
-import { canSnooze, canSnoozeUntilPullRequest } from "@t3tools/client-runtime/state/thread-settled";
-import type { SnoozeThreadOptions } from "../home/useThreadListActions";
+import {
+  canSnooze,
+  canSnoozeUntilPullRequest,
+  type SnoozeChoice,
+} from "@t3tools/client-runtime/state/thread-settled";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useNavigation } from "@react-navigation/native";
@@ -772,11 +775,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly onRenameThread: (thread: EnvironmentThreadShell) => void;
   readonly onRegenerateThreadTitle: (thread: EnvironmentThreadShell) => void;
   readonly onSettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
-  readonly onSnoozeThread: (
-    thread: EnvironmentThreadShell,
-    snoozedUntil: string,
-    options?: SnoozeThreadOptions,
-  ) => void;
+  readonly onSnoozeThread: (thread: EnvironmentThreadShell, choice: SnoozeChoice) => void;
   readonly onUnsnoozeThread: (thread: EnvironmentThreadShell) => void;
   readonly onUnsettleThread: (thread: EnvironmentThreadShell) => void;
   readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
@@ -954,8 +953,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     setCustomSnoozeOpen(false);
   }
   const handleSnooze = useCallback(
-    (snoozedUntil: string, options?: SnoozeThreadOptions) =>
-      onSnoozeThread(thread, snoozedUntil, options),
+    (choice: SnoozeChoice) => onSnoozeThread(thread, choice),
     [onSnoozeThread, thread],
   );
   const handleUnsnooze = useCallback(() => onUnsnoozeThread(thread), [onUnsnoozeThread, thread]);
@@ -1269,7 +1267,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         presets: props.snoozePresets,
       });
       if (snoozeSelection._tag === "selected") {
-        handleSnooze(snoozeSelection.preset.snoozedUntil, snoozeSelection.preset);
+        handleSnooze(snoozeSelection.preset);
       } else if (snoozeSelection._tag === "expired") {
         Dialog.alert(
           gt("Could not snooze thread"),
@@ -1768,7 +1766,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   return (
     <View collapsable={false}>
       {customSnoozeOpen && (
-        <CustomSnoozeSheet onClose={() => setCustomSnoozeOpen(false)} onSnooze={handleSnooze} />
+        <CustomSnoozeSheet
+          onClose={() => setCustomSnoozeOpen(false)}
+          onSnooze={(snoozedUntil) => handleSnooze({ snoozedUntil })}
+        />
       )}
       <ThreadSwipeable
         dormant={dormant}

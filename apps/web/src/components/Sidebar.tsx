@@ -226,7 +226,7 @@ import {
 import { SidebarPointerSensor } from "./Sidebar.pointer";
 import { createSidebarListMotion } from "./Sidebar.motion";
 import { createSidebarShiftGuard } from "./Sidebar.shiftGuard";
-import { pickSnoozePreset, resolveSnoozePresets, type SnoozePreset } from "./Sidebar.snooze";
+import { pickSnoozePreset, resolveSnoozePresets, type SnoozeChoice } from "./Sidebar.snooze";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { deriveProviderEntriesByEnvironment } from "../providerInstances";
 import { useStableCallback } from "../hooks/useStableCallback";
@@ -2244,7 +2244,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   };
   const performSnooze = async (
     threadRef: ScopedThreadRef,
-    preset: Pick<SnoozePreset, "snoozedUntil" | "wakesOnPullRequest">,
+    preset: SnoozeChoice,
     opts: { coSnoozingKeys?: ReadonlySet<string> } = {},
   ) => {
     const threadKey = scopedThreadKey(threadRef);
@@ -2276,7 +2276,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const attemptSnooze = useStableCallback(
     (
       threadRef: ScopedThreadRef,
-      preset: Pick<SnoozePreset, "snoozedUntil" | "wakesOnPullRequest">,
+      preset: SnoozeChoice,
       opts: { coSnoozingKeys?: ReadonlySet<string> } = {},
     ) => {
       void (async () => {

@@ -3,7 +3,7 @@ import type { ThreadMoveDestination } from "../threads/threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
 import { showThreadUndoNotice } from "./thread-undo-notice";
-import { canSnooze, type SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
+import { canSnooze, type SnoozeChoice } from "@t3tools/client-runtime/state/thread-settled";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Haptics from "expo-haptics";
@@ -227,18 +227,11 @@ function confirmThreadDeletion(
   });
 }
 
-/** Snooze options a picked preset carries; "Until PR activity" sets `wakesOnPullRequest`. */
-export type SnoozeThreadOptions = Pick<SnoozePreset, "wakesOnPullRequest">;
-
 export function useThreadListActions(): {
   readonly archiveThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly confirmDeleteThread: (thread: EnvironmentThreadShell) => void;
   readonly settleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
-  readonly snoozeThread: (
-    thread: EnvironmentThreadShell,
-    snoozedUntil: string,
-    options?: SnoozeThreadOptions,
-  ) => Promise<boolean>;
+  readonly snoozeThread: (thread: EnvironmentThreadShell, choice: SnoozeChoice) => Promise<boolean>;
   readonly unsnoozeThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly unsettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly pinThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
@@ -356,11 +349,7 @@ export function useThreadListActions(): {
     }
     return succeeded;
   };
-  const snoozeThread = async (
-    thread: EnvironmentThreadShell,
-    snoozedUntil: string,
-    options: SnoozeThreadOptions = {},
-  ) => {
+  const snoozeThread = async (thread: EnvironmentThreadShell, choice: SnoozeChoice) => {
     if (!checkThreadOperationPermission(thread, m(msg("Could not snooze thread")))) return false;
     const key = scopedThreadKey(thread.environmentId, thread.id);
     if (snoozeInFlightThreadKeys.current.has(key)) {
@@ -402,8 +391,8 @@ export function useThreadListActions(): {
             environmentId: thread.environmentId,
             input: {
               threadId: thread.id,
-              snoozedUntil,
-              ...(options.wakesOnPullRequest === true && { wakesOnPullRequest: true }),
+              snoozedUntil: choice.snoozedUntil,
+              ...(choice.wakesOnPullRequest === true && { wakesOnPullRequest: true }),
             },
           }),
         (result) => result._tag === "Success",
@@ -827,8 +816,7 @@ export function useThreadListActions(): {
     archiveThread: (thread) => archiveThread(liveThread(thread)),
     confirmDeleteThread: (thread) => confirmDeleteThread(liveThread(thread)),
     settleThread: (thread) => settleThread(liveThread(thread)),
-    snoozeThread: (thread, snoozedUntil, options) =>
-      snoozeThread(liveThread(thread), snoozedUntil, options),
+    snoozeThread: (thread, choice) => snoozeThread(liveThread(thread), choice),
     unsnoozeThread: (thread) => unsnoozeThread(liveThread(thread)),
     unsettleThread: (thread) => unsettleThread(liveThread(thread)),
     pinThread: (thread) => pinThread(liveThread(thread)),

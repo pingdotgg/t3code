@@ -4390,15 +4390,20 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* sync({ updatedAt: at(1) });
       assert.equal(yield* snoozedUntilNow, at(0));
 
-      // A conflict moves no update time but still needs a look.
-      yield* snooze(true);
-      yield* sync({ updatedAt: at(-60), mergeability: "conflicting" });
-      assert.equal(yield* snoozedUntilNow, at(0));
-
       // A plain snooze keeps its timer through the same news.
       yield* snooze(false);
       yield* sync({ updatedAt: at(2), state: "merged" });
       assert.equal(yield* snoozedUntilNow, snoozedUntil);
+
+      // Sync stops reading a settled thread's pull requests, so it cannot wait on one.
+      yield* sync({ updatedAt: at(2) });
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("pr-snooze-settle"),
+        threadId,
+      });
+      const settled = yield* snooze(true).pipe(Effect.flip);
+      assert.equal(settled._tag, "OrchestratorDispatchError");
     }),
   );
 

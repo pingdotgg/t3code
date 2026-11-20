@@ -248,11 +248,17 @@ function pullRequestSnoozePreset(now: Date, resolve: MFunctionType): SnoozePrese
   };
 }
 
-/** Whether "Until PR activity" fits a thread: it has a linked pull request still open. */
+/** What a snooze menu pick sends: a wake time, and whether pull request activity wakes it sooner. */
+export type SnoozeChoice = Pick<SnoozePreset, "snoozedUntil" | "wakesOnPullRequest">;
+
+/** Whether "Until PR activity" fits a thread: pull request sync reads it and a linked one is open. */
 export function canSnoozeUntilPullRequest(thread: {
+  readonly settledOverride: "settled" | "active" | null;
   readonly pullRequests?: ReadonlyArray<ThreadPullRequestLink> | undefined;
 }): boolean {
-  return hasOpenThreadPullRequest(thread.pullRequests ?? []);
+  return (
+    thread.settledOverride !== "settled" && hasOpenThreadPullRequest(thread.pullRequests ?? [])
+  );
 }
 
 function snoozeTimeOfDayLabel(date: Date): string {

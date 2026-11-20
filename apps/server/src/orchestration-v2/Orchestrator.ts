@@ -4832,15 +4832,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Thread ${command.threadId} snooze wake time ${command.snoozedUntil} is not in the future.`,
         });
       }
-      // Only a pull request sync wakes this snooze early, so it needs an open one to wait on.
+      // Only a pull request sync wakes this snooze early, and sync skips settled threads.
       if (
         command.wakesOnPullRequest === true &&
-        !hasOpenThreadPullRequest(threadPullRequestsOf(thread))
+        (thread.settledOverride === "settled" ||
+          !hasOpenThreadPullRequest(threadPullRequestsOf(thread)))
       ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
-          cause: `Thread ${command.threadId} has no open pull request to wake on.`,
+          cause: `Thread ${command.threadId} needs an open pull request and must not be settled to snooze until pull request activity.`,
         });
       }
       if (
@@ -5089,6 +5090,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   snoozedUntil: DateTime.makeUnsafe(limitRecovery.resetAt),
                   // Recovery updates acknowledge the same stopped run; their timestamps must not trigger fresh failure wakes.
                   snoozedAt: now,
+                  snoozeWakesOnPullRequest: false,
                 }
               : command.limitRecovery !== undefined &&
                   thread.limitRecovery?.snooze &&
@@ -5479,13 +5481,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: now,
         payload: link,
       });
-      // A snooze waiting on pull request activity wakes as its timer would, so clients show it
-      // woke and settlement treats it as awake, for example to settle it once the PR merges.
+      // A PR snooze wakes as its timer would, so clients show it woke and settlement can settle
+      // it on merge. A layer dismissed while this read was in flight is no longer watched.
       const previous = threadPullRequestsOf(thread).find((candidate) =>
         threadPullRequestKeysEqual(candidate, link),
       );
       if (
         command.type === "thread.pull-request-link.sync" &&
+        link.source !== "stack-dismissed" &&
         thread.snoozeWakesOnPullRequest === true &&
         thread.snoozedAt != null &&
         thread.snoozedUntil != null &&
