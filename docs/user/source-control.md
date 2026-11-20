@@ -75,6 +75,9 @@ git remote set-url origin http://your-server/owner/repo.git
 git remote set-url --push origin ssh://your-ssh-alias/owner/repo.git
 ```
 
+T3 Code caches each project's remote, so restart the T3 Code server (or the desktop app) after
+changing the remote of a project you already added.
+
 ### GitLab
 
 Install [GitLab CLI](https://gitlab.com/gitlab-org/cli), then sign in:
@@ -317,7 +320,7 @@ and their marks follow the same rules as on web and desktop.
 - **Forgejo asks you to install a CLI although `fj` is signed in:** the project's remote does not
   match the `fj` login. On a plain-HTTP server, or with an SSH remote that uses a host alias, use an
   `http://` fetch URL with an SSH push URL as described in [Forgejo and Gitea](#forgejo-and-gitea),
-  then rescan.
+  then restart the T3 Code server.
 - **GitHub sign-in cannot be verified:** update GitHub CLI to at least 2.81.0, or save a token in Settings → Source control & issues.
 - **Push fails despite a connected account:** check the Git remote's credentials. SSH and HTTPS
   remotes can require separate setup from the hosting provider's API access.
