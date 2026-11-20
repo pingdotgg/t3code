@@ -24,6 +24,8 @@ import {
   OrchestratorMcpTaskCancelInput,
   OrchestratorMcpTaskCancelResult,
   OrchestratorMcpTaskStatusInput,
+  OrchestratorMcpTaskReceiptInput,
+  OrchestratorMcpTaskReceiptResult,
   OrchestratorMcpThreadInterruptInput,
   OrchestratorMcpThreadInterruptResult,
   OrchestratorMcpThreadListInput,
@@ -99,6 +101,20 @@ const DelegateTaskTool = Tool.make("delegate_task", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
+
+const TaskReceiptTool = Tool.make("task_receipt", {
+  description:
+    "Recover a delegate_task acceptance after its response was lost. Pass the same clientRequestId. External clients also pass the original parentThreadId and requestNamespace. This read does not deliver or start work.",
+  parameters: OrchestratorMcpTaskReceiptInput,
+  success: OrchestratorMcpTaskReceiptResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Look up a task receipt")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
 
 const TaskStatusTool = Tool.make("task_status", {
   description:
@@ -366,6 +382,7 @@ export const OrchestratorToolkit = Toolkit.make(
   OrchestratorCapabilitiesTool,
   DelegateTaskTool,
   TaskStatusTool,
+  TaskReceiptTool,
   TaskCancelTool,
   WorkflowStopTool,
   BackgroundWaitTool,
