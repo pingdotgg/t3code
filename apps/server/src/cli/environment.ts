@@ -119,6 +119,17 @@ const FAILURE_KIND_LABELS = {
   other: "failed",
 } as const;
 
+/**
+ * How a result line names its entry: the address's origin, since a username,
+ * password, path or query in it may be a credential and stdout is kept in logs.
+ */
+const linkBatchEntryName = (entry: { readonly line: number; readonly url: string }) => {
+  const parsed = URL.parse(entry.url);
+  return parsed !== null && (parsed.protocol === "https:" || parsed.protocol === "http:")
+    ? parsed.origin
+    : `line ${entry.line}`;
+};
+
 /** One `<url> <pairing-code>` per line; blank lines and `#` comments are skipped. */
 const parseLinkBatch = (text: string) =>
   text.split(/\r?\n/).flatMap((raw, index) => {
@@ -156,13 +167,13 @@ const linkBatch = Effect.fn("environment.linkBatch")(function* (
             Effect.map(({ link, alreadyLinked }) => ({
               linked: true,
               text: alreadyLinked
-                ? `${entry.url}: already linked as ${link.label} (${link.environmentId}), left as it is`
-                : `${entry.url}: linked ${link.label} (${link.environmentId}) with ${link.access} access`,
+                ? `${linkBatchEntryName(entry)}: already linked as ${link.label} (${link.environmentId}), left as it is`
+                : `${linkBatchEntryName(entry)}: linked ${link.label} (${link.environmentId}) with ${link.access} access`,
             })),
             Effect.catch((error) =>
               Effect.succeed({
                 linked: false,
-                text: `${entry.url}: ${FAILURE_KIND_LABELS[peerLinkFailureKind(error)]}: ${error.message}`,
+                text: `${linkBatchEntryName(entry)}: ${FAILURE_KIND_LABELS[peerLinkFailureKind(error)]}: ${error.message}`,
               }),
             ),
           ),

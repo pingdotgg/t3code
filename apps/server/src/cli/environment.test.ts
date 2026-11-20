@@ -97,6 +97,29 @@ it.effect("links a file of environments, reports each line, and fails when one d
       expect((yield* one.linkedSessions).length).toBe(1);
       expect((yield* two.linkedSessions).length).toBe(1);
       expect((yield* three.linkedSessions).length).toBe(1);
+
+      // An address may carry credentials; a result line names only its origin.
+      const withSecrets = (url: string) =>
+        Object.assign(new URL(url), {
+          username: "alice",
+          password: "hunter2",
+          search: "?token=s3cret",
+        }).href;
+      const secrets = NodePath.join(baseDir, "secrets.txt");
+      yield* fs.writeFileString(
+        secrets,
+        [
+          `${withSecrets(one.url)} ${firstCode}`,
+          `${withSecrets("http://192.168.1.20:3773")} some-code`,
+          `ftp://alice:hunter2@files.example/?token=s3cret some-code`,
+        ].join("\n"),
+      );
+      yield* link(secrets).pipe(Effect.flip);
+      const redacted = (yield* reports).at(-1) ?? "";
+      expect(redacted).toContain(`${new URL(one.url).origin}: already linked as VM 1`);
+      expect(redacted).toContain("http://192.168.1.20:3773: unreachable: ");
+      expect(redacted).toContain("line 3: unreachable: ");
+      expect(redacted).not.toMatch(/alice|hunter2|s3cret/);
     }),
   ).pipe(Effect.provide(Layer.mergeAll(layerCliRuntime, TestConsole.layer))),
 );

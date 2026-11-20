@@ -5,6 +5,7 @@ import {
   linkBatchFailureLabel,
   type LinkBatchOutcome,
   linkBatchSummary,
+  linkListState,
   runLinkBatch,
 } from "@t3tools/client-runtime/link-batch";
 import { offersLinkedEnvironments } from "@t3tools/client-runtime/link-request";
@@ -30,6 +31,7 @@ import { useEnvironmentServerConfig } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
 import { peerLinkEnvironment, useLinkableMachines } from "../../state/peerLinks";
 import { mintPairingCodeOn } from "../../state/peerPairingCode";
+import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "../settings/components/SettingsSection";
@@ -77,6 +79,11 @@ function LinkSeveralSheet(props: {
   const m = useMessages();
   const insets = useSafeAreaInsets();
   const machines = useLinkableMachines(props.environmentId, true);
+  // The same shared list `useLinkableMachines` reads `linked` from.
+  const links = useEnvironmentQuery(
+    peerLinkEnvironment.list({ environmentId: props.environmentId, input: {} }),
+  );
+  const linksState = linkListState(links);
   const machineIds = machines.map((machine) => machine.environmentId).join("\n");
   const scoped = useMemo(
     () =>
@@ -93,13 +100,13 @@ function LinkSeveralSheet(props: {
   const [linking, setLinking] = useState(NO_MACHINES);
   // Two taps can both run before a re-render; this guard is synchronous.
   const inFlight = useRef(false);
-  const link = useAtomCommand(peerLinkEnvironment.link, {
+  const link = useAtomCommand(peerLinkEnvironment.linkInBatch, {
     label: "link several environments",
     // The failure cause holds the request, and with it the code; keep it out of the console.
     reportFailure: false,
     reportDefect: false,
   });
-  const candidates = linkBatchCandidates(machines, writable);
+  const candidates = linkBatchCandidates(machines, writable, linksState);
   const selectable = candidates.flatMap(({ machine, blocked }) =>
     blocked === null && outcomes.get(machine.environmentId)?.kind !== "linked" ? [machine] : [],
   );
@@ -128,6 +135,7 @@ function LinkSeveralSheet(props: {
           ? Result.succeed(result.value)
           : Result.fail(squashAtomCommandFailure(result));
       },
+      refreshLinks: links.refresh,
       onOutcome: (id, outcome) => {
         setOutcomes((current) => new Map(current).set(id, outcome));
         setLinking((current) => {
@@ -170,6 +178,32 @@ function LinkSeveralSheet(props: {
           </Text>
         ) : (
           <>
+            {linksState === "loading" ? (
+              <Text
+                accessibilityLiveRegion="polite"
+                className="font-sans text-sm leading-5 text-foreground-muted"
+              >
+                <T>Checking which machines are already linked…</T>
+              </Text>
+            ) : linksState === "failed" ? (
+              <View className="gap-2">
+                <Text
+                  accessibilityLiveRegion="polite"
+                  className="font-sans text-sm leading-5 text-danger-foreground"
+                >
+                  {gt(
+                    "Could not check which machines are already linked, so none can be picked: {error}",
+                    { error: links.error ?? "" },
+                  )}
+                </Text>
+                <Button
+                  label={gt("Retry")}
+                  size="compact"
+                  disabled={links.isPending}
+                  onPress={links.refresh}
+                />
+              </View>
+            ) : null}
             <SettingsSection title={gt("Machines")}>
               {candidates.map(({ machine, blocked }, index) => {
                 const id = machine.environmentId;

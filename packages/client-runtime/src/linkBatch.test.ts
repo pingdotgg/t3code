@@ -2,7 +2,7 @@ import { EnvironmentId, PeerLinkError } from "@t3tools/contracts";
 import * as Result from "effect/Result";
 import { describe, expect, it } from "vite-plus/test";
 
-import { linkBatchCandidates, linkBatchSummary, runLinkBatch } from "./linkBatch.ts";
+import { linkBatchCandidates, linkBatchSummary, linkListState, runLinkBatch } from "./linkBatch.ts";
 import type { LinkableMachine } from "./linkRequest.ts";
 
 const machine = (name: string, overrides: Partial<LinkableMachine> = {}): LinkableMachine => ({
@@ -29,7 +29,7 @@ describe("linkBatchCandidates", () => {
     ];
     const writable = new Set([id("ready"), id("linked"), id("offline"), id("loopback")]);
     expect(
-      linkBatchCandidates(machines, writable).map(({ machine, blocked }) => [
+      linkBatchCandidates(machines, writable, "loaded").map(({ machine, blocked }) => [
         machine.label,
         blocked,
       ]),
@@ -41,6 +41,22 @@ describe("linkBatchCandidates", () => {
       ["viewer", "no_access"],
       ["loopback", "no_address"],
     ]);
+  });
+
+  it("offers no machine until the linking environment's links have loaded", () => {
+    // With no list, a linked machine reads as unlinked.
+    const machines = [machine("ready"), machine("linked-but-unlisted")];
+    const writable = new Set(machines.map((entry) => entry.environmentId));
+    const blockedWhen = (query: Parameters<typeof linkListState>[0]) =>
+      linkBatchCandidates(machines, writable, linkListState(query)).map(({ blocked }) => blocked);
+    expect(linkListState({ data: null, error: null })).toBe("loading");
+    expect(linkListState({ data: null, error: "The environment request failed." })).toBe("failed");
+    expect(blockedWhen({ data: null, error: null })).toEqual(["links_unknown", "links_unknown"]);
+    expect(blockedWhen({ data: null, error: "failed" })).toEqual([
+      "links_unknown",
+      "links_unknown",
+    ]);
+    expect(blockedWhen({ data: { links: [] }, error: null })).toEqual([null, null]);
   });
 });
 
@@ -73,6 +89,7 @@ describe("runLinkBatch", () => {
         const failure = failures[input.expectedLabel ?? ""];
         return failure === undefined ? Result.succeed(null) : Result.fail(failure);
       },
+      refreshLinks: () => {},
       onOutcome: (environmentId) => seen.push(environmentId),
     });
 
@@ -114,6 +131,7 @@ describe("runLinkBatch", () => {
       access: "auto",
       mint: async () => Result.succeed("secret-code"),
       link: async (input) => Result.fail(new Error(`request failed: ${JSON.stringify(input)}`)),
+      refreshLinks: () => {},
     });
     expect(outcomes.get(id("a"))).toEqual({ kind: "failed", failure: "other", detail: null });
   });
@@ -134,7 +152,31 @@ describe("runLinkBatch", () => {
         open -= 1;
         return Result.succeed(null);
       },
+      refreshLinks: () => {},
     });
     expect(most).toBe(4);
+  });
+
+  it("refreshes the links list once for the whole batch, after its last link", async () => {
+    const events: Array<string> = [];
+    const run = (names: ReadonlyArray<string>, fails: boolean) =>
+      runLinkBatch({
+        machines: names.map((name) => machine(name)),
+        access: "auto",
+        mint: async () => Result.succeed("code"),
+        link: async () => {
+          await Promise.resolve();
+          events.push("link");
+          return fails ? Result.fail(new Error("refused")) : Result.succeed(null);
+        },
+        refreshLinks: () => events.push("refresh"),
+      });
+    const names = Array.from({ length: 12 }, (_, index) => `vm-${index}`);
+    await run(names, false);
+    expect(events).toEqual([...names.map(() => "link"), "refresh"]);
+    // A retry batch is one more refresh; a batch that linked nothing changed no list.
+    await run(names.slice(0, 3), false);
+    await run(names.slice(0, 3), true);
+    expect(events.filter((event) => event === "refresh").length).toBe(2);
   });
 });

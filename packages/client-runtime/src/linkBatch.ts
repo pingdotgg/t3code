@@ -18,29 +18,50 @@ const LINK_BATCH_CONCURRENCY = 4;
  * Why a batch cannot link a machine: the client mints each pairing code there
  * with its own session, and sends it only to addresses it already has for it.
  */
-export type LinkBatchBlock = "linked" | "not_connected" | "no_access" | "no_address";
+export type LinkBatchBlock =
+  | "links_unknown"
+  | "linked"
+  | "not_connected"
+  | "no_access"
+  | "no_address";
+
+/** Whether the linking environment's own links are known yet. */
+export type LinkListState = "loading" | "failed" | "loaded";
+
+export const linkListState = (query: {
+  readonly data: unknown;
+  readonly error: unknown;
+}): LinkListState => (query.data !== null ? "loaded" : query.error !== null ? "failed" : "loading");
 
 export interface LinkBatchCandidate {
   readonly machine: LinkableMachine;
   readonly blocked: LinkBatchBlock | null;
 }
 
-/** `writable` holds the machines where this client's session may create pairing codes. */
+/**
+ * `writable` holds the machines where this client's session may create pairing codes.
+ * Until `links` has loaded, no machine's `linked` is known, and linking one that is
+ * already linked would replace its working token, so none is offered.
+ */
 export const linkBatchCandidates = (
   machines: ReadonlyArray<LinkableMachine>,
   writable: ReadonlySet<EnvironmentId>,
+  links: LinkListState,
 ): ReadonlyArray<LinkBatchCandidate> =>
   machines.map((machine) => ({
     machine,
-    blocked: machine.linked
-      ? "linked"
-      : !machine.connected
-        ? "not_connected"
-        : !writable.has(machine.environmentId)
-          ? "no_access"
-          : machine.urls.length === 0
-            ? "no_address"
-            : null,
+    blocked:
+      links !== "loaded"
+        ? "links_unknown"
+        : machine.linked
+          ? "linked"
+          : !machine.connected
+            ? "not_connected"
+            : !writable.has(machine.environmentId)
+              ? "no_access"
+              : machine.urls.length === 0
+                ? "no_address"
+                : null,
   }));
 
 export const linkBatchBlockLabel = (
@@ -48,6 +69,8 @@ export const linkBatchBlockLabel = (
   resolve: MFunctionType = mFallback,
 ): string => {
   switch (blocked) {
+    case "links_unknown":
+      return resolve(msg("Not known yet whether it is linked"));
     case "linked":
       return resolve(msg("Already linked"));
     case "not_connected":
@@ -119,6 +142,8 @@ export async function runLinkBatch(input: {
     access: AuthMcpClientAccess,
   ) => Promise<Result.Result<string, unknown>>;
   readonly link: (input: PeerLinkCreateInput) => Promise<Result.Result<unknown, unknown>>;
+  /** Called once, at the end: listing probes every linked machine, so `link` must not refresh. */
+  readonly refreshLinks: () => void;
   readonly onOutcome?: (environmentId: EnvironmentId, outcome: LinkBatchOutcome) => void;
 }): Promise<ReadonlyMap<EnvironmentId, LinkBatchOutcome>> {
   const outcomes = new Map<EnvironmentId, LinkBatchOutcome>();
@@ -150,6 +175,7 @@ export async function runLinkBatch(input: {
     }
   };
   await Promise.all(Array.from({ length: LINK_BATCH_CONCURRENCY }, worker));
+  if ([...outcomes.values()].some((outcome) => outcome.kind === "linked")) input.refreshLinks();
   return outcomes;
 }
 

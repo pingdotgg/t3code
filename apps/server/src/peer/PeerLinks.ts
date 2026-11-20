@@ -165,7 +165,8 @@ const peerOrigin = (url: string) => {
     return Effect.fail(
       new PeerLinkError({
         reason: "unreachable",
-        message: `${url} is not an http or https address.`,
+        // Never the address as given: it may hold a username, password or query.
+        message: "That address is not an http or https address.",
       }),
     );
   }
@@ -177,7 +178,7 @@ const peerOrigin = (url: string) => {
     return Effect.fail(
       new PeerLinkError({
         reason: "unreachable",
-        message: `${url} is plain http, which would send the link's credentials unencrypted. Use its https address, or its Tailscale address.`,
+        message: `${parsed.origin} is plain http, which would send the link's credentials unencrypted. Use its https address, or its Tailscale address.`,
       }),
     );
   }

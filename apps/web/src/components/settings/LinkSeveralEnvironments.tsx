@@ -4,6 +4,7 @@ import {
   linkBatchFailureLabel,
   type LinkBatchOutcome,
   linkBatchSummary,
+  linkListState,
   runLinkBatch,
 } from "@t3tools/client-runtime/link-batch";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -18,6 +19,7 @@ import { useId, useRef, useState } from "react";
 
 import { mintPairingCodeOn } from "~/state/peerPairingCode";
 import { peerLinkEnvironment, useLinkableMachines } from "~/state/peerLinks";
+import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentsWithScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
@@ -54,6 +56,11 @@ export function LinkSeveralEnvironmentsAction({
   const formId = useId();
   const [open, setOpen] = useState(false);
   const machines = useLinkableMachines(environmentId, open);
+  // The same shared list `useLinkableMachines` reads `linked` from.
+  const links = useEnvironmentQuery(
+    open ? peerLinkEnvironment.list({ environmentId, input: {} }) : null,
+  );
+  const linksState = linkListState(links);
   const writable = useEnvironmentsWithScope(machines, AuthAccessWriteScope);
   const [selected, setSelected] = useState(NO_MACHINES);
   const [access, setAccess] = useState<AuthMcpClientAccess>("approval-required");
@@ -61,13 +68,13 @@ export function LinkSeveralEnvironmentsAction({
   const [linking, setLinking] = useState(NO_MACHINES);
   // Enter then a click can both run before a re-render; this guard is synchronous.
   const inFlight = useRef(false);
-  const link = useAtomCommand(peerLinkEnvironment.link, {
+  const link = useAtomCommand(peerLinkEnvironment.linkInBatch, {
     label: "link several environments",
     // The failure cause holds the request, and with it the code; keep it out of the console.
     reportFailure: false,
     reportDefect: false,
   });
-  const candidates = linkBatchCandidates(machines, writable);
+  const candidates = linkBatchCandidates(machines, writable, linksState);
   const selectable = candidates.flatMap(({ machine, blocked }) =>
     blocked === null && outcomes.get(machine.environmentId)?.kind !== "linked" ? [machine] : [],
   );
@@ -104,6 +111,7 @@ export function LinkSeveralEnvironmentsAction({
           ? Result.succeed(result.value)
           : Result.fail(squashAtomCommandFailure(result));
       },
+      refreshLinks: links.refresh,
       onOutcome: (id, outcome) => {
         setOutcomes((current) => new Map(current).set(id, outcome));
         setLinking((current) => {
@@ -184,6 +192,34 @@ export function LinkSeveralEnvironmentsAction({
                       : gt("Select all")}
                   </Button>
                 </div>
+                {linksState === "loaded" ? null : (
+                  <div
+                    role="status"
+                    className="flex items-center justify-between gap-2 text-xs text-muted-foreground"
+                  >
+                    {linksState === "loading" ? (
+                      <T>Checking which machines are already linked…</T>
+                    ) : (
+                      <>
+                        <span className="text-destructive">
+                          {gt(
+                            "Could not check which machines are already linked, so none can be picked: {error}",
+                            { error: links.error ?? "" },
+                          )}
+                        </span>
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="outline"
+                          disabled={links.isPending}
+                          onClick={links.refresh}
+                        >
+                          <T>Retry</T>
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                )}
                 <ul className="max-h-72 divide-y overflow-y-auto rounded-lg border">
                   {candidates.map(({ machine, blocked }) => {
                     const id = machine.environmentId;
