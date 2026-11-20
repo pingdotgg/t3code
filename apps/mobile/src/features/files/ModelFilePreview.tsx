@@ -86,6 +86,8 @@ type Failure =
 
 type ViewerRequests = ReturnType<typeof createModelViewerRequests>;
 
+const MODEL_VIEWER_STARTUP_TIMEOUT_MS = 15_000;
+
 // Notes and camera per model for this app session, so leaving and reopening a file keeps them.
 let rememberedModels: Readonly<Record<string, ModelPreviewMemory>> = {};
 
@@ -256,9 +258,18 @@ export function ModelFilePreview({
     () => viewRef.current ?? initialView ?? rememberedModels[memoryKey]?.view ?? null,
   );
 
-  useImperativeHandle(ref, () => ({
-    resetView: () => send({ type: "preset", preset: "iso" }),
-  }));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports a WebView that never sent its startup message
+  useEffect(() => {
+    if (page.ready || page.crashed) return;
+    const timeout = setTimeout(() => {
+      setPage((current) =>
+        current.attempt === page.attempt && !current.ready
+          ? { ...current, crashed: true }
+          : current,
+      );
+    }, MODEL_VIEWER_STARTUP_TIMEOUT_MS);
+    return () => clearTimeout(timeout);
+  }, [page.attempt, page.ready, page.crashed]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- streams the file's bytes into the WebView page, cancelling on unmount, source change or retry
   useLayoutEffect(() => {
@@ -364,11 +375,11 @@ export function ModelFilePreview({
   };
 
   const handleEvent = (event: ModelViewerEvent) => {
-    if (activePage.current !== page.attempt) return;
+    if (page.crashed || activePage.current !== page.attempt) return;
     const current = generation.current;
     switch (event.type) {
       case "ready":
-        setPage((current) => ({ ...current, ready: true }));
+        setPage((current) => (current.crashed ? current : { ...current, ready: true }));
         return;
       case "crashed":
         stopPage();
@@ -453,6 +464,9 @@ export function ModelFilePreview({
     setActivePreset(preset);
     send({ type: "preset", preset });
   };
+  useImperativeHandle(ref, () => ({
+    resetView: () => choosePreset("iso"),
+  }));
 
   const updateNotes = (next: ReadonlyArray<ModelNote>) => {
     lastPinNumber.current =

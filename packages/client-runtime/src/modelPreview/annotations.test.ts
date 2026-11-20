@@ -86,6 +86,21 @@ describe("model notes after the geometry changes", () => {
     expect(reconcileModelNotes(undefined, "g1")).toEqual([]);
   });
 
+  it("restores pins for the same attachment without giving them to another with identical bytes", () => {
+    const first = {
+      fingerprint: "g1",
+      notes: [note(1, "Keep this face")],
+      view,
+      wireframe: false,
+      lastPinNumber: 1,
+      capture: null,
+      earlierCapture: null,
+    };
+    const memory = rememberModelPreview({}, "attachment:first", first);
+    expect(restoreModelPins(memory["attachment:second"], "g1").notes).toEqual([]);
+    expect(restoreModelPins(memory["attachment:first"], "g1").notes).toEqual(first.notes);
+  });
+
   it("keeps the most recently viewed models within its bound", () => {
     const entry = (fingerprint: string): ModelPreviewMemory => ({
       fingerprint,

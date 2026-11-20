@@ -441,7 +441,8 @@ file link, or an attachment. Drag to orbit, Shift-drag to pan, and scroll to zoo
 drag one finger to orbit, use two fingers to pan, pinch to zoom, and double-tap to fit. Choose
 **Top**, **Front**, or **Iso** for a preset, or **Fit** to frame the model at the current angle.
 STL previews assume millimeters and display colors stored with the Magics extension. The viewer
-accepts STL and self-contained GLB files up to 128 MiB.
+accepts STL and self-contained GLB files up to 128 MiB. GLB files that require Draco, meshopt,
+or KTX2 compression cannot be previewed.
 
 3MF previews omit print settings. They accept up to 2,048 archive entries, with limits of
 50 MiB for the archive and its expanded contents, 10 MiB per entry, and 8 MiB for entries ending
