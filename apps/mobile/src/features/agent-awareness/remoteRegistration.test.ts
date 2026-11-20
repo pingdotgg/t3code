@@ -750,7 +750,9 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         url: "https://relay.example.test/",
       },
     };
-    vi.mocked(loadOrCreateAgentAwarenessDeviceId).mockRejectedValueOnce(new Error("storage failure"));
+    vi.mocked(loadOrCreateAgentAwarenessDeviceId).mockRejectedValueOnce(
+      new Error("storage failure"),
+    );
     setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
     setAgentAwarenessRelayTokenProvider(null);
 
