@@ -12,7 +12,7 @@ test(
     await t3.open(open);
 
     await screen.getByRole("button", "Login redirect", { exact: false }).tap();
-    await expect(screen.getByRole("textbox")).toBeFocused();
+    await browser.locator('[data-testid="composer-editor"]:focus').waitFor();
     await browser.keyboard.press("F2");
     await app.screenshot("after-f2");
 

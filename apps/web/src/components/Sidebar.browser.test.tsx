@@ -53,6 +53,8 @@ vi.mock(import("../state/server"), async (original) => {
     { key: "mod+1", command: "thread.jump.1" },
     { key: "mod+2", command: "thread.jump.2" },
     { key: "shift+f2", command: "thread.next" },
+    // Bound, but not while the composer has focus.
+    { key: "f2", command: "terminal.toggle", when: "!composerFocus" },
   ]);
   return { ...(await original()), primaryServerKeybindingsAtom: Atom.make(keybindings) };
 });
@@ -267,7 +269,7 @@ describe("sidebar thread rename", () => {
   // Opening a thread moves focus from its row to the composer, where F2 used to do nothing.
   it.each([
     { focus: "the composer", renames: true },
-    { focus: "another text field", area: "details", renames: false },
+    { focus: "another field in the composer", editor: false, renames: false },
     { focus: "a side chat composer", sideChat: true, renames: false },
     { focus: "the composer with the sidebar collapsed", sidebarCollapsed: true, renames: false },
     { focus: "the composer as a bound shortcut", keys: "{Shift>}{F2}{/Shift}", renames: false },
@@ -295,10 +297,10 @@ describe("sidebar thread rename", () => {
   });
 
   function createTestContext({
-    area = "composer",
+    editor = true,
     sideChat = false,
     sidebarCollapsed = false,
-  }: { area?: string; sideChat?: boolean; sidebarCollapsed?: boolean } = {}) {
+  }: { editor?: boolean; sideChat?: boolean; sidebarCollapsed?: boolean } = {}) {
     const activeProject = project("active");
     const routeThreadRef: ScopedThreadRef = {
       environmentId: activeProject.environmentId,
@@ -331,8 +333,11 @@ describe("sidebar thread rename", () => {
           </SidebarProvider>
         </div>
         <div {...(sideChat ? { "data-side-chat-pane": "side-thread" } : {})}>
-          <div data-workspace-area={area}>
-            <textarea aria-label="Outside the sidebar" />
+          <div data-workspace-area="composer">
+            <textarea
+              aria-label="Outside the sidebar"
+              {...(editor ? { "data-testid": "composer-editor" } : {})}
+            />
           </div>
         </div>
       </>
