@@ -1,7 +1,15 @@
 import { useGT } from "gt-react";
 import { Button } from "~/components/ui/button";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { memo, useDeferredValue, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  Activity,
+  memo,
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 
 import { kickBrowserSurfaceTracking } from "../browser/browserSurfaceTracking";
 import { ThreadRouteView } from "../components/ThreadRouteView";
@@ -2259,7 +2267,11 @@ function LayoutPageSurface({
       inert={!visible || staged}
       onPointerDownCapture={() => claimPaneFocus(tabId)}
     >
-      <LayoutPaneContext value={paneState}>{children}</LayoutPaneContext>
+      {/* Behind another tab, a page keeps its state and DOM but stops rendering and
+          subscribing until it is shown again. */}
+      <Activity mode={visible ? "visible" : "hidden"}>
+        <LayoutPaneContext value={paneState}>{children}</LayoutPaneContext>
+      </Activity>
       {split && !staged ? <PaneCuts /> : null}
     </div>
   );
