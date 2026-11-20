@@ -220,6 +220,17 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
       expect(requests).toBe(3);
       yield* reader.forget;
       expect(yield* read).toBeUndefined();
+
+      // Another organization is not held to the previous one's Retry-After.
+      expect(requests).toBe(3);
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(
+        login.accountConfigPath,
+        '{"oauthAccount":{"organizationUuid":"org-2"}}',
+      );
+      limited = false;
+      expect((yield* read)?.nextCreditId).toBe("grant_a");
+      expect(requests).toBe(4);
     }),
   );
 });

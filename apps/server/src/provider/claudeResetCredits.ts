@@ -266,8 +266,9 @@ export const makeClaudeResetCreditsReader = Effect.fn("makeClaudeResetCreditsRea
   }) {
     const account = yield* readClaudeOrganizationId(input.accountConfigPath);
     const state = yield* Ref.get(known);
-    const kept = state.account === account ? state.credits : undefined;
-    if ((yield* Clock.currentTimeMillis) < state.retryAtMs) return kept;
+    const sameAccount = state.account === account;
+    const kept = sameAccount ? state.credits : undefined;
+    if (sameAccount && (yield* Clock.currentTimeMillis) < state.retryAtMs) return kept;
     const result = yield* readClaudeResetCredits(input.configDir, input.version);
     if (result._tag === "read") {
       yield* Ref.set(known, { account, credits: result.credits, retryAtMs: 0 });
@@ -278,7 +279,7 @@ export const makeClaudeResetCreditsReader = Effect.fn("makeClaudeResetCreditsRea
     return kept;
   });
   /** A redeemed credit is gone; never show it again from memory. */
-  const forget = Ref.update(known, ({ retryAtMs }) => ({ retryAtMs }));
+  const forget = Ref.update(known, ({ account, retryAtMs }) => ({ account, retryAtMs }));
   return { read, forget };
 });
 
