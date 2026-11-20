@@ -658,7 +658,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     }
     openCodeVendorsByInstance.set(model.instanceId, vendors);
   }
-  for (const [instanceId, { names, namesAtOpen }] of openCodeVendorsByInstance) {
+  for (const [instanceId, vendors] of openCodeVendorsByInstance) {
+    const { names, namesAtOpen } = vendors;
     if (namesAtOpen.size < 2) continue;
     subProvidersByInstance.set(instanceId, {
       subProviders: [...names]
@@ -691,8 +692,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       }
     }
     for (const instanceId of tabsWithLegacyRow) addRow(instanceId);
-    for (const [instanceId, { subProviders }] of subProvidersByInstance) {
-      for (const _subProvider of subProviders) addRow(instanceId);
+    for (const [instanceId, grouping] of subProvidersByInstance) {
+      for (const _subProvider of grouping.subProviders) addRow(instanceId);
     }
     return Math.max(0, ...unitsByTab.values());
   })();
