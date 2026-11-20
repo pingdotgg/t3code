@@ -47,8 +47,28 @@ const mergeTaggedObjects = (branches: ReadonlyArray<Json>): JsonObject | undefin
     return values.every((value) => value !== undefined) && new Set(values).size === values.length;
   });
   if (tag === undefined) return undefined;
+  const requireds = objects.map((object) =>
+    Array.isArray(object.required) ? object.required : [],
+  );
+  const [first = [], ...others] = requireds;
+  const requiredByAll = first.filter(
+    (name) => name !== tag && others.every((required) => required.includes(name)),
+  );
+  // Merging drops each branch's own required fields, so the tag names them.
+  const ownRequired = objects.flatMap((object, index) => {
+    const own = requireds[index]!.filter((name) => name !== tag && !requiredByAll.includes(name));
+    return own.length === 0
+      ? []
+      : [
+          `\`${String(tagOf(object, tag))}\` requires ${own.map((name) => `\`${name}\``).join(", ")}.`,
+        ];
+  });
   const properties: JsonObject = {
-    [tag]: { type: "string", enum: objects.map((object) => tagOf(object, tag)) },
+    [tag]: {
+      type: "string",
+      enum: objects.map((object) => tagOf(object, tag)),
+      ...(ownRequired.length === 0 ? {} : { description: ownRequired.join(" ") }),
+    },
   };
   for (const object of objects) {
     for (const [name, property] of Object.entries(object.properties)) {
@@ -62,12 +82,6 @@ const mergeTaggedObjects = (branches: ReadonlyArray<Json>): JsonObject | undefin
       }
     }
   }
-  const [first = [], ...others] = objects.map((object) =>
-    Array.isArray(object.required) ? object.required : [],
-  );
-  const requiredByAll = first.filter(
-    (name) => name !== tag && others.every((required) => required.includes(name)),
-  );
   return { type: "object", properties, required: [tag, ...requiredByAll] };
 };
 
@@ -104,8 +118,8 @@ const compact = (schema: Json, optional: boolean): Json => {
 /**
  * The input schema T3 advertises for a tool. Drops JSON noise that every thread pays for:
  * `additionalProperties: true`, safe-integer bounds, nested `anyOf`, JSON-string fallbacks, and
- * the `null` branch of optional properties. A tagged union of objects becomes one object.
- * Decoding still uses the full schema, so each tag's own required fields still apply.
+ * the `null` branch of optional properties. A tagged union of objects becomes one object whose
+ * tag names each branch's own required fields. Decoding still uses the full schema.
  */
 export const advertisedJsonSchema = (tool: Tool.Any) =>
   compact(Tool.getJsonSchema(tool), false) as ReturnType<typeof Tool.getJsonSchema>;
