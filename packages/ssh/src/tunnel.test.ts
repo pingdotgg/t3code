@@ -837,7 +837,9 @@ describe("ssh tunnel scripts", () => {
     { condition: "responses take over a second", reconnectResponseMs: 2_500 },
     // An alive server whose event loop stalls (e.g. on a blocked fsync) answers late.
     { condition: "server stalls for 20 seconds", reconnectResponseMs: 20_000 },
-  ])("connects and reuses a tunnel whose $condition", ({ reconnectResponseMs }) =>
+    // ssh closes the forwarded connection when nothing listens on the remote port.
+    { condition: "server is gone", reconnectResponseMs: 0, serverGone: true },
+  ])("connects and reuses a tunnel whose $condition", ({ reconnectResponseMs, serverGone }) =>
     Effect.gen(function* () {
       const RESPONSE_MS = 2_500;
       const tunnelSpawned = yield* Deferred.make<void>();
@@ -859,6 +861,14 @@ describe("ssh tunnel scripts", () => {
         Effect.gen(function* () {
           if (connected) yield* Deferred.succeed(reconnectProbed, undefined);
           yield* Effect.sleep(Duration.millis(connected ? reconnectResponseMs : RESPONSE_MS));
+          if (connected && serverGone) {
+            return yield* new HttpClientError.HttpClientError({
+              reason: new HttpClientError.TransportError({
+                request,
+                description: "socket hang up",
+              }),
+            });
+          }
           return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
         }),
       );
@@ -900,7 +910,7 @@ describe("ssh tunnel scripts", () => {
           Fiber.join(reconnect).pipe(Effect.map((environment) => environment.httpBaseUrl)),
           Deferred.await(forwardReplaced).pipe(Effect.as("replaced the forward")),
         );
-        assert.equal(outcome, result.success.httpBaseUrl);
+        assert.equal(outcome, serverGone ? "replaced the forward" : result.success.httpBaseUrl);
       }).pipe(Effect.provide(layer), Effect.scoped);
     }),
   );
