@@ -61,9 +61,14 @@ import {
   type SourceControlManagedCliDiscoverySpec,
 } from "@t3tools/source-control-core/server/discovery";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
-import { readSourceControlHostSettings } from "@t3tools/source-control-core/shared/definition";
+import {
+  parseGitRemoteHost,
+  readSourceControlHostSettings,
+  unknownRemoteProvider,
+} from "@t3tools/source-control-core/shared/definition";
 
 import * as GitHubClient from "../shared/definition.ts";
+import { makeGhProcess } from "./gitHubCliProcess.ts";
 import {
   PullRequestByNumber,
   PullRequestNode,
@@ -211,7 +216,7 @@ function environmentTokenVariable(environment: NodeJS.ProcessEnv): string | null
 export const makeDiscovery = Effect.gen(function* () {
   const api = yield* GitHubRest.GitHubRest;
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
-  const process = sourceControlHost.process;
+  const process = yield* makeGhProcess;
   const environment = yield* HostProcess.Environment;
   const appSignIn = yield* GitHubAppSignIn.GitHubAppSignIn;
   const offerAppSignIn = <A extends SourceControlProviderDiscoveryItem>(item: A): A =>
@@ -339,6 +344,30 @@ class GitHubFailure extends Schema.TaggedError<GitHubFailure>()("GitHubFailure",
 
 const failure = (detail: string, cause?: unknown) => new GitHubFailure({ detail, cause });
 
+// A gh login confirms a GitHub Enterprise Server whose hostname does not identify its provider.
+const refineRepositoryIdentity: NonNullable<
+  SourceControlProvider.SourceControlProvider["Service"]["refineRepositoryIdentity"]
+> = Effect.fn("GitHubSourceControlProvider.refineRepositoryIdentity")(function* ({
+  identity,
+  resolveContext,
+}) {
+  if (!identity.rootPath || (identity.provider !== undefined && identity.provider !== "unknown"))
+    return identity;
+  const remote = parseGitRemoteHost(identity.locator.remoteUrl);
+  if (remote === null) return identity;
+  const context = yield* resolveContext({
+    cwd: identity.rootPath,
+    context: {
+      provider: unknownRemoteProvider(remote),
+      remoteName: identity.locator.remoteName,
+      remoteUrl: identity.locator.remoteUrl,
+    },
+  });
+  return context?.provider.kind === "github"
+    ? { ...identity, provider: SourceControlProviderKind.make("github") }
+    : identity;
+});
+
 const PULL_REQUEST_NOT_FOUND = "Pull request not found. Check the PR number or URL and try again.";
 const REPOSITORY_NOT_FOUND = "Repository not found. Check the owner and name and try again.";
 
@@ -370,6 +399,7 @@ function fromGitHubApiError(
     case "GitHubApiNotFoundError":
       return failure(notFound, error);
     case "GitHubCliFailedError":
+    case "GitHubCliTimeoutError":
     case "GitHubAppSessionError":
     case "GitHubApiResponseError":
     case "GitHubApiRequestError":
@@ -968,6 +998,7 @@ export const make = Effect.gen(function* () {
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("github"),
+    refineRepositoryIdentity,
     resolveRemoteWebHost: Effect.fn("GitHubSourceControlProvider.resolveRemoteWebHost")(
       ({ context }) => Effect.succeed(gitHubApiHostForRemote(context.remoteUrl)),
     ),

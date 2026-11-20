@@ -66,6 +66,7 @@ import {
   ThreadPullRequestSnapshot,
   ThreadPullRequestStack,
   ThreadPullRequestWatch,
+  PullRequestWatchUntil,
 } from "./threadPullRequest.ts";
 import {
   ProviderApprovalDecision,
@@ -299,6 +300,8 @@ export const OrchestrationV2TurnCapabilities = Schema.Struct({
   emitsTurnStarted: Schema.Boolean,
   emitsTurnCompleted: Schema.Boolean,
   supportsInterrupt: Schema.Boolean,
+  // Continues an interrupted turn without a new message; absent on sessions recorded before it existed.
+  supportsNativeResume: Schema.optional(Schema.Boolean),
   supportsActiveSteering: Schema.Boolean,
   // Some native steering mechanisms cancel pending tools before consuming the message.
   activeSteeringInterruptsTools: Schema.optional(Schema.Boolean),
@@ -328,6 +331,8 @@ export const OrchestrationV2ToolCapabilities = Schema.Struct({
   emitsToolOutput: Schema.Boolean,
   supportsMcpTools: Schema.Boolean,
   supportsDynamicToolCallbacks: Schema.Boolean,
+  /** The agent can mark background work it resumes from, so the thread holds as waiting. */
+  supportsBackgroundWait: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2ToolCapabilities = typeof OrchestrationV2ToolCapabilities.Type;
 
@@ -532,6 +537,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
     ),
   ),
   lastTitleRegeneration: Schema.optional(Schema.NullOr(OrchestrationV2LastTitleRegeneration)),
+  /** Set by a rename until a generated title replaces it; absent reads as false. */
+  titleRenamed: Schema.optional(Schema.Boolean),
   rollbackRequestId: Schema.optional(CommandId),
   rollbackFailure: Schema.optional(
     Schema.NullOr(
@@ -595,6 +602,38 @@ export function isCompactionCommandMessage(message: CompactionMessageFields): bo
     message.text.trim().toLowerCase() === IDLE_COMPACTION_TEXT &&
     (message.attachments?.length ?? 0) === 0
   );
+}
+
+const LEADING_COMMAND = /^\s*(?:\/|\p{Sc}[a-zA-Z0-9:_-]*[a-zA-Z])/u;
+
+/**
+ * Who sent a message, in a line the model reads before its text, or the text unchanged when a
+ * person typed it. Providers parse slash commands and skill mentions such as `$deploy` from the
+ * start of a prompt, so those stay as sent.
+ */
+export function withMessageSenderNote(
+  message: {
+    readonly createdBy: OrchestrationV2Actor;
+    readonly creationSource: OrchestrationV2CreationSource;
+    readonly scheduledTaskId?: ScheduledTaskId | undefined;
+    readonly senderThreadId?: ThreadId | undefined;
+    readonly linkedSender?: OrchestrationV2LinkedSender | undefined;
+  },
+  text: string,
+): string {
+  const agent = message.createdBy === "agent";
+  const note =
+    agent && message.linkedSender !== undefined
+      ? `[T3 Code: the agent in T3 thread ${JSON.stringify(message.linkedSender.threadId)} on linked environment ${JSON.stringify(message.linkedSender.environmentId)} sent this message, not the user.]`
+      : agent && message.senderThreadId !== undefined
+        ? `[T3 Code: the agent in T3 thread ${JSON.stringify(message.senderThreadId)} sent this message, not the user.]`
+        : message.scheduledTaskId !== undefined
+          ? `[T3 Code: scheduled task ${JSON.stringify(message.scheduledTaskId)} sent this prompt, not the user typing in this chat.]`
+          : agent && message.creationSource === "mcp"
+            ? "[T3 Code: this message came through T3 Code's tools, not from the user typing in this chat.]"
+            : undefined;
+  if (note === undefined || LEADING_COMMAND.test(text)) return text;
+  return text === "" ? note : `${note}\n\n${text}`;
 }
 
 export type OrchestrationV2GoalCommand =
@@ -1232,6 +1271,8 @@ export const OrchestrationV2ProviderTurn = Schema.Struct({
   nodeId: NodeId,
   runAttemptId: Schema.NullOr(RunAttemptId),
   nativeTurnRef: Schema.NullOr(OrchestrationV2ProviderRef),
+  /** The native session that held this turn, when a provider can move a thread between sessions. */
+  nativeThreadRef: Schema.optional(OrchestrationV2ProviderRef),
   ordinal: PositiveInt,
   status: Schema.Literals([
     "pending",
@@ -3316,6 +3357,10 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     ...ThreadPullRequestKey.fields,
     watching: Schema.Boolean,
+    /** With `watching`, sets how long the watch holds its thread; absent keeps the current one. */
+    until: Schema.optional(PullRequestWatchUntil),
+    /** Whether CI was pending with no failure yet when the watch started, so any failure is news. */
+    checksPending: Schema.optional(Schema.Boolean),
     link: Schema.optional(
       Schema.Struct({
         url: TrimmedNonEmptyString,
@@ -4140,6 +4185,8 @@ export const OrchestrationV2ThreadHistoryPage = withRecordIdTable(
     ),
     nextCursor: Schema.NullOr(TrimmedNonEmptyString),
     hasMoreHistory: Schema.Boolean,
+    /** Records of the page's subagent items, which a bounded snapshot can omit. */
+    subagents: Schema.optionalKey(Schema.Array(OrchestrationV2Subagent)),
     idTable: IdTableMarker,
   }),
   () => null,
@@ -4460,6 +4507,7 @@ export class OrchestrationGetWorkflowScriptError extends Schema.TaggedError<Orch
 
 export const OrchestrationV2SearchThreadInput = Schema.Struct({
   threadId: ThreadId,
+  theme: Schema.optionalKey(Schema.Literals(["dark", "light"])),
   skills: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({
