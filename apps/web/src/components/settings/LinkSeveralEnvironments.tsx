@@ -236,7 +236,7 @@ export function LinkSeveralEnvironmentsAction({
                             : linkBatchBlockLabel(blocked, m);
                     return (
                       <li key={id}>
-                        <label className="flex cursor-pointer items-start gap-2.5 px-3 py-2 text-sm has-data-disabled:cursor-default">
+                        <label className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-sm has-data-disabled:cursor-default">
                           <Checkbox
                             checked={available && selected.has(id)}
                             disabled={busy || !available}
@@ -244,25 +244,27 @@ export function LinkSeveralEnvironmentsAction({
                           />
                           <EnvironmentMachineIcon
                             kind={machine.machine}
-                            className="mt-0.5 size-4 shrink-0 text-muted-foreground"
+                            className="size-4 shrink-0 text-muted-foreground"
                           />
                           <span className="min-w-0 flex-1">
                             <span className="block truncate font-medium">{machine.label}</span>
-                            {status === null ? null : (
-                              <span
-                                className={
-                                  outcome?.kind === "failed"
-                                    ? "block text-xs text-destructive"
-                                    : "block text-xs text-muted-foreground"
-                                }
-                              >
-                                {status}
-                                {outcome?.kind === "failed" && outcome.detail !== null
-                                  ? `: ${outcome.detail}`
-                                  : null}
+                            {outcome?.kind === "failed" && outcome.detail !== null ? (
+                              <span className="block text-xs text-destructive">
+                                {outcome.detail}
                               </span>
-                            )}
+                            ) : null}
                           </span>
+                          {status === null ? null : (
+                            <span
+                              className={
+                                outcome?.kind === "failed"
+                                  ? "shrink-0 text-xs text-destructive"
+                                  : "shrink-0 text-xs text-muted-foreground"
+                              }
+                            >
+                              {status}
+                            </span>
+                          )}
                         </label>
                       </li>
                     );
@@ -289,13 +291,15 @@ export function LinkSeveralEnvironmentsAction({
           <DialogClose disabled={busy} render={<Button variant="outline" type="button" />}>
             {outcomes.size > 0 ? gt("Done") : gt("Cancel")}
           </DialogClose>
-          <Button form={formId} type="submit" disabled={busy || chosen.length === 0}>
-            {busy
-              ? gt("Linking…")
-              : gt("{count, plural, one {Link # machine} other {Link # machines}}", {
-                  count: chosen.length,
-                })}
-          </Button>
+          {outcomes.size > 0 && !busy && chosen.length === 0 ? null : (
+            <Button form={formId} type="submit" disabled={busy || chosen.length === 0}>
+              {busy
+                ? gt("Linking…")
+                : gt("{count, plural, one {Link # machine} other {Link # machines}}", {
+                    count: chosen.length,
+                  })}
+            </Button>
+          )}
         </DialogFooter>
       </DialogPopup>
     </Dialog>
