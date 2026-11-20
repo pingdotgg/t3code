@@ -203,7 +203,13 @@ const make = Effect.gen(function* () {
                   : ["-lc", item.input],
                 {
                   cwd: item.userShell.cwd,
-                  env: createTerminalSpawnEnv(environment, null, processPlatform, home),
+                  env: createTerminalSpawnEnv(
+                    environment,
+                    null,
+                    processPlatform,
+                    home,
+                    item.threadId,
+                  ),
                   stdin: "ignore",
                   forceKillAfter: "2 seconds",
                 },

@@ -460,27 +460,58 @@ describe("Antigravity tool results", () => {
     });
   });
 
-  it("bounds both canonical output and retained raw output", () => {
-    const output = `${"output line\n".repeat(20_000)}last line\n`;
+  it.each([
+    { name: "ASCII", boundary: "x", kept: "x", field: "combinedOutput" },
+    { name: "split emoji", boundary: "🚀", kept: "", field: "combinedOutput" },
+    { name: "split emoji (snake case)", boundary: "🚀", kept: "", field: "combined_output" },
+  ])("bounds both canonical and retained raw output at $name", ({ boundary, kept, field }) => {
+    const tail = `${"x".repeat(7_989)}last line\n`;
+    const output = `${"output line\n".repeat(20_000)}${boundary}${tail}`;
+    const expected = `[Earlier output truncated]\n\n${kept}${tail}`;
+    const { combinedOutput: _combinedOutput, ...rawOutput } = commandCompleted.update.rawOutput;
     const event = parseToolUpdate({
       ...commandCompleted,
       update: {
         ...commandCompleted.update,
         rawOutput: {
-          ...commandCompleted.update.rawOutput,
-          combinedOutput: output,
+          ...rawOutput,
+          [field]: output,
           formatted_output: output,
         },
       },
     });
     const toolCall = normalizeAntigravityToolCall(event.toolCall);
     expect(toolCall.data).toMatchObject({
-      item: { aggregatedOutput: expect.stringContaining("last line\n") },
-      rawOutput: { combinedOutput: expect.stringContaining("last line\n") },
+      item: { aggregatedOutput: expected },
+      rawOutput: { [field]: expected },
     });
+    expect(event.toolCall.data.rawOutput).toMatchObject({ [field]: expected });
     expect(JSON.stringify(toolCall).length).toBeLessThan(20_000);
     expect(JSON.stringify(event.rawPayload).length).toBeLessThan(10_000);
     expect(JSON.stringify(event.rawPayload)).not.toContain("formatted_output");
+  });
+
+  it("keeps 1.5 command input and output valid Unicode when cut", () => {
+    const tail = `${"x".repeat(7_982)}build completed\r\n`;
+    const output = `Command output:\nprefix\r\n🚀${tail}`;
+    const expected = `[Earlier output truncated]\n\n${tail}`;
+    const toolCall = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        ...commandCompleted,
+        update: {
+          ...commandCompleted.update,
+          rawInput: { CommandLine: output },
+          rawOutput: { output, exit_code: 0 },
+          content: [{ type: "content", content: { type: "text", text: output } }],
+        },
+      }).toolCall,
+    );
+    expect(toolCall.command).toBe(expected.trimEnd());
+    expect(toolCall.data).toMatchObject({
+      rawInput: { CommandLine: expected },
+      rawOutput: { output: expected },
+      content: [{ content: { text: expected.trimEnd() } }],
+    });
   });
 
   it("removes inline images while preserving valid tool content and the local image path", () => {
@@ -542,6 +573,17 @@ describe("Antigravity tool results", () => {
     expect(serialized).not.toContain("image-blob");
     expect(serialized).not.toContain("inline-image");
     expect(serialized).not.toContain("inline-data-url");
+
+    // Leave three UTF-16 units for the retained output.
+    const padding = Object.fromEntries(
+      Array.from({ length: 7 }, (_, index) => [index, "x".repeat(8_000)]),
+    );
+    expect(
+      sanitizeAntigravityToolPayload({
+        rawOutput: { ...padding, tail: "x".repeat(7_997) },
+        item: { aggregatedOutput: "🚀ok" },
+      }),
+    ).toMatchObject({ item: { aggregatedOutput: "[Earlier output truncated]\n\nok" } });
   });
 });
 
