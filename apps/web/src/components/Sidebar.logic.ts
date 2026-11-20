@@ -1033,11 +1033,12 @@ export function resolveSidebarFolderStatus(
     return { dot: "attention", working };
   }
   if (statuses.has("failed")) return { dot: "failed", working };
-  // Rows show Done only for ready threads, so the dot follows the same rule.
-  const hasUnread = threads.some(
-    (thread) => resolveSidebarRowStatus(thread) === "ready" && hasUnseenCompletion(thread),
-  );
-  return { dot: hasUnread ? "unread" : null, working };
+  return { dot: threads.some(isSidebarThreadDone) ? "unread" : null, working };
+}
+
+/** Whether the row shows Done: a ready thread whose latest run finished after the last visit. */
+export function isSidebarThreadDone(thread: ThreadStatusInput & SidebarThreadStatusInput): boolean {
+  return resolveSidebarRowStatus(thread) === "ready" && hasUnseenCompletion(thread);
 }
 
 /**

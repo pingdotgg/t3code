@@ -38,6 +38,7 @@ import {
   orderSidebarFolderThreads,
   orderSidebarProjectFolders,
   resolveSidebarFolderStatus,
+  isSidebarThreadDone,
   sidebarFolderExpansionKeys,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -1783,6 +1784,20 @@ describe("resolveSidebarFolderStatus", () => {
       dot: "attention",
       working: false,
     });
+  });
+
+  it("reads a Done thread visited exactly at its run's completion", () => {
+    const done = {
+      hasActionableProposedPlan: false,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      interactionMode: "default" as const,
+      latestRun: makeLatestRun(),
+      lastVisitedAt: "2026-03-09T10:04:00.000Z",
+      runtime: null,
+    };
+    expect(isSidebarThreadDone(done)).toBe(true);
+    expect(isSidebarThreadDone({ ...done, lastVisitedAt: "2026-03-09T10:05:00.000Z" })).toBe(false);
   });
 });
 
