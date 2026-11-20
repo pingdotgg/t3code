@@ -1117,6 +1117,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
 
   if (props.open === false && addSurfaceMenuOpen) setAddSurfaceMenuOpen(false);
 
+  const openAddSurfaceMenu = useEffectEvent(() => {
+    addSurfaceTriggerRef.current?.focus();
+    setAddSurfaceMenuOpen(true);
+  });
   const onNewSurfaceKeyDown = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented || event.isComposing) return;
     if (
@@ -1128,16 +1132,21 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     if (!addSurfaceMenuOpen && document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) return;
     event.preventDefault();
     event.stopPropagation();
-    if (!event.repeat) {
-      addSurfaceTriggerRef.current?.focus();
-      setAddSurfaceMenuOpen(true);
-    }
+    if (!event.repeat) openAddSurfaceMenu();
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a document keydown listener for the new surface shortcut while the panel is open
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a document keydown listener and the desktop menu action for the new surface shortcut while the panel is open
   useEffect(() => {
     if (props.open === false) return;
     document.addEventListener("keydown", onNewSurfaceKeyDown, true);
-    return () => document.removeEventListener("keydown", onNewSurfaceKeyDown, true);
+    // A focused desktop browser page forwards the chord as a menu action.
+    const unsubscribe = window.desktopBridge?.onMenuAction((action) => {
+      if (action === "rightPanel.new" && !document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS))
+        openAddSurfaceMenu();
+    });
+    return () => {
+      document.removeEventListener("keydown", onNewSurfaceKeyDown, true);
+      unsubscribe?.();
+    };
   }, [props.open]);
 
   const updateTabScrollState = (viewport: HTMLDivElement) => {
