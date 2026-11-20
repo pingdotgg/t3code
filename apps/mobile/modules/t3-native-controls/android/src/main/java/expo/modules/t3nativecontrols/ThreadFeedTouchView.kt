@@ -41,14 +41,39 @@ class ThreadFeedTouchView(
   private var downY = 0f
   private var axis = Axis.PENDING
   private var pointerChanged = false
+  private var lockingFeed = false
+
+  // A descendant, such as a text selection drag, asked its parents not to intercept.
+  private var childLocked = false
 
   override fun requestDisallowInterceptTouchEvent(disallowIntercept: Boolean) {
     val activeFeed = feed
+    if (activeFeed != null && !lockingFeed) childLocked = disallowIntercept
     if (!disallowIntercept && activeFeed != null && axis != Axis.VERTICAL) {
       // A link may release the table's interceptor while the feed still needs to stay locked.
-      activeFeed.requestDisallowInterceptTouchEvent(true)
+      lockFeed(activeFeed)
     } else {
       super.requestDisallowInterceptTouchEvent(disallowIntercept)
+    }
+  }
+
+  private fun lockFeed(activeFeed: ReactScrollView) {
+    lockingFeed = true
+    try {
+      activeFeed.requestDisallowInterceptTouchEvent(true)
+    } finally {
+      lockingFeed = false
+    }
+  }
+
+  /** Hands the gesture to the feed unless a descendant still holds its own lock. */
+  private fun releaseFeed(activeFeed: ReactScrollView, event: MotionEvent) {
+    axis = Axis.VERTICAL
+    if (childLocked) return
+    activeFeed.requestDisallowInterceptTouchEvent(false)
+    if (pointerChanged && !event.endsGesture()) {
+      // The feed skipped intercept callbacks while the gesture was undecided.
+      withDownEvent(event, activeFeed) { activeFeed.onInterceptTouchEvent(it) }
     }
   }
 
@@ -69,10 +94,7 @@ class ThreadFeedTouchView(
           withCancelEvent(event) { dispatchToGutterTarget(target, it) }
         }
       } else {
-        activeFeed.requestDisallowInterceptTouchEvent(false)
-        if (pointerChanged && !event.endsGesture()) {
-          withDownEvent(event, activeFeed) { activeFeed.onInterceptTouchEvent(it) }
-        }
+        releaseFeed(activeFeed, event)
         clearGesture()
         return super.dispatchTouchEvent(event)
       }
@@ -114,6 +136,7 @@ class ThreadFeedTouchView(
     gutterDistance = Int.MAX_VALUE
     axis = Axis.PENDING
     pointerChanged = false
+    childLocked = false
   }
 
   private fun finishGesture(event: MotionEvent) {
@@ -134,7 +157,7 @@ class ThreadFeedTouchView(
     val handled = super.dispatchTouchEvent(event)
     if (handled) {
       updatePointer(event, 0)
-      activeFeed.requestDisallowInterceptTouchEvent(true)
+      lockFeed(activeFeed)
     } else {
       clearGesture()
     }
@@ -177,13 +200,8 @@ class ThreadFeedTouchView(
     val canScroll = target?.canScrollHorizontally(direction) != false
     return when {
       max(abs(dx), abs(dy)) <= touchSlop -> target != null || super.dispatchTouchEvent(event)
-      abs(dy) >= abs(dx) || !canScroll -> {
-        axis = Axis.VERTICAL
-        activeFeed.requestDisallowInterceptTouchEvent(false)
-        if (pointerChanged) {
-          // The feed skipped intercept callbacks while the gesture was undecided.
-          withDownEvent(event, activeFeed) { activeFeed.onInterceptTouchEvent(it) }
-        }
+      abs(dy) >= abs(dx) || !canScroll || childLocked -> {
+        releaseFeed(activeFeed, event)
         super.dispatchTouchEvent(event)
       }
       else -> startHorizontal(target, event)
