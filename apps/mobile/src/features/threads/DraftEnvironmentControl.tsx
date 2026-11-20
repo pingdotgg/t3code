@@ -27,7 +27,7 @@ export function DraftEnvironmentControl(props: {
       }
       disabled={props.disabled}
       onPress={props.onChooseEnvironment}
-      className="flex-row items-center gap-1.5 rounded-xl px-3 py-2 active:opacity-65"
+      className="min-h-[44px] flex-row items-center gap-1.5 rounded-xl px-3 py-2 active:opacity-65 android:min-h-[48px]"
     >
       <EnvironmentMachineSymbol
         kind={props.machineKind}
