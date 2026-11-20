@@ -83,7 +83,7 @@ interface QuestionAttachmentScope {
 export async function pickQuestionAttachments(
   input: QuestionAttachmentScope & {
     readonly key: string;
-    readonly kind: "media" | "files";
+    readonly kind: "media" | "camera" | "files";
     readonly maxUploadBytes?: number | undefined;
   },
 ): Promise<{ error: string | null; rejected: number }> {
@@ -100,8 +100,9 @@ export async function pickQuestionAttachments(
           })
         : await pickComposerMedia({
             existingCount,
-            maxVideoBytes: input.maxUploadBytes,
+            maxVideoBytes: input.kind === "camera" ? undefined : input.maxUploadBytes,
             acceptSelection,
+            source: input.kind === "camera" ? "camera" : "library",
           });
     const attachments = "files" in result ? result.files : result.attachments;
     return await preparation.complete({ attachments, error: result.error }, input);

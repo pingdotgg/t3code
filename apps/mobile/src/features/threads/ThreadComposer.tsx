@@ -175,6 +175,7 @@ export interface ThreadComposerProps {
   readonly hidden: boolean;
   readonly editorRef?: RefObject<ComposerEditorHandle | null>;
   readonly onChangeDraftMessage: (value: string) => void;
+  readonly onTakeDraftPhoto: () => Promise<void>;
   readonly onPickDraftMedia: () => Promise<void>;
   readonly onPickDraftFiles: () => Promise<void>;
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<boolean>;
@@ -836,6 +837,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 size={usesLargeControls ? "large" : "regular"}
                 disabled={isSubmissionLocked}
                 supportsFiles={props.serverConfig !== null}
+                onTakePhoto={props.onTakeDraftPhoto}
                 onPickMedia={props.onPickDraftMedia}
                 onPickFiles={props.onPickDraftFiles}
               />

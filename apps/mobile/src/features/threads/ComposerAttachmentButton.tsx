@@ -7,6 +7,7 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { Menu } from "../../components/ui/Menu";
 
 const ATTACHMENT_MENU_ACTIONS: MenuAction[] = [
+  { id: "camera", title: msg("Take Photo"), image: "camera" },
   { id: "photos", title: msg("Photo Library"), image: "photo" },
   { id: "files", title: msg("Choose Files"), image: "folder" },
 ];
@@ -15,6 +16,7 @@ export function ComposerAttachmentButton(props: {
   readonly disabled?: boolean;
   readonly size?: "regular" | "large";
   readonly supportsFiles: boolean;
+  readonly onTakePhoto: () => Promise<void>;
   readonly onPickMedia: () => Promise<void>;
   readonly onPickFiles: () => Promise<void>;
 }) {
@@ -51,7 +53,9 @@ export function ComposerAttachmentButton(props: {
       accessibilityRole="button"
       actions={ATTACHMENT_MENU_ACTIONS.map((action) => ({ ...action, title: m(action.title) }))}
       onPressAction={({ nativeEvent }) => {
-        if (nativeEvent.event === "photos") {
+        if (nativeEvent.event === "camera") {
+          void props.onTakePhoto();
+        } else if (nativeEvent.event === "photos") {
           void props.onPickMedia();
         } else if (nativeEvent.event === "files") {
           void props.onPickFiles();

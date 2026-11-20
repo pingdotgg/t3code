@@ -401,10 +401,12 @@ export async function pickComposerMedia(input: {
   readonly existingCount: number;
   readonly maxVideoBytes?: number;
   readonly acceptSelection?: () => boolean;
+  readonly source?: "library" | "camera";
 }): Promise<{
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly error: string | null;
 }> {
+  const source = input.source ?? "library";
   const remainingSlots = PROVIDER_SEND_TURN_MAX_ATTACHMENTS - input.existingCount;
   if (remainingSlots <= 0) {
     return {
@@ -423,27 +425,58 @@ export async function pickComposerMedia(input: {
   } catch (error) {
     return {
       attachments: [],
-      error: errorDisplayMessage(error, m) ?? m(msg("The photo library is unavailable right now.")),
+      error:
+        errorDisplayMessage(error, m) ??
+        m(
+          source === "camera"
+            ? msg("The camera is unavailable right now.")
+            : msg("The photo library is unavailable right now."),
+        ),
     };
+  }
+
+  if (source === "camera") {
+    const permission = await imagePicker.requestCameraPermissionsAsync();
+    if (!permission.granted) {
+      return {
+        attachments: [],
+        error: m(msg("Camera access is required to take a photo.")),
+      };
+    }
   }
 
   // Android pickers report background state; guard against deferred restarts mid-pick.
   const endHandoff = beginForegroundHandoff();
   let result: Awaited<ReturnType<typeof imagePicker.launchImageLibraryAsync>>;
   try {
-    result = await imagePicker.launchImageLibraryAsync({
-      mediaTypes: input.maxVideoBytes === undefined ? ["images"] : ["images", "videos"],
-      allowsMultipleSelection: true,
-      selectionLimit: remainingSlots,
-      // Base64 makes iOS decode all full-size photos and stalls JS with large strings; read bytes only as needed.
-      base64: false,
-      quality: 1,
-      shouldDownloadFromNetwork: true,
-    });
+    result =
+      source === "camera"
+        ? await imagePicker.launchCameraAsync({
+            mediaTypes: ["images"],
+            allowsMultipleSelection: false,
+            // Base64 makes iOS decode full-size photos and stalls JS with large strings; read bytes only as needed.
+            base64: false,
+            quality: 1,
+          })
+        : await imagePicker.launchImageLibraryAsync({
+            mediaTypes: input.maxVideoBytes === undefined ? ["images"] : ["images", "videos"],
+            allowsMultipleSelection: true,
+            selectionLimit: remainingSlots,
+            // Base64 makes iOS decode all full-size photos and stalls JS with large strings; read bytes only as needed.
+            base64: false,
+            quality: 1,
+            shouldDownloadFromNetwork: true,
+          });
   } catch (error) {
     return {
       attachments: [],
-      error: errorDisplayMessage(error, m) ?? m(msg("Could not open the photo library.")),
+      error:
+        errorDisplayMessage(error, m) ??
+        m(
+          source === "camera"
+            ? msg("Could not open the camera.")
+            : msg("Could not open the photo library."),
+        ),
     };
   } finally {
     endHandoff();

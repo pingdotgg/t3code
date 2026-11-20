@@ -67,22 +67,30 @@ export function useComposerAttachmentActions(props: {
     ];
     if (problems.length) Dialog.alert(title, problems.join("\n\n"));
   };
-  const onPickDraftMedia = async () => {
+  const pickDraftMedia = async (source: "library" | "camera") => {
     const key = props.draftKey;
     if (!key || props.locked) return;
     const insertion = captureComposerDraftInsertion(key);
     await withDraftOperation(key, async (signal) => {
       const result = await pickComposerMedia({
         existingCount: countComposerDraftAttachmentsAfterSelection(key, insertion),
-        maxVideoBytes: capabilities?.fileAttachments?.maxUploadBytes,
+        maxVideoBytes:
+          source === "camera" ? undefined : capabilities?.fileAttachments?.maxUploadBytes,
+        source,
       });
       report(
-        m(msg("Could not attach photo or video")),
+        m(
+          source === "camera"
+            ? msg("Could not attach photo")
+            : msg("Could not attach photo or video"),
+        ),
         result.error,
         await append(key, signal, result.attachments, insertion),
       );
     });
   };
+  const onTakeDraftPhoto = () => pickDraftMedia("camera");
+  const onPickDraftMedia = () => pickDraftMedia("library");
   const onPickDraftFiles = async () => {
     const key = props.draftKey;
     if (!key || props.locked) return;
@@ -160,5 +168,11 @@ export function useComposerAttachmentActions(props: {
       }
     });
   };
-  return { onPickDraftMedia, onPickDraftFiles, onNativePasteImages, onNativePasteText };
+  return {
+    onTakeDraftPhoto,
+    onPickDraftMedia,
+    onPickDraftFiles,
+    onNativePasteImages,
+    onNativePasteText,
+  };
 }
