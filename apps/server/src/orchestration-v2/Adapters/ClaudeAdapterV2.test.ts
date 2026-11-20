@@ -8304,6 +8304,35 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("declares the refusal fallback dialog so a safeguard flag can pause the turn", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-refusal-fallback"),
+          text: "continue",
+          attachments: [],
+        }),
+      );
+      assert.include(
+        harness.getOpenedOptions()!.supportedDialogKinds ?? [],
+        "refusal_fallback_prompt",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("completes a turn after the resume dialog without a failed tool row", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
