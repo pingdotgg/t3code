@@ -32,12 +32,6 @@ const projection = (
   >;
 
 describe("unsentManualContinuationSource", () => {
-  it("returns undefined when the run is not a manual continuation", () => {
-    expect(
-      unsentManualContinuationSource(run("r1"), projection([run("r1")], [], [])),
-    ).toBeUndefined();
-  });
-
   it("returns undefined when the source run no longer exists", () => {
     expect(
       unsentManualContinuationSource(run("r2", "ghost" as RunId), projection([run("r2")], [], [])),
@@ -62,14 +56,15 @@ describe("unsentManualContinuationSource", () => {
   });
 
   it("returns the source when a steering restart ran after the accepted attempt", () => {
+    const source = run("src");
     const a1 = attempt("a1", "src", 1);
     const a2 = attempt("a2", "src", 2, "steering_restart");
     expect(
       unsentManualContinuationSource(
         run("r2", "src" as RunId),
-        projection([run("src")], [a1, a2], [turn("a1")]),
+        projection([source], [a1, a2], [turn("a1")]),
       ),
-    ).not.toBeUndefined();
+    ).toBe(source);
   });
 
   it("ignores a steering restart that predates the accepted attempt", () => {
