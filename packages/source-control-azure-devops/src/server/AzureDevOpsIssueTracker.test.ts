@@ -221,14 +221,20 @@ describe("AzureDevOpsIssueTracker", () => {
         ...WORK_ITEM,
         fields: { ...fields, "Microsoft.VSTS.TCM.ReproSteps": "<div>Open the composer.</div>" },
       };
-      const api = yield* tracker((args) => (args[0] === "boards" ? encode(bug) : answer(args)));
-      const issue = yield* api.getIssue({
-        cwd: "/w",
-        host: "dev.azure.com",
-        scope: "acme/Web App",
-        key: "7",
+      const writes: Array<string[]> = [];
+      const api = yield* tracker((args) => {
+        if (args[0] === "boards" && args[2] === "update") writes.push([...args]);
+        return args[0] === "boards" ? encode(bug) : answer(args);
       });
+      const scope = { cwd: "/w", host: "dev.azure.com", scope: "acme/Web App", key: "7" };
+      const issue = yield* api.getIssue(scope);
       expect(issue.body).toBe("<div>Open the composer.</div>");
+      yield* api.update!({ ...scope, body: "Close it.", labels: ["ui"] });
+      expect(
+        writes.map((args) =>
+          args.slice(args.indexOf("--id") + 2, args.indexOf("--only-show-errors")),
+        ),
+      ).toEqual([["--fields", "System.Tags=ui", "Microsoft.VSTS.TCM.ReproSteps=Close it."]]);
     }),
   );
 
