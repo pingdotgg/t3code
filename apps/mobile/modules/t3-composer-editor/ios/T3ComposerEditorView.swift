@@ -470,6 +470,10 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   // TextKit 1 mid-edit; that swap can leave typed text laid out but never drawn.
   private let textView = ComposerTextView(usingTextLayoutManager: false)
   private let placeholderLabel = UILabel()
+  private var placeholder = ""
+  private var placeholderText = NSAttributedString()
+  private var placeholderSizeCache: (width: CGFloat, size: CGSize)?
+  private var growsWithPlaceholder = false
   private var value = ""
   private var tokensJson = "[]"
   private var tokens: [ComposerTokenPayload] = []
@@ -571,7 +575,6 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     textView.addGestureRecognizer(contextTap)
     addSubview(textView)
 
-    placeholderLabel.numberOfLines = 0
     placeholderLabel.adjustsFontForContentSizeCategory = true
     addSubview(placeholderLabel)
     applyTypography()
@@ -675,20 +678,58 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
         }
       }
     }
-    let placeholderX = textView.textContainerInset.left + textView.textContainer.lineFragmentPadding
+    // A growing placeholder fills the lines the editor has room for and truncates the last;
+    // others keep one line. The draft's line height keeps the text still when it's filled in.
     let placeholderY = textView.textContainerInset.top
-    let placeholderWidth = max(
-      0,
-      bounds.width - placeholderX - textView.textContainerInset.right -
-        textView.textContainer.lineFragmentPadding
-    )
+    let width = placeholderWidth()
+    var lines = 1
+    if growsWithPlaceholder, value.isEmpty, lineHeight > 0 {
+      let room = bounds.height - placeholderY - textView.textContainerInset.bottom
+      lines = max(1, Int(((room + 0.5) / lineHeight).rounded(.down)))
+    }
+    let lineFrameHeight = max(lineHeight, placeholderLabel.font.lineHeight)
+    placeholderLabel.numberOfLines = lines
     placeholderLabel.frame = CGRect(
-      x: placeholderX,
+      x: textView.textContainerInset.left + textView.textContainer.lineFragmentPadding,
       y: placeholderY,
-      width: placeholderWidth,
-      height: max(lineHeight, placeholderLabel.font.lineHeight)
+      width: width,
+      height: lines == 1
+        ? lineFrameHeight
+        : max(lineFrameHeight, min(ceil(placeholderSize(width: width).height), CGFloat(lines) * lineHeight))
     )
     emitContentSizeIfNeeded()
+  }
+
+  private func placeholderWidth() -> CGFloat {
+    max(
+      0,
+      bounds.width - textView.textContainerInset.left - textView.textContainerInset.right -
+        2 * textView.textContainer.lineFragmentPadding
+    )
+  }
+
+  private func placeholderSize(width: CGFloat) -> CGSize {
+    if let cached = placeholderSizeCache, cached.width == width {
+      return cached.size
+    }
+    let size = placeholderText.boundingRect(
+      with: CGSize(width: width, height: .greatestFiniteMagnitude),
+      options: [.usesLineFragmentOrigin, .usesFontLeading],
+      context: nil
+    ).size
+    placeholderSizeCache = (width: width, size: size)
+    return size
+  }
+
+  private func applyPlaceholder() {
+    var attributes = baseAttributes()
+    attributes[.foregroundColor] = UIColor(composerHex: theme.placeholder) ?? .placeholderText
+    placeholderText = NSAttributedString(string: placeholder, attributes: attributes)
+    placeholderSizeCache = nil
+    placeholderLabel.attributedText = placeholderText
+    // Set after the text, whose paragraph style would otherwise override it.
+    placeholderLabel.lineBreakMode = .byTruncatingTail
+    setNeedsLayout()
   }
 
   func setClipboardFragment(_ fragment: String) {
@@ -759,8 +800,13 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   }
 
   func setPlaceholder(_ placeholder: String) {
-    placeholderLabel.text = placeholder
+    self.placeholder = placeholder
     textView.accessibilityLabel = placeholder
+    applyPlaceholder()
+  }
+
+  func setGrowsWithPlaceholder(_ growsWithPlaceholder: Bool) {
+    self.growsWithPlaceholder = growsWithPlaceholder
     setNeedsLayout()
   }
 
@@ -1180,7 +1226,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     textView.font = font
     restoreBaseTypingAttributes()
     placeholderLabel.font = font
-    setNeedsLayout()
+    applyPlaceholder()
   }
 
   private func restoreBaseTypingAttributes() {
@@ -1192,7 +1238,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
 
   private func applyTheme() {
     textView.textColor = UIColor(composerHex: theme.text) ?? .label
-    placeholderLabel.textColor = UIColor(composerHex: theme.placeholder) ?? .placeholderText
+    applyPlaceholder()
     tintColor = UIColor.systemBlue
   }
 
@@ -1310,11 +1356,27 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   }
 
   private func updatePlaceholderVisibility() {
+    guard placeholderLabel.isHidden != !value.isEmpty else {
+      return
+    }
     placeholderLabel.isHidden = !value.isEmpty
+    // Layout measures the placeholder only while it shows.
+    setNeedsLayout()
   }
 
   private func emitContentSizeIfNeeded() {
     guard bounds.width > 0 else { return }
+    // An empty editor that grows with its placeholder reports the placeholder's size instead.
+    if growsWithPlaceholder, value.isEmpty, !placeholder.isEmpty {
+      // A placeholder that fits one line measures its natural width.
+      let wrapped = placeholderSize(width: placeholderWidth())
+      let oneLine = wrapped.height <= lineHeight + 0.5
+      emitContentSize(CGSize(
+        width: oneLine ? ceil(wrapped.width) : 0,
+        height: ceil(min(lineHeight * 4, wrapped.height))
+      ))
+      return
+    }
     // Fit independently of the animated viewport: when scrolling is disabled,
     // its current height can clip TextKit's laid-out line fragments.
     let fittedHeight = textView.sizeThatFits(CGSize(width: bounds.width, height: .greatestFiniteMagnitude)).height
@@ -1323,7 +1385,10 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     let width = fittedHeight <= lineHeight + 0.5
       ? textView.layoutManager.usedRect(for: textView.textContainer).width
       : 0
-    let nextSize = CGSize(width: ceil(width), height: ceil(measuredHeight))
+    emitContentSize(CGSize(width: ceil(width), height: ceil(measuredHeight)))
+  }
+
+  private func emitContentSize(_ nextSize: CGSize) {
     guard abs(nextSize.width - lastContentSize.width) > 0.5 ||
       abs(nextSize.height - lastContentSize.height) > 0.5 else {
       return

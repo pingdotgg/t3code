@@ -59,6 +59,8 @@ export interface ComposerEditorProps {
   readonly contentInsetVertical?: number;
   /** Android: center a single line vertically (collapsed pill); no-op on iOS. */
   readonly singleLineCentered?: boolean;
+  /** iOS: while empty, report the placeholder's size so the owner can grow to show all of it. */
+  readonly growsWithPlaceholder?: boolean;
   readonly style?: StyleProp<ViewStyle>;
   readonly textStyle?: StyleProp<TextStyle>;
   readonly onChangeText: (value: string) => void;
