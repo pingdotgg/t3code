@@ -245,6 +245,11 @@ Third}`;
     const result = openRtf(input.buffer);
     if (result.type !== "document") throw new Error("Expected document");
     expect(result.pages[0]!.html).toBe("<p>А А<br>あ</p>");
+    for (const header of [String.raw`\mac`, String.raw`\mac\ansicpg10000`]) {
+      const mac = openRtf(bytes(String.raw`{\rtf1` + header + String.raw` Caf\'8e Cr\'8fme}`));
+      if (mac.type !== "document") throw new Error("Expected document");
+      expect(mac.pages[0]!.html).toBe("<p>Café Crème</p>");
+    }
     expect(() => openRtf(bytes(String.raw`{\rtf1\ansicpg99999 text}`))).toThrow(
       expect.objectContaining({ code: "rtf-code-page" }),
     );
