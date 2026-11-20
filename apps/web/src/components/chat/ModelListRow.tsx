@@ -44,20 +44,6 @@ export const ModelListRow = memo(function ModelListRow(props: {
     name: props.name,
     subProvider: props.subProvider,
   };
-  const providerIcon = (
-    <ProviderInstanceIcon
-      driverKind={props.driverKind}
-      displayName={props.providerDisplayName}
-      accentColor={props.providerAccentColor}
-      acpRegistryAgentId={props.acpRegistryAgentId}
-      acpRegistryIconUrl={props.acpRegistryIconUrl}
-      showBadge={props.showInstanceBadge}
-      className="size-4"
-      iconClassName="size-4"
-      indicatorBackground="var(--popover)"
-      badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs"
-    />
-  );
 
   const row = (
     <ComboboxItem
@@ -75,32 +61,18 @@ export const ModelListRow = memo(function ModelListRow(props: {
       )}
     >
       {/* One row shape in every tab: the logo names the provider, so Favorites needs no second line. */}
-      {props.reorderable ? (
-        <div className="flex shrink-0 items-center gap-1">
-          <Tooltip disabled={props.isAnyDragging === true}>
-            <TooltipTrigger
-              render={
-                <span
-                  data-favorite-drag-handle="true"
-                  aria-hidden="true"
-                  className={cn(
-                    "-ms-1 flex size-4 shrink-0 cursor-grab touch-none items-center justify-center rounded-xs text-muted-foreground/45 transition-colors hover:text-foreground group-hover:text-muted-foreground group-data-highlighted:text-muted-foreground active:cursor-grabbing",
-                    props.isDragging && "cursor-grabbing text-foreground",
-                  )}
-                >
-                  <GripVerticalIcon className="size-3.5 text-current" />
-                </span>
-              }
-            />
-            <TooltipPopup side="top" align="center">
-              <T>Drag to reorder</T>
-            </TooltipPopup>
-          </Tooltip>
-          {providerIcon}
-        </div>
-      ) : (
-        providerIcon
-      )}
+      <ProviderInstanceIcon
+        driverKind={props.driverKind}
+        displayName={props.providerDisplayName}
+        accentColor={props.providerAccentColor}
+        acpRegistryAgentId={props.acpRegistryAgentId}
+        acpRegistryIconUrl={props.acpRegistryIconUrl}
+        showBadge={props.showInstanceBadge}
+        className="size-4"
+        iconClassName="size-4"
+        indicatorBackground="var(--popover)"
+        badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs"
+      />
       <div className="flex min-w-0 flex-1 items-center gap-2 text-left">
         <div
           className="min-w-0 truncate text-sm font-normal leading-snug"
@@ -171,6 +143,29 @@ export const ModelListRow = memo(function ModelListRow(props: {
           </TooltipPopup>
         </Tooltip>
         {props.jumpLabel ? <Kbd>{props.jumpLabel}</Kbd> : null}
+        {props.reorderable ? (
+          <Tooltip disabled={props.isAnyDragging === true}>
+            <TooltipTrigger
+              render={
+                <span
+                  data-favorite-drag-handle="true"
+                  aria-hidden="true"
+                  className={cn(
+                    "flex size-4 shrink-0 cursor-grab touch-none items-center justify-center rounded-xs text-muted-foreground transition-opacity hover:text-foreground active:cursor-grabbing",
+                    props.isDragging
+                      ? "cursor-grabbing text-foreground opacity-100"
+                      : "opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100",
+                  )}
+                >
+                  <GripVerticalIcon className="size-3.5 text-current" />
+                </span>
+              }
+            />
+            <TooltipPopup side="top" align="center">
+              <T>Drag to reorder</T>
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
       </div>
     </ComboboxItem>
   );
