@@ -32,6 +32,14 @@ export const PullRequestMarkdownContext = createContext<{
 export const PullRequestMarkdownPanelContext =
   createContext<ScopedThreadRef>(PULL_REQUESTS_PANEL_REF);
 
+function attachmentHost(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+}
+
 function PullRequestHostVideo({
   environmentId,
   cwd,
@@ -181,8 +189,7 @@ function PullRequestBodySegmentView({
       <PaperclipIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
       <span className="min-w-0 flex-1 truncate">
         <T>
-          Open attachment on{" "}
-          <Var>{hostMedia?.definition.label ?? new URL(segment.url).hostname}</Var>
+          Open attachment on <Var>{hostMedia?.definition.label ?? attachmentHost(segment.url)}</Var>
         </T>
       </span>
       <ExternalLinkIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
