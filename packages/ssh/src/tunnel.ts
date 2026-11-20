@@ -2063,12 +2063,45 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         localPort: entry.localPort,
         remotePort: entry.remotePort,
       });
+      let answered = false;
+      const markAnswered = Effect.sync(() => {
+        answered = true;
+      });
+      const client = yield* HttpClient.HttpClient;
       const readinessExit = yield* Effect.exit(
         waitForHttpReady({
           baseUrl: entry.httpBaseUrl,
           timeoutMs: SSH_TUNNEL_READY_PROBE_TIMEOUT_MS,
-        }),
+        }).pipe(
+          Effect.provideService(
+            HttpClient.HttpClient,
+            client.pipe(
+              HttpClient.transform((request) =>
+                request.pipe(
+                  Effect.tap(() => markAnswered),
+                  Effect.tapError(() => markAnswered),
+                ),
+              ),
+            ),
+          ),
+        ),
       );
+      // ssh closes the channel when nothing listens remotely, so a forward that
+      // is up but got no answer leads to a live server that is only slow.
+      const keepSlowForward =
+        Exit.isFailure(readinessExit) &&
+        !answered &&
+        (yield* entry.process.isRunning.pipe(Effect.orElseSucceed(() => false))) &&
+        (yield* (yield* NetService.NetService).hasListenerOnHost(entry.localPort, "127.0.0.1"));
+      if (keepSlowForward) {
+        yield* Effect.logWarning("ssh.environment.tunnel.existing.slow", {
+          ...sshTargetLogFields(resolvedTarget),
+          key,
+          localPort: entry.localPort,
+          remotePort: entry.remotePort,
+        });
+        return entry;
+      }
       if (Exit.isSuccess(readinessExit)) {
         yield* Effect.logDebug("ssh.environment.tunnel.reused", {
           ...sshTargetLogFields(resolvedTarget),
