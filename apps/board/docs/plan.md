@@ -2,7 +2,7 @@
 
 Agent Board is a desktop app for running projects through an orchestrator on the T3 Code engine. The sidebar lists T3 projects, each project lists its boards, and each board shows one orchestrator, its tickets in lanes, the agents working each ticket, artifact cards, and For-you cards. The workflow it shows is the XEO-3330 run from November 2026.
 The rule the program enforces is that the engine stays upstream. No PR edits a file that exists upstream, except `pnpm-lock.yaml`. Every PR passes `apps/board/scripts/check-engine-untouched.mjs`. The repo's lint and dependency standards apply to every file in the repo, and fail only on lines we add or change.
-The PRs, in stack order, are B0, B1, S1, K1, B2, U1, B3, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, C2, F1, D1, B12, and O1.
+The PRs, in stack order, are B0, B1, S1, K1, B2, U1, B3, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, C2, F1, D1, L1, B12, and O1.
 
 ## How to read this
 
@@ -38,9 +38,9 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
 - [ ] Follow this dependency graph. Base each PR on its parent's branch, because the execution playbook stacks.
   - [ ] B0 is first. It branches from `main` of `13kparkin/t3code`.
   - [ ] B1 after B0. S1 after B1. K1 after S1. B2 after K1. U1 after B2. B3 after U1. W1 after B3. B4 after W1. B5 after B4. B6 after B5.
-  - [ ] B7 after B6. C1 after B7. B8 after C1. B9 after B8. B10 after B9. B11 after B10. W2 after B11. C2 after W2. F1 after C2. D1 after F1. B12 after D1. O1 after B12.
+  - [ ] B7 after B6. C1 after B7. B8 after C1. B9 after B8. B10 after B9. B11 after B10. W2 after B11. C2 after W2. F1 after C2. D1 after F1. L1 after D1. B12 after L1. O1 after B12.
 - [ ] Hold the file boundaries. Every PR touches only `apps/board/**`, `.github/workflows/agent-board.yml`, and `pnpm-lock.yaml`. S1 also adds `standards/**`, `.vite-hooks/pre-push`, and `.claude/settings.json`, which upstream does not have. K1 and B12 write outside the repo only through their install scripts.
-- [ ] Hold the review gate. B1, B2, U1, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, C2, F1, and D1 change an interaction. They post their screenshots and video in chat at merge, so the operator can ask for a follow-up PR.
+- [ ] Hold the review gate. B1, B2, U1, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, C2, F1, D1, and L1 change an interaction. They post their screenshots and video in chat at merge, so the operator can ask for a follow-up PR.
 - [ ] Cap building agents at 2 at once, and run a push as the only heavy job, because this machine has 15 GB of RAM and 4 cores.
 
 ### PR mechanics, for every PR
@@ -1362,9 +1362,72 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends D1 to the base-branch stack and the operator lands it bottom-up.
 
-## Port the omp skills for T3 agents (B12)
+## Start work from Linear and GitHub issues (L1)
 
 **Depends on.** D1.
+
+**Files.**
+
+- [ ] Create `apps/board/src/settings/IntegrationsPage.tsx`.
+- [ ] Create `apps/board/src/issues/IssuePicker.tsx` and `apps/board/src/issues/IssueChip.tsx`.
+- [ ] Create `apps/board/src/issues/issueLinks.ts` and `apps/board/src/issues/issueLinks.test.ts`.
+- [ ] Edit `apps/board/src/board/CreateBoard.tsx`, `apps/board/src/board/TicketFrame.tsx`, `apps/board/src/settings/SettingsNav.tsx`, `apps/board/src/domain/ticket.ts`, `apps/board/src/domain/forYou.ts`, `apps/board/src/orchestrator/brief.md`, and `apps/board/src/orchestrator/brief.ts`.
+
+**Build.**
+
+- [ ] Add an Integrations page to the settings screen in W1's Orca layout. Connect Linear with a personal API key through `issueTrackers.connect`, which T3 probes and keeps as an engine secret. Show each tracker from `issueTrackers.list`, disconnect with a null token, and bind each project to a Linear team through `issueTrackers.bindProject`. Copy the flow from T3 web's `apps/web/src/components/settings/IntegrationsSettings.tsx` and `IssueTrackerSettings.tsx`, read only.
+- [ ] Give the new-board dialog a **Create From** row like Orca's Create worktree dialog in `/home/kyle/personalDev/main/artifacts/agent-board-prototype/refs/orca-create-worktree.png`, with Prompt, GitHub, Linear, Branch, and Name tabs and a search box. The Linear and GitHub tabs search through `issues.list` and `issues.candidates`, and the Branch tab lists bases from `vcs.listRefs`. Copy issue rows and search from T3 web's `apps/web/src/components/issue/`, read only.
+- [ ] Picking an issue fills the board's name and goal, and the orchestrator's first message carries the issue's description and comments from `issues.detail` and `issues.comments`.
+- [ ] Add an optional `issue` field, holding the tracker and the key, to the ticket schema in `domain/ticket.ts`, and tell the orchestrator in `brief.md` to set it when a ticket maps to an issue, such as a Linear child issue.
+- [ ] In `IssueChip.tsx`, show a linked ticket's issue key, state, and assignee from `issues.detail` on its frame, open the issue in B11's panel on click, and list its linked threads from `issues.linkedThreads`.
+- [ ] Route every tracker write through the operator. `brief.md` tells the orchestrator to ask for a create, a state change, or a comment as a For-you item of a new `tracker_write` kind that states the exact change. **Approve** makes that change through `issues.create`, `issues.setState`, or `issues.comment` and messages the orchestrator the result, and **Hold** changes nothing.
+- [ ] Add **Add from Linear** to the orchestrator card. It opens the same picker and sends the picked issue to the orchestrator as a new ticket request.
+- [ ] In `issueLinks.ts`, keep the pure pieces, which find issue keys in text, join tickets to issues, and turn an approved `tracker_write` item into the T3 call's input.
+
+**You see.**
+
+- [ ] Settings connects Linear, the new-board dialog starts a board from a Linear or GitHub issue like Orca's dialog, ticket frames show their issue's state, and every write to the tracker waits for the operator's approval.
+
+**Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] `issueLinks.test.ts` finds the keys in a fixed text, joins a fixed `tickets.json` to fixed issues, and turns approved create, state, and comment items into literal expected `issues.create`, `issues.setState`, and `issues.comment` inputs. Run `vp test run src/issues/issueLinks.test.ts` from `apps/board`.
+
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe. Linear lanes read the operator's workspace with a key the operator enters at lane time, and never write to it. Write lanes use a scratch Linear workspace key the operator provides, or a throwaway GitHub repo.
+
+- [ ] Lane 1. Regression lane against trunk. Trunk's dialog has no Create From row, so record that fact. Connect Linear at head. Save `l1-connect.png`. Pass when `issueTrackers.list` shows Linear connected and the key appears in no board file or log.
+- [ ] Lane 2. Bind the project to a team. Save `l1-bind.png`. Pass when `issues.list` returns that team's issues.
+- [ ] Lane 3. Search the Linear tab. Save `l1-search.png`. Pass when the results match Linear's own search for the same text.
+- [ ] Lane 4. Create a board from an issue. Save `l1-from-issue.png`. Pass when the orchestrator's first message holds the issue's description and comments.
+- [ ] Lane 5. Load a `tickets.json` whose tickets link child issues. Save `l1-ticket-chip.png`. Pass when each frame shows the key, state, and assignee Linear reports.
+- [ ] Lane 6. Search the GitHub tab on a throwaway repo with three issues. Save `l1-github.png`. Pass when all three are listed and one starts a board.
+- [ ] Lane 7. Have a real Claude orchestrator ask to change an issue's state in the scratch tracker. Save `l1-write.png`. Pass when the card states the exact change, **Hold** leaves the issue unchanged, and **Approve** changes it.
+- [ ] Lane 8. Use **Add from Linear** on an existing board. Save `l1-add.png`. Pass when the orchestrator adds a ticket linked to that issue.
+- [ ] Lane 9. Run the Windows app and open the new-board dialog on the Linear tab. Save `l1-windows.png` from a full-window capture. Pass when it matches the layout of Orca's dialog in the reference screenshot.
+- [ ] Lane 10. Run the boundary check, the standards check, and the dependency rules at head. Save `l1-checks.txt`. Pass when all three exit 0.
+
+**Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] Metric. Time from a keystroke in the Linear search to its results' paint.
+- [ ] Probe. Log `board:issue-search` and `board:issue-results` twenty times.
+- [ ] Baseline. Trunk has no search. Record the head times.
+- [ ] Rule. The median stays under 300 ms, recorded for O1.
+
+**Review gate.** The operator reviews at merge.
+
+- [ ] Copy lane 3, 5, and 7 screenshots into `apps/board/docs/media/l1-review-<slug>.png`.
+- [ ] Record a 30 to 60 second video of the change from a lane. Save it as `apps/board/docs/media/l1-review.mp4`.
+- [ ] Post the screenshots and the video in chat for the operator at merge.
+
+**Merge.**
+
+- [ ] Root's clean verdict at the exact head SHA.
+- [ ] Bugbot triage done.
+- [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
+- [ ] The root appends L1 to the base-branch stack and the operator lands it bottom-up.
+
+## Port the omp skills for T3 agents (B12)
+
+**Depends on.** L1.
 
 **Files.**
 
