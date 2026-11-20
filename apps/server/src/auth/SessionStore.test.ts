@@ -454,6 +454,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
       expect((yield* Effect.flip(sessions.verifyWebSocketToken(`${ticket.token}.`)))._tag).toBe(
         "MalformedWebSocketTokenError",
       );
+      const renewable = { ttl: Duration.hours(1), renewalWindow: Duration.hours(2) };
+      const relay = yield* sessions.issue({ ...relaySessionInput, ...renewable });
+      const renewal = sessions.renew(`${relay.token}.extra`, {
+        proofKeyThumbprint: relaySessionInput.proofKeyThumbprint,
+        consumeProof: Effect.void,
+        ...renewable,
+      });
+      expect((yield* Effect.flip(renewal))._tag).toBe("MalformedSessionTokenError");
     }).pipe(Effect.provide(layerSessionStore())),
   );
 
