@@ -52,6 +52,8 @@ export interface McpClientCaller {
    * another environment passing on the limits of the agent it calls for.
    */
   readonly narrowedTo?: ClientModes | undefined;
+  /** The user types what this client sends, as in the `t3` CLI; set only by a signed session claim. */
+  readonly actsForUser?: boolean | undefined;
   /** A linked environment's thread this request is made for (`T3-Sender-Thread`). */
   readonly senderThread?: OrchestrationV2LinkedSender | undefined;
   /** An outside client's thread links go through this hosted app, as Copy thread's do. */
@@ -162,14 +164,11 @@ export interface McpInvocationScope {
   readonly forge?: boolean;
 }
 
-/**
- * Who a message an MCP caller sends comes from. A client the user signed in from outside a thread,
- * such as the `t3` CLI, acts for the user; a thread's agent or a linked environment's does not.
- */
+/** Outside agents sign in as MCP clients too, so only a client marked as the user's sends as them. */
 export const mcpMessageActor = (
   scope: Pick<McpInvocationScope, "thread" | "client">,
 ): OrchestrationV2Actor =>
-  scope.thread === undefined && scope.client !== undefined && scope.client.linked !== true
+  scope.thread === undefined && scope.client?.actsForUser === true && scope.client.linked !== true
     ? "user"
     : "agent";
 

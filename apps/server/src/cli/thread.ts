@@ -236,6 +236,8 @@ const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E,
         // the project's default mode, never at this ceiling by default.
         access: "full-access",
         peerLink: false,
+        // A person types what this command sends, so the model reads it as theirs.
+        actsForUser: true,
         client: { deviceType: "bot" },
       }),
       (session) =>

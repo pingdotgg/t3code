@@ -5178,8 +5178,18 @@ describe("OrchestratorMcpService thread lookup", () => {
       const fromBareLink = yield* sendAs(linked());
       assert.isUndefined(fromBareLink?.linkedSender);
       assert.strictEqual(fromBareLink?.createdBy, "agent");
-      // A client the user signed in, such as the `t3` CLI, sends as the user.
-      assert.strictEqual((yield* sendAs(client))?.createdBy, "user");
+      // An outside agent signed in over OAuth is not the user; the `t3` CLI's own session is.
+      assert.strictEqual((yield* sendAs(client))?.createdBy, "agent");
+      const typedByUser: McpInvocationScope = {
+        ...client,
+        client: {
+          sessionId: "cli",
+          label: "t3 thread cli",
+          access: "full-access",
+          actsForUser: true,
+        },
+      };
+      assert.strictEqual((yield* sendAs(typedByUser))?.createdBy, "user");
     }),
   );
 

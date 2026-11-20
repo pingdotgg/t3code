@@ -103,6 +103,8 @@ export interface McpClientSession {
   readonly peerLink: boolean;
   /** When a peer link's session ends unless it is used again; the linking side keeps this. */
   readonly linkExpiresAt?: DateTime.Utc;
+  /** Issued to a client the user types into, such as the `t3` CLI, never over OAuth. */
+  readonly actsForUser: boolean;
 }
 
 export interface AuthenticatedSession {
@@ -639,6 +641,7 @@ export class EnvironmentAuth extends Context.Service<
       readonly label: string;
       readonly access: AuthMcpClientAccess;
       readonly peerLink: boolean;
+      readonly actsForUser?: boolean;
       readonly client: AuthClientMetadata;
     }) => Effect.Effect<
       {
@@ -1625,6 +1628,7 @@ export const make = Effect.gen(function* () {
               ? (session.runtimeModeCeiling ?? "approval-required")
               : "read-only",
             peerLink: session.peerLink === true,
+            actsForUser: session.actsForUser === true,
           } satisfies McpClientSession;
           if (session.peerLink !== true || session.expiresAt === undefined) return client;
           return {
@@ -1646,6 +1650,7 @@ export const make = Effect.gen(function* () {
         ttl: MCP_CLIENT_SESSION_TTL,
         ...(input.access === "read-only" ? {} : { runtimeModeCeiling: input.access }),
         peerLink: input.peerLink,
+        ...(input.actsForUser === true ? { actsForUser: true } : {}),
         client: { ...input.client, label: input.label, deviceType: "bot" },
       })
       .pipe(

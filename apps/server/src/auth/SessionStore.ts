@@ -65,6 +65,8 @@ export interface VerifiedSession {
   readonly runtimeModeCeiling?: RuntimeMode;
   /** An MCP client that is another T3 Code environment's peer link. */
   readonly peerLink?: true;
+  /** An MCP client the user drives directly, such as the `t3` CLI. */
+  readonly actsForUser?: true;
 }
 
 export interface VerifiedWebSocketTicket extends VerifiedSession {
@@ -412,6 +414,7 @@ export class SessionStore extends Context.Service<
       readonly proofKeyThumbprint?: string;
       readonly runtimeModeCeiling?: RuntimeMode;
       readonly peerLink?: boolean;
+      readonly actsForUser?: boolean;
       readonly replaceActiveForSubjectAndMethod?: boolean;
       readonly replaceSessionId?: AuthSessionId;
       /** Keeps the session alive this long past each renewal; `ttl` then bounds only the token. */
@@ -503,6 +506,8 @@ const SessionClaims = Schema.Struct({
   rtc: Schema.optionalKey(RuntimeMode),
   /** Signed, so a client cannot shed its peer link's limits. */
   plk: Schema.optionalKey(Schema.Literal(1)),
+  /** Signed, so an OAuth client cannot claim to be the user typing. */
+  usr: Schema.optionalKey(Schema.Literal(1)),
   /** Signed, so only sessions issued as renewable can renew. */
   rnw: Schema.optionalKey(Schema.Literal(1)),
   iat: Schema.Number,
@@ -748,6 +753,7 @@ const make = Effect.gen(function* () {
         ...(input?.proofKeyThumbprint ? { jkt: input.proofKeyThumbprint } : {}),
         ...(input?.runtimeModeCeiling ? { rtc: input.runtimeModeCeiling } : {}),
         ...(input?.peerLink === true ? { plk: 1 as const } : {}),
+        ...(input?.actsForUser === true ? { usr: 1 as const } : {}),
         ...(input?.renewalWindow ? { rnw: 1 as const } : {}),
         iat: issuedAt.epochMilliseconds,
         exp: expiresAt.epochMilliseconds,
@@ -931,6 +937,7 @@ const make = Effect.gen(function* () {
         ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
         ...(claims.rtc ? { runtimeModeCeiling: claims.rtc } : {}),
         ...(claims.plk === 1 ? { peerLink: true as const } : {}),
+        ...(claims.usr === 1 ? { actsForUser: true as const } : {}),
       } satisfies VerifiedSession;
     },
   );
