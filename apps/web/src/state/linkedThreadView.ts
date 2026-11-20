@@ -1,5 +1,6 @@
 import { useAtom, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { SideThreadOpenIntent } from "@t3tools/client-runtime/side-thread";
 import {
   connectLinkedEnvironment,
   type LinkedThreadOpen,
@@ -12,6 +13,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import type { TurnItemSource } from "../components/chat/timelineRowContext";
 import { useRightPanelStore } from "../rightPanelStore";
 import { connectPairing, reachesEnvironment } from "../connection/onboarding";
+import { openLinkedThreadRead } from "../lib/sideChatPane";
 import type { LinkedThreadSurface } from "../linkedThreadSurface";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { useEnvironment } from "./environments";
@@ -20,10 +22,9 @@ import { useEnvironmentQuery } from "./query";
 import { useAtomCommand } from "./use-atom-command";
 
 /**
- * How a click opens a thread that the thread `panelRef` says is on a linked environment: in place
- * when this client is connected there itself, else as a read-only tab in that thread's right
- * panel, read through its environment. Once the link is gone a saved environment opens in place,
- * where the client can reconnect to it; with neither, the tab says what to link again.
+ * How a click opens a thread `panelRef` says is on a linked environment: in place when this client
+ * is connected there, else read-only through `panelRef`'s environment, in its right panel or on
+ * the main screen as the click asks. A saved environment whose link is gone opens in place.
  */
 export function useLinkedThreadOpener(
   panelRef: ScopedThreadRef,
@@ -35,7 +36,10 @@ export function useLinkedThreadOpener(
       }
     | undefined,
   title: string | null,
-): { readonly mode: Exclude<LinkedThreadOpen, "unavailable">; readonly open: () => void } | null {
+): {
+  readonly mode: Exclude<LinkedThreadOpen, "unavailable">;
+  readonly open: (intent: SideThreadOpenIntent) => void;
+} | null {
   const navigate = useNavigate();
   const viaEnvironmentId = panelRef.environmentId;
   const own = useEnvironment(thread?.environmentId ?? null);
@@ -51,14 +55,19 @@ export function useLinkedThreadOpener(
   const mode = resolved === "direct" ? "direct" : "linked";
   return {
     mode,
-    open: () => {
+    open: (intent) => {
       if (mode === "linked") {
-        useRightPanelStore.getState().openLinkedThread(panelRef, {
-          viaEnvironmentId,
-          environmentId: thread.environmentId,
-          threadId: thread.threadId,
-          label: own?.label ?? thread.label,
-          title,
+        openLinkedThreadRead({
+          panelRef,
+          target: {
+            viaEnvironmentId,
+            environmentId: thread.environmentId,
+            threadId: thread.threadId,
+            label: own?.label ?? thread.label,
+            title,
+          },
+          intent,
+          navigate,
         });
         return;
       }
@@ -71,8 +80,9 @@ export function useLinkedThreadOpener(
 }
 
 type TabKey = readonly [
-  panelEnvironmentId: EnvironmentId,
-  panelThreadId: ThreadId,
+  /** Null on the main screen, where no tab shows the title. */
+  panelEnvironmentId: EnvironmentId | null,
+  panelThreadId: ThreadId | null,
   surfaceId: string,
   viaEnvironmentId: EnvironmentId,
   environmentId: EnvironmentId,
@@ -90,30 +100,36 @@ const targetOf = (
 const tabViewAtom = Atom.family((key: string) => {
   const [panelEnvironmentId, panelThreadId, surfaceId, viaEnvironmentId, environmentId, threadId] =
     JSON.parse(key) as TabKey;
-  const panelRef = scopeThreadRef(panelEnvironmentId, panelThreadId);
+  const panelRef =
+    panelEnvironmentId === null || panelThreadId === null
+      ? null
+      : scopeThreadRef(panelEnvironmentId, panelThreadId);
   const view = peerLinkEnvironment.threadView(
     targetOf({ viaEnvironmentId, environmentId, threadId }),
   );
   return Atom.make((get) => {
     const live = get(view);
     const title = AsyncResult.getOrElse(live, () => null)?.thread.projection?.thread.title;
-    if (title) useRightPanelStore.getState().setLinkedThreadTitle(panelRef, surfaceId, title);
+    if (title && panelRef !== null) {
+      useRightPanelStore.getState().setLinkedThreadTitle(panelRef, surfaceId, title);
+    }
     return live;
   }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`linked-thread-tab-view:${key}`));
 });
 
 /**
- * The thread of `surface`, streamed through the environment that links to it for the tab in
- * `panelRef`'s panel. The stream runs only while `visible`; what it last showed stays.
+ * The thread of `surface`, streamed through the environment that links to it, for the tab in
+ * `panelRef`'s panel or, with null, the main screen. The stream runs only while `visible`; what
+ * it last showed stays.
  */
 export function useLinkedThreadView(
-  panelRef: ScopedThreadRef,
+  panelRef: ScopedThreadRef | null,
   surface: Pick<LinkedThreadSurface, "id" | "viaEnvironmentId" | "environmentId" | "threadId">,
   visible: boolean,
 ) {
   const key: TabKey = [
-    panelRef.environmentId,
-    panelRef.threadId,
+    panelRef?.environmentId ?? null,
+    panelRef?.threadId ?? null,
     surface.id,
     surface.viaEnvironmentId,
     surface.environmentId,
@@ -157,11 +173,12 @@ const linkedEnvironmentConnectAtom = Atom.family((key: string) =>
 
 /**
  * Connects this client to the environment `surface`'s thread lives in. One step when the linking
- * environment can get a pairing for this client: the thread then opens there and the tab closes.
- * Otherwise the add-environment dialog opens for that machine.
+ * environment can get a pairing for this client: the thread then opens there, in place of the
+ * read-only view. Otherwise the add-environment dialog opens for that machine. `panelRef` is the
+ * thread whose panel shows the read, or null on the main screen.
  */
 export function useConnectLinkedEnvironment(
-  panelRef: ScopedThreadRef,
+  panelRef: ScopedThreadRef | null,
   surface: LinkedThreadSurface,
 ) {
   const navigate = useNavigate();
@@ -174,7 +191,9 @@ export function useConnectLinkedEnvironment(
   const reaches = useAtomCommand(reachesEnvironment, quiet);
   const pair = useAtomCommand(connectPairing, quiet);
   const [state, setState] = useAtom(
-    linkedEnvironmentConnectAtom(`${scopedThreadKey(panelRef)}:${surface.id}`),
+    linkedEnvironmentConnectAtom(
+      `${panelRef === null ? "main" : scopedThreadKey(panelRef)}:${surface.id}`,
+    ),
   );
   const addWithCode = (prefill: AddEnvironmentPrefill) => {
     setPrefill(prefill);
@@ -213,10 +232,12 @@ export function useConnectLinkedEnvironment(
     if (outcome.type === "connected") {
       setState({ phase: "idle" });
       // The thread opens where every thread on a connected environment does, so its tab is done.
-      useRightPanelStore.getState().closeSurface(panelRef, surface.id);
+      if (panelRef !== null) useRightPanelStore.getState().closeSurface(panelRef, surface.id);
       void navigate({
         to: "/$environmentId/$threadId",
         params: buildThreadRouteParams(scopeThreadRef(surface.environmentId, surface.threadId)),
+        // The read-only page has nothing left to go back to.
+        replace: panelRef === null,
       });
       return outcome;
     }

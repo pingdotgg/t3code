@@ -483,8 +483,10 @@ You can read a thread on a linked machine without connecting this app to it. Ope
 a task that was delegated there from the thread's agents, or a thread link that
 points there, and the thread opens read-only, streamed through the machine you
 are connected to over its link. It follows the thread live. On web and desktop
-it opens as a tab in the right panel, beside the thread you are in, and shows
-the same timeline as any other thread.
+it opens as a tab in the right panel, beside the thread you are in, or in the
+main view with ⌘/Ctrl-click, like
+[subagents and side chats](thread-sidebar.md#open-a-thread-beside-the-one-you-are-in).
+It shows the same timeline as any other thread.
 
 - The view is marked **Read-only** with both machines' names. To reply, approve
   or stop the thread, choose **Connect to interact**. When the link has full

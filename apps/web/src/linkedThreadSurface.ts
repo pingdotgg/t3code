@@ -53,3 +53,14 @@ export function linkedThreadTitle(
 ): string {
   return surface.title?.trim() || fallback;
 }
+
+/** The main-screen route of a linked environment's thread, read through `viaEnvironmentId`. */
+export function linkedThreadRouteParams(
+  target: Pick<LinkedThreadTarget, "viaEnvironmentId" | "environmentId" | "threadId">,
+) {
+  return {
+    viaEnvironmentId: target.viaEnvironmentId,
+    environmentId: target.environmentId,
+    threadId: target.threadId,
+  };
+}

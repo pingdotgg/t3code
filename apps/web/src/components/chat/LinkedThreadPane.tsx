@@ -4,6 +4,7 @@ import { T, useGT, useMessages, Var } from "gt-react";
 import { EyeIcon, PlugIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
+import { useOpenSurfaceInMainView } from "../../hooks/useOpenSurfaceInMainView";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { type LinkedThreadSurface, linkedThreadTitle } from "../../linkedThreadSurface";
 import { useEnvironment } from "../../state/environments";
@@ -21,6 +22,7 @@ import {
   ReadOnlyComposerLead,
   ReadOnlyComposerStatus,
 } from "./ReadOnlyComposerBar";
+import { SideThreadPaneHeader } from "./SideThreadPane";
 import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
 import type { MessagesTimelineHistoryControls } from "./MessagesTimeline";
@@ -42,7 +44,7 @@ function LinkedThreadComposer(props: {
   const { label, via } = props;
   const gt = useGT();
   return (
-    <div className="flex shrink-0 flex-col gap-1 px-3 pb-3">
+    <div className="chat-composer-lane flex shrink-0 flex-col gap-1 pt-1.5 pb-4 sm:pt-2 sm:pb-5">
       {props.notice ? <ComposerBannerStack items={[props.notice]} detached /> : null}
       <ComposerSurface.Shell>
         <ComposerSurface.Host>
@@ -76,12 +78,14 @@ const ignore = () => {};
  * and drawn by the timeline every thread uses. The client never connects to the linked one, so
  * the view only reads: what would need that connection is absent. Key it by its surface id.
  */
-export function LinkedThreadPane(props: {
-  /** The thread whose panel shows the tab. */
-  readonly panelRef: ScopedThreadRef;
+export function LinkedThread(props: {
+  /** The thread whose panel shows it as a tab, or null on the main screen. */
+  readonly panelRef: ScopedThreadRef | null;
   readonly surface: LinkedThreadSurface;
-  /** Whether the tab is showing; the stream runs only while it is. */
+  /** Whether it is showing; the stream runs only while it is. */
   readonly visible: boolean;
+  /** What sits above the timeline, given the thread's title once the stream or surface names it. */
+  readonly renderHeader: (title: string) => ReactNode;
 }) {
   const { surface, panelRef } = props;
   const gt = useGT();
@@ -173,30 +177,36 @@ export function LinkedThreadPane(props: {
           onLoadEarlier: view.loadEarlier,
         };
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <h2 className="shrink-0 truncate border-b border-border px-3 py-2 text-sm font-medium">
-        {linkedThreadTitle(
+    // `data-chat-canvas` gives the timeline the side gutters it has in a thread's own chat.
+    <div
+      data-chat-canvas
+      className="flex h-full min-h-0 flex-col [--chat-lane-inset-end:0px] [--chat-lane-inset-start:0px] [--chat-timeline-gutter:0px]"
+    >
+      {props.renderHeader(
+        linkedThreadTitle(
           { title: projection?.thread.title || surface.title },
           gt("Thread on {label}", { label }),
-        )}
-      </h2>
+        ),
+      )}
       {projection === null ? (
         <>
-          <div className="min-h-0 flex-1 overflow-y-auto p-3">
-            {failure === null ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Spinner size="sm" />
-                <T>
-                  Reading from <Var>{label}</Var>…
-                </T>
-              </div>
-            ) : (
-              <Alert variant="error">
-                <AlertTitle>{failure.title}</AlertTitle>
-                <AlertDescription>{failure.detail}</AlertDescription>
-                {retryAction}
-              </Alert>
-            )}
+          <div className="chat-composer-lane min-h-0 flex-1 overflow-y-auto py-3">
+            <div className="chat-content-lane">
+              {failure === null ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Spinner size="sm" />
+                  <T>
+                    Reading from <Var>{label}</Var>…
+                  </T>
+                </div>
+              ) : (
+                <Alert variant="error">
+                  <AlertTitle>{failure.title}</AlertTitle>
+                  <AlertDescription>{failure.detail}</AlertDescription>
+                  {retryAction}
+                </Alert>
+              )}
+            </div>
           </div>
           <LinkedThreadComposer
             label={label}
@@ -221,14 +231,16 @@ export function LinkedThreadPane(props: {
           {() => (
             <>
               {failure === null ? null : (
-                <div className="shrink-0 px-3 pb-2">
-                  <Alert variant="warning">
-                    <AlertTitle>{failure.title}</AlertTitle>
-                    <AlertDescription>
-                      {failure.detail} <T>Showing what was read before.</T>
-                    </AlertDescription>
-                    {retryAction}
-                  </Alert>
+                <div className="chat-composer-lane shrink-0 pb-2">
+                  <div className="chat-content-lane">
+                    <Alert variant="warning">
+                      <AlertTitle>{failure.title}</AlertTitle>
+                      <AlertDescription>
+                        {failure.detail} <T>Showing what was read before.</T>
+                      </AlertDescription>
+                      {retryAction}
+                    </Alert>
+                  </div>
                 </div>
               )}
               <LinkedThreadComposer
@@ -243,5 +255,33 @@ export function LinkedThreadPane(props: {
         </ReadOnlyThreadTimeline>
       )}
     </div>
+  );
+}
+
+/** A linked environment's thread as a right panel tab. Key it by its surface id. */
+export function LinkedThreadPane(props: {
+  /** The thread whose panel shows the tab. */
+  readonly panelRef: ScopedThreadRef;
+  readonly surface: LinkedThreadSurface;
+  /** Whether the tab is showing. */
+  readonly visible: boolean;
+  readonly onClose: () => void;
+}) {
+  const { panelRef, surface } = props;
+  const openInMainView = useOpenSurfaceInMainView(panelRef);
+  return (
+    <LinkedThread
+      panelRef={panelRef}
+      surface={surface}
+      visible={props.visible}
+      renderHeader={(title) => (
+        <SideThreadPaneHeader
+          title={title}
+          kind="linked"
+          onOpenInMainView={() => openInMainView(surface)}
+          onClose={props.onClose}
+        />
+      )}
+    />
   );
 }
