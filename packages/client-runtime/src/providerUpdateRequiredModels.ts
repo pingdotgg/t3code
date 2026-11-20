@@ -1,15 +1,10 @@
 import { PROVIDER_DISPLAY_NAMES, type ServerProvider } from "@t3tools/contracts";
 import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
+import { mFallback, msg } from "gt-i18n";
+import { formatConjunctionList } from "./listFormat.ts";
+import type { MFunctionType } from "gt-i18n/types";
 
-const RUNTIME_NAMES: Partial<Record<string, string>> = {
-  claudeAgent: "Claude Code",
-  codex: "the Codex CLI",
-};
-
-function formatModelList(names: ReadonlyArray<string>): string {
-  if (names.length <= 2) return names.join(" and ");
-  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
-}
+const CLAUDE_CODE_NAME = "Claude Code";
 
 function withV(version: string): string {
   return version.startsWith("v") ? version : `v${version}`;
@@ -18,6 +13,8 @@ function withV(version: string): string {
 export function formatProviderUpdateRequiredNotice(
   provider: Pick<ServerProvider, "driver" | "updateRequiredModels" | "versionAdvisory">,
   searchQuery = "",
+  resolve: MFunctionType = mFallback,
+  locale = "en",
 ): string | null {
   const query = searchQuery.trim().toLocaleLowerCase();
   const models = (provider.updateRequiredModels ?? []).filter(
@@ -33,8 +30,16 @@ export function formatProviderUpdateRequiredNotice(
       compareSemverVersions(version, highest) > 0 ? version : highest,
     );
   const providerName =
-    RUNTIME_NAMES[provider.driver] ?? PROVIDER_DISPLAY_NAMES[provider.driver] ?? provider.driver;
-  const names = formatModelList(models.map((model) => model.name));
+    provider.driver === "claudeAgent"
+      ? CLAUDE_CODE_NAME
+      : (PROVIDER_DISPLAY_NAMES[provider.driver] ?? provider.driver);
+  const version = withV(minVersion);
+  const names = formatConjunctionList(
+    models.map((model) => model.name),
+    locale,
+    resolve,
+  );
+  const runtime = provider.driver === "codex" ? "codex" : "other";
   const latestVersion = provider.versionAdvisory?.latestVersion;
   if (
     latestVersion &&
@@ -42,7 +47,22 @@ export function formatProviderUpdateRequiredNotice(
     parseSemver(minVersion) &&
     compareSemverVersions(latestVersion, minVersion) < 0
   ) {
-    return `${names} ${models.length === 1 ? "needs" : "need"} ${providerName} ${withV(minVersion)} or newer, but the newest this install can update to is ${withV(latestVersion)}. Install ${providerName} another way or wait for a newer release.`;
+    return resolve(
+      msg(
+        "{runtime, select, codex {Using {names} requires the Codex CLI {version} or newer, but the newest this install can update to is {latestVersion}. Install the Codex CLI another way or wait for a newer release.} other {Using {names} requires {providerName} {version} or newer, but the newest this install can update to is {latestVersion}. Install {providerName} another way or wait for a newer release.}}",
+        { runtime, providerName, version, names, latestVersion: withV(latestVersion) },
+      ),
+    );
   }
-  return `Update ${providerName} to ${withV(minVersion)} or newer to use ${names}.`;
+  return resolve(
+    msg(
+      "{runtime, select, codex {Update the Codex CLI to {version} or newer to use {names}.} other {Update {providerName} to {version} or newer to use {names}.}}",
+      {
+        runtime,
+        providerName,
+        version,
+        names,
+      },
+    ),
+  );
 }

@@ -61,8 +61,10 @@ import * as Stream from "effect/Stream";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as SynchronizedRef from "effect/SynchronizedRef";
+import { msg } from "gt-i18n";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import { m } from "../i18n/messages.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import {
   MENU_ACTION_CHANNEL,
@@ -3157,7 +3159,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               height: PICTURE_IN_PICTURE_INITIAL_HEIGHT,
               minWidth: PICTURE_IN_PICTURE_MIN_WIDTH,
               minHeight: PICTURE_IN_PICTURE_MIN_HEIGHT,
-              title: title.length > 0 ? `Preview · ${title}` : "Browser preview",
+              title:
+                title.length > 0
+                  ? m(msg("Preview · {title}"), { title })
+                  : m(msg("Browser preview")),
               show: false,
               alwaysOnTop: true,
               autoHideMenuBar: true,
@@ -3618,6 +3623,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       { discard: true },
     );
   });
+  // A hidden or locked window draws no frames, so a guest it hid stays unpainted until unthrottled.
+  const serverCaptureLeases = new Map<string, { readonly tabId: string; readonly lease: symbol }>();
   const updateServerTabCapturing = Effect.fn("PreviewManager.updateServerTabCapturing")(
     function* (painting: {
       readonly key: { readonly threadId: string; readonly tabId: string };
@@ -3628,6 +3635,25 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           candidate.serverTab?.threadId === painting.key.threadId &&
           candidate.serverTab.tabId === painting.key.tabId,
       );
+      const key = `${painting.key.threadId}\u0000${painting.key.tabId}`;
+      const held = serverCaptureLeases.get(key);
+      if (!painting.active && held) {
+        serverCaptureLeases.delete(key);
+        yield* stopFrameCapture(held.tabId, held.lease);
+      } else if (painting.active && !held && tab) {
+        const lease = Symbol("server-capture");
+        yield* startFrameCapture(tab.tabId, lease).pipe(
+          Effect.andThen(
+            Effect.sync(() => serverCaptureLeases.set(key, { tabId: tab.tabId, lease })),
+          ),
+          Effect.catch((error) =>
+            Effect.logWarning("Failed to unthrottle a server tab for its capture.", {
+              tabId: tab.tabId,
+              error,
+            }),
+          ),
+        );
+      }
       if (tab && tab.capturing !== painting.active) {
         yield* update(tab.tabId, { capturing: painting.active });
       }
