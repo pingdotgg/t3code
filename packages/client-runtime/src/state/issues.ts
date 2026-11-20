@@ -224,6 +224,22 @@ export function createIssueEnvironmentAtoms<R, E>(
       );
     }),
   });
+  const candidateQuery = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:issues:candidates",
+    tag: WS_METHODS.issuesCandidates,
+    staleTimeMs: 60_000,
+  });
+  const candidates: typeof candidateQuery = (
+    { environmentId, input: { projectId, tracker, host, scope } },
+    mountScope,
+  ) =>
+    candidateQuery(
+      {
+        environmentId,
+        input: { projectId, tracker, ...(host === undefined ? {} : { host }), scope },
+      },
+      mountScope,
+    );
   return {
     /** The threads an issue is linked to, reread when the server signals a link changed. */
     linkedThreads: createEnvironmentRpcQueryAtomFamily(runtime, {
@@ -280,12 +296,8 @@ export function createIssueEnvironmentAtoms<R, E>(
       tag: WS_METHODS.issuesTemplates,
       staleTimeMs: 5 * 60_000,
     }),
-    /** Read when a label or assignee picker opens, not with every issue. */
-    candidates: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:issues:candidates",
-      tag: WS_METHODS.issuesCandidates,
-      staleTimeMs: 60_000,
-    }),
+    /** List filters and issue pickers use the same candidates for a scope. */
+    candidates,
     create: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:issues:create",
       tag: WS_METHODS.issuesCreate,
