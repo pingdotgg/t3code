@@ -73,11 +73,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly refreshInterval?: Duration.Input;
   readonly refreshOnInterval?: boolean | ((snapshot: ServerProvider) => boolean);
   readonly checkProviderOnSettingsChange?: (previous: Settings, next: Settings) => boolean;
-  /**
-   * False publishes the limits that probes and enrichment report, so a failed read or a cleared
-   * account replaces the last good read instead of keeping it.
-   */
-  readonly retainUsageLimits?: boolean;
+  /** False publishes a failed usage probe as-is instead of keeping the last good read. */
+  readonly retainUsageLimitsOnProbeFailure?: boolean;
 }): Effect.fn.Return<
   ManagedServerProvider,
   ServerSettingsError,
@@ -119,7 +116,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
               ...nextSnapshot,
               auth: { ...nextSnapshot.auth, label: state.usageAuthLabel ?? undefined },
             },
-        input.retainUsageLimits === false ? nextSnapshot.usageLimits : state.snapshot.usageLimits,
+        state.snapshot.usageLimits,
       );
       if (Equal.equals(state.snapshot, merged)) {
         return [null, state] as const;
@@ -226,7 +223,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           : probedSnapshot.usageLimits === undefined &&
               state.snapshot.usageLimits !== usageBeforeProbe
             ? state.snapshot.usageLimits
-            : input.retainUsageLimits === false &&
+            : input.retainUsageLimitsOnProbeFailure === false &&
                 probedSnapshot.usageLimits?.unavailable?.reason === "probeFailed"
               ? probedSnapshot.usageLimits
               : resolveUsageLimitsAfterProbe({
