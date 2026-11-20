@@ -5,6 +5,7 @@ import {
   WINDOWS_POLICY_LISTS,
   WINDOWS_POLICY_VALUES,
 } from "@t3tools/shared/managedPolicyFile";
+import { BUILD_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
 
 import { knownDriverLabels } from "./managedProviders.ts";
 
@@ -96,7 +97,7 @@ const policies = (): ReadonlyArray<Policy> => [
         kind: "checkbox",
         list: "Clients",
         name: "remote",
-        label: "Remote: phones, other computers, app.t3.codes",
+        label: `Remote: phones, other computers${BUILD_HOSTED_APP_URL ? `, ${new URL(BUILD_HOSTED_APP_URL).host}` : ""}`,
         defaultChecked: false,
       },
     ],

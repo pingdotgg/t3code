@@ -1,7 +1,9 @@
 # Security
 
-Report vulnerabilities to [security@t3.codes](mailto:security@t3.codes). The
-[security policy](.github/SECURITY.md) covers disclosure and safe harbor.
+Report vulnerabilities in EasyDev Code to
+[contato@easydevsolucoes.com.br](mailto:contato@easydevsolucoes.com.br). Do not disclose them
+publicly until we have had a reasonable chance to fix them. Vulnerabilities in upstream T3 Code
+go to T3 Tools as its [security policy](.github/SECURITY.md) describes.
 
 The rest of this file is for agents and maintainers auditing T3 Code or triaging
 a report. It says who is trusted with what, which boundaries a real finding

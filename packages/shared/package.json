@@ -195,6 +195,10 @@
       "types": "./src/appScheme.ts",
       "import": "./src/appScheme.ts"
     },
+    "./standalone": {
+      "types": "./src/standalone.ts",
+      "import": "./src/standalone.ts"
+    },
     "./remote": {
       "types": "./src/remote.ts",
       "import": "./src/remote.ts"

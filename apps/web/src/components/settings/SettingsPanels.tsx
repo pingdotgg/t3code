@@ -2,7 +2,7 @@ import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m as resolveMessage } from "~/i18n/messages";
 import { useAtomValue } from "@effect/atom-react";
 import { NotificationSettings } from "./NotificationSettings";
-import { PRIVACY_POLICY_URL } from "../../projectLinks";
+import { MOBILE_APP_URL, PRIVACY_POLICY_URL } from "../../projectLinks";
 import { CheckIcon } from "lucide-react";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -2490,7 +2490,7 @@ export function AboutSettingsPanel() {
             />
           </>
         )}
-        <MobileAppSettingsRow />
+        {MOBILE_APP_URL ? <MobileAppSettingsRow /> : null}
         {primaryEnvironmentId === null ? null : (
           <SettingsRow
             {...setting("welcome-page")}
