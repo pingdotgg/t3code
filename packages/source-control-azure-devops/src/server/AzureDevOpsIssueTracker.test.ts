@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as PlatformError from "effect/PlatformError";
@@ -127,14 +128,21 @@ function answer(args: ReadonlyArray<string>): string {
   throw new Error(`unexpected az invocation ${args.join(" ")}`);
 }
 
-function tracker(onExecute: (args: ReadonlyArray<string>, stdin: string | undefined) => string) {
+function tracker(
+  onExecute: (args: ReadonlyArray<string>, stdin: string | undefined) => string,
+  beforeExecute: (
+    args: ReadonlyArray<string>,
+  ) => Effect.Effect<void, AzureDevOpsCli.AzureDevOpsCliError> = () => Effect.void,
+) {
   return AzureDevOpsIssueTracker.make.pipe(
     Effect.provide(
       Layer.mergeAll(
         NodeFileSystem.layer,
         Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({
           execute: ({ args, stdin }) =>
-            Effect.succeed(TestSourceControlHost.processOutput(onExecute(args, stdin))),
+            beforeExecute(args).pipe(
+              Effect.map(() => TestSourceControlHost.processOutput(onExecute(args, stdin))),
+            ),
         }),
       ),
     ),
@@ -142,6 +150,36 @@ function tracker(onExecute: (args: ReadonlyArray<string>, stdin: string | undefi
 }
 
 describe("AzureDevOpsIssueTracker", () => {
+  it.effect("cancels the concurrent work item read when the workflow read fails", () =>
+    Effect.gen(function* () {
+      const itemStarted = yield* Deferred.make<void>();
+      const itemCanceled = yield* Deferred.make<void>();
+      const api = yield* tracker(answer, (args) =>
+        args[0] === "boards"
+          ? Deferred.succeed(itemStarted, undefined).pipe(
+              Effect.andThen(Effect.never),
+              Effect.onInterrupt(() => Deferred.succeed(itemCanceled, undefined)),
+            )
+          : Deferred.await(itemStarted).pipe(
+              Effect.andThen(
+                new AzureDevOpsCli.AzureDevOpsCliRateLimitError({
+                  operation: "execute",
+                  command: "az",
+                  cwd: "/w",
+                  argumentCount: args.length,
+                  cause: null,
+                }),
+              ),
+            ),
+      );
+      const error = yield* Effect.flip(
+        api.getIssue({ cwd: "/w", host: "dev.azure.com", scope: "acme/Web App", key: "7" }),
+      );
+      expect(error.reason).toBe("rate-limited");
+      expect(yield* Deferred.isDone(itemCanceled)).toBe(true);
+    }),
+  );
+
   it.effect("maps a work item, its conversation and revisions to the neutral issue shape", () =>
     Effect.gen(function* () {
       const seen: string[][] = [];
