@@ -1,5 +1,5 @@
 /// <reference lib="dom" />
-import type { GitResolvePullRequestResult } from "@t3tools/contracts";
+import { WS_METHODS, type GitResolvePullRequestResult } from "@t3tools/contracts";
 import { expect } from "e2e";
 
 import { test, WEB } from "./t3.ts";
@@ -10,7 +10,9 @@ test(
   async ({ t3, app, browser, screen }) => {
     await t3.project("demo");
     await browser.setViewport({ width: 1280, height: 800 });
-    await browser.addInitScript(() => {
+    const failureDetail = "The fixture could not check out pull request #42.";
+    const checkoutFixture = { methods: WS_METHODS, failureDetail };
+    await browser.addInitScript(({ methods, failureDetail }) => {
       const send = WebSocket.prototype.send;
       WebSocket.prototype.send = function (data) {
         const request: {
@@ -28,7 +30,7 @@ test(
               }),
             ),
           );
-        if (request.tag === "git.resolvePullRequest") {
+        if (request.tag === methods.gitResolvePullRequest) {
           const number = Number(request.payload.reference.replace(/^#/, ""));
           const value: GitResolvePullRequestResult = {
             pullRequest: {
@@ -43,7 +45,7 @@ test(
           reply({ _tag: "Success", value });
           return;
         }
-        if (request.tag === "git.preparePullRequestThread") {
+        if (request.tag === methods.gitPreparePullRequestThread) {
           reply({
             _tag: "Failure",
             cause: [
@@ -53,8 +55,7 @@ test(
                   _tag: "GitManagerError",
                   operation: "preparePullRequestThread",
                   cwd: request.payload.cwd,
-                  detail:
-                    "This repository has uncommitted changes. Commit or stash them before checking out pull request #42 here, or check it out in its own folder.",
+                  detail: failureDetail,
                 },
               },
             ],
@@ -63,7 +64,7 @@ test(
         }
         return send.call(this, data);
       };
-    });
+    }, checkoutFixture);
 
     await t3.open("/");
     await browser
@@ -77,7 +78,7 @@ test(
     const dialog = screen.getByRole("dialog", checkoutLabel);
     await dialog.getByText("Update the release notes", { exact: true }).waitFor();
     await dialog.getByRole("button", "Local", { exact: true }).tap();
-    const previousError = dialog.getByText(/before checking out pull request #42 here/);
+    const previousError = dialog.getByText(failureDetail, { exact: false });
     await previousError.waitFor();
     await dialog.getByRole("textbox").fill("#43");
     await dialog.getByText("Fix the status badge", { exact: true }).waitFor();
