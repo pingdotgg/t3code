@@ -2158,7 +2158,7 @@
   "7a1fdec255a0049d": "Iso",
   "23f357e0c9a3c1a6": "Ajuster",
   "fb7e26f0d6f9e65f": "Touchez le modèle pour épingler",
-  "6c7029c866931ed4": "{count, plural, one {Envoyer 1 au chat} other {Envoyer # au chat}}",
+  "6c7029c866931ed4": "{count, plural, one {Envoyer # au chat} other {Envoyer # au chat}}",
   "09af12cc6ccfdd12": "{format} · {count} triangles · {size}",
   "3d2907abe354161f": "{count, plural, one {Le modèle a changé après la pose d’1 note. Elle garde son texte mais n’est plus épinglée à la surface.} other {Le modèle a changé après la pose de # notes. Elles gardent leur texte mais ne sont plus épinglées à la surface.}}",
   "35d235e816e6f4b0": "Vue 3D de {name}",
@@ -4216,7 +4216,7 @@
       "v": "v"
     }
   ],
-  "db1b7e1cec1473ea": "{count, plural, one {1 note} other {# notes}}",
+  "db1b7e1cec1473ea": "{count, plural, one {# note} other {# notes}}",
   "12ba9fa1445f92a2": "Travail des sous-agents",
   "eaa6c91a05d95ce7": "Actualiser",
   "4740c38b2edd194d": "Lecture seule. Ces sous-agents ne peuvent pas recevoir de messages.",
