@@ -59,6 +59,10 @@ at the top of every other screen. In the mobile app it appears on the thread.
 Approvals show only while Ada is open: there is no push notification for them,
 so keep a window or the mobile app open while a task runs.
 
+Keys that only move around, such as Tab, the arrows or Page Down, run at once.
+Other keyboard shortcuts ask first, and shortcuts that quit an app, log out,
+lock the screen or switch apps are refused.
+
 An approval covers that one step only. If the window changes before the step
 runs, it does not run. **Deny** ends the task, and so does letting the
 countdown run out. Agents cannot approve a step.

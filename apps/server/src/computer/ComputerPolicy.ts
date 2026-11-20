@@ -1,7 +1,7 @@
 // Ported from LocalRouter (github.com/jayleaton/localrouter @fe24726, apps/companion/src/executor/policy.ts),
 // Apache-2.0, Copyright 2026 Jay Leaton. Modified for Ada.
 import type { ComputerAction, ComputerDecision } from "@t3tools/contracts";
-import { COMPUTER_CONTROL_KINDS } from "@t3tools/contracts";
+import { COMPUTER_CONTROL_KINDS, computerChord } from "@t3tools/contracts";
 
 /**
  * What a computer action needs before the helper may do it. The server is the authority: the helper asks before
@@ -23,13 +23,29 @@ const PASSIVE_KEYS: ReadonlyArray<string> = [
   "space",
   "escape",
   "tab",
+  "shift+tab",
   "up",
   "down",
   "left",
   "right",
+  "home",
+  "end",
+  "pageup",
+  "pagedown",
   "cmd+l",
   "cmd+t",
 ];
+/** Chords that end the session, quit an app or take the focus away from the window: never pressed. */
+const DENIED_CHORDS: ReadonlyMap<string, string> = new Map([
+  ["cmd+q", "quitting an app (computer_control quit_app does that)"],
+  ["cmd+shift+q", "logging out"],
+  ["cmd+alt+shift+q", "logging out"],
+  ["cmd+ctrl+q", "locking the screen (computer_control lock_screen does that)"],
+  ["cmd+alt+escape", "Force Quit"],
+  ["cmd+tab", "switching apps takes the focus away"],
+  ["cmd+shift+tab", "switching apps takes the focus away"],
+  ["cmd+space", "Spotlight takes the focus away"],
+]);
 const MAX_URL_BYTES = 4_000;
 
 const auto = (): ComputerDecision => ({ verdict: "auto", why: "" });
@@ -81,14 +97,20 @@ export function screen(action: ComputerAction): ComputerDecision {
           ? `it needs your mouse for a moment: ${action.why}`
           : "it needs your mouse for a moment",
       };
-    case "press":
-      if (PASSIVE_KEYS.includes(action.key ?? "")) return auto();
-      if (action.key === "cmd+w")
+    case "press": {
+      const key = computerChord(action.key ?? "");
+      if (key === null)
+        return refused("not a key, or a chord of cmd, ctrl, alt and shift with one key");
+      const denied = DENIED_CHORDS.get(key);
+      if (denied) return refused(denied);
+      if (PASSIVE_KEYS.includes(key)) return auto();
+      if (key === "cmd+w" || key === "cmd+shift+w")
         return { verdict: "tap", why: "closing a tab or window can lose what is in it" };
-      if (action.key !== "enter")
-        return refused("a key other than Enter, Tab, Escape, Space, an arrow, ⌘L, ⌘T or ⌘W");
+      if (key !== "enter")
+        return { verdict: "tap", why: "a shortcut can do whatever the app's menus do" };
       if (action.fieldRole && searchField(action.fieldRole, action.fieldLabel ?? "")) return auto();
       return { verdict: "tap", why: "pressing Enter could send or submit what was typed" };
+    }
     case "type": {
       const text = action.text ?? "";
       if (!text) return refused("typing with no text");

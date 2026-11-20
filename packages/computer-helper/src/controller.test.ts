@@ -1200,7 +1200,7 @@ describe("an act the agent chose", () => {
       text: "milk",
     });
     expect(page.query).toBe("milk");
-    await computer.run({ goal: "", text: null, act: { action: "key", key: "return" } });
+    await computer.run({ goal: "", text: null, act: { action: "key", key: "enter" } });
     expect(server.requests.at(-1)?.action).toMatchObject({ kind: "press", key: "enter" });
     expect(page.searched).toBe(true);
   });
