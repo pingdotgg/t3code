@@ -89,7 +89,7 @@ export function CollapsedComposerPromptPreview(props: {
             key={key}
             kind="mention"
             icon={<PierreEntryIcon pathValue={segment.path} kind="file" theme={props.theme} />}
-            label={fileBasename(segment.path)}
+            label={fileBasename(segment.path).normalize("NFC")}
           />
         );
       case "context-reference": {
