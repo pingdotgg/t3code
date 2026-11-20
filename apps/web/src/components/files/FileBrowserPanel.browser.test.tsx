@@ -341,11 +341,13 @@ describe("FileBrowserPanel", () => {
     async function renderRevealedPanel(cwd: string) {
       writeExpandedDirectories(`env-files:${cwd}`, ["d01/", "d01/sub/"]);
       directory.ready = false;
-      const screen = await render(renderPanel(cwd), { container: sizedContainer() });
+      await using stack = new AsyncDisposableStack();
+      const screen = stack.use(await render(renderPanel(cwd), { container: sizedContainer() }));
       directory.entries = roots;
       directory.ready = true;
       await screen.rerender(renderPanel(cwd));
       await vi.waitFor(() => expect(isTreeRowInView("d09/")).toBe(true));
+      stack.move();
       return screen;
     }
 
