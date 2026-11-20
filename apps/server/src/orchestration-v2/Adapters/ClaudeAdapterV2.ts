@@ -42,6 +42,7 @@ import {
   type ElicitationResult,
   forkSession as forkClaudeSession,
   type EffortLevel,
+  type FastModeDisabledReason,
   type ForkSessionOptions,
   type ForkSessionResult,
   getSessionMessages,
@@ -85,7 +86,10 @@ import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as ProviderProcesses from "../../process/providerProcesses.ts";
 import * as SpawnWorker from "../../process/SpawnWorker.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { applyClaudePromptEffortPrefix } from "@t3tools/shared/model";
+import {
+  applyClaudePromptEffortPrefix,
+  getModelSelectionBooleanOptionValue,
+} from "@t3tools/shared/model";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
   CLAUDE_RESUME_COMPACTION_COMPACT_ANSWER,
@@ -5052,6 +5056,19 @@ const CLAUDE_USAGE_LIMIT_WINDOWS = {
 
 const CLAUDE_USAGE_LIMIT_MAX_WAIT_MS = 30 * 24 * 60 * 60 * 1000;
 
+const CLAUDE_FAST_MODE_DISABLED_REASONS: Record<FastModeDisabledReason, string> = {
+  free: "it is not available on the free plan",
+  preference: "it is turned off in Claude Code's settings",
+  extra_usage_disabled: "extra usage is not enabled for this account",
+  network_error: "Claude Code could not check whether it is available",
+  unknown: "Claude Code did not say why",
+  not_first_party: "it needs the Anthropic API",
+  disabled_by_env: "it is disabled by an environment variable",
+  model_not_allowed: "this model does not support it",
+  sdk_opt_in_required: "Claude Code needs an opt-in to use it here",
+  pending: "Claude Code is still checking whether it is available",
+};
+
 function describeClaudeUsageLimit(
   info: SDKRateLimitInfo,
   nowMs: number,
@@ -9257,6 +9274,45 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         });
 
         // Streamed text no snapshot will complete ends where the stream stopped.
+        // One notice per turn: an overage notification and an "off" result share the item.
+        const emitFastModeNotice = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+          message: string,
+        ) {
+          if (
+            getModelSelectionBooleanOptionValue(context.input.modelSelection, "fastMode") !== true
+          ) {
+            return;
+          }
+          const now = yield* DateTime.now;
+          const nativeItemId = `fast-mode:${context.providerTurnId}`;
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver: CLAUDE_PROVIDER,
+            turnItem: {
+              id: idAllocator.derive.turnItemFromProviderItem({
+                driver: CLAUDE_PROVIDER,
+                nativeItemId,
+              }),
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              nodeId: context.input.rootNodeId,
+              providerThreadId: context.input.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef: { driver: CLAUDE_PROVIDER, nativeId: nativeItemId, strength: "weak" },
+              parentItemId: null,
+              ordinal: yield* resolveItemOrdinal(context, nativeItemId),
+              type: "system_notice",
+              status: "completed",
+              title: "Fast mode is off",
+              message,
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+            },
+          });
+        });
+
         const cutOffStreamedText = Effect.fnUntraced(function* (context: ActiveClaudeTurnContext) {
           for (const item of context.assistant.streamItems.values()) item.status = "interrupted";
           yield* assistantDeltas.flushTurn(context.nativeTurnId);
@@ -11302,6 +11358,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return;
           }
 
+          if (
+            message.type === "system" &&
+            message.subtype === "notification" &&
+            message.key === "fast-mode-overage-rejected"
+          ) {
+            yield* emitFastModeNotice(context, message.text);
+            return;
+          }
+
           if (message.type === "system" && message.subtype === "api_retry") {
             const updatedAt = yield* DateTime.now;
             const previous = (yield* Ref.get(providerRetries)).get(context.providerTurnId);
@@ -12021,6 +12086,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           if (message.type === "result") {
+            if (message.fast_mode_state === "off") {
+              const reason =
+                message.fast_mode_disabled_reason === undefined
+                  ? CLAUDE_FAST_MODE_DISABLED_REASONS.unknown
+                  : CLAUDE_FAST_MODE_DISABLED_REASONS[message.fast_mode_disabled_reason];
+              yield* emitFastModeNotice(
+                context,
+                `Claude Code ran this turn at standard speed because ${reason}.`,
+              );
+            }
             const contextUsage = context.streamUsage?.usage ?? context.compactionTokens;
             if (resultsReportingNewContextWindow.has(message) && contextUsage !== undefined) {
               yield* emitContextUsage(context, contextUsage);
