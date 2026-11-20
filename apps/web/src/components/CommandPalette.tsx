@@ -137,6 +137,7 @@ import { pickTriageEnvironment } from "../lib/triageTarget";
 import { useNewProject } from "../hooks/useNewProject";
 import { useOrderWhileOpen } from "../hooks/useOrderWhileOpen";
 import { reportProjectFailure, useProjectPin } from "../hooks/useProjectGroupUpdate";
+import { useChangeProjectFolder } from "../hooks/useChangeProjectFolder";
 import {
   useEnvironmentProviders,
   useEnvironments,
@@ -488,9 +489,7 @@ function OpenCommandPaletteDialog(props: {
   const updateProject = useOrchestrationCommand(projectEnvironment.update, {
     label: "project unarchive",
   });
-  const updateProjectFolder = useOrchestrationCommand(projectEnvironment.update, {
-    reportFailure: false,
-  });
+  const changeProjectFolder = useChangeProjectFolder();
   const { scratchEnvironmentId, scratchWorkspaceRootFor, startScratchThread } = useScratchProject();
   const startTriage = useStartTriage();
   const lookupRepository = useAtomQueryRunner(sourceControlEnvironment.repository, {
@@ -2141,79 +2140,10 @@ function OpenCommandPaletteDialog(props: {
     setOpen(false);
   };
 
-  const changeProjectFolder = async (
-    project: typeof changeFolderProject,
-    rawCwd: string,
-    platform: string,
-  ) => {
-    const failureTitle = gt("Failed to change project folder");
-    // The project can be removed while the browser is open; never add one in its place.
-    if (project === null) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: failureTitle,
-          description: gt("This project is no longer available."),
-        }),
-      );
-      setOpen(false);
-      return;
-    }
-    if (isUnsupportedWindowsProjectPath(rawCwd.trim(), platform)) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: failureTitle,
-          description: gt("Windows-style paths are only supported on Windows."),
-        }),
-      );
-      return;
-    }
-    const cwd = resolveProjectPathForDispatch(rawCwd, project.workspaceRoot);
-    if (cwd.length === 0) return;
-    if (findProjectByPath([project], cwd)) {
-      setOpen(false);
-      return;
-    }
-    const owner = findProjectByPath(
-      projects.filter(
-        (candidate) =>
-          candidate.environmentId === project.environmentId && candidate.id !== project.id,
-      ),
-      cwd,
-    );
-    if (owner) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: failureTitle,
-          description: gt('This folder already belongs to "{title}".', { title: owner.title }),
-        }),
-      );
-      return;
-    }
-    const result = await updateProjectFolder({
-      environmentId: project.environmentId,
-      input: { projectId: project.id, workspaceRoot: cwd },
-    });
-    if (result._tag === "Failure") {
-      reportProjectFailure(failureTitle, result);
-      return;
-    }
-    toastManager.add(
-      stackedThreadToast({
-        type: "success",
-        title: gt("Project folder changed"),
-        description: cwd,
-      }),
-    );
-    setOpen(false);
-  };
-
   const handleAddProject = async (rawCwd: string) => {
     if (!browseEnvironmentId) return;
     if (changeFolderProjectRef !== null) {
-      await changeProjectFolder(changeFolderProject, rawCwd, browseEnvironmentPlatform);
+      if (await changeProjectFolder(changeFolderProject, rawCwd)) setOpen(false);
       return;
     }
     await handleAddProjectForEnvironment({
@@ -3081,7 +3011,7 @@ function OpenCommandPaletteDialog(props: {
       }
       if (changeFolderProjectRef !== null) {
         if (selection.environmentId === changeFolderProjectRef.environmentId) {
-          await changeProjectFolder(changeFolderProject, selection.linuxPath, "Linux");
+          if (await changeProjectFolder(changeFolderProject, selection.linuxPath)) setOpen(false);
         } else {
           toastManager.add(
             stackedThreadToast({

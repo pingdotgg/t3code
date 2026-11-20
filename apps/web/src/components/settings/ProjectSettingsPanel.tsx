@@ -19,7 +19,6 @@ import { InfoIcon, Trash2Icon } from "lucide-react";
 import { lazy, Suspense, useRef, useState, type ReactNode } from "react";
 import { T, useGT, useMessages } from "gt-react";
 
-import { openCommandPalette } from "../../commandPaletteBus";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { releaseProjectDraftUploads } from "../../lib/composerDraftUploads";
 import { persistClientSettingsUpdate, useClientSettings } from "../../hooks/useSettings";
@@ -53,6 +52,7 @@ import {
   canPickExternalProjectFavicon,
   ProjectFaviconPickerDialog,
 } from "./ProjectFaviconPickerDialog";
+import { ChangeProjectFolderPopover } from "./ChangeProjectFolderPopover";
 import { ProjectActionsSettings } from "./ProjectActionsSettings";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import {
@@ -456,20 +456,10 @@ function ProjectDetail({
         <CheckoutGroupingSelect member={member} />
       </div>
       {member.isScratch ? null : (
-        <Button
-          size="sm"
-          variant="outline"
+        <ChangeProjectFolderPopover
+          member={member}
           disabled={!editableIds.has(member.environmentId)}
-          onClick={() =>
-            openCommandPalette({
-              open: "change-project-folder",
-              projectRef: scopeProjectRef(member.environmentId, member.id),
-            })
-          }
-          aria-label={gt("Change folder of checkout {path}", { path: member.workspaceRoot })}
-        >
-          <T>Change folder</T>
-        </Button>
+        />
       )}
       {hasMultipleCheckouts ? (
         <Button

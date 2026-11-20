@@ -725,6 +725,8 @@ export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
   typeof OrchestrationV2ThreadLaunchWorkspaceStrategy.Type;
 
 export const ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE = "workspace_preparation_failed";
+/** The thread's folder is gone; when it is the project's own, clients offer to choose a new one. */
+export const ORCHESTRATION_V2_WORKSPACE_MISSING_FAILURE_CODE = "workspace_missing";
 
 export const OrchestrationV2Run = Schema.Struct({
   id: RunId,

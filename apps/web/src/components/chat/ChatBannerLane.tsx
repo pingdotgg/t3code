@@ -1,11 +1,14 @@
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type {
   EnvironmentId,
   OrchestrationV2ProviderFailureClass,
+  ProjectId,
   ProviderInstanceId,
   ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
 import type { Dispatch, SetStateAction } from "react";
+import { openCommandPalette } from "../../commandPaletteBus";
 import {
   dismissProviderStatusBannerForSession,
   ProviderStatusBanner,
@@ -25,6 +28,8 @@ export function ChatBannerLane(props: {
   threadError: string | null;
   threadErrorClass: OrchestrationV2ProviderFailureClass | null;
   threadErrorCode: string | null;
+  /** The project to repoint when the error is its folder being gone. */
+  missingFolderProjectId: ProjectId | null;
   threadErrorBannerKey: string | null;
   setThreadError: (threadId: ThreadId | null, error: string | null) => void;
   setThreadErrorBannerDismissTick: Dispatch<SetStateAction<number>>;
@@ -37,6 +42,7 @@ export function ChatBannerLane(props: {
     threadError,
     threadErrorClass,
     threadErrorCode,
+    missingFolderProjectId,
     threadErrorBannerKey,
     setThreadError,
     setThreadErrorBannerDismissTick,
@@ -53,6 +59,15 @@ export function ChatBannerLane(props: {
         error={threadError}
         errorClass={threadErrorClass}
         errorCode={threadErrorCode}
+        onChooseProjectFolder={
+          missingFolderProjectId === null
+            ? undefined
+            : () =>
+                openCommandPalette({
+                  open: "change-project-folder",
+                  projectRef: scopeProjectRef(props.environmentId, missingFolderProjectId),
+                })
+        }
         onDismiss={() => {
           setThreadError(threadId, null);
           dismissThreadErrorBannerForSession(threadErrorBannerKey);

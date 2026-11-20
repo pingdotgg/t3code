@@ -68,9 +68,13 @@ A project on several machines must have every machine connected to pin or archiv
 
 If you move or rename a project's folder on disk, point the project at its new location instead
 of adding it again, so its threads stay with it. Choose **Change folder** next to the checkout in
-**Settings → Projects**, from the project's right-click menu in the sidebar, or with **Change
-project folder** in the command palette. The folder browser starts next to the old folder, and a
-path such as `../new-name` is read relative to it.
+**Settings → Projects** and type or paste the new path, or choose **Browse** there to pick the
+folder. The folder browser also opens from the project's right-click menu in the sidebar and from
+**Change project folder** in the command palette. It starts next to the old folder, and a path
+such as `../new-name` is read relative to the old folder in both places.
+
+T3 Code marks a project whose folder is gone in the sidebar and in **Settings → Projects**, and
+offers **Choose new folder** above the composer and on a turn that failed because of it.
 
 ## Worktree branch names
 
