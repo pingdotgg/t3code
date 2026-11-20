@@ -475,8 +475,9 @@ this app, each environment with one line per route (the one in use is
 highlighted), and the machines an environment links to. Select a machine to
 manage it, or switch to **List** for the same controls as rows. To link from
 the map, drag the plus on an environment onto another machine, or press it and
-pick one. If this app is connected to both machines and its session on the
-other one manages access there, it needs no pairing code.
+pick one. If this app is connected to both machines, knows an address the first
+can reach the other at, and its session on the other one manages access there,
+it needs no pairing code.
 
 A link goes one way. To let the other machine's agents work back, tick **Also
 link … back** when you create the link, or select a one-way link and use
