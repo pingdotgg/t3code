@@ -53,13 +53,29 @@ export function startQuestionImagePreparation(key: string, waitingForSelection =
   pending.add(resolve);
   imagePreparations.set(key, pending);
   changeQuestionAttachmentPreparation(key, 1);
+  const currentDestination = () => (threadOperation?.signal.aborted ? null : destination);
   return {
     acceptSelection: () => {
       if (destination !== key) return false;
       waitingForSelection = false;
       return true;
     },
-    destination: () => (threadOperation?.signal.aborted ? null : destination),
+    destination: currentDestination,
+    complete: async (
+      result: { attachments: ReadonlyArray<DraftComposerAttachment>; error: string | null },
+      scope: QuestionAttachmentScope,
+    ) => {
+      const target = currentDestination();
+      if (target === null || (target === key && !scope.isActive())) {
+        await releaseUnusedComposerAttachmentFiles(result.attachments);
+        return { error: null, rejected: 0 };
+      }
+      const rejected =
+        target === key
+          ? scope.append(result.attachments)
+          : appendUnsentQuestionAttachments(target, result.attachments);
+      return { error: result.error, rejected };
+    },
     finish: () => {
       threadOperation?.finish();
       if (imagePreparations.get(key) !== pending || !pending.delete(resolve)) return;
@@ -87,13 +103,18 @@ export function appendUnsentQuestionAttachments(
   });
 }
 
-export async function pickQuestionAttachments(input: {
-  readonly key: string;
-  readonly kind: "media" | "files";
-  readonly maxUploadBytes?: number | undefined;
+interface QuestionAttachmentScope {
   readonly isActive: () => boolean;
   readonly append: (attachments: ReadonlyArray<DraftComposerAttachment>) => number;
-}): Promise<{ error: string | null; rejected: number }> {
+}
+
+export async function pickQuestionAttachments(
+  input: QuestionAttachmentScope & {
+    readonly key: string;
+    readonly kind: "media" | "files";
+    readonly maxUploadBytes?: number | undefined;
+  },
+): Promise<{ error: string | null; rejected: number }> {
   const preparation = startQuestionImagePreparation(input.key, true);
   try {
     const existingCount = getComposerDraftSnapshot(input.key).attachments.length;
@@ -111,16 +132,7 @@ export async function pickQuestionAttachments(input: {
             acceptSelection,
           });
     const attachments = "files" in result ? result.files : result.attachments;
-    const destination = preparation.destination();
-    if (destination === null || (destination === input.key && !input.isActive())) {
-      await releaseUnusedComposerAttachmentFiles(attachments);
-      return { error: null, rejected: 0 };
-    }
-    const rejected =
-      destination === input.key
-        ? input.append(attachments)
-        : appendUnsentQuestionAttachments(destination, attachments);
-    return { error: result.error, rejected };
+    return await preparation.complete({ attachments, error: result.error }, input);
   } finally {
     preparation.finish();
   }

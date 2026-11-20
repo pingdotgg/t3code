@@ -24,10 +24,8 @@ import {
   appendComposerDraftAttachments,
   composerDraftsAtom,
   removeComposerDraftAttachment,
-  releaseUnusedComposerAttachmentFiles,
 } from "../../state/use-composer-drafts";
 import {
-  appendUnsentQuestionAttachments,
   pickQuestionAttachments,
   questionAttachmentDraftKey,
   startQuestionImagePreparation,
@@ -110,18 +108,15 @@ export function QuestionAttachments(props: {
     );
     const preparation = startQuestionImagePreparation(key);
     void convertPastedImagesToAttachments({ uris })
-      .then(async (result) => {
-        const destination = preparation.destination();
-        if (destination === null || (destination === key && !scope.active)) {
-          await releaseUnusedComposerAttachmentFiles(result.attachments);
-          return;
-        }
-        const rejected =
-          destination === key
-            ? append(key, result.attachments)
-            : appendUnsentQuestionAttachments(destination, result.attachments);
+      .then((result) =>
+        preparation.complete(result, {
+          isActive: () => scope.active,
+          append: (attachments) => append(key, attachments),
+        }),
+      )
+      .then(({ error, rejected }) => {
         const problems = [
-          ...(result.error ? [result.error] : []),
+          ...(error ? [error] : []),
           ...(rejected > 0 ? [gt("Too many attachments.")] : []),
         ];
         if (problems.length) Dialog.alert(gt("Could not paste image"), problems.join("\n\n"));
