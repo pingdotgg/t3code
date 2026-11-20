@@ -561,6 +561,38 @@ describe("mobile task permissions", () => {
     );
   });
 
+  it("queues a goal command with the thread's settings and leaves the draft alone", async () => {
+    state.grantedEnvironments.add("secondary");
+    state.draft.modelSelection = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-sonnet-5-5",
+    };
+    Object.assign(state.draft, { runtimeMode: "approval-required" });
+    const composer = useThreadComposerState(NO_SIDE_CHATS);
+    expect(await composer.onSendCommand("/goal clear")).toBe("message");
+    expect(state.enqueue).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        environmentId: "secondary",
+        threadId: "thread",
+        text: "/goal clear",
+        restoreToDraft: false,
+        attachments: [],
+        modelSelection: state.thread.modelSelection,
+        runtimeMode: state.thread.runtimeMode,
+      }),
+    );
+    expect(state.clearDraft).not.toHaveBeenCalled();
+    expect(state.draft.text).toBe("Keep my draft");
+  });
+
+  it("rechecks the operate grant before queueing a command", async () => {
+    state.grantedEnvironments.add("secondary");
+    const composer = useThreadComposerState(NO_SIDE_CHATS);
+    state.grantedEnvironments.delete("secondary");
+    expect(await composer.onSendCommand("/goal clear")).toBeNull();
+    expect(state.enqueue).not.toHaveBeenCalled();
+  });
+
   it("rechecks the target environment before an approval response", async () => {
     state.grantedEnvironments.add("secondary");
     const requests = useSelectedThreadRequests();
