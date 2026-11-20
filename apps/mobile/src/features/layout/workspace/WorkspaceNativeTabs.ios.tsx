@@ -1,3 +1,4 @@
+import { nativeSidebarColumnWidth } from "../../../lib/layout";
 import { useGT, useMessages } from "gt-react-native";
 import {
   WORKSPACE_TAB_LABELS,
@@ -284,11 +285,14 @@ export function WorkspaceNativeTabs(props: {
             position: "absolute",
             left: 0,
             bottom: 0,
-            // UIKit can shrink the sidebar to 280pt independently of its preferred width.
+            // Over a page, the bar takes the sidebar column's width, so it matches the one the
+            // column draws on the other tabs.
             width:
-              deviceType === "pad" && (floatingTabs || layout.usesSplitView)
-                ? Math.min(280, layout.listPaneWidth ?? width, width)
-                : (layout.listPaneWidth ?? width),
+              deviceType === "pad" && floatingTabs
+                ? Math.min(280, width)
+                : layout.usesSplitView
+                  ? nativeSidebarColumnWidth(layout)
+                  : width,
             height: 128,
           }}
         >

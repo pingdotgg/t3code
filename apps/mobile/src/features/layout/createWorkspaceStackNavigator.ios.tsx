@@ -40,7 +40,7 @@ import { Split, type SplitHostCommands } from "react-native-screens";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { NATIVE_INSPECTOR_MIN_MAIN_WIDTH } from "../../lib/layout";
+import { NATIVE_INSPECTOR_MIN_MAIN_WIDTH, nativeSidebarColumnWidth } from "../../lib/layout";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { WorkspaceTabsProvider, useWorkspaceTabs } from "./workspace/WorkspaceTabsContext";
 import {
@@ -361,7 +361,7 @@ function WorkspaceColumns(
 
   const primary = props.descriptors[props.primary.key];
   if (!primary) return null;
-  const primaryColumnWidth = (layout.listPaneWidth ?? 320) + (layout.listPaneGap ?? 0) / 2;
+  const primaryColumnWidth = nativeSidebarColumnWidth(layout);
   return (
     <Split.Host
       ref={hostRef}
