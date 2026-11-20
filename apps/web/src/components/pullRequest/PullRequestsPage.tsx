@@ -139,6 +139,13 @@ import {
   type PullRequestHostRead,
 } from "./pullRequestProjectAssignment.logic";
 
+/** The windowed list reuses row slots, so document order is not the order on screen. */
+function rowsInScreenOrder(viewport: HTMLElement | null): HTMLElement[] {
+  const rows = [...(viewport?.querySelectorAll<HTMLElement>("[data-pull-request-key]") ?? [])];
+  const tops = new Map(rows.map((row) => [row, row.getBoundingClientRect().top]));
+  return rows.sort((a, b) => (tops.get(a) ?? 0) - (tops.get(b) ?? 0));
+}
+
 function getShortcutContext() {
   return {
     terminalFocus: isTerminalFocused(),
@@ -170,14 +177,32 @@ const heldRowReaders = new WeakMap<
   Map<string, ReturnType<typeof heldPullRequestListEntriesAtom<EnvironmentPullRequestEntry>>>
 >();
 
-function usePendingListEntries(
+type PendingListEntriesAtom = Atom.Atom<ReadonlyArray<EnvironmentPullRequestEntry>>;
+const NO_PENDING_LIST_ENTRIES: PendingListEntriesAtom = Atom.make(
+  (): ReadonlyArray<EnvironmentPullRequestEntry> => [],
+);
+// One atom per list and query. An atom made during render was a new registry node every
+// render, whose value read again on subscribe was a new array, so the page rendered again.
+const pendingListAtoms = new WeakMap<
+  ReadonlyArray<EnvironmentPullRequestEntry>,
+  Map<string, PendingListEntriesAtom>
+>();
+
+function pendingListEntriesAtom(
   input: PullRequestListInput,
   entries: ReadonlyArray<EnvironmentPullRequestEntry> | undefined,
-) {
+): PendingListEntriesAtom {
+  if (entries === undefined || entries.length === 0) return NO_PENDING_LIST_ENTRIES;
   const key = JSON.stringify(input);
-  return useAtomValue(
-    Atom.make((get) =>
-      (entries ?? []).flatMap((entry) => {
+  let byInput = pendingListAtoms.get(entries);
+  if (byInput === undefined) {
+    byInput = new Map();
+    pendingListAtoms.set(entries, byInput);
+  }
+  let atom = byInput.get(key);
+  if (atom === undefined) {
+    atom = Atom.make((get) =>
+      entries.flatMap((entry) => {
         let readers = heldRowReaders.get(entry);
         if (readers === undefined) {
           readers = new Map();
@@ -190,8 +215,17 @@ function usePendingListEntries(
         }
         return AsyncResult.getOrElse(get(reader), () => []);
       }),
-    ),
-  );
+    );
+    byInput.set(key, atom);
+  }
+  return atom;
+}
+
+function usePendingListEntries(
+  input: PullRequestListInput,
+  entries: ReadonlyArray<EnvironmentPullRequestEntry> | undefined,
+) {
+  return useAtomValue(pendingListEntriesAtom(input, entries));
 }
 
 export function PullRequestsPage() {
@@ -782,6 +816,12 @@ export function PullRequestsPage() {
   const shownHeldAuthored = usePendingListEntries(overlayInput, heldPartitions?.authored);
   const shownHeldReviewing = usePendingListEntries(overlayInput, heldPartitions?.reviewing);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // State as well as a ref: the windowed rows follow the scroller once it mounts.
+  const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null);
+  const attachScroller = (element: HTMLDivElement | null) => {
+    scrollRef.current = element;
+    setScrollElement(element);
+  };
   const {
     entries,
     listedPullRequestTabStatuses,
@@ -1084,8 +1124,7 @@ export function PullRequestsPage() {
       if (!group || readCloseSweep().closingKeys.has(originKey)) return;
       // The rows on screen, in screen order: stacks reorder their layers and a folded stack
       // renders none, so the data order would sweep rows the reader never passed over.
-      const orderedKeys = Array.from(
-        scrollRef.current?.querySelectorAll<HTMLElement>("[data-pull-request-key]") ?? [],
+      const orderedKeys = rowsInScreenOrder(scrollRef.current).map(
         (row) => row.dataset.pullRequestKey ?? "",
       );
       const canClose = (key: string) => {
@@ -1140,7 +1179,7 @@ export function PullRequestsPage() {
           const bounds = viewport.getBoundingClientRect();
           const visibleY = Math.min(Math.max(y, bounds.top), bounds.bottom - 1);
           let key: string | null = null;
-          for (const row of viewport.querySelectorAll<HTMLElement>("[data-pull-request-key]")) {
+          for (const row of rowsInScreenOrder(viewport)) {
             if (key !== null && row.getBoundingClientRect().top > visibleY) break;
             key = row.dataset.pullRequestKey ?? null;
           }
@@ -1454,6 +1493,7 @@ export function PullRequestsPage() {
           closingKeys={closingKeys}
           sweepingKeys={closeSweepKeys}
           onCloseSweepStart={startCloseSweep}
+          scrollElement={scrollElement}
         />
       )}
 
@@ -1604,10 +1644,9 @@ export function PullRequestsPage() {
       />
     ),
     rightPanelOpen: rightPanelState.isOpen,
-
     maximizedAway: rightPanelMaximized,
     listBody,
-    scrollRef,
+    scrollRef: attachScroller,
   };
 
   const activateSurface = (surface: PullRequestSurface) => {
@@ -1715,6 +1754,7 @@ export function PullRequestsPage() {
             pane
             open={rightPanelState.isOpen}
             maximized={rightPanelMaximized}
+            holdsPaneTabs={rightPanelMaximized}
             keybindings={keybindings}
             widthStorageKey="t3code:pull-request-panel-width"
             // The pen's split (bETcv) gives the review 549 of 1280px, which

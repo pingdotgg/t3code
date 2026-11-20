@@ -381,6 +381,10 @@ export function PullRequestDetailGhost({
               <GhostBar className="h-4 w-4/5" />
               <GhostBar className="h-4 w-2/3" />
             </div>
+            {/* The labels line. */}
+            <div className="-mt-1 flex h-6 items-center">
+              <GhostBar className="w-20" />
+            </div>
           </div>
         </section>
       </div>

@@ -288,7 +288,10 @@ import { ComposerHandleContext, useComposerHandleContext } from "../composerHand
 import { returnKeyboardToFocusedPane } from "../layout/layoutPaneContext";
 import { useOpenLayoutPage } from "../layout/pageNavigation";
 import type { ChatComposerHandle } from "./chat/ChatComposer";
-import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
+import {
+  isPickableProjectMember,
+  pickableProjectGroups,
+} from "@t3tools/client-runtime/state/project-grouping";
 import { buildSidebarProjectPickerEntries } from "../sidebarProjectGrouping";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { IssueGlyph } from "~/components/issue/issuePresentation";
@@ -954,15 +957,16 @@ function OpenCommandPaletteDialog(props: {
             return;
           }
           const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
-          const contextualRefBelongsToGroup =
+          const contextualProjectIsEligible =
             contextualProjectRef !== null &&
-            group?.memberProjectRefs.some(
-              (projectRef) =>
-                projectRef.environmentId === contextualProjectRef.environmentId &&
-                projectRef.projectId === contextualProjectRef.projectId,
+            group?.memberProjects.some(
+              (member) =>
+                member.environmentId === contextualProjectRef.environmentId &&
+                member.id === contextualProjectRef.projectId &&
+                isPickableProjectMember(member),
             );
           await handleNewThread(
-            contextualRefBelongsToGroup
+            contextualProjectIsEligible
               ? contextualProjectRef
               : scopeProjectRef(project.environmentId, project.id),
           );

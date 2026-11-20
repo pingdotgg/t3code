@@ -4,7 +4,11 @@ import type { OpenPreviewMutation } from "./browser/openFileInPreview";
 import type { ClosedView, ClosedViewEntry } from "./closedViewStore";
 import type { PullRequestListPreferences } from "./components/pullRequest/pullRequestListPreferences";
 import { openPreviewSession } from "./components/preview/openPreviewSession";
-import { findLayoutPane, findLayoutTabByContent } from "./layout/layoutModel";
+import {
+  findLayoutPane,
+  findLayoutTabByContent,
+  type LayoutTabContent,
+} from "./layout/layoutModel";
 import { useLayoutStore } from "./layout/layoutStore";
 import { useComposerDraftStore } from "./composerDraftStore";
 import type { ThreadRouteTarget } from "./threadRoutes";
@@ -43,11 +47,8 @@ export function planNextReopen(
       break;
     }
     const alreadyOpen =
-      entry.kind === "chat"
-        ? findLayoutTabByContent(useLayoutStore.getState().layout, {
-            kind: "chat",
-            target: closedChatTarget(entry),
-          }) !== null
+      entry.kind === "chat" || entry.kind === "page"
+        ? findLayoutTabByContent(useLayoutStore.getState().layout, closedTabContent(entry)) !== null
         : entry.kind === "panel-tab"
           ? owner.panel.isOpen && owner.panel.surfaces.some((s) => s.id === entry.surface.id)
           : owner.panel.surfaces.some(
@@ -69,6 +70,11 @@ export function closedChatTarget(view: Extract<ClosedView, { kind: "chat" }>): T
   return view.draftId && !promoted
     ? { kind: "draft", draftId: view.draftId }
     : { kind: "server", threadRef: promoted ?? view.threadRef };
+}
+
+function closedTabContent(view: Extract<ClosedView, { kind: "chat" | "page" }>): LayoutTabContent {
+  if (view.kind === "chat") return { kind: "chat", target: closedChatTarget(view) };
+  return { kind: view.page, ...(view.href === undefined ? {} : { href: view.href }) };
 }
 
 type PullRequestsSearchLike = Partial<PullRequestListPreferences> & {
@@ -119,9 +125,9 @@ export async function reopenClosedView(
   const panels = useRightPanelStore.getState();
   const ref = view.threadRef;
 
-  if (view.kind === "chat") {
+  if (view.kind === "chat" || view.kind === "page") {
     const store = useLayoutStore.getState();
-    const content = { kind: "chat", target: closedChatTarget(view) } as const;
+    const content = closedTabContent(view);
     if (findLayoutPane(store.layout, view.paneId))
       store.placeContent(content, { kind: "pane", paneId: view.paneId, index: view.index });
     else store.openTab(content, { placement: "active-pane" });

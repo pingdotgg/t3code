@@ -11,7 +11,7 @@ import {
   noIssuePicks,
 } from "@t3tools/client-runtime/issue-selection";
 import { isSelected, toggleSelection } from "@t3tools/client-runtime/pull-request-selection";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { executeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
   IssueAssigneeCandidate,
@@ -32,7 +32,6 @@ import {
   MoreHorizontalIcon,
   TagIcon,
   UserPlusIcon,
-  UsersIcon,
 } from "lucide-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { useContext, useState, type ReactNode } from "react";
@@ -72,6 +71,7 @@ import { PullRequestEditButton } from "../pullRequest/PullRequestEditButton";
 import { PullRequestMarkdownEditor } from "../pullRequest/PullRequestMarkdownEditor";
 import { PullRequestReviewEntry } from "../pullRequest/PullRequestQuietEntries";
 import { WorkItemTitleEditor } from "../pullRequest/PullRequestTitleEditor";
+import { WorkItemFacts } from "../workItem/WorkItemFacts";
 import { readableFailure } from "../pullRequest/pullRequestDetail.logic";
 import { pullRequestLabelColor } from "../pullRequest/pullRequestList.logic";
 import {
@@ -126,12 +126,14 @@ function IssueLabelPicker({
   detail,
   allowed,
   disabledReason,
+  text,
 }: {
   environmentId: EnvironmentId;
   reference: IssueRef;
   detail: IssueDetail;
   allowed: boolean;
   disabledReason: string;
+  text?: string | undefined;
 }) {
   const gt = useGT();
   const [open, setOpen] = useState(false);
@@ -186,6 +188,7 @@ function IssueLabelPicker({
     <PullRequestCandidatePicker
       icon={<TagIcon className="size-3.5" />}
       label={gt("Change labels")}
+      text={text}
       popupWidth="labels"
       allowed={allowed}
       disabledReason={disabledReason}
@@ -246,12 +249,14 @@ function IssueAssigneePicker({
   detail,
   allowed,
   disabledReason,
+  text,
 }: {
   environmentId: EnvironmentId;
   reference: IssueRef;
   detail: IssueDetail;
   allowed: boolean;
   disabledReason: string;
+  text?: string | undefined;
 }) {
   const gt = useGT();
   const [open, setOpen] = useState(false);
@@ -305,6 +310,7 @@ function IssueAssigneePicker({
     <PullRequestCandidatePicker
       icon={<UserPlusIcon className="size-3.5" />}
       label={gt("Change assignees")}
+      text={text}
       popupWidth="reviewers"
       allowed={allowed}
       disabledReason={disabledReason}
@@ -569,7 +575,11 @@ export function IssueDetailPanel({
       <MenuPopup align="end" side="bottom">
         <MenuItem
           disabled={detailQuery.isPending}
-          onClick={() => void pager.refresh(registry, detailQuery.refresh)}
+          onClick={() =>
+            void pager.refresh(registry, () =>
+              executeAtomQuery(registry, detailAtom, { refresh: true, reportFailure: false }),
+            )
+          }
         >
           <RefreshIcon size="sm" refreshing={detailQuery.isPending} />
           <T context="verb, menu item">Refresh</T>
@@ -692,7 +702,23 @@ export function IssueDetailPanel({
           </div>
         ) : null}
 
-        <PullRequestSection key={`description:${detail.url}`} title={gt("Description")} keepMounted>
+        <PullRequestSection
+          key={`description:${detail.url}`}
+          title={gt("Description")}
+          keepMounted
+          // With none yet, the description's reaction control waits in its heading instead of
+          // taking a row of its own; the first reaction moves it under the text with its chips.
+          actions={
+            detail.reactions !== undefined && detail.reactions.length === 0 && canReact ? (
+              <IssueReactionBar
+                reactions={detail.reactions}
+                canReact={canReact}
+                environmentId={environmentId}
+                reference={reference}
+              />
+            ) : undefined
+          }
+        >
           <div className="group">
             {editingBody ? (
               <PullRequestMarkdownEditor
@@ -729,7 +755,7 @@ export function IssueDetailPanel({
               </div>
             )}
           </div>
-          {detail.reactions !== undefined ? (
+          {detail.reactions !== undefined && detail.reactions.length > 0 ? (
             <div className="mt-2 flex">
               <IssueReactionBar
                 reactions={detail.reactions}
@@ -739,65 +765,62 @@ export function IssueDetailPanel({
               />
             </div>
           ) : null}
-          {/* Labels and assignees ride under the description, as a pull request's labels do. */}
-          <div className="mt-3 flex min-w-0 flex-wrap items-center gap-1 text-meta">
-            <TagIcon aria-label={gt("Labels")} className="mr-0.5 size-3.5 text-muted-foreground" />
-            {detail.labels.length === 0 && !detail.capabilities.labels ? (
-              <span className="text-muted-foreground">
-                <T context="no labels">None</T>
-              </span>
-            ) : null}
-            {detail.labels.map((label) => (
-              <PullRequestLabelChip
-                key={label.name}
-                label={label}
-                size="default"
-                className="max-w-48"
-                focusable
-              />
-            ))}
-            {detail.capabilities.labels ? (
-              <IssueLabelPicker
-                environmentId={environmentId}
-                reference={reference}
-                detail={detail}
-                allowed={canLabel}
-                disabledReason={
-                  blocked ?? gt("Changing labels needs triage access on this tracker.")
-                }
-              />
-            ) : null}
-          </div>
-          <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-1.5 text-meta">
-            <UsersIcon
-              aria-label={gt("Assignees")}
-              className="mr-0.5 size-3.5 text-muted-foreground"
-            />
-            {detail.assignees.length === 0 ? (
-              <span className="text-muted-foreground">
-                <T context="no assignees">None</T>
-              </span>
-            ) : (
-              detail.assignees.map((actor) => (
-                <PullRequestActorLabel
-                  key={actor.login}
-                  actor={actor}
-                  profileUrl={profileUrl(actor)}
-                />
-              ))
-            )}
-            {detail.capabilities.assignees ? (
-              <IssueAssigneePicker
-                environmentId={environmentId}
-                reference={reference}
-                detail={detail}
-                allowed={canAssign}
-                disabledReason={
-                  blocked ?? gt("Changing assignees needs triage access on this tracker.")
-                }
-              />
-            ) : null}
-          </div>
+          <WorkItemFacts
+            facts={[
+              detail.labels.length > 0 || detail.capabilities.labels
+                ? {
+                    name: gt("Labels"),
+                    values: detail.labels.map((label) => ({
+                      key: label.name,
+                      node: (
+                        <PullRequestLabelChip
+                          label={label}
+                          size="default"
+                          className="max-w-48"
+                          focusable
+                        />
+                      ),
+                    })),
+                    control: canLabel ? (
+                      <IssueLabelPicker
+                        environmentId={environmentId}
+                        reference={reference}
+                        detail={detail}
+                        allowed={canLabel}
+                        disabledReason={
+                          blocked ?? gt("Changing labels needs triage access on this tracker.")
+                        }
+                        text={detail.labels.length === 0 ? gt("Add labels") : undefined}
+                      />
+                    ) : undefined,
+                    emptyText: <T>No labels</T>,
+                  }
+                : null,
+              detail.assignees.length > 0 || detail.capabilities.assignees
+                ? {
+                    name: gt("Assignees"),
+                    people: true,
+                    values: detail.assignees.map((actor) => ({
+                      key: actor.login,
+                      node: <PullRequestActorLabel actor={actor} profileUrl={profileUrl(actor)} />,
+                    })),
+                    control: canAssign ? (
+                      <IssueAssigneePicker
+                        environmentId={environmentId}
+                        reference={reference}
+                        detail={detail}
+                        allowed={canAssign}
+                        disabledReason={
+                          blocked ?? gt("Changing assignees needs triage access on this tracker.")
+                        }
+                        text={detail.assignees.length === 0 ? gt("Add assignees") : undefined}
+                      />
+                    ) : undefined,
+                    emptyText: <T>No one assigned</T>,
+                  }
+                : null,
+            ]}
+          />
         </PullRequestSection>
 
         {detail.linkedPullRequests.length > 0 ? (

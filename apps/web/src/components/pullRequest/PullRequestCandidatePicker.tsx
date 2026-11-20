@@ -16,6 +16,7 @@ import { PullRequestPeopleGhost } from "./PullRequestGhosts";
 export function PullRequestCandidatePicker<T>({
   icon,
   label,
+  text,
   allowed,
   disabledReason,
   open,
@@ -40,6 +41,8 @@ export function PullRequestCandidatePicker<T>({
 }: {
   icon: ReactNode;
   label: string;
+  /** Written beside the icon where nothing is picked yet, so the empty row says what it adds. */
+  text?: string | undefined;
   allowed: boolean;
   disabledReason: string;
   open: boolean;
@@ -67,16 +70,27 @@ export function PullRequestCandidatePicker<T>({
   footer?: ReactNode;
   children: (candidate: T) => ReactNode;
 }) {
+  const trigger = (disabled: boolean) =>
+    text === undefined ? (
+      <Button
+        size="icon-xs"
+        variant="ghost"
+        aria-disabled={disabled || undefined}
+        aria-label={label}
+      >
+        {icon}
+      </Button>
+    ) : (
+      <Button size="xs" variant="ghost-muted" aria-disabled={disabled || undefined}>
+        {icon}
+        {text}
+      </Button>
+    );
+
   if (!allowed) {
     return (
       <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button size="icon-xs" variant="ghost" aria-disabled="true" aria-label={label}>
-              {icon}
-            </Button>
-          }
-        />
+        <TooltipTrigger render={trigger(true)} />
         <TooltipPopup side="bottom">{disabledReason}</TooltipPopup>
       </Tooltip>
     );
@@ -105,13 +119,7 @@ export function PullRequestCandidatePicker<T>({
         onOpenChange(nextOpen);
       }}
     >
-      <ComboboxTrigger
-        render={
-          <Button size="icon-xs" variant="ghost" aria-label={label}>
-            {icon}
-          </Button>
-        }
-      />
+      <ComboboxTrigger render={trigger(false)} />
       <ComboboxPopup
         align="start"
         side="bottom"

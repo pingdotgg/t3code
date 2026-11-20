@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { flushSync } from "react-dom";
 
 import { cn } from "../../lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -31,7 +32,8 @@ export function RedactedSensitiveText(props: {
   readonly hideTooltip: string;
   readonly className?: string;
 }) {
-  const [revealed, setRevealed] = useState(false);
+  const [visibility, setVisibility] = useState<"hidden" | "hiding" | "revealed">("hidden");
+  const revealed = visibility === "revealed";
   const value = props.value?.trim();
   const redacted = value ? redactedPlaceholder(value) : "";
 
@@ -48,10 +50,25 @@ export function RedactedSensitiveText(props: {
               revealed ? "text-muted-foreground" : "select-none text-muted-foreground blur-xs",
               props.className,
             )}
-            onClick={() => setRevealed((current) => !current)}
+            onClick={(event) => {
+              if (!revealed) return setVisibility("revealed");
+              const button = event.currentTarget;
+              flushSync(() => setVisibility("hiding"));
+              const finishHiding = () =>
+                setVisibility((current) => (current === "hiding" ? "hidden" : current));
+              const blur = button
+                .getAnimations()
+                .find(
+                  (animation) =>
+                    animation instanceof CSSTransition && animation.transitionProperty === "filter",
+                );
+              // Theme changes suppress the transition; a reversed one settles once revealed.
+              if (blur) void blur.finished.then(finishHiding, finishHiding);
+              else finishHiding();
+            }}
             aria-label={props.ariaLabel}
           >
-            {revealed ? value : redacted}
+            {visibility === "hidden" ? redacted : value}
           </button>
         }
       />

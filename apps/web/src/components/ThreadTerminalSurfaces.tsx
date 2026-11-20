@@ -35,7 +35,7 @@ import { cn, randomUUID } from "~/lib/utils";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { type TerminalContextSelection } from "../lib/terminalContext";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
-import { useKnownTerminalSessions } from "../state/terminalSessions";
+import { useKnownTerminalSessions, useTerminalDrawerSessions } from "../state/terminalSessions";
 import { useEnvironmentScope, useEnvironmentSessionLoaded } from "~/state/session";
 import { terminalEnvironment } from "../state/terminal";
 import { useProject, useQuietThreadShell } from "../state/entities";
@@ -60,42 +60,6 @@ function shellRuntimeEnv(
   return project
     ? projectScriptRuntimeEnv({ project: { cwd: project.workspaceRoot }, worktreePath })
     : {};
-}
-function terminalIdListsEqual(left: readonly string[], right: readonly string[]): boolean {
-  if (left.length !== right.length) {
-    return false;
-  }
-  if (left.length === 0) {
-    return true;
-  }
-  const sortedLeft = left.toSorted((a, b) => a.localeCompare(b));
-  const sortedRight = right.toSorted((a, b) => a.localeCompare(b));
-  for (let index = 0; index < sortedLeft.length; index += 1) {
-    if (sortedLeft[index] !== sortedRight[index]) {
-      return false;
-    }
-  }
-  return true;
-}
-
-/**
- * Typical right after `terminal.open`: known-session list lags; reconciling would drop the new id
- * and later re-add it as a separate group (no split layout).
- */
-function serverTerminalIdsStrictSubsetOfClient(
-  serverIds: readonly string[],
-  clientIds: readonly string[],
-): boolean {
-  if (serverIds.length >= clientIds.length || clientIds.length === 0) {
-    return false;
-  }
-  const clientSet = new Set(clientIds);
-  for (const id of serverIds) {
-    if (!clientSet.has(id)) {
-      return false;
-    }
-  }
-  return true;
 }
 
 interface PersistentThreadTerminalDrawerProps {
@@ -147,14 +111,13 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
     selectThreadTerminalUiState(state.terminalUiStateByThreadKey, threadRef),
   );
   const visible = active && terminalUiState.terminalOpen;
-  const knownTerminalSessions = useKnownTerminalSessions({
-    environmentId: threadRef.environmentId,
-    threadId,
-  });
+  const metadata = useTerminalDrawerSessions(threadRef.environmentId, threadId);
+  const knownTerminalSessions = metadata?.sessions;
+  const snapshotId = metadata?.snapshotId;
   // Until the grant and the session list load, which terminals exist is not known yet.
   const canReadTerminal = useEnvironmentScope(threadRef.environmentId, AuthTerminalReadScope);
   const sessionLoaded = useEnvironmentSessionLoaded(threadRef.environmentId);
-  const attaching = !sessionLoaded || (canReadTerminal && knownTerminalSessions === null);
+  const attaching = !sessionLoaded || (canReadTerminal && metadata === null);
   const panelSurfaces = useRightPanelStore(
     (state) => selectThreadRightPanelState(state.byThreadKey, threadRef).surfaces,
   );
@@ -210,8 +173,7 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
   const allocateTerminalId = () =>
     nextTerminalId(
       allocatableTerminalIds,
-      knownTerminalSessions === null ||
-        !readEnvironmentScope(threadRef.environmentId, AuthTerminalReadScope)
+      metadata === null || !readEnvironmentScope(threadRef.environmentId, AuthTerminalReadScope)
         ? randomUUID()
         : undefined,
     );
@@ -225,18 +187,11 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
   const storeCloseTerminal = useTerminalUiStateStore((state) => state.closeTerminal);
   const reconcileTerminalIds = useTerminalUiStateStore((state) => state.reconcileTerminalIds);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Reconcile terminal UI ids with asynchronously discovered server sessions while preserving pending client terminals.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- feeds the server's terminal list into the terminal UI store, which owns how local ids follow it
   useEffect(() => {
-    if (terminalIdListsEqual(serverOrderedTerminalIds, terminalUiState.terminalIds)) {
-      return;
-    }
-    if (
-      serverTerminalIdsStrictSubsetOfClient(serverOrderedTerminalIds, terminalUiState.terminalIds)
-    ) {
-      return;
-    }
-    reconcileTerminalIds(threadRef, serverOrderedTerminalIds);
-  }, [reconcileTerminalIds, serverOrderedTerminalIds, terminalUiState.terminalIds, threadRef]);
+    if (snapshotId === undefined) return;
+    reconcileTerminalIds(threadRef, serverOrderedTerminalIds, snapshotId);
+  }, [reconcileTerminalIds, serverOrderedTerminalIds, snapshotId, threadRef]);
   const worktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
   const effectiveWorktreePath = launchContext !== null ? launchContext.worktreePath : worktreePath;
   const cwd =

@@ -5,6 +5,8 @@ import { readTimelineTopInset } from "./timelineScrollAnchoring";
 import { useThreadFindHighlights } from "./threadFindHighlights";
 
 const FIND_MATCH_VIEW_MARGIN = 96;
+const FIND_SCROLL_VIEWPORT_SELECTOR =
+  'pre, .chat-markdown-table-container [data-slot="scroll-area-viewport"]';
 
 type FindEntries = readonly { readonly id: string }[];
 
@@ -125,13 +127,20 @@ function revealThreadFindMatch(
     return;
   }
 
-  const codeScroller = range.startContainer.parentElement?.closest("pre");
-  if (codeScroller) {
+  for (
+    let horizontalViewport = range.startContainer.parentElement?.closest<HTMLElement>(
+      FIND_SCROLL_VIEWPORT_SELECTOR,
+    );
+    horizontalViewport;
+    horizontalViewport = horizontalViewport.parentElement?.closest<HTMLElement>(
+      FIND_SCROLL_VIEWPORT_SELECTOR,
+    )
+  ) {
     const rect = range.getBoundingClientRect();
-    const viewport = codeScroller.getBoundingClientRect();
-    if (rect.left < viewport.left) codeScroller.scrollLeft += rect.left - viewport.left - 16;
+    const viewport = horizontalViewport.getBoundingClientRect();
+    if (rect.left < viewport.left) horizontalViewport.scrollLeft += rect.left - viewport.left - 16;
     else if (rect.right > viewport.right)
-      codeScroller.scrollLeft += rect.right - viewport.right + 16;
+      horizontalViewport.scrollLeft += rect.right - viewport.right + 16;
   }
   const rect = range.getBoundingClientRect();
   const viewport = container?.getBoundingClientRect();

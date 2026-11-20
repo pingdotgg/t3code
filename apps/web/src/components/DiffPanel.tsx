@@ -542,7 +542,7 @@ export default function DiffPanel({
 
   const toolCallPreview =
     toolCallSelection && toolCallItem?.type === "file_change"
-      ? toolCallDiff(toolCallItem, messages)
+      ? toolCallDiff(toolCallItem, activeCwd, messages)
       : null;
   const selectedPatch = toolCallSelection
     ? toolCallPreview?.patch

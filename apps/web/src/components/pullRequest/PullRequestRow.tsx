@@ -73,7 +73,8 @@ export function PullRequestRowLabels({
         current.shown === shown && current.left === left ? current : { shown, left },
       );
     };
-    measure();
+    // Measured only when the observer delivers, after layout and batched across rows: a read
+    // here, in the commit, forced a layout per row. It delivers each new target's first size.
     // The chips too: a web font landing resizes them inside a line that keeps its width.
     return observeLabelFit([group, ...chips], measure);
   };

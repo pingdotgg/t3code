@@ -4,8 +4,15 @@ import { Component, useEffectEvent, useLayoutEffect, useRef } from "react";
 
 import { useClientSettings } from "../hooks/useSettings";
 import { closedLayoutTabIds } from "../layout/layoutModel";
+import { isScrollingWorkspacesEnabled } from "../layout/layoutBehavior";
 import { useLayoutStore } from "../layout/layoutStore";
-import { MotionAnimation, playMotion, toDevicePixel, type MotionRun } from "./animation";
+import {
+  FINE_STEP_MS,
+  MotionAnimation,
+  playMotion,
+  toDevicePixel,
+  type MotionRun,
+} from "./animation";
 import { takePaneDrop } from "./paneDrop";
 import { configureMotion } from "./registry";
 import { afterResizeObservers, liftSlideClips, sidebarSlideStarting } from "./slideTrack";
@@ -131,7 +138,7 @@ function trackContent(
   stage: HTMLElement,
   shown: Map<HTMLElement, { left: number; right: number }>,
   anchors: Map<HTMLElement, Anchor>,
-  stepped: boolean,
+  stepped: boolean | number,
 ) {
   for (const [pane, unlift] of unlifts) {
     if (stage.contains(pane)) {
@@ -234,7 +241,10 @@ const ADJACENT_GAP_PX = 16;
 const DEFAULT_PANEL_MS = 150;
 
 /** Whole device pixels, except beside the sidebar slide's smooth curve, which they would lag. */
-let stepped = true;
+let stepped: boolean | number = true;
+
+/** Scrolling workspaces step panes on the camera's fine grid; off keeps its 8 ms one. */
+const pixelGrid = () => (isScrollingWorkspacesEnabled() ? FINE_STEP_MS : true);
 
 function slide(
   element: HTMLElement,
@@ -734,7 +744,7 @@ export function usePaneMotion(
       before.key === key &&
       framed &&
       (before.viewportWidth === viewportWidth || sidebarSlideStarting());
-    stepped = !sidebarSlideStarting();
+    stepped = sidebarSlideStarting() ? false : pixelGrid();
     const scroller = stage.parentElement;
     const shown = scroller ? (shownScrolls.get(scroller) ?? null) : null;
     const camera =
@@ -807,11 +817,11 @@ export function usePaneMotion(
           element.scrollLeft = left;
         }
       }
-      if (edge) playMotion(edge.element, motion, keyframe, undefined, undefined, true);
+      if (edge) playMotion(edge.element, motion, keyframe, undefined, undefined, pixelGrid());
       if (camera === 0 && passesEnd(box, offset.dx, viewEnd)) {
         for (const corner of ghost.querySelectorAll<HTMLElement>(END_CORNERS)) {
           const back = (progress: number) => translate(-offset.dx * progress, 0);
-          playMotion(corner, motion, back, undefined, undefined, true);
+          playMotion(corner, motion, back, undefined, undefined, pixelGrid());
         }
       }
       playMotion(
@@ -820,7 +830,7 @@ export function usePaneMotion(
         (progress) => translate(offset.dx * progress - camera, offset.dy * progress),
         done,
         undefined,
-        true,
+        pixelGrid(),
       );
     }
     const tracked = shownBefore.get(stage);

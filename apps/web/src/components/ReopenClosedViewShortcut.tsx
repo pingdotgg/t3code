@@ -54,6 +54,9 @@ import {
 } from "../threadRoutes";
 import { toastManager } from "./ui/toast";
 import { readIssueListPreferences } from "./issue/issueListPreferences";
+import { findLayoutTabByContent, isLayoutPageContent } from "../layout/layoutModel";
+import { useLayoutStore } from "../layout/layoutStore";
+import { layoutPageHref } from "../layout/pageNavigation";
 
 const PREVIEW_FORWARDED_COMMANDS = [
   "workspace.focusNext",
@@ -154,6 +157,14 @@ export function ReopenClosedViewShortcut() {
       return;
     }
     useClosedViewStore.getState().remove(restore.id);
+    if (restore.kind === "page") {
+      const content = findLayoutTabByContent(useLayoutStore.getState().layout, {
+        kind: restore.page,
+      })?.tab.content;
+      if (content && isLayoutPageContent(content))
+        await navigate({ href: layoutPageHref(content) });
+      return;
+    }
     if (restore.kind === "chat") {
       const target = closedChatTarget(restore);
       if (target.kind === "draft")

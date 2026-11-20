@@ -24,6 +24,7 @@ import {
 import { getLocalStorageItem, removeLocalStorageItem } from "../hooks/useLocalStorage";
 import {
   isRichTextBoldShortcut,
+  isSidebarToggleShortcut,
   resolveShortcutCommand,
   shortcutLabelForCommand,
 } from "../keybindings";
@@ -392,15 +393,17 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
         // with just a caret, and everywhere else, it toggles the sidebar.
         return;
       }
-      const command = resolveShortcutCommand(event, keybindings, {
-        context: {
-          terminalFocus: isTerminalFocused(),
-          previewFocus: isPreviewFocused(),
-          ...readRoutePanelsOpen(router),
-          usagePageOpen,
-        },
-      });
-      if (command !== "sidebar.toggle") return;
+      if (
+        !isSidebarToggleShortcut(event, keybindings, {
+          context: {
+            terminalFocus: isTerminalFocused(),
+            previewFocus: isPreviewFocused(),
+            ...readRoutePanelsOpen(router),
+            usagePageOpen,
+          },
+        })
+      )
+        return;
 
       event.preventDefault();
       event.stopPropagation();
@@ -578,9 +581,8 @@ export function AppSidebarLayout({
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
   const pathname = useLocation({ select: (location) => location.pathname });
-  const panelAnimationsSuppressed = usePanelNavigationSuppression(pathname);
-  // Each chat suppresses its own panels (SurfaceHost). React propagates a context change past
-  // nested providers, so a flip here on a chat switch would re-render every mounted chat twice.
+  // Each chat suppresses its own panels (SurfaceHost). A flip here on a chat switch would
+  // re-render every mounted chat twice and restyle the shell, whose eased sizes stay put.
   const onChatRoute = useParams({
     strict: false,
     select: (params) => resolveThreadRouteTarget(params) !== null,
@@ -588,7 +590,7 @@ export function AppSidebarLayout({
   const pagePanelAnimationsSuppressed = usePanelNavigationSuppression(
     onChatRoute ? "chat" : pathname,
   );
-  const routePanelAnimationsActive = panelAnimationsActive && !panelAnimationsSuppressed;
+  const routePanelAnimationsActive = panelAnimationsActive && !pagePanelAnimationsSuppressed;
   const isOnDesignSystem =
     DesignSystemSidebarNav !== null &&
     (pathname === "/design-system" || pathname.startsWith("/design-system/"));

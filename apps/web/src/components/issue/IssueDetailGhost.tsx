@@ -74,6 +74,11 @@ export function IssueDetailGhost({ seed }: { seed?: IssueListEntry | null }) {
         <GhostBar className="h-3.5 w-full" />
         <GhostBar className="h-3.5 w-5/6" />
         <GhostBar className="h-3.5 w-2/3" />
+        {/* The labels and assignees line. */}
+        <div className="-mt-1 flex h-6 items-center gap-4">
+          <GhostBar className="w-20" />
+          <GhostBar className="w-24" />
+        </div>
         <GhostBar className="mt-4 w-16" />
         {[0, 1].map((row) => (
           <div key={row} className="flex flex-col gap-2 rounded-xl surface-panel px-3 py-2.5">

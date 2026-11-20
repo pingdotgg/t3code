@@ -360,19 +360,23 @@ export const make: Effect.Effect<
       decode: decodeAs(decodeTypes),
     }).pipe(Effect.map((types) => types.value));
 
-  // Each `az` call costs seconds of startup, and a project's states rarely change.
-  const listClosedStates = yield* Cache.makeWith(
+  // Shares one in-flight workflow read per project; only a success replaces the cached states.
+  const workflowReads = yield* Cache.makeWith(
     (key: string) => {
       const [cwd, organization, project] = JSON.parse(key) as [string, string, string];
       return workItemTypes({ cwd, organization, project, operation: "listIssues" }).pipe(
         Effect.map(closedStateNames),
+        Effect.tap((closed) => Cache.set(listClosedStates, key, closed)),
       );
     },
-    {
+    { capacity: Infinity, timeToLive: () => Duration.zero },
+  );
+  // Each `az` call costs seconds of startup, and a project's states rarely change.
+  const listClosedStates: Cache.Cache<string, ClosedStates, IssueTrackerError> =
+    yield* Cache.makeWith((key: string) => Cache.get(workflowReads, key), {
       capacity: 256,
       timeToLive: (exit) => (Exit.isSuccess(exit) ? CLOSED_STATES_TTL : Duration.zero),
-    },
-  );
+    });
 
   const workItem = (input: {
     readonly cwd: string;
@@ -613,12 +617,12 @@ export const make: Effect.Effect<
       const created = input.sort === "created";
       const dateField = created ? "[System.CreatedDate]" : "[System.ChangedDate]";
       return yield* scoped("listIssues", input).pipe(
-        Effect.flatMap((scope) =>
-          Cache.get(
-            listClosedStates,
-            JSON.stringify([input.cwd, scope.organization, scope.project]),
-          ).pipe(Effect.map((closed) => ({ scope, closed }))),
-        ),
+        Effect.flatMap((scope) => {
+          const key = JSON.stringify([input.cwd, scope.organization, scope.project]);
+          const refresh = cursor === undefined && input.refresh === true;
+          const closed = refresh ? Cache.get(workflowReads, key) : Cache.get(listClosedStates, key);
+          return closed.pipe(Effect.map((closed) => ({ scope, closed })));
+        }),
         Effect.flatMap(({ scope, closed }) =>
           invokeWithBody({
             cwd: input.cwd,

@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode, type RefObject } from "react";
+import { useEffect, useRef, type ReactNode, type Ref } from "react";
 
 import { cn } from "~/lib/utils";
 import { useLayoutPaneFocusedRef } from "~/layout/layoutPaneContext";
@@ -26,7 +26,6 @@ export function WorkItemListColumn({
   filtersMenu,
   savedViewsMenu,
   rightPanelOpen,
-
   maximizedAway,
   split,
   listBody,
@@ -46,12 +45,11 @@ export function WorkItemListColumn({
   filtersMenu: ReactNode;
   savedViewsMenu: ReactNode;
   rightPanelOpen: boolean;
-
   maximizedAway: boolean;
   /** Whether the list sits beside an open review as its own pane. */
   split: boolean;
   listBody: ReactNode;
-  scrollRef: RefObject<HTMLDivElement | null>;
+  scrollRef: Ref<HTMLDivElement>;
 }) {
   const contentArea = workspaceAreaProps(area, 1, title);
   const focusedRef = useLayoutPaneFocusedRef();
@@ -86,9 +84,12 @@ export function WorkItemListColumn({
       {/* Beside an open review that pane holds the window's top-right corner; otherwise
           the layout pane's own edge decides. */}
       <SettingsPaneHeader transparent trailingEdge={split || rightPanelOpen ? false : undefined}>
-        <SettingsTabNotch title={title} icon={icon}>
-          <h1 className="truncate">{title}</h1>
-        </SettingsTabNotch>
+        {/* Maximized away, the open review's notch holds the pane's tabs instead. */}
+        {maximizedAway ? null : (
+          <SettingsTabNotch title={title} icon={icon}>
+            <h1 className="truncate">{title}</h1>
+          </SettingsTabNotch>
+        )}
       </SettingsPaneHeader>
 
       <div

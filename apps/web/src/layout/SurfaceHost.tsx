@@ -1,7 +1,15 @@
 import { useGT } from "gt-react";
 import { Button } from "~/components/ui/button";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { memo, useDeferredValue, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  Activity,
+  memo,
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 
 import { kickBrowserSurfaceTracking } from "../browser/browserSurfaceTracking";
 import { ThreadRouteView } from "../components/ThreadRouteView";
@@ -12,8 +20,15 @@ import { SidebarInset } from "../components/ui/sidebar";
 import { StatusDot } from "../components/ui/status-dot";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useScrollingWorkspacesEnabled } from "../hooks/useSettings";
-import { cn, isMacPlatform } from "../lib/utils";
-import { scrollTabStripFromRow, sidewaysWheelScrollsStrip, wheelDeltaPx } from "../motion/gesture";
+import { cn } from "../lib/utils";
+import {
+  layoutChordHeld,
+  listenLayoutWheel,
+  scrollTabStripFromRow,
+  sidewaysWheelStripScroll,
+  WHEEL_STREAM_IDLE_MS,
+  wheelDeltaPx,
+} from "../motion/gesture";
 import { noteStripScroll, PaneMotionSnapshot, usePaneMotion } from "../motion/paneMotion";
 import {
   ChatPanelAnimationSuppressionProvider,
@@ -133,6 +148,8 @@ const USER_SCROLL_END_MS = 250;
  * recently; a fling keeps scrolling a while after the touch ends.
  */
 const USER_SCROLL_SETTLE_WINDOW_MS = 2000;
+/** A strip scroll this soon after a sideways wheel is the wheel's: about one busy frame. */
+const USER_WHEEL_SCROLL_MS = 100;
 /** The first off-screen pane an agent opened on each side of the window. */
 interface UnseenPeeks {
   left: string | null;
@@ -192,6 +209,73 @@ type ClosingTab = { placed: { slot: LayoutPaneSlot; style: React.CSSProperties }
   | { kind: "bare" }
 );
 const NO_GHOSTS: ReadonlyMap<string, ClosingTab> = new Map();
+
+/** A shown surface tab, by the pane and thread it shows in. */
+interface SurfaceMountRequest {
+  readonly tabId: string;
+  readonly paneId: string;
+  readonly threadKey: string;
+}
+
+/** The element a shown surface tab renders in: kept across a switch among its pane's tabs. */
+interface SurfaceMount {
+  readonly key: string;
+  readonly paneId: string;
+  readonly threadKey: string;
+}
+const NO_SURFACE_MOUNTS: ReadonlyMap<string, SurfaceMount> = new Map();
+
+/**
+ * Which element each shown surface tab renders in, by tab id. A tab keeps its
+ * own, also into another pane; a tab newly shown in a pane takes the element
+ * its pane's last tab of the same thread showed in, so its header and strip
+ * stay and only the content changes, as a right panel's header does.
+ */
+export function selectSurfaceMounts(
+  previous: ReadonlyMap<string, SurfaceMount>,
+  shown: readonly SurfaceMountRequest[],
+): ReadonlyMap<string, SurfaceMount> {
+  const next = new Map<string, SurfaceMount>();
+  const claimed = new Set<string>();
+  const take = (tabId: string, paneId: string, threadKey: string, key: string) => {
+    next.set(tabId, { key, paneId, threadKey });
+    claimed.add(key);
+  };
+  const waiting: SurfaceMountRequest[] = [];
+  for (const entry of shown) {
+    const own = previous.get(entry.tabId);
+    if (own && !claimed.has(own.key)) take(entry.tabId, entry.paneId, entry.threadKey, own.key);
+    else waiting.push(entry);
+  }
+  const fresh: SurfaceMountRequest[] = [];
+  for (const entry of waiting) {
+    const pane = [...previous.values()].find(
+      (mount) =>
+        mount.paneId === entry.paneId &&
+        mount.threadKey === entry.threadKey &&
+        !claimed.has(mount.key),
+    );
+    if (pane) take(entry.tabId, entry.paneId, entry.threadKey, pane.key);
+    else fresh.push(entry);
+  }
+  // A new element never reuses a key that was just in use: React would keep that element.
+  const used = new Set([...claimed, ...[...previous.values()].map((mount) => mount.key)]);
+  for (const { tabId, paneId, threadKey } of fresh) {
+    let key = tabId;
+    for (let n = 2; used.has(key); n += 1) key = `${tabId}#${n}`;
+    used.add(key);
+    take(tabId, paneId, threadKey, key);
+  }
+  const unchanged =
+    next.size === previous.size &&
+    [...next].every(([tabId, mount]) => {
+      const was = previous.get(tabId);
+      return (
+        was?.key === mount.key && was.paneId === mount.paneId && was.threadKey === mount.threadKey
+      );
+    });
+  return unchanged ? previous : next;
+}
 
 /**
  * Whether a pane sits under the window's caption buttons: unset reads the
@@ -1030,36 +1114,54 @@ export function LayoutSurfaceHost({
   // Hold alt+cmd and the strip follows the wheel sideways and a middle-button
   // drag, wherever the pointer is (pen ZlxmK). Up and down switch workspaces
   // (motion/workspaceSwitch.ts). Any sideways scroll of the user's takes the
-  // camera over from a spring in flight.
+  // camera over from a spring in flight. A plain sideways wheel scrolls the
+  // strip natively, on the compositor, so a busy main thread never stalls it.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own wheel and swipe subscriptions on the mounted workspace scroller.
   useEffect(() => {
     const scroller = scrollerRef.current;
     if (!scrollingWorkspaces || !scroller) return;
-    const mac = isMacPlatform(navigator.platform);
-    const held = (event: MouseEvent) =>
-      mac ? event.metaKey && event.altKey : event.ctrlKey && event.altKey;
-    const moveStrip = (event: WheelEvent, delta: number) => {
+    const onWheel = (event: WheelEvent) => {
+      if (!layoutChordHeld(event) || Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return;
       event.preventDefault();
+      settleStripCamera();
+      noteUserStripScroll();
+      scroller.scrollLeft += wheelDeltaPx(event.deltaX, event);
+    };
+    // Decided once per wheel stream, as the browser latches a scroll to one target.
+    let stream: { at: number; scroll: "native" | "script" | null } | null = null;
+    let sidewaysWheelAt = Number.NEGATIVE_INFINITY;
+    const onSidewaysWheel = (event: WheelEvent) => {
+      if (event.defaultPrevented || layoutChordHeld(event)) return;
+      const now = performance.now();
+      const shifted = event.shiftKey && event.deltaX === 0;
+      const delta = shifted ? event.deltaY : event.deltaX;
+      if (!stream || now - stream.at > WHEEL_STREAM_IDLE_MS) {
+        stream = {
+          at: now,
+          scroll: sidewaysWheelStripScroll(
+            event.composedPath(),
+            scroller,
+            delta,
+            shifted ? 0 : event.deltaY,
+          ),
+        };
+      }
+      stream.at = now;
+      if (stream.scroll === "native") sidewaysWheelAt = now;
+      if (stream.scroll !== "script") return;
+      // Past a code block that ends the browser's scroll chain, script moves the strip.
       settleStripCamera();
       noteUserStripScroll();
       scroller.scrollLeft += wheelDeltaPx(delta, event);
     };
-    const onWheel = (event: WheelEvent) => {
-      if (held(event) && Math.abs(event.deltaX) > Math.abs(event.deltaY))
-        moveStrip(event, event.deltaX);
-    };
-    const onSidewaysWheel = (event: WheelEvent) => {
-      if (event.defaultPrevented) return;
-      const shifted = event.shiftKey && event.deltaX === 0;
-      const delta = shifted ? event.deltaY : event.deltaX;
-      if (
-        sidewaysWheelScrollsStrip(event.composedPath(), scroller, delta, shifted ? 0 : event.deltaY)
-      ) {
-        moveStrip(event, delta);
-      }
+    // The strip itself moved right after a sideways wheel: the user's scroll.
+    const onScroll = () => {
+      if (performance.now() - sidewaysWheelAt > USER_WHEEL_SCROLL_MS) return;
+      settleStripCamera();
+      noteUserStripScroll();
     };
     const onPointerDown = (event: PointerEvent) => {
-      if (event.button !== 1 || !held(event)) return;
+      if (event.button !== 1 || !layoutChordHeld(event)) return;
       event.preventDefault();
       settleStripCamera();
       const startX = event.clientX;
@@ -1082,13 +1184,15 @@ export function LayoutSurfaceHost({
       settleStripCamera();
       noteUserStripScroll();
     };
-    scroller.addEventListener("wheel", onWheel, { passive: false, capture: true });
-    scroller.addEventListener("wheel", onSidewaysWheel, { passive: false });
+    const chordWheel = listenLayoutWheel(scroller, onWheel, { capture: true });
+    scroller.addEventListener("wheel", onSidewaysWheel, { passive: true });
+    scroller.addEventListener("scroll", onScroll, { passive: true });
     scroller.addEventListener("pointerdown", onPointerDown, true);
     scroller.addEventListener("touchmove", onTouchMove, { passive: true });
     return () => {
-      scroller.removeEventListener("wheel", onWheel, true);
+      chordWheel.stop();
       scroller.removeEventListener("wheel", onSidewaysWheel);
+      scroller.removeEventListener("scroll", onScroll);
       scroller.removeEventListener("pointerdown", onPointerDown, true);
       scroller.removeEventListener("touchmove", onTouchMove);
     };
@@ -1256,6 +1360,16 @@ export function LayoutSurfaceHost({
     const content = surfaceTabsById.get(tabId);
     return content ? [{ placed, tabId, content }] : [];
   });
+  const [surfaceMounts, setSurfaceMounts] = useState(NO_SURFACE_MOUNTS);
+  const nextSurfaceMounts = selectSurfaceMounts(
+    surfaceMounts,
+    surfaceSlots.map(({ tabId, placed, content }) => ({
+      tabId,
+      paneId: placed.slot.paneId,
+      threadKey: scopedThreadKey(content.threadRef),
+    })),
+  );
+  if (nextSurfaceMounts !== surfaceMounts) setSurfaceMounts(nextSurfaceMounts);
   const launcherSlots = [...slotByTabId].flatMap(([tabId, placed]) => {
     const content = launcherTabsById.get(tabId);
     return content ? [{ placed, tabId, content }] : [];
@@ -1404,6 +1518,8 @@ export function LayoutSurfaceHost({
       inert={background}
       ref={rootRef}
       data-strip-under-controls={active && split && !staged ? "" : undefined}
+      data-split-panes={active && split ? "" : undefined}
+      data-pane-cuts=""
     >
       <div
         ref={scrollerRef}
@@ -1582,7 +1698,7 @@ export function LayoutSurfaceHost({
           )}
           {surfaceSlots.map(({ placed, tabId, content }) => (
             <LayoutSurfaceTabSurface
-              key={tabId}
+              key={nextSurfaceMounts.get(tabId)?.key ?? tabId}
               active={active}
               tabId={tabId}
               content={content}
@@ -1640,7 +1756,24 @@ export function LayoutSurfaceHost({
           ) : null}
         </>
       ) : null}
+      {active && !split && !staged ? <LonePaneCorners /> : null}
     </SidebarInset>
+  );
+}
+
+/**
+ * A lone pane's corners, painted over the inset's square clip (index.css,
+ * [data-pane-cut]). On the inset rather than in the pane, so they stay out
+ * of the pane's layout.
+ */
+function LonePaneCorners() {
+  return (
+    <>
+      <span aria-hidden data-pane-cut="start-top" />
+      <span aria-hidden data-pane-cut="start-bottom" />
+      <span aria-hidden data-pane-cut="end-top" />
+      <span aria-hidden data-pane-cut="end-bottom" />
+    </>
   );
 }
 
@@ -1970,15 +2103,6 @@ function LayoutSurfaceTabSurface({
   } satisfies LayoutPaneState;
   const tab = { id: tabId, content } satisfies LayoutTab;
   const slotRef = useRef<HTMLDivElement | null>(null);
-  const focusOrigin = useRef(document.activeElement);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the control that gave the surface keyboard focus when its pane unmounts.
-  useLayoutEffect(() => {
-    const host = slotRef.current;
-    if (host) return holdSurfaceFocusOrigin(host, focusOrigin.current);
-  }, []);
-  // Focus that lands on the pane (cmd+J, alt+cmd+B, a launcher's letter, a
-  // click on its tab) moves the keyboard in.
-  usePaneKeyboard(slotRef, focused && !staged, surfaceKeyboardTarget);
   return (
     <div
       ref={slotRef}
@@ -2008,8 +2132,32 @@ function LayoutSurfaceTabSurface({
         ) : null}
       </LayoutPaneContext>
       {split && !staged ? <PaneCuts /> : null}
+      <SurfaceTabFocus key={tabId} slotRef={slotRef} focused={focused && !staged} />
     </div>
   );
+}
+
+/**
+ * Keyboard focus for each tab shown in a surface's element, as when every tab
+ * mounted its own: focus that lands on the pane (cmd+J, alt+cmd+B, a
+ * launcher's letter, a click on its tab) moves the keyboard in, and the
+ * control that gave the tab focus gets it back as the tab leaves.
+ */
+function SurfaceTabFocus({
+  slotRef,
+  focused,
+}: {
+  slotRef: React.RefObject<HTMLDivElement | null>;
+  focused: boolean;
+}) {
+  const focusOrigin = useRef(document.activeElement);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the control that gave the surface keyboard focus when its tab leaves the pane.
+  useLayoutEffect(() => {
+    const host = slotRef.current;
+    if (host) return holdSurfaceFocusOrigin(host, focusOrigin.current);
+  }, [slotRef]);
+  usePaneKeyboard(slotRef, focused, surfaceKeyboardTarget);
+  return null;
 }
 
 /** Where the keyboard goes in each kind of pane that takes layout focus. */
@@ -2304,7 +2452,11 @@ function LayoutPageSurface({
       inert={!visible || staged}
       onPointerDownCapture={() => claimPaneFocus(tabId)}
     >
-      <LayoutPaneContext value={paneState}>{children}</LayoutPaneContext>
+      {/* Behind another tab, a page keeps its state and DOM but stops rendering and
+          subscribing until it is shown again. */}
+      <Activity mode={visible ? "visible" : "hidden"}>
+        <LayoutPaneContext value={paneState}>{children}</LayoutPaneContext>
+      </Activity>
       {split && !staged ? <PaneCuts /> : null}
     </div>
   );

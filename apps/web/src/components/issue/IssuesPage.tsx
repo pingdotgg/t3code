@@ -36,7 +36,7 @@ import {
   UsersIcon,
 } from "lucide-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
-import { Fragment, useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useState, type ReactNode } from "react";
 
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { IssueDetailPanel } from "~/components/issue/IssueDetailPanel";
@@ -65,6 +65,7 @@ import { PullRequestCompactFilterMenu } from "../pullRequest/PullRequestCompactF
 import { RightPanelMaximizeControl } from "../chat/PanelLayoutControls";
 import { RightPanelTabs } from "~/components/RightPanelTabs";
 import { WorkItemListColumn } from "../workItem/WorkItemListColumn";
+import { WorkItemWindowedList, type WorkItemListItem } from "../workItem/WorkItemWindowedList";
 import { Button } from "~/components/ui/button";
 import { Separator } from "~/components/ui/separator";
 import { SidebarInset, useMobileSidebarSheetMounted } from "~/components/ui/sidebar";
@@ -198,7 +199,8 @@ export function IssuesPage() {
   const projects = useProjects();
   const issuesSupported = useIssuesSupported();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const scrollRef = useRef<HTMLDivElement | null>(null);
+  // The windowed rows follow the page's scroller once it mounts.
+  const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null);
 
   const capableEnvironments = environments.filter(
     (environment) => environment.serverConfig?.environment.capabilities.issues === true,
@@ -234,7 +236,7 @@ export function IssuesPage() {
   // Refreshing a list still loading would cancel it and start over, losing the scopes already read.
   useLiveRefresh(
     () => {
-      if (!list.isPending) list.refresh();
+      if (!list.isPending) list.reload();
     },
     { key: JSON.stringify(targets) },
   );
@@ -537,6 +539,179 @@ export function IssuesPage() {
   const showTracker = groups.length > 1;
   const noneAnswered = list.answers.length === 0;
 
+  // Flat, so only the rows near the view mount; each group's gap rides on its first item.
+  const issueListItems = (): WorkItemListItem[] => {
+    const items: WorkItemListItem[] = [];
+    if (list.error) {
+      items.push({
+        key: "error",
+        type: "notice",
+        node: (
+          <div className="pb-3">
+            <div className="flex items-center justify-between gap-3 rounded-control border border-warning/30 bg-warning-surface px-3 py-2 text-meta">
+              <span>
+                <T>
+                  <Var>{list.error}</Var> Showing the issues that loaded.
+                </T>
+              </span>
+              <Button size="xs" variant="secondary" onClick={list.retry}>
+                <T>Retry</T>
+              </Button>
+            </div>
+          </div>
+        ),
+      });
+    }
+    for (const [groupIndex, group] of groups.entries()) {
+      const groupKey = issueTrackerKey(group.tracker);
+      const presentation = issueTrackerPresentation(group.tracker.tracker);
+      const showScope = new Set(group.rows.map((row) => row.scope.toLowerCase())).size > 1;
+      // Said in the rows' text column, under the heading, where the rows would be.
+      const note = (text: ReactNode, tone: "muted" | "error" = "muted") => (
+        <p
+          className={cn(
+            "ps-10 pe-3 py-1.5 text-body",
+            tone === "error" ? "text-destructive-foreground" : "text-muted-foreground",
+          )}
+        >
+          {text}
+        </p>
+      );
+      items.push({
+        key: `${groupKey}:header`,
+        type: "header",
+        node: (
+          <div className={groupIndex > 0 ? "pt-3" : undefined}>
+            <WorkItemGroupHeader
+              icon={presentation.Icon}
+              label={presentation.providerName}
+              // The host sits with the count, in the quieter ink, after the tracker's name.
+              count={
+                <span className="inline-flex gap-2">
+                  {presentation.providerName.toLowerCase() !== group.tracker.host ? (
+                    <span>{group.tracker.host}</span>
+                  ) : null}
+                  <span>
+                    {gt("{count, plural, one {{count} project} other {{count} projects}}", {
+                      count: group.tracker.projectCount,
+                    })}
+                  </span>
+                </span>
+              }
+            />
+          </div>
+        ),
+      });
+      if (!group.tracker.configured) {
+        items.push({
+          key: `${groupKey}:unconfigured`,
+          type: "note",
+          node: note(
+            group.tracker.detail === null
+              ? gt("This tracker cannot be read right now.")
+              : issueTrackerDetailText(group.tracker.detail, resolve),
+          ),
+        });
+      }
+      for (const error of group.errors) {
+        items.push({
+          key: `${groupKey}:error:${error.environmentId}:${error.projectTitle}`,
+          type: "note",
+          node: note(`${error.projectTitle}: ${error.message}`, "error"),
+        });
+      }
+      if (group.tracker.configured && group.rows.length === 0 && group.errors.length === 0) {
+        items.push({
+          key: `${groupKey}:empty`,
+          type: "notice",
+          node: debouncedQuery ? (
+            <PullRequestListNotice
+              icon={SearchIcon}
+              title={<T>Nothing matches that.</T>}
+              description={null}
+            >
+              <Button size="sm" variant="secondary" onClick={() => updateSearch({ q: undefined })}>
+                <T>Clear search</T>
+              </Button>
+            </PullRequestListNotice>
+          ) : (
+            <PullRequestListNotice
+              icon={IssueGlyph.issue}
+              title={<T>No issues under these filters.</T>}
+              description={null}
+            >
+              {listFiltered ? (
+                <Button size="sm" variant="secondary" onClick={clearListFilters}>
+                  <T>Clear filters</T>
+                </Button>
+              ) : null}
+            </PullRequestListNotice>
+          ),
+        });
+      }
+      for (const [index, row] of group.rows.entries()) {
+        const key = issueEntryKey(row);
+        const selected =
+          renderedSurface?.kind === "issue" &&
+          renderedSurface.environmentId === row.environmentId &&
+          issueEntryKey({
+            ...renderedSurface,
+            host: renderedSurface.host ?? "",
+            projectId: renderedSurface.projectId as ProjectId,
+          }) === key;
+        items.push({
+          key: `${groupKey}:${row.environmentId}:${key}`,
+          type: "row",
+          node: (
+            <div>
+              {index > 0 ? <Separator /> : null}
+              <IssueRow
+                entry={row}
+                selected={selected}
+                showScope={showScope}
+                showTracker={showTracker}
+                {...(capableEnvironments.length > 1 && environmentLabels.has(row.environmentId)
+                  ? { environmentLabel: environmentLabels.get(row.environmentId) }
+                  : {})}
+                onSelect={selectEntry}
+              />
+            </div>
+          ),
+        });
+      }
+      for (const environmentId of group.more) {
+        const moreFailure = held.get(environmentId)?.moreFailure ?? null;
+        const loadingThis = loadingMore === `${environmentId} ${group.tracker.host}`;
+        items.push({
+          key: `${groupKey}:more:${environmentId}`,
+          type: "more",
+          node: (
+            <div className="flex flex-col items-center gap-2 py-3 text-meta text-muted-foreground">
+              {moreFailure === null ? null : (
+                <span className="text-destructive-foreground">{moreFailure}</span>
+              )}
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={loadingMore !== null}
+                onClick={() => void loadMore(environmentId, group.tracker.host)}
+              >
+                {loadingThis ? (
+                  <T>Loading…</T>
+                ) : moreFailure === null ? (
+                  <T>Load more</T>
+                ) : (
+                  <T>Retry</T>
+                )}
+              </Button>
+            </div>
+          ),
+        });
+      }
+    }
+    return items;
+  };
+
   const listBody: ReactNode = !issuesSupported ? (
     <PullRequestListNotice
       icon={IssueGlyph.issue}
@@ -563,151 +738,11 @@ export function IssuesPage() {
       description={<T>Add a project whose remote is on a supported tracker.</T>}
     />
   ) : (
-    <div className="flex flex-col gap-3">
-      {list.error ? (
-        <div className="flex items-center justify-between gap-3 rounded-control border border-warning/30 bg-warning-surface px-3 py-2 text-meta">
-          <span>
-            <T>
-              <Var>{list.error}</Var> Showing the issues that loaded.
-            </T>
-          </span>
-          <Button size="xs" variant="secondary" onClick={list.retry}>
-            <T>Retry</T>
-          </Button>
-        </div>
-      ) : null}
-      {groups.map((group) => {
-        const presentation = issueTrackerPresentation(group.tracker.tracker);
-        const showScope = new Set(group.rows.map((row) => row.scope.toLowerCase())).size > 1;
-        // Said in the rows' text column, under the heading, where the rows would be.
-        const note = (text: ReactNode, tone: "muted" | "error" = "muted") => (
-          <p
-            className={cn(
-              "ps-10 pe-3 py-1.5 text-body",
-              tone === "error" ? "text-destructive-foreground" : "text-muted-foreground",
-            )}
-          >
-            {text}
-          </p>
-        );
-        return (
-          <section key={issueTrackerKey(group.tracker)} className="flex flex-col">
-            <WorkItemGroupHeader
-              icon={presentation.Icon}
-              label={presentation.providerName}
-              // The host sits with the count, in the quieter ink, after the tracker's name.
-              count={
-                <span className="inline-flex gap-2">
-                  {presentation.providerName.toLowerCase() !== group.tracker.host ? (
-                    <span>{group.tracker.host}</span>
-                  ) : null}
-                  <span>
-                    {gt("{count, plural, one {{count} project} other {{count} projects}}", {
-                      count: group.tracker.projectCount,
-                    })}
-                  </span>
-                </span>
-              }
-            />
-            {!group.tracker.configured
-              ? note(
-                  group.tracker.detail === null
-                    ? gt("This tracker cannot be read right now.")
-                    : issueTrackerDetailText(group.tracker.detail, resolve),
-                )
-              : null}
-            {group.errors.map((error) => (
-              <Fragment key={`${error.environmentId}:${error.projectTitle}`}>
-                {note(`${error.projectTitle}: ${error.message}`, "error")}
-              </Fragment>
-            ))}
-            {group.tracker.configured && group.rows.length === 0 && group.errors.length === 0 ? (
-              debouncedQuery ? (
-                <PullRequestListNotice
-                  icon={SearchIcon}
-                  title={<T>Nothing matches that.</T>}
-                  description={null}
-                >
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => updateSearch({ q: undefined })}
-                  >
-                    <T>Clear search</T>
-                  </Button>
-                </PullRequestListNotice>
-              ) : (
-                <PullRequestListNotice
-                  icon={IssueGlyph.issue}
-                  title={<T>No issues under these filters.</T>}
-                  description={null}
-                >
-                  {listFiltered ? (
-                    <Button size="sm" variant="secondary" onClick={clearListFilters}>
-                      <T>Clear filters</T>
-                    </Button>
-                  ) : null}
-                </PullRequestListNotice>
-              )
-            ) : null}
-            {group.rows.map((row, index) => {
-              const key = issueEntryKey(row);
-              const selected =
-                renderedSurface?.kind === "issue" &&
-                renderedSurface.environmentId === row.environmentId &&
-                issueEntryKey({
-                  ...renderedSurface,
-                  host: renderedSurface.host ?? "",
-                  projectId: renderedSurface.projectId as ProjectId,
-                }) === key;
-              return (
-                <Fragment key={`${row.environmentId}:${key}`}>
-                  {index > 0 ? <Separator /> : null}
-                  <IssueRow
-                    entry={row}
-                    selected={selected}
-                    showScope={showScope}
-                    showTracker={showTracker}
-                    {...(capableEnvironments.length > 1 && environmentLabels.has(row.environmentId)
-                      ? { environmentLabel: environmentLabels.get(row.environmentId) }
-                      : {})}
-                    onSelect={selectEntry}
-                  />
-                </Fragment>
-              );
-            })}
-            {group.more.map((environmentId) => {
-              const moreFailure = held.get(environmentId)?.moreFailure ?? null;
-              const loadingThis = loadingMore === `${environmentId} ${group.tracker.host}`;
-              return (
-                <div
-                  key={environmentId}
-                  className="flex flex-col items-center gap-2 py-3 text-meta text-muted-foreground"
-                >
-                  {moreFailure === null ? null : (
-                    <span className="text-destructive-foreground">{moreFailure}</span>
-                  )}
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    disabled={loadingMore !== null}
-                    onClick={() => void loadMore(environmentId, group.tracker.host)}
-                  >
-                    {loadingThis ? (
-                      <T>Loading…</T>
-                    ) : moreFailure === null ? (
-                      <T>Load more</T>
-                    ) : (
-                      <T>Retry</T>
-                    )}
-                  </Button>
-                </div>
-              );
-            })}
-          </section>
-        );
-      })}
-    </div>
+    <WorkItemWindowedList
+      items={issueListItems()}
+      scrollElement={scrollElement}
+      estimatedItemSize={61}
+    />
   );
 
   const openPanelControls =
@@ -829,7 +864,7 @@ export function IssuesPage() {
           maximizedAway={rightPanelMaximized}
           split={splitPanes}
           listBody={listBody}
-          scrollRef={scrollRef}
+          scrollRef={setScrollElement}
         />
 
         {splitPanes ? (
@@ -838,6 +873,7 @@ export function IssuesPage() {
             pane
             open={rightPanelState.isOpen}
             maximized={rightPanelMaximized}
+            holdsPaneTabs={rightPanelMaximized}
             keybindings={keybindings}
             widthStorageKey="t3code:issue-panel-width"
             defaultWidth={
