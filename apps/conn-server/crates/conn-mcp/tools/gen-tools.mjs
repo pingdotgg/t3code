@@ -406,10 +406,10 @@ const htmlOut = NodePath.join(here, "../../conn-files/src/html-bootstrap.json");
 const htmlText = JSON.stringify({markup, minHeight: HTML_RENDER_MIN_HEIGHT, maxHeight: HTML_RENDER_MAX_HEIGHT, maxTitleLength: HTML_RENDER_MAX_TITLE_LENGTH}) + "\n";
 // MCP's advertised schemas omit decode-time checks and string normalization.
 const threadInputs = {};
-for (const [module,name] of [["attachment","AttachmentToolkit"],["worktree","WorktreeToolkit"],["orchestrator","OrchestratorToolkit"],["toolSearch","ToolSearchToolkit"],["credentials","CredentialsToolkit"],["panels","PanelsToolkit"]]) {
+for (const [module,name] of [["attachment","AttachmentToolkit"],["worktree","WorktreeToolkit"],["orchestrator","OrchestratorToolkit"],["toolSearch","ToolSearchToolkit"],["credentials","CredentialsToolkit"],["panels","PanelsToolkit"],["theme","ThemeToolkit"]]) {
   const toolkit = (await src(`mcp/toolkits/${module}/tools.ts`))[name];
   for (const [name,tool] of Object.entries(toolkit.tools)) {
-    if (!["create_threads","t3_attachment_prepare_upload","t3_attachment_discard","t3_thread_send_attachments","t3_worktree_handoff","t3_worktree_list","t3_workflow_stop","tool_search","save_test_login","request_credentials","database_query","mcp_call","mcp_connect"].includes(name)) continue;
+    if (!["create_threads","t3_attachment_prepare_upload","t3_attachment_discard","t3_thread_send_attachments","t3_worktree_handoff","t3_worktree_list","t3_workflow_stop","tool_search","save_test_login","request_credentials","database_query","mcp_call","mcp_connect","t3_theme_read","t3_theme_set"].includes(name)) continue;
     threadInputs[name] = schemaRule(tool.parametersSchema.ast, "decode");
   }
 }

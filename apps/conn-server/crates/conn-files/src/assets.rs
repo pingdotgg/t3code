@@ -126,6 +126,12 @@ pub enum Claims {
     NativeAppIcon {
         expires_at: u64,
     },
+    /// A published theme's background image. Published themes go to every client, so any
+    /// client may read their backgrounds.
+    EnvironmentThemeBackground {
+        theme_id: String,
+        expires_at: u64,
+    },
 }
 
 impl Claims {
@@ -137,7 +143,8 @@ impl Claims {
             | Claims::Attachment { expires_at, .. }
             | Claims::ProjectFavicon { expires_at, .. }
             | Claims::ProjectFaviconExternal { expires_at, .. }
-            | Claims::NativeAppIcon { expires_at } => *expires_at,
+            | Claims::NativeAppIcon { expires_at }
+            | Claims::EnvironmentThemeBackground { expires_at, .. } => *expires_at,
         }
     }
 }
@@ -415,8 +422,21 @@ impl Files {
             },
             // Tool output images live in turn items this server does not record yet.
             AssetResource::ToolOutputImage(_) => return Err(not_found(resource, None)),
-            // This server publishes no environment themes, so no theme has a background.
-            AssetResource::EnvironmentThemeBackground(_) => return Err(not_found(resource, None)),
+            // The id names a file in the themes folder; T3's decoder refuses any other.
+            AssetResource::EnvironmentThemeBackground(background) => {
+                if !crate::themes::is_theme_id(&background.theme_id) {
+                    return Err(not_found(resource, None));
+                }
+                Finalized {
+                    claims: Claims::EnvironmentThemeBackground {
+                        theme_id: background.theme_id.clone(),
+                        expires_at,
+                    },
+                    file_name: format!("{}-background", background.theme_id),
+                    image_dimensions: None,
+                    file_revision: None,
+                }
+            }
             // Fetching a host's private media needs its credentials; callers refuse first.
             AssetResource::GithubMedia(_) => {
                 return Err(AssetsCreateUrlError::AssetGitHubMediaUrlValidationError(
@@ -746,6 +766,25 @@ impl Files {
                 favicon_asset(path)
             }
             Claims::NativeAppIcon { .. } => None,
+            Claims::EnvironmentThemeBackground { theme_id, .. } => {
+                // The folder may be a link; the image itself may not be (`findThemeBackground`).
+                let dir = fs::canonicalize(self.themes.dir()).ok()?;
+                crate::themes::is_theme_id(&theme_id).then_some(())?;
+                let (path, _) = crate::themes::find_background(&dir, &theme_id, None)?;
+                // The route serves only the file it opens with this device and inode, so a link
+                // swapped in after the check is refused, as T3 serves from its no-follow handle.
+                let meta = fs::symlink_metadata(&path)
+                    .ok()
+                    .filter(fs::Metadata::is_file)?;
+                Some(Served::File {
+                    path,
+                    download: false,
+                    file_name: None,
+                    mime_type: None,
+                    render_intent: None,
+                    identity: Some(identity(&meta)),
+                })
+            }
             Claims::MediaFileExact {
                 file_path,
                 download,

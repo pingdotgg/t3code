@@ -103,3 +103,5 @@ set_issue_state
 link_issue
 unlink_issue
 list_thread_issues
+t3_theme_read
+t3_theme_set

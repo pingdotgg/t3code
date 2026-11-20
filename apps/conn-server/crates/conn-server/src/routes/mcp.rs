@@ -104,7 +104,7 @@ fn settings_port(environment: Arc<crate::environment::Environment>) -> conn_mcp:
             let environment = environment.clone();
             Box::pin(async move {
                 let writer = environment.clone();
-                tokio::task::spawn_blocking(move || writer.settings.update(patch, None))
+                tokio::task::spawn_blocking(move || writer.settings.update_server(patch))
                     .await
                     .map_err(|e| e.to_string())?
                     .map_err(|e| format!("{e:?}"))?;

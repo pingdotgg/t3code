@@ -169,6 +169,7 @@ run 2 120 "gen-upstream --check" node tools/gen-upstream.mjs --check
 run 2 120 "gen-graphql --check" node crates/conn-source-control/tools/gen-graphql.mjs --check
 run 2 120 "PR characterizations" node crates/conn-source-control/tools/gen-pr-cases.mjs --check
 run 2 60 "credential characterizations" node crates/conn-features/tools/gen-credential-cases.mjs --check
+run 2 60 "theme characterizations" node crates/conn-files/tools/gen-theme-cases.mjs --check
 run 2 120 "check-copies" node tools/check-copies.mjs
 decoded="$scratch/decoded-tags"
 : >"$decoded"

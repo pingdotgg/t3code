@@ -212,6 +212,22 @@ const program = Effect.gen(function* () {
         config.config.environment.environmentId === descriptor.environmentId,
       `${Object.keys(config.config.settings).length} settings keys`,
     );
+    // A theme file dropped into the folder reaches a subscriber that asks, after the snapshot.
+    NodeFS.writeFileSync(
+      NodePath.join(stateDir, "themes", "fixture.json"),
+      JSON.stringify({ name: " Fixture ", appearance: "dark", canvas: "#101010", accent: "#ff8800" }),
+    );
+    const themed = yield* take(client.subscribeServerConfig({ environmentThemes: true }), 2);
+    check(
+      "subscribeServerConfig environmentThemesUpdated decodes",
+      themed[0].type === "snapshot" &&
+        themed[0].config.environment.capabilities.environmentThemes === true &&
+        themed[1].type === "environmentThemesUpdated" &&
+        themed[1].payload.themes.length === 1 &&
+        themed[1].payload.themes[0].id === "fixture" &&
+        themed[1].payload.themes[0].name === "Fixture",
+      JSON.stringify(themed[1]),
+    );
     const lifecycle = yield* take(client.subscribeServerLifecycle({}), 2);
     check("subscribeServerLifecycle", lifecycle.map((e) => e.type).join(",") === "welcome,ready");
     const device = yield* take(client.subscribeDeviceState({}), 1);

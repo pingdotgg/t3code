@@ -51,6 +51,14 @@ fn keep_client_patch_keys(patch: &mut Map<String, Value>) {
     patch.retain(|key, _| CLIENT_PATCH_KEYS.contains(&key.as_str()));
 }
 
+/// The keys `ServerSettingsPatch` has beyond the client patch: the theme defaults.
+const THEME_DEFAULT_KEYS: &[&str] = &[
+    "defaultTheme",
+    "defaultThemeSetAt",
+    "defaultAppearance",
+    "defaultAppearanceSetAt",
+];
+
 /// Keys a patch replaces whole instead of merging.
 const REPLACED: &[&str] = &[
     "providerInstances",
@@ -221,6 +229,36 @@ impl SettingsStore {
     /// `persistSettingsSecrets` sends them: a new value is written, a value a client echoes as
     /// `••••••` stays, a cleared one is removed; on a failure the store changes are undone.
     pub fn update(&self, patch: Value, mutation: Option<Value>) -> Result<Value, SettingsError> {
+        self.update_with(patch, mutation, false)
+    }
+
+    /// `ServerSettingsService.updateSettings` from the server itself (the `/mcp` tools): as
+    /// [`Self::update`], and the theme defaults that only the theme service sets are kept.
+    pub fn update_server(&self, patch: Value) -> Result<Value, SettingsError> {
+        self.update_with(patch, None, true)
+    }
+
+    fn update_with(
+        &self,
+        patch: Value,
+        mutation: Option<Value>,
+        theme_defaults: bool,
+    ) -> Result<Value, SettingsError> {
+        let mut theme = Map::new();
+        let patch = match patch {
+            Value::Object(mut map) if theme_defaults => {
+                for key in THEME_DEFAULT_KEYS {
+                    if let Some(value) = map.remove(*key) {
+                        if !value.is_string() {
+                            return Err(self.error("normalize", format!("invalid {key}")));
+                        }
+                        theme.insert((*key).to_owned(), value);
+                    }
+                }
+                Value::Object(map)
+            }
+            other => other,
+        };
         if let Err(error) = conn_contract::from_json::<ClientServerSettingsPatch>(patch.clone()) {
             return Err(self.error("normalize", format!("invalid settings patch: {error}")));
         }
@@ -237,6 +275,7 @@ impl SettingsStore {
             return Err(self.error("normalize", "the patch is not an object"));
         };
         keep_client_patch_keys(&mut patch);
+        patch.extend(theme);
         let mut state = self.lock();
         let mut next = state.sparse.clone();
         if let Some(mutation) = &mutation
@@ -1043,6 +1082,28 @@ mod tests {
         );
         assert_eq!(view["textGenerators"]["t"]["apiKey"], SECRET_REDACTED);
         assert_eq!(view["secretProviders"]["x"], json!({ "kind": "future" }));
+    }
+
+    /// Clients cannot set the theme defaults (`ClientServerSettingsPatch`); the theme service
+    /// can (`ServerSettingsPatch`).
+    #[test]
+    fn only_the_server_sets_theme_defaults() {
+        let dir = temp_state();
+        let store = SettingsStore::open(dir.join("settings.json"));
+        let patch = json!({ "defaultTheme": "night", "defaultThemeSetAt": "2026-11-20T00:00:00.000Z",
+            "defaultAppearance": "dark", "defaultAppearanceSetAt": "2026-11-20T00:00:00.000Z" });
+        store.update(patch.clone(), None).unwrap();
+        assert!(store.raw().get("defaultTheme").is_none_or(|t| t == ""));
+        store.update_server(patch).unwrap();
+        assert_eq!(store.raw()["defaultTheme"], "night");
+        assert_eq!(store.raw()["defaultAppearance"], "dark");
+        assert!(
+            store
+                .update_server(json!({ "defaultAppearance": "sepia" }))
+                .is_err()
+        );
+        assert!(store.update_server(json!({ "defaultTheme": 5 })).is_err());
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     fn temp_state() -> PathBuf {

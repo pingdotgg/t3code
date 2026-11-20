@@ -274,6 +274,9 @@ pub fn capabilities(server_restart: bool) -> ExecutionEnvironmentCapabilities {
         max_upload_bytes: i64::try_from(conn_files::attachments::MAX_FILE_BYTES)
             .unwrap_or(i64::MAX),
     });
+    // `environmentThemesUpdated` on `subscribeServerConfig`, theme background assets and the
+    // theme tools (`conn_files::themes`).
+    capabilities.environment_themes = Some(true);
     capabilities.pull_requests = Some(true);
     capabilities.pull_request_checks = Some(true);
     capabilities.linked_thread_refreshes = Some(true);
@@ -366,6 +369,7 @@ mod tests {
             advertised,
             [
                 "attachmentUploads",
+                "environmentThemes",
                 "fileAttachments",
                 "ignoredFileListing",
                 "ignoredFileSearch",

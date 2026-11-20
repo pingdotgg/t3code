@@ -21,6 +21,37 @@ the run stays open. Waiting for terminal confirmation is deliberate. `idle-diff`
 split in `KNOWN` as `intermittent`; a gate either side misses still fails it. Whether to
 match T3 is open.
 
+## Environment themes (2026-11-20)
+
+Agents can restyle the clients with `t3_theme_read` and `t3_theme_set`, and clients that ask
+get the published themes on `subscribeServerConfig` (`environmentThemesUpdated`, capability
+`environmentThemes`). The service is `conn-files/src/themes.rs` (T3's
+`EnvironmentThemeService`); the tools are `conn-mcp/src/tools/themes.rs`.
+
+- **The folder:** `<state-dir>/themes`, as in T3. A theme is `<id>.json`, read without
+  following links or blocking on a FIFO, at most 32 files and 2 MiB in total; its background
+  is `<id>.webp|png|jpg|jpeg` beside it (16 MiB, no links), served by the asset route
+  (`environment-theme-background`). Publishing writes a staging file and renames it, checks
+  that the theme is served without pushing another out, and puts the old file back when the
+  settings write that selects it fails. Selecting sets `defaultTheme`/`defaultAppearance` and
+  their `SetAt` times; `t3-code` is stored as the empty stock default.
+- **Changes:** T3 watches the folder. Here each theme subscription looks at the folder once a
+  second and reads the files again only when the listing (names, inodes, sizes, times)
+  changed; a publish notifies at once.
+- **Proof:** `gen-theme-cases.mjs` (new check) records T3's `EnvironmentThemeFile` decode and
+  pretty encode, `environmentThemeFileHasColors`, the id pattern, the reserved ids and
+  `themeCssLoadsRemoteFiles` (123 cases), and the guide text and built-in ids the tool returns
+  (`themes/upstream.json`); `cargo test -p conn-files themes` matches them and covers publish,
+  revert and each refusal. `files.rs` covers the background route (no link, no bad id).
+  `parity.mjs`: each refusal, a publish, a read and three switches, values equal to T3.
+  `effect-client.mjs`: a theme file reaches a subscriber that asks, decoded by T3's client.
+- **Known differences:** key order in a published file is alphabetical (serde_json), not
+  T3's schema order; the content is the same. A theme file with a lone surrogate escape in a
+  string is skipped (T3's `JSON.parse` keeps it). The `/mcp` input rules check a colors
+  record's values before dropping keys that miss the key pattern; T3 drops those keys
+  unchecked. `t3_theme_set` does not take the caller thread's command lock (T3's
+  `executor.withLock`), as `t3_environment_preferences_update` here. T3's `t3 theme` CLI is
+  not built.
 ## Issues (2026-11-20)
 
 GitHub issues are served: 11 `issues.*` methods (`list`, `detail`, `comments`, `templates`,
@@ -712,8 +743,7 @@ Compat only, no new features (Nick, 2026-11-19):
 `tools/follow-conn.sh --capture`, then each red check followed as T3 does it:
 
 - Contract and generated tables regenerated (T3 server version 0.1.10).
-- Assets: `environment-theme-background` (#36680) is answered "not found": this server
-  publishes no environment themes, so no theme has a background.
+- Assets: `environment-theme-background` (#36680); served since "Environment themes".
 - Payload limits: T3's theme id pattern starts with a negative lookahead, which Rust's regex
   lacks; a leading `^(?!X)` now compiles to a deny regex beside the allow regex.
 - Thread titles: title instructions replace the 3-8 word length rule and go under "Title

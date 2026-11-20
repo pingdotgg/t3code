@@ -34,6 +34,7 @@ mod scheduled;
 mod secrets;
 mod tasks;
 mod test_logins;
+mod themes;
 mod threads;
 mod workflows;
 pub(crate) mod worktree;
@@ -128,6 +129,8 @@ pub(crate) const HANDLED: &[&str] = &[
     "save_test_login",
     "request_credentials",
     "fill_credential",
+    "t3_theme_read",
+    "t3_theme_set",
     "database_query",
     "t3_background_wait",
     "link_pull_request",
@@ -330,6 +333,8 @@ async fn call_in(cx: &Cx<'_>, name: &str, args: Args) -> ToolResult {
         "save_test_login" => test_logins::save(cx, &args).await,
         "request_credentials" => test_logins::request(cx, &args).await,
         "fill_credential" => test_logins::fill(cx, &args).await,
+        "t3_theme_read" => themes::read(cx, &args).await,
+        "t3_theme_set" => themes::set(cx, &args).await,
         "database_query" => panels::database_query(cx, &args).await,
         "send_to_user" => message::send_to_user(cx, &args).await,
         "t3_background_wait" => background::wait(cx, &args).await,

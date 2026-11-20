@@ -148,6 +148,11 @@ async fn serve_mcp_app_html(
     )
 }
 
+#[cfg(target_os = "linux")]
+const NONBLOCK: i32 = 0o4000;
+#[cfg(all(unix, not(target_os = "linux")))]
+const NONBLOCK: i32 = 0x0004;
+
 async fn serve_file(
     path: &std::path::Path,
     download: bool,
@@ -157,7 +162,12 @@ async fn serve_file(
     range: Option<String>,
     head: bool,
 ) -> Option<Response> {
-    let mut file = tokio::fs::File::open(path).await.ok()?;
+    let mut options = tokio::fs::OpenOptions::new();
+    options.read(true);
+    // A FIFO swapped in after the checks must not hold the request open (T3: `O_NONBLOCK`).
+    #[cfg(unix)]
+    options.custom_flags(NONBLOCK);
+    let mut file = options.open(path).await.ok()?;
     let meta = file.metadata().await.ok()?;
     if !meta.is_file() {
         return Some(text(StatusCode::NOT_FOUND, "Not Found"));
@@ -166,6 +176,11 @@ async fn serve_file(
     if let Some((device, inode)) = identity {
         use std::os::unix::fs::MetadataExt;
         if meta.dev() != device || meta.ino() != inode {
+            return Some(text(StatusCode::NOT_FOUND, "Not Found"));
+        }
+        // A pinned file is served only from its canonical path, checked after the open: a
+        // parent folder swapped for a link is refused, as in T3's `openMediaFile`.
+        if tokio::fs::canonicalize(path).await.ok().as_deref() != Some(path) {
             return Some(text(StatusCode::NOT_FOUND, "Not Found"));
         }
     }

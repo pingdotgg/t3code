@@ -20,6 +20,7 @@ pub mod mime;
 pub mod paths;
 pub mod search;
 pub mod signer;
+pub mod themes;
 pub mod workspace;
 
 pub use assets::{AssetContext, Served};
@@ -35,6 +36,8 @@ pub struct Files {
     pub signer: Signer,
     pub internal: InternalPaths,
     pub home: Option<PathBuf>,
+    /// `<state-dir>/themes`: the published environment themes.
+    pub themes: themes::Themes,
 }
 
 impl Files {
@@ -47,6 +50,7 @@ impl Files {
             signer: Signer::open(&state_dir.join(paths::SECRETS_DIR))?,
             internal: InternalPaths::new(state_dir),
             attachments: AttachmentStore::new(attachments_dir),
+            themes: themes::Themes::open(state_dir.join("themes")),
             home: std::env::var_os("HOME")
                 .map(PathBuf::from)
                 .filter(|h| h.is_absolute()),

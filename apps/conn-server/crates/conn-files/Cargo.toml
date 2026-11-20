@@ -12,7 +12,7 @@ conn-support.workspace = true
 conn-contract.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["rt", "process", "io-util", "time"] }
+tokio = { workspace = true, features = ["rt", "process", "io-util", "time", "sync"] }
 # Already in the tree (conn-server): HMAC-SHA256 for signed URLs, random ids and the key.
 sha2.workspace = true
 getrandom.workspace = true

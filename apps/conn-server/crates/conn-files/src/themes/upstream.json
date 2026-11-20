@@ -1,0 +1,28 @@
+{
+  "guide": "Themes restyle T3 Code on web and desktop. Mobile does not use them.\n\nColors: `canvas` and `accent` (hex) derive a full palette. `colors` overrides single roles, and `variants.light` or `variants.dark` does that for the other appearance. Prefer colors over CSS.\nRoles: canvas, chrome, toolbar, toolbarForeground, toolbarBorder, toolbarControl, toolbarControlForeground, toolbarControlHover, surface, surfaceRaised, surfaceOverlay, text, textMuted, border, input, focus, accent, accentForeground, secondary, secondaryForeground, muted, mutedForeground, placeholder, secondaryLabel, iconMuted, error, errorForeground, errorSurface, warning, warningForeground, warningSurface, update, updateForeground, updateSurface, accentSurface, accentSurfaceForeground, messageSurface, messageForeground, messageAction, messageActionForeground, messageActionHover, codeBackground, codeForeground, searchMatchBackground, searchMatchForeground, searchMatchActiveBackground, searchMatchActiveForeground, sidebar, sidebarForeground, sidebarMutedForeground, sidebarControlSurface, sidebarRowHover, sidebarRowActive, sidebarRowSelected, sidebarBorder, terminalBackground, terminalForeground, terminalCursor, terminalSelection, terminalScrollbar, terminalScrollbarHover.\n\nCSS: `css` applies after the app's styles. Use `.dark` or `:root:not(.dark)` for one appearance.\nIt cannot load files: no @import, no image-set(), and url() only with data: or #id.\nFor a background image, copy a JPEG, PNG, or WebP file of up to 16 MB to `<themesDir>/<themeId>.jpg` (or .png, .webp), beside the theme file. CSS shows it with `var(--theme-background-image)`, such as `[data-workspace-area=\"conversation\"] { background: var(--theme-background-image) center / cover no-repeat; }`. Delete the file to remove it. Do not embed images in `css`: it holds 100,000 characters.\nThe app's own rules can be more specific. If a rule has no effect, add !important.\nIt cannot reach the terminal text, the file tree, or diff internals. Use color roles for those.\nNative scrollbars take `::-webkit-scrollbar` and `::-webkit-scrollbar-thumb`.\nIcons are `svg.lucide`. stroke-width, stroke-linecap, and stroke-linejoin restyle them.\n\nStable selectors (other class names change between releases, so do not use them):\n- [data-slot=\"sidebar\"]: app sidebar\n- [data-slot=\"sidebar-inner\"]: sidebar surface\n- [data-thread-item]: sidebar thread row\n- [data-slot=\"project-monogram\"]: project icon with letters; its svg holds the tile\n- [data-chat-header]: chat header\n- [data-workspace-area=\"conversation\"]: chat area, behind the messages\n- .messages-timeline-scroll: chat scroller\n- [data-timeline-row-kind]: chat row, such as =\"message\" or =\"work\"\n- [data-message-role=\"user\"]: user message row\n- [data-user-message-bubble]: user message bubble\n- [data-message-role=\"assistant\"]: assistant message row\n- .chat-markdown: assistant text\n- .chat-markdown-codeblock: code block\n- [data-chat-composer-form]: composer\n- [data-slot=\"composer-host\"]: composer card\n- .composer-tiptap: composer text\n- [data-thread-details-card]: thread details card\n- [data-thread-terminal-drawer]: terminal drawer\n- [data-settings-page-scroll]: settings page\n- [data-slot=\"button\"]: button\n- [data-slot=\"input\"]: text input\n- [data-slot=\"switch\"]: switch\n- [data-slot=\"select-trigger\"]: select\n- [data-slot=\"dialog-popup\"]: dialog\n- [data-slot=\"popover-popup\"]: popover\n- [data-slot=\"menu-popup\"]: menu\n- [data-slot=\"tooltip-popup\"]: tooltip\n- [data-slot=\"scroll-area-scrollbar\"]: overlay scrollbar\n- [data-slot=\"scroll-area-thumb\"]: overlay scrollbar thumb\n\nYou cannot see the result. Make small changes, then ask the user how it looks.\nTo undo, set `t3-code`, the stock T3 Code theme, or another built-in theme. An empty `current` means the stock theme or no environment theme.",
+  "builtIn": [
+    "t3-code",
+    "t3-chat",
+    "grove",
+    "ocean",
+    "ember",
+    "iris"
+  ],
+  "defaultId": "t3-code",
+  "unpublishable": [
+    "dark",
+    "ember",
+    "grove",
+    "iris",
+    "light",
+    "ocean",
+    "system",
+    "t3-chat",
+    "t3-chat-dark",
+    "t3-code",
+    "t3-ember",
+    "t3-grove",
+    "t3-iris",
+    "t3-ocean"
+  ]
+}

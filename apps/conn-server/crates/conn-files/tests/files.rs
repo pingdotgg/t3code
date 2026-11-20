@@ -844,3 +844,48 @@ fn finds_project_favicons() {
         Some("favicon.png")
     );
 }
+
+#[test]
+fn serves_a_published_theme_background_and_nothing_else() {
+    let f = fixture("theme-background");
+    let themes = f.state.join("themes");
+    let now = now_ms();
+    let mint = |id: &str| {
+        f.files.create_asset_url(
+            &resource(json!({"_tag": "environment-theme-background", "themeId": id})),
+            &AssetContext::default(),
+            now,
+        )
+    };
+    let issued = mint("night").unwrap();
+    let (token, name) = token_and_name(&issued.relative_url);
+    assert_eq!(name, "night-background");
+    // No image yet: the URL is minted, the route answers 404.
+    assert!(f.files.resolve_asset(&token, &name, now).is_none());
+    fs::write(themes.join("night.jpg"), "jpg").unwrap();
+    let real_themes = fs::canonicalize(&themes).unwrap();
+    assert_eq!(
+        served_path(f.files.resolve_asset(&token, &name, now)),
+        Some(real_themes.join("night.jpg"))
+    );
+    // The route serves only the file with the inode checked here, not a link swapped in later.
+    let Some(Served::File { identity, .. }) = f.files.resolve_asset(&token, &name, now) else {
+        panic!("no background served");
+    };
+    let inode =
+        std::os::unix::fs::MetadataExt::ino(&fs::metadata(themes.join("night.jpg")).unwrap());
+    assert_eq!(identity.map(|(_, ino)| ino), Some(inode));
+    // Earlier extensions win; a link is never served.
+    fs::write(themes.join("night.webp"), "webp").unwrap();
+    assert_eq!(
+        served_path(f.files.resolve_asset(&token, &name, now)),
+        Some(real_themes.join("night.webp"))
+    );
+    fs::remove_file(themes.join("night.webp")).unwrap();
+    fs::remove_file(themes.join("night.jpg")).unwrap();
+    symlink(f.outside.join("secret.txt"), themes.join("night.png")).unwrap();
+    assert!(f.files.resolve_asset(&token, &name, now).is_none());
+    // Ids T3's schema refuses never reach the folder.
+    assert!(mint("../secrets").is_err());
+    assert!(mint("Night").is_err());
+}

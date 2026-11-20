@@ -722,6 +722,22 @@ const steps = [
   ["list_thread_issues", () => ({ threadId: "thread:none" })],
   ["fill_credential", () => ({itemId:"login:none",field:"password"})],
   ["fill_credential", () => ({itemId:"x",field:"pin"})],
+  // Themes: each refusal, then a publish, a read of it, and a switch, in temp state on both.
+  ["t3_theme_read", () => ({})],
+  ["t3_theme_read", () => ({ themeId: "parity" })],
+  ["t3_theme_read", () => ({ themeId: "Bad" })],
+  ["t3_theme_set", () => ({})],
+  ["t3_theme_set", () => ({ theme: { name: "P", appearance: "dark", canvas: "#000", accent: "#fff" } })],
+  ["t3_theme_set", () => ({ themeId: "nope" })],
+  ["t3_theme_set", () => ({ themeId: "grove", theme: { name: "P", appearance: "dark", canvas: "#000", accent: "#fff" } })],
+  ["t3_theme_set", () => ({ themeId: "parity", theme: { name: "P", appearance: "dark", accent: "#fff" } })],
+  ["t3_theme_set", () => ({ themeId: "parity", theme: { name: "P", appearance: "dark", canvas: "#000", accent: "#fff", css: "a{background:url(https://x)}" } })],
+  ["t3_theme_set", () => ({ themeId: "parity", theme: { name: " Parity ", appearance: "dark", canvas: "#000", accent: "#fff", css: "a{}", extra: 1 } }), undefined, { same: (v) => v }],
+  ["t3_theme_read", () => ({ themeId: "parity" }), undefined, { same: (v) => ({ current: v.current, builtIn: v.builtIn, published: v.published, theme: v.theme, guide: v.guide }) }],
+  ["t3_theme_set", () => ({ themeId: "grove", appearance: "light" }), undefined, { same: (v) => v }],
+  ["t3_theme_set", () => ({ themeId: "t3-code" }), undefined, { same: (v) => v }],
+  ["t3_theme_set", () => ({ appearance: "system" }), undefined, { same: (v) => v }],
+  ["t3_theme_read", () => ({}), undefined, { same: (v) => ({ current: v.current, published: v.published }) }],
   ["database_query", () => ({sql:"select 1"})],
   ["request_secret", () => ({ label: "Fixture key", reason: "Parity check" })],
   ["request_secret", () => ({ label: "Fixture key", reason: "Parity check", delivery: "file", value: "test-only" })],
@@ -780,8 +796,8 @@ for (const [tool, input, after, options] of run) {
   }
   if (ts.kind === "failure") {
     report(
-      `${label}: both fail with ${ts.code}`,
-      tool !== "t3_workflow_stop" || ts.message === rust.message,
+      `${label}: both fail with ${ts.code}${ts.message === rust.message ? "" : `\n       T3:   ${ts.message}\n       Conn: ${rust.message}`}`,
+      !(tool === "t3_workflow_stop" || tool.startsWith("t3_theme_")) || ts.message === rust.message,
     );
     continue;
   }

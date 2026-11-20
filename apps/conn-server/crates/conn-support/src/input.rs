@@ -151,7 +151,11 @@ impl Rule {
             Some("String") => value.is_string(),
             Some("Number") => value.is_number(),
             Some("Boolean") => value.is_boolean(),
-            Some("Literal") => self.literal == *value,
+            // JSON numbers compare as JavaScript numbers: `1.0` is the literal `1`.
+            Some("Literal") => match (self.literal.as_f64(), value.as_f64()) {
+                (Some(literal), Some(number)) => literal == number,
+                _ => self.literal == *value,
+            },
             Some("Null") => value.is_null(),
             Some("Arrays") => value.is_array() || (self.from_record && value.is_object()),
             Some("Objects") => {
@@ -456,5 +460,19 @@ mod tests {
         }
         assert!(rules.check("rpc", &mut json!(false)).is_ok());
         assert!(rules.check("mcp", &mut json!(false)).is_err());
+    }
+
+    #[test]
+    fn a_number_literal_matches_every_spelling_of_its_value() {
+        let rules = Rules::parse(
+            &json!({"version":{"kind":"Literal","expected":"1","literal":1,"checks":[]}})
+                .to_string(),
+        )
+        .unwrap();
+        let mut spelled: Value = serde_json::from_str("1.0").unwrap();
+        assert!(rules.check("version", &mut spelled).is_ok());
+        assert!(rules.check("version", &mut json!(1)).is_ok());
+        assert!(rules.check("version", &mut json!(2)).is_err());
+        assert!(rules.check("version", &mut json!("1")).is_err());
     }
 }

@@ -148,11 +148,16 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
     });
 
     let (env, providers) = (environment.clone(), deps.clone());
-    table.stream("subscribeServerConfig", move |_, _: Value| {
+    let themes = deps.files.as_ref().map(|files| files.themes.clone());
+    table.stream("subscribeServerConfig", move |_, input: Value| {
         let config = server_config(&env, current_providers(&providers));
         let env = env.clone();
         let deps = providers.clone();
-        async move { Ok(config_stream(env, deps, config?)) }
+        // Only clients that ask get `environmentThemesUpdated`; older ones die on it.
+        let themes = themes
+            .clone()
+            .filter(|_| input["environmentThemes"] == Value::Bool(true));
+        async move { Ok(config_stream(env, deps, config?, themes)) }
     });
     let env = environment.clone();
     table.stream("subscribeAuthAccess", move |ctx, _: Value| {
@@ -228,13 +233,28 @@ pub fn server_config(environment: &Environment, providers: Vec<Value>) -> Result
     Ok(conn_contract::to_json(&config))
 }
 
+/// How often a theme subscription looks at the themes folder.
+const THEME_POLL: std::time::Duration = std::time::Duration::from_secs(1);
+
+fn themes_event(snapshot: &conn_files::themes::Snapshot) -> Value {
+    json!({ "version": 1, "type": "environmentThemesUpdated", "payload": { "themes": *snapshot.themes } })
+}
+
 /// `PROVIDER_STATUS_DEBOUNCE_MS`.
 const PROVIDER_STATUS_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(200);
 
 /// The config snapshot, then `settingsUpdated` after each settings write and
 /// `keybindingsUpdated` after each keybinding write, until the client unsubscribes.
-fn config_stream(env: Arc<Environment>, deps: Deps, config: Value) -> ItemStream {
+fn config_stream(
+    env: Arc<Environment>,
+    deps: Deps,
+    config: Value,
+    themes: Option<conn_files::themes::Themes>,
+) -> ItemStream {
     let (tx, rx) = mpsc::channel::<Result<Value, Failure>>(4);
+    let mut theme_changes = themes.as_ref().map(conn_files::themes::Themes::subscribe);
+    let mut theme_poll = tokio::time::interval(THEME_POLL);
+    theme_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut settings = env.settings.subscribe();
     let mut keybindings = env.keybindings.subscribe();
     let mut providers = deps.provider_status.subscribe();
@@ -252,8 +272,38 @@ fn config_stream(env: Arc<Environment>, deps: Deps, config: Value) -> ItemStream
         if tx.send(Ok(snapshot)).await.is_err() {
             return;
         }
+        // The theme stream sends the current set first, then each change after it.
+        let mut themes_seen = None;
+        if let Some(themes) = &themes {
+            // Marked before the read: a publish after it fires `changed` and is sent next.
+            if let Some(changes) = &mut theme_changes {
+                changes.mark_unchanged();
+            }
+            let reader = themes.clone();
+            let Ok(current) = tokio::task::spawn_blocking(move || reader.refresh()).await else {
+                return;
+            };
+            themes_seen = Some(current.seq);
+            if tx.send(Ok(themes_event(&current))).await.is_err() {
+                return;
+            }
+        }
         loop {
             let event = tokio::select! {
+                changed = async { theme_changes.as_mut()?.changed().await.ok() }, if theme_changes.is_some() => {
+                    let (Some(()), Some(themes)) = (changed, &themes) else { break };
+                    let current = themes.current();
+                    if themes_seen.is_some_and(|seen| current.seq <= seen) { continue; }
+                    themes_seen = Some(current.seq);
+                    themes_event(&current)
+                }
+                _ = theme_poll.tick(), if themes.is_some() => {
+                    // T3 watches the folder; this re-reads it when its listing changed.
+                    if let Some(themes) = themes.clone() {
+                        let _ = tokio::task::spawn_blocking(move || themes.refresh()).await;
+                    }
+                    continue;
+                }
                 changed = settings.changed() => {
                     if changed.is_err() { break; }
                     json!({ "version": 1, "type": "settingsUpdated", "payload": { "settings": env.settings.for_client() } })
@@ -421,7 +471,7 @@ mod tests {
             .into(),
             ..Deps::default()
         };
-        let mut stream = config_stream(env.clone(), deps.clone(), config);
+        let mut stream = config_stream(env.clone(), deps.clone(), config, None);
         assert_eq!(stream.recv().await.unwrap().unwrap()["type"], "snapshot");
         env.settings
             .update(json!({ "enableAgentBrowserAccess": false }), None)
