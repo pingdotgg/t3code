@@ -767,9 +767,13 @@ const ComposerUrlExtension = Extension.create({
 function composerUrlDecorations({ doc }: EditorState): DecorationSet {
   const decorations: Decoration[] = [];
   doc.descendants((node, pos) => {
-    if (node.type.spec.code) return false;
-    if (!node.text || node.marks.some((mark) => mark.type.spec.code)) return;
-    if (!/https?:\/\/|www\./i.test(node.text)) return;
+    if (
+      node.type.spec.code ||
+      !node.text ||
+      node.marks.some((mark) => mark.type.spec.code) ||
+      !/https?:\/\/|www\./i.test(node.text)
+    )
+      return !node.type.spec.code;
     for (const { start, end, value } of findLinks(node.text, "url")) {
       if (/^(?:https?:\/\/|www\.)/i.test(value)) {
         decorations.push(
