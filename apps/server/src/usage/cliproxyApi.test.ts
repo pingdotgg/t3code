@@ -715,6 +715,41 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
+  it.effect("drops a Devin window whose reset already passed", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1788710400000);
+      const test = fixture({
+        accounts: [
+          {
+            id: "devin-stale.json",
+            auth_index: "d",
+            provider: "devin",
+            email: "stale@example.com",
+            quota: {
+              observed_at: "2020-01-01T00:00:00Z",
+              signals: {
+                daily_quota_remaining_percent: "0%",
+                daily_quota_reset_at: "2020-01-02T00:00:00Z",
+                weekly_quota_remaining_percent: "25%",
+                weekly_quota_reset_at: "2099-01-08T00:00:00Z",
+              },
+            },
+          },
+        ],
+      });
+      const [account] = yield* (yield* test.api).readAccounts(config);
+      expect(account?.usageLimits.windows).toMatchObject([
+        {
+          id: "weekly",
+          kind: "weekly",
+          usedPercent: 75,
+          resetsAt: "2099-01-08T00:00:00Z",
+        },
+      ]);
+      expect(test.requests.map((request) => request.path)).toEqual(["/v0/management/auth-files"]);
+    }),
+  );
+
   it.effect("skips accounts of providers the hub table does not know", () =>
     Effect.gen(function* () {
       const test = fixture({

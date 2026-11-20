@@ -449,10 +449,14 @@ const HUB_PROVIDERS = new Map<string, HubProvider>([
       header: () => ({}),
       read: Effect.fnUntraced(function* ({ account, checkedAt }) {
         const signals = account.quota?.signals ?? {};
+        const checkedAtMs = Date.parse(checkedAt);
         const windows = DEVIN_QUOTA_WINDOWS.flatMap((slot) => {
           const remaining = devinSignalPercent(signals, slot.percentSignal);
           if (remaining === undefined) return [];
           const resetsAt = signals[slot.resetSignal]?.trim();
+          // A reset that already passed is a stale observation, not an exhausted window.
+          const resetMs = resetsAt ? Date.parse(resetsAt) : NaN;
+          if (Number.isFinite(resetMs) && resetMs <= checkedAtMs) return [];
           return [
             {
               id: slot.id,
