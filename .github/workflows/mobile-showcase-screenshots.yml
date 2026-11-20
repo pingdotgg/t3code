@@ -44,7 +44,7 @@ env:
 jobs:
   ios:
     name: iPhone, iPhone Duo, and iPad 13
-    if: inputs.platform == 'all' || inputs.platform == 'ios'
+    if: ${{ false && (inputs.platform == 'all' || inputs.platform == 'ios') }}
     runs-on: macos-26
     # Capturing every palette multiplies the device matrix by six, and only the
     # one native build is shared between them.

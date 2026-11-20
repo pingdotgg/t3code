@@ -220,7 +220,7 @@ jobs:
 
   ios:
     name: iOS simulator
-    if: github.repository == 'pingdotgg/t3code' && (github.event_name != 'workflow_dispatch' || inputs.platform == 'ios')
+    if: ${{ false && github.repository == 'pingdotgg/t3code' && (github.event_name != 'workflow_dispatch' || inputs.platform == 'ios') }}
     runs-on: macos-26
     timeout-minutes: 60
     concurrency:

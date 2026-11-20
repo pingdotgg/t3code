@@ -549,7 +549,7 @@ jobs:
     name: iOS store build
     needs: production
     # Skipped when the production job failed: no store build after a failed OTA.
-    if: needs.production.outputs.ios_build == 'true'
+    if: ${{ false && needs.production.outputs.ios_build == 'true' }}
     runs-on: macos-26
     timeout-minutes: 60
     concurrency:

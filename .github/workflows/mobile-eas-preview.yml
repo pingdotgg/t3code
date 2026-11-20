@@ -328,7 +328,7 @@ jobs:
   ios-build:
     name: iOS preview client
     needs: ios
-    if: needs.ios.outputs.build == 'true'
+    if: ${{ false && needs.ios.outputs.build == 'true' }}
     runs-on: macos-26
     timeout-minutes: 60
     concurrency:

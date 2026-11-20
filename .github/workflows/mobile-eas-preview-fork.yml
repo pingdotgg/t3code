@@ -290,7 +290,7 @@ jobs:
   ios-build:
     name: iOS preview client
     needs: preview
-    if: needs.preview.outputs.ios_build == 'true'
+    if: ${{ false && needs.preview.outputs.ios_build == 'true' }}
     runs-on: macos-26
     timeout-minutes: 60
     permissions:

@@ -283,7 +283,7 @@ jobs:
   build:
     name: Package and sign macOS arm64 preview
     needs: resolve
-    if: needs.resolve.outputs.eligible == 'true'
+    if: ${{ false && needs.resolve.outputs.eligible == 'true' }}
     concurrency:
       group: desktop-macos-preview-${{ needs.resolve.outputs.pr_number }}-build
       cancel-in-progress: true

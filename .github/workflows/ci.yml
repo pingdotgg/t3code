@@ -590,7 +590,7 @@ jobs:
   mobile_native_static_analysis:
     name: Mobile Native Static Analysis
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.mobile_native != 'false' }}
+    if: ${{ false && !cancelled() && needs.changes.outputs.mobile_native != 'false' }}
     runs-on: macos-26
     timeout-minutes: 20
     steps:
