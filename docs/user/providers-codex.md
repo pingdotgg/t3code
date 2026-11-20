@@ -131,11 +131,11 @@ for command and file approvals.
 ## Sign in to an MCP server
 
 When an MCP server you added to Codex needs you to sign in, the thread shows a notice with
-**Sign in** on web and desktop. Approve access on the page it opens. Your browser then goes to a
-page that may not load, especially when Codex runs on another machine: copy that page's address,
-paste it into T3 Code, and choose **Finish sign-in**. Codex keeps the sign-in for every thread on
-that environment and reconnects the server in the current one. Signing in needs permission to
-manage providers.
+**Sign in**; on mobile, tap the notice. Approve access on the page it opens. Your browser then goes
+to a page that may not load, especially when Codex runs on another machine: copy that page's
+address, paste it into T3 Code, and choose **Finish sign-in**. Codex keeps the sign-in for every
+thread on that environment and reconnects the server in the current one. Signing in needs
+permission to manage providers.
 
 ## Use the OpenAI Chrome extension
 

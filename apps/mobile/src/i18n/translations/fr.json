@@ -4217,6 +4217,14 @@
       "v": "v"
     }
   ],
+  "15f32e12fd49533f": "Impossible de poursuivre la connexion. Réessayez.",
+  "54789628a737f557": "Se connecter à {server}",
+  "f8fde2e549c61546": "Adresse de la page ouverte par votre navigateur",
+  "d9f6244b252d11f6": "Terminer la connexion",
+  "8aecbd38f1facf71": "Autorisez l’accès dans votre navigateur. Il ouvre ensuite une page qui peut ne pas se charger : copiez l’adresse de cette page et collez-la ici.",
+  "6e5bcc452add4f9b": "Ouvre la connexion. Appuyez longuement pour copier.",
+  "83be7aade7ff6360": "Connecté",
+  "ec21b232e0eacd4a": "Se connecter",
   "12ba9fa1445f92a2": "Travail des sous-agents",
   "eaa6c91a05d95ce7": "Actualiser",
   "4740c38b2edd194d": "Lecture seule. Ces sous-agents ne peuvent pas recevoir de messages.",
