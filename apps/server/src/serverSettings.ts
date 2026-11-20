@@ -57,6 +57,7 @@ import {
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import { secretProviderDefinitions } from "./secrets/secretProviderDefinitions.ts";
+import { watchDirectoryReplacements } from "./watchDirectoryReplacements.ts";
 import {
   readSecretFieldValues,
   sourceControlHostSecretName,
@@ -1299,40 +1300,23 @@ const make = Effect.gen(function* () {
   // A directory watch follows the directory's inode, so when the target's
   // directory is renamed away and another takes its path, watch the new one.
   const watchLinkTargetChanges = (linkTargetPath: string, ready: Deferred.Deferred<void>) =>
-    Stream.unwrap(
-      Effect.gen(function* () {
-        const parentReady = yield* Deferred.make<void>();
-        const replacements = yield* watchFileChanges(
-          pathService.dirname(linkTargetPath),
-          parentReady,
-        ).pipe(
-          // Native watch registration can throw, including when the OS runs out of watches.
-          Stream.ignoreCause({ log: true }),
-          Stream.toQueue({ capacity: 1, strategy: "sliding" }),
-        );
-        // Start buffering replacements before attaching to the target directory's inode.
-        yield* Deferred.await(parentReady);
-
-        const targetChanges = Stream.unwrap(
-          Effect.gen(function* () {
-            const registered = yield* Deferred.make<void>();
-            return Stream.merge(
-              watchFileChanges(linkTargetPath, registered).pipe(Stream.ignoreCause({ log: true })),
-              // Startup reloads once ready. Later watches trigger their own reload.
-              Stream.fromEffect(
-                Deferred.await(registered).pipe(Effect.andThen(Deferred.succeed(ready, undefined))),
-              ).pipe(
-                Stream.filter((completedStartup) => !completedStartup),
-                Stream.as(undefined),
-              ),
-            );
-          }),
-        );
-        return Stream.make(targetChanges).pipe(
-          Stream.concat(Stream.fromQueue(replacements).pipe(Stream.as(targetChanges))),
-          Stream.switchMap((changes) => changes),
-        );
-      }),
+    watchDirectoryReplacements(
+      (parentReady) => watchFileChanges(pathService.dirname(linkTargetPath), parentReady),
+      Stream.unwrap(
+        Effect.gen(function* () {
+          const registered = yield* Deferred.make<void>();
+          return Stream.merge(
+            watchFileChanges(linkTargetPath, registered).pipe(Stream.ignoreCause({ log: true })),
+            // Startup reloads once ready. Later watches trigger their own reload.
+            Stream.fromEffect(
+              Deferred.await(registered).pipe(Effect.andThen(Deferred.succeed(ready, undefined))),
+            ).pipe(
+              Stream.filter((completedStartup) => !completedStartup),
+              Stream.as(undefined),
+            ),
+          );
+        }),
+      ),
     );
 
   const startWatcher = Effect.gen(function* () {

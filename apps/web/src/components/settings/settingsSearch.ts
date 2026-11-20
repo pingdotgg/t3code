@@ -1405,6 +1405,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     cloudOnly: true,
   },
   {
+    id: "preview-tunnel",
+    title: msg("Preview tunnel"),
+    to: "/settings/access",
+    targetId: "connections-environment",
+    searchTerms: [
+      msg("localhost loopback port forwarding open on this device browser tabs stream security"),
+    ],
+  },
+  {
     id: "connections-environment",
     title: msg("This machine"),
     to: "/settings/access",

@@ -93,6 +93,7 @@ import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
 import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
+  hasPendingBackgroundSubagent,
   pendingBackgroundTurnItems,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Context from "effect/Context";
@@ -856,6 +857,7 @@ function mayStartSubagentFollowup(
 ): boolean {
   if (command.scheduledTaskId !== undefined || command.restartContinuationOfRunId !== undefined)
     return false;
+  if (isCompactionCommandMessage({ role: "user", ...command })) return false;
   if (command.notification !== undefined)
     return (
       command.notification.source.kind !== "monitor" || command.notification.outcome !== "updated"
@@ -7439,6 +7441,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ) {
       dispatchMode = { type: "queue_after_active" };
     }
+    // An agent's automatic send must not overtake an earlier agent message still queued
+    // (e.g. behind /compact), or the agent receives them out of send order.
+    if (
+      command.deliveryIntent === "auto" &&
+      command.createdBy === "agent" &&
+      (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active")
+    ) {
+      const queuedRuns = projection.runs.filter(
+        (run) => run.status === "queued" && run.queueHeld !== true,
+      );
+      if (queuedRuns.length > 0) {
+        const queuedMessages = yield* projectionStore
+          .getMessagesById(
+            command.threadId,
+            queuedRuns.map((run) => run.userMessageId),
+          )
+          .pipe(mapDispatchError(command));
+        if ([...queuedMessages.values()].some((message) => message.createdBy === "agent")) {
+          dispatchMode = { type: "queue_after_active" };
+        }
+      }
+    }
     // An explicit restart that Stop reached has only its start left, so it
     // queues behind the stopping run like any other start.
     if (
@@ -9745,6 +9769,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     yield* Ref.update(effects, (existing) => [...existing, pendingEffect]);
   });
 
+  // A native background subagent keeps working, and delegating, after the latest run settles.
+  const backgroundSubagentOutlivesRun = (run: OrchestrationV2Run) =>
+    projectionStore.getThreadShell(run.threadId).pipe(
+      Effect.map(
+        (shell) =>
+          shell !== null &&
+          shell.archivedAt === null &&
+          shell.activeRunId === null &&
+          shell.latestRunId === run.id &&
+          hasPendingBackgroundSubagent(shell.pendingBackgroundTasks, run.providerInstanceId),
+      ),
+      Effect.mapError(
+        (cause) => new OrchestratorProjectionError({ threadId: run.threadId, cause }),
+      ),
+    );
+
   const dispatchDelegatedTaskRequest = Effect.fn("orchestrationV2.dispatch.delegatedTaskRequest")(
     function* (
       command: Extract<OrchestrationV2Command, { readonly type: "delegated_task.request" }>,
@@ -9761,7 +9801,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const parentRun = parentProjection.runs.find(
         (candidate) => candidate.id === command.parentRunId,
       );
-      if (parentRun === undefined || !isActiveRun(parentRun)) {
+      if (
+        parentRun === undefined ||
+        !(isActiveRun(parentRun) || (yield* backgroundSubagentOutlivesRun(parentRun)))
+      ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,

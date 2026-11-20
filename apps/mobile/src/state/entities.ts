@@ -8,6 +8,7 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import {
+  allowsPreviewTunnel,
   EnvironmentId,
   ThreadId,
   type ComposerContextRecord,
@@ -302,6 +303,12 @@ export function useEnvironmentServerConfig(
       ? EMPTY_SERVER_CONFIG_ATOM
       : serverEnvironment.configValueAtom(environmentId),
   );
+}
+
+/** Whether the environment turned its preview tunnel off; false until its config loads. */
+export function useEnvironmentPreviewTunnelOff(environmentId: EnvironmentId | null): boolean {
+  const config = useEnvironmentServerConfig(environmentId);
+  return config !== null && !allowsPreviewTunnel(config);
 }
 
 export function useServerConfigs(): ReadonlyMap<EnvironmentId, ServerConfig> {
