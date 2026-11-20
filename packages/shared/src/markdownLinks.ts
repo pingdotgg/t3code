@@ -288,6 +288,7 @@ export function markdownDestinationHostPath(source: string): string | null {
 
 const DIRECT_IMAGE_SOURCE_PATTERN = /^(?:https?:|data:|blob:|\/\/)/i;
 const URI_SCHEME_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*:/;
+const AMP_MEDIA_SOURCE_PATTERN = /[#&]amp-media-source=([^&]*)/;
 
 export type MarkdownImageSource =
   | { readonly _tag: "Direct"; readonly uri: string }
@@ -326,6 +327,10 @@ export function classifyMarkdownImageSource(
     return { _tag: "Blocked" };
   }
   if (DIRECT_IMAGE_SOURCE_PATTERN.test(source)) {
+    // Amp swaps local images for auth-only attachment URLs and keeps the file in this fragment.
+    const ampSource = AMP_MEDIA_SOURCE_PATTERN.exec(splitMarkdownLinkSearchAndHash(source).hash);
+    const ampFile = ampSource ? safeDecodeURIComponent(ampSource[1] ?? "") : "";
+    if (/^file:/i.test(ampFile)) return classifyMarkdownImageSource(ampFile, workspaceRoot);
     return { _tag: "Direct", uri: source };
   }
 
