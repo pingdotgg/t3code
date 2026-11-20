@@ -74,7 +74,7 @@ it.effect("reports a deleted worktree's scan as finished, not pending", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect("leaves out Claude Code commands that only print usage or unavailable here", () =>
+it.effect("leaves out Claude Code commands that only print usage or are unavailable here", () =>
   Effect.gen(function* () {
     const commands = ["effort", "Model", "fast", "focus", "agents", "context", "goal"];
     const query = vi.spyOn(ClaudeSdk, "query").mockReturnValue({
