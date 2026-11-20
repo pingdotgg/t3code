@@ -3,6 +3,7 @@ import { memo } from "react";
 import { cn } from "~/lib/utils";
 
 export function formatCompactDiffCount(value: number): string {
+  if (!Number.isFinite(value)) return "0";
   if (value < 1000) return String(value);
   if (value < 999_500) {
     const k = value / 1000;

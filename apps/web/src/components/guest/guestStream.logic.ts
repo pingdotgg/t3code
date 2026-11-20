@@ -161,6 +161,7 @@ export function formatGuestExpiry(
   resolve: MessageResolver = m,
 ): string {
   const remainingMs = Date.parse(expiresAt) - nowMs;
+  if (!Number.isFinite(remainingMs)) return "";
   if (remainingMs <= 0) return resolve(msg("Expired"));
   const minutes = Math.max(1, Math.floor(remainingMs / 60_000));
   return minutes >= 60
