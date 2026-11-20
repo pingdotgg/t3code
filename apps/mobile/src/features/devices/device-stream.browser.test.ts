@@ -77,6 +77,10 @@ function viewerFixture(supported: boolean) {
       buttonForeground: "white",
       buttonBorder: "gray",
     },
+    labels: {
+      screen: "iOS Simulator screen",
+      reconnectingControls: "Reconnecting device controls...",
+    },
   });
   return { configured, requested, videoBodies };
 }
