@@ -36,6 +36,7 @@ import * as CliTokenManager from "../cloud/CliTokenManager.ts";
 import { formatReachabilityFailure } from "../cloud/ConnectReachability.ts";
 import { filterRelayResponse } from "../cloud/relayResponse.ts";
 import {
+  CLOUD_ENDPOINT_RUNTIME_CONFIG,
   CLOUD_LINK_REVOKED,
   CLOUD_LINKED_USER_ID,
   isAgentActivityPublishingEnabledValue,
@@ -199,17 +200,19 @@ function formatCloudStatus(
         ? "pending server startup"
         : "not provisioned";
   const publishOnly = status.desired && status.linkMode === "publish_only";
-  const nextStep = !status.authenticated
-    ? `Run \`${commands.link}\` to authorize and enable T3 Connect.`
-    : status.revoked
-      ? `Run \`${commands.link}\` to link this environment again.`
-      : !status.desired
-        ? `Run \`${commands.link}\` to enable T3 Connect.`
-        : !status.linked
-          ? publishOnly
-            ? "Start T3 to provision the environment link."
-            : "Start T3 to provision the environment link and launch its managed tunnel."
-          : undefined;
+  // An app-made link needs no CLI credential once provisioned.
+  const nextStep =
+    status.desired && status.linked && !status.revoked
+      ? undefined
+      : !status.authenticated
+        ? `Run \`${commands.link}\` to authorize and enable T3 Connect.`
+        : status.revoked
+          ? `Run \`${commands.link}\` to link this environment again.`
+          : !status.desired
+            ? `Run \`${commands.link}\` to enable T3 Connect.`
+            : publishOnly
+              ? "Start T3 to provision the environment link."
+              : "Start T3 to provision the environment link and launch its managed tunnel.";
 
   return [
     "T3 Connect",
@@ -672,7 +675,8 @@ const connectStatusCommand = Command.make("status", {
         const relayClient = yield* RelayClient.RelayClient;
         const tokens = yield* CliTokenManager.CloudCliTokenManager;
         const [
-          desired,
+          cliDesired,
+          managedTunnel,
           authenticated,
           cloudUserId,
           relayUrl,
@@ -683,6 +687,7 @@ const connectStatusCommand = Command.make("status", {
         ] = yield* Effect.all(
           [
             CliState.readCliDesiredCloudLink,
+            secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
             tokens.hasCredential,
             secrets.get(CLOUD_LINKED_USER_ID),
             secrets.get(RELAY_URL_SECRET),
@@ -693,6 +698,8 @@ const connectStatusCommand = Command.make("status", {
           ],
           { concurrency: "unbounded" },
         );
+        // A link made in the desktop, web, or mobile app saves the tunnel config but no CLI marker.
+        const desired = cliDesired || Option.isSome(managedTunnel);
         // A publish-only link has no tunnel for other devices to reach.
         const reachability =
           desired && linkMode === "managed" ? yield* checkLiveReachability() : null;

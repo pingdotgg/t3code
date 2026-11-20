@@ -18,7 +18,7 @@ import { Command } from "effect/cli";
 
 import { makeCli } from "../binCli.ts";
 import { CLOUD_CLI_DESIRED_LINK_SECRET } from "../cloud/CliState.ts";
-import { CLOUD_LINKED_USER_ID } from "../cloud/config.ts";
+import { CLOUD_ENDPOINT_RUNTIME_CONFIG, CLOUD_LINKED_USER_ID } from "../cloud/config.ts";
 import {
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
@@ -147,10 +147,16 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
           // Status asks the server for reachability only for a managed link.
           yield* fs.makeDirectory(`${baseDir}/userdata/secrets`, { recursive: true });
           yield* options.linkedByApp
-            ? fs.writeFileString(
-                `${baseDir}/userdata/secrets/${CLOUD_LINKED_USER_ID}.bin`,
-                "user_app_linked",
-              )
+            ? Effect.all([
+                fs.writeFileString(
+                  `${baseDir}/userdata/secrets/${CLOUD_LINKED_USER_ID}.bin`,
+                  "user_app_linked",
+                ),
+                fs.writeFileString(
+                  `${baseDir}/userdata/secrets/${CLOUD_ENDPOINT_RUNTIME_CONFIG}.bin`,
+                  "{}",
+                ),
+              ])
             : fs.writeFileString(
                 `${baseDir}/userdata/secrets/${CLOUD_CLI_DESIRED_LINK_SECRET}.bin`,
                 options.linkMode ?? "managed",
