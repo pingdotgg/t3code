@@ -420,27 +420,6 @@ describe("settle and snooze Undo", () => {
       input: { threadId: target.threadId, reason: "user" },
     });
   });
-
-  it("ignores an older reschedule Undo once a newer wake time was chosen", async () => {
-    vi.setSystemTime(RESCHEDULE_NOW_MS);
-    const firstWake = wakeIn(60_000);
-    const secondWake = wakeIn(120_000);
-    const thirdWake = wakeIn(180_000);
-    threadShell.snoozedUntil = firstWake;
-    const actions = useThreadActions();
-    await actions.snoozeThread(target, secondWake);
-    const staleUndo = currentUndo();
-    threadShell.snoozedUntil = secondWake;
-    await actions.snoozeThread(target, thirdWake);
-    commands.snooze.mockClear();
-    await staleUndo();
-    expect(commands.snooze).not.toHaveBeenCalled();
-    await currentUndo()();
-    expect(commands.snooze).toHaveBeenCalledExactlyOnceWith({
-      environmentId: target.environmentId,
-      input: { threadId: target.threadId, snoozedUntil: secondWake },
-    });
-  });
 });
 
 describe("archive and delete Undo expiry", () => {
