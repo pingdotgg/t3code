@@ -32,6 +32,7 @@ export const PROVIDER_PRESENTATION = {
     color: "#5b9bbd",
     driverKind: ProviderDriverKind.make("opencode"),
   },
+  kilo: { label: "Kilo", color: "#f59e0b", driverKind: ProviderDriverKind.make("acpRegistry") },
   antigravity: {
     label: "Antigravity",
     color: "#8c7bd1",

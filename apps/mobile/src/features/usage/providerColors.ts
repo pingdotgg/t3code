@@ -7,6 +7,7 @@ export function providerColors(scheme: "light" | "dark"): Record<UsageProviderKi
     grok: scheme === "dark" ? "#a1a1aa" : "#52525b",
     cursor: "#8b8b8b",
     opencode: "#5b9bbd",
+    kilo: "#f59e0b",
     antigravity: "#8c7bd1",
     pi: "#4d9f8a",
     muse: "#0866ff",
