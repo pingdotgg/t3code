@@ -679,6 +679,41 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
       }),
   );
 
+  it.effect.skipIf(!symlinksSupported)(
+    "links the user's global GEMINI.md and AGENTS.md rules without replacing a real file",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const temporaryDirectory = yield* fs.makeTempDirectoryScoped();
+        const userHome = path.join(temporaryDirectory, "home");
+        const profileDirectory = path.join(temporaryDirectory, "profile");
+        const globalAgents = path.join(userHome, ".gemini", "AGENTS.md");
+        const globalGemini = path.join(userHome, ".gemini", "GEMINI.md");
+        const agentsLink = path.join(profileDirectory, "AGENTS.md");
+        const geminiLink = path.join(profileDirectory, "GEMINI.md");
+        yield* fs.makeDirectory(path.dirname(globalAgents), { recursive: true });
+        yield* fs.writeFileString(globalAgents, "End every reply with MANGO.");
+
+        yield* prepareAntigravityProfile({ profileDirectory, userHome });
+        expect(yield* fs.readLink(agentsLink)).toBe(globalAgents);
+        expect(yield* fs.exists(geminiLink)).toBe(false);
+
+        yield* fs.writeFileString(geminiLink, "profile-owned rules");
+        yield* fs.writeFileString(globalGemini, "End every reply with KIWI.");
+        yield* prepareAntigravityProfile({ profileDirectory, userHome });
+        expect(yield* fs.readFileString(geminiLink)).toBe("profile-owned rules");
+
+        yield* fs.remove(globalAgents);
+        yield* prepareAntigravityProfile({ profileDirectory, userHome });
+        const dangling = yield* fs.readLink(agentsLink).pipe(
+          Effect.as(true),
+          Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(false)),
+        );
+        expect(dangling).toBe(false);
+      }),
+  );
+
   it.effect("rewrites the GCP block on every launch and never stores the API key", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
