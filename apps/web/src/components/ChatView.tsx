@@ -912,7 +912,7 @@ export default function ChatView(props: ChatViewProps) {
           },
           messages,
         );
-  // A linked environment's agent may have delegated this thread from there.
+  // The thread whose agent launched this one, here or in a linked environment.
   const delegatedFrom = activeThread?.delegatedFrom ?? null;
   const delegatedFromEnvironment = useEnvironment(delegatedFrom?.environmentId ?? null);
   const delegatedFromRef =
@@ -959,7 +959,12 @@ export default function ChatView(props: ChatViewProps) {
     const parentRef = delegatedFromRef;
     return {
       title: delegatedFromThread?.title ?? delegatedFrom.title,
-      environmentLabel: delegatedFromEnvironment?.label ?? activeThread?.linkOrigin?.label ?? "",
+      ...(delegatedFrom.environmentId === environmentId
+        ? {}
+        : {
+            environmentLabel:
+              delegatedFromEnvironment?.label ?? activeThread?.linkOrigin?.label ?? "",
+          }),
       // Only an environment this client is connected to can open the parent.
       ...(delegatedFromEnvironment === null
         ? {}

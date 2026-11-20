@@ -219,6 +219,11 @@ function relationshipHint(
 ) {
   if (sideChat) return resolve(msg("Open side chat in this chat"));
   if (edge.kind === "transfer") return resolve(msg("Open context transfer in this chat"));
+  if (edge.kind === "launched") {
+    return edge.sourceThreadId === currentThreadId
+      ? resolve(msg("Open launched thread in this chat"))
+      : resolve(msg("Open parent agent in this chat"));
+  }
   if (edge.kind === "subagent") {
     return edge.sourceThreadId === currentThreadId
       ? resolve(msg("Open subagent in this chat"))
@@ -559,7 +564,11 @@ export function ThreadRelationshipsPanel(props: {
     ...relationshipShells,
     ...(archivedShells ?? []),
   ];
-  const graph = deriveThreadRelationshipGraph({ threads: shells, projection });
+  const graph = deriveThreadRelationshipGraph({
+    threads: shells,
+    projection,
+    environmentId: props.environmentId,
+  });
   const isHiddenRelation = (threadId: ThreadId) =>
     hiddenKeys.has(threadKey({ environmentId: props.environmentId, threadId }));
   // While hiding, an unloaded parent, fork or transfer may be hidden; unloaded subagent
@@ -626,7 +635,7 @@ export function ThreadRelationshipsPanel(props: {
     const isParent = isParentThreadRelationship(edge, props.threadId);
     if (!isParent && graph.nodes.get(threadId)?.thread?.lineage.sideChat === true)
       return "sideChats";
-    if (edge.kind !== "subagent" || isParent) return "related";
+    if ((edge.kind !== "subagent" && edge.kind !== "launched") || isParent) return "related";
     return isFinishedAgentStatus(edge.status) ? "previous" : "active";
   });
   const { remoteActive = [], remotePrevious = [] } = groupBy(
@@ -655,8 +664,12 @@ export function ThreadRelationshipsPanel(props: {
       (agent) => agent.childThreadId === null && agent.status === "running",
     ).length ?? 0) + active.filter(({ edge }) => edge.status === "running").length;
 
-  // A linked environment's agent may have delegated this thread from there.
-  const delegatedFrom = currentThread?.delegatedFrom;
+  // A linked environment's agent may have delegated this thread from there; a launcher here is a
+  // parent row of its own.
+  const delegatedFrom =
+    currentThread?.delegatedFrom?.environmentId === props.environmentId
+      ? undefined
+      : (currentThread?.delegatedFrom ?? undefined);
 
   const lineageVisible =
     props.showLineage &&
@@ -774,6 +787,8 @@ export function ThreadRelationshipsPanel(props: {
   const renderRelationshipRow = ({ threadId, edge }: ThreadRelationshipWalkRow) => {
     const node = graph.nodes.get(threadId);
     const isSubagent = edge.kind === "subagent";
+    // A thread this one launched is an agent too, shown with its own provider.
+    const isAgent = isSubagent || edge.kind === "launched";
     const isMergeTarget = threadId === mergeTargetThreadId;
     const isParent = isParentThreadRelationship(edge, props.threadId);
     const rowStatus =
@@ -782,7 +797,7 @@ export function ThreadRelationshipsPanel(props: {
         : undefined) ?? threadRelationshipRowStatus(graph, { threadId, edge });
     const RelationshipIcon = isParent
       ? CornerLeftUpIcon
-      : isSubagent
+      : isAgent
         ? BotIcon
         : node?.thread?.lineage.sideChat === true
           ? MessagesSquareIcon
@@ -862,7 +877,7 @@ export function ThreadRelationshipsPanel(props: {
     const relationshipContent = (
       <>
         <ThreadRelationshipIcon
-          driver={isSubagent && !isParent ? providerDriver : undefined}
+          driver={isAgent && !isParent ? providerDriver : undefined}
           provider={provider}
           providerEntries={providerEntries}
           fallbackIcon={RelationshipIcon}
