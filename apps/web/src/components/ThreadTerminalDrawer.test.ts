@@ -39,6 +39,14 @@ describe("terminal selection actions", () => {
       action("terminal.paste", key("v", { ctrlKey: true, shiftKey: true, altKey: true }), false),
     ).toBe("paste");
     expect(action("terminal.paste", key("v", { metaKey: true }), false)).toBe("paste");
+    const insert = (modifiers: Partial<KeyboardEvent>) => ({
+      ...key("Insert", modifiers),
+      code: "Insert",
+    });
+    expect(action("terminal.copy", insert({ ctrlKey: true }), true)).toBe("native");
+    expect(action("terminal.copy", insert({ ctrlKey: true, altKey: true }), true)).toBe("copy");
+    expect(action("terminal.paste", insert({ shiftKey: true }), false)).toBe("native");
+    expect(action("terminal.paste", insert({ shiftKey: true, altKey: true }), false)).toBe("paste");
     expect(action("terminal.new", key("c", { ctrlKey: true }), true)).toBeNull();
     vi.unstubAllGlobals();
   });
