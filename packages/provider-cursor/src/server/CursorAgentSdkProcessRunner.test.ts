@@ -5,6 +5,7 @@ import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -52,6 +53,10 @@ rl.on("line", (line) => {
     return;
   }
   if (req.type === "send") {
+    if (mode === "hang-send") {
+      send({ type: "protocolLog", event: { direction: "incoming", stage: "decoded", payload: { type: "run.started", runId: "pending", agentId: "agent-worker-1" } } });
+      return;
+    }
     if (mode === "crash-mid-run") {
       send({ type: "response", id: req.id, ok: true, result: { runId: "run-crash", agentId: "agent-worker-1" } });
       process.stderr.write("fatal worker boom\\n");
@@ -264,6 +269,7 @@ describe("CursorAgentSdkProcessRunner", () => {
 
           const session = yield* runner.open(openInput);
           assert.equal(session.agentId, "agent-worker-1");
+          assert.isTrue(session.isAlive?.());
           assert.lengthOf(registeredPids, 1);
 
           const receivedDeltas: Array<string> = [];
@@ -302,6 +308,7 @@ describe("CursorAgentSdkProcessRunner", () => {
           assert.isFalse(yield* session.runCheckpointed!("other"));
           yield* session.rewindAfterRun!("run-worker-1");
           yield* session.close;
+          assert.isFalse(session.isAlive?.());
 
           assert.deepEqual(unregisteredPids, registeredPids);
           assert.deepEqual(stoppedUnits, ["unit-cursor-sdk"]);
@@ -393,8 +400,9 @@ describe("CursorAgentSdkProcessRunner", () => {
               env: { FAKE_WORKER_MODE: "exit-after-done" },
             }),
             protocolLoggerFor: () => undefined,
-            onWorkerTerminated: () =>
-              Deferred.succeed(workerTerminated, undefined).pipe(Effect.asVoid),
+            onWorkerTerminated: () => {
+              Deferred.doneUnsafe(workerTerminated, Exit.void);
+            },
           });
 
           const session = yield* runner.open(openInput);
@@ -453,6 +461,43 @@ describe("CursorAgentSdkProcessRunner", () => {
         yield* session.close;
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live(
+    "retires the worker when send is interrupted after transmission before acknowledgment",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const scriptPath = yield* writeFakeWorker;
+          const executable = yield* HostProcess.ExecutablePath;
+          const receivedByWorker = yield* Deferred.make<void>();
+          const unregistered = yield* Deferred.make<void>();
+
+          const runner = yield* CursorAgentSdkProcessRunner.makeCursorAgentSdkProcessRunner({
+            resolveLaunch: Effect.succeed({
+              command: executable,
+              args: [scriptPath],
+              env: { FAKE_WORKER_MODE: "hang-send" },
+              registerProcess: () => () => {
+                Deferred.doneUnsafe(unregistered, Exit.void);
+              },
+            }),
+            protocolLoggerFor: () => (event) =>
+              event.payload.type === "run.started"
+                ? Deferred.succeed(receivedByWorker, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+          });
+
+          const session = yield* runner.open(openInput);
+          assert.isTrue(session.isAlive?.());
+          const sending = yield* Effect.forkChild(session.send({ message: "hi" }));
+          yield* Deferred.await(receivedByWorker);
+          yield* Fiber.interrupt(sending);
+          yield* Deferred.await(unregistered);
+          assert.isFalse(session.isAlive?.());
+          yield* session.close;
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("forwards cancel and runs textGenerate in a disposable child process", () =>

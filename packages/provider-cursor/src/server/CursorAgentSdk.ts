@@ -142,6 +142,8 @@ export interface CursorAgentSdkSession {
    * The open agent keeps its old conversation in memory, so reopen it before the next send.
    */
   readonly rewindAfterRun?: (runId: string) => Effect.Effect<void, CursorAgentSdkRunnerError>;
+  /** False once an out-of-process worker has terminated or started closing; absent on in-process sessions. */
+  readonly isAlive?: () => boolean;
   readonly close: Effect.Effect<void, CursorAgentSdkRunnerError>;
 }
 
