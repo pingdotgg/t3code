@@ -26,6 +26,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { captureLauncher, captureLauncherFor, runLauncher } from "./launcherTestHarness.ts";
@@ -1363,7 +1364,15 @@ const http = require("node:http");
 const path = require("node:path");
 const args = process.argv.slice(2);
 const flag = (name) => args[args.indexOf(name) + 1];
-const server = http.createServer((_request, response) => response.end("ok"));
+const server = http.createServer((request, response) => {
+  // Closes the listener but stays up, like a server stuck in its teardown.
+  if (request.url === "/stop") {
+    server.close();
+    setInterval(() => {}, 1 << 30);
+    response.setHeader("connection", "close");
+  }
+  response.end("ok");
+});
 server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
   const port = server.address().port;
   const base = flag("--base-dir");
@@ -1482,6 +1491,36 @@ server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
         `the launcher kept ${kind} as its running server`,
       );
       assert.isTrue(yield* isRunning(pid));
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.live("a reconnect names the previous server while it is still shutting down", () =>
+    Effect.gen(function* () {
+      const { fs, fakeServer, sshAsLocalShell, stateDir } = yield* prepare("an unrelated process");
+      const launch = SshTunnel.launchOrReuseRemoteServer(target, undefined, {
+        nodeScriptPath: fakeServer,
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, sshAsLocalShell));
+
+      const first = yield* launch;
+      const pid = Number((yield* fs.readFileString(`${stateDir}/pid`)).trim());
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {}
+        }),
+      );
+      yield* HttpClient.get(`http://127.0.0.1:${first.remotePort}/stop`).pipe(
+        Effect.flatMap((response) => response.text),
+        Effect.provide(FetchHttpClient.layer),
+      );
+
+      const error = yield* Effect.flip(launch);
+      assert.include(
+        error.message,
+        `The previous remote T3 server (PID ${pid}) is still shutting down.`,
+      );
+      assert.isTrue(yield* isRunning(pid), "the launcher signalled the stopping server");
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
