@@ -3,7 +3,10 @@ import {
   EnvironmentId,
   EventId,
   type OrchestrationV2StoredEvent,
+  OrchestrationV2ThreadStreamItem,
   type PeerLinkThreadReadError,
+  PEER_LINK_THREAD_HISTORY_ROUTE,
+  PEER_LINK_THREAD_ITEM_ROUTE,
   PEER_LINK_THREAD_STREAM_ROUTE,
   ThreadId,
   TurnItemId,
@@ -19,7 +22,9 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import { HttpRouter, HttpServerResponse } from "effect/http";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -84,17 +89,32 @@ const serveBox = Effect.gen(function* () {
 /** A, holding the link and relaying B's threads to its own clients. */
 const makeLaptop = Effect.gen(function* () {
   const linking = yield* layerLinkingEnvironment(laptop).pipe(Layer.build);
+  const answered = yield* Queue.unbounded<number>();
   const relay = yield* PeerThreadRelay.layer.pipe(
     Layer.provide(Layer.succeedContext(linking)),
-    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(
+      Layer.effect(
+        HttpClient.HttpClient,
+        Effect.map(
+          HttpClient.HttpClient,
+          HttpClient.tap((response) => Queue.offer(answered, response.status)),
+        ),
+      ).pipe(Layer.provide(FetchHttpClient.layer)),
+    ),
     Layer.build,
   );
   return {
     links: Context.get(linking, PeerLinks.PeerLinks),
     settings: Context.get(linking, ServerSettings.ServerSettingsService),
     relay: Context.get(relay, PeerThreadRelay.PeerThreadRelay),
+    /** The status of each answer the relay got, once its headers arrived. */
+    answered,
   };
 });
+
+const encodeStreamItem = Schema.encodeSync(
+  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadStreamItem)),
+);
 
 it.effect("relays a linked thread's snapshot and live items, and stops when the client does", () =>
   Effect.scoped(
@@ -223,6 +243,88 @@ it.effect("tells a client why a linked environment's thread cannot be read", () 
       yield* TestClock.adjust(Duration.days(31));
       expect(yield* reasonOf()).toEqual({ reason: "expired", label: "Box" });
       expect(yield* Ref.get(b.bearers)).toEqual([]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("leaves out what a newer linked environment sends that this one cannot pass on", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const frames = [
+        encodeStreamItem({ kind: "snapshot", snapshotSequence: 7, projection: boxProjection }),
+        // An event type added after this version, which its schema reads but never writes.
+        JSON.stringify({ kind: "event", sequence: 8, event: { type: "thread.teleported" } }),
+        encodeStreamItem({ kind: "event", ...archived(9) }),
+      ];
+      const b = yield* servePeer(
+        box,
+        Layer.empty,
+        HttpRouter.add(
+          "GET",
+          PEER_LINK_THREAD_STREAM_ROUTE,
+          Effect.succeed(
+            HttpServerResponse.stream(
+              Stream.fromIterable(frames).pipe(
+                Stream.map((frame) => `data: ${frame}\n\n`),
+                Stream.concat(Stream.never),
+                Stream.encodeText,
+              ),
+              { contentType: "text/event-stream" },
+            ),
+          ),
+        ),
+      );
+      const a = yield* makeLaptop;
+      yield* linkTo(a.links, b);
+
+      const relayed = yield* a.relay.subscribe(input).pipe(Stream.take(2), Stream.runCollect);
+      expect(relayed.map((item) => [item.kind, "sequence" in item ? item.sequence : null])).toEqual(
+        [
+          ["snapshot", null],
+          ["event", 9],
+        ],
+      );
+      // Each one goes on to this environment's client in the same encoding.
+      expect(relayed.map((item) => encodeStreamItem(item))).toHaveLength(2);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("gives up on an answer whose body never arrives", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const stalled = (status: number) =>
+        Effect.succeed(
+          HttpServerResponse.stream(
+            Stream.make("{").pipe(Stream.concat(Stream.never), Stream.encodeText),
+            { status, contentType: "application/json" },
+          ),
+        );
+      const b = yield* servePeer(
+        box,
+        Layer.empty,
+        Layer.mergeAll(
+          HttpRouter.add("GET", PEER_LINK_THREAD_ITEM_ROUTE, stalled(200)),
+          HttpRouter.add("GET", PEER_LINK_THREAD_HISTORY_ROUTE, stalled(403)),
+        ),
+      );
+      const a = yield* makeLaptop;
+      yield* linkTo(a.links, b);
+
+      const item = yield* a.relay
+        .item({ ...input, itemId: boxItem })
+        .pipe(Effect.flip, Effect.forkScoped);
+      expect(yield* Queue.take(a.answered)).toBe(200);
+      yield* TestClock.adjust(Duration.seconds(10));
+      expect(yield* Fiber.join(item)).toMatchObject({ reason: "unreachable", label: "Box" });
+
+      // A refusal is known by its status, so its body is not waited for either.
+      const page = yield* a.relay
+        .historyPage({ ...input, cursor: "cursor-1" })
+        .pipe(Effect.flip, Effect.forkScoped);
+      expect(yield* Queue.take(a.answered)).toBe(403);
+      yield* TestClock.adjust(Duration.seconds(10));
+      expect(yield* Fiber.join(page)).toMatchObject({ reason: "rejected", label: "Box" });
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

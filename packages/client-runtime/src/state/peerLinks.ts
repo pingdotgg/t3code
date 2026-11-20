@@ -10,7 +10,11 @@ import * as Effect from "effect/Effect";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
-import { followLinkedThread, type LinkedThreadView } from "../linkedThread.ts";
+import {
+  followLinkedThread,
+  keepLinkedThreadView,
+  type LinkedThreadView,
+} from "../linkedThread.ts";
 import { request, subscribe } from "../rpc/client.ts";
 import {
   createEnvironmentRpcCommand,
@@ -78,7 +82,10 @@ export function createPeerLinkEnvironmentAtoms<R, E>(
     const stream = threadStream(JSON.parse(key) as LinkedThreadViewTarget);
     return Atom.make((get) => {
       const live = get(stream);
-      if (AsyncResult.isSuccess(live)) get.set(lastThreadView(key), live.value);
+      if (AsyncResult.isSuccess(live)) {
+        const kept = lastThreadView(key);
+        get.set(kept, keepLinkedThreadView(get.once(kept), live.value));
+      }
       return live;
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-data:peer-links:thread-view:${key}`));
   });

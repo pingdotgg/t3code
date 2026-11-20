@@ -132,7 +132,12 @@ const make = Effect.gen(function* () {
     route: string,
     params: Record<string, string>,
   ): Effect.fn.Return<
-    { readonly label: string; readonly response: HttpClientResponse.HttpClientResponse },
+    {
+      readonly label: string;
+      readonly response: HttpClientResponse.HttpClientResponse;
+      /** How long the peer may take over the rest of an answer that is not a stream. */
+      readonly timeout: Duration.Duration;
+    },
     PeerLinkThreadReadError,
     Scope.Scope
   > {
@@ -168,6 +173,7 @@ const make = Effect.gen(function* () {
     if (resolved.capabilities.linkThreadStream !== true) {
       return yield* fromStatus(404, undefined, label);
     }
+    const timeout = PeerLinks.probeTimeout(resolved.url);
     const query = new URLSearchParams({ thread: input.threadId, ...params });
     const response = yield* HttpClient.withScope(httpClient)
       .execute(
@@ -176,15 +182,17 @@ const make = Effect.gen(function* () {
         ),
       )
       .pipe(
-        // Only the answer is bounded: an open stream stays quiet for as long as the thread does.
-        Effect.timeout(PeerLinks.probeTimeout(resolved.url)),
+        // Bounds the headers only: an open stream stays quiet for as long as the thread does.
+        Effect.timeout(timeout),
         Effect.mapError((error) => unreachable(label, error)),
         Effect.tapError((error) =>
           links.recordOutcome(input.environmentId, { error: error.message }),
         ),
       );
     if (response.status !== 200) {
+      // A refusal whose body never arrives is still the refusal its status names.
       const refusal = yield* response.json.pipe(
+        Effect.timeout(timeout),
         Effect.map(decodeRefusal),
         Effect.orElseSucceed(() => Option.none()),
       );
@@ -202,7 +210,7 @@ const make = Effect.gen(function* () {
       DateTime.make,
     );
     if (Option.isSome(renewed)) yield* links.recordExpiry(input.environmentId, renewed.value);
-    return { label, response };
+    return { label, response, timeout };
   });
 
   const readJson = <A>(
@@ -210,8 +218,10 @@ const make = Effect.gen(function* () {
     decode: (body: unknown) => Effect.Effect<A, Schema.SchemaError>,
   ) =>
     opened.pipe(
-      Effect.flatMap(({ label, response }) =>
+      Effect.flatMap(({ label, response, timeout }) =>
         response.json.pipe(
+          // A peer that sends headers and then stalls must not leave the read waiting.
+          Effect.timeout(timeout),
           Effect.flatMap(decode),
           Effect.mapError((error) => unreachable(label, error)),
         ),
@@ -231,9 +241,12 @@ const make = Effect.gen(function* () {
             Stream.decodeText,
             Stream.pipeThroughChannel(Sse.decode()),
             // An item this version cannot read is skipped, as the owner's own client skips it.
+            // That includes an event type from a newer peer, which cannot be encoded again.
             Stream.filterMap((event) => {
               const item = decodeStreamItem(event.data);
-              return Option.isSome(item) ? Result.succeed(item.value) : Result.failVoid;
+              return Option.isSome(item) && item.value.kind !== "unknown-event"
+                ? Result.succeed(item.value)
+                : Result.failVoid;
             }),
             Stream.mapError((error) =>
               error._tag === "PeerLinkThreadReadError" ? error : unreachable(label, error),

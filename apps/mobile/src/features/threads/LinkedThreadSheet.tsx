@@ -5,6 +5,10 @@ import {
   type LinkedThreadFailure,
   type LinkedThreadTarget,
 } from "@t3tools/client-runtime/linked-thread";
+import {
+  turnItemDetailRevision,
+  turnItemOutputText,
+} from "@t3tools/client-runtime/work-log/item-detail";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { T, useGT, useLocale, useMessages } from "gt-react-native";
 import { useRef, useState, useSyncExternalStore } from "react";
@@ -22,10 +26,13 @@ import { useEnvironments } from "../../state/environments";
 import {
   buildThreadFeed,
   createThreadFeedCache,
+  formatItemFullDetail,
   type ThreadFeedActivity,
   type ThreadFeedEntry,
 } from "../../lib/threadActivity";
 import { useLinkedThreadView } from "../../state/linkedThread";
+import { peerLinkEnvironment } from "../../state/peerLinks";
+import { useEnvironmentQuery } from "../../state/query";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
 import { ReadOnlyComposerBar } from "./ReadOnlyComposerBar";
 
@@ -50,10 +57,45 @@ export const linkedThreadRouteParams = (
   ...(title === null ? {} : { title }),
 });
 
-function ActivityRow(props: { readonly activity: ThreadFeedActivity }) {
-  const { activity } = props;
+function ActivityRow(props: {
+  readonly activity: ThreadFeedActivity;
+  readonly target: LinkedThreadTarget;
+}) {
+  const { activity, target } = props;
+  const gt = useGT();
   const [open, setOpen] = useState(false);
-  const body = open ? (activity.getFullDetail() ?? activity.detail) : null;
+  const row = activity.projectedItem;
+  // The stream leaves long output out; an open row reads its item in full through the link.
+  const fetched = useEnvironmentQuery(
+    open && activity.fetchesDetail
+      ? peerLinkEnvironment.threadItem({
+          environmentId: target.viaEnvironmentId,
+          input: {
+            environmentId: target.environmentId,
+            threadId: row.sourceThreadId,
+            itemId: row.sourceItemId,
+            revision: turnItemDetailRevision(row.item),
+          },
+        })
+      : null,
+  );
+  const fetchedItem = fetched.data?.item ?? null;
+  const body = !open
+    ? null
+    : fetchedItem
+      ? formatItemFullDetail(row, fetchedItem)
+      : (activity.getFullDetail() ?? activity.detail);
+  const output = !open
+    ? null
+    : !activity.fetchesDetail
+      ? turnItemOutputText(row.item)
+      : fetchedItem
+        ? (turnItemOutputText(fetchedItem) ?? gt("No output."))
+        : fetched.error
+          ? gt("Couldn't load output: {error}", { error: fetched.error })
+          : fetched.data
+            ? gt("Output is no longer available.")
+            : gt("Loading output…");
   return (
     <Pressable
       accessibilityRole="button"
@@ -75,6 +117,23 @@ function ActivityRow(props: { readonly activity: ThreadFeedActivity }) {
           </Text>
         </View>
       ) : null}
+      {output ? (
+        <View className="mt-1 rounded-lg bg-subtle p-2">
+          <Text selectable className="font-mono text-xs text-foreground-muted">
+            {output}
+          </Text>
+        </View>
+      ) : null}
+      {open && fetched.error ? (
+        <View className="mt-1.5 self-start">
+          <Button
+            size="compact"
+            tone="secondary"
+            label={gt("Try again")}
+            onPress={fetched.refresh}
+          />
+        </View>
+      ) : null}
     </Pressable>
   );
 }
@@ -83,17 +142,24 @@ function ActivityRow(props: { readonly activity: ThreadFeedActivity }) {
  * One entry of the thread's feed, as the thread screen's own feed model has it. Only reading
  * rows are drawn: what needs the thread's environment (files, visuals, apps) is left out.
  */
-function LinkedThreadEntry(props: { readonly entry: ThreadFeedEntry }) {
+function LinkedThreadEntry(props: {
+  readonly entry: ThreadFeedEntry;
+  readonly target: LinkedThreadTarget;
+}) {
   const { entry } = props;
   const styles = useMarkdownPreviewStyles();
   if (entry.type === "activity-group") {
     return (
       <View className="gap-1.5">
         {entry.activities.map((activity) => (
-          <ActivityRow key={activity.id} activity={activity} />
+          <ActivityRow key={activity.id} activity={activity} target={props.target} />
         ))}
       </View>
     );
+  }
+  // A message the agent sent with a tool reads as its own words, as on the thread screen.
+  if (entry.type === "sent-message") {
+    return <SelectableMarkdownText markdown={entry.text} textStyle={styles.nativeTextStyle} />;
   }
   if (entry.type !== "message" || entry.message.text.trim() === "") return null;
   return entry.message.role === "user" ? (
@@ -261,7 +327,7 @@ function LinkedThreadView(props: { readonly target: LinkedThreadTarget }) {
                 </Text>
               ) : null}
               {feed.map((entry) => (
-                <LinkedThreadEntry key={entry.id} entry={entry} />
+                <LinkedThreadEntry key={entry.id} entry={entry} target={target} />
               ))}
               {failure === null ? null : <FailureCard failure={failure} stale onRetry={retry} />}
             </>

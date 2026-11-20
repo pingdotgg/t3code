@@ -12,6 +12,7 @@ import { TestClock } from "effect/testing";
 
 import {
   followLinkedThread,
+  keepLinkedThreadView,
   LINKED_THREAD_RETRY_MS,
   type LinkedThreadView,
 } from "./linkedThread.ts";
@@ -81,6 +82,45 @@ it.effect("keeps what it read while a linked environment is out of reach, and as
     expect(yield* Fiber.join(following)).toEqual(failure("expired"));
     expect(opened).toBe(2);
   }),
+);
+
+it.effect("keeps the thread a view showed while its reopened stream has read nothing", () =>
+  Effect.gen(function* () {
+    const attempts = [
+      Stream.make(snapshot(1, "cursor-1"), retitled(2, "Renamed")),
+      // The view closed and opened again while the linked environment was out of reach.
+      Stream.fail(failure("unreachable")),
+      Stream.make(snapshot(5)).pipe(Stream.concat(Stream.never)),
+    ];
+    let opened = 0;
+    const follow = () =>
+      followLinkedThread({
+        items: Stream.suspend(() => attempts[opened++]!),
+        historyPage: () => Effect.die("unused"),
+      });
+    let kept: LinkedThreadView | null = null;
+    yield* follow().pipe(
+      Stream.runForEach((view) => Effect.sync(() => (kept = keepLinkedThreadView(kept, view)))),
+    );
+
+    const views = yield* Queue.unbounded<LinkedThreadView>();
+    yield* follow().pipe(
+      Stream.runForEach((view) => Queue.offer(views, keepLinkedThreadView(kept, view))),
+      Effect.forkScoped,
+    );
+    const waiting = yield* Queue.take(views);
+    expect([titleOf(waiting), waiting.error]).toEqual(["Renamed", failure("unreachable")]);
+    // Earlier turns belong to a stream that is gone, so none are offered until one is back.
+    expect(waiting.thread.historyCursor).toBeNull();
+
+    yield* TestClock.adjust(LINKED_THREAD_RETRY_MS);
+    const back = yield* Queue.take(views);
+    expect([titleOf(back), back.error, back.thread.sequence]).toEqual([
+      v2Projection.thread.title,
+      null,
+      5,
+    ]);
+  }).pipe(Effect.scoped),
 );
 
 it.effect("loads the turns before a snapshot's window once per request", () =>

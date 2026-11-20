@@ -182,6 +182,19 @@ export interface LinkedThreadView {
 }
 
 /**
+ * What a view keeps once its stream shows `next`. A stream that was opened again has read nothing
+ * until its snapshot arrives, so the thread read before stays, with the new stream's state beside
+ * it. Its earlier turns load again only once that stream has a thread of its own to add them to.
+ */
+export const keepLinkedThreadView = (
+  kept: LinkedThreadView | null,
+  next: LinkedThreadView,
+): LinkedThreadView =>
+  next.thread.projection !== null || kept === null || kept.thread.projection === null
+    ? next
+    : { ...next, thread: { ...kept.thread, historyCursor: null } };
+
+/**
  * Follows a linked environment's thread for as long as something consumes the result. The thread
  * is built from the same stream items and with the same reducer as a guest page's, and older
  * turns load through the same cursor. A linked environment that stops answering is asked again
