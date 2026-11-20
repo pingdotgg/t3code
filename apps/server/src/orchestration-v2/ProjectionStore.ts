@@ -262,7 +262,18 @@ const ProjectionCheckpointContext = Schema.Struct({
   ),
   checkpoints: Schema.Array(
     OrchestrationV2CheckpointJsonSchema.mapFields(
-      ({ scopeId, runId, ordinalWithinScope, appRunOrdinal, status, ref }) => ({
+      ({
+        id,
+        parentCheckpointId,
+        scopeId,
+        runId,
+        ordinalWithinScope,
+        appRunOrdinal,
+        status,
+        ref,
+      }) => ({
+        id,
+        parentCheckpointId,
         scopeId,
         runId,
         ordinalWithinScope,
@@ -281,6 +292,9 @@ export interface ProjectionCheckpointCaptureContext {
   readonly rootNode: OrchestrationV2ExecutionNode | undefined;
   readonly scope: OrchestrationV2CheckpointScope | undefined;
   readonly providerThread: OrchestrationV2ProviderThread | undefined;
+  readonly previousRunCheckpoint:
+    | Pick<OrchestrationV2Checkpoint, "id" | "ref" | "ordinalWithinScope">
+    | undefined;
   /**
    * Ordinals a runless baseline must not overwrite: ready snapshots, and missing checkpoints pinning
    * a run. Without file snapshots that run link is what rewind uses. Stale rows are rebaselined.
@@ -6281,7 +6295,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ORDER BY ordinal_within_parent ASC, scope_id ASC
             `,
               sql`
-              SELECT scope_id AS "scopeId", run_id AS "runId",
+              SELECT checkpoint_id AS id, scope_id AS "scopeId", run_id AS "runId",
+                json_extract(payload_json, '$.parentCheckpointId') AS "parentCheckpointId",
                 ordinal_within_scope AS "ordinalWithinScope",
                 app_run_ordinal AS "appRunOrdinal", status,
                 json_extract(payload_json, '$.ref') AS ref
@@ -6331,11 +6346,25 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               AND (thread_id = ${threadId}
                 OR owner_node_id IN (${nodesOwningProviderThreads(threadId)})
                 OR provider_thread_id IN (SELECT provider_thread_id FROM orchestration_v2_projection_subagents WHERE thread_id = ${threadId}))`,
-              sql<{ readonly ordinal: number }>`SELECT ordinal_within_scope AS ordinal
+              sql<{
+                readonly id: OrchestrationV2Checkpoint["id"];
+                readonly ref: OrchestrationV2Checkpoint["ref"];
+                readonly ordinal: number;
+                readonly run_id: RunId | null;
+                readonly app_run_ordinal: number | null;
+              }>`SELECT checkpoint_id AS id, json_extract(payload_json, '$.ref') AS ref,
+                ordinal_within_scope AS ordinal, run_id, app_run_ordinal
             FROM orchestration_v2_projection_checkpoints
             WHERE thread_id = ${threadId} AND scope_id = ${target.scopeId}
               AND (status = 'ready' OR (status = 'missing' AND run_id IS NOT NULL))`,
             ]);
+            const previous =
+              run === undefined
+                ? undefined
+                : preservedRows.find(
+                    (checkpoint) =>
+                      checkpoint.run_id !== null && checkpoint.app_run_ordinal === run.ordinal - 1,
+                  );
             return {
               run,
               rootNode:
@@ -6351,6 +6380,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   ? undefined
                   : yield* decodeProviderThreadPayload(providerRows[0].payload_json),
               preservedCheckpointOrdinals: preservedRows.map(({ ordinal }) => ordinal),
+              previousRunCheckpoint:
+                previous === undefined
+                  ? undefined
+                  : { id: previous.id, ref: previous.ref, ordinalWithinScope: previous.ordinal },
               sideChat: threadRows[0].side_chat === 1,
             };
           }),

@@ -5252,6 +5252,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           },
         },
       ];
+      const legacyTop = turn("legacy", "full", [
+        user("legacy:user", "legacy"),
+        user("steer", "Steer the turn"),
+        answer("legacy"),
+      ]);
+      const local = turn("local-3", "full", [user("local-3")]);
       const { runtime, providerThread } = yield* makeCodexReplayHarness(
         makeCodexReplayTranscript({
           scenario: "codex-external-history",
@@ -5280,26 +5286,27 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             ...listItems(12, "newest", null, [user("newest:user", "newest")], "stuck"),
             ...listItems(13, "newest", "stuck", [answer("newest")], "stuck"),
             ...readMode(14, "legacy"),
-            ...listPage(
-              15,
-              null,
-              [
-                turn("legacy", "full", [
-                  user("legacy:user", "legacy"),
-                  user("steer", "Steer the turn"),
-                  answer("legacy"),
-                ]),
-              ],
-              "older-1",
-              "full",
-              "legacy-head",
-            ),
-            ...listPage(16, "older-1", [turn("local-3", "full")], "older-2", "full"),
+            ...listPage(15, null, [legacyTop], "older-1", "full", "legacy-head"),
+            ...listPage(16, "older-1", [local], "older-2", "full"),
             ...listPage(17, "older-2", [turn("local-2", "full")], "older-3", "full"),
             ...listPage(18, "older-3", [turn("local-1", "full")], "older-4", "full"),
             ...readMode(19, "legacy"),
+            ...listPage(20, "legacy-head", [turn("legacy")], null, "notLoaded", undefined, true),
             ...listPage(
-              20,
+              21,
+              "older-4",
+              [turn("missed-legacy", "full", [user("missed-legacy")]), turn(nativeTurnId, "full")],
+              null,
+              "full",
+            ),
+            ...readMode(22, "legacy"),
+            ...listPage(23, null, [legacyTop], "older-1", "full", "legacy-head"),
+            ...listPage(24, "older-1", [local], "older-2", "full"),
+            ...listPage(25, "older-2", [turn("local-2", "full")], "older-3", "full"),
+            ...listPage(26, "older-3", [turn("local-1", "full")], "older-4", "full"),
+            ...readMode(27, "legacy"),
+            ...listPage(
+              28,
               "legacy-head",
               [turn("legacy")],
               "new-append",
@@ -5308,9 +5315,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               true,
             ),
             ...listPage(
-              21,
-              "older-4",
-              [turn("missed-legacy", "full", [user("missed-legacy")]), turn(nativeTurnId, "full")],
+              29,
+              null,
+              [
+                turn("new-append", "full", [user("new-append")]),
+                legacyTop,
+                turn(nativeTurnId, "full"),
+              ],
               null,
               "full",
             ),
@@ -5337,18 +5348,36 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.deepEqual(yield* readHistory({ providerThread, nativeTurnId }), []);
       const error = yield* Effect.flip(readHistory({ providerThread, nativeTurnId }));
       assert.equal(error._tag, "ProviderAdapterReadThreadSnapshotError");
-      assert.deepEqual(yield* readHistory({ providerThread, nativeTurnId }), []);
-      const legacy = yield* readHistory({ providerThread, nativeTurnId });
+      assert.deepEqual(
+        yield* readHistory({
+          providerThread,
+          nativeTurnId,
+          knownNativeTurnIds: new Set(["legacy"]),
+        }),
+        [],
+      );
+      const legacy = yield* readHistory({
+        providerThread,
+        nativeTurnId,
+        knownNativeTurnIds: new Set(["local-3"]),
+      });
       assert.deepEqual(
         legacy.map((turn) => turn.id),
         ["missed-legacy", "local-1", "local-2", "local-3", "legacy"],
       );
       assert.deepEqual(legacy[0]?.messages, [{ role: "user", text: "missed-legacy" }]);
+      assert.deepEqual(legacy.find((turn) => turn.id === "local-3")?.messages, []);
       assert.deepEqual(legacy.at(-1)?.messages, [
         { role: "user", text: "legacy" },
         { role: "user", text: "Steer the turn" },
         { role: "assistant", text: "Reply to legacy" },
       ]);
+      assert.deepEqual(yield* readHistory({ providerThread, nativeTurnId }), []);
+      const afterAppend = yield* readHistory({ providerThread, nativeTurnId });
+      assert.deepEqual(
+        afterAppend.map((turn) => turn.id),
+        ["legacy", "new-append"],
+      );
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
@@ -10729,97 +10758,138 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     completedAt: input.now,
   });
 
-  it.effect("fails honestly when rolling back a legacy Codex thread", () =>
-    Effect.gen(function* () {
-      const nativeThreadId = "legacy-rollback-thread";
-      const preamble = codexReplayPreamble({
-        nativeThreadId,
-        nativeTurnId: "legacy-rollback-turn",
-        prompt: "unused",
-      });
-      const transcript = makeCodexReplayTranscript({
-        scenario: "codex-legacy-rollback",
-        entries: [
-          ...preamble.slice(0, 5),
-          {
-            type: "expect_outbound",
-            label: "thread/read",
-            frame: {
-              id: 3,
-              method: "thread/read",
-              params: { threadId: nativeThreadId, includeTurns: false },
+  it.effect.each(["known suffix", "native suffix", "native head"] as const)(
+    "checks whether a legacy Codex rollback would change history (%s)",
+    (scenario) =>
+      Effect.gen(function* () {
+        const nativeThreadId = "legacy-rollback-thread";
+        const preamble = codexReplayPreamble({
+          nativeThreadId,
+          nativeTurnId: "legacy-rollback-turn",
+          prompt: "unused",
+        });
+        const transcript = makeCodexReplayTranscript({
+          scenario: "codex-legacy-rollback",
+          entries: [
+            ...preamble.slice(0, 5),
+            {
+              type: "expect_outbound",
+              label: "thread/read",
+              frame: {
+                id: 3,
+                method: "thread/read",
+                params: { threadId: nativeThreadId, includeTurns: false },
+              },
             },
-          },
-          {
-            type: "emit_inbound",
-            label: "thread/read",
-            frame: {
-              id: 3,
-              result: { thread: { id: nativeThreadId, historyMode: "legacy" } },
+            {
+              type: "emit_inbound",
+              label: "thread/read",
+              frame: {
+                id: 3,
+                result: { thread: { id: nativeThreadId, historyMode: "legacy" } },
+              },
             },
-          },
-        ],
-      });
-      const outbound: Array<string> = [];
-      const harness = yield* makeCodexReplayHarness(
-        transcript,
-        () => Effect.void,
-        (method) =>
-          Effect.sync(() => {
-            outbound.push(method);
+            ...(scenario === "known suffix"
+              ? []
+              : ([
+                  {
+                    type: "expect_outbound",
+                    label: "thread/turns/list",
+                    frame: {
+                      id: 4,
+                      method: "thread/turns/list",
+                      params: {
+                        threadId: nativeThreadId,
+                        cursor: null,
+                        limit: 1,
+                        sortDirection: "desc",
+                        itemsView: "notLoaded",
+                      },
+                    },
+                  },
+                  {
+                    type: "emit_inbound",
+                    label: "thread/turns/list",
+                    frame: {
+                      id: 4,
+                      result: {
+                        data: [
+                          {
+                            id: scenario === "native head" ? "native-turn-first" : "external-turn",
+                            items: [],
+                            status: "completed",
+                            error: null,
+                          },
+                        ],
+                        nextCursor: null,
+                      },
+                    },
+                  },
+                ] satisfies Array<CodexReplay.CodexAppServerReplayEntry>)),
+          ],
+        });
+        const outbound: Array<string> = [];
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          () => Effect.void,
+          (method) =>
+            Effect.sync(() => {
+              outbound.push(method);
+            }),
+        );
+        const now = yield* DateTime.now;
+        const firstTurn = codexReplaySourceTurn({
+          id: "provider-turn-first",
+          ordinal: 1,
+          nativeId: "native-turn-first",
+          providerThreadId: harness.providerThread.id,
+          now,
+        });
+        const secondTurn = codexReplaySourceTurn({
+          id: "provider-turn-second",
+          ordinal: 2,
+          nativeId: "native-turn-second",
+          providerThreadId: harness.providerThread.id,
+          now,
+        });
+
+        const result = yield* Effect.result(
+          harness.runtime.rollbackThread({
+            providerThread: harness.providerThread,
+            target: {
+              type: "provider_turn",
+              checkpointId: CheckpointId.make("checkpoint-legacy-rollback"),
+              appRunOrdinal: 1,
+              providerTurn: firstTurn,
+            },
+            providerThreadTurns:
+              scenario === "known suffix" ? [firstTurn, secondTurn] : [firstTurn],
           }),
-      );
-      const now = yield* DateTime.now;
-      const firstTurn = codexReplaySourceTurn({
-        id: "provider-turn-first",
-        ordinal: 1,
-        nativeId: "native-turn-first",
-        providerThreadId: harness.providerThread.id,
-        now,
-      });
-      const secondTurn = codexReplaySourceTurn({
-        id: "provider-turn-second",
-        ordinal: 2,
-        nativeId: "native-turn-second",
-        providerThreadId: harness.providerThread.id,
-        now,
-      });
+        );
 
-      const error = yield* Effect.flip(
-        harness.runtime.rollbackThread({
-          providerThread: harness.providerThread,
-          target: {
-            type: "provider_turn",
-            checkpointId: CheckpointId.make("checkpoint-legacy-rollback"),
-            appRunOrdinal: 1,
-            providerTurn: firstTurn,
-          },
-          providerThreadTurns: [firstTurn, secondTurn],
-        }),
-      );
-
-      assert.instanceOf(error, ProviderAdapter.ProviderAdapterRollbackThreadError);
-      assert.include(
-        errorCauseChainText(error),
-        "legacy",
-        "legacy rollback must surface an honest unsupported-history failure",
-      );
-      assert.notInclude(
-        outbound,
-        "thread/rollback",
-        "thread/rollback must not be sent to a legacy Codex thread",
-      );
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        Layer.mergeAll(
-          IdAllocator.layer,
-          McpProviderSessions.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
+        if (result._tag === "Success") {
+          assert.equal(scenario, "native head");
+          assert.deepEqual(
+            result.success.providerThread.nativeConversationHeadRef,
+            firstTurn.nativeTurnRef,
+          );
+        } else {
+          assert.notEqual(scenario, "native head");
+          assert.include(errorCauseChainText(result.failure), "legacy");
+        }
+        if (scenario !== "known suffix") assert.include(outbound, "thread/turns/list");
+        assert.notInclude(outbound, "thread/revert");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
-    ),
   );
 
   it.effect("unarchives a Codex thread and reverts all native turns after the checkpoint", () =>

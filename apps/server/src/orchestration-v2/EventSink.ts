@@ -497,19 +497,42 @@ const layerBase: Layer.Layer<
         turnItemRunIds: runIds,
       });
       const itemsByRun = Map.groupBy(turnItems, (item) => item.runId);
-      return events.flatMap((event): ReadonlyArray<OrchestrationV2DomainEvent> =>
-        event.type === "run.updated" && event.threadId === threadId
-          ? [
-              event,
-              ...(itemsByRun.get(event.payload.id) ?? []).map((item) => ({
-                type: "turn-item.updated" as const,
-                id: EventId.make(`${event.id}:position:${item.id}`),
-                threadId,
-                occurredAt: event.occurredAt,
-                payload: item,
-              })),
-            ]
-          : [event],
+      const updatesByItem = Map.groupBy(
+        events.flatMap((event) =>
+          event.type === "turn-item.updated" && event.threadId === threadId ? [event] : [],
+        ),
+        (event) => event.payload.id,
+      );
+      const relocated = new Set<EventId>();
+      const repositions = new Map<EventId, Array<OrchestrationV2DomainEvent>>();
+      for (const event of events) {
+        if (event.type !== "run.updated" || event.threadId !== threadId) continue;
+        const items = itemsByRun.get(event.payload.id);
+        if (items === undefined) continue;
+        itemsByRun.delete(event.payload.id);
+        // The position allocator follows event order, so updated items must keep their place.
+        const ordered: Array<OrchestrationV2DomainEvent> = [];
+        for (const item of items) {
+          const updates = updatesByItem.get(item.id);
+          if (updates === undefined) {
+            ordered.push({
+              type: "turn-item.updated",
+              id: EventId.make(`${event.id}:position:${item.id}`),
+              threadId,
+              occurredAt: event.occurredAt,
+              payload: item,
+            });
+          } else if (updates.every((update) => update.payload.runId === item.runId)) {
+            for (const update of updates) {
+              relocated.add(update.id);
+              ordered.push(update);
+            }
+          }
+        }
+        repositions.set(event.id, ordered);
+      }
+      return events.flatMap((event) =>
+        relocated.has(event.id) ? [] : [event, ...(repositions.get(event.id) ?? [])],
       );
     });
 

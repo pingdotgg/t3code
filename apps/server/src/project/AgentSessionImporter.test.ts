@@ -1035,6 +1035,37 @@ it.effect("refreshes completed Codex turns in order, including gaps after a fail
     expect((yield* projections.getThreadRecords(threadId, ["turnItems"])).turnItems).toEqual(
       after.turnItems,
     );
+
+    yield* sink.write({
+      repositionRunItems: true,
+      events: [
+        {
+          id: EventId.make(`${continuedId}:background-rechecked`),
+          type: "turn-item.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            ...backgroundCommand,
+            status: "completed",
+            completedAt: now,
+            output: "Build succeeded after retry",
+          },
+        },
+        {
+          id: EventId.make(`${continuedId}:moved-again`),
+          type: "run.updated",
+          threadId,
+          occurredAt: now,
+          payload: { ...continuedRun, ordinal: 7 },
+        },
+      ],
+    });
+    const { turnItems } = yield* projections.getThreadRecords(threadId, ["turnItems"]);
+    expect(turnItems.find((item) => item.id === backgroundCommand.id)).toMatchObject({
+      ordinal: 7_000_002,
+      status: "completed",
+      output: "Build succeeded after retry",
+    });
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 

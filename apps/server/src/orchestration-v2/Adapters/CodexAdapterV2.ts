@@ -8939,7 +8939,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   );
                 if (
                   head?.data[0]?.id !== pending.head.id ||
-                  head.data[0].status !== pending.head.status
+                  head.data[0].status !== pending.head.status ||
+                  (pending.headCursor !== null && head.nextCursor != null)
                 ) {
                   pending = undefined;
                 }
@@ -8983,7 +8984,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     completedAt:
                       turn.completedAt == null ? startedAt : codexTimestamp(turn.completedAt),
                     messages:
-                      !paginated && turn.status === "completed" && !knownNativeTurnIds?.has(turn.id)
+                      !paginated && turn.status === "completed"
                         ? turn.items.flatMap((item) => {
                             const message = codexHistoryMessage(item);
                             return message === undefined ? [] : [message];
@@ -8996,11 +8997,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   const history: Array<CodexHistoryTurn> = [];
                   for (const turn of turns.reverse()) {
                     if (turn.status === "inProgress") break;
-                    if (
-                      !paginated ||
-                      turn.status !== "completed" ||
-                      knownNativeTurnIds?.has(turn.id)
-                    ) {
+                    if (knownNativeTurnIds?.has(turn.id)) {
+                      history.push({ ...turn, messages: [] });
+                      continue;
+                    }
+                    if (!paginated || turn.status !== "completed") {
                       history.push(turn);
                       continue;
                     }
@@ -9127,22 +9128,35 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 nativeConversationHeadRef?.strength === "strong"
                   ? (nativeConversationHeadRef.nativeId ?? undefined)
                   : undefined;
+              const unchanged = () => ({
+                providerThread: {
+                  ...threadInput.providerThread,
+                  nativeConversationHeadRef,
+                  status: "idle" as const,
+                },
+                providerTurns: [],
+                messages: [],
+                runtimeRequests: [],
+              });
               if (numTurns === 0 && afterTurnId === undefined) {
-                return {
-                  providerThread: {
-                    ...threadInput.providerThread,
-                    nativeConversationHeadRef,
-                    status: "idle" as const,
-                  },
-                  providerTurns: [],
-                  messages: [],
-                  runtimeRequests: [],
-                };
+                return unchanged();
               }
               const { historyMode, loaded } = yield* ensureInitialized.pipe(
                 Effect.andThen(readCodexThreadHistoryMetadata(client.raw, threadId)),
               );
               if (historyMode !== "paginated") {
+                if (numTurns === 0 && afterTurnId !== undefined) {
+                  const { data } = yield* client.request("thread/turns/list", {
+                    threadId,
+                    cursor: null,
+                    limit: 1,
+                    sortDirection: "desc",
+                    itemsView: "notLoaded",
+                  });
+                  if (data[0]?.id === afterTurnId && data[0].status !== "inProgress") {
+                    return unchanged();
+                  }
+                }
                 return yield* new ProviderAdapter.ProviderAdapterRollbackThreadError({
                   driver: CODEX_PROVIDER,
                   providerThreadId: threadInput.providerThread.id,
