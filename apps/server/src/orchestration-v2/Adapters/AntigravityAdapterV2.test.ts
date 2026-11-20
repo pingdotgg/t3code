@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off -- fixtures write a native session database.
+import * as NodeSqlite from "node:sqlite";
+
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
@@ -1148,6 +1151,8 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
   detachedChildProfile?: string,
   /** agy 1.5.11 answers a steered prompt once the next one arrives, which runs to `releaseSteer`. */
   steering?: { readonly agentVersion: string; readonly holdsFirstPrompt: boolean },
+  /** Profile directory holding `conversations/mock-session-1.db` for command reconciliation tests. */
+  commandProfileDirectory?: string,
 ) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const path = yield* Path.Path;
@@ -1180,6 +1185,7 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
   const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
   const instanceId = ProviderInstanceId.make("antigravity-wake-test");
   const threadId = ThreadId.make("thread-antigravity-wake");
+  const profileDirectory = detachedChildProfile ?? commandProfileDirectory;
   const adapter = yield* makeAntigravityAdapterV2({
     instanceId,
     selfInvocation: yield* resolveSelfInvocation(),
@@ -1249,7 +1255,7 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
     },
     withProcess: (_stop, task) => task,
     defaultModel: Effect.undefined,
-    ...(detachedChildProfile === undefined ? {} : { profileDirectory: detachedChildProfile }),
+    ...(profileDirectory === undefined ? {} : { profileDirectory }),
   });
   const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
     runtimeMode: "full-access",
@@ -1750,6 +1756,119 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
         const terminal = (yield* opened.throughTerminal).at(-1);
         assert.equal(terminal?.type === "turn.terminal" && terminal.status, status);
         assert.equal(opened.cancels(), cancels);
+      }).pipe(Effect.provide(layerSession)),
+  );
+
+  // When manage_task(kill) cancels a background run_command, agy transitions its RUN_COMMAND step
+  // to CANCELED (6) in conversations/<sessionId>.db without emitting a terminal tool_call_update.
+  it.effect(
+    "finalizes the turn when a background command was canceled in the session database without a tool_call_update",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const profile = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-agy-cmd-cancel-" });
+        const conversations = path.join(profile, "antigravity-acp", "conversations");
+        yield* fileSystem.makeDirectory(conversations, { recursive: true });
+        const db = new NodeSqlite.DatabaseSync(path.join(conversations, "mock-session-1.db"));
+        try {
+          db.exec(
+            "CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_type INTEGER NOT NULL, status INTEGER NOT NULL, metadata BLOB, step_payload BLOB)",
+          );
+          db.prepare("INSERT INTO steps VALUES (14, 21, 6, NULL, NULL)").run();
+        } finally {
+          db.close();
+        }
+        const { command, startTurn, throughTerminal } = yield* openSessionWithRunningCommand(
+          { WaitMsBeforeAsync: 10000 },
+          undefined,
+          undefined,
+          profile,
+        );
+        yield* startTurn(1, false);
+        const run = yield* throughTerminal;
+        const terminal = run.at(-1);
+        assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
+        const reconciled = run.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === command.toolCallId,
+        );
+        assert.equal(
+          reconciled?.type === "turn_item.updated" && reconciled.turnItem.status,
+          "failed",
+        );
+      }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect(
+    "keeps the run open when the session database confirms the background command is still running",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const profile = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-agy-cmd-live-" });
+        const conversations = path.join(profile, "antigravity-acp", "conversations");
+        yield* fileSystem.makeDirectory(conversations, { recursive: true });
+        const encoder = new TextEncoder();
+        const varint = (value: number): number[] => {
+          const bytes: number[] = [];
+          while (value >= 0x80) {
+            bytes.push((value & 0x7f) | 0x80);
+            value = Math.floor(value / 0x80);
+          }
+          return [...bytes, value];
+        };
+        const field = (number: number, value: string | Uint8Array) => {
+          const bytes = typeof value === "string" ? encoder.encode(value) : value;
+          return [...varint(number * 8 + 2), ...varint(bytes.length), ...bytes];
+        };
+        const proto = (...parts: number[][]) => Uint8Array.from(parts.flat());
+        const metadata = proto(
+          field(
+            4,
+            proto(
+              field(1, "call_native_999"),
+              field(2, "run_command"),
+              field(3, JSON.stringify({ CommandLine: "node fetch_throughput.mjs" })),
+            ),
+          ),
+        );
+        const db = new NodeSqlite.DatabaseSync(path.join(conversations, "mock-session-1.db"));
+        try {
+          db.exec(
+            "CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_type INTEGER NOT NULL, status INTEGER NOT NULL, metadata BLOB, step_payload BLOB)",
+          );
+          db.prepare("INSERT INTO steps VALUES (14, 21, 2, ?, NULL)").run(metadata);
+        } finally {
+          db.close();
+        }
+        const { command, usage, send, startTurn, until, throughPromptSettled } =
+          yield* openSessionWithRunningCommand(
+            { WaitMsBeforeAsync: 10000 },
+            undefined,
+            undefined,
+            profile,
+          );
+        yield* startTurn(1, false);
+        yield* throughPromptSettled;
+        yield* TestClock.adjust("10 minutes");
+        yield* send({
+          sessionUpdate: "tool_call_update",
+          ...command,
+          status: "completed",
+          rawOutput: { output: "Command exited with code 0.", exit_code: 0 },
+        });
+        yield* send({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Command finished." },
+        });
+        yield* send(usage);
+        yield* TestClock.adjust("3 seconds");
+        const run = yield* until((event) => event.type === "turn.terminal");
+        const terminal = run.at(-1);
+        assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
+        assert.include(JSON.stringify(run), "Command finished.");
       }).pipe(Effect.provide(layerSession)),
   );
 });
