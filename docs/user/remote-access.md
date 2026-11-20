@@ -126,7 +126,10 @@ install that CA on Android as a **CA certificate** in its security settings; the
 Android app then trusts it.
 
 Pairing authorizes that device for future connections. Use a fresh one-time link
-for each new device; you do not need the original token to reconnect. Links
+for each new device; you do not need the original token to reconnect. A device
+stays signed in while you keep using it, until you revoke it in **Settings →
+Sharing & access** on the host. One unused for 30 days, or paired with a host
+older than this release, has to pair again. Links
 created in Settings can only be copied from the client that created them while
 its Sharing & access page stays open. If you leave or reload that page, create
 another link to share.
@@ -158,7 +161,9 @@ T3 Code connects over the first route that answers. Away from home, a LAN
 address that does not answer is checked briefly and skipped. It is only tried
 again, after the other routes, if none of them connect. While connected over a
 later route, T3 Code checks the earlier ones when your network changes, when you
-return to the app, and every minute, and moves back as soon as one works.
+return to the app, and every minute, and moves back as soon as one works. A
+route whose machine refused this device's sign-in is marked **Sign-in
+refused**; pair that address again with **Add route** to use it.
 
 On web and desktop, select the route count under the machine's name in
 **Settings → Environments** to see its routes. Drag a route to change the order,
@@ -254,6 +259,18 @@ check with:
 ssh user@example.com 'sh -lc "command -v claude codex"'
 ```
 
+T3 Code cannot answer a second sign-in prompt such as a Duo code. On macOS and
+Linux it can reuse a connection you signed in to in a terminal instead: turn on
+connection sharing for the host in `~/.ssh/config`, run `ssh <alias>`, then
+connect. When that connection closes, sign in again in a terminal and retry.
+
+```sshconfig
+Host <alias>
+  ControlMaster auto
+  ControlPath ~/.ssh/cm-%C
+  ControlPersist 8h
+```
+
 If SSH reconnecting fails after an app update, retry the launch once. Removing
 the connection stops a server that T3 Code launched; a server that was already
 running is left alone.
@@ -274,6 +291,52 @@ tabs from any device. The desktop app shows its own environment's tabs
 directly. Every other device, and the desktop app for other environments,
 streams them from the host. Agents keep using them while no device is
 connected, and `localhost` addresses reach servers on the host.
+
+A tab you open yourself in the desktop app for another environment loads on
+your computer instead, so the element picker, screenshots, and annotations work
+as they do locally. Its `localhost` addresses still reach servers on the host,
+over the connection the app already has, whichever way you connected. If the
+host cannot be reached, the tab shows a connection error; a `localhost`,
+`127.0.0.1`, or `[::1]` address never opens a server on your own computer.
+Other names that point at your computer, such as `/etc/hosts` entries, still
+do. These tabs ignore your system proxy settings, so they can't reach a host
+you connect to only through a proxy or over HTTPS with a privately issued
+certificate. The web app keeps streaming.
+
+The desktop app can also forward a port on the host to your computer, so any
+app there, such as your own browser, `curl`, or a database client, reaches it
+at `localhost`. Use the forward button on a server in the thread's **Servers**
+list, or **Forwarded ports** in the command palette, where you can also type
+any port number and stop forwards. A forward keeps the host's port number
+unless that port is taken on your computer, in which case it uses a free one
+and shows it. Forwards end when you stop them or quit the app. ⌘-click
+(Ctrl-click on Windows and Linux) on a remote server forwards it and opens it
+in your browser.
+
+A forwarded port behaves like a server running on your computer: anything on
+your computer can reach it, including web pages open in your browser, so a
+forwarded service is exposed the same way a local dev server is. Forwards
+listen only on your computer's loopback, never on your network. On Linux they
+accept only apps running as your user; on macOS and Windows, other users signed
+in to the same computer can reach them too.
+
+On iPhone, iPad, and Android, a tab showing one of the host's `localhost` pages
+has **Open on this device** in its menu. So does a long press on a `localhost`
+link in a chat. It opens the page in the phone's own browser view, at the same
+`localhost` address, so it scrolls and responds to touch natively. Like the
+desktop app, it never opens a server on the phone itself. The streamed tab
+stays where it was, and agents keep using it. Each host keeps its own cookies
+and site data on the phone. On iPhone and iPad the page runs under a stand-in
+address while the address bar shows `localhost`, so browser features that need
+a secure page, such as the clipboard or service workers, aren't available there.
+
+All of this rides the host's preview tunnel. Turn off **Settings → Sharing &
+access → Preview tunnel** on the host to stop other devices from loading its
+`localhost` pages themselves: port forwarding and **Open on this device** go
+away, and open tunnels close. Tabs keep working by streaming from the host, so
+anyone who can use the host's browser tabs can still view its `localhost` pages
+there. An administrator can also turn it off with a
+[managed policy](./managed-policy.md#other-capabilities).
 
 The first tab downloads a headless Chrome, about 120 MB, into the T3 home. It
 is the same browser [HTML renders](html-renders.md) use, so a host downloads it
@@ -372,6 +435,21 @@ from that machine's **Settings → Sharing & access**. An address you type alway
 needs a pasted code. From a terminal, use
 `t3 environment link <address> --pairing-code <code> --access <mode>`.
 
+To link many machines at once, choose **Link several…** (it appears once this
+app has two other machines saved). Tick the machines, pick one access level for
+all of them, and confirm once. A machine can be ticked when this app is
+connected to it with a session that manages access there and has an address
+another machine can reach; the list says why when it cannot. Each machine
+reports its own result, and the ones that failed stay ticked so you can try
+only those again. Machines already linked are left as they are.
+
+For machines no app is connected to, put one `<address> <pairing-code>` per
+line in a file (make each code with `t3 pair` on that machine) and run
+`t3 environment link --from <file> --access <mode>`, or `--from -` to read
+standard input. It prints a result per line, leaves machines already linked as
+they are, and exits non-zero if any line failed, so the same file can be run
+again with fresh codes for the failures.
+
 You can also ask an agent to link a machine by name, such as "delegate this to
 my vps". It shows a card in the thread where you pick the machine the same way
 and the access, then approve. An address the agent gives that this app does
@@ -388,7 +466,9 @@ an address you trust: the code is sent there.
 - The link shows up in that machine's **Settings → Sharing & access** like any
   outside agent. Revoke it there to end it. **Forget** on this machine only
   removes it here.
-- Links last 30 days. Link again with a new pairing code to renew one.
+- A link stays valid while agents use it. One unused for 30 days expires, as
+  does one to a machine on an older T3 Code after 30 days; link again with a
+  new pairing code.
 
 An agent can also hand a task to a linked machine with `delegate_task`: it runs
 there as an ordinary thread, in the project with the same repository (or the
@@ -420,7 +500,8 @@ t3 pair --scope orchestration:read --scope relay:read
 The selected scopes replace the default permissions. The same option works with
 `t3 auth pairing create` and `t3 auth session issue`; each command's
 `--help` lists the available scopes. Without `--scope`, pairing tokens and issued
-bearer sessions get every permission, including managing access and T3 Connect.
+bearer sessions get the standard client permissions, including managing access.
+Setting up or replacing a T3 Connect link requires the separate `relay:configure` permission.
 A terminal or a full-access agent on the host can reach those as well, so a
 client that should not manage access also needs to go without `terminal:operate`
 and `orchestration:operate`.
@@ -443,8 +524,10 @@ worktree still creates that branch and worktree with `orchestration:operate`,
 and the agent it runs can use Git however the environment allows.
 
 Settings changes, provider management, environment maintenance, access
-management, and T3 Connect management can each be granted separately. New
-pairings without `--scope` include all of them. Existing clients keep the
+management, and T3 Connect preferences can each be granted separately. Setting
+up or replacing a T3 Connect link requires the administrative
+`relay:configure` permission. `relay:write` covers preferences and unlinking.
+New pairings without `--scope` include the standard client permissions. Existing clients keep the
 permissions they paired with and can stay connected after an update, but newly
 separated features may require pairing again with the permissions they need.
 Older clients may show controls that the server denies. Create a fresh pairing
@@ -454,13 +537,25 @@ link to change a client's permissions.
 local changes. Add `filesystem:write` to allow editing files or saving plans to
 the workspace. These scopes control direct file access from the client.
 
+Some permissions also give a client indirect access. With `terminal:operate`,
+a client can run commands that read or change any files the server’s OS account
+can access, even when the pairing link omits file permissions. With
+`relay:configure`, a client can replace the trusted issuer of pairing
+credentials. Grant these permissions only to clients you trust with those
+capabilities.
+
 To remove an environment from T3 Connect, open your account menu's **T3 Connect**
 page, or **Settings → T3 Connect** on mobile, and choose **Deregister**. This
 revokes its cloud access and frees its host space even when the environment is
 offline or has been wiped. When T3 Connect rejects a host's link, the host
 shows that it was removed from T3 Connect. To link it again, turn on
-**T3 Connect** in **Settings → Sharing & access** on a desktop host, or run
-`t3 connect link` on a command-line host and then restart T3 Code there. A
+**T3 Connect** in **Settings → Sharing & access** on web or desktop, or turn on
+**Live Activity Updates** in **Settings → Notifications** on mobile; if it is
+already on, turn it off and on again. Either needs a client paired with
+`relay:read`, `relay:write`, and `relay:configure`. The desktop app's own session
+and the startup pairing link include all three; a pairing link created in
+**Settings → Sharing & access** needs `relay:configure` selected. You can also
+run `t3 connect link` on the host and then restart T3 Code there. A
 command-line host that released its tunnel when it last stopped may link itself
 again on its next start; run `t3 connect unlink` on that host to keep it off.
 Removing an environment from a device's connection settings only forgets it on

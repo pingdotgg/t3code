@@ -25,13 +25,24 @@ const child = {
   },
 } as Partial<OrchestrationV2ThreadShell> as OrchestrationV2ThreadShell;
 
-vi.mock(import("../../state/orchestration"), async (original) => ({
-  ...(await original()),
-  threadTitlesRead: {
-    label: "thread-titles-read",
-    run: (_registry: unknown, input: unknown) => read(input),
-  } as never,
-}));
+vi.mock(import("../../state/orchestration"), async (original) => {
+  const Effect = await import("effect/Effect");
+  type Reply =
+    | { readonly _tag: "Success"; readonly value: unknown }
+    | { readonly _tag: "Failure"; readonly cause: Cause.Cause<Error> };
+  return {
+    ...(await original()),
+    threadTitlesRead: {
+      label: "thread-titles-read",
+      run: (_registry: unknown, input: unknown) =>
+        Effect.promise(() => read(input) as Promise<Reply>).pipe(
+          Effect.flatMap((reply) =>
+            reply._tag === "Success" ? Effect.succeed(reply.value) : Effect.failCause(reply.cause),
+          ),
+        ),
+    } as never,
+  };
+});
 vi.mock(import("../../state/entities"), async (original) => ({
   ...(await original()),
   useThreadProjection: () => null,
