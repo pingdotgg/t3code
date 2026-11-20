@@ -1,5 +1,5 @@
 import { LegendList } from "@legendapp/list/react";
-import { useRef, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 export interface WorkItemListItem {
   readonly key: string;
@@ -8,16 +8,29 @@ export interface WorkItemListItem {
   readonly node: ReactNode;
 }
 
+// Chrome stops re-checking content-visibility on nodes moved with moveBefore, so a row LegendList
+// reorders can stay blank on screen. The element whose children it reorders is the nearest one
+// holding two of our items; without moveBefore there, the list falls back to insertBefore.
+const withoutMoveBefore = (item: HTMLElement | null) => {
+  let slots = item?.parentElement ?? null;
+  while (slots && !slots.hasAttribute("data-work-item-list")) {
+    if (slots.querySelectorAll("[data-work-item]").length > 1) {
+      if (!Object.hasOwn(slots, "moveBefore")) {
+        Object.defineProperty(slots, "moveBefore", { value: undefined });
+      }
+      return;
+    }
+    slots = slots.parentElement;
+  }
+};
+
 const itemKey = (item: WorkItemListItem) => item.key;
 const itemType = (item: WorkItemListItem) => item.type;
-const renderItem = ({ item }: { item: WorkItemListItem }) => item.node;
-
-// Chrome stops re-checking content-visibility on rows moved with moveBefore, so a row
-// LegendList reorders can stay blank on screen; without it the list falls back to insertBefore.
-const withoutMoveBefore = (host: HTMLDivElement | null) => {
-  const slots = host?.querySelector(".legend-list-content-container > div");
-  if (slots) Object.defineProperty(slots, "moveBefore", { value: undefined });
-};
+const renderItem = ({ item }: { item: WorkItemListItem }) => (
+  <div ref={withoutMoveBefore} data-work-item className="contents">
+    {item.node}
+  </div>
+);
 
 /**
  * A list page's rows, mounted only near the view. It scrolls the page's own scroller, so the
@@ -33,9 +46,8 @@ export function WorkItemWindowedList({
   scrollElement: HTMLElement | null;
   estimatedItemSize: number;
 }) {
-  const host = useRef<HTMLDivElement>(null);
   return (
-    <div ref={host} className="contents">
+    <div data-work-item-list className="contents">
       <LegendList<WorkItemListItem>
         data={items}
         keyExtractor={itemKey}
@@ -46,8 +58,6 @@ export function WorkItemWindowedList({
         scrollElement={scrollElement}
         estimatedItemSize={estimatedItemSize}
         drawDistance={720}
-        // The rows' container exists once the list has laid out its first rows.
-        onLoad={() => withoutMoveBefore(host.current)}
       />
     </div>
   );
