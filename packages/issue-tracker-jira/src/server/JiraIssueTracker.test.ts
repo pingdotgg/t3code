@@ -294,9 +294,86 @@ describe("JiraIssueTracker", () => {
             },
           };
         },
+        "GET /rest/dev-status/latest/issue/summary": ({ query }) => {
+          expect(query.get("issueId")).toBe("id_ENG-7");
+          return {
+            summary: {
+              pullrequest: {
+                byInstanceType: {
+                  GitHub: { count: 2, name: "GitHub" },
+                  bitbucket: { count: 1, name: "Bitbucket Cloud" },
+                  stash: { count: 0, name: "Bitbucket Data Center" },
+                },
+              },
+            },
+          };
+        },
+        "GET /rest/dev-status/latest/issue/detail": ({ query }) => {
+          expect(query.get("issueId")).toBe("id_ENG-7");
+          expect(query.get("dataType")).toBe("pullrequest");
+          const merged = {
+            id: "#12",
+            name: "Fix the login redirect",
+            status: "MERGED",
+            url: "https://github.com/acme/web/pull/12",
+            repositoryName: "web",
+          };
+          const pullRequests = {
+            GitHub: [
+              merged,
+              {
+                id: "#14",
+                name: "Keep the session",
+                status: "DRAFT",
+                url: `${merged.url.slice(0, -2)}14`,
+              },
+              merged,
+              { id: "#15", name: "Not a link", status: "OPEN", url: "javascript:alert(1)" },
+            ],
+            bitbucket: [
+              {
+                id: "3",
+                name: "Old approach",
+                status: "DECLINED",
+                url: "https://bitbucket.org/acme/api/pull-requests/3",
+              },
+            ],
+          }[query.get("applicationType") ?? ""];
+          expect(pullRequests).toBeDefined();
+          return { errors: [], detail: [{ pullRequests, branches: [] }] };
+        },
       });
       const api = yield* tracker;
       const detail = yield* api.getIssue({ ...target, key: "eng-7" });
+      expect(detail.linkedPullRequests).toEqual([
+        {
+          repository: "acme/web",
+          number: 12,
+          title: "Fix the login redirect",
+          url: "https://github.com/acme/web/pull/12",
+          state: "merged",
+          isDraft: false,
+          closesIssue: false,
+        },
+        {
+          repository: "acme/web",
+          number: 14,
+          title: "Keep the session",
+          url: "https://github.com/acme/web/pull/14",
+          state: "open",
+          isDraft: true,
+          closesIssue: false,
+        },
+        {
+          repository: "acme/api",
+          number: 3,
+          title: "Old approach",
+          url: "https://bitbucket.org/acme/api/pull-requests/3",
+          state: "closed",
+          isDraft: false,
+          closesIssue: false,
+        },
+      ]);
       expect(detail).toMatchObject({
         key: "ENG-7",
         body: "Body",
@@ -333,6 +410,21 @@ describe("JiraIssueTracker", () => {
         ["assigned", "Theo"],
         ["renamed", "Issue ENG-7"],
       ]);
+    }),
+  );
+
+  it.effect("opens an issue without linked pull requests when Jira will not list them", () =>
+    Effect.gen(function* () {
+      const { tracker } = fakeJira({
+        "GET /rest/api/3/issue/ENG-7": () => issue("ENG-7"),
+        "GET /rest/api/3/issue/ENG-7/comment": () => ({ total: 0, comments: [] }),
+        "GET /rest/dev-status/latest/issue/summary": () =>
+          Response.json({ errorMessages: ["You do not have permission."] }, { status: 403 }),
+      });
+      const api = yield* tracker;
+      const detail = yield* api.getIssue({ ...target, key: "ENG-7" });
+      expect(detail.title).toBe("Issue ENG-7");
+      expect(detail.linkedPullRequests).toEqual([]);
     }),
   );
 
