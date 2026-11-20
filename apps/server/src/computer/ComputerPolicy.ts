@@ -127,6 +127,16 @@ export function screen(action: ComputerAction): ComputerDecision {
         ? auto()
         : refused("only a web address (http or https) is opened in the browser");
     }
+    case "choose_file": {
+      const path = action.path ?? "";
+      if (!path.startsWith("/") && !path.startsWith("~/"))
+        return refused("a file is chosen by its full path");
+      if (utf8Bytes(path) > MAX_URL_BYTES) return refused("a path longer than any file's");
+      return {
+        verdict: "tap",
+        why: "choosing a file hands it to the app, and a page can upload it",
+      };
+    }
     case "click": {
       const why = consequential(label);
       if (why) return { verdict: "tap", why };
@@ -136,7 +146,7 @@ export function screen(action: ComputerAction): ComputerDecision {
     }
     default:
       return refused(
-        "not a step computer use takes (click, type, press, scroll, surface, open_url, pointer)",
+        "not a step computer use takes (click, type, press, scroll, surface, open_url, choose_file, pointer)",
       );
   }
 }

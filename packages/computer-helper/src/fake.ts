@@ -41,6 +41,9 @@ export class FakeNotes implements ScreenBackend {
   scrollable = false;
   page = 0;
   readonly picked: string[] = [];
+  /** Controls of a popup or sheet open over the window, and the ones pressed. */
+  readonly overlay: ScreenControl[] = [];
+  readonly pressed: string[] = [];
   private focus: "search" | null = null;
   private at: Point = { x: 400, y: 300 };
 
@@ -54,6 +57,7 @@ export class FakeNotes implements ScreenBackend {
     };
     if (this.focus === "search") search.focused = true;
     const controls: ScreenControl[] = [
+      ...this.overlay,
       search,
       { ref: "new", role: "button", label: "New Note" },
       { ref: "delete", role: "button", label: "Delete" },
@@ -102,6 +106,10 @@ export class FakeNotes implements ScreenBackend {
     };
     switch (action.kind) {
       case "click": {
+        if (this.overlay.some((control) => control.ref === action.ref)) {
+          this.pressed.push(action.ref);
+          return done(undefined);
+        }
         const point = this.spot(action.ref);
         this.click(action.ref);
         return done(point);
@@ -140,6 +148,8 @@ export class FakeNotes implements ScreenBackend {
         this.picked.push(action.label);
         // Like a browser's "Select password", one item opens a picker of saved accounts.
         this.menu = action.label === "Select password" ? ["Password for dana@acme.test"] : [];
+        return done(undefined);
+      case "choose_file":
         return done(undefined);
     }
   }

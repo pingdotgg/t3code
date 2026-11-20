@@ -431,6 +431,8 @@
   "aa1eb3600697e609": "Scroll {direction} on {where}",
   "aeade0614b98ec35": "Bring the {what} forward",
   "5b4846a83451d22c": "Bring {what} {name} forward",
+  "ac766a304457d82e": "选择文件",
+  "789fc1b3cdba452e": "选择文件 {path}",
   "d30de4dffd298d6b": "Use your mouse",
   "7e19512f1ce2b686": "尚未检查设备工具版本。",
   "7bdc8e41c92e24b7": "设备中心",

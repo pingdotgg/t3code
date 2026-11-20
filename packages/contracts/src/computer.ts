@@ -57,6 +57,8 @@ export const ComputerAction = Schema.Struct({
   why: Schema.optionalKey(Schema.String),
   /** `open_url`: the address handed to the default browser. */
   url: Schema.optionalKey(Schema.String),
+  /** `choose_file`: the file picked in an open panel. */
+  path: Schema.optionalKey(Schema.String),
 });
 export type ComputerAction = typeof ComputerAction.Type;
 
@@ -260,7 +262,15 @@ export const ComputerControl = Schema.Struct({
 });
 export type ComputerControl = typeof ComputerControl.Type;
 
-const COMPUTER_ACT_ACTIONS = ["click", "type", "key", "scroll", "menu", "open_url"] as const;
+const COMPUTER_ACT_ACTIONS = [
+  "click",
+  "type",
+  "key",
+  "scroll",
+  "menu",
+  "open_url",
+  "choose_file",
+] as const;
 const CHORD_MODIFIERS: Readonly<Record<string, string>> = {
   cmd: "cmd",
   command: "cmd",
@@ -337,6 +347,8 @@ export const ComputerAct = Schema.Struct({
   /** `scroll` up or down: how many screens, 1 to 10; one when left out. */
   amount: Schema.optionalKey(Schema.Number),
   url: Schema.optionalKey(Schema.String),
+  /** `choose_file`: the absolute path (or ~/…) of the file to pick in the open panel. */
+  path: Schema.optionalKey(Schema.String),
   /** The app whose window to act on, as computer_look reads it; defaults to the app in front. */
   app: Schema.optionalKey(Schema.String),
 });
@@ -355,7 +367,10 @@ export const ComputerLook = Schema.Struct({
   app: Schema.String,
   title: Schema.String,
   url: Schema.optionalKey(Schema.String),
-  /** The visible text (a browser's page, not its tabs and toolbar), at most 8,000 characters. */
+  /**
+   * The visible text (a browser's page, not its tabs and toolbar), at most 8,000 characters, then a `## <window>`
+   * section for each sheet, dialog or DevTools open with it.
+   */
   text: Schema.String,
   controls: Schema.Array(
     Schema.Struct({
@@ -365,6 +380,8 @@ export const ComputerLook = Schema.Struct({
       value: Schema.optionalKey(Schema.String),
       focused: Schema.optionalKey(Schema.Boolean),
       bounds: Schema.optionalKey(ComputerRect),
+      /** The sheet, dialog, popup or DevTools it sits in, when not the window's own content. */
+      window: Schema.optionalKey(Schema.String),
     }),
   ),
   /** The walk ran out of budget: more is on screen than is listed. */

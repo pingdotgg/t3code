@@ -1178,6 +1178,45 @@ describe("an act the agent chose", () => {
     expect(acted).toEqual([{ kind: "click", mode: "background" }]);
   });
 
+  it("clicks a popup's button by label even when the page has a control of the same name", async () => {
+    const { page, server, computer } = actWith();
+    page.overlay.push({
+      ref: "w1:0.3",
+      role: "button",
+      label: "Send",
+      window: "popup “Send feedback?”",
+    });
+    const outcome = await computer.run({
+      goal: "",
+      text: null,
+      act: { action: "click", label: "Send" },
+    });
+    expect(outcome).toMatchObject({ status: "done" });
+    expect(server.requests[0]?.action).toEqual({
+      kind: "click",
+      ref: "w1:0.3",
+      role: "button",
+      label: "Send",
+    });
+    expect(page.pressed).toEqual(["w1:0.3"]);
+  });
+
+  it("chooses a file through the server's grant", async () => {
+    const { page, server, computer } = actWith();
+    expect(
+      await computer.run({
+        goal: "",
+        text: null,
+        act: { action: "choose_file", path: "/tmp/a.pdf" },
+      }),
+    ).toMatchObject({ status: "done", steps: ["chose the file “/tmp/a.pdf”"] });
+    expect(server.requests[0]?.action).toEqual({ kind: "choose_file", path: "/tmp/a.pdf" });
+    expect(page.actions.at(-1)).toEqual({ kind: "choose_file", path: "/tmp/a.pdf" });
+    expect(
+      await computer.run({ goal: "", text: null, act: { action: "choose_file" } }),
+    ).toMatchObject({ status: "stuck", reason: expect.stringMatching(/path/) });
+  });
+
   it("asks once for the mouse when the background cannot take the step", async () => {
     const { page, server, acted, computer } = actWith();
     page.pointerOnly.add("new");

@@ -285,6 +285,10 @@ export function computerActionSentence(
               name: quoted(action.name),
             }),
           );
+    case "choose_file":
+      return action.path === undefined
+        ? resolve(msg("Choose a file"))
+        : resolve(msg("Choose the file {path}", { path: quoted(action.path) }));
     case "pointer":
       return action.why === undefined ? resolve(msg("Use your mouse")) : clipped(action.why, 160);
     default:
