@@ -18,6 +18,7 @@ import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
 
 import * as ProcessRunner from "../processRunner.ts";
 import { acquireServiceSelectionLock } from "./serviceSelectionLock.ts";
+import { publishStableLauncher, stableLauncherPaths } from "./stableLauncher.ts";
 import {
   serviceLauncherIsRunning,
   serviceLauncherLockPath,
@@ -41,6 +42,7 @@ import {
   decodeServiceUnit,
   disabledServiceTask,
   encodeServiceTask,
+  escapeXmlText,
   serviceTaskIsDisabled,
   serviceUnitBaseDirOf as bootServiceBaseDirOf,
   serviceUnitEnvironmentValueOf,
@@ -144,10 +146,6 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     "WantedBy=default.target",
     "",
   ].join("\n");
-}
-
-function escapeXmlText(value: string): string {
-  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
 /** Launch agents cannot rely on the user's shell or PATH. */
@@ -975,6 +973,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     });
   });
   const logPath = path.join(input.logsDir, BOOT_SERVICE_LOG_FILE);
+  const launcherPathsFor = (manager: BootServiceManager | undefined) =>
+    manager?.kind === "launchd" ? stableLauncherPaths(input.baseDir) : runtimePaths;
   const resolveTarget = (systemdUnitDir: string | undefined) => {
     const manager = selectBootServiceManager({
       platform,
@@ -999,7 +999,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     });
     const unitPath = manager?.unitPath ?? "";
     const plan: BootServicePlan = {
-      program: [runtimePaths.entryPath, "__service-launcher"],
+      program: [launcherPathsFor(manager).entryPath, "__service-launcher"],
       baseDir: input.baseDir,
       logPath,
       unitPath,
@@ -1402,6 +1402,13 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
               return yield* new BootServiceUpdatePendingError();
             }
           }
+          if (manager.kind === "launchd") {
+            yield* Effect.tryPromise({
+              try: () =>
+                publishStableLauncher(input.baseDir, runtimePaths.entryPath, input.cliVersion),
+              catch: (cause) => new BootServiceInstallError({ cause }),
+            }).pipe(Effect.uninterruptible);
+          }
           const unit = manager.render(plan);
           yield* writeDurably(
             unitPath,
@@ -1538,9 +1545,22 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     )
       return false;
     yield* runSteps(manager.deactivate);
-    yield* fs
-      .remove(unitPath)
-      .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+    yield* withSelectionLock(
+      unitPath,
+      readUnit().pipe(
+        Effect.tap(() => fs.remove(unitPath)),
+        Effect.flatMap((unit) =>
+          manager.kind === "launchd"
+            ? fs.remove(
+                stableLauncherPaths(bootServiceBaseDirOf(unit) ?? input.baseDir).directory,
+                { recursive: true, force: true },
+              )
+            : Effect.void,
+        ),
+        Effect.mapError((cause) => new BootServiceInstallError({ cause })),
+        Effect.uninterruptible,
+      ),
+    );
     yield* runSteps(manager.finalize);
     return true;
   }).pipe(Effect.withSpan("cloud.boot_service.uninstall"));
@@ -1553,10 +1573,20 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     if (!(yield* fs.exists(unitPath))) {
       return { supported: true, installed: false, current: false, unitPath, logPath };
     }
-    const [unit, runtimeEntryExists, runtimeSentinel, stateText] = yield* Effect.all([
+    const isCurrent = (paths: { readonly entryPath: string; readonly sentinelPath: string }) =>
+      Effect.all([
+        fs.exists(paths.entryPath),
+        fs.readFileString(paths.sentinelPath).pipe(Effect.option),
+      ]).pipe(
+        Effect.map(
+          ([entryExists, sentinel]) =>
+            entryExists && Option.isSome(sentinel) && sentinel.value.trim() === input.cliVersion,
+        ),
+      );
+    const [unit, runtimeIsCurrent, launcherIsCurrent, stateText] = yield* Effect.all([
       readUnit(),
-      fs.exists(runtimePaths.entryPath),
-      fs.readFileString(runtimePaths.sentinelPath).pipe(Effect.option),
+      isCurrent(runtimePaths),
+      isCurrent(launcherPathsFor(manager)),
       fs.readFileString(statePath).pipe(Effect.option),
     ]);
     const state = Option.isSome(stateText) ? parseServiceState(stateText.value) : undefined;
@@ -1587,9 +1617,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         problems.length === 0 &&
         !(manager.kind === "systemd" && systemdUnsafeValue(planForUnit(unit))) &&
         normalizeUnit(unit) === normalizeUnit(manager.render(planForUnit(unit))) &&
-        runtimeEntryExists &&
-        Option.isSome(runtimeSentinel) &&
-        runtimeSentinel.value.trim() === input.cliVersion &&
+        runtimeIsCurrent &&
+        launcherIsCurrent &&
         state?.activeVersion === input.cliVersion &&
         state?.update?.status !== "pending",
       unitPath,
