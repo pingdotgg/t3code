@@ -92,9 +92,13 @@ const checkForUpdatesFromMenu = Effect.gen(function* () {
       title: m(msg("Update available")),
       message:
         updateState.availableVersion === null
-          ? m(msg("A new version of T3 Code is available."))
-          : m(msg("T3 Code {version} is available."), { version: updateState.availableVersion }),
-      detail: m(msg("You're running T3 Code {version}."), {
+          ? m(msg("A new version of {appName} is available."), { appName: environment.displayName })
+          : m(msg("{appName} {version} is available."), {
+              appName: environment.displayName,
+              version: updateState.availableVersion,
+            }),
+      detail: m(msg("You're running {appName} {version}."), {
+        appName: environment.displayName,
         version: updateState.currentVersion,
       }),
       buttons: [
@@ -111,8 +115,11 @@ const checkForUpdatesFromMenu = Effect.gen(function* () {
       title: m(msg("Update downloading")),
       message:
         updateState.availableVersion === null
-          ? m(msg("A new version of T3 Code is already downloading."))
-          : m(msg("T3 Code {version} is already downloading."), {
+          ? m(msg("A new version of {appName} is already downloading."), {
+              appName: environment.displayName,
+            })
+          : m(msg("{appName} {version} is already downloading."), {
+              appName: environment.displayName,
               version: updateState.availableVersion,
             }),
       buttons: [m(msg("OK"))],
@@ -124,9 +131,17 @@ const checkForUpdatesFromMenu = Effect.gen(function* () {
       title: m(msg("Update ready")),
       message:
         version === null
-          ? m(msg("A new version of T3 Code is ready to install."))
-          : m(msg("T3 Code {version} is ready to install."), { version }),
-      detail: m(msg("T3 Code will restart to install it. Any running tasks will be interrupted.")),
+          ? m(msg("A new version of {appName} is ready to install."), {
+              appName: environment.displayName,
+            })
+          : m(msg("{appName} {version} is ready to install."), {
+              appName: environment.displayName,
+              version,
+            }),
+      detail: m(
+        msg("{appName} will restart to install it. Any running tasks will be interrupted."),
+        { appName: environment.displayName },
+      ),
       buttons: [m(msg("Restart", { $context: "button, restarts the app" })), m(msg("Later"))],
       defaultId: 0,
       cancelId: 1,
