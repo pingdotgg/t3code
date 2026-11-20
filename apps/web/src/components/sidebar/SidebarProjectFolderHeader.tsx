@@ -43,7 +43,7 @@ export function MissingProjectFolderMark({ group }: { group: SidebarProjectSnaps
         <span className="sr-only">{gt("Folder not found")}</span>
       </TooltipTrigger>
       <TooltipPopup>
-        {gt("Folder not found")}: {missing.join(", ")}
+        {gt("Folder not found")}: {missing.map((folder) => folder.workspaceRoot).join(", ")}
       </TooltipPopup>
     </Tooltip>
   );

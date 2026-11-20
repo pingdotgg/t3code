@@ -6,6 +6,7 @@ import { AgentScope } from "@t3tools/shared/AgentScope";
 import {
   EnvironmentId,
   type ModelSelection,
+  ORCHESTRATION_V2_WORKSPACE_MISSING_FAILURE_CODE,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2PromptSuggestion,
@@ -5597,6 +5598,10 @@ it.effect.each(["missing", "file"] as const)(
         assert.instanceOf(error, ProviderWorkspaceMissingError);
         assert.include(error.message, cwd);
         assert.include(error.message, "Restore the folder at this path before retrying.");
+        assert.equal(
+          makeProviderFailure({ cause: error }).code,
+          ORCHESTRATION_V2_WORKSPACE_MISSING_FAILURE_CODE,
+        );
         assert.equal((yield* Ref.get(state)).openCount, 0);
         assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
         assert.deepEqual(
