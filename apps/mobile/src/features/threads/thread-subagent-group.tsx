@@ -28,11 +28,11 @@ import { useServerConfigs } from "../../state/entities";
 import { SubagentRow } from "./SubagentRow";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 import { subagentThreadTarget } from "./threadAgentsPresentation";
-import { linkedThreadRouteParams } from "./LinkedThreadSheet";
 import { useLinkedThreadReach } from "../../state/linkedThread";
 import { WorkLogBlock } from "./work-log-layout";
 
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
+import { useOpenLinkedThreadRead } from "./useOpenLinkedThread";
 
 type SubagentItem = Extract<OrchestrationV2TurnItem, { type: "subagent" }>;
 type AgentTiming = Pick<OrchestrationV2Subagent, "status" | "startedAt" | "completedAt">;
@@ -114,6 +114,7 @@ export function ThreadSubagentGroup(props: {
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
   const navigation = useNavigation();
   const openInspector = useOpenThreadInspector();
+  const openLinkedRead = useOpenLinkedThreadRead();
   const members = props.activities.flatMap(({ projectedItem }) =>
     projectedItem.item.type === "subagent" ? [projectedItem.item] : [],
   );
@@ -224,12 +225,12 @@ export function ThreadSubagentGroup(props: {
                 onPress={() => {
                   if (target === null) return;
                   if (target.linked !== undefined) {
-                    navigation.dispatch(
-                      StackActions.push(
-                        "LinkedThread",
-                        linkedThreadRouteParams(target, target.linked, agent.title),
-                      ),
-                    );
+                    openLinkedRead(target, target.linked, agent.title, {
+                      source: {
+                        environmentId: props.environmentId,
+                        threadId: members[0]!.threadId,
+                      },
+                    });
                     return;
                   }
                   if (

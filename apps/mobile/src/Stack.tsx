@@ -789,6 +789,11 @@ const RootStackConfig = createWorkspaceStackNavigator({
       screen: LinkedThreadSheet,
       options: sheetRoute({ detent: 0.9, android: "fullScreen" }),
     }),
+    // Maximized from the inspector, like ThreadInspectorFullscreen.
+    LinkedThreadFullscreen: createNativeStackScreen({
+      screen: LinkedThreadSheet,
+      options: modalRoute({ header: "glass", itemStyle: "editor", duoMinimize: "onScrollUp" }),
+    }),
     ThreadGuestShare: createNativeStackScreen({
       screen: ThreadGuestShareSheet,
       options: sheetRoute({ detent: 0.5 }),

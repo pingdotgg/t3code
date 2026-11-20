@@ -63,6 +63,7 @@ import type { MessageResolver } from "~/i18n/messages";
 
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { buildThreadRouteParams } from "../../threadRoutes";
+import type { SideThreadOpenIntent } from "@t3tools/client-runtime/side-thread";
 import { useLinkedThreadOpener } from "../../state/linkedThreadView";
 import {
   useProjects,
@@ -86,7 +87,8 @@ import { useEnvironmentQuery } from "../../state/query";
 import { AgentElapsed } from "./AgentElapsed";
 import { ThreadRelationshipIcon, threadRelationshipStatusLabel } from "./ThreadRelationshipIcon";
 import { ThreadLineageWorkflowRow } from "./ThreadLineageWorkflowRow";
-import { resolveThreadOpenRoute } from "../../lib/sideChatPane";
+import { useSideThreadTrigger } from "../../hooks/useSideThreadTrigger";
+import { openSideThread, resolveThreadOpenRoute } from "../../lib/sideChatPane";
 
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -219,11 +221,11 @@ function relationshipHint(
   sideChat: boolean,
   resolve: MessageResolver,
 ) {
-  if (sideChat) return resolve(msg("Open side chat in this chat"));
+  if (sideChat) return resolve(msg("Open side chat"));
   if (edge.kind === "transfer") return resolve(msg("Open context transfer in this chat"));
   if (edge.kind === "subagent") {
     return edge.sourceThreadId === currentThreadId
-      ? resolve(msg("Open subagent in this chat"))
+      ? resolve(msg("Open subagent"))
       : resolve(msg("Open parent agent in this chat"));
   }
   return edge.sourceThreadId === currentThreadId
@@ -301,13 +303,19 @@ function RemoteSubagentRow(props: {
     isSubagent: true,
   });
   const opener = useLinkedThreadOpener(props.parentRef, remoteChild, title);
+  const trigger = useSideThreadTrigger();
   return (
     <li className="group relative flex h-8 items-center rounded-lg">
       <Tooltip>
         <TooltipTrigger
           delay={200}
           render={
-            <ThreadDetailsControl size="sm" variant="ghost" part="row" onClick={opener?.open} />
+            <ThreadDetailsControl
+              size="sm"
+              variant="ghost"
+              part="row"
+              {...(opener ? trigger(opener.open, { panel: opener.mode === "linked" }) : {})}
+            />
           }
         >
           <ThreadRelationshipIcon
@@ -492,6 +500,7 @@ export function ThreadRelationshipsPanel(props: {
       : null;
   const parentProjection = useQuietThreadProjection(parentRef)?.projection;
   const navigate = useNavigate();
+  const trigger = useSideThreadTrigger();
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack);
   const stopSession = useAtomCommand(threadEnvironment.stopSession);
   const interruptTurn = useAtomCommand(threadEnvironment.interruptTurn);
@@ -676,6 +685,20 @@ export function ThreadRelationshipsPanel(props: {
     });
   };
 
+  // A subagent or side chat of this thread opens beside it or in its place, as the click asks.
+  const openSideThreadRow = (threadId: ThreadId, intent: SideThreadOpenIntent) => {
+    openSideThread({
+      threadRef: scopeThreadRef(props.environmentId, threadId),
+      panelRef: ref,
+      intent,
+      navigate: (threadRef) =>
+        void navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(threadRef),
+        }),
+    });
+  };
+
   const merge = async () => {
     if (!latestMergeBackRun || mergeTargetThreadId === null || busyAction !== null) return;
     if (mergeErrorToastId.current !== null) {
@@ -817,12 +840,12 @@ export function ThreadRelationshipsPanel(props: {
       ? "group-hover:opacity-0 group-focus-within:opacity-0 pointer-coarse:opacity-0 [@media(hover:none)]:opacity-0"
       : "";
     const project = projects.find((project) => project.id === node?.thread?.projectId);
-    const hint = relationshipHint(
-      edge,
-      props.threadId,
-      node?.thread?.lineage.sideChat === true && !isParent,
-      m,
-    );
+    const isSideChat = node?.thread?.lineage.sideChat === true && !isParent;
+    const hint = relationshipHint(edge, props.threadId, isSideChat, m);
+    const openProps =
+      isSideChat || (isSubagent && !isParent)
+        ? trigger((intent) => openSideThreadRow(threadId, intent))
+        : { onClick: () => openThread(threadId) };
     const RelationshipPopup = agent ? ThreadHoverCardPopup : TooltipPopup;
     const relationshipTooltip = agent ? (
       <SubagentTooltipContent
@@ -891,7 +914,7 @@ export function ThreadRelationshipsPanel(props: {
               size="sm"
               variant="ghost"
               part={workflowGroup ? "primary" : "row"}
-              onClick={() => openThread(threadId)}
+              {...openProps}
             />
           }
         >
@@ -910,7 +933,9 @@ export function ThreadRelationshipsPanel(props: {
           providers={providers}
           providerEntries={providerEntries}
           driver={providerDriver}
-          onOpenThread={(memberThreadId) => openThread(memberThreadId as ThreadId)}
+          onOpenThread={(memberThreadId, intent) =>
+            openSideThreadRow(memberThreadId as ThreadId, intent)
+          }
           onStop={canStopWorkflow ? () => void stopWorkflow(agent.id) : undefined}
           stopping={stoppingId === agent.id}
           stopDisabled={stoppingId !== null}
