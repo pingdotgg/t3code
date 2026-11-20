@@ -309,6 +309,8 @@ permissions:
     skills: false
   expo-sqlite:
     skills: false
+  fallow:
+    skills: false
 
 # @cursor/sdk finds its platform package (sandbox helper, rg, tree-sitter) by
 # walking up from the entry script for node_modules/@cursor/sdk-<platform>-<arch>.
@@ -345,3 +347,12 @@ minimumReleaseAgeExclude:
   - "@effect/sql-sqlite-do@4.1.5"
   - "@effect/vitest@4.1.5"
   - effect@4.1.5
+  - "@fallow-cli/darwin-arm64@3.45.0"
+  - "@fallow-cli/darwin-x64@3.45.0"
+  - "@fallow-cli/linux-arm64-gnu@3.45.0"
+  - "@fallow-cli/linux-arm64-musl@3.45.0"
+  - "@fallow-cli/linux-x64-gnu@3.45.0"
+  - "@fallow-cli/linux-x64-musl@3.45.0"
+  - "@fallow-cli/win32-arm64-msvc@3.45.0"
+  - "@fallow-cli/win32-x64-msvc@3.45.0"
+  - fallow@3.45.0

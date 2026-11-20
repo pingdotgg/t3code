@@ -47,7 +47,7 @@ interface ReadablePlan {
   readonly configKey: string;
 }
 
-export const make = Effect.fn("SecretResolver.make")(function* (options: {
+const make = Effect.fn("SecretResolver.make")(function* (options: {
   readonly drivers: ReadonlyArray<SecretProviderDriver>;
   readonly secretProviders: Effect.Effect<ServerSettings["secretProviders"]>;
 }) {

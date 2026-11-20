@@ -385,16 +385,7 @@ function launcherFixture() {
   }
   write(".gitignore", "node_modules/\nrecords/\n");
   write("pnpm-workspace.yaml", "packages:\n  - packages/*\n");
-  write(
-    "package.json",
-    JSON.stringify({
-      type: "module",
-      scripts: {
-        "knip:check:files": "knip --include files",
-        "knip:check:exports": "knip --exports",
-      },
-    }),
-  );
+  write("package.json", JSON.stringify({ type: "module" }));
   write("packages/example/package.json", JSON.stringify({ name: "example" }));
   const source = "packages/example/space & (draft) %PATH% ! 研究.ts";
   write(source, "export const value = 1;\n");
@@ -488,7 +479,7 @@ it("checks changed source paths through the Windows launcher", () => {
   expect(result.stdout).toContain("fixture stderr: lint");
 });
 
-it("lints an Astro component and runs knip when only it changed", () => {
+it("lints an Astro component and runs fallow when only it changed", () => {
   using project = launcherFixture();
   const page = "packages/example/Page.astro";
   project.write(page, "---\nconst title = 1;\n---\n<h1>{title}</h1>\n");
@@ -501,8 +492,7 @@ it("lints an Astro component and runs knip when only it changed", () => {
     page,
   ]);
   const commands = calls.map(({ args }) => args);
-  expect(commands).toContainEqual(["exec", "knip", "--include", "files"]);
-  expect(commands).toContainEqual(["exec", "knip", "--exports"]);
+  expect(commands).toContainEqual(["run", "fallow:check"]);
 });
 
 it.each(["install", "lint"])("reports a failing %s step with its output", (step) => {
