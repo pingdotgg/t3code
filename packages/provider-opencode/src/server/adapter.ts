@@ -940,14 +940,19 @@ function isOpenCodeQuotaRetry(
   if (structuredQuota(status) || structuredQuota(status.action)) return true;
   // Text is evidence only of an explicit quota identifier/window, never a
   // structured reason embedded in diagnostics (e.g. account_rate_limit=false).
-  return [status.message, status.action?.message ?? ""].some(
-    (message) =>
-      /\b(?:GoUsageLimitError|FreeUsageLimitError)\b|OpenCode Go usage limit reached|weekly.*resets in|5[ -]hour.*limit/i.test(
-        message,
-      ) ||
+  return [status.message, status.action?.message ?? ""].some((message) => {
+    // Negative diagnostic fields do not become quota evidence merely because
+    // their identifier contains "rate_limit" or "tier_limit".
+    const diagnosticText = message.replace(
+      /["']?\b(?:account_rate_limit|free_tier_limit)\b["']?\s*[:=]\s*(?:false|null|0)\b/gi,
+      "",
+    );
+    return (
+      /\b(?:GoUsageLimitError|FreeUsageLimitError)\b|OpenCode Go usage limit reached|weekly.*resets in|5[ -]hour.*limit/i.test(message) ||
       (status.next - now >= OPENCODE_INTERACTIVE_RETRY_CEILING_MS &&
-        /(?:rate|usage|quota)[ _-]?limit|quota.{0,20}(?:exhausted|exceeded)/i.test(message)),
-  );
+        /(?:rate|usage|quota)[ _-]?limit|quota.{0,20}(?:exhausted|exceeded)/i.test(diagnosticText))
+    );
+  });
 }
 
 function openCodeErrorMessage(event: Extract<OpenCodeEvent, { type: "session.error" }>): string {

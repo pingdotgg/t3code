@@ -776,6 +776,7 @@ describe("OpenCodeAdapterV2", () => {
     "503: service unavailable",
     "429: per-minute token usage limit exceeded; retry in 1 second",
     "503: upstream overload; account_rate_limit=false",
+    '503: upstream overload; "free_tier_limit":false',
   ]) {
     it.effect(`surfaces a short retry and completes normally: ${message}`, () =>
       Effect.gen(function* () {
@@ -804,7 +805,7 @@ describe("OpenCodeAdapterV2", () => {
           Effect.forkScoped,
         );
         const now = yield* DateTime.now;
-        const next = DateTime.toEpochMillis(now) + 1_000;
+        const next = DateTime.toEpochMillis(now) + (message.includes("false") ? 300_000 : 1_000);
         yield* Effect.promise(() =>
           nativeEvents.push({
             type: "message.updated",
