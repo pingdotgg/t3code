@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { Viewport } from "./board/Viewport";
 import { EngineStatus } from "./sidebar/EngineStatus";
+import { EngineVersion } from "./sidebar/EngineVersion";
 import { SettingsScreen } from "./settings/SettingsScreen";
 import { Sidebar } from "./sidebar/Sidebar";
 import { UsageBar } from "./usage/UsageBar";
@@ -14,7 +15,12 @@ export function App() {
       {/* Hidden, not unmounted, so the viewport keeps its pan and zoom while settings are open. */}
       <div className={settingsOpen ? "hidden" : "grid min-h-0 grid-cols-[240px_minmax(0,1fr)]"}>
         <Sidebar
-          footer={<EngineStatus />}
+          footer={
+            <>
+              <EngineStatus />
+              <EngineVersion />
+            </>
+          }
           onOpenSettings={() => {
             performance.mark("board:settings-click");
             setSettingsOpen(true);

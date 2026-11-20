@@ -24,7 +24,7 @@ function webBridge(): EngineBridge {
   const url = import.meta.env.AGENT_BOARD_ENGINE_URL;
   const token = import.meta.env.AGENT_BOARD_TOKEN;
   const state: EngineState = url
-    ? { phase: "ready", origin: new URL(url).origin }
+    ? { phase: "ready", origin: new URL(url).origin, source: "url" }
     : {
         phase: "offline",
         reason: "Set AGENT_BOARD_ENGINE_URL to reach an engine from the browser.",

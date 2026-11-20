@@ -5,7 +5,12 @@ export type EngineState =
   | { readonly phase: "updating" }
   | { readonly phase: "install-needed" }
   | { readonly phase: "update-needed"; readonly found: string }
-  | { readonly phase: "ready"; readonly origin: string }
+  | {
+      readonly phase: "ready";
+      readonly origin: string;
+      /** `url` for an engine named by `AGENT_BOARD_ENGINE_URL`, which the app never updates. */
+      readonly source: "service" | "url";
+    }
   | { readonly phase: "offline"; readonly reason: string };
 
 export type EngineTokenResult =
