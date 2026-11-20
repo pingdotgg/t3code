@@ -358,6 +358,54 @@ describe("DesktopBackendManager", () => {
     }),
   );
 
+  it.effect("delivers the local bootstrap after recording ownership and forgets after exit", () =>
+    Effect.gen(function* () {
+      const recording = yield* Deferred.make<void>();
+      const finishRecording = yield* Deferred.make<void>();
+      const receivedBootstrap = yield* Deferred.make<boolean>();
+      const childExit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+      const forgotten = yield* Ref.make(false);
+      const layerSpawner = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(
+          Effect.fnUntraced(function* (command) {
+            if (!ChildProcess.isStandardCommand(command)) {
+              return yield* Effect.die("Expected a standard local backend command");
+            }
+            const fd = command.options.additionalFds?.fd3;
+            if (fd?.type !== "input" || fd.stream === undefined) {
+              return yield* Effect.die("Expected a bootstrap stream on fd 3");
+            }
+            yield* Stream.runForEach(fd.stream, () =>
+              Deferred.isDone(finishRecording).pipe(
+                Effect.flatMap((wasRecorded) => Deferred.succeed(receivedBootstrap, wasRecorded)),
+              ),
+            ).pipe(Effect.forkScoped);
+            return makeProcess({ exitCode: Deferred.await(childExit) });
+          }),
+        ),
+      );
+      const run = yield* DesktopBackendManager.runBackendProcess({
+        ...baseConfig,
+        desktopTelemetryStream: Stream.empty,
+        trackProcess: () =>
+          Deferred.succeed(recording, undefined).pipe(
+            Effect.andThen(Deferred.await(finishRecording)),
+            Effect.as(Ref.set(forgotten, true)),
+          ),
+      }).pipe(Effect.provide(Layer.merge(layerSpawner, layerHealthyHttpClient)), Effect.forkChild);
+
+      yield* Deferred.await(recording);
+      assert.isFalse(yield* Deferred.isDone(receivedBootstrap));
+      yield* Deferred.succeed(finishRecording, undefined);
+      assert.isTrue(yield* Deferred.await(receivedBootstrap));
+      assert.isFalse(yield* Ref.get(forgotten));
+      yield* Deferred.succeed(childExit, ChildProcessSpawner.ExitCode(0));
+      yield* Fiber.join(run);
+      assert.isTrue(yield* Ref.get(forgotten));
+    }),
+  );
+
   it.effect("reports a SIGKILL exit without an exit code", () =>
     Effect.gen(function* () {
       const exitCause = PlatformError.systemError({

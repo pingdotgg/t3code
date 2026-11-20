@@ -195,6 +195,8 @@ export const BackendProcessError = Schema.Union([
 ]);
 export type BackendProcessError = typeof BackendProcessError.Type;
 
+type TrackBackendProcess = (pid: number) => Effect.Effect<Effect.Effect<void>>;
+
 interface RunBackendProcessOptions extends DesktopBackendStartConfig {
   readonly desktopTelemetryStream: Stream.Stream<Uint8Array>;
   readonly desktopBrowserStream?: Stream.Stream<Uint8Array>;
@@ -204,6 +206,7 @@ interface RunBackendProcessOptions extends DesktopBackendStartConfig {
   ) => Effect.Effect<void>;
   readonly readinessTimeout?: Duration.Duration;
   readonly outputDrainTimeout?: Duration.Duration;
+  readonly trackProcess?: TrackBackendProcess;
   readonly onStarted?: (pid: number) => Effect.Effect<void>;
   readonly onExitObserved?: () => Effect.Effect<void>;
   readonly onReady?: (pid: number) => Effect.Effect<void>;
@@ -253,6 +256,7 @@ export interface BackendInstanceSpec {
   readonly id: BackendInstanceId;
   readonly label: Effect.Effect<string>;
   readonly configResolve: Effect.Effect<DesktopBackendStartConfig, PlatformError.PlatformError>;
+  readonly trackProcess?: TrackBackendProcess;
   /** Receives the ready run's URL and pid; reading current config could race a subsequent restart. */
   readonly onReady?: (httpBaseUrl: URL, pid: number) => Effect.Effect<void>;
   readonly onShutdown?: () => Effect.Effect<void>;
@@ -447,11 +451,16 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   );
   const onOutput = options.onOutput ?? (() => Effect.void);
   const bootstrapStream = Stream.encodeText(Stream.make(`${bootstrapJson}\n`));
+  const recorded = options.trackProcess === undefined ? undefined : yield* Deferred.make<void>();
   const additionalFds: Record<`fd${number}`, ChildProcess.AdditionalFdConfig> = {};
   if (options.bootstrapDelivery === "fd3") {
     additionalFds.fd3 = {
       type: "input",
-      stream: bootstrapStream,
+      // Record ownership before the local backend can claim the home and start serving.
+      stream:
+        recorded === undefined
+          ? bootstrapStream
+          : Stream.unwrap(Deferred.await(recorded).pipe(Effect.as(bootstrapStream))),
     };
     if (options.bootstrap.desktopTelemetryFd !== undefined) {
       additionalFds[`fd${options.bootstrap.desktopTelemetryFd}`] = {
@@ -502,6 +511,8 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
         }),
     ),
   );
+  const forgetProcess = yield* options.trackProcess?.(handle.pid) ?? Effect.succeed(Effect.void);
+  if (recorded !== undefined) yield* Deferred.succeed(recorded, undefined);
   const outputFibers: Array<Fiber.Fiber<void, never>> = [];
   const serverReady = yield* Deferred.make<void>();
 
@@ -645,6 +656,8 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     Effect.exit,
   );
   yield* options.onExitObserved?.() ?? Effect.void;
+  // A cancelled run may leave a survivor. Only forget after observing a real exit.
+  if (Exit.isSuccess(exit)) yield* forgetProcess;
   yield* Effect.forEach(outputFibers, Fiber.await, {
     concurrency: "unbounded",
     discard: true,
@@ -943,6 +956,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
 
         const program = runBackendProcess({
           ...config.value,
+          ...(spec.trackProcess === undefined ? {} : { trackProcess: spec.trackProcess }),
           desktopTelemetryStream: desktopTelemetryPublisher.encoded,
           desktopBrowserStream: desktopBrowserHost.events,
           onDesktopBrowserCommand: desktopBrowserHost.handleCommandLine,
