@@ -311,6 +311,10 @@ describe("DesktopBackend", () => {
     await desktop.act({ kind: "press", key: "space" });
     await desktop.act({ kind: "press", key: "up" });
     await desktop.act({ kind: "press", key: "cmd+l" });
+    await desktop.act({ kind: "press", key: "cmd+shift+g" });
+    await desktop.act({ kind: "press", key: "cmd+alt+i" });
+    await desktop.act({ kind: "press", key: "shift+tab" });
+    await desktop.act({ kind: "press", key: "cmd+left" });
     expect(calls.map((call) => call.argv)).toEqual([
       ["setvalue", JSON.stringify({ ref: "0.2.4", text })],
       ["value", JSON.stringify({ ref: "0.2.4" })],
@@ -321,7 +325,11 @@ describe("DesktopBackend", () => {
       ["scroll", JSON.stringify({ direction: "down", amount: 3 })],
       ["press", JSON.stringify({ code: 49 })],
       ["press", JSON.stringify({ code: 126 })],
-      ["press", JSON.stringify({ code: 37, command: "L" })],
+      ["press", JSON.stringify({ code: 37, flags: 0x100000, command: "L" })],
+      ["press", JSON.stringify({ code: 5, flags: 0x120000, command: "G", menu: 1 })],
+      ["press", JSON.stringify({ code: 34, flags: 0x180000, command: "I", menu: 2 })],
+      ["press", JSON.stringify({ code: 48, flags: 0x20000 })],
+      ["press", JSON.stringify({ code: 123, flags: 0x100000 })],
     ]);
     // The value and text travel as argv on stdin, never spliced into the script source.
     expect(calls[0]?.script).not.toContain("Finder");

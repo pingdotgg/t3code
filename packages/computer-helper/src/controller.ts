@@ -39,7 +39,7 @@ export type ComputerAct = {
   label?: string;
   x?: number;
   y?: number;
-  key?: Key | "return";
+  key?: Key;
   direction?: "up" | "down" | "top" | "bottom";
   /** `scroll` up or down: how many screens. */
   amount?: number;
@@ -1187,8 +1187,7 @@ function actOn(
     }
     case "key": {
       if (!act.key) return { stop: "Name the key to press." };
-      const key = act.key === "return" ? "enter" : act.key;
-      return { screen, action: { kind: "press", key }, said: `pressed ${act.key}` };
+      return { screen, action: { kind: "press", key: act.key }, said: `pressed ${act.key}` };
     }
     case "scroll": {
       const direction = act.direction ?? "down";

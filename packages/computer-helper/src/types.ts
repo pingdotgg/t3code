@@ -77,19 +77,8 @@ export type Observation = {
   popup?: string;
 };
 
-/** The keys a step may press: the ones that move, reveal or submit, and three browser shortcuts. */
-export type Key =
-  | "enter"
-  | "escape"
-  | "tab"
-  | "space"
-  | "up"
-  | "down"
-  | "left"
-  | "right"
-  | "cmd+l"
-  | "cmd+t"
-  | "cmd+w";
+/** A key or chord in the contracts' one spelling (`enter`, `cmd+shift+g`): modifiers cmd, ctrl, alt, shift, then the key. */
+export type Key = string;
 
 export type ScreenAction =
   | { kind: "click"; ref: string }
