@@ -1652,6 +1652,8 @@ export const ServerSettings = Schema.Struct({
   agentGateway: Schema.NullOr(AgentGatewaySettings).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** Lets clients reach this machine's loopback ports over `/api/preview/tunnel`. */
+  enablePreviewTunnel: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   cloudSpeechCredentials: CloudSpeechCredentials.pipe(
     Schema.withDecodingDefault(Effect.succeed({ openai: "", xai: "", openrouter: "" })),
   ),
@@ -2148,6 +2150,7 @@ export const ServerSettingsPatch = Schema.Struct({
   keepAwakeWhileAgentsWork: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   agentGateway: Schema.optionalKey(Schema.NullOr(AgentGatewaySettings)),
+  enablePreviewTunnel: Schema.optionalKey(Schema.Boolean),
   cloudSpeechCredentials: Schema.optionalKey(
     Schema.Struct({
       openai: Schema.optionalKey(SettingsSecretValue),
@@ -2310,7 +2313,7 @@ export function requiredScopesForServerSettingsPatch(
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined) continue;
     // Outside agents reach this environment through the gateway, as through a pairing link.
-    if (key === "agentGateway") {
+    if (key === "agentGateway" || key === "enablePreviewTunnel") {
       changesAccess = true;
     } else if (
       key === "providers" ||

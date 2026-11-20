@@ -5,6 +5,8 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import { Atom } from "effect/reactivity";
 
 import type { AtomCommand } from "./runtime.ts";
@@ -90,41 +92,39 @@ export function createOptimisticThreadLifecycle(
   ): typeof command {
     return {
       label: command.label,
-      run: async (registry, target) => {
-        const now = DateTime.nowUnsafe();
-        const pending = pendingAtom(target.environmentId);
-        const source = sourceSnapshotAtom(target.environmentId);
-        const update: PendingThreadUpdate = {
-          threadId: target.input.threadId,
-          apply: (thread) => apply(thread, target.input, now, update.sequence !== undefined),
-        };
-        const shown = registry.get(snapshotAtom(target.environmentId));
-        const followerUpdates: ReadonlyArray<PendingThreadUpdate> =
-          followers === undefined || shown === null
-            ? []
-            : followers.select(shown, target.input).map((threadId) => ({
-                threadId,
-                apply: (thread) =>
-                  followers.landed(thread, now) ? thread : followers.apply(thread, now),
-                settlesWhen: (thread) => followers.landed(thread, now),
-              }));
-        const remove = () =>
-          registry.update(pending, (current) =>
-            current.filter((item) => item !== update && !followerUpdates.includes(item)),
-          );
-        registry.update(pending, (current) => [...current, update, ...followerUpdates]);
-        let confirmed = false;
-        try {
-          const result = await command.run(registry, target);
-          if (result._tag === "Success" && followerUpdates.length > 0) {
+      run: (registry, target) =>
+        Effect.suspend(() => {
+          const now = DateTime.nowUnsafe();
+          const pending = pendingAtom(target.environmentId);
+          const source = sourceSnapshotAtom(target.environmentId);
+          const update: PendingThreadUpdate = {
+            threadId: target.input.threadId,
+            apply: (thread) => apply(thread, target.input, now, update.sequence !== undefined),
+          };
+          const shown = registry.get(snapshotAtom(target.environmentId));
+          const followerUpdates: ReadonlyArray<PendingThreadUpdate> =
+            followers === undefined || shown === null
+              ? []
+              : followers.select(shown, target.input).map((threadId) => ({
+                  threadId,
+                  apply: (thread) =>
+                    followers.landed(thread, now) ? thread : followers.apply(thread, now),
+                  settlesWhen: (thread) => followers.landed(thread, now),
+                }));
+          const remove = () =>
+            registry.update(pending, (current) =>
+              current.filter((item) => item !== update && !followerUpdates.includes(item)),
+            );
+          const pruneFollowers = () => {
             const prune = (snapshot: OrchestrationV2ShellSnapshot | null) => {
               const threads = new Map(
                 (snapshot?.threads ?? []).map((thread) => [thread.id, thread]),
               );
               registry.update(pending, (current) =>
                 current.filter((item) => {
-                  if (item.settlesWhen === undefined || !followerUpdates.includes(item))
+                  if (item.settlesWhen === undefined || !followerUpdates.includes(item)) {
                     return true;
+                  }
                   const thread = threads.get(item.threadId);
                   return thread !== undefined && !item.settlesWhen(thread);
                 }),
@@ -135,25 +135,30 @@ export function createOptimisticThreadLifecycle(
             };
             const stopPruning = registry.subscribe(source, prune);
             prune(registry.get(source));
-          }
-          if (result._tag === "Success") {
-            update.sequence = result.value.sequence;
+          };
+          // Stays applied after the reply until a snapshot at or past its sequence replaces it.
+          const confirm = (sequence: number) => {
+            if (followerUpdates.length > 0) pruneFollowers();
+            update.sequence = sequence;
             registry.update(pending, (current) => [...current]);
             const reconcile = (snapshot: OrchestrationV2ShellSnapshot | null) => {
-              if (snapshot === null || snapshot.snapshotSequence >= result.value.sequence) {
+              if (snapshot === null || snapshot.snapshotSequence >= sequence) {
                 registry.update(pending, (current) => current.filter((item) => item !== update));
                 unsubscribe();
               }
             };
             const unsubscribe = registry.subscribe(source, reconcile);
             reconcile(registry.get(source));
-            confirmed = true;
-          }
-          return result;
-        } finally {
-          if (!confirmed) remove();
-        }
-      },
+          };
+          registry.update(pending, (current) => [...current, update, ...followerUpdates]);
+          return command
+            .run(registry, target)
+            .pipe(
+              Effect.onExit((exit) =>
+                Effect.sync(() => (Exit.isSuccess(exit) ? confirm(exit.value.sequence) : remove())),
+              ),
+            );
+        }),
     };
   }
 

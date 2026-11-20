@@ -55,7 +55,7 @@ vi.mock("@effect/atom-react", () => ({
 }));
 vi.mock("../../state/preferences", () => ({
   mobilePreferencesAtom: {},
-  updateMobilePreferencesAtom: {},
+  saveMobilePreferences: {},
 }));
 vi.mock("./components/AutoSettleDurationField", () => ({ AutoSettleDurationField: () => null }));
 vi.mock("./components/SourceControlSignInSection", () => ({

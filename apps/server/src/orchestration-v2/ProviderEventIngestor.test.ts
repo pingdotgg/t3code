@@ -37,6 +37,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
 import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -1821,16 +1822,32 @@ layer("ProviderEventIngestorV2", (it) => {
         threadId: rootEvent.threadId,
       });
 
-      const threadEvents = yield* ingestor.normalize({
-        providerSessionId,
-        providerInstanceId: modelSelection.instanceId,
-        threadId: rootEvent.threadId,
-        event: {
-          type: "app_thread.created",
-          driver: CODEX_DRIVER,
-          appThread: childThread,
+      const failedSpans: Array<string> = [];
+      const tracer = Tracer.make({
+        span(options) {
+          const span = new Tracer.NativeSpan(options);
+          const end = span.end.bind(span);
+          span.end = (time, exit) => {
+            end(time, exit);
+            if (Exit.isFailure(exit)) failedSpans.push(span.name);
+          };
+          return span;
         },
       });
+      const threadEvents = yield* ingestor
+        .normalize({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId: rootEvent.threadId,
+          event: {
+            type: "app_thread.created",
+            driver: CODEX_DRIVER,
+            appThread: childThread,
+          },
+        })
+        .pipe(Effect.withTracer(tracer));
+      // A new child's existence check expects a miss; a failed span there reads as an error in Tempo.
+      assert.deepEqual(failedSpans, []);
       const messageEvents = yield* ingestor.normalize({
         providerSessionId,
         providerInstanceId: modelSelection.instanceId,

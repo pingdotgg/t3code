@@ -30,7 +30,7 @@ export const es: Messages = {
     harnessBody: `${APP_NAME} no revende tokens. Conecta Claude Code, Codex, Antigravity, OpenCode, Cursor o Grok con las credenciales que ya tienes. Nosotros los orquestamos, tú conservas tu plan.`,
     googleSignIn: "Inicio de sesión con Google",
     harnessPoints: [
-      "Sin reventa de claves. Sin límites de cuota.",
+      "Sin venta de claves. Sin límites de cuota.",
       "Cambia de modelo a mitad del hilo.",
       "Nuevas integraciones cada semana.",
     ],

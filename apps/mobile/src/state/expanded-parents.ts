@@ -1,9 +1,10 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import { toggleExpandedParentKey } from "@t3tools/client-runtime/state/child-status-counts";
 import { AsyncResult } from "effect/reactivity";
 import { useCallback, useMemo } from "react";
 
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "./preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "./preferences";
+import { useAtomCommand } from "./use-atom-command";
 
 const NO_EXPANDED_PARENTS: readonly string[] = [];
 
@@ -13,7 +14,7 @@ const NO_EXPANDED_PARENTS: readonly string[] = [];
  */
 export function useExpandedParents() {
   const preferences = useAtomValue(mobilePreferencesAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   const stored = AsyncResult.isSuccess(preferences)
     ? (preferences.value.expandedParentKeys ?? NO_EXPANDED_PARENTS)
     : NO_EXPANDED_PARENTS;

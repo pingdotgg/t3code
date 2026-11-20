@@ -167,6 +167,7 @@ A few settings need care:
     "clients": ["desktop"],
     "webhookTasks": false,
     "browserCookieImport": false,
+    "previewTunnel": false,
     "providers": {
       "allowedDrivers": ["claudeAgent", "codex"],
       "instances": {
@@ -246,6 +247,10 @@ so restart Ada after that.
   but do not run, and cannot be turned back on. Users can still edit or delete them.
 - `browserCookieImport: false`: users cannot import cookies from another browser into Ada's
   browser.
+- `previewTunnel: false`: other devices cannot load this machine's `localhost` pages themselves.
+  Browser tabs stream from it instead, and port forwarding and **Open on this device** are
+  unavailable. This wins over the user's
+  [Preview tunnel setting](./remote-access.md#browser-on-a-remote-environment).
 
 ### Providers
 

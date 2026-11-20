@@ -30,7 +30,7 @@ export const ja: Messages = {
     harnessBody: `${APP_NAME} はトークンを転売しません。Claude Code、Codex、Antigravity、OpenCode、Cursor、Grok を、すでに持っている認証情報でつなぐだけ。オーケストレーションは私たちに任せて、プランは今のままで。`,
     googleSignIn: "Google でサインイン",
     harnessPoints: [
-      "キーの転売なし。使用量の上限なし。",
+      "キーの再販なし。使用量の上限なし。",
       "スレッドの途中でモデルを切り替え。",
       "対応エージェントは毎週追加。",
     ],

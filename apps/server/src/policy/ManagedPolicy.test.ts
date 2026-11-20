@@ -60,11 +60,16 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
         JSON.stringify({
           schemaVersion: 1,
           organization: "Example Corp",
-          limits: { webhookTasks: false, browserCookieImport: true },
+          limits: { webhookTasks: false, browserCookieImport: true, previewTunnel: false },
         }),
       );
-      assert.deepEqual(policy.summary?.limits, { webhookTasks: false, browserCookieImport: true });
+      assert.deepEqual(policy.summary?.limits, {
+        webhookTasks: false,
+        browserCookieImport: true,
+        previewTunnel: false,
+      });
       assert.equal(ManagedPolicy.deniedBy(policy, "webhookTasks"), "Example Corp");
+      assert.equal(ManagedPolicy.deniedBy(policy, "previewTunnel"), "Example Corp");
     }),
   );
 

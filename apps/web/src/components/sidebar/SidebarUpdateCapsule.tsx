@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { msg, useMessages } from "gt-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { type ReactNode, useSyncExternalStore } from "react";
 
 import type { MessageResolver } from "~/i18n/messages";
@@ -47,19 +47,20 @@ function useUpdateRunMachineViews(run: UpdateEverythingRun): ReadonlyArray<Updat
   }));
 }
 
+function restartSecondsLeft(run: UpdateEverythingRun, now: number): number | null {
+  return run.phase === "countdown" && run.restartAt !== null
+    ? Math.max(0, Math.ceil((run.restartAt - now) / 1000))
+    : null;
+}
+
 function localStatusLabel(
   run: UpdateEverythingRun,
   local: UpdateRunLocalState,
   now: number,
   resolve: MessageResolver,
 ) {
-  if (run.phase === "countdown" && run.restartAt !== null) {
-    return resolve(
-      msg("restarts in {seconds}s", {
-        seconds: Math.max(0, Math.ceil((run.restartAt - now) / 1000)),
-      }),
-    );
-  }
+  const seconds = restartSecondsLeft(run, now);
+  if (seconds !== null) return resolve(msg("restarts in {seconds}s", { seconds }));
   if (run.phase === "installing") return resolve(msg("restarting"));
   if (local?.status === "downloading") {
     return local.percent === null
@@ -96,6 +97,7 @@ function useUpdateRun(run: UpdateEverythingRun, local: UpdateRunLocalState) {
     runAction,
     failed: machines.some(({ status }) => status === "failed"),
     settled: !hasActiveMachine && run.localVersion === null,
+    restartSeconds: restartSecondsLeft(run, now),
     // After a relaunch the run only waits on handed-off servers, which can take half an hour.
     waitsOnHandoff:
       run.localVersion === null &&
@@ -149,15 +151,17 @@ export function SidebarUpdateCapsule({
   onRestart,
 }: UpdateRunProps & { readonly icon: ReactNode }) {
   const runView = useUpdateRun(run, local);
-  const { view, runAction } = runView;
+  const { view, runAction, restartSeconds } = runView;
+  const m = useMessages();
+  const gt = useGT();
   const actionLabel =
-    view.action === "later" ? "Later" : view.action === "retry" ? "Retry" : "Dismiss";
+    view.action === "later" ? gt("Later") : view.action === "retry" ? gt("Retry") : gt("Dismiss");
 
   return (
     <Popover>
       <div
         className={cn(
-          "relative flex h-8 flex-1 items-center rounded-full bg-sidebar-control-surface text-sidebar-foreground",
+          "relative ml-auto flex h-8 w-8 shrink-0 items-center rounded-full bg-sidebar-control-surface text-sidebar-foreground @min-[12rem]/sidebar-update:w-full",
           view.tone === "slow" && "ring-1 ring-warning/40 ring-inset",
           view.tone === "failed" && "ring-1 ring-destructive/40 ring-inset",
         )}
@@ -171,9 +175,7 @@ export function SidebarUpdateCapsule({
             />
           }
         />
-        {/* w-0 keeps the label out of the capsule's minimum width, so a shared footer row
-            can squeeze the label but never push the action past the sidebar edge. */}
-        <span className="pointer-events-none relative w-0 min-w-0 flex-1 truncate pl-3 text-xs">
+        <span className="pointer-events-none relative hidden min-w-0 flex-1 truncate pl-3 text-xs @min-[12rem]/sidebar-update:block">
           <span className={cn(view.tone === "failed" && "text-destructive")}>{view.label}</span>
           {view.slow ? (
             <span className="text-warning tabular-nums"> {view.slow.elapsed}</span>
@@ -182,16 +184,22 @@ export function SidebarUpdateCapsule({
         {view.action !== null ? (
           <button
             type="button"
-            className="relative shrink-0 cursor-pointer pr-3 pl-1.5 text-xs underline decoration-muted-foreground/60 underline-offset-3 hover:decoration-current"
+            className="relative hidden shrink-0 cursor-pointer pr-3 pl-1.5 text-xs underline decoration-muted-foreground/60 underline-offset-3 hover:decoration-current @min-[12rem]/sidebar-update:block"
             onClick={runAction}
           >
             {actionLabel}
           </button>
-        ) : (
-          <span className="pointer-events-none relative grid size-8 shrink-0 place-items-center">
-            {icon}
-          </span>
-        )}
+        ) : null}
+        <span
+          className={cn(
+            "pointer-events-none relative grid size-8 shrink-0 place-items-center",
+            view.action !== null && "@min-[12rem]/sidebar-update:hidden",
+            restartSeconds !== null &&
+              "rounded-full text-xs font-medium tabular-nums ring-1 ring-current/22 ring-inset",
+          )}
+        >
+          {restartSeconds !== null ? m(msg("{seconds}s", { seconds: restartSeconds })) : icon}
+        </span>
       </div>
       <PopoverPopup side="top" align="end" padding="compact" width="sm">
         <UpdateRunDetails run={run} local={local} onRestart={onRestart} runView={runView} />
@@ -211,16 +219,20 @@ function UpdateRunDetails({
     <div className="flex flex-col gap-1 text-xs">
       {run.localVersion !== null ? (
         <div className="flex items-center justify-between gap-3">
-          <span>This app</span>
+          <span>
+            <T>This app</T>
+          </span>
           <span className="text-muted-foreground tabular-nums">
             {localStatusLabel(run, local, now, m)}
           </span>
         </div>
       ) : onRestart ? (
         <div className="flex items-center justify-between gap-3">
-          <span>This app</span>
+          <span>
+            <T>This app</T>
+          </span>
           <Button size="xs" variant="outline" onClick={() => void onRestart()}>
-            Restart to update
+            <T>Restart to update</T>
           </Button>
         </div>
       ) : null}
@@ -234,9 +246,9 @@ function UpdateRunDetails({
                 status === "failed" ? "text-destructive" : "text-muted-foreground",
               )}
             >
-              {RUN_STATUS_LABELS[status]}
+              {m(RUN_STATUS_LABELS[status])}
               {status !== "done" && status !== "failed" && status !== "waiting"
-                ? ` ${formatUpdateElapsed(now - machine.startedAt)}`
+                ? ` ${formatUpdateElapsed(now - machine.startedAt, m)}`
                 : ""}
             </span>
           </div>
@@ -249,23 +261,23 @@ function UpdateRunDetails({
         <div className="mt-1 flex justify-end gap-1">
           {view.action === "retry" ? (
             <Button size="xs" variant="outline" onClick={runAction}>
-              Retry
+              <T>Retry</T>
             </Button>
           ) : null}
           <Button size="xs" variant="ghost" onClick={dismissSettledUpdateRunMachines}>
-            Dismiss
+            <T>Dismiss</T>
           </Button>
         </div>
       ) : view.action === "later" ? (
         <div className="mt-1 flex justify-end">
           <Button size="xs" variant="outline" onClick={runAction}>
-            Later
+            <T>Later</T>
           </Button>
         </div>
       ) : waitsOnHandoff ? (
         <div className="mt-1 flex justify-end">
           <Button size="xs" variant="ghost" onClick={hideHandedOffUpdateRun}>
-            Hide
+            <T>Hide</T>
           </Button>
         </div>
       ) : null}

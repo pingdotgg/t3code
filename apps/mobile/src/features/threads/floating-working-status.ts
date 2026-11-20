@@ -23,7 +23,12 @@ export type FloatingWorkingStatus =
       readonly unresponsive: boolean;
       readonly action: FloatingStatusAction | null;
     }
-  | { readonly kind: "goal"; readonly label: string; readonly accessibilityLabel: string }
+  | {
+      readonly kind: "goal";
+      readonly label: string;
+      readonly accessibilityLabel: string;
+      readonly actions: ReadonlyArray<FloatingStatusAction>;
+    }
   | {
       /** A computer task this thread started: what it is doing, and Stop. */
       readonly kind: "computer";

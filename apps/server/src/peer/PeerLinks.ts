@@ -104,6 +104,13 @@ export class PeerLinks extends Context.Service<
     readonly link: (input: PeerLinkCreateInput) => Effect.Effect<PeerLink, PeerLinkError>;
     /** Keeps a link another flow already made, such as a tailnet device's grant, with its token. */
     readonly store: (link: PeerLink, token: string) => Effect.Effect<void, PeerLinkError>;
+    /**
+     * Links like `link`, except that a machine whose link has not expired is
+     * left as it is, with its pairing code unused.
+     */
+    readonly linkUnlessLinked: (
+      input: PeerLinkCreateInput,
+    ) => Effect.Effect<{ readonly link: PeerLink; readonly alreadyLinked: boolean }, PeerLinkError>;
     /** Every link with its reachability, probing each peer once, all at once. */
     readonly list: Effect.Effect<ReadonlyArray<PeerLinkSummary>, PeerLinkError>;
     /** Every stored link, without asking any peer whether it answers. */
@@ -125,6 +132,11 @@ export class PeerLinks extends Context.Service<
     ) => Effect.Effect<void>;
     /** Every link stored or removed after subscribing. */
     readonly subscribeChanges: Effect.Effect<Stream.Stream<EnvironmentId>, never, Scope.Scope>;
+    /** Records a later end the peer gives the link's session: using a link renews it there. */
+    readonly recordExpiry: (
+      environmentId: EnvironmentId,
+      expiresAt: DateTime.Utc,
+    ) => Effect.Effect<void>;
   }
 >()("t3/peer/PeerLinks") {}
 
@@ -173,7 +185,8 @@ const peerOrigin = (url: string) => {
     return Effect.fail(
       new PeerLinkError({
         reason: "unreachable",
-        message: `${url} is not an http or https address.`,
+        // Never the address as given: it may hold a username, password or query.
+        message: "That address is not an http or https address.",
       }),
     );
   }
@@ -185,7 +198,7 @@ const peerOrigin = (url: string) => {
     return Effect.fail(
       new PeerLinkError({
         reason: "unreachable",
-        message: `${url} is plain http, which would send the link's credentials unencrypted. Use its https address, or its Tailscale address.`,
+        message: `${parsed.origin} is plain http, which would send the link's credentials unencrypted. Use its https address, or its Tailscale address.`,
       }),
     );
   }
@@ -487,6 +500,7 @@ const make = Effect.gen(function* () {
             return yield* new PeerLinkError({
               reason: "unreachable",
               message: `${origin} answered as another environment, ${descriptor.label}.`,
+              answeredAs: descriptor.label,
             });
           }
           return { origin, descriptor };
@@ -498,12 +512,14 @@ const make = Effect.gen(function* () {
     );
     const first = matching[0];
     if (first === undefined) {
-      const reasons = checked.flatMap((result) =>
-        Result.isFailure(result) ? [result.failure.message] : [],
+      const failures = checked.flatMap((result) =>
+        Result.isFailure(result) ? [result.failure] : [],
       );
+      const answeredAs = failures.find((failure) => failure.answeredAs !== undefined)?.answeredAs;
       return yield* new PeerLinkError({
         reason: "unreachable",
-        message: `This environment could not reach ${name}: ${reasons.join(" ")}`,
+        message: `This environment could not reach ${name}: ${failures.map((failure) => failure.message).join(" ")}`,
+        ...(answeredAs === undefined ? {} : { answeredAs }),
       });
     }
     // Each address is kept once, even when two spellings share an origin.
@@ -518,7 +534,10 @@ const make = Effect.gen(function* () {
     return { primary, peer: yield* probe(primary), origins };
   });
 
-  const link: PeerLinks["Service"]["link"] = Effect.fn("PeerLinks.link")(function* (input) {
+  const linkWith = Effect.fn("PeerLinks.link")(function* (
+    input: PeerLinkCreateInput,
+    keepLinked: boolean,
+  ) {
     if (!(yield* enabled)) {
       return yield* new PeerLinkError({ reason: "disabled", message: LINKED_ENVIRONMENTS_OFF });
     }
@@ -533,21 +552,24 @@ const make = Effect.gen(function* () {
             input.expectedEnvironmentId,
             input.expectedLabel ?? input.expectedEnvironmentId,
           );
+    const row = yield* readRow(peer.environmentId);
+    const stored = Option.isSome(row) ? yield* toLink(row.value) : undefined;
+    const current =
+      stored !== undefined && DateTime.isGreaterThan(stored.expiresAt, yield* DateTime.now)
+        ? stored
+        : undefined;
+    if (keepLinked && current !== undefined) return { link: current, alreadyLinked: true };
     // Anything can answer as a linked machine, so an address alone renews its
     // link only where the link already reaches it, and never moves it.
-    if (input.expectedEnvironmentId === undefined) {
-      const row = yield* readRow(peer.environmentId);
-      const existing = Option.isSome(row) ? yield* toLink(row.value) : undefined;
-      if (
-        existing !== undefined &&
-        DateTime.isGreaterThan(existing.expiresAt, yield* DateTime.now) &&
-        !existing.urls.includes(primary)
-      ) {
-        return yield* new PeerLinkError({
-          reason: "pairing_rejected",
-          message: `${primary} answers as ${existing.label}, which is already linked at another address. If ${existing.label} moved, forget that link first.`,
-        });
-      }
+    if (
+      input.expectedEnvironmentId === undefined &&
+      current !== undefined &&
+      !current.urls.includes(primary)
+    ) {
+      return yield* new PeerLinkError({
+        reason: "pairing_rejected",
+        message: `${primary} answers as ${current.label}, which is already linked at another address. If ${current.label} moved, forget that link first.`,
+      });
     }
     const self = yield* environment.getDescriptor;
     if (peer.environmentId === self.environmentId) {
@@ -576,7 +598,7 @@ const make = Effect.gen(function* () {
       lastError: null,
     };
     yield* store(linked, issued.access_token);
-    return linked;
+    return { link: linked, alreadyLinked: false };
   });
 
   const store: PeerLinks["Service"]["store"] = Effect.fn("PeerLinks.store")(
@@ -623,6 +645,11 @@ const make = Effect.gen(function* () {
       yield* PubSub.publish(changes, linked.environmentId);
     },
   );
+
+  const link: PeerLinks["Service"]["link"] = (input) =>
+    linkWith(input, false).pipe(Effect.map((result) => result.link));
+  const linkUnlessLinked: PeerLinks["Service"]["linkUnlessLinked"] = (input) =>
+    linkWith(input, true);
 
   /** A peer's label follows its machine name, so the link takes the one its own address answers with. */
   const withLabel = (link: PeerLink, label: string) =>
@@ -764,10 +791,17 @@ const make = Effect.gen(function* () {
       Effect.ignoreCause({ log: true }),
     );
 
+  const recordExpiry: PeerLinks["Service"]["recordExpiry"] = (environmentId, expiresAt) =>
+    sql`
+      UPDATE peer_environment_links SET expires_at = ${DateTime.formatIso(expiresAt)}
+      WHERE environment_id = ${environmentId} AND expires_at < ${DateTime.formatIso(expiresAt)}
+    `.pipe(Effect.asVoid, Effect.ignoreCause({ log: true }));
+
   return PeerLinks.of({
     enabled,
     link,
     store,
+    linkUnlessLinked,
     list,
     stored,
     get,
@@ -775,6 +809,7 @@ const make = Effect.gen(function* () {
     resolve,
     recordOutcome,
     subscribeChanges: PubSub.subscribe(changes).pipe(Effect.map(Stream.fromSubscription)),
+    recordExpiry,
   });
 });
 
