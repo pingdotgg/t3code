@@ -418,7 +418,13 @@ const make = Effect.gen(function* () {
     const expectedStackHeads: Array<{ readonly number: number; readonly headSha: string }> = [];
     for (const layer of stack.layers.slice(0, end + 1)) {
       if (layer.state === "merged") continue;
-      const headSha = layer.number === ref.number ? input.expectedHeadSha : layer.headSha;
+      const headSha =
+        layer.number !== ref.number
+          ? layer.headSha
+          : layer.headSha !== undefined &&
+              PullRequestService.isHeadSha(layer.headSha, input.expectedHeadSha)
+            ? layer.headSha
+            : input.expectedHeadSha;
       if (headSha === undefined)
         return yield* new PullRequestForgeError({
           detail: `The host did not report PR #${layer.number}'s head, so the stack cannot be pinned. Try again.`,
