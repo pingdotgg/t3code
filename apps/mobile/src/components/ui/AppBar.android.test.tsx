@@ -13,7 +13,7 @@ vi.mock("@react-navigation/native", () => ({
     throw new Error("Couldn't find a navigation object.");
   },
 }));
-vi.mock("./AndroidScreenHeader", () => ({
+vi.mock("./AndroidScreenHeader.android", () => ({
   AndroidScreenHeader: (props: { readonly title: string }) => <h1>{props.title}</h1>,
 }));
 vi.mock("./WorkspaceAppBar.android", () => ({
@@ -23,6 +23,10 @@ vi.mock("./WorkspaceAppBar.android", () => ({
 vi.mock("./Menu", () => ({ Menu: (props: { readonly children?: ReactNode }) => props.children }));
 vi.mock("./ScreenHeaderButton.android", () => ({ ScreenHeaderButton: () => null }));
 vi.mock("./SearchField", () => ({ SearchField: () => null }));
+vi.mock("./Button", () => ({ Button: () => null }));
+vi.mock("../../features/layout/adaptive-workspace-context", () => ({
+  useAdaptiveWorkspaceLayout: () => ({ layout: { usesSplitView: false } }),
+}));
 vi.mock("./useToolbarLayout", () => ({
   useToolbarLayout: () => ({ height: 48, paddingTop: 0, paddingBottom: 0 }),
 }));

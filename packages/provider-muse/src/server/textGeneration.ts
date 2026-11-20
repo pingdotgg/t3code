@@ -14,10 +14,20 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { createMuseSdkHost, createMuseSdkHostEffect, type MuseSdkHost } from "./sdk.ts";
+import {
+  createMuseSdkHost,
+  createMuseSdkHostEffect,
+  MuseSdkError,
+  type MuseSdkHost,
+} from "./sdk.ts";
 import { museModelCapabilities, resolveMuseReasoningEffort } from "./modelCatalog.ts";
+import { isMuseUsageLimitFailure } from "./usageLimits.ts";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
-import { investigationUnsupported } from "@t3tools/provider-core/server/textGenerationOperations";
+import {
+  generatedThreadTitle,
+  investigationUnsupported,
+  TranscriptionPostProcessingOutput,
+} from "@t3tools/provider-core/server/textGenerationOperations";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
@@ -27,7 +37,6 @@ import {
 import {
   sanitizeCommitSubject,
   sanitizePrTitle,
-  sanitizeThreadTitle,
   toJsonSchemaObject,
 } from "@t3tools/provider-core/server/textGenerationUtils";
 
@@ -44,11 +53,17 @@ const ItemNotification = Schema.Struct({
     truncated: Schema.optionalKey(Schema.Boolean),
   }),
 });
+const TurnError = Schema.Struct({
+  kind: Schema.optionalKey(Schema.String),
+  message: Schema.String,
+  quota: Schema.optionalKey(Schema.Unknown),
+});
 const TurnCompleted = Schema.Struct({
   sessionId: Schema.String,
   turnId: Schema.String,
   terminal: Schema.String,
-  error: Schema.optionalKey(Schema.Struct({ message: Schema.String })),
+  reason: Schema.optionalKey(Schema.String),
+  error: Schema.optionalKey(TurnError),
 });
 const ApprovalRequested = Schema.Struct({
   sessionId: Schema.String,
@@ -67,10 +82,32 @@ const decodeItem = Schema.decodeUnknownSync(ItemNotification);
 const decodeCompleted = Schema.decodeUnknownSync(TurnCompleted);
 const decodeApproval = Schema.decodeUnknownSync(ApprovalRequested);
 const decodeUserInput = Schema.decodeUnknownSync(UserInputRequested);
+const isMuseSdkError = Schema.is(MuseSdkError);
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 type Operation = keyof ProviderTextGeneration;
+class MuseTurnFailure extends Schema.TaggedError<MuseTurnFailure>()("MuseTurnFailure", {
+  turnError: TurnError,
+}) {
+  override get message() {
+    return this.turnError.message;
+  }
+}
+const isMuseTurnFailure = Schema.is(MuseTurnFailure);
+
+function museFailureDetail(cause: unknown): string {
+  const error =
+    isMuseSdkError(cause) && isMuseTurnFailure(cause.cause) ? cause.cause.turnError : undefined;
+  // Muse sends `quota` only for quota exhaustion, which it still labels `modelError`.
+  if (error?.quota !== undefined || isMuseUsageLimitFailure(error?.message))
+    return "Muse Code usage limit reached. Try again after it resets.";
+  if (error?.kind === "authRequired")
+    return "Muse Code is not signed in. Run `muse login` on this T3 server host.";
+  if (error?.kind === "modelError")
+    return "Muse Code's model request failed. Try again or choose another Muse model.";
+  return "Muse Code text generation failed. Check Muse login and availability on this T3 server host.";
+}
 
 async function generateMuseText(
   host: MuseSdkHost,
@@ -136,8 +173,13 @@ async function generateMuseText(
             resolveCompletion(answer?.text ?? "");
           }
         } else {
+          const error =
+            completed.error ??
+            (completed.reason !== undefined ? { message: completed.reason } : undefined);
           rejectCompletion(
-            new Error(completed.error?.message ?? `Muse turn ${completed.terminal}.`),
+            error
+              ? new MuseTurnFailure({ turnError: error })
+              : new Error(`Muse turn ${completed.terminal}.`),
           );
         }
       } else if (
@@ -250,24 +292,25 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
         (host: MuseSdkHost) => Effect.promise(() => host.close()),
         { interruptible: true },
       );
-      return yield* Effect.tryPromise((signal) =>
-        generateMuseText(
-          host,
-          cwd,
-          `${input.prompt}\n\nReturn only a JSON object matching this schema, with no markdown fences. Do not use tools or ask questions.\n${jsonSchema}`,
-          modelId,
-          reasoningEffort,
-          signal,
-        ),
-      );
+      return yield* Effect.tryPromise({
+        try: (signal) =>
+          generateMuseText(
+            host,
+            cwd,
+            `${input.prompt}\n\nReturn only a JSON object matching this schema, with no markdown fences. Do not use tools or ask questions.\n${jsonSchema}`,
+            modelId,
+            reasoningEffort,
+            signal,
+          ),
+        catch: (cause) => new MuseSdkError({ operation: "generate text", cause }),
+      });
     }).pipe(
       Effect.scoped,
       Effect.mapError(
         (cause) =>
           new TextGenerationError({
             operation,
-            detail:
-              "Muse Code text generation failed. Check Muse login and availability on this T3 server host.",
+            detail: museFailureDetail(cause),
             cause,
           }),
       ),
@@ -338,8 +381,17 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
       ...buildThreadTitlePrompt(input),
       modelSelection: input.modelSelection,
     });
-    return { title: sanitizeThreadTitle(generated.title) };
+    return { title: yield* generatedThreadTitle(generated.title) };
   });
+  const generateTranscriptionPostProcessing: ProviderTextGeneration["generateTranscriptionPostProcessing"] =
+    Effect.fn("MuseTextGeneration.generateTranscriptionPostProcessing")(function* (input) {
+      return yield* runMuseJson({
+        operation: "generateTranscriptionPostProcessing",
+        prompt: input.prompt,
+        outputSchema: TranscriptionPostProcessingOutput,
+        modelSelection: input.modelSelection,
+      });
+    });
   const generateReviewGuide: ProviderTextGeneration["generateReviewGuide"] = () =>
     Effect.fail(investigationUnsupported("generateReviewGuide", "Muse Code"));
   return {
@@ -348,5 +400,6 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
     generateBranchName,
     generateThreadTitle,
     generateReviewGuide,
+    generateTranscriptionPostProcessing,
   } satisfies ProviderTextGeneration;
 });

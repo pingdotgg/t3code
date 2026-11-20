@@ -10,20 +10,22 @@ import {
   OrchestrationV2GetTurnItemResult,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { Atom } from "effect/reactivity";
+import { msg } from "gt-react";
+
+import { m } from "~/i18n/messages";
 
 import type { TurnItemSource } from "../chat/timelineRowContext";
 
 /** What an expanded guest row says when it cannot read the item. */
-class GuestItemReadError extends Data.TaggedError("GuestItemReadError")<{
-  readonly message: string;
-}> {}
+class GuestItemReadError extends Schema.TaggedError<GuestItemReadError>()("GuestItemReadError", {
+  message: Schema.String,
+}) {}
 
 const decodeDetail = Schema.decodeUnknownSync(Schema.toCodecJson(OrchestrationV2GetTurnItemResult));
 const decodeFrame = Schema.decodeUnknownOption(
@@ -50,7 +52,7 @@ const guestItemDetailAtom = Atom.family((key: string) => {
   return Atom.make(
     Effect.tryPromise({
       try: () => fetchGuestItemDetail(shareId, itemId),
-      catch: () => new GuestItemReadError({ message: "Could not load this item." }),
+      catch: () => new GuestItemReadError({ message: m(msg("Could not load this item.")) }),
     }),
   );
 });
@@ -76,7 +78,9 @@ const guestCommandOutputAtom = Atom.family((key: string) => {
           if (source.readyState === EventSource.CLOSED) {
             Queue.failCauseUnsafe(
               queue,
-              Cause.fail(new GuestItemReadError({ message: "Output is no longer available." })),
+              Cause.fail(
+                new GuestItemReadError({ message: m(msg("Output is no longer available.")) }),
+              ),
             );
           }
         });

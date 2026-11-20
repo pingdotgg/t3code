@@ -1,7 +1,8 @@
+import { useGT } from "gt-react-native";
 import { SymbolView } from "./ui/AppSymbol";
 import { AppText } from "./ui/AppText";
 import { Image } from "expo-image";
-import { memo, useLayoutEffect, useState } from "react";
+import { memo, useLayoutEffect, useMemo, useState } from "react";
 import { View } from "react-native";
 import type { EnvironmentId, ProjectIconOverride } from "@t3tools/contracts";
 import {
@@ -11,6 +12,7 @@ import {
 } from "@t3tools/shared/projectFavicon";
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
+import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { projectFaviconUrlAtom } from "../state/assets";
 import {
   countGlyphs,
@@ -20,6 +22,7 @@ import {
   resolveProjectIconSymbol,
   type ProjectIconGlyph,
 } from "../lib/projectIcon";
+import { resolveProjectFaviconColorScheme } from "../lib/projectFaviconColorScheme";
 
 import {
   beginProjectFaviconRequest,
@@ -145,6 +148,7 @@ function ProjectFaviconImage(props: {
   readonly projectTitle: string;
   readonly size: number;
 }) {
+  const gt = useGT();
   const faviconRequest = createProjectFaviconRequest(props.cacheKey, props.faviconUrl);
   // Registers with the module-level loader before the Image's native onLoad/onError can fire,
   // so stale loads for a superseded URL under the same cacheKey are ignored.
@@ -158,6 +162,16 @@ function ProjectFaviconImage(props: {
     props.faviconUrl?.startsWith("data:") || hasLoadedProjectFavicon(props.cacheKey)
       ? "loaded"
       : "loading",
+  );
+
+  const { themeAppearance } = useAppearancePreferences();
+  const requestFaviconUrl = faviconRequest?.faviconUrl;
+  const inlineFaviconUrl = useMemo(
+    () =>
+      requestFaviconUrl?.startsWith("data:")
+        ? resolveProjectFaviconColorScheme(requestFaviconUrl, themeAppearance)
+        : null,
+    [requestFaviconUrl, themeAppearance],
   );
 
   const showImage = faviconRequest !== null && status === "loaded";
@@ -187,13 +201,13 @@ function ProjectFaviconImage(props: {
         <Image
           key={faviconRequest.faviconUrl}
           source={
-            faviconRequest.faviconUrl.startsWith("data:")
-              ? { uri: faviconRequest.faviconUrl }
+            inlineFaviconUrl !== null
+              ? { uri: inlineFaviconUrl }
               : { uri: faviconRequest.faviconUrl, cacheKey: faviconRequest.cacheKey }
           }
-          cachePolicy={faviconRequest.faviconUrl.startsWith("data:") ? "memory" : "memory-disk"}
+          cachePolicy={inlineFaviconUrl !== null ? "memory" : "memory-disk"}
           recyclingKey={faviconRequest.cacheKey}
-          accessibilityLabel={`${props.projectTitle} favicon`}
+          accessibilityLabel={gt("{projectTitle} favicon", { projectTitle: props.projectTitle })}
           style={{
             width: props.size,
             height: props.size,
