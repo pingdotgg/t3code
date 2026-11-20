@@ -1164,6 +1164,20 @@ const make = Effect.gen(function* () {
     const status = yield* git.statusDetailsLocal(repo);
     if (!status.isRepo || status.branch !== branch || status.hasWorkingTreeChanges) return null;
     if ((yield* hiddenTrackedChange(repo)) !== null) return null;
+    // A paused rebase, merge or bisect would lose its progress (and any autostash) with the clone.
+    const operations = yield* git.execute({
+      operation: "StorageCleanup.pausedOperations",
+      cwd: repo,
+      args: [
+        "rev-parse",
+        ...["rebase-merge", "rebase-apply", "MERGE_HEAD", "MERGE_AUTOSTASH", "BISECT_LOG"].flatMap(
+          (state) => ["--git-path", state],
+        ),
+      ],
+    });
+    for (const state of operations.stdout.trim().split(/\r?\n/)) {
+      if (yield* fs.exists(path.resolve(repo, state))) return null;
+    }
     // Deleting a clone also deletes its submodules, including their ignored files and local history.
     const submodules = yield* submoduleRemoval(repo, { worktreeKeepWhen: "any-local-files" });
     if (submodules.reason !== null) return null;

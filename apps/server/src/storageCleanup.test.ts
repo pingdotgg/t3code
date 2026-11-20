@@ -4120,6 +4120,33 @@ describe("Workler cleanup safety on v2 threads", () => {
       ),
   );
 
+  it.live.each(["clone", "group"] as const)(
+    "keeps a %s while a paused merge holds an autostash",
+    (kind) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const { service, worktree, fs, command } = yield* cleanupFixture(
+            undefined,
+            undefined,
+            kind,
+          );
+          const cwd = kind === "group" ? `${worktree}/web` : worktree;
+          const autostash = (yield* command(cwd, [
+            "rev-parse",
+            "--git-path",
+            "MERGE_AUTOSTASH",
+          ])).stdout.trim();
+          const head = (yield* command(cwd, ["rev-parse", "HEAD"])).stdout.trim();
+          yield* fs.writeFileString(`${cwd}/${autostash}`, `${head}\n`);
+          yield* service.runNow;
+          expect(yield* fs.exists(worktree)).toBe(true);
+          yield* fs.remove(`${cwd}/${autostash}`);
+          yield* service.runNow;
+          expect(yield* fs.exists(worktree)).toBe(false);
+        }),
+      ),
+  );
+
   it.live("keeps a clone on a git worktree's dev home", () =>
     runCleanupTest(
       Effect.gen(function* () {
