@@ -54,7 +54,7 @@ import {
   type CodexAppServerProviderSnapshot,
 } from "./CodexProvider.ts";
 import { BUNDLED_CLAUDE_MODEL_CATALOG } from "./ClaudeModelCatalog.ts";
-import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
+import { checkClaudeProviderStatus, type ClaudeCapabilitiesProbe } from "./ClaudeProvider.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import * as ModelManifest from "./ModelManifest.ts";
@@ -318,6 +318,7 @@ type TestClaudeCapabilities = {
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
   readonly models?: ReadonlyArray<ModelInfo>;
+  readonly usage?: ClaudeCapabilitiesProbe["usage"];
 };
 
 function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
@@ -4659,6 +4660,14 @@ it.layer(
             tokenSource: "none",
             apiKeySource: "none",
             apiProvider: "firstParty",
+            // get_usage reports the CLI's local login, not the account the endpoint routes to.
+            usage: {
+              rate_limits_available: true,
+              rate_limits: {
+                five_hour: null,
+                seven_day: { utilization: 0, resets_at: "2026-11-26T06:00:00Z" },
+              },
+            },
           }),
           environment,
         );
@@ -4666,6 +4675,8 @@ it.layer(
         assert.strictEqual(status.auth.status, "authenticated");
         assert.strictEqual(status.auth.type, "customEndpoint");
         assert.strictEqual(status.auth.label, "Custom API endpoint");
+        assert.deepStrictEqual(status.usageLimits?.windows, []);
+        assert.isDefined(status.usageLimits?.unavailable);
       }).pipe(
         Effect.provide(
           layerMockSpawner((args) => {
