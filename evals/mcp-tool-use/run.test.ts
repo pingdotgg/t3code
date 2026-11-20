@@ -1511,7 +1511,7 @@ const deviceCases = () =>
 it.effect("builds device cases from product-backed worlds and synthetic prior turns", () =>
   Effect.gen(function* () {
     const cases = deviceCases();
-    assert.equal(new Set(cases.map((c) => c.id)).size, 16);
+    assert.equal(new Set(cases.map((c) => c.id)).size, 18);
     const base = buildBase(
       {
         ...template,
@@ -1529,7 +1529,7 @@ it.effect("builds device cases from product-backed worlds and synthetic prior tu
       // would have opened the app, so its world starts that session. OWN seeds another owner.
       assert.deepEqual(
         [...(sample.devices?.sessions(sample.shell).values() ?? [])],
-        ["FAIL-AFTER-hub", "OWN-01", "OWN-02", "OWN-03"].includes(testCase.id)
+        ["FAIL-AFTER-hub", "OWN-01", "OWN-02", "OWN-03", "OWN-04"].includes(testCase.id)
           ? [{ app: true }]
           : [],
         testCase.id,
@@ -2470,7 +2470,8 @@ it("shares failed device attempts across tools and launcher steps, resetting onl
 });
 
 it("applies device shell checks to decoded cases and stops raw UI early", () => {
-  for (const testCase of deviceCases()) {
+  // In USER-01 the user picks the project's own simctl script, so raw UI is the right route.
+  for (const testCase of deviceCases().filter((c) => c.id !== "USER-01")) {
     const run = {
       calls: [
         {
