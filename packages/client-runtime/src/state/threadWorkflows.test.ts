@@ -4,6 +4,7 @@ import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 import {
   canForkProjectedAssistantItem,
   deriveThreadQueueWorkflowState,
+  getUserQueuedThreadRuns,
   resolveLatestMergeBackRun,
   threadSupportsProviderHandoff,
 } from "./threadWorkflows.ts";
@@ -30,6 +31,24 @@ const capabilities = (input?: {
   }) as never;
 
 describe("thread workflows", () => {
+  it("skips message history classification when no runs are queued", () => {
+    let metadataReads = 0;
+    const message = {
+      id: "message",
+      get delegatedCompletion() {
+        metadataReads++;
+        return undefined;
+      },
+    };
+    const projection = {
+      runs: [{ id: "active", status: "running", userMessageId: "message", ordinal: 1 }],
+      messages: [message],
+    } as never;
+
+    expect(getUserQueuedThreadRuns(projection)).toEqual([]);
+    expect(metadataReads).toBe(0);
+  });
+
   it("allows a completed thread to switch providers after its session detaches", () => {
     const projection = {
       thread: {
@@ -62,7 +81,8 @@ describe("thread workflows", () => {
         ...projection,
         providerThreads: [{ ...projection.providerThreads[0]!, nativeThreadRef: null }],
       }),
-    ).toBe(false);
+    ).toBe(true);
+    expect(threadSupportsProviderHandoff({ ...projection, providerThreads: [] })).toBe(false);
   });
 
   it("sorts queued messages and gates promotion from capabilities", () => {
@@ -305,7 +325,7 @@ describe("thread workflows", () => {
   });
 
   it.each(["preparing", "starting", "waiting"] as const)(
-    "does not promote queued work into a %s run",
+    "defers steering during setup and blocks it while waiting (%s)",
     (status) => {
       const state = deriveThreadQueueWorkflowState({
         thread: { id: "thread", activeProviderThreadId: "provider-thread" },
@@ -343,7 +363,7 @@ describe("thread workflows", () => {
         ],
       } as never);
 
-      expect(state.canPromoteToSteer).toBe(false);
+      expect(state.canPromoteToSteer).toBe(status !== "waiting");
     },
   );
 

@@ -7,12 +7,14 @@ import android.os.Build
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
+import android.text.method.PasswordTransformationMethod
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.modules.Module
@@ -42,7 +44,14 @@ class T3SecretInputModule : Module() {
         view.input.setTextSize(TypedValue.COMPLEX_UNIT_DIP, value)
       }
       Prop("editable") { view: T3SecretInputView, value: Boolean -> view.input.isEnabled = value }
+      Prop("revealed") { view: T3SecretInputView, value: Boolean -> view.setRevealed(value) }
+      Prop("returnKey") { view: T3SecretInputView, value: String ->
+        view.input.imeOptions =
+          if (value == "next") EditorInfo.IME_ACTION_NEXT else EditorInfo.IME_ACTION_DONE
+      }
       Events("onChangeText", "onSubmit")
+
+      AsyncFunction("focus") { view: T3SecretInputView -> view.focusInput() }
     }
   }
 }
@@ -101,7 +110,12 @@ class T3SecretInputView(context: Context, appContext: AppContext) : ExpoView(con
       }
     )
     input.setOnEditorActionListener { _, actionId, event ->
-      if (actionId == EditorInfo.IME_ACTION_DONE || event?.keyCode == KeyEvent.KEYCODE_ENTER) {
+      // Next is submitted too: JS moves focus to the following field.
+      if (
+        actionId == EditorInfo.IME_ACTION_DONE ||
+        actionId == EditorInfo.IME_ACTION_NEXT ||
+        event?.keyCode == KeyEvent.KEYCODE_ENTER
+      ) {
         // Hardware Enter reports IME_NULL on Android 13 and earlier, and both key down and key up.
         if (event == null || event.action == KeyEvent.ACTION_DOWN) {
           onSubmit(mapOf("value" to input.text.toString()))
@@ -131,6 +145,24 @@ class T3SecretInputView(context: Context, appContext: AppContext) : ExpoView(con
     input.setText(value)
     input.setSelection(input.text.length)
     applyingValue = false
+  }
+
+  /** Swapping the transformation re-sets the text, so it neither echoes to JS nor moves the caret. */
+  fun setRevealed(revealed: Boolean) {
+    val method = if (revealed) null else PasswordTransformationMethod.getInstance()
+    if (input.transformationMethod == method) return
+    val start = input.selectionStart
+    val end = input.selectionEnd
+    applyingValue = true
+    input.transformationMethod = method
+    if (start >= 0 && end >= 0) input.setSelection(start, end)
+    applyingValue = false
+  }
+
+  fun focusInput() {
+    input.requestFocus()
+    val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+    imm?.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
   }
 
   fun setCursorColor(color: Int) {
