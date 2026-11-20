@@ -18,7 +18,7 @@ import { connectionAtomRuntime } from "../connection/runtime";
 
 export const environmentCatalog = createEnvironmentCatalogAtoms(connectionAtomRuntime);
 const environmentShell = createEnvironmentShellAtoms(connectionAtomRuntime);
-const environmentSnapshotAtom = createEnvironmentSnapshotAtom(environmentShell.stateAtom);
+export const environmentSnapshotAtom = createEnvironmentSnapshotAtom(environmentShell.stateAtom);
 
 export const environmentProjects = createEnvironmentProjectAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,

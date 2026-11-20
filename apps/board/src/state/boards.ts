@@ -194,7 +194,7 @@ export function boardEngine(registry: AtomRegistry.AtomRegistry, environmentId: 
         .map(familyThread),
   };
 
-  return { files, threads };
+  return { files, threads, run };
 }
 
 export type ProjectBoards =
