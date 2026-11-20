@@ -5,6 +5,7 @@ import { type FormEvent, useContext, useState } from "react";
 import { ProviderPicker } from "../providers/ProviderPicker";
 import {
   canStart,
+  defaultPick,
   NO_PICK,
   type PickerValue,
   pickableInstances,
@@ -32,6 +33,7 @@ export function CreateBoard({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const chosen = resolvePick(instances, pick);
+  const reason = pick.instanceId === "" ? defaultPick(instances).reason : null;
   const selected = instances.find((instance) => instance.instanceId === chosen.instanceId);
   const selection = selectionOf(instances, chosen);
 
@@ -82,7 +84,7 @@ export function CreateBoard({
         </label>
         <div className="flex flex-col gap-1 text-muted">
           Orchestrator
-          <ProviderPicker instances={instances} value={chosen} onChange={setPick} />
+          <ProviderPicker instances={instances} value={chosen} onChange={setPick} reason={reason} />
         </div>
         {error !== null && (
           <p role="alert" className="break-words text-red-400">

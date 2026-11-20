@@ -1,13 +1,35 @@
-import { defaultInstanceIdForDriver, type ServerProvider } from "@t3tools/contracts";
+import {
+  isReasoningSelect,
+  selectableProviderOptionChoices,
+} from "@t3tools/client-runtime/model-traits";
+import {
+  defaultInstanceIdForDriver,
+  type ModelSelection,
+  ProviderInstanceId,
+  type ProviderOptionSelection,
+  type ServerProvider,
+} from "@t3tools/contracts";
 
 import type { OrchestratorSelection } from "../orchestrator/launch";
 
 export type SignInState = "signed-in" | "signed-out" | "unknown";
 
+/** The model's reasoning control, with the levels the picker lists. */
+export interface EffortControl {
+  /** The option id a model selection carries the level under. */
+  readonly id: string;
+  readonly choices: ReadonlyArray<{ readonly id: string; readonly label: string }>;
+  readonly defaultChoice: string | null;
+}
+
 export interface PickableModel {
   readonly slug: string;
   readonly name: string;
+  readonly effort: EffortControl | null;
 }
+
+/** Where a new orchestrator starts: Claude Code on this model at this effort. */
+export const DEFAULT_ORCHESTRATOR = { model: "claude-opus-5-5", effort: "medium" } as const;
 
 /** A Claude Code or Codex instance the engine reports, as the picker lists it. */
 export interface PickableInstance {
@@ -27,13 +49,24 @@ export interface PickableInstance {
   readonly defaultModel: string | null;
 }
 
-/** What the picker holds: an instance and the model typed or chosen for it. */
+/** What the picker holds: an instance, the model typed or chosen for it, and its effort, empty for the model's own default. */
 export interface PickerValue {
   readonly instanceId: string;
   readonly model: string;
+  readonly effort: string;
 }
 
-export const NO_PICK: PickerValue = { instanceId: "", model: "" };
+export const NO_PICK: PickerValue = { instanceId: "", model: "", effort: "" };
+
+function effortControl(model: ServerProvider["models"][number]): EffortControl | null {
+  const descriptor = model.capabilities?.optionDescriptors?.find(isReasoningSelect);
+  if (descriptor === undefined) return null;
+  return {
+    id: descriptor.id,
+    choices: selectableProviderOptionChoices(descriptor).map(({ id, label }) => ({ id, label })),
+    defaultChoice: descriptor.options.find((option) => option.isDefault === true)?.id ?? null,
+  };
+}
 
 const DRIVER_NAME = new Map([
   ["claudeAgent", "Claude Code"],
@@ -74,7 +107,11 @@ export function pickableInstances(
         canSignIn: provider.setup?.canAuthenticate === true,
         unavailable: provider.installed ? null : "Not installed on the machine that runs T3",
         message: provider.message ?? null,
-        models: models.map((model) => ({ slug: model.slug, name: model.name })),
+        models: models.map((model) => ({
+          slug: model.slug,
+          name: model.name,
+          effort: effortControl(model),
+        })),
         defaultModel: (models.find((model) => model.isDefault === true) ?? models[0])?.slug ?? null,
       };
     });
@@ -84,22 +121,73 @@ export function pickableInstances(
 export const canStart = (instance: PickableInstance) =>
   instance.unavailable === null && instance.signIn !== "signed-out";
 
+const instanceIsSignedIn = (instance: PickableInstance) =>
+  instance.unavailable === null && instance.signIn === "signed-in";
+
 /**
- * The pick, or while nothing is picked yet the first instance that can start, with its default
- * model unless one was typed.
+ * Where a new orchestrator starts. Claude Code on its default model at medium effort when a
+ * signed-in Claude instance offers it. Otherwise the first signed-in instance on its default model,
+ * with the reason shown under the picker.
  */
+export function defaultPick(instances: ReadonlyArray<PickableInstance>): {
+  readonly value: PickerValue;
+  readonly reason: string | null;
+} {
+  const claude = instances.filter((instance) => instance.driver === "claudeAgent");
+  const preferred = claude.find(
+    (instance) =>
+      instanceIsSignedIn(instance) &&
+      instance.models.some((model) => model.slug === DEFAULT_ORCHESTRATOR.model),
+  );
+  if (preferred !== undefined) {
+    const effort = preferred.models
+      .find((model) => model.slug === DEFAULT_ORCHESTRATOR.model)
+      ?.effort?.choices.some((choice) => choice.id === DEFAULT_ORCHESTRATOR.effort);
+    return {
+      value: {
+        instanceId: preferred.instanceId,
+        model: DEFAULT_ORCHESTRATOR.model,
+        effort: effort === true ? DEFAULT_ORCHESTRATOR.effort : "",
+      },
+      reason: null,
+    };
+  }
+  const fallback = instances.find(instanceIsSignedIn) ?? instances.find(canStart) ?? instances[0];
+  const lead = claude[0];
+  const why =
+    lead === undefined
+      ? "The engine has no Claude Code instance."
+      : claude.some(instanceIsSignedIn)
+        ? `Claude Code does not offer ${DEFAULT_ORCHESTRATOR.model}.`
+        : `Claude Code is ${lead.unavailable === null ? "signed out" : "not installed"}.`;
+  if (fallback === undefined) return { value: NO_PICK, reason: null };
+  return {
+    value: { instanceId: fallback.instanceId, model: fallback.defaultModel ?? "", effort: "" },
+    reason: `${why} Starting on ${fallback.name} instead.`,
+  };
+}
+
+/** The pick, or while nothing is picked yet the default, with a model typed before any pick kept. */
 export function resolvePick(
   instances: ReadonlyArray<PickableInstance>,
   pick: PickerValue,
 ): PickerValue {
   if (instances.some((instance) => instance.instanceId === pick.instanceId)) return pick;
-  const first = instances.find(canStart) ?? instances[0];
-  return first === undefined
-    ? pick
-    : { instanceId: first.instanceId, model: pick.model || (first.defaultModel ?? "") };
+  const { value } = defaultPick(instances);
+  return pick.model === "" ? value : { ...value, model: pick.model, effort: "" };
 }
 
-/** The orchestrator's instance and model from the picker, with the typed model, or the default when it is empty. */
+/** The effort control of the picked model, when the instance lists the model and it has one. */
+export function effortOf(
+  instances: ReadonlyArray<PickableInstance>,
+  pick: PickerValue,
+): EffortControl | null {
+  const instance = instances.find((entry) => entry.instanceId === pick.instanceId);
+  const model = pick.model.trim() || instance?.defaultModel;
+  return instance?.models.find((entry) => entry.slug === model)?.effort ?? null;
+}
+
+/** The orchestrator's instance, model, and effort from the picker, with the typed model, or the default when it is empty. */
 export function selectionOf(
   instances: ReadonlyArray<PickableInstance>,
   pick: PickerValue,
@@ -107,10 +195,46 @@ export function selectionOf(
   const instance = instances.find((entry) => entry.instanceId === pick.instanceId);
   const model = pick.model.trim() || instance?.defaultModel;
   if (instance === undefined || !model) return null;
+  const control = effortOf(instances, pick);
+  const options: ReadonlyArray<ProviderOptionSelection> =
+    control !== null && pick.effort !== "" ? [{ id: control.id, value: pick.effort }] : [];
   return {
     instanceId: instance.instanceId,
     driver: instance.driver,
     model,
     offered: instance.models.map((entry) => entry.slug),
+    options,
+  };
+}
+
+/** The picker's value for a thread's current model selection. */
+export function pickOf(
+  instances: ReadonlyArray<PickableInstance>,
+  selection: ModelSelection,
+): PickerValue {
+  const instance = instances.find((entry) => entry.instanceId === selection.instanceId);
+  const control = instance?.models.find((entry) => entry.slug === selection.model)?.effort;
+  const chosen =
+    control === null || control === undefined
+      ? undefined
+      : (selection.options ?? []).find((option) => option.id === control.id)?.value;
+  return {
+    instanceId: selection.instanceId,
+    model: selection.model,
+    effort: typeof chosen === "string" ? chosen : "",
+  };
+}
+
+/** The model selection a turn goes out with, or null when the pick names no instance or model. */
+export function modelSelectionOf(
+  instances: ReadonlyArray<PickableInstance>,
+  pick: PickerValue,
+): ModelSelection | null {
+  const selection = selectionOf(instances, pick);
+  if (selection === null) return null;
+  return {
+    instanceId: ProviderInstanceId.make(selection.instanceId),
+    model: selection.model,
+    ...(selection.options.length > 0 ? { options: selection.options } : {}),
   };
 }

@@ -1,0 +1,302 @@
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
+import {
+  resolveProviderSkillsForCwd,
+  resolveProviderSlashCommandsForCwd,
+  resolveProvidersForCwd,
+} from "@t3tools/client-runtime/providerSkills";
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import { threadSupportsProviderHandoff } from "@t3tools/client-runtime/state/thread-workflows";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
+import { MessageId, type OrchestrationV2ThreadProjection, type ThreadId } from "@t3tools/contracts";
+import { SendHorizontal, Square } from "lucide-react";
+import { flushSync } from "react-dom";
+import {
+  type FormEvent,
+  type KeyboardEvent,
+  useContext,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+
+import {
+  modelSelectionOf,
+  NO_PICK,
+  pickableInstances,
+  type PickerValue,
+  pickOf,
+} from "../providers/providers";
+import { failureText } from "../settings/failureText";
+import { newId } from "../state/boards";
+import { engineProvidersAtom, serverEnvironment } from "../state/server";
+import { interruptTurn, startTurn } from "../state/threads";
+import { ModelPicker } from "./ModelPicker";
+import {
+  buildSlashItems,
+  rankSlashItems,
+  type SlashAction,
+  type SlashItem,
+  slashMessage,
+  slashQuery,
+} from "./slash";
+import { MARK_SLASH, SlashMenu, slashOptionId } from "./SlashMenu";
+import { useWorkspaceSnapshot } from "./workspaceSnapshot";
+
+const SWITCH_BLOCKED =
+  "This thread does not support switching providers after it has started. Start a new thread to use this model.";
+
+/**
+ * The box that sends a message to the orchestrator or stops its turn, with the model picker for the
+ * next turn and the slash menu that opens when the message starts with `/`.
+ */
+export function Composer({
+  project,
+  threadId,
+  projection,
+  live,
+}: {
+  project: EnvironmentProject;
+  threadId: ThreadId;
+  projection: OrchestrationV2ThreadProjection | null;
+  live: boolean;
+}) {
+  const registry = useContext(RegistryContext);
+  const { environmentId, workspaceRoot: cwd } = project;
+  const menuId = useId();
+  const input = useRef<HTMLTextAreaElement | null>(null);
+
+  const [draft, setDraft] = useState("");
+  const [cursor, setCursor] = useState(0);
+  const [active, setActive] = useState(0);
+  const [closedFor, setClosedFor] = useState<string | null>(null);
+  const [modelOpen, setModelOpen] = useState(false);
+  const [override, setOverride] = useState<PickerValue | null>(null);
+  const [fresh, setFresh] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const providers = useAtomValue(engineProvidersAtom);
+  const providersForCwd = useMemo(() => resolveProvidersForCwd(providers, cwd), [providers, cwd]);
+  const instances = useMemo(() => pickableInstances(providersForCwd), [providersForCwd]);
+  const thread = projection?.thread ?? null;
+  const shown = override ?? (thread === null ? NO_PICK : pickOf(instances, thread.modelSelection));
+  const provider = providersForCwd.find((entry) => entry.instanceId === shown.instanceId);
+  const { refresh } = useWorkspaceSnapshot(environmentId, provider?.instanceId, cwd);
+  const canFresh =
+    useAtomValue(serverEnvironment.configValueAtom(environmentId))?.environment.capabilities
+      .freshContext === true && (projection?.messages.length ?? 0) > 0;
+  const switchBlocked =
+    projection !== null &&
+    thread !== null &&
+    projection.runs.length > 0 &&
+    !threadSupportsProviderHandoff(projection)
+      ? { reason: SWITCH_BLOCKED, stayOn: thread.modelSelection.instanceId }
+      : null;
+
+  const query = slashQuery(draft, cursor);
+  const onlyTheCommand = draft.slice(cursor).trim() === "";
+  const open = query !== null && closedFor !== draft;
+  const items = useMemo(
+    () =>
+      open && provider !== undefined
+        ? buildSlashItems({
+            commands: resolveProviderSlashCommandsForCwd(provider, cwd),
+            skills: resolveProviderSkillsForCwd(provider, cwd),
+            actions: ["model", ...(canFresh ? (["clear"] as const) : [])],
+            messageIsOnlyTheCommand: onlyTheCommand,
+          })
+        : [],
+    [open, provider, cwd, canFresh, onlyTheCommand],
+  );
+  const ranked = useMemo(() => rankSlashItems(items, query ?? ""), [items, query]);
+  const highlighted = Math.min(active, Math.max(ranked.length - 1, 0));
+
+  const edit = (value: string, at: number) => {
+    if (MARK_SLASH && slashQuery(draft, cursor) === null && slashQuery(value, at) !== null) {
+      performance.mark("board:slash-open");
+    }
+    if (slashQuery(draft, cursor) === null && slashQuery(value, at) !== null) refresh();
+    setActive(0);
+    setDraft(value);
+    setCursor(at);
+  };
+
+  const runAction = (action: SlashAction) => {
+    setDraft(draft.slice(cursor));
+    setCursor(0);
+    if (action === "model") setModelOpen(true);
+    else setFresh(true);
+  };
+
+  const pick = (item: SlashItem) => {
+    if (item.action !== null) {
+      runAction(item.action);
+      return;
+    }
+    const text = `${slashMessage(item, "")} `;
+    const rest = draft.slice(cursor);
+    // A space already after the cursor serves as the one that follows the pick.
+    const next = text + (rest.startsWith(" ") ? rest.slice(1) : rest);
+    setActive(0);
+    // The textarea must hold the text before the cursor can move past it.
+    flushSync(() => setDraft(next));
+    input.current?.setSelectionRange(text.length, text.length);
+    setCursor(text.length);
+  };
+
+  const send = async (event?: FormEvent) => {
+    event?.preventDefault();
+    const text = draft.trim();
+    if (text === "" || projection === null) return;
+    const selection = override === null ? null : modelSelectionOf(instances, override);
+    setError(null);
+    setDraft("");
+    setCursor(0);
+    const result = await runAtomCommand(
+      registry,
+      startTurn,
+      {
+        environmentId,
+        input: {
+          threadId,
+          message: { messageId: MessageId.make(newId()), role: "user", text, attachments: [] },
+          runtimeMode: projection.thread.runtimeMode,
+          interactionMode: projection.thread.interactionMode,
+          ...(selection === null ? {} : { modelSelection: selection }),
+          ...(fresh ? { freshContext: true } : {}),
+        },
+      },
+      { reportFailure: false },
+    );
+    if (result._tag === "Success") {
+      setFresh(false);
+    } else {
+      setDraft(text);
+      setCursor(text.length);
+      setError(failureText(result));
+    }
+  };
+
+  const stop = async () => {
+    setError(null);
+    const result = await runAtomCommand(
+      registry,
+      interruptTurn,
+      { environmentId, input: { threadId } },
+      { reportFailure: false },
+    );
+    if (result._tag !== "Success") setError(failureText(result));
+  };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.nativeEvent.isComposing) return;
+    if (open && ranked.length > 0) {
+      const step = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
+      if (step !== 0) {
+        setActive((highlighted + step + ranked.length) % ranked.length);
+        event.preventDefault();
+        return;
+      }
+      const chosen = ranked[highlighted];
+      if (chosen !== undefined && (event.key === "Enter" || event.key === "Tab")) {
+        if (event.key === "Enter" && event.shiftKey) return;
+        pick(chosen);
+        event.preventDefault();
+        return;
+      }
+    }
+    if (event.key === "Escape" && open) {
+      setClosedFor(draft);
+      event.preventDefault();
+      return;
+    }
+    if (event.key === "Enter" && !event.shiftKey) {
+      void send();
+      event.preventDefault();
+    }
+  };
+
+  const highlightedItem = open ? ranked[highlighted] : undefined;
+
+  return (
+    <form
+      onSubmit={(event) => void send(event)}
+      className="relative shrink-0 border-t border-line p-2"
+    >
+      {open && (
+        <SlashMenu
+          id={menuId}
+          items={ranked}
+          active={highlighted}
+          onPick={pick}
+          onHover={setActive}
+        />
+      )}
+      {error !== null && (
+        <p role="alert" className="mb-1.5 break-words text-red-400">
+          {error}
+        </p>
+      )}
+      {fresh && (
+        <p className="mb-1.5 flex items-center gap-2 text-muted">
+          <span className="min-w-0 flex-1">The next message starts a fresh session.</span>
+          <button type="button" onClick={() => setFresh(false)} className="hover:text-fg">
+            Cancel
+          </button>
+        </p>
+      )}
+      <div className="flex flex-col gap-1 rounded-xl border border-line bg-panel p-2 focus-within:border-muted">
+        <div className="flex items-end gap-2">
+          <textarea
+            ref={input}
+            value={draft}
+            onChange={(event) => edit(event.target.value, event.target.selectionStart)}
+            onSelect={(event) => setCursor(event.currentTarget.selectionStart)}
+            onKeyDown={onKeyDown}
+            rows={2}
+            placeholder="Message the orchestrator"
+            aria-label="Message the orchestrator"
+            role="combobox"
+            aria-expanded={open}
+            aria-controls={open && ranked.length > 0 ? menuId : undefined}
+            aria-autocomplete="list"
+            aria-activedescendant={
+              highlightedItem === undefined ? undefined : slashOptionId(menuId, highlightedItem)
+            }
+            className="max-h-40 min-h-10 min-w-0 flex-1 resize-none bg-transparent text-fg outline-none placeholder:text-faint"
+          />
+          {live && draft.trim() === "" ? (
+            <button
+              type="button"
+              aria-label="Stop"
+              onClick={() => void stop()}
+              className="grid size-7 shrink-0 place-items-center rounded-full bg-fg text-bg"
+            >
+              <Square className="size-3 fill-current" />
+            </button>
+          ) : (
+            <button
+              type="submit"
+              aria-label="Send"
+              disabled={draft.trim() === ""}
+              className="grid size-7 shrink-0 place-items-center rounded-full bg-fg text-bg disabled:opacity-40"
+            >
+              <SendHorizontal className="size-3.5" />
+            </button>
+          )}
+        </div>
+        <ModelPicker
+          instances={instances}
+          value={shown}
+          onChange={setOverride}
+          switchBlocked={switchBlocked}
+          open={modelOpen}
+          onOpenChange={(next) => {
+            setModelOpen(next);
+            if (!next) input.current?.focus();
+          }}
+        />
+      </div>
+    </form>
+  );
+}

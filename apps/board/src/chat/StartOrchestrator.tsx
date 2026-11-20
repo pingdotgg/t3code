@@ -5,6 +5,7 @@ import { type FormEvent, useContext, useState } from "react";
 import { ProviderPicker } from "../providers/ProviderPicker";
 import {
   canStart,
+  defaultPick,
   NO_PICK,
   type PickerValue,
   pickableInstances,
@@ -29,6 +30,7 @@ export function StartOrchestrator({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const chosen = resolvePick(instances, pick);
+  const reason = pick.instanceId === "" ? defaultPick(instances).reason : null;
   const selected = instances.find((instance) => instance.instanceId === chosen.instanceId);
   const selection = selectionOf(instances, chosen);
 
@@ -49,7 +51,7 @@ export function StartOrchestrator({
   return (
     <form onSubmit={(event) => void submit(event)} className="flex flex-col gap-3 p-3">
       <p className="text-muted">This board has no orchestrator yet. Pick where to run it.</p>
-      <ProviderPicker instances={instances} value={chosen} onChange={setPick} />
+      <ProviderPicker instances={instances} value={chosen} onChange={setPick} reason={reason} />
       <div>
         <button
           type="submit"
