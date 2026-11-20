@@ -1,4 +1,5 @@
 import { PreviewError, previewFailure } from "./previewFailure";
+import { loadHeicDecoder } from "../../lib/heicDecoder";
 
 const MAX_PIXELS = 32_000_000;
 
@@ -158,18 +159,17 @@ async function decode(bytes: ArrayBuffer, heif: boolean) {
   if (bytes.byteLength > 50 * 1024 * 1024) throw new PreviewError({ code: "file-too-large" });
   if (heif) {
     validateHeif(bytes);
-    // Desktop CSP forbids the JavaScript evaluation used by heic-to/next.
-    const { heicTo } = await import("heic-to/csp");
+    const { heicTo } = await loadHeicDecoder();
     const bitmap = await heicTo({ blob: new Blob([bytes]), type: "bitmap" });
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
     try {
-      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
       const context = canvas.getContext("2d");
       if (!context) throw new PreviewError({ code: "image-decoding-unavailable" });
       context.drawImage(bitmap, 0, 0);
-      return await canvas.convertToBlob({ type: "image/png" });
     } finally {
       bitmap.close();
     }
+    return await canvas.convertToBlob({ type: "image/png" });
   }
   const { decode: decodeTiff } = await import("tiff");
   validateTiffMetadata(bytes);
