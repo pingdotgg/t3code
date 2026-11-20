@@ -390,13 +390,17 @@ function parseClaudeEffortCapSources(
   return sources.length > 0 ? sources : undefined;
 }
 
+// Claude Code lists these, but sent as a message they only print usage or "not available": the
+// model picker owns model, effort and fast mode, and /focus and /agents need its terminal UI.
+const CLAUDE_UNOFFERED_SLASH_COMMANDS = new Set(["model", "effort", "fast", "focus", "agents"]);
+
 function parseClaudeInitializationCommands(
   commands: ReadonlyArray<ClaudeSlashCommand> | undefined,
 ): ReadonlyArray<ServerProviderSlashCommand> {
   return dedupeSlashCommands(
     (commands ?? []).flatMap((command) => {
       const name = nonEmptyProbeString(command.name);
-      if (!name) {
+      if (!name || CLAUDE_UNOFFERED_SLASH_COMMANDS.has(name.toLowerCase())) {
         return [];
       }
 
