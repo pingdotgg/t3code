@@ -261,6 +261,7 @@ export class AzureDevOpsCli extends Context.Service<
       readonly target?: SourceControlProvider.SourceControlRefSelector;
       readonly title: string;
       readonly bodyFile: string;
+      readonly draft?: boolean;
       readonly remoteUrl?: string;
     }) => Effect.Effect<void, AzureDevOpsCliError>;
 
@@ -746,6 +747,7 @@ export const make = Effect.gen(function* () {
           title.arg,
           // Joined: az expands a separate `@file` value again, so a body of `@path` read that file.
           `--description=@${input.bodyFile}`,
+          ...(input.draft === true ? ["--draft", "true"] : []),
         ],
         ...(title.stdin === undefined ? {} : { stdin: title.stdin }),
       }).pipe(Effect.asVoid);

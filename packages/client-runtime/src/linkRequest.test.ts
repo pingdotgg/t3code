@@ -339,16 +339,15 @@ describe("linkableMachines", () => {
 });
 
 describe("linkedEnvironmentNames", () => {
-  it("names the unexpired links as this client does, else as the link does", () => {
+  it("names the links as this client does, else as the link does", () => {
     const vps = EnvironmentId.make("environment-vps");
     const mini = EnvironmentId.make("environment-mini");
     const unsaved = EnvironmentId.make("environment-unsaved");
     expect(
       linkedEnvironmentNames({
         links: [
-          { environmentId: vps, label: "vps-01", status: "unreachable" },
-          { environmentId: mini, label: "mini", status: "expired" },
-          { environmentId: unsaved, label: "Office box", status: "reachable" },
+          { environmentId: vps, label: "vps-01" },
+          { environmentId: unsaved, label: "Office box" },
         ],
         environments: [
           { environmentId: vps, label: "Hetzner VPS" },
