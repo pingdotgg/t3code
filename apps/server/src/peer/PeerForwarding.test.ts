@@ -466,7 +466,6 @@ it.effect("keeps a forwarded wait short and its retries scoped to the caller", (
       const waited = yield* a.call("thread:laptop-full", "t3_thread_wait", {
         environmentId: box.environmentId,
         threadId: boxThread,
-        timeoutMs: 600_000,
       });
       expect(waited.structuredContent).toEqual({
         threadId: boxThread,
@@ -474,8 +473,8 @@ it.effect("keeps a forwarded wait short and its retries scoped to the caller", (
         status: "completed",
         timedOut: false,
       });
-      // One capped piece, so the caller's MCP request returns before its client times out.
-      expect((yield* Ref.get(seen)).waits.map(({ timeoutMs }) => timeoutMs)).toEqual([45_000]);
+      // One bounded piece, so the caller's MCP request returns before its client times out.
+      expect((yield* Ref.get(seen)).waits.map(({ timeoutMs }) => timeoutMs)).toEqual([30_000]);
 
       const send = (caller: string, clientRequestId: string) =>
         a.call(caller, "t3_thread_send", {

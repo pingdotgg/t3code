@@ -5,6 +5,7 @@ import {
   MessageId,
   type ModelSelection,
   NodeId,
+  ORCHESTRATOR_MCP_MAX_WAIT_TIMEOUT_MS,
   ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
   TurnItemId,
   type OrchestrationV2Run,
@@ -141,7 +142,6 @@ import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 
 // Return recoverable handles before common MCP client timeouts expire.
 const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
-const MAX_WAIT_TIMEOUT_MS = 45_000;
 const DEFAULT_SECRET_REQUEST_TIMEOUT_MS = 10 * 60 * 1_000;
 const MAX_SECRET_REQUEST_TIMEOUT_MS = 60 * 60 * 1_000;
 const TASK_WAKE_EVENTS = [
@@ -2037,7 +2037,7 @@ const make = Effect.gen(function* () {
     requestedTimeoutMs: number | undefined,
   ): Effect.fn.Return<OrchestratorMcpDelegateTaskResult, OrchestratorMcpFailure> {
     const timeoutMs = Math.min(
-      MAX_WAIT_TIMEOUT_MS,
+      ORCHESTRATOR_MCP_MAX_WAIT_TIMEOUT_MS,
       Math.max(1, requestedTimeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
     );
     const upgradeWake = threadManagement
@@ -3664,7 +3664,7 @@ const make = Effect.gen(function* () {
           threadId: input.threadId,
           ...(input.runId === undefined ? {} : { runId: input.runId }),
           timeoutMs: Math.min(
-            MAX_WAIT_TIMEOUT_MS,
+            ORCHESTRATOR_MCP_MAX_WAIT_TIMEOUT_MS,
             Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
           ),
           ...(input.untilDelegatedWorkSettled === true ? { untilDelegatedWorkSettled: true } : {}),
