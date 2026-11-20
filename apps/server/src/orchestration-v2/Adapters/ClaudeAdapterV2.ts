@@ -72,7 +72,7 @@ import type {
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- the SDK takes a Node ChildProcess for the CLI.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeUtil from "node:util";
-import { parseCliArgs } from "@t3tools/shared/cliArgs";
+import { parseCliArgs, tokenizeCliArgs } from "@t3tools/shared/cliArgs";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import {
   claudeMcpToolName,
@@ -229,6 +229,7 @@ import {
   makeProviderFailure,
   makeProviderRetryTurnItem,
   PROVIDER_RETRY_BUDGET_MS,
+  providerProcessExitGuidance,
 } from "@t3tools/provider-core/server/failure";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import { providerMessageTextWithAttachmentPaths } from "@t3tools/provider-core/server/attachmentPrompt";
@@ -357,6 +358,27 @@ function mergeClaudeStreamUsage(
 export const CLAUDE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CLAUDE_PROVIDER);
 // The Claude CLI takes the next token as this flag's value even when it starts with `--`.
 const claudeLaunchArgParseOptions = { valueFlags: ["append-system-prompt"] };
+
+// Claude's --plugin-dir is repeatable; parseCliArgs keeps only the last one.
+function claudeLaunchArgPluginDirectories(launchArgs: string): ReadonlyArray<string> {
+  const tokens = tokenizeCliArgs(launchArgs);
+  const directories: string[] = [];
+  for (let index = 0; index < tokens.length && tokens[index] !== "--"; index++) {
+    const token = tokens[index]!;
+    if (!token.startsWith("--") || token.includes("=")) {
+      if (token.startsWith("--plugin-dir=")) directories.push(token.slice("--plugin-dir=".length));
+      continue;
+    }
+    const next = tokens[index + 1];
+    const takesNext =
+      next !== undefined &&
+      (!next.startsWith("--") || claudeLaunchArgParseOptions.valueFlags.includes(token.slice(2)));
+    if (!takesNext) continue;
+    if (token === "--plugin-dir") directories.push(next);
+    index++;
+  }
+  return directories;
+}
 
 const CLAUDE_SCRIPT_EXTENSIONS = [".js", ".mjs", ".tsx", ".ts", ".jsx"];
 // The SDK has no control-request deadline; the CLI waits up to 30 s per MCP server.
@@ -570,6 +592,7 @@ export const ClaudeProviderCapabilitiesV2 = {
     emitsTurnStarted: true,
     emitsTurnCompleted: true,
     supportsInterrupt: true,
+    supportsNativeResume: true,
     supportsActiveSteering: true,
     activeSteeringInterruptsTools: true,
     supportsSteeringByInterruptRestart: false,
@@ -776,6 +799,19 @@ export class ClaudeConversationNotFoundError extends Schema.TaggedError<ClaudeCo
   }
 }
 
+export class ClaudeCodeStartupExitError extends Schema.TaggedError<ClaudeCodeStartupExitError>()(
+  "ClaudeCodeStartupExitError",
+  {
+    status: Schema.String,
+    guidance: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `${this.status} before it started. ${this.guidance}`;
+  }
+}
+
 class ClaudeMcpRegistrationTimeoutError extends Schema.TaggedError<ClaudeMcpRegistrationTimeoutError>()(
   "ClaudeMcpRegistrationTimeoutError",
   { phase: Schema.Literals(["initialize", "setMcpServers"]) },
@@ -900,18 +936,24 @@ const CLAUDE_PROCESS_EXIT_ERROR_CLASSES: ReadonlySet<unknown> = new Set([
 ]);
 
 // The SDK's exit Error appends Claude's stderr tail to `message`; `telemetryMessage` omits it.
-function claudeProcessExitFailure(
-  cause: Cause.Cause<ClaudeAgentSdkQueryRunnerError>,
-): { readonly message: string; readonly code: string } | undefined {
-  const error = Cause.squash(cause);
-  const sdkError = isClaudeAgentSdkQueryRunnerError(error) ? error.cause : error;
+function claudeProcessExit(
+  sdkError: unknown,
+): { readonly status: string; readonly code: string } | undefined {
   if (typeof sdkError !== "object" || sdkError === null) return undefined;
   const { errorClass, telemetryMessage } = sdkError as Record<string, unknown>;
   return typeof errorClass === "string" &&
     CLAUDE_PROCESS_EXIT_ERROR_CLASSES.has(errorClass) &&
     typeof telemetryMessage === "string"
-    ? { message: `${telemetryMessage}.`, code: errorClass }
+    ? { status: telemetryMessage, code: errorClass }
     : undefined;
+}
+
+function claudeProcessExitFailure(
+  cause: Cause.Cause<ClaudeAgentSdkQueryRunnerError>,
+): { readonly message: string; readonly code: string } | undefined {
+  const error = Cause.squash(cause);
+  const exit = claudeProcessExit(isClaudeAgentSdkQueryRunnerError(error) ? error.cause : error);
+  return exit === undefined ? undefined : { message: `${exit.status}.`, code: exit.code };
 }
 
 function closeClaudeQuery(queryRuntime: ClaudeQuery) {
@@ -1730,13 +1772,28 @@ export const layerQueryRunner: Layer.Layer<
                   );
                 }
                 const refusedRoot = !answered && stderrTail.includes(CLAUDE_ROOT_REFUSAL);
+                const startupExit = answered ? undefined : claudeProcessExit(cause);
+                if (startupExit !== undefined) {
+                  // The turn failure omits this output, so the log is the only place it is kept.
+                  yield* Effect.logWarning("orchestration-v2.claude-startup-exit", {
+                    threadId: input.threadId,
+                    status: startupExit.status,
+                    stderr: stderrTail,
+                  });
+                }
                 return yield* queryRunnerError(
                   refusedRoot
                     ? new ClaudeCodeRootRefusalError({ cause })
                     : conversationMissing ||
                         (!answered && stderrTail.includes(CLAUDE_CONVERSATION_NOT_FOUND))
                       ? new ClaudeConversationNotFoundError({ cause })
-                      : cause,
+                      : startupExit !== undefined
+                        ? new ClaudeCodeStartupExitError({
+                            status: startupExit.status,
+                            guidance: providerProcessExitGuidance(stderrTail),
+                            cause,
+                          })
+                        : cause,
                   "fromAsyncIterable",
                 );
               }),
@@ -2224,6 +2281,8 @@ export function makeClaudeQueryOptions(input: {
   const {
     // claudeLaunchArgDirectories reads every --add-dir into additionalDirectories.
     "add-dir": _launchArgAddDir,
+    // claudeLaunchArgPluginDirectories reads every --plugin-dir into plugins.
+    "plugin-dir": launchArgPluginDir,
     "permission-mode": launchArgPermissionMode,
     "dangerously-skip-permissions": launchArgSkipPermissions,
     "append-system-prompt": launchArgAppendSystemPrompt,
@@ -2247,6 +2306,10 @@ export function makeClaudeQueryOptions(input: {
   if (requestThinkingSummaries && extraArgs["thinking-display"] === undefined) {
     extraArgs["thinking-display"] = "summarized";
   }
+  const pluginDirectories =
+    input.settings === undefined ? [] : claudeLaunchArgPluginDirectories(input.settings.launchArgs);
+  // A bare --plugin-dir still reaches Claude, which reports the missing path.
+  if (launchArgPluginDir === null) extraArgs["plugin-dir"] = null;
   const threadIdentity: ClaudeAgentSdkThreadIdentity = input.resume
     ? { resume: input.nativeThreadId }
     : { sessionId: input.nativeThreadId };
@@ -2378,6 +2441,9 @@ export function makeClaudeQueryOptions(input: {
           },
         }
       : {}),
+    ...(pluginDirectories.length === 0
+      ? {}
+      : { plugins: pluginDirectories.map((path) => ({ type: "local" as const, path })) }),
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
   const additionalDirectories = [
@@ -12495,6 +12561,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             activePermissionMode === "bypassPermissions" &&
             callbackOptions.matchedAskRule === undefined &&
             (/^Dangerous rm(?:dir)?\b/i.test(safetyReason) ||
+              /\bdangerous removal\b/i.test(safetyReason) ||
               safetyReason === "This shell -c script runs rm and could not be checked" ||
               safetyReason === "A permission rule denies a command in this shell -c script")
           ) {
