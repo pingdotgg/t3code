@@ -22,6 +22,7 @@ import { useId, useRef, useState } from "react";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { mintPairingCodeOn } from "~/state/peerPairingCode";
 import { peerLinkEnvironment, useLinkableMachines } from "~/state/peerLinks";
+import { useEnvironments } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope, usePreparedConnection } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -44,6 +45,7 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
 import { LinkAccessPicker } from "./LinkAccessPicker";
 import { LinkAddressWarning, LinkMachineSelect } from "./LinkMachineSelect";
+import { LinkSeveralEnvironmentsAction } from "./LinkSeveralEnvironments";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { useLiveRefresh } from "../../hooks/useLiveRefresh";
 import { m as resolveMessage } from "../../i18n/messages";
@@ -87,6 +89,8 @@ export function LinkedEnvironmentsSettings({
   );
   const canLink = useAtomValue(peerLinkEnvironment.link.permissionAtom(environmentId));
   const search = searchableSetting("linked-environments");
+  // A batch needs at least two other machines this app has saved.
+  const otherMachines = useEnvironments().environments.length - 1;
   return (
     <SettingsSection
       {...(isSearchTarget ? { id: search.id } : {})}
@@ -96,7 +100,16 @@ export function LinkedEnvironmentsSettings({
           <span className="text-meta text-muted-foreground">{environmentLabel}</span>
         )
       }
-      headerAction={canLink ? <LinkEnvironmentAction environmentId={environmentId} /> : null}
+      headerAction={
+        canLink ? (
+          <div className="flex items-center gap-2">
+            {otherMachines > 1 ? (
+              <LinkSeveralEnvironmentsAction environmentId={environmentId} />
+            ) : null}
+            <LinkEnvironmentAction environmentId={environmentId} />
+          </div>
+        ) : null
+      }
     >
       {links.error ? (
         <SettingsRow title={gt("Could not load linked environments")} description={links.error} />

@@ -26,8 +26,8 @@ export interface ComposerThreadItem {
 }
 
 /**
- * Threads from this server and linked machines, excluding subagents and side chats.
- * A bare `@` stays a file picker; `#` lists recent threads.
+ * Threads from this server and linked machines, excluding subagents and other threads'
+ * side chats. A bare `@` stays a file picker; `#` lists recent threads.
  */
 export function matchComposerThreadItems<Candidate extends ComposerThreadCandidate>(
   input: {
@@ -46,13 +46,19 @@ export function matchComposerThreadItems<Candidate extends ComposerThreadCandida
 ): ComposerThreadItem[] {
   const query = foldSearchQuery(input.query);
   if (query.length === 0 && !input.allowEmptyQuery) return [];
+  // Closing an unused side chat deletes it, so only one with a message is offered.
+  const isOwnSideChat = (shell: ComposerThreadCandidate) =>
+    shell.lineage.sideChat === true &&
+    shell.environmentId === input.environmentId &&
+    shell.lineage.parentThreadId === input.excludeThreadId &&
+    shell.latestUserMessageAt !== null;
   const candidates = input.shells.filter(
     (shell) =>
       (shell.environmentId === input.environmentId ||
         input.linkedEnvironments.has(shell.environmentId)) &&
       shell.id !== input.excludeThreadId &&
       shell.archivedAt === null &&
-      isListedThreadLineage(shell.lineage),
+      (isListedThreadLineage(shell.lineage) || isOwnSideChat(shell)),
   );
   const matches =
     query.length === 0
@@ -76,8 +82,9 @@ export function matchComposerThreadItems<Candidate extends ComposerThreadCandida
       type: "thread",
       thread: { environmentId: shell.environmentId, threadId: shell.id },
       label: shell.title,
-      description:
-        machine === undefined
+      description: isOwnSideChat(shell)
+        ? resolve(msg("Side chat"))
+        : machine === undefined
           ? (description ?? resolve(msg("Thread", { $context: "noun, search result type" })))
           : description === undefined
             ? resolve(msg("Thread on {machine}", { machine }))

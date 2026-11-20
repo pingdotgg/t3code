@@ -163,15 +163,30 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
     displayKey: issueRef.key,
     title: "Add keyboard support",
   };
-  using _environment = installFakeEnvironment([first, { ...linked, issues: [issue] }]);
+  const completed = {
+    ...issue,
+    key: "WEB-124",
+    displayKey: "WEB-124",
+    url: "https://linear.app/example/issue/WEB-124/keep-tabs-visible",
+    title: "Keep tabs visible",
+  };
+  const grouped = threadWithHistory("issue-grouped", 1);
+  using _environment = installFakeEnvironment([
+    first,
+    { ...linked, issues: [issue] },
+    { ...grouped, issues: [completed, issue] },
+  ]);
   const liveTitle = "Add keyboard shortcuts to the sidebar";
   using _detail = answerRpc(WS_METHODS.issuesDetail, (input: IssueRef) => {
-    expect(input).toEqual(issueRef);
+    const isCompleted = input.key === completed.key;
+    expect(input).toEqual({ ...issueRef, key: isCompleted ? completed.key : issue.key });
     return Effect.succeed({
-      ...issue,
-      title: liveTitle,
+      ...(isCompleted ? completed : issue),
+      title: isCompleted ? completed.title : liveTitle,
       author: { login: "sam", name: null, avatarUrl: null },
-      state: { category: "open", name: "Open" },
+      state: isCompleted
+        ? { category: "closed", closeReason: "completed", name: "Done" }
+        : { category: "open", name: "Open" },
       createdAt: issue.linkedAt,
       updatedAt: issue.linkedAt,
       closedAt: null,
@@ -226,6 +241,10 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
   });
   await expect.element(badge).toBeVisible();
   expect(badge.element().querySelector("svg")).toHaveClass(/text-success-foreground/);
+  const groupedBadge = page.getByRole("button", { name: "2 linked issues" });
+  await vi.waitFor(() =>
+    expect(groupedBadge.element().querySelector("svg")).toHaveClass(/text-success-foreground/),
+  );
   await userEvent.hover(badge);
   const issueName = `Issue ${issue.displayKey}: ${liveTitle}`;
   const previewLink = page.getByRole("link", { name: issueName });

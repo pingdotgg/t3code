@@ -3917,7 +3917,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               <ul
                                 key="pinned-grid"
                                 role="group"
-                                aria-label="Pinned threads"
+                                aria-label={gt("Pinned threads")}
                                 data-testid="sidebar-pinned-grid"
                                 data-sidebar-motion-group=""
                                 className="sidebar-pinned-grid"

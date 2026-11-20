@@ -805,7 +805,9 @@ function codexReplayPreamble(input: {
 
 /**
  * Every turn/start follows a config/read, and a thread's first turn on a connection names it
- * unless the transcript names it itself. Inserts those exchanges and shifts later client ids.
+ * unless the transcript names it itself. A thread start, resume or fork follows a config/read
+ * unless it retries a failed request or the transcript reads config itself. Inserts those
+ * exchanges and shifts later client ids.
  */
 function withConfigReadBeforeTurnStart(
   entries: ReadonlyArray<CodexReplay.CodexAppServerReplayEntry>,
@@ -815,6 +817,9 @@ function withConfigReadBeforeTurnStart(
   let offset = 0;
   let clientIds = new Map<number, number>();
   let namedThreads = new Set<unknown>();
+  let transcriptReads = 0;
+  let previousOutbound: { readonly method: string; readonly id: number } | undefined;
+  let failedMethod: string | undefined;
   for (const entry of entries) {
     const frame = entry.type === "runtime_exit" ? undefined : entry.frame;
     if (!Predicate.isObject(frame) || typeof frame.id !== "number") {
@@ -829,8 +834,25 @@ function withConfigReadBeforeTurnStart(
         namedThreads = new Set();
       }
       if (frame.method === "thread/name/set") namedThreads.add(params.threadId);
+      const exchanges: Array<readonly [string, unknown, unknown]> = [];
+      const isThreadRequest =
+        frame.method === "thread/start" ||
+        frame.method === "thread/resume" ||
+        frame.method === "thread/fork";
+      if (frame.method === "config/read") transcriptReads += 1;
+      else if (isThreadRequest && transcriptReads > 0) transcriptReads -= 1;
+      else if (
+        isThreadRequest &&
+        failedMethod !== frame.method &&
+        previousOutbound?.method !== "thread/unarchive"
+      ) {
+        exchanges.push([
+          "config/read",
+          { ...(params.cwd === undefined ? {} : { cwd: params.cwd }), includeLayers: false },
+          { config: {}, origins: {} },
+        ]);
+      }
       if (frame.method === "turn/start") {
-        const exchanges: Array<readonly [string, unknown, unknown]> = [];
         if (!namedThreads.has(params.threadId)) {
           namedThreads.add(params.threadId);
           exchanges.push(["thread/name/set", { threadId: params.threadId, name: threadName }, {}]);
@@ -840,22 +862,27 @@ function withConfigReadBeforeTurnStart(
           { cwd: params.cwd, includeLayers: false },
           { config: {}, origins: {} },
         ]);
-        for (const [method, requestParams, response] of exchanges) {
-          const id = frame.id + offset;
-          result.push(
-            {
-              type: "expect_outbound",
-              label: method,
-              frame: { id, method, params: requestParams },
-            },
-            { type: "emit_inbound", label: method, frame: { id, result: response } },
-          );
-          offset += 1;
-        }
       }
+      for (const [method, requestParams, response] of exchanges) {
+        const id = frame.id + offset;
+        result.push(
+          {
+            type: "expect_outbound",
+            label: method,
+            frame: { id, method, params: requestParams },
+          },
+          { type: "emit_inbound", label: method, frame: { id, result: response } },
+        );
+        offset += 1;
+      }
+      previousOutbound = { method: frame.method, id: frame.id };
+      failedMethod = undefined;
       clientIds.set(frame.id, frame.id + offset);
       result.push(withReplayRequestId(entry, frame.id + offset));
       continue;
+    }
+    if (entry.type === "emit_inbound" && frame.id === previousOutbound?.id && "error" in frame) {
+      failedMethod = previousOutbound.method;
     }
     const mapped = clientIds.get(frame.id);
     result.push(
@@ -947,8 +974,8 @@ describe("CodexAdapterV2 process exit", () => {
                     Predicate.isObject(entry.frame) &&
                     "id" in entry.frame,
                 );
-                if (response?.type === "emit_inbound") {
-                  yield* emit(response.frame);
+                if (response?.type === "emit_inbound" && Predicate.isObject(response.frame)) {
+                  yield* emit({ ...response.frame, id: frame.id });
                 }
               }),
             ).pipe(Sink.ensuring(Deferred.succeed(outputEnded, undefined))),
@@ -1193,10 +1220,25 @@ describe("CodexAdapterV2 session initialize", () => {
         makeCodexReplayTranscript({
           scenario: "concurrent-initialize",
           entries: [
-            ...replayPreamble("concurrent-first").slice(0, 5),
+            ...replayPreamble("concurrent-first").slice(0, 3),
+            ...[2, 3].flatMap((id): Array<CodexReplay.CodexAppServerReplayEntry> => [
+              {
+                type: "expect_outbound",
+                label: "config/read",
+                frame: { id, method: "config/read", params: { includeLayers: false } },
+              },
+              {
+                type: "emit_inbound",
+                label: "config/read",
+                frame: { id, result: { config: {}, origins: {} } },
+              },
+            ]),
+            ...replayPreamble("concurrent-first")
+              .slice(3, 5)
+              .map((entry) => withReplayRequestId(entry, 4)),
             ...replayPreamble("concurrent-second")
               .slice(3, 5)
-              .map((entry) => withReplayRequestId(entry, 3)),
+              .map((entry) => withReplayRequestId(entry, 5)),
           ],
         }),
         (entry) =>
@@ -2384,7 +2426,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
-  it.effect("adds the session MCP server without replacing launch-argument servers", () =>
+  it.effect("adds the session MCP server and gives stdio servers the thread id", () =>
     Effect.gen(function* () {
       const scenario = "launch-mcp-servers";
       yield* (yield* McpProviderSessions.McpProviderSessions).set({
@@ -2397,14 +2439,40 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         browserToolsAvailable: true,
       });
       const requests: Array<unknown> = [];
+      const preamble = codexReplayPreamble({
+        nativeThreadId: "launch-mcp-thread",
+        nativeTurnId: "unused",
+        prompt: "unused",
+      });
       yield* makeCodexReplayHarness(
         makeCodexReplayTranscript({
           scenario,
-          entries: codexReplayPreamble({
-            nativeThreadId: "launch-mcp-thread",
-            nativeTurnId: "unused",
-            prompt: "unused",
-          }).slice(0, 5),
+          entries: [
+            ...preamble.slice(0, 3),
+            {
+              type: "expect_outbound",
+              label: "config/read",
+              frame: { id: 2, method: "config/read", params: { includeLayers: false } },
+            },
+            {
+              type: "emit_inbound",
+              label: "config/read",
+              frame: {
+                id: 2,
+                result: {
+                  config: {
+                    mcp_servers: {
+                      envprobe: { command: "python3", env: { FOO: "bar" } },
+                      remote: { url: "https://example.com/mcp" },
+                      "dotted.name": { command: "node" },
+                    },
+                  },
+                  origins: {},
+                },
+              },
+            },
+            ...preamble.slice(3, 5).map((entry) => withReplayRequestId(entry, 3)),
+          ],
         }),
         () => Effect.void,
         (method, params) =>
@@ -2421,6 +2489,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             mcp_optional_startup_grace_ms: 10_000,
             "features.concurrent_reasoning_summaries": true,
             "shell_environment_policy.set.T3CODE_THREAD_ID": `thread-${scenario}`,
+            "mcp_servers.envprobe.env.T3CODE_THREAD_ID": `thread-${scenario}`,
             "mcp_servers.t3-code": {
               url: "http://127.0.0.1:43123/mcp",
               tool_timeout_sec: 3_900,
@@ -4503,7 +4572,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           "cause.method",
           failAt === 4 ? "thread/unarchive" : "thread/resume",
         );
-        assert.nestedPropertyVal(error, "cause.requestId", String(failAt));
+        // The thread start and the resume each read config first.
+        assert.nestedPropertyVal(error, "cause.requestId", String(failAt + 2));
         return;
       }
       const resumed = yield* resume;

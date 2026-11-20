@@ -2212,7 +2212,8 @@ describe("orchestration v2 provider switching", () => {
             ["completed", "failed", "completed", "completed"],
           );
           const run4NativeThreadId = (yield* Ref.get(capturedTurns)).at(-1)?.nativeThreadId;
-          assert.equal(
+          // Run 3's summary already covers run 2's handoff, so run 4's fresh session must not get it again.
+          assert.notEqual(
             projection.contextHandoffs.find(
               (handoff) => handoff.targetRunId === projection.runs[1]?.id,
             )?.delivery?.nativeThreadId,
