@@ -699,11 +699,26 @@ export function resolveChangesTotals(
 }
 
 /** Names a few repositories for a hint or toast, e.g. "api, web and 3 more". */
-export function summarizeRepositories(repositories: ReadonlyArray<string>, shown = 3): string {
+export function summarizeRepositories(
+  repositories: ReadonlyArray<string>,
+  resolve: MessageResolver = m,
+  shown = 3,
+): string {
+  if (repositories.length <= 1) return repositories[0] ?? "";
   if (repositories.length <= shown + 1) {
-    return repositories.length <= 1
-      ? (repositories[0] ?? "")
-      : `${repositories.slice(0, -1).join(", ")} and ${repositories.at(-1)}`;
+    return resolve(
+      msg("{list} and {last}", {
+        $context: "joins repository names",
+        list: repositories.slice(0, -1).join(", "),
+        last: repositories.at(-1) ?? "",
+      }),
+    );
   }
-  return `${repositories.slice(0, shown).join(", ")} and ${repositories.length - shown} more`;
+  return resolve(
+    msg("{count, plural, one {{list} and {count} more} other {{list} and {count} more}}", {
+      $context: "repository names, then how many more",
+      list: repositories.slice(0, shown).join(", "),
+      count: repositories.length - shown,
+    }),
+  );
 }

@@ -2072,6 +2072,8 @@
   "e5032445ef2250ec": "Den här åtgärden pushar lokala commits och skapar en {term, select, mr {merge request} cr {ändringsbegäran} other {pull request}} på ”{branch}”. Du kan fortsätta på den här refen eller skapa en funktionsref och köra samma åtgärd där.",
   "28037ad2b89449f0": "Det finns inga ändringar att committa, så det går inte att namnge en funktionsgren. Skapa en gren själv eller fortsätt på {branch}.",
   "e08efa9a4aa14c9e": "Den här åtgärden committar inte dina ändringar, så det går inte att namnge en funktionsgren. Skapa en gren själv eller fortsätt på {branch}.",
+  "6d42980f3b4ca98a": "{list} and {last}",
+  "1b63108725d6298a": "{count, plural, one {{list} and {count} more} other {{list} and {count} more}}",
   "aa7e0308a397c6bc": "Leverantörsstatus är inte tillgänglig. Öppna Inställningar -> Versionshantering och ärenden och sök igen.",
   "4cc8b8150c559ddf": "{provider} är inte autentiserad. Öppna Inställningar -> Versionshantering och ärenden för hjälp med konfigurationen.",
   "3724ff240986c6da": "Committa ändringar",

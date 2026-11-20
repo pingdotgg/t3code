@@ -1690,7 +1690,7 @@ function CheckoutGitActionsControl({
           part="row"
           panel
           title={gt("Groups {repositories}, so a new worktree branches them all together.", {
-            repositories: summarizeRepositories(multiRepoCandidate.repositories),
+            repositories: summarizeRepositories(multiRepoCandidate.repositories, messages),
           })}
           disabled={!canMakeMultiRepo || isMakingMultiRepo}
           onClick={makeMultiRepoProject}

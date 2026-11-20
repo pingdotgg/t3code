@@ -2072,6 +2072,8 @@
   "e5032445ef2250ec": "This action will push local commits and create a {term, select, mr {merge request} cr {change request} other {pull request}} on \"{branch}\". You can continue on this ref or create a feature ref and run the same action there.",
   "28037ad2b89449f0": "There are no changes to commit, so a feature branch can't be named. Create a branch yourself or continue on {branch}.",
   "e08efa9a4aa14c9e": "This action doesn't commit your changes, so a feature branch can't be named. Create a branch yourself or continue on {branch}.",
+  "6d42980f3b4ca98a": "{list} and {last}",
+  "1b63108725d6298a": "{count, plural, one {{list} and {count} more} other {{list} and {count} more}}",
   "aa7e0308a397c6bc": "Provider status unavailable. Open Settings -> Source control & issues and rescan.",
   "4cc8b8150c559ddf": "{provider} is not authenticated. Open Settings -> Source control & issues for setup guidance.",
   "3724ff240986c6da": "Commit changes",

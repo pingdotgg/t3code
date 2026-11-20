@@ -2072,6 +2072,8 @@
   "e5032445ef2250ec": "Cette action va pousser les commits locaux et créer une {term, select, mr {merge request} cr {demande de modification} other {pull request}} sur « {branch} ». Vous pouvez continuer sur cette ref ou créer une ref de fonctionnalité et y lancer la même action.",
   "28037ad2b89449f0": "Il n’y a aucune modification à commiter ; impossible de nommer une branche de fonctionnalité. Créez une branche vous-même ou continuez sur {branch}.",
   "e08efa9a4aa14c9e": "Cette action ne commite pas vos modifications ; impossible de nommer une branche de fonctionnalité. Créez une branche vous-même ou continuez sur {branch}.",
+  "6d42980f3b4ca98a": "{list} and {last}",
+  "1b63108725d6298a": "{count, plural, one {{list} and {count} more} other {{list} and {count} more}}",
   "aa7e0308a397c6bc": "Statut du fournisseur indisponible. Ouvrez Paramètres -> Gestion de versions et tickets et relancez l’analyse.",
   "4cc8b8150c559ddf": "{provider} n’est pas authentifié. Ouvrez Paramètres -> Gestion de versions et tickets pour savoir comment le configurer.",
   "3724ff240986c6da": "Commiter les modifications",

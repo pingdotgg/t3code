@@ -2071,6 +2071,8 @@
   "e5032445ef2250ec": "{term, select, mr {Diese Aktion pusht lokale Commits und erstellt einen Merge Request auf „{branch}“. Du kannst auf dieser Ref weitermachen oder eine Feature-Ref erstellen und dieselbe Aktion dort ausführen.} cr {Diese Aktion pusht lokale Commits und erstellt eine Änderungsanfrage auf „{branch}“. Du kannst auf dieser Ref weitermachen oder eine Feature-Ref erstellen und dieselbe Aktion dort ausführen.} other {Diese Aktion pusht lokale Commits und erstellt einen Pull Request auf „{branch}“. Du kannst auf dieser Ref weitermachen oder eine Feature-Ref erstellen und dieselbe Aktion dort ausführen.}}",
   "28037ad2b89449f0": "Es gibt keine Änderungen zum Committen, daher kann kein Feature-Branch benannt werden. Erstelle selbst einen Branch oder mach auf {branch} weiter.",
   "e08efa9a4aa14c9e": "Diese Aktion committet deine Änderungen nicht, daher kann kein Feature-Branch benannt werden. Erstelle selbst einen Branch oder mach auf {branch} weiter.",
+  "6d42980f3b4ca98a": "{list} and {last}",
+  "1b63108725d6298a": "{count, plural, one {{list} and {count} more} other {{list} and {count} more}}",
   "aa7e0308a397c6bc": "Anbieterstatus nicht verfügbar. Öffne Einstellungen -> Versionskontrolle & Issues und suche erneut.",
   "4cc8b8150c559ddf": "{provider} ist nicht authentifiziert. Öffne Einstellungen -> Versionskontrolle & Issues für eine Einrichtungsanleitung.",
   "3724ff240986c6da": "Änderungen committen",

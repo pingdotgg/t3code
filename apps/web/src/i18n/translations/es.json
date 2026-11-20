@@ -2072,6 +2072,8 @@
   "e5032445ef2250ec": "Esta acción hará push de los commits locales y creará una {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}} en \"{branch}\". Puedes continuar en esta ref o crear una ref de funcionalidad y ejecutar allí la misma acción.",
   "28037ad2b89449f0": "No hay cambios para hacer commit, así que no se puede poner nombre a una rama de funcionalidad. Crea una rama tú mismo o continúa en {branch}.",
   "e08efa9a4aa14c9e": "Esta acción no hace commit de tus cambios, así que no se puede poner nombre a una rama de funcionalidad. Crea una rama tú mismo o continúa en {branch}.",
+  "6d42980f3b4ca98a": "{list} and {last}",
+  "1b63108725d6298a": "{count, plural, one {{list} and {count} more} other {{list} and {count} more}}",
   "aa7e0308a397c6bc": "El estado del proveedor no está disponible. Abre Ajustes -> Control de versiones e issues y vuelve a escanear.",
   "4cc8b8150c559ddf": "{provider} no está autenticado. Abre Ajustes -> Control de versiones e issues para ver cómo configurarlo.",
   "3724ff240986c6da": "Hacer commit de los cambios",

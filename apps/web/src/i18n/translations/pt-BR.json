@@ -2072,6 +2072,8 @@
   "e5032445ef2250ec": "Esta ação vai fazer push dos commits locais e criar {term, select, mr {um merge request} cr {uma solicitação de alteração} other {um pull request}} em \"{branch}\". Você pode continuar nesta ref ou criar uma ref de feature e executar a mesma ação nela.",
   "28037ad2b89449f0": "Não há alterações para fazer commit, então não é possível nomear um branch de feature. Crie um branch você mesmo ou continue em {branch}.",
   "e08efa9a4aa14c9e": "Esta ação não faz commit das suas alterações, então não é possível nomear um branch de feature. Crie um branch você mesmo ou continue em {branch}.",
+  "6d42980f3b4ca98a": "{list} and {last}",
+  "1b63108725d6298a": "{count, plural, one {{list} and {count} more} other {{list} and {count} more}}",
   "aa7e0308a397c6bc": "Status do provedor indisponível. Abra Configurações -> Controle de versão e issues e verifique novamente.",
   "4cc8b8150c559ddf": "{provider} não está autenticado. Abra Configurações -> Controle de versão e issues para ver as instruções de configuração.",
   "3724ff240986c6da": "Fazer commit das alterações",

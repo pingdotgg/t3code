@@ -2075,6 +2075,8 @@
   "e5032445ef2250ec": "此操作将推送本地提交并在“{branch}”上创建 {term, select, mr {merge request} cr {change request} other {pull request}}。你可以继续使用此引用，或创建功能引用并在其上运行相同操作。",
   "28037ad2b89449f0": "没有可提交的改动，因此无法命名功能分支。请自行创建分支，或继续在 {branch} 上操作。",
   "e08efa9a4aa14c9e": "此操作不会提交你的更改，因此无法为功能分支命名。请自行创建分支，或继续使用 {branch}。",
+  "6d42980f3b4ca98a": "{list} and {last}",
+  "1b63108725d6298a": "{count, plural, one {{list} and {count} more} other {{list} and {count} more}}",
   "aa7e0308a397c6bc": "提供方状态不可用。请打开“设置 -> 版本控制与 issue”并重新扫描。",
   "4cc8b8150c559ddf": "{provider} 未通过身份验证。请打开“设置 -> 版本控制与 issue”查看设置指南。",
   "3724ff240986c6da": "提交更改",
