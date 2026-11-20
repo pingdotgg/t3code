@@ -292,6 +292,11 @@ export function uncappedProviderFailureMessage(message: string): string {
   return redactProviderFailureText(message) || DEFAULT_PROVIDER_FAILURE_MESSAGE;
 }
 
+/** True when `makeProviderFailure` replaces `message` with the 413 guidance. */
+export function isRequestTooLargeMessage(message: string): boolean {
+  return REQUEST_TOO_LARGE_STATUS.test(message) || REQUEST_TOO_LARGE_REASON.test(message);
+}
+
 function boundedText(value: string, maxLength: number): string {
   const redacted = redactProviderFailureText(value);
   if (redacted.length <= maxLength) return redacted;

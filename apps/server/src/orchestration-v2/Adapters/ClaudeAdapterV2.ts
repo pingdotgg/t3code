@@ -226,6 +226,7 @@ import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
+  isRequestTooLargeMessage,
   makeProviderFailure,
   makeProviderRetryTurnItem,
   PROVIDER_RETRY_BUDGET_MS,
@@ -4614,6 +4615,14 @@ function failureRepeatsFrame(source: string | undefined, frameText: string): boo
   if (source === undefined) return false;
   const frame = frameText.trim();
   return source.trim() === frame || uncappedProviderFailureMessage(source) === frame;
+}
+
+/** True when a failure built from `text`, or from its API error excerpt, shows the 413 guidance instead. */
+function isRequestTooLargeFrame(text: string): boolean {
+  return (
+    isRequestTooLargeMessage(text) ||
+    isRequestTooLargeMessage(makeProviderFailure({ message: text }).message)
+  );
 }
 
 /** Exclude CLI-internal "[ede_diagnostic] ..." telemetry from error banners. */
@@ -9439,7 +9448,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const retryBudgetFailure = requested.context.retryBudgetFailure;
           const input =
             requested.status === "interrupted" && retryBudgetFailure !== undefined
-              ? { ...requested, status: "failed" as const, failure: retryBudgetFailure }
+              ? {
+                  ...requested,
+                  status: "failed" as const,
+                  failure: retryBudgetFailure,
+                  failureSource: retryBudgetFailure.message,
+                }
               : requested;
           input.context.steersClosed = true;
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
@@ -11998,7 +12012,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (heldApiError !== null && heldApiError.nativeItemId !== assistantText.nativeItemId) {
               yield* emitAssistantTextArtifacts({ context, ...heldApiError });
             }
-            if (message.type === "assistant" && message.error !== undefined) {
+            if (
+              message.type === "assistant" &&
+              message.error !== undefined &&
+              !isRequestTooLargeFrame(assistantText.text)
+            ) {
               context.assistant.apiErrorFrame = assistantText;
               return;
             }

@@ -8973,6 +8973,41 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       shown: true,
     },
     {
+      name: "keeps the CLI's API error frame when the failure rewrites a 413",
+      text: 'API Error: 413 {"type":"error","error":{"type":"request_too_large","message":"Request exceeds the maximum size"}}',
+      failure:
+        "This thread's request is too large for the provider (HTTP 413), so retrying fails the same way. Start a fresh session with /clear, or continue in a new thread.",
+      apiErrorStatus: 413,
+      shown: true,
+    },
+    {
+      name: "keeps the CLI's API error frame when the failure rewrites a 413 behind a control character",
+      text: "API Error:\u0000413 gateway rejected the request",
+      failure:
+        "This thread's request is too large for the provider (HTTP 413), so retrying fails the same way. Start a fresh session with /clear, or continue in a new thread.",
+      apiErrorStatus: 413,
+      shown: true,
+    },
+    {
+      name: "drops the CLI's API error frame when the failure redacts it",
+      text: "API Error: 400 https://gateway.example/v1/messages?api_key=test-key-123",
+      failure: "API Error: 400 https://gateway.example/v1/messages",
+      apiErrorStatus: 400,
+      shown: false,
+    },
+    {
+      name: "drops the CLI's API error frame when an error result lists the 413 guidance itself",
+      text: "This thread's request is too large for the provider (HTTP 413), so retrying fails the same way. Start a fresh session with /clear, or continue in a new thread.",
+      subtype: "error_during_execution",
+      errors: [
+        "This thread's request is too large for the provider (HTTP 413), so retrying fails the same way. Start a fresh session with /clear, or continue in a new thread.",
+      ],
+      failure:
+        "This thread's request is too large for the provider (HTTP 413), so retrying fails the same way. Start a fresh session with /clear, or continue in a new thread.",
+      apiErrorStatus: 400,
+      shown: false,
+    },
+    {
       name: "keeps the CLI's API error frame when the turn is interrupted",
       text: "API Error: rejected",
       apiErrorStatus: 400,
