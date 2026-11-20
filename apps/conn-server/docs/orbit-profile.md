@@ -645,7 +645,7 @@ remain separate from registration):
 | --- | --- | --- |
 | Git actions control (commit, push, PR) | `git.runStackedAction` | Registered; commit is served, push and PR creation return a typed error |
 | Thread PR panel, when a PR is linked | `pullRequests.*` | All 35 methods are registered; disabled guide generation and unavailable actions return typed errors |
-| Provider sign-in and install in Settings | `provider.auth.*`, `provider.install.*` | Sign-in is served as in T3: Claude, Codex and Grok are CLI-owned (`setup.canAuthenticate: false`), so the UI shows no sign-in and every `provider.auth.*` call answers T3's `ProviderSetupError`. Install actions fail; the UI follows `providers[].auth.status` |
+| Provider sign-in and install in Settings | `provider.auth.*`, `provider.install.*` | Sign-in is served as in T3: Claude, Codex and Grok are CLI-owned (`setup.canAuthenticate: false`), so the UI shows no sign-in and every `provider.auth.*` call answers T3's `ProviderSetupError`. Install is served: a managed Codex is Orbit's bundled `codex`, signed in through the AI router; nothing downloads (status.md, item 7) |
 | Device panel | `device.*` | Served on this machine and on SSH hosts; Expo and Simlock hosts are not offered |
 | Test logins and credentials | `testLogins.*`, `credentials.*` | Test-login methods are served; the two site-credential methods remain unserved |
 | Secret request card | `secrets.answerRequest` | Served |
@@ -1048,9 +1048,9 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `provider.chatgpt.import-profile` | no | X | U | M | ChatGPT profile handoff for Codex |
 | `provider.chatgpt.reconnect-profile` | no | X | U | M | ChatGPT profile handoff for Codex |
 | `provider.consumeResetCredit` | no | X | U | S |  |
-| `provider.install.cancel` | no | X | U | M | install a provider CLI; Orbit bundles agents |
-| `provider.install.remove` | no | X | U | M | install a provider CLI; Orbit bundles agents |
-| `provider.install.start` | no | X | U | M | install a provider CLI; Orbit bundles agents |
+| `provider.install.cancel` | yes | X | U | M | managed Codex = Orbit's bundled runtime through the AI router; no download |
+| `provider.install.remove` | yes | X | U | M | managed Codex = Orbit's bundled runtime through the AI router; no download |
+| `provider.install.start` | yes | X | U | M | managed Codex = Orbit's bundled runtime through the AI router; no download |
 | `provider.install.subscribe` | yes | U | U |  |  |
 | `provider.uploadFeedback` | no | U | U | S |  |
 | `pullRequests.activity` | yes | O | N |  | PR panel: list, review, comment, merge |

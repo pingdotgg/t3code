@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Provider sign-in (`provider.auth.*`) on the T3 server and the Conn Server, call by call.
+// Provider sign-in and install (`provider.auth.*`, `provider.install.*`) on the T3 server and
+// the Conn Server, call by call.
 //
 //   node crates/conn-server/tools/provider-auth-diff.mjs [--keep] <conn-server>
 //
@@ -236,6 +237,13 @@ const CALLS = [
   ["provider.auth.removeMethod", { methodId: "chatgpt" }],
   ["provider.auth.logout", {}],
   ["provider.auth.subscribe", {}],
+  // Install: T3 installs only for a managed Codex (or Antigravity), so every instance here
+  // gets `requireInstance`'s error. A managed Codex is checked in effect-client.mjs: T3's
+  // side would check its version against the download manifest.
+  ["provider.install.start", {}],
+  ["provider.install.cancel", { operationId: "op-1" }],
+  ["provider.install.remove", {}],
+  ["provider.install.subscribe", {}],
 ];
 
 /** The reply as the client decodes it: a value, the first stream item, or the typed error. */
@@ -277,7 +285,7 @@ async function drive(side) {
     const replies = [];
     for (const instanceId of INSTANCES) {
       for (const [tag, input] of CALLS) {
-        const stream = tag === "provider.auth.subscribe";
+        const stream = tag.endsWith(".subscribe");
         const payload = { instanceId, ...input };
         const exit = stream
           ? yield* Effect.exit(Stream.runHead(client[tag](payload)).pipe(Effect.timeoutOption("2 seconds")))

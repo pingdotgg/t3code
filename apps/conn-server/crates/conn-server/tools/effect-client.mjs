@@ -64,6 +64,19 @@ NodeFS.writeFileSync(
   ].join("\n"),
   { mode: 0o755 },
 );
+// A stand-in `codex` on PATH: Orbit's bundled runtime for a managed Codex instance
+// (`provider.install.*`). It answers the two runtime checks and nothing else.
+NodeFS.writeFileSync(
+  NodePath.join(sshStub, "codex"),
+  [
+    "#!/bin/sh",
+    '[ "$1" = --version ] && { echo "codex-cli 0.166.0"; exit 0; }',
+    '[ "$1" = app-server ] && [ "$2" = --help ] && exit 0',
+    "exit 1",
+    "",
+  ].join("\n"),
+  { mode: 0o755 },
+);
 serverEnv.PATH = `${sshStub}:${serverEnv.PATH}`;
 const workflowScript = NodePath.join(serverEnv.HOME, ".claude", "projects", "effect-client.js");
 NodeFS.mkdirSync(NodePath.dirname(workflowScript), { recursive: true });
@@ -559,7 +572,43 @@ const decodeEach = (client) =>
     yield* call("provider.auth.cancel", { instanceId: "codex", flowId: "f" });
     yield* call("provider.auth.removeMethod", { instanceId: "codex", methodId: "chatgpt" });
     yield* call("provider.auth.logout", { instanceId: "codex" });
+    // Install: T3's ProviderSetupError outside managed Codex; a managed Codex is the runtime
+    // on PATH (Orbit's bundle, signed in through the AI router), never a download.
     yield* call("provider.install.subscribe", { instanceId: "codex" });
+    yield* call("provider.install.start", { instanceId: "codex" });
+    yield* call("provider.install.cancel", { instanceId: "codex", operationId: "op" });
+    yield* call("provider.install.remove", { instanceId: "codex" });
+    yield* call("server.updateSettings", {
+      patch: {},
+      providerInstanceMutation: {
+        operation: "create",
+        instanceId: "codexManaged",
+        instance: { driver: "codex", enabled: false, config: { setupMode: "managed" } },
+      },
+    });
+    const installed = yield* call("provider.install.start", { instanceId: "codexManaged" });
+    check(
+      "managed Codex reuses the runtime on PATH",
+      Exit.isSuccess(installed) &&
+        installed.value.phase === "succeeded" &&
+        installed.value.source === "local" &&
+        installed.value.installedVersion === "0.166.0" &&
+        installed.value.executablePath === NodePath.join(sshStub, "codex") &&
+        installed.value.version === null,
+      JSON.stringify(Exit.isSuccess(installed) ? installed.value : String(installed.cause)),
+    );
+    const watched = yield* call("provider.install.subscribe", { instanceId: "codexManaged" });
+    check(
+      "managed Codex install state",
+      Exit.isSuccess(watched) && Option.getOrUndefined(Option.flatten(watched.value))?.phase === "succeeded",
+    );
+    yield* call("provider.install.cancel", { instanceId: "codexManaged", operationId: "op" });
+    const removed = yield* call("provider.install.remove", { instanceId: "codexManaged" });
+    check("managed Codex remove keeps Orbit's runtime", Exit.isSuccess(removed) && removed.value.phase === "succeeded");
+    yield* call("server.updateSettings", {
+      patch: {},
+      providerInstanceMutation: { operation: "remove", instanceId: "codexManaged" },
+    });
     yield* call("server.getConfig", {});
     // Grok, switched on with a stub CLI (crates/conn-provider-acp/tools/grok-cli-stub.mjs; no
     // real CLI runs): the server probes it as T3 does, and the entry decodes as "ready".
