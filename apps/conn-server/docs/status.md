@@ -743,6 +743,9 @@ builder with a test that fails without the fix.
   inline, `preview_open` and `preview_snapshot` in headless Chrome, and `save_test_login`
   with `request_credentials`. MCP Apps rest on the parity checks alone.
 - **Release `conn-server-v0.2.0`**: every wave-1 slice; the version bump is its own PR.
+- **Release `conn-server-v0.3.0`**: provider install through Orbit's AI router (#181),
+  Antigravity over ACP (#183) and the ACP MCP bridge memory fix (#184); the version bump is
+  its own PR.
 
 ## Partly followed to Conn `444f032be7` (the 2026-11-18 sync)
 
