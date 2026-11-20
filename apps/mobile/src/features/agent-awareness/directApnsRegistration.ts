@@ -1,4 +1,8 @@
-import type { EnvironmentId, PushDeviceRegistration } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  PushDeviceRegistration,
+  PushLiveActivityRegistration,
+} from "@t3tools/contracts";
 import type { RelayDeviceRegistrationRequest } from "@t3tools/contracts/relay";
 import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
@@ -83,6 +87,56 @@ async function registerWithConnectedEnvironments(
   );
 }
 
+// Live Activity tokens belong to the activity, not the device, and arrive on
+// their own schedule: remember the latest of each and sync them with every
+// connected server whenever either side changes.
+const liveActivityTokens: { activityPushToken?: string; pushToStartToken?: string } = {};
+const liveActivitySignatures = new Map<EnvironmentId, string>();
+
+export function setDirectLiveActivityTokens(tokens: typeof liveActivityTokens): void {
+  Object.assign(liveActivityTokens, tokens);
+  if (lastRequest) void syncLiveActivities(lastRequest);
+}
+
+async function syncLiveActivities(request: RelayDeviceRegistrationRequest): Promise<void> {
+  const base = toPushDeviceRegistration(request);
+  if (base === null) return;
+  const enabled = request.preferences.liveActivitiesEnabled !== false;
+  const { activityPushToken, pushToStartToken } = liveActivityTokens;
+  const registration: PushLiveActivityRegistration = {
+    deviceId: base.deviceId,
+    apsEnvironment: base.apsEnvironment,
+    bundleId: base.bundleId,
+    ...(activityPushToken ? { activityPushToken } : {}),
+    ...(pushToStartToken ? { pushToStartToken } : {}),
+  };
+  // Turning the preference off must reach servers, or they keep updating a card the user dismissed.
+  const signature = enabled ? JSON.stringify(registration) : "disabled";
+  if (enabled && !activityPushToken && !pushToStartToken) return;
+  const catalog = appAtomRegistry.get(environmentCatalog.catalogValueAtom);
+  await Promise.all(
+    [...enabledEnvironmentIds(catalog)].map(async (environmentId) => {
+      const known = liveActivitySignatures.get(environmentId);
+      if (known === signature || (!enabled && known === undefined)) return;
+      const options = { reportFailure: false, reportDefect: false };
+      const result = enabled
+        ? await runAtomCommand(
+            appAtomRegistry,
+            serverEnvironment.registerPushLiveActivity,
+            { environmentId, input: registration },
+            options,
+          )
+        : await runAtomCommand(
+            appAtomRegistry,
+            serverEnvironment.unregisterPushLiveActivity,
+            { environmentId, input: { deviceId: base.deviceId } },
+            options,
+          );
+      if (result._tag === "Success") liveActivitySignatures.set(environmentId, signature);
+    }),
+  );
+}
+
 export async function registerDirectApnsDevice(
   request: RelayDeviceRegistrationRequest,
 ): Promise<void> {
@@ -92,14 +146,20 @@ export async function registerDirectApnsDevice(
   if (!watchingCatalog) {
     watchingCatalog = true;
     appAtomRegistry.subscribe(environmentCatalog.catalogValueAtom, () => {
-      if (lastRequest) void registerWithConnectedEnvironments(lastRequest);
+      if (lastRequest) {
+        void registerWithConnectedEnvironments(lastRequest);
+        void syncLiveActivities(lastRequest);
+      }
     });
   }
-  await registerWithConnectedEnvironments(request);
+  await Promise.all([registerWithConnectedEnvironments(request), syncLiveActivities(request)]);
 }
 
 export function __resetDirectApnsRegistrationForTest(): void {
   registeredSignatures.clear();
+  liveActivitySignatures.clear();
+  delete liveActivityTokens.activityPushToken;
+  delete liveActivityTokens.pushToStartToken;
   registeredListeners.clear();
   lastRequest = null;
   watchingCatalog = false;

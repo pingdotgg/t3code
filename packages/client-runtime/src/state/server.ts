@@ -1902,6 +1902,14 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:unregister-push-device",
       tag: WS_METHODS.notificationsUnregisterDevice,
     }),
+    registerPushLiveActivity: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:register-push-live-activity",
+      tag: WS_METHODS.notificationsRegisterLiveActivity,
+    }),
+    unregisterPushLiveActivity: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:unregister-push-live-activity",
+      tag: WS_METHODS.notificationsUnregisterLiveActivity,
+    }),
     checkOtlpEndpoint: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:check-otlp-endpoint",
       tag: WS_METHODS.serverCheckOtlpEndpoint,

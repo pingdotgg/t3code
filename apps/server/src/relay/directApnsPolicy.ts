@@ -139,3 +139,97 @@ export function notificationForState(state: AgentAwarenessState): DirectApnsNoti
     updatedAt: state.updatedAt,
   };
 }
+
+export interface DirectLiveActivityRow {
+  readonly environmentId: string;
+  readonly threadId: string;
+  readonly projectTitle: string;
+  readonly threadTitle: string;
+  readonly modelTitle: string;
+  readonly phase: string;
+  readonly status: string;
+  readonly updatedAt: string;
+  readonly deepLink: string;
+}
+
+// Mirrors the widget's AgentActivityProps in apps/mobile/src/widgets/AgentActivity.tsx.
+export interface DirectLiveActivityContent {
+  readonly title: string;
+  readonly subtitle: string;
+  readonly activeCount: number;
+  readonly updatedAt: string;
+  readonly activities: ReadonlyArray<DirectLiveActivityRow>;
+}
+
+const MAX_LIVE_ACTIVITY_ROWS = 5;
+
+// Same display rules as the relay's makeAggregateState (infra/relay/src/agentActivity),
+// applied to this server's threads only, so a card reads the same from either sender.
+const CARD_TERMINAL_TTL_MS = 15 * 60 * 1_000;
+const CARD_RUNNING_TTL_MS = 2 * 60 * 60 * 1_000;
+const CARD_WAITING_TTL_MS = 24 * 60 * 60 * 1_000;
+
+const attentionPriority = (phase: Phase) => {
+  if (isAttentionPhase(phase)) return 0;
+  if (phase === "failed") return 1;
+  if (phase === "starting" || phase === "running") return 2;
+  return 3;
+};
+
+const updatedAtMsOf = (state: AgentAwarenessState) => Date.parse(state.updatedAt);
+
+/**
+ * The card shows this environment's in-flight threads plus recently finished
+ * ones. An environment that died mid-run never reports a terminal state, so
+ * in-flight rows expire. Null means nothing is worth showing and a running
+ * card should end.
+ */
+export function liveActivityContentForStates(
+  states: Iterable<AgentAwarenessState>,
+  nowMs: number,
+): DirectLiveActivityContent | null {
+  const all = [...states];
+  const active = all
+    .filter((state) => {
+      if (isTerminalPhase(state.phase)) return false;
+      const ttl =
+        state.phase === "running" || state.phase === "starting"
+          ? CARD_RUNNING_TTL_MS
+          : CARD_WAITING_TTL_MS;
+      return nowMs <= updatedAtMsOf(state) + ttl;
+    })
+    .toSorted((a, b) => attentionPriority(a.phase) - attentionPriority(b.phase));
+  const recentTerminal = all
+    .filter(
+      (state) =>
+        isTerminalPhase(state.phase) && nowMs - updatedAtMsOf(state) <= CARD_TERMINAL_TTL_MS,
+    )
+    .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const shown = [...active, ...recentTerminal].slice(0, MAX_LIVE_ACTIVITY_ROWS);
+  if (shown.length === 0) return null;
+  const subtitle =
+    active.length > 0
+      ? "Agent work in progress"
+      : recentTerminal[0]!.phase === "failed"
+        ? "Agent work failed"
+        : "Agent work completed";
+  return {
+    title: "T3 Code",
+    subtitle,
+    activeCount: active.length,
+    updatedAt: [...active, ...recentTerminal].reduce((latest, state) =>
+      state.updatedAt.localeCompare(latest.updatedAt) > 0 ? state : latest,
+    ).updatedAt,
+    activities: shown.map((state) => ({
+      environmentId: state.environmentId,
+      threadId: state.threadId,
+      projectTitle: truncateText(state.projectTitle, MAX_TEXT_LENGTH),
+      threadTitle: truncateText(state.threadTitle, MAX_TEXT_LENGTH),
+      modelTitle: truncateText(state.modelTitle, MAX_TEXT_LENGTH),
+      phase: state.phase,
+      status: statusForPhase(state.phase),
+      updatedAt: state.updatedAt,
+      deepLink: sanitizeDeepLink(state.deepLink),
+    })),
+  };
+}

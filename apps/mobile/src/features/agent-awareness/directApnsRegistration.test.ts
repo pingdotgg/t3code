@@ -27,13 +27,18 @@ vi.mock("../../state/atom-registry", () => ({
   },
 }));
 vi.mock("../../state/server", () => ({
-  serverEnvironment: { registerPushDevice: { label: "register" } },
+  serverEnvironment: {
+    registerPushDevice: { label: "register" },
+    registerPushLiveActivity: { label: "register-live-activity" },
+    unregisterPushLiveActivity: { label: "unregister-live-activity" },
+  },
 }));
 
 import {
   __resetDirectApnsRegistrationForTest,
   isDirectApnsRegistered,
   registerDirectApnsDevice,
+  setDirectLiveActivityTokens,
   toPushDeviceRegistration,
 } from "./directApnsRegistration";
 
@@ -150,5 +155,53 @@ describe("registerDirectApnsDevice", () => {
     // A later registration does not stack a second catalog subscription.
     await registerDirectApnsDevice(request({ pushToken: "cd".repeat(32) }));
     expect(mocks.catalogListeners).toHaveLength(1);
+  });
+});
+
+describe("live activity sync", () => {
+  const liveActivityCalls = () =>
+    mocks.runAtomCommand.mock.calls.filter(([, command]) => command.label !== "register");
+
+  it("sends the latest activity and push-to-start tokens once a device registration exists", async () => {
+    mocks.environmentIds = [ENV_A];
+    setDirectLiveActivityTokens({ activityPushToken: "11".repeat(32) });
+    expect(liveActivityCalls()).toHaveLength(0);
+    await registerDirectApnsDevice(request());
+    setDirectLiveActivityTokens({ pushToStartToken: "22".repeat(32) });
+    await vi.waitFor(() => expect(liveActivityCalls()).toHaveLength(2));
+    expect(liveActivityCalls().at(-1)?.[2].input).toEqual({
+      deviceId: "device-1",
+      apsEnvironment: "sandbox",
+      bundleId: "com.example.t3code",
+      activityPushToken: "11".repeat(32),
+      pushToStartToken: "22".repeat(32),
+    });
+    // Unchanged tokens are not resent on the next device registration.
+    await registerDirectApnsDevice(request({ label: "renamed" }));
+    expect(liveActivityCalls()).toHaveLength(2);
+  });
+
+  it("replaces a rotated activity token", async () => {
+    mocks.environmentIds = [ENV_A];
+    await registerDirectApnsDevice(request());
+    setDirectLiveActivityTokens({ activityPushToken: "11".repeat(32) });
+    setDirectLiveActivityTokens({ activityPushToken: "33".repeat(32) });
+    await vi.waitFor(() => expect(liveActivityCalls()).toHaveLength(2));
+    expect(liveActivityCalls().at(-1)?.[2].input.activityPushToken).toBe("33".repeat(32));
+  });
+
+  it("unregisters from servers once when the preference is turned off", async () => {
+    mocks.environmentIds = [ENV_A];
+    await registerDirectApnsDevice(request());
+    setDirectLiveActivityTokens({ activityPushToken: "11".repeat(32) });
+    await vi.waitFor(() => expect(liveActivityCalls()).toHaveLength(1));
+    const off = request({
+      preferences: { ...request().preferences, liveActivitiesEnabled: false },
+    });
+    await registerDirectApnsDevice(off);
+    await registerDirectApnsDevice(off);
+    expect(liveActivityCalls()).toHaveLength(2);
+    expect(liveActivityCalls().at(-1)?.[1].label).toBe("unregister-live-activity");
+    expect(liveActivityCalls().at(-1)?.[2].input).toEqual({ deviceId: "device-1" });
   });
 });

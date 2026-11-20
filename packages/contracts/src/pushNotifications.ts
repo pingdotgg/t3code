@@ -26,3 +26,14 @@ export const PushDeviceUnregistration = Schema.Struct({
   deviceId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
 });
 export type PushDeviceUnregistration = typeof PushDeviceUnregistration.Type;
+
+// Tokens for ActivityKit pushes. Activity tokens rotate and die with their activity;
+// the push-to-start token lets the server begin an activity while the app is closed.
+export const PushLiveActivityRegistration = Schema.Struct({
+  deviceId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  apsEnvironment: PushApsEnvironment,
+  bundleId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  activityPushToken: Schema.optional(ApnsDeviceToken),
+  pushToStartToken: Schema.optional(ApnsDeviceToken),
+});
+export type PushLiveActivityRegistration = typeof PushLiveActivityRegistration.Type;

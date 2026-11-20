@@ -228,6 +228,8 @@ function ConfiguredSettingsNotificationsRouteScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const { getToken, isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
+  // iOS Live Activities can also be pushed by a connected T3 server, without T3 Connect.
+  const directLiveActivities = Platform.OS === "ios" && !isSignedIn;
   const { savedConnectionsById } = useSavedRemoteConnections();
   const notificationStatus = useAtomValue(notificationStatusAtom);
   const setNotificationStatus = useAtomSet(notificationStatusAtom);
@@ -244,7 +246,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     liveActivityOverride.basis.isSignedIn === isSignedIn &&
     liveActivityOverride.basis.preferencesResult === preferencesResult
       ? liveActivityOverride.status
-      : liveActivityStatusFrom(isLoaded, isSignedIn, preferencesResult);
+      : liveActivityStatusFrom(isLoaded, isSignedIn || directLiveActivities, preferencesResult);
   const setLiveActivityStatus = (status: LiveActivityStatus) =>
     setLiveActivityOverride({ status, basis: liveActivityBasis });
   const liveActivityWriteInFlight = useRef(false);
@@ -338,7 +340,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
   };
 
   const linkEnvironments = async () => {
-    if (!isSignedIn) {
+    if (!isSignedIn && !directLiveActivities) {
       promptSignIn();
       return;
     }
@@ -373,7 +375,9 @@ function ConfiguredSettingsNotificationsRouteScreen() {
       }
       setNotificationStatus("enabled");
     }
-    const tokenResult = await settlePromise(() => getToken(resolveRelayClerkTokenOptions()));
+    const tokenResult = isSignedIn
+      ? await settlePromise(() => getToken(resolveRelayClerkTokenOptions()))
+      : ({ _tag: "Success", value: null } as const);
     if (tokenResult._tag === "Failure") {
       setLiveActivityStatus("disabled");
       const error = squashAtomCommandFailure(tokenResult);
@@ -387,7 +391,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
       );
       return;
     }
-    if (!tokenResult.value) {
+    if (!tokenResult.value && !directLiveActivities) {
       promptSignIn();
       setLiveActivityStatus("signed-out");
       return;
@@ -437,7 +441,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
           "The device preference was saved. Update older environment servers to apply the setting there.",
         ),
       );
-    } else if (getAgentAwarenessRegistrationStatus() === "registered") {
+    } else if (getAgentAwarenessRegistrationStatus() === "registered" || directLiveActivities) {
       Dialog.alert(
         Platform.OS === "android" ? gt("Ongoing activity enabled") : gt("Live Activities enabled"),
         environmentCount > 0
@@ -505,7 +509,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
       ),
     );
     if (updateResult._tag === "Failure") {
-      setLiveActivityStatus(isSignedIn ? "enabled" : "signed-out");
+      setLiveActivityStatus(isSignedIn || directLiveActivities ? "enabled" : "signed-out");
       if (!reportPartialEnvironmentUpdate(squashAtomCommandFailure(updateResult))) {
         reportAtomCommandResult(updateResult, {
           label: "live activity disable",
@@ -548,7 +552,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
       return;
     }
 
-    if (!isSignedIn) {
+    if (!isSignedIn && !directLiveActivities) {
       promptSignIn();
       return;
     }
@@ -605,7 +609,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
             value={
               agentAwarenessPushAvailable &&
               (liveActivityStatus === "enabled" || liveActivityStatus === "linking") &&
-              deviceRegistered
+              (deviceRegistered || (directLiveActivities && directPushRegistered))
             }
             onValueChange={(enabled) => void handleLiveActivitiesChange(enabled)}
           />

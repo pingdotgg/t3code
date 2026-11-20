@@ -66,11 +66,19 @@ const makeHarness = Effect.fnUntraced(function* (options: {
   readonly respond?: (
     device: DirectApnsDevices.StoredPushDevice,
   ) => DirectApnsClient.DirectApnsSendResult;
+  readonly respondLiveActivity?: (token: string) => DirectApnsClient.DirectApnsSendResult;
 }) {
   const currentShell = yield* Ref.make<OrchestrationV2ThreadShell | null>(shell({}));
   const reads: ThreadId[] = [];
   const firstRead = yield* Deferred.make<void>();
   const sent: Array<{ deviceId: string; title: string; body: string; phase: string }> = [];
+  const liveSent: Array<{
+    token: string;
+    event: string;
+    activeCount: number;
+    phases: string[];
+    alertTitle?: string;
+  }> = [];
   const values = new Map<string, Uint8Array>();
   const secrets = Layer.succeed(
     ServerSecretStore.ServerSecretStore,
@@ -99,6 +107,17 @@ const makeHarness = Effect.fnUntraced(function* (options: {
                 phase: notification.phase,
               });
               return options.respond?.(device) ?? { outcome: "sent" as const };
+            }),
+          sendLiveActivity: ({ token, event, content, alert }) =>
+            Effect.sync(() => {
+              liveSent.push({
+                token,
+                event,
+                activeCount: content.activeCount,
+                phases: content.activities.map((row) => row.phase),
+                ...(alert ? { alertTitle: alert.title } : {}),
+              });
+              return options.respondLiveActivity?.(token) ?? { outcome: "sent" as const };
             }),
         }),
       ),
@@ -135,7 +154,7 @@ const makeHarness = Effect.fnUntraced(function* (options: {
       } as never),
     ),
   );
-  return { layer, currentShell, sent, reads, firstRead };
+  return { layer, currentShell, sent, liveSent, reads, firstRead };
 });
 
 describe("DirectApnsNotifier", () => {
@@ -247,6 +266,216 @@ describe("DirectApnsNotifier", () => {
         yield* notifier.observeThread(THREAD_ID);
         yield* notifier.drain;
         assert.deepStrictEqual(harness.sent, []);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect(
+    "updates a live activity on change, keeps the finished state and ends it once it expires",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const harness = yield* makeHarness({});
+        yield* Effect.gen(function* () {
+          const notifier = yield* DirectApnsNotifier.DirectApnsNotifier;
+          const devices = yield* DirectApnsDevices.DirectApnsDevices;
+          yield* devices.registerLiveActivity({
+            deviceId: "iphone",
+            apsEnvironment: "sandbox",
+            bundleId: "com.example.t3code",
+            activityPushToken: "c".repeat(64),
+          });
+          yield* notifier.observeThread(THREAD_ID);
+          yield* notifier.drain;
+          // Re-pushing identical content would burn APNs' update budget.
+          yield* notifier.observeThread(THREAD_ID);
+          yield* notifier.drain;
+          assert.deepStrictEqual(harness.liveSent, [
+            { token: "c".repeat(64), event: "update", activeCount: 1, phases: ["running"] },
+          ]);
+
+          yield* Ref.set(
+            harness.currentShell,
+            shell({ activityRunStatus: "completed", status: "completed" }),
+          );
+          yield* notifier.observeThread(THREAD_ID);
+          yield* notifier.drain;
+          assert.deepStrictEqual(harness.liveSent.at(-1), {
+            token: "c".repeat(64),
+            event: "update",
+            activeCount: 0,
+            phases: ["completed"],
+          });
+          assert.lengthOf(yield* devices.listLiveActivities, 1);
+
+          yield* TestClock.adjust("16 minutes");
+          yield* notifier.observeThread(THREAD_ID);
+          yield* notifier.drain;
+          assert.strictEqual(harness.liveSent.at(-1)?.event, "end");
+          assert.deepStrictEqual(yield* devices.listLiveActivities, []);
+        }).pipe(Effect.provide(harness.layer));
+      }),
+  );
+
+  it.effect("drops an activity token APNs rejects but keeps the push-to-start token", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const harness = yield* makeHarness({
+        respondLiveActivity: () => ({
+          outcome: "rejected",
+          status: 410,
+          reason: "Unregistered",
+          removeToken: true,
+        }),
+      });
+      yield* Effect.gen(function* () {
+        const notifier = yield* DirectApnsNotifier.DirectApnsNotifier;
+        const devices = yield* DirectApnsDevices.DirectApnsDevices;
+        yield* devices.registerLiveActivity({
+          deviceId: "iphone",
+          apsEnvironment: "sandbox",
+          bundleId: "com.example.t3code",
+          activityPushToken: "c".repeat(64),
+          pushToStartToken: "d".repeat(64),
+        });
+        yield* notifier.observeThread(THREAD_ID);
+        yield* notifier.drain;
+        assert.deepStrictEqual(yield* devices.listLiveActivities, [
+          {
+            deviceId: "iphone",
+            apsEnvironment: "sandbox",
+            bundleId: "com.example.t3code",
+            pushToStartToken: "d".repeat(64),
+          },
+        ]);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("starts a live activity once per burst of work through the push-to-start token", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const harness = yield* makeHarness({});
+      yield* Effect.gen(function* () {
+        const notifier = yield* DirectApnsNotifier.DirectApnsNotifier;
+        const devices = yield* DirectApnsDevices.DirectApnsDevices;
+        yield* devices.registerLiveActivity({
+          deviceId: "iphone",
+          apsEnvironment: "sandbox",
+          bundleId: "com.example.t3code",
+          pushToStartToken: "d".repeat(64),
+        });
+        yield* notifier.observeThread(THREAD_ID);
+        yield* notifier.drain;
+        // The app's own card registers a token within seconds; starting sooner duplicates it.
+        assert.deepStrictEqual(harness.liveSent, []);
+        yield* TestClock.adjust("10 seconds");
+        yield* Ref.set(
+          harness.currentShell,
+          shell({
+            activityRunStatus: "waiting_for_approval",
+            pendingRuntimeRequest: { kind: "approval" },
+          }),
+        );
+        yield* notifier.observeThread(THREAD_ID);
+        yield* notifier.drain;
+        assert.deepStrictEqual(
+          harness.liveSent.map((push) => push.event),
+          ["start"],
+        );
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("leaves a card armed for work it has not seen alone and never ends it", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const harness = yield* makeHarness({});
+      yield* Effect.gen(function* () {
+        const notifier = yield* DirectApnsNotifier.DirectApnsNotifier;
+        const devices = yield* DirectApnsDevices.DirectApnsDevices;
+        yield* Ref.set(
+          harness.currentShell,
+          shell({ activityRunStatus: "completed", status: "completed" }),
+        );
+        yield* notifier.observeThread(THREAD_ID);
+        yield* notifier.drain;
+        yield* devices.registerLiveActivity({
+          deviceId: "iphone",
+          apsEnvironment: "sandbox",
+          bundleId: "com.example.t3code",
+          activityPushToken: "c".repeat(64),
+        });
+        yield* notifier.observeThread(THREAD_ID);
+        yield* notifier.drain;
+        assert.deepStrictEqual(harness.liveSent, []);
+        assert.lengthOf(yield* devices.listLiveActivities, 1);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("carries an attention alert on the live card instead of a separate banner", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const harness = yield* makeHarness({});
+      yield* Effect.gen(function* () {
+        const notifier = yield* DirectApnsNotifier.DirectApnsNotifier;
+        const devices = yield* DirectApnsDevices.DirectApnsDevices;
+        yield* devices.register(registration());
+        yield* devices.registerLiveActivity({
+          deviceId: "iphone",
+          apsEnvironment: "sandbox",
+          bundleId: "com.example.t3code",
+          activityPushToken: "c".repeat(64),
+        });
+        yield* notifier.observeThread(THREAD_ID);
+        yield* notifier.drain;
+        yield* Ref.set(
+          harness.currentShell,
+          shell({
+            activityRunStatus: "waiting_for_approval",
+            pendingRuntimeRequest: { kind: "approval" },
+          }),
+        );
+        yield* notifier.observeThread(THREAD_ID);
+        yield* notifier.drain;
+        assert.deepStrictEqual(harness.sent, []);
+        assert.isDefined(harness.liveSent.at(-1)?.alertTitle);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("falls back to a separate banner when the live push is not delivered", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const harness = yield* makeHarness({
+        respondLiveActivity: () => ({ outcome: "error", removeToken: false }),
+      });
+      yield* Effect.gen(function* () {
+        const notifier = yield* DirectApnsNotifier.DirectApnsNotifier;
+        const devices = yield* DirectApnsDevices.DirectApnsDevices;
+        yield* devices.register(registration());
+        yield* devices.registerLiveActivity({
+          deviceId: "iphone",
+          apsEnvironment: "sandbox",
+          bundleId: "com.example.t3code",
+          activityPushToken: "c".repeat(64),
+        });
+        yield* notifier.observeThread(THREAD_ID);
+        yield* notifier.drain;
+        yield* Ref.set(
+          harness.currentShell,
+          shell({
+            activityRunStatus: "waiting_for_approval",
+            pendingRuntimeRequest: { kind: "approval" },
+          }),
+        );
+        yield* notifier.observeThread(THREAD_ID);
+        yield* notifier.drain;
+        assert.deepStrictEqual(
+          harness.sent.map((push) => push.deviceId),
+          ["iphone"],
+        );
       }).pipe(Effect.provide(harness.layer));
     }),
   );

@@ -22,6 +22,7 @@ import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
 import { databaseMigrationHead } from "../persistence/databaseMigrationHead.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as DirectApnsClient from "../relay/DirectApnsClient.ts";
 import { isSpeechPlatformSupported } from "../speech/platform.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 import { detectServerEnvironmentMachineKind } from "./ServerEnvironmentMachine.ts";
@@ -188,6 +189,7 @@ export const make = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const identity = yield* ServerEnvironmentIdentity;
+  const directApns = yield* DirectApnsClient.DirectApnsClient;
   const hostPlatform = yield* HostProcess.Platform;
   const hostArchitecture = yield* HostProcess.Architecture;
   const hostLibc = hostPlatform === "linux" ? yield* HostProcess.LinuxLibc : undefined;
@@ -308,7 +310,12 @@ export const make = Effect.gen(function* () {
   return ServerEnvironment.of({
     getEnvironmentId: Effect.succeed(environmentId),
     // Publishing opt-in and relay links change at runtime; read the capability per request.
-    getDescriptor: readAgentActivityPublishingActive(secrets).pipe(
+    // A server that pushes straight to APNs publishes agent activity without the relay link.
+    getDescriptor: Effect.all([
+      readAgentActivityPublishingActive(secrets),
+      directApns.isConfigured,
+    ]).pipe(
+      Effect.map(([relayPublishing, directPublishing]) => relayPublishing || directPublishing),
       Effect.map((agentActivityPublishing) => ({
         ...descriptor,
         capabilities: { ...descriptor.capabilities, agentActivityPublishing },
@@ -322,4 +329,5 @@ export const layerIdentity = Layer.effect(ServerEnvironmentIdentity, makeIdentit
 export const layer = Layer.effect(ServerEnvironment, make).pipe(
   Layer.provideMerge(layerIdentity),
   Layer.provide(ProcessRunner.layer),
+  Layer.provide(DirectApnsClient.layer.pipe(Layer.provide(DirectApnsClient.transportLayer))),
 );

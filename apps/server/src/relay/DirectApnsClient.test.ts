@@ -127,6 +127,75 @@ describe("DirectApnsClient", () => {
     }).pipe(Effect.provide(harness.layer));
   });
 
+  it.effect(
+    "posts a liveactivity push with the widget content state and event-specific dates",
+    () => {
+      const harness = makeHarness({});
+      const content = {
+        title: "T3 Code",
+        subtitle: "Agent work in progress",
+        activeCount: 1,
+        updatedAt: "2026-09-04T11:59:30.000Z",
+        activities: [],
+      };
+      return Effect.gen(function* () {
+        const client = yield* DirectApnsClient.DirectApnsClient;
+        const target = {
+          deviceId: "iphone",
+          apsEnvironment: "sandbox",
+          bundleId: "com.example.t3code",
+        } as const;
+        for (const event of ["update", "start", "end"] as const) {
+          const result = yield* client.sendLiveActivity({
+            target,
+            token: "cd".repeat(32),
+            event,
+            content,
+          });
+          assert.strictEqual(result.outcome, "sent");
+        }
+        const alerted = yield* client.sendLiveActivity({
+          target,
+          token: "cd".repeat(32),
+          event: "update",
+          content,
+          alert: { title: "Fix the bug", body: "Approval: Project" },
+        });
+        assert.strictEqual(alerted.outcome, "sent");
+        const [update, start, end, alertedUpdate] = harness.requests.map((request) => ({
+          headers: request.headers,
+          aps: JSON.parse(request.body).aps as Record<string, unknown>,
+        }));
+        assert.strictEqual(update?.headers["apns-push-type"], "liveactivity");
+        assert.strictEqual(
+          update?.headers["apns-topic"],
+          "com.example.t3code.push-type.liveactivity",
+        );
+        assert.strictEqual(update?.headers["apns-priority"], "5");
+        assert.deepStrictEqual(update?.aps["content-state"], {
+          name: "AgentActivity",
+          props: JSON.stringify(content),
+        });
+        assert.strictEqual(update?.aps.event, "update");
+        assert.isDefined(update?.aps["stale-date"]);
+        assert.isUndefined(update?.aps["attributes-type"]);
+        assert.isUndefined(update?.aps.alert);
+        assert.isDefined(start?.aps.alert);
+        assert.strictEqual(start?.aps["input-push-token"], 1);
+        assert.strictEqual(start?.aps["attributes-type"], "LiveActivityAttributes");
+        assert.strictEqual(start?.headers["apns-priority"], "10");
+        assert.deepStrictEqual(alertedUpdate?.aps.alert, {
+          title: "Fix the bug",
+          body: "Approval: Project",
+          sound: "default",
+        });
+        assert.strictEqual(alertedUpdate?.headers["apns-priority"], "10");
+        assert.isDefined(end?.aps["dismissal-date"]);
+        assert.isUndefined(end?.aps["stale-date"]);
+      }).pipe(Effect.provide(harness.layer));
+    },
+  );
+
   it.effect("picks the APNs host per device token, not per server", () => {
     const harness = makeHarness({});
     return Effect.gen(function* () {

@@ -13,7 +13,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import type { DirectApnsNotification } from "./directApnsPolicy.ts";
+import type { DirectApnsNotification, DirectLiveActivityContent } from "./directApnsPolicy.ts";
 import type { StoredPushDevice } from "./DirectApnsDevices.ts";
 
 const APNS_PRODUCTION_ORIGIN = "https://api.push.apple.com";
@@ -77,6 +77,13 @@ export type DirectApnsSendResult =
     }
   | { readonly outcome: "error"; readonly removeToken: false };
 
+export type LiveActivityEvent = "start" | "update" | "end";
+
+// Seconds, matching the relay's STALE_AFTER_SECONDS: a card whose pushes stop
+// degrades to "out of date" instead of looking alive forever.
+const LIVE_ACTIVITY_STALE_AFTER_SECONDS = 10 * 60;
+const LIVE_ACTIVITY_DISMISS_AFTER_SECONDS = 2 * 60;
+
 export class DirectApnsClient extends Context.Service<
   DirectApnsClient,
   {
@@ -84,6 +91,17 @@ export class DirectApnsClient extends Context.Service<
     readonly send: (input: {
       readonly device: StoredPushDevice;
       readonly notification: DirectApnsNotification;
+    }) => Effect.Effect<DirectApnsSendResult>;
+    readonly sendLiveActivity: (input: {
+      readonly target: {
+        readonly apsEnvironment: StoredPushDevice["apsEnvironment"];
+        readonly bundleId: string;
+        readonly deviceId: string;
+      };
+      readonly token: string;
+      readonly event: LiveActivityEvent;
+      readonly content: DirectLiveActivityContent;
+      readonly alert?: { readonly title: string; readonly body: string };
     }) => Effect.Effect<DirectApnsSendResult>;
   }
 >()("t3/relay/DirectApnsClient") {}
@@ -214,18 +232,24 @@ const make = Effect.gen(function* () {
     });
   });
 
-  const send: DirectApnsClient["Service"]["send"] = Effect.fn("DirectApnsClient.send")(function* ({
-    device,
-    notification,
-  }) {
+  const deliver = Effect.fnUntraced(function* (input: {
+    readonly target: {
+      readonly apsEnvironment: StoredPushDevice["apsEnvironment"];
+      readonly deviceId: string;
+    };
+    readonly token: string;
+    readonly headers: Readonly<Record<string, string>>;
+    readonly body: unknown;
+    readonly nowSeconds: number;
+  }): Effect.fn.Return<DirectApnsSendResult, never, never> {
+    const { target } = input;
     const credentials = yield* readCredentials;
     if (Option.isNone(credentials)) {
       yield* Effect.logDebug("direct APNs push skipped; credentials not configured");
       return { outcome: "unconfigured" } as const;
     }
-    const nowSeconds = Math.floor((yield* Clock.currentTimeMillis) / 1_000);
     const jwt = yield* Effect.try({
-      try: () => providerTokens.getJwt(credentials.value, nowSeconds),
+      try: () => providerTokens.getJwt(credentials.value, input.nowSeconds),
       catch: (cause) => new DirectApnsTransportError({ cause }),
     }).pipe(Effect.option);
     if (Option.isNone(jwt)) {
@@ -237,38 +261,19 @@ const make = Effect.gen(function* () {
         // The token's own environment decides the host: a dev build and a
         // store build can both be registered with one server.
         origin:
-          device.apsEnvironment === "production" ? APNS_PRODUCTION_ORIGIN : APNS_SANDBOX_ORIGIN,
-        path: `/3/device/${device.apnsToken}`,
+          target.apsEnvironment === "production" ? APNS_PRODUCTION_ORIGIN : APNS_SANDBOX_ORIGIN,
+        path: `/3/device/${input.token}`,
         headers: {
           authorization: `bearer ${jwt.value}`,
-          "apns-push-type": "alert",
-          "apns-topic": device.bundleId,
-          "apns-priority": "10",
           "content-type": "application/json",
+          ...input.headers,
         },
-        body: encodeJson({
-          aps: {
-            alert: { title: notification.title, body: notification.body },
-            sound: "default",
-            "thread-id":
-              notification.threadId.length > 0
-                ? `${notification.environmentId}/${notification.threadId}`
-                : "t3-agent-alerts",
-          },
-          // Expo iOS exposes userInfo.body as notification.content.data.
-          body: {
-            environmentId: notification.environmentId,
-            threadId: notification.threadId,
-            deepLink: notification.deepLink,
-            phase: notification.phase,
-            updatedAt: notification.updatedAt,
-          },
-        }),
+        body: encodeJson(input.body),
       })
       .pipe(Effect.option);
     if (Option.isNone(response)) {
       yield* Effect.logWarning("direct APNs push failed in transport", {
-        deviceId: device.deviceId,
+        deviceId: target.deviceId,
       });
       return { outcome: "error", removeToken: false } as const;
     }
@@ -276,7 +281,7 @@ const make = Effect.gen(function* () {
     if (status >= 200 && status < 300) return { outcome: "sent" } as const;
     const reason = reasonFromBody(body);
     yield* Effect.logWarning("direct APNs push rejected", {
-      deviceId: device.deviceId,
+      deviceId: target.deviceId,
       status,
       reason,
     });
@@ -290,9 +295,91 @@ const make = Effect.gen(function* () {
     } as const;
   });
 
+  const send: DirectApnsClient["Service"]["send"] = Effect.fn("DirectApnsClient.send")(function* ({
+    device,
+    notification,
+  }) {
+    return yield* deliver({
+      target: device,
+      token: device.apnsToken,
+      nowSeconds: Math.floor((yield* Clock.currentTimeMillis) / 1_000),
+      headers: {
+        "apns-push-type": "alert",
+        "apns-topic": device.bundleId,
+        "apns-priority": "10",
+      },
+      body: {
+        aps: {
+          alert: { title: notification.title, body: notification.body },
+          sound: "default",
+          "thread-id":
+            notification.threadId.length > 0
+              ? `${notification.environmentId}/${notification.threadId}`
+              : "t3-agent-alerts",
+        },
+        // Expo iOS exposes userInfo.body as notification.content.data.
+        body: {
+          environmentId: notification.environmentId,
+          threadId: notification.threadId,
+          deepLink: notification.deepLink,
+          phase: notification.phase,
+          updatedAt: notification.updatedAt,
+        },
+      },
+    });
+  });
+
+  const sendLiveActivity: DirectApnsClient["Service"]["sendLiveActivity"] = Effect.fn(
+    "DirectApnsClient.sendLiveActivity",
+  )(function* ({ target, token, event, content, alert }) {
+    const nowSeconds = Math.floor((yield* Clock.currentTimeMillis) / 1_000);
+    const urgent =
+      event !== "update" ||
+      alert !== undefined ||
+      content.activities.some(
+        (row) => row.phase === "waiting_for_approval" || row.phase === "waiting_for_input",
+      );
+    return yield* deliver({
+      target,
+      token,
+      nowSeconds,
+      headers: {
+        "apns-push-type": "liveactivity",
+        "apns-topic": `${target.bundleId}.push-type.liveactivity`,
+        "apns-priority": urgent ? "10" : "5",
+      },
+      body: {
+        aps: {
+          timestamp: nowSeconds,
+          event,
+          // expo-widgets' ActivityKit ContentState: the widget name plus the
+          // layout props as a JSON string, exactly what LiveActivity.update writes.
+          "content-state": { name: "AgentActivity", props: encodeJson(content) },
+          ...(event === "end"
+            ? { "dismissal-date": nowSeconds + LIVE_ACTIVITY_DISMISS_AFTER_SECONDS }
+            : { "stale-date": nowSeconds + LIVE_ACTIVITY_STALE_AFTER_SECONDS }),
+          // iOS silently drops a push-to-start that carries no alert.
+          ...(event === "start"
+            ? {
+                "attributes-type": "LiveActivityAttributes",
+                attributes: {},
+                // Without this iOS never issues an update token for a push-started card.
+                "input-push-token": 1,
+                alert: { title: content.title, body: content.subtitle },
+              }
+            : {}),
+          // An alert on an update or end wakes the screen and expands the island,
+          // like the relay's pushes, instead of redrawing silently.
+          ...(event !== "start" && alert ? { alert: { ...alert, sound: "default" } } : {}),
+        },
+      },
+    });
+  });
+
   return DirectApnsClient.of({
     isConfigured: readCredentials.pipe(Effect.map(Option.isSome)),
     send,
+    sendLiveActivity,
   });
 });
 

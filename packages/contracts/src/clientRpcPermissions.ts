@@ -24,6 +24,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // Registering a device only asks this server to alert it about threads its grant can already read.
   [WS_METHODS.notificationsRegisterDevice]: AuthOrchestrationReadScope,
   [WS_METHODS.notificationsUnregisterDevice]: AuthOrchestrationReadScope,
+  [WS_METHODS.notificationsRegisterLiveActivity]: AuthOrchestrationReadScope,
+  [WS_METHODS.notificationsUnregisterLiveActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
   // Restarts the server, as an update does.
   [WS_METHODS.serverReclaimDatabaseSpace]: AuthEnvironmentMaintainScope,
