@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   createProviderWorkspaceSnapshotRefreshAtomFamily,
   getProviderSkillsForSlashMenu,
+  getProviderSlashCommandsForSlashMenu,
   hasCompleteProviderWorkspaceSnapshot,
   isProviderWorkspaceSnapshotScanning,
   resolveProviderSkillsForCwd,
@@ -82,6 +83,22 @@ describe("getProviderSkillsForSlashMenu", () => {
     ];
 
     expect(getProviderSkillsForSlashMenu(skills, true)).toEqual([enabledSkill]);
+  });
+});
+
+describe("getProviderSlashCommandsForSlashMenu", () => {
+  it("drops native commands that duplicate an enabled skill or its alias", () => {
+    const skills = [
+      { name: "pstack:bro", path: "/plugins/pstack/skills/bro/SKILL.md", enabled: true },
+      { name: "boat", slashCommandName: "sandbox", path: "/skills/boat/SKILL.md", enabled: true },
+      { name: "off", path: "/skills/off/SKILL.md", enabled: false },
+    ];
+    expect(
+      getProviderSlashCommandsForSlashMenu(
+        [{ name: "pstack:bro" }, { name: "Sandbox" }, { name: "off" }, { name: "compact" }],
+        skills,
+      ).map((command) => command.name),
+    ).toEqual(["off", "compact"]);
   });
 });
 
