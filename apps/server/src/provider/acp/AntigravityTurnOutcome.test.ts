@@ -158,12 +158,15 @@ describe("watchAntigravityPromptOutcome", () => {
             [TOOL, reply],
             [ERROR_MESSAGE, error],
           ]),
-          reusable({
-            class: "provider_error",
-            message: "Requested entity was not found.",
-            code: "NOT_FOUND",
-            retryable: true,
-          }),
+          {
+            ...reusable({
+              class: "provider_error",
+              message: "Requested entity was not found.",
+              code: "NOT_FOUND",
+              retryable: true,
+            }),
+            resumeWith: "continue",
+          },
         );
       }
       // A 404 before the model answered is an unknown or unentitled model.

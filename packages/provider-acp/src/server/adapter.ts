@@ -368,6 +368,8 @@ export function acpPerTurnPromptUsage(
 interface AcpPromptOutcomeFailure {
   readonly failure: OrchestrationV2ProviderFailure;
   readonly threadDisposition: "reusable" | "broken";
+  /** The native session can carry on: the turn resends this prompt once before failing. */
+  readonly resumeWith?: string;
 }
 
 export interface AcpAdapterV2Flavor {
@@ -1670,6 +1672,8 @@ interface ActiveAcpTurn {
   foregroundIdle: Deferred.Deferred<void>;
   /** Counts the turn's prompts; only the latest one settles the turn. */
   promptSequence: number;
+  /** The turn already resent a prompt after a resumable outcome failure. */
+  outcomeResumed: boolean;
   /** Clock millis just before `session/prompt` was handed to the runtime. */
   promptSentAt: number | null;
   /** Completed when an update after dispatch matches `cancelAfterPromptStarts.isStart`. */
@@ -8967,7 +8971,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             readonly promptParts: Effect.Success<ReturnType<typeof resolvePromptParts>> | null;
             readonly compactSession: AcpAdapterV2Flavor["compactSession"];
           },
-        ) => {
+        ): Effect.Effect<void> => {
           const sequence = ++context.promptSequence;
           const superseded = () => context.promptSequence !== sequence;
           return prompt(superseded).pipe(
@@ -9034,6 +9038,43 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     result.stopReason === "cancelled"
                       ? undefined
                       : yield* settle.checkPromptOutcome(result);
+                  const resumeWith = hiddenFailure?.resumeWith;
+                  if (
+                    hiddenFailure !== undefined &&
+                    resumeWith !== undefined &&
+                    steersWithPrompt &&
+                    !context.outcomeResumed
+                  ) {
+                    context.outcomeResumed = true;
+                    yield* reportProviderRetry({
+                      sessionId: context.nativeThreadId,
+                      failure: hiddenFailure.failure,
+                    });
+                    yield* steerWithPrompt({
+                      threadId: context.input.threadId,
+                      runId: context.input.runId,
+                      providerThread: context.input.providerThread,
+                      providerTurnId: context.providerTurnId,
+                      message: { ...context.input.message, text: resumeWith, attachments: [] },
+                    }).pipe(
+                      Effect.catchCause(() =>
+                        runRuntimeCallbackAtGeneration(
+                          settle.generation,
+                          Effect.gen(function* () {
+                            if (context.finalized || context.interrupted) return;
+                            yield* Ref.set(runtimeRestartRequired, true);
+                            yield* terminalizeOpenForegroundTools(context, "failed");
+                            yield* finalizeTurn(context, "failed", hiddenFailure.failure, {
+                              childTurnsContinue: hasSurvivingBackgroundWork(context),
+                              threadDisposition: hiddenFailure.threadDisposition,
+                            });
+                          }),
+                        ),
+                      ),
+                      Effect.forkIn(sessionScope),
+                    );
+                    return;
+                  }
                   if (hiddenFailure !== undefined) {
                     yield* Ref.set(runtimeRestartRequired, true);
                   }
@@ -9312,6 +9353,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               promptDispatched,
               foregroundIdle: yield* Deferred.make<void>(),
               promptSequence: 0,
+              outcomeResumed: false,
               promptSentAt: null,
               promptStarted,
               promptUsage: undefined,

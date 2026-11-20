@@ -133,6 +133,7 @@ function turnFailure(
   | {
       readonly failure: OrchestrationV2ProviderFailure;
       readonly threadDisposition: "reusable" | "broken";
+      readonly resumeWith?: string;
     }
   | undefined {
   const errorText =
@@ -180,15 +181,16 @@ function turnFailure(
   const rateLimited = httpStatus === "429" || status === "RESOURCE_EXHAUSTED";
   // A 404 before the model answered is an unknown or unentitled model; after, a transient edge error.
   const transientNotFound = httpStatus === "404" && step?.reachedModel === true;
-  return reusable(
-    makeProviderFailure({
-      class: rateLimited ? "usage_limit" : "provider_error",
-      message: message!.trim(),
-      code: status ?? null,
-      retryable: rateLimited || transientNotFound || Number(httpStatus) >= 500,
-      resetAt: resetAtFrom(text, now) ?? null,
-    }),
-  );
+  const failure = makeProviderFailure({
+    class: rateLimited ? "usage_limit" : "provider_error",
+    message: message!.trim(),
+    code: status ?? null,
+    retryable: rateLimited || transientNotFound || Number(httpStatus) >= 500,
+    resetAt: resetAtFrom(text, now) ?? null,
+  });
+  return transientNotFound
+    ? { failure, threadDisposition: "reusable", resumeWith: "continue" }
+    : reusable(failure);
 }
 
 const conversationSegments = ["antigravity-acp", "conversations"];
