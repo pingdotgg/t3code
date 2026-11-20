@@ -4227,6 +4227,15 @@
   "f6f962de62b3e462": "Pregunta lo que quieras",
   "64338d507e708bef": "El contenido compartido ya no está en la bandeja de entrada. Puedes seguir editando este borrador de tarea.",
   "c5b11890aa7f406f": "¿En qué trabajamos?",
+  "39a92e68dd2bf6cc": [
+    "Tu borrador está guardado en este dispositivo. ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " no tiene ningún modelo disponible. Instala un proveedor o inicia sesión en uno allí para elegir uno."
+  ],
   "3a3930717d8d73b4": "Tu borrador está guardado en este dispositivo. Conéctate a un entorno para elegir su primer modelo.",
   "8b53cd9e9e107f7c": "Añade un entorno antes de crear una tarea.",
   "b369a312b533f975": "Cargando proyectos del entorno guardado.",

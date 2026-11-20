@@ -564,13 +564,6 @@ export const make: Effect.Effect<
       stdin: input.stdin,
     }).pipe(Effect.asVoid);
 
-  /** A write names its work item by id alone, so the item is first read to be the scope's own. */
-  const owned = (
-    operation: string,
-    cwd: string,
-    scope: { readonly organization: string; readonly project: string; readonly number: number },
-  ) => workItem({ ...scope, cwd, operation, closed: new Set() }).pipe(Effect.as(scope));
-
   /** Azure keeps tags as one `; `-joined field and takes exactly one assignee. */
   const fieldArgs = (
     operation: string,
@@ -594,9 +587,7 @@ export const make: Effect.Effect<
         refused(operation, "Azure DevOps takes no label or assignee that starts with `@`."),
       );
     }
-    return Effect.succeed(
-      fields.length === 0 ? [] : ["--fields", ...fields.map(([name, value]) => `${name}=${value}`)],
-    );
+    return Effect.succeed(fields.map(([name, value]) => `${name}=${value}`));
   };
 
   return {
@@ -792,7 +783,7 @@ export const make: Effect.Effect<
                   type,
                   title.arg,
                   ...(body === undefined || bodyFollows ? [] : [body.arg]),
-                  ...fields,
+                  ...(fields.length === 0 ? [] : ["--fields", ...fields]),
                 ],
                 stdin: title.stdin ?? body?.stdin,
                 decode: (raw) => decodeWorkItemJson(raw, closed),
@@ -840,43 +831,61 @@ export const make: Effect.Effect<
         Effect.asVoid,
       ),
 
-    update: (input) => {
-      const texts = [
-        ...(input.title === undefined ? [] : [AzureDevOpsCli.textOption("--title", input.title)]),
-        ...(input.body === undefined
-          ? []
-          : [AzureDevOpsCli.textOption("--description", input.body)]),
-      ];
-      // az has one stdin, so each value read from it needs its own call.
-      const batches =
-        texts.filter((text) => text.stdin !== undefined).length > 1
-          ? texts.map((text) => [text])
-          : [texts];
-      return target("update", input).pipe(
+    update: (input) =>
+      target("update", input).pipe(
         Effect.flatMap((scope) =>
           fieldArgs("update", input).pipe(Effect.map((fields) => ({ scope, fields }))),
         ),
-        Effect.tap(({ scope }) => owned("update", input.cwd, scope)),
+        // `az` names a work item by id alone, so the read proves the item is the scope's own; it
+        // also names the field the item keeps its text in.
         Effect.flatMap(({ scope, fields }) =>
-          Effect.forEach(
+          workItem({ ...scope, cwd: input.cwd, operation: "update", closed: new Set() }).pipe(
+            Effect.map((item) => ({ scope, fields, bodyField: item.bodyField })),
+          ),
+        ),
+        Effect.flatMap(({ scope, fields, bodyField }) => {
+          const texts = [
+            ...(input.title === undefined
+              ? []
+              : [{ ...AzureDevOpsCli.textOption("--title", input.title), field: false }]),
+            ...(input.body === undefined
+              ? []
+              : bodyField === "System.Description"
+                ? [{ ...AzureDevOpsCli.textOption("--description", input.body), field: false }]
+                : [{ ...AzureDevOpsCli.textOption(bodyField, input.body), field: true }]),
+          ];
+          // az has one stdin, so each value read from it needs its own call.
+          const batches =
+            texts.filter((text) => text.stdin !== undefined).length > 1
+              ? texts.map((text) => [text])
+              : [texts];
+          return Effect.forEach(
             batches,
-            (batch, index) =>
-              update({
+            (batch, index) => {
+              // az keeps only the last `--fields`, so every field of a call goes in one.
+              const pairs = [
+                ...(index === 0 ? fields : []),
+                ...batch.flatMap((text) => (text.field ? [text.arg] : [])),
+              ];
+              return update({
                 ...scope,
                 cwd: input.cwd,
                 operation: "update",
-                args: [...batch.map((text) => text.arg), ...(index === 0 ? fields : [])],
+                args: [
+                  ...batch.flatMap((text) => (text.field ? [] : [text.arg])),
+                  ...(pairs.length === 0 ? [] : ["--fields", ...pairs]),
+                ],
                 stdin: batch.find((text) => text.stdin !== undefined)?.stdin,
-              }),
+              });
+            },
             { discard: true },
-          ),
-        ),
-      );
-    },
+          );
+        }),
+      ),
 
     setState: (input) =>
       target("setState", input).pipe(
-        // The read also proves the item is the scope's own, as `owned` does for other writes.
+        // `az` names a work item by id alone, so the read also proves the item is the scope's own.
         Effect.flatMap((scope) =>
           workItem({ ...scope, cwd: input.cwd, operation: "setState", closed: new Set() }).pipe(
             Effect.flatMap((item) =>
