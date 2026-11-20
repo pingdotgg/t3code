@@ -2,6 +2,7 @@ import { msg } from "gt-i18n";
 import { translatableDetail } from "../errors/translatable.ts";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
@@ -97,6 +98,10 @@ export class EnvironmentRegistry extends Context.Service<
   EnvironmentRegistry,
   {
     readonly entries: SubscriptionRef.SubscriptionRef<
+      ReadonlyMap<EnvironmentId, ConnectionCatalogEntry>
+    >;
+    /** Catalog snapshots starting after the first successful platform reconciliation. */
+    readonly entriesAfterPlatformDiscovery: Stream.Stream<
       ReadonlyMap<EnvironmentId, ConnectionCatalogEntry>
     >;
     readonly networkStatus: SubscriptionRef.SubscriptionRef<NetworkStatus>;
@@ -270,6 +275,7 @@ export const make = Effect.gen(function* () {
   );
   const entries =
     yield* SubscriptionRef.make<ReadonlyMap<EnvironmentId, ConnectionCatalogEntry>>(initialEntries);
+  const platformReconciled = yield* Deferred.make<void>();
   const networkStatus = yield* SubscriptionRef.make(yield* connectivity.status);
   const serviceScopes = yield* SubscriptionRef.make<
     ReadonlyMap<EnvironmentId, EnvironmentServiceScope>
@@ -857,6 +863,7 @@ export const make = Effect.gen(function* () {
     appliedPlatformRegistrations = undefined;
     if (yield* applyPlatformRegistrations(platformRegistrations)) {
       appliedPlatformRegistrations = platformRegistrations;
+      yield* Deferred.succeed(platformReconciled, undefined);
     }
   }, reconcileLock.withPermits(1));
 
@@ -1196,6 +1203,9 @@ export const make = Effect.gen(function* () {
 
   return EnvironmentRegistry.of({
     entries,
+    entriesAfterPlatformDiscovery: Stream.unwrap(
+      Deferred.await(platformReconciled).pipe(Effect.as(SubscriptionRef.changes(entries))),
+    ),
     networkStatus,
     start,
     register,

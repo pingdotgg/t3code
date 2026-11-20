@@ -129,6 +129,7 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
     entries: yield* SubscriptionRef.make<ReadonlyMap<EnvironmentId, ConnectionCatalogEntry>>(
       new Map(),
     ),
+    entriesAfterPlatformDiscovery: Stream.empty,
     networkStatus: yield* SubscriptionRef.make<NetworkStatus>("online"),
     start: Effect.void,
     register: () => Effect.die("Unexpected environment registration"),

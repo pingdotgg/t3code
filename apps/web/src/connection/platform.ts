@@ -673,7 +673,7 @@ const layerPlatformConnectionSource = Layer.effect(
   Effect.gen(function* () {
     if (isHostedStaticApp() || isLocalEnvironmentDisabled()) {
       return PlatformConnectionSource.PlatformConnectionSource.of({
-        registrations: Stream.empty,
+        registrations: Stream.succeed([]),
       });
     }
     const cacheRef = yield* Ref.make(new Map<string, CachedPlatformRegistration>());

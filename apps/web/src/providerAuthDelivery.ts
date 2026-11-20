@@ -5,7 +5,7 @@ import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { msg } from "gt-react";
 
 import { toastManager } from "./components/ui/toast";
-import { environmentCatalog } from "./connection/catalog";
+import { entriesAfterPlatformDiscoveryAtom } from "./connection/catalog";
 import { m } from "./i18n/messages";
 import { appAtomRegistry } from "./rpc/atomRegistry";
 import { environmentPresentations } from "./state/presentation";
@@ -33,17 +33,19 @@ export function startProviderAuthDelivery(): void {
 
 async function completeProviderAuth(delivery: ProviderAuthDelivery): Promise<void> {
   const presentationAtom = environmentPresentations.presentationAtom(delivery.environmentId);
-  const destinationAtom = Atom.make((get) =>
-    AsyncResult.flatMap(get(environmentCatalog.catalogAtom), ({ isReady }) => {
-      // The first catalog value is a placeholder until saved environments have loaded.
-      if (!isReady) return AsyncResult.initial();
-      const presentation = get(presentationAtom);
-      if (presentation === null) return AsyncResult.success("missing");
-      return presentation.connection.phase === "connected"
-        ? AsyncResult.success("connected")
-        : AsyncResult.initial();
-    }),
-  );
+  const destinationAtom = Atom.make((get) => {
+    const presentation = get(presentationAtom);
+    if (presentation === null) {
+      return AsyncResult.flatMap(get(entriesAfterPlatformDiscoveryAtom), (entries) =>
+        entries.has(delivery.environmentId)
+          ? AsyncResult.initial()
+          : AsyncResult.success("missing"),
+      );
+    }
+    return presentation.connection.phase === "connected"
+      ? AsyncResult.success("connected")
+      : AsyncResult.initial();
+  });
 
   try {
     const destination = await Effect.runPromise(
