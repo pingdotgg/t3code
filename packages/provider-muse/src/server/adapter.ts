@@ -104,8 +104,36 @@ import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/sel
 import { museItemStatus, museToolPresentation } from "./itemPresentation.ts";
 
 const MUSE_PROVIDER = ProviderDriverKind.make("muse");
+const MUSE_MSP_FRAME_LIMIT_BYTES = 10 * 1024 * 1024;
 const isOpenSessionError = Schema.is(ProviderAdapter.ProviderAdapterOpenSessionError);
 const isProtocolError = Schema.is(ProviderAdapter.ProviderAdapterProtocolError);
+
+function museTurnStartImagesFit(
+  params: Record<string, unknown> & Pick<SendUserTurnOptions<unknown>, "input">,
+  sessionId: string | undefined,
+  commandId: string,
+): boolean {
+  let imageBytes = 0;
+  const input = params.input.map((part) => {
+    if (part.type !== "image" || part.base64Data === undefined) return part;
+    // The base64 alphabet needs no JSON escaping and uses one byte per character.
+    imageBytes += part.base64Data.length;
+    return { ...part, base64Data: "" };
+  });
+  if (imageBytes === 0) return true;
+  if (imageBytes > MUSE_MSP_FRAME_LIMIT_BYTES) return false;
+
+  // Reserve room for the SDK's increasing numeric request id, including retries.
+  const frameOverhead = Buffer.byteLength(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: Number.MAX_SAFE_INTEGER,
+      method: "turn/start",
+      params: { ...(sessionId ? { sessionId } : {}), ...params, input, commandId },
+    }),
+  );
+  return imageBytes + frameOverhead <= MUSE_MSP_FRAME_LIMIT_BYTES;
+}
 
 const MuseProviderCapabilitiesV2 = {
   runtimePolicy: { enforcement: "native" },
@@ -2098,13 +2126,44 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         const targetModel = continuation
           ? undefined
           : yield* resolveModel(turnInput.modelSelection);
+        const nativeId = adopted?.nativeId ?? host.connection.mintCommandId();
+        const turnStartParams =
+          compact || continuation
+            ? null
+            : {
+                input: [
+                  {
+                    type: "text" as const,
+                    text: buildRuntimeInstructions({
+                      harness: "Muse Code",
+                      model: targetModel ?? session.model ?? undefined,
+                      reasoningEffort: effort,
+                    }),
+                  },
+                  ...parts,
+                ],
+                displayText: turnInput.message.text || "Image attachment",
+                // Resumed sessions retain old roots; pin edits to the current checkout.
+                workspaceRoots: [workspaceRoot],
+                ifBusy: "queue",
+                ...(effort ? { reasoningEffort: effort } : {}),
+              };
+        if (
+          turnStartParams &&
+          !museTurnStartImagesFit(turnStartParams, nativeSessionId, nativeId)
+        ) {
+          return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+            driver: MUSE_PROVIDER,
+            detail: "Muse turn/start image request exceeds the MSP frame limit",
+            reason: "image_request_too_large",
+          });
+        }
         if (targetModel && session.model !== targetModel) {
           yield* request("session/setModel", {
             model: { modelId: targetModel, providerId: "meta" },
           });
           session = { ...session, model: targetModel };
         }
-        const nativeId = adopted?.nativeId ?? host.connection.mintCommandId();
         const startedAt = yield* DateTime.now;
         const providerTurn: OrchestrationV2ProviderTurn = {
           id: idAllocator.derive.providerTurn({
@@ -2164,7 +2223,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         }).pipe(eventPermit.withPermits(1));
         if (continuation) return;
         yield* Effect.gen(function* () {
-          if (compact) {
+          if (turnStartParams === null) {
             // The turn's terminal reports a declined compaction; only a broken host fails the command.
             const declined = yield* request("session/compact", {}, true, nativeId).pipe(
               Effect.flatMap((value) => decode(MuseCompactResult, value)),
@@ -2180,29 +2239,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             if (declined !== undefined)
               yield* eventPermit.withPermits(1)(finish(turn, "failed", declined));
           } else {
-            const result = yield* request(
-              "turn/start",
-              {
-                input: [
-                  {
-                    type: "text",
-                    text: buildRuntimeInstructions({
-                      harness: "Muse Code",
-                      model: session.model ?? undefined,
-                      reasoningEffort: effort,
-                    }),
-                  },
-                  ...parts,
-                ],
-                displayText: turnInput.message.text || "Image attachment",
-                // Resumed sessions retain old roots; pin edits to the current checkout.
-                workspaceRoots: [workspaceRoot],
-                ifBusy: "queue",
-                ...(effort ? { reasoningEffort: effort } : {}),
-              },
-              true,
-              nativeId,
-            ).pipe(Effect.flatMap((value) => decode(MuseTurnStartResult, value)));
+            const result = yield* request("turn/start", turnStartParams, true, nativeId).pipe(
+              Effect.flatMap((value) => decode(MuseTurnStartResult, value)),
+            );
             if (result.turnId !== nativeId) {
               yield* eventPermit.withPermits(1)(
                 failHost(new Error("Muse admitted an unowned turn")),
