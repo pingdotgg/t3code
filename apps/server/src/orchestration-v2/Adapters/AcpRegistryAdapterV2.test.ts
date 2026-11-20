@@ -15,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 import { pendingBackgroundTurnItems } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { resolveSelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
+import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as DateTime from "effect/DateTime";
@@ -2828,6 +2829,143 @@ describe("AcpRegistryAdapterV2", () => {
         text("replacement-more"),
         { type: "Text", text: "replacement-morePATCH" },
       ]);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("shows an unnamed html_render call only for a page this thread published", () =>
+    Effect.gen(function* () {
+      const { update } = claudeFrames;
+      // Droid 1.14 script-mode calls are titled "Tool" with no MCP name or _meta.
+      const args = { html: "<p>ACP render test</p>", title: "ACP render test", height: 160 };
+      const page = {
+        attachmentId: "thread-claude-lifecycle-page-html",
+        title: args.title,
+        height: 160,
+      };
+      const failedPage = { ...page, attachmentId: "thread-claude-lifecycle-failed-html" };
+      const blockPage = { ...page, attachmentId: "thread-claude-lifecycle-block-html" };
+      const resultText = (reference: typeof page) => JSON.stringify({ htmlRender: reference });
+      const readPage = { ...page, attachmentId: "thread-claude-lifecycle-read-html" };
+      const laterFailedPage = { ...page, attachmentId: "thread-claude-lifecycle-later-html" };
+      const failedStatusPage = { ...page, attachmentId: "thread-claude-lifecycle-status-html" };
+      const monitorPage = { ...page, attachmentId: "thread-claude-lifecycle-monitor-html" };
+      const droidCall = (
+        toolCallId: string,
+        completion: Record<string, unknown>,
+        start: Record<string, unknown> = {},
+      ) => [
+        update(CLAUDE_ROOT_SESSION, {
+          sessionUpdate: "tool_call_update",
+          toolCallId,
+          title: "Tool",
+          kind: "other",
+          status: "pending",
+          rawInput: args,
+          ...start,
+        }),
+        update(CLAUDE_ROOT_SESSION, {
+          sessionUpdate: "tool_call_update",
+          toolCallId,
+          status: "completed",
+          ...completion,
+        }),
+      ];
+      const session = yield* openClaudeReplaySession([
+        ...claudeFrames.open,
+        ...claudeFrames.prompt(1),
+        ...droidCall("droid-unpublished", {
+          rawOutput: { text: resultText({ ...page, attachmentId: "thread-other-page-html" }) },
+        }),
+        ...droidCall("droid-render", { rawOutput: { text: resultText(page) } }),
+        // A repeated completion with new _meta and an unpublished page keeps the claimed page.
+        update(CLAUDE_ROOT_SESSION, {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "droid-render",
+          status: "completed",
+          rawOutput: { text: resultText({ ...page, attachmentId: "thread-other-page-html" }) },
+          _meta: { unrelated: true },
+        }),
+        ...droidCall("droid-failed", {
+          rawOutput: { result: { isError: true, structuredContent: { htmlRender: failedPage } } },
+        }),
+        ...droidCall("droid-content-block", {
+          content: [{ type: "content", content: { type: "text", text: resultText(blockPage) } }],
+        }),
+        ...droidCall("droid-read", { rawOutput: { text: resultText(readPage) } }, { kind: "read" }),
+        ...droidCall(
+          "droid-monitor",
+          { rawOutput: { text: resultText(monitorPage) } },
+          { rawInput: { ...args, variant: "monitor" } },
+        ),
+        ...droidCall("droid-later-failure", { rawOutput: { text: resultText(laterFailedPage) } }),
+        update(CLAUDE_ROOT_SESSION, {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "droid-later-failure",
+          status: "completed",
+          rawOutput: { result: { isError: true } },
+        }),
+        ...droidCall("droid-failed-status", { rawOutput: { text: resultText(failedStatusPage) } }),
+        update(CLAUDE_ROOT_SESSION, {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "droid-failed-status",
+          status: "failed",
+        }),
+        claudeMarker("tools complete"),
+        claudeFrames.idle("end_turn"),
+        claudeFrames.closeRequest,
+        claudeFrames.closed,
+      ]);
+      const input = session.turnInput(1);
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      for (const published of [
+        page,
+        failedPage,
+        blockPage,
+        readPage,
+        laterFailedPage,
+        failedStatusPage,
+        monitorPage,
+      ]) {
+        yield* mcpSessions.recordHtmlRender(input.threadId, args, published);
+      }
+      yield* session.runtime.startTurn(input);
+      const events = yield* session.throughMarker("tools complete");
+      const lastItem = (nativeId: string) =>
+        events
+          .flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.nativeItemRef?.nativeId === nativeId
+              ? [event.turnItem]
+              : [],
+          )
+          .at(-1);
+      for (const [nativeId, expected] of [
+        ["droid-render", page],
+        ["droid-content-block", blockPage],
+      ] as const) {
+        const rendered = lastItem(nativeId);
+        assert.equal(rendered?.toolName, "t3-code.html_render");
+        assert.deepEqual(
+          rendered === undefined ? undefined : htmlRenderFromToolItem(rendered),
+          expected,
+        );
+      }
+      for (const nativeId of ["droid-unpublished", "droid-failed", "droid-later-failure"]) {
+        const generic = lastItem(nativeId);
+        assert.equal(generic?.status, "completed");
+        assert.notEqual(generic?.toolName, "t3-code.html_render", nativeId);
+      }
+      assert.equal(lastItem("droid-read")?.toolName, "Read");
+      const failedStatus = lastItem("droid-failed-status");
+      assert.equal(failedStatus?.status, "failed");
+      assert.notEqual(failedStatus?.toolName, "t3-code.html_render");
+      // The monitor keeps its command row and leaves the page for the real render call.
+      assert.equal(lastItem("droid-monitor"), undefined);
+      assert.deepEqual(
+        yield* mcpSessions.takeHtmlRender(input.threadId, {}, monitorPage),
+        monitorPage,
+      );
     }).pipe(Effect.provide(layerTest)),
   );
 

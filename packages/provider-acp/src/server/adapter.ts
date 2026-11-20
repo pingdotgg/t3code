@@ -35,7 +35,7 @@ import {
   type TurnTokenUsage,
 } from "@t3tools/contracts";
 import { AgentScope, AgentScopeThreadId } from "@t3tools/shared/AgentScope";
-import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
+import { HTML_RENDER_TOOL_NAME, type HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { type SelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
 import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
@@ -1624,6 +1624,7 @@ interface ActiveAcpTurn {
   readonly stoppedToolCallIds: Set<string>;
   readonly toolUpdatesSkipped: Map<string, number>;
   readonly toolStartedAt: Map<string, DateTime.Utc>;
+  readonly recoveredHtmlRenders: Map<string, HtmlRenderReference>;
   readonly subagents: Map<string, ActiveAcpSubagent>;
   readonly subagentsBySessionId: Map<string, ActiveAcpSubagent>;
   readonly pendingSubagentNotifications: Map<string, Array<EffectAcpSchema.SessionNotification>>;
@@ -4621,6 +4622,31 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               toolCall.toolCallId,
             ),
           });
+          // Some agents (Droid in script mode) report T3 calls with no MCP name or _meta; only a
+          // page this thread published identifies the call. Reads, commands and failures keep their rows.
+          const unnamedRender =
+            mcpIdentity === undefined &&
+            status === "completed" &&
+            (toolCall.kind ?? "other") === "other" &&
+            !projectAsCommandExecution &&
+            compactDynamicToolOutput(rawOutput)?.isError !== true &&
+            compactDynamicToolOutput(rawOutputRecord?.result)?.isError !== true;
+          let recoveredPage = unnamedRender
+            ? context.recoveredHtmlRenders.get(toolCall.toolCallId)
+            : undefined;
+          if (unnamedRender && recoveredPage === undefined) {
+            const toolName = `t3-code.${HTML_RENDER_TOOL_NAME}`;
+            const reportedPage =
+              htmlRenderFromToolItem({ toolName, output: acpMcpToolCallOutput(rawOutput) }) ??
+              htmlRenderFromToolItem({ toolName, output: textFromUnknown(rawOutput) });
+            recoveredPage =
+              reportedPage === undefined
+                ? undefined
+                : yield* mcpSessions.takeHtmlRender(context.input.threadId, {}, reportedPage);
+            if (recoveredPage !== undefined) {
+              context.recoveredHtmlRenders.set(toolCall.toolCallId, recoveredPage);
+            }
+          }
           let turnItem: OrchestrationV2TurnItem;
           if (toolCall.toolCallId.startsWith("acp-compaction:")) {
             const summary =
@@ -4709,6 +4735,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* emitProviderEvent({ type: "turn_item.updated", driver, turnItem });
             yield* rearmDeferredFinalize(context);
             return;
+          } else if (recoveredPage !== undefined) {
+            turnItem = {
+              ...base,
+              title: null,
+              ...mcpToolPresentation({ serverName: "t3-code", toolName: HTML_RENDER_TOOL_NAME }),
+              type: "dynamic_tool",
+              toolName: `t3-code.${HTML_RENDER_TOOL_NAME}`,
+              input: rawInputRecord ?? {},
+              output: { htmlRender: recoveredPage },
+            };
           } else if (changes.length > 0) {
             turnItem = {
               ...base,
@@ -9292,6 +9328,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               stoppedToolCallIds: new Set(),
               toolUpdatesSkipped: new Map(),
               toolStartedAt: new Map(),
+              recoveredHtmlRenders: new Map(),
               subagents: new Map(),
               subagentsBySessionId: new Map(),
               pendingSubagentNotifications: new Map(),

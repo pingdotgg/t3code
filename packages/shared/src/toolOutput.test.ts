@@ -19,6 +19,8 @@ describe("compactDynamicToolOutput", () => {
       { structuredContent: JSON.parse(json), content: "Ignored alternative body" },
       [{ type: "text", text: json }],
       { content: [{ text: { text: json } }], isError: false },
+      // Factory Droid's ACP tool_call_update carries the MCP result as rawOutput { text }.
+      { text: json },
       json,
     ]) {
       expect(compactDynamicToolOutput(value)).toEqual(metadata);
@@ -86,6 +88,20 @@ describe("compactDynamicToolOutput", () => {
     expect(
       compactDynamicToolOutput([{ text: "{}" }, { text: JSON.stringify({ threadId: "second" }) }]),
     ).toBeUndefined();
+    // A text block that only looks like JSON keeps the first result data.
+    expect(
+      compactDynamicToolOutput([
+        { text: JSON.stringify({ text: "[INFO] done" }) },
+        { text: JSON.stringify({ threadId: "second" }) },
+      ]),
+    ).toBeUndefined();
+    // A later block's plain { text } stays opaque instead of spending the parse budget again.
+    expect(
+      compactDynamicToolOutput([
+        { text: JSON.stringify({ threadId: "first" }) },
+        { text: JSON.stringify({ text: "x".repeat(9_000) }) },
+      ]),
+    ).toEqual({ threadId: "first" });
   });
 
   it("keeps complete thread creation batches and rollback markers without row bodies", () => {
