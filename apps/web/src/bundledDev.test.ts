@@ -26,13 +26,17 @@ it("initializes React refresh before a shared UI chunk runs in bundled dev", asy
   try {
     await NodeFSP.mkdir(NodePath.join(root, "src/lib"), { recursive: true });
     await NodeFSP.writeFile(NodePath.join(root, "package.json"), '{"type":"module"}');
-    // Conn's bootError names the app through branding.ts, so the bundle needs it too.
+    // Conn's bootError names the app through branding.ts and draws Conn's copy and check
+    // glyphs, so the bundle needs those modules too.
+    await NodeFSP.mkdir(NodePath.join(root, "src/icons"), { recursive: true });
     for (const file of [
       "index.html",
       "src/bootstrap.ts",
       "src/lib/bootError.ts",
       "src/branding.ts",
       "src/branding.logic.ts",
+      "src/icons/glyphMarkup.ts",
+      "src/icons/glyphs.generated.ts",
     ]) {
       await NodeFSP.copyFile(new URL(`../${file}`, import.meta.url), NodePath.join(root, file));
     }

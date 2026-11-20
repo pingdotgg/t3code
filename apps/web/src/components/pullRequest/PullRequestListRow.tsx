@@ -48,7 +48,7 @@ export function PullRequestRowGlyph({
             isDraft={isDraft}
             {...(mergeability === undefined ? {} : { mergeability })}
             {...(baseBranch === undefined ? {} : { baseBranch })}
-            className="size-3 fill-background [stroke-width:2.5]"
+            className="size-3 stroke-background [paint-order:stroke] [stroke-width:3]"
           />
         </span>
       </span>

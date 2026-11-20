@@ -427,9 +427,8 @@ export function PullRequestReviewOutcomeAvatarBadge({
   return (
     <presentation.Icon
       aria-hidden
-      strokeWidth={3}
       className={cn(
-        "absolute -right-1 -bottom-1 size-3 text-background",
+        "absolute -right-1 -bottom-1 size-3 rounded-full bg-background",
         presentation.fillClassName,
         stale && "opacity-50",
       )}

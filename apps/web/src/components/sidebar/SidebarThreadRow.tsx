@@ -313,20 +313,20 @@ function SidebarThreadTooltip({
           <div className="flex min-w-0 items-center gap-2">
             <EnvironmentMachineIcon
               kind={environmentMachine}
-              className="size-3 shrink-0 stroke-muted-foreground"
+              className="size-3 shrink-0 text-muted-foreground"
             />
             <div className="min-w-0 truncate text-foreground/75">{environmentLabel}</div>
           </div>
         ) : null}
         {thread.branch ? (
           <div className="flex min-w-0 items-center gap-2">
-            <GitBranchIcon className="size-3 shrink-0 stroke-muted-foreground" />
+            <GitBranchIcon className="size-3 shrink-0 text-muted-foreground" />
             <MiddleTruncate value={thread.branch} className="flex" />
           </div>
         ) : null}
         {branchMismatch ? (
           <div className="flex min-w-0 items-start gap-2 text-warning">
-            <CircleAlertIcon aria-hidden className="mt-0.5 size-3 shrink-0 stroke-current" />
+            <CircleAlertIcon aria-hidden className="mt-0.5 size-3 shrink-0" />
             <div className="min-w-0 flex-1 wrap-break-word">
               <T>You're currently checked out on another branch.</T>
             </div>
@@ -356,7 +356,7 @@ function SidebarThreadTooltip({
         ) : null}
         {previousProviderNames.length > 0 ? (
           <div className="flex min-w-0 items-center gap-2">
-            <ArrowRightLeftIcon className="size-3 shrink-0 stroke-muted-foreground" />
+            <ArrowRightLeftIcon className="size-3 shrink-0 text-muted-foreground" />
             <div className="min-w-0 truncate text-foreground/75">
               <T>
                 Handed off from <Var>{previousProviderNames.join(", ")}</Var>
@@ -382,7 +382,7 @@ function SidebarThreadTooltip({
               thread.runtime.lastErrorClass === "usage_limit" ? "text-warning" : "text-error",
             )}
           >
-            <CircleAlertIcon className="size-3 shrink-0 stroke-current" />
+            <CircleAlertIcon className="size-3 shrink-0" />
             <div className="min-w-0 truncate">
               {thread.runtime.lastErrorClass === "usage_limit"
                 ? gt("Usage limit reached")

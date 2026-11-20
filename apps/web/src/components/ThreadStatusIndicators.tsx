@@ -582,7 +582,7 @@ function ThreadPullRequestMiniListItem({
     <>
       <Icon
         aria-hidden
-        className={cn("size-3 shrink-0", presentation?.toneClassName ?? "stroke-muted-foreground")}
+        className={cn("size-3 shrink-0", presentation?.toneClassName ?? "text-muted-foreground")}
       />
       <span className="shrink-0 font-mono tabular-nums">#{number}</span>
       <span className="min-w-0 truncate text-foreground/75">{title}</span>

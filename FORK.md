@@ -179,27 +179,32 @@ Sources:
 
 ### Icons
 
-Web thread timeline icons are Phosphor: solid by default, bold for carets and
-line glyphs whose solid form adds a box. Icons elsewhere stay Lucide.
-`ConnIconScope` around `MessagesTimeline` in `ChatView.tsx` selects Phosphor.
+Every web and desktop icon is a Superheroicons 16px solid glyph. The set is
+vendored in `assets/conn/superheroicons/` (`16/solid/*.svg`, `manifest.json`,
+README there); fix glyphs in github.com/nckrtl/superheroicons and copy them in.
+`manifest.json` maps each Lucide name Conn uses to a glyph.
 
-The web tsconfig and Vite's `resolve.alias` map `lucide-react` and `lucide` to
-Conn modules that pair each Lucide icon with a Phosphor icon. Upstream imports
-stay unchanged. A new upstream icon fails typecheck until it gets an entry. Both
-mappings are needed: the dev server ignores tsconfig paths for pre-bundled
-packages.
+`node scripts/generate-conn-icons.ts` writes `apps/web/src/icons/lucide-react.ts`:
+one component per Lucide name, with Lucide's props (`size`, `color`, `className`;
+stroke props are ignored) and the `lucide lucide-<name>` classes. The web
+tsconfig and Vite's `resolve.alias` map `lucide-react` to it, so upstream imports
+stay unchanged. A Lucide name missing from the manifest fails the typecheck until
+the set maps it. Both mappings are needed: the dev server ignores tsconfig paths
+for pre-bundled packages. Colour icons with `text-*`, not `stroke-*`; for a halo
+use `stroke-background [paint-order:stroke]`.
 
-Upstream removed icon morphing and `MorphIcon` (#33985); the 2026-11-12 sync took
-that removal, so toggles swap icons instantly through `lucide-react`. The `lucide`
-alias and `lucideNodes` (from `lucide-original`) remain for any `lucide` import. Project and workspace icons use
-`lucide-react/dynamic` and `lucide-react-original`.
+Icons with no Lucide name use a glyph by concept id: `connIcon("<concept>",
+<concept>Glyph)` from `src/icons/glyphs.generated.ts` (Mini PC and Workstation
+machines, SnapShots, screen rotation). Glyphs drawn at 24px or more use
+the set's 24px files, vendored one by one in `24/solid/` (the foldable postures
+in `DeviceDuoGlyph`, size-7); everything else is 16px. Project and workspace icons (any Lucide
+name a user picks) stay on `lucide-react/dynamic` and `lucide-react-original`.
 
 Sources:
 
-- Web (`apps/web/`): `src/icons/` (`lucide-react.ts`, `lucide.ts`,
-  `connIcon.tsx`), `tsconfig.json` (`paths`), `vite.config.ts`.
-- Components (`apps/web/src/components/`): `ChatView.tsx`,
-  `sidebar/workspaceVisuals.tsx`.
+- `assets/conn/superheroicons/`, `scripts/generate-conn-icons.ts`.
+- Web (`apps/web/`): `src/icons/` (`lucide-react.ts`, `connIcon.tsx`),
+  `tsconfig.json` (`paths`), `vite.config.ts`, `components/sidebar/workspaceVisuals.tsx`.
 
 ### iOS icons
 
@@ -1355,16 +1360,16 @@ Sources:
      forward buttons out of `SidebarChromeHeader`. Take upstream's
      sidebar content changes inside that wrapper. The November 7 sync dropped
      all three; see [Shell design](#shell-design).
-   - `apps/web/src/components/ChatView.tsx`: keep `<ConnIconScope>` around
-     `<MessagesTimeline>`;
-     `apps/mobile/src/features/threads/ThreadDetailScreen.tsx`: keep
+   - `apps/web/src/icons/lucide-react.ts`: generated; take upstream's new
+     Lucide names into `assets/conn/superheroicons/manifest.json` (ask the icon
+     set for a glyph) and regenerate.
+   - `apps/mobile/src/features/threads/ThreadDetailScreen.tsx`: keep
      `<ConnSymbolScope>` around `<ThreadFeed>`.
    - `apps/mobile/src/components/ui/AppSymbol.tsx` (was `AppSymbol.ios.tsx` until 2026-11-10): keep Conn's version (no
      Tabler; `conn.` names inside `ConnSymbolScope`).
    - Work-log icon unions (`thread-work-log.tsx`): keep both sides' icons.
    - `apps/web/vite.config.ts` (`resolve.alias`), `apps/web/tsconfig.json`
-     (`paths`), `apps/web/package.json` (`lucide-react-original`,
-     `lucide-original`, `@phosphor-icons/react`), `apps/mobile/package.json`
+     (`paths`), `apps/web/package.json` (`lucide-react-original`), `apps/mobile/package.json`
      (the `-conn.tgz` tarballs) and `pnpm-workspace.yaml` (the Conn tarball's
      build allowance): keep the Conn entries next to upstream's.
    - Desktop relay routing: keep

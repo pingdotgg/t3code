@@ -18,6 +18,7 @@ import * as DateTime from "effect/DateTime";
 import { msg, T, Var } from "gt-react";
 import {
   CircleDashedIcon,
+  CircleDotDashedIcon,
   CircleStopIcon,
   GitBranchIcon,
   MessageCircleIcon,
@@ -244,7 +245,14 @@ export function backgroundWorkNowItem(
   const startedAtMs = only?.startedAtMs ?? null;
   return {
     id: `background-work:${input.threadId}`,
-    icon: rows.every(isCommand) ? <TerminalIcon /> : <CircleDashedIcon />,
+    // Same glyphs as the sidebar's thread status: Waiting draws circle-dot-dashed, Working circle-dashed.
+    icon: rows.every(isCommand) ? (
+      <TerminalIcon />
+    ) : presentation.waiting ? (
+      <CircleDotDashedIcon />
+    ) : (
+      <CircleDashedIcon />
+    ),
     title:
       only && typeof only.label !== "string" && only.task.label !== only.task.kind ? (
         <>

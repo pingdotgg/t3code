@@ -1,0 +1,2065 @@
+{
+  "lucide": {
+    "X": "close",
+    "CircleX": "clear-circle",
+    "XCircle": "clear-circle",
+    "Plus": "add",
+    "Minus": "remove",
+    "Check": "check",
+    "CheckCircle2": "check-circle",
+    "CircleCheck": "check-circle",
+    "Copy": "copy",
+    "Trash2": "delete",
+    "Trash": "delete",
+    "Pencil": "edit",
+    "PenLine": "edit",
+    "SquarePen": "compose",
+    "Search": "search",
+    "ListFilter": "filter",
+    "ArrowDownUp": "sort-order",
+    "CalendarArrowUp": "sort-ascending",
+    "CalendarArrowDown": "sort-descending",
+    "RefreshCw": "refresh",
+    "RotateCcw": "retry",
+    "RotateCw": "rotate-forward",
+    "Undo2": "undo",
+    "ArchiveX": "undo",
+    "Redo2": "redo",
+    "Download": "download",
+    "Upload": "upload",
+    "ExternalLink": "external-link",
+    "SquareArrowOutUpRight": "external-link",
+    "Ellipsis": "more-horizontal",
+    "MoreHorizontal": "more-horizontal",
+    "MoreVertical": "more-vertical",
+    "GripVertical": "drag-handle",
+    "Pin": "pin",
+    "PinOff": "unpin",
+    "Bookmark": "bookmark",
+    "Star": "star",
+    "Archive": "archive",
+    "Link": "link",
+    "Link2": "link",
+    "Link2Off": "unlink",
+    "Unlink": "unlink",
+    "Unlink2": "unlink",
+    "Paperclip": "attach",
+    "Send": "send",
+    "SendHorizontal": "send",
+    "Quote": "quote",
+    "LogIn": "login",
+    "Power": "power",
+    "Maximize2": "maximize",
+    "Maximize": "fullscreen",
+    "Minimize2": "minimize",
+    "Scan": "fit-scan",
+    "PictureInPicture2": "picture-in-picture",
+    "Play": "play",
+    "Pause": "pause",
+    "Square": "stop",
+    "CircleStop": "stop-circle",
+    "ChevronDown": "chevron-down",
+    "ChevronUp": "chevron-up",
+    "ChevronLeft": "chevron-left",
+    "ChevronRight": "chevron-right",
+    "ChevronsUpDown": "chevrons-up-down",
+    "ChevronsDownUp": "chevrons-down-up",
+    "ArrowLeft": "arrow-left",
+    "ArrowRight": "arrow-right",
+    "ArrowUp": "arrow-up",
+    "ArrowDown": "arrow-down",
+    "ArrowUpRight": "arrow-up-right",
+    "ArrowUpLeft": "arrow-up-left",
+    "ArrowDownLeft": "arrow-down-left",
+    "ArrowDownToLine": "arrow-down-to-line",
+    "CornerLeftUp": "go-up-parent",
+    "CornerDownRight": "reply-indent",
+    "CornerUpRight": "forward",
+    "ArrowRightLeft": "switch",
+    "ArrowUpCircle": "arrow-up-circle",
+    "CircleArrowUp": "arrow-up-circle",
+    "History": "history",
+    "AlertTriangle": "warning",
+    "TriangleAlert": "warning",
+    "CircleAlert": "error-circle",
+    "OctagonAlert": "danger-octagon",
+    "Info": "info",
+    "CircleHelp": "help",
+    "MessageCircleQuestion": "question",
+    "CircleSlash": "blocked",
+    "Circle": "circle",
+    "CircleDashed": "circle-dashed",
+    "CircleDotDashed": "circle-dashed-dot",
+    "CircleDot": "circle-dot",
+    "LoaderCircle": "spinner",
+    "AlarmClock": "snooze",
+    "AlarmClockOff": "snooze-off",
+    "Clock": "clock",
+    "Clock3": "clock",
+    "Timer": "timer",
+    "CalendarClock": "scheduled",
+    "Calendar": "calendar",
+    "TrendingUp": "trend-up",
+    "TrendingDown": "trend-down",
+    "Gauge": "usage",
+    "Activity": "activity",
+    "ChartNoAxesColumn": "chart",
+    "Zap": "fast",
+    "Target": "target",
+    "Eye": "show",
+    "EyeOff": "hide",
+    "Lock": "lock",
+    "LockKeyhole": "lock",
+    "LockOpen": "unlock",
+    "KeyRound": "key",
+    "Shield": "shield",
+    "ShieldCheck": "shield-check",
+    "ShieldOff": "shield-off",
+    "ShieldQuestion": "needs-approval",
+    "User": "user",
+    "UserRound": "user",
+    "Users": "users",
+    "UserPlus": "user-add",
+    "UserCheck": "user-approved",
+    "UserRoundX": "user-rejected",
+    "UserLock": "user-waiting",
+    "MessageSquare": "thread",
+    "MessageCircle": "comment",
+    "MessagesSquare": "threads",
+    "MessageSquareDashed": "new-thread-bubble",
+    "MessageSquarePlus": "new-thread-bubble",
+    "MessageSquareText": "comment-text",
+    "MessageSquareOff": "comments-off",
+    "MessageSquareWarning": "callout-warning",
+    "SmilePlus": "react",
+    "Bot": "agent",
+    "Sparkles": "ai",
+    "Brain": "thinking",
+    "Lightbulb": "idea",
+    "File": "file",
+    "FileText": "file-text",
+    "FileCode2": "file-code",
+    "FileJson": "file-code",
+    "FileDiff": "file-diff",
+    "FileSearch": "file-search",
+    "FileSpreadsheet": "spreadsheet",
+    "Files": "files",
+    "Folder": "folder",
+    "FolderClosed": "folder",
+    "FolderOpen": "folder-open",
+    "FolderPlus": "folder-add",
+    "FolderCode": "folder-code",
+    "FolderGit": "folder-git",
+    "FolderGit2": "folder-git",
+    "FolderTree": "file-tree",
+    "Image": "image",
+    "Film": "video",
+    "Table2": "table",
+    "Presentation": "presentation",
+    "Mail": "mail",
+    "Inbox": "inbox",
+    "BookOpen": "book",
+    "Code": "code",
+    "Code2": "code",
+    "Terminal": "terminal",
+    "TerminalSquare": "terminal-window",
+    "GitBranch": "branch",
+    "GitBranchPlus": "branch-add",
+    "GitCommit": "commit",
+    "GitCommitHorizontal": "commit",
+    "GitFork": "fork",
+    "GitMerge": "merge",
+    "GitPullRequestArrow": "pull-request",
+    "GitPullRequestClosed": "pull-request-closed",
+    "GitPullRequestDraft": "pull-request-draft",
+    "CloudUpload": "push",
+    "CloudDownload": "pull",
+    "Columns2": "diff-split",
+    "Rows3": "diff-unified",
+    "Pilcrow": "whitespace",
+    "TextWrap": "wrap-lines",
+    "WrapText": "wrap-lines",
+    "FlaskConicalOff": "tests-off",
+    "FlaskConical": "tests",
+    "Bug": "debug",
+    "Hammer": "build",
+    "Wrench": "tool",
+    "Webhook": "webhook",
+    "Workflow": "workflow",
+    "Route": "route",
+    "Plug": "plug",
+    "Plug2": "plug",
+    "Unplug": "unplug",
+    "Package": "package",
+    "PackagePlus": "package",
+    "Box": "package",
+    "Blocks": "apps",
+    "Layers": "layers",
+    "List": "list",
+    "ListChecks": "checklist",
+    "ListTodo": "checklist",
+    "ListPlus": "list-add",
+    "ListTree": "list-tree",
+    "TextSearch": "text-search",
+    "Text": "text",
+    "Type": "type",
+    "Settings": "settings",
+    "Settings2": "adjust",
+    "SlidersHorizontal": "adjust",
+    "Palette": "theme",
+    "Paintbrush": "paint",
+    "PencilRuler": "design",
+    "BrushCleaning": "clean",
+    "PanelLeft": "sidebar-left",
+    "PanelLeftClose": "sidebar-left",
+    "PanelRight": "sidebar-right",
+    "PanelBottom": "panel-bottom",
+    "PanelsTopLeft": "layout",
+    "SquareMenu": "panel-menu",
+    "SquareSplitHorizontal": "split-horizontal",
+    "SquareSplitVertical": "split-vertical",
+    "Keyboard": "keyboard",
+    "Sun": "theme-light",
+    "Moon": "theme-dark",
+    "Monitor": "desktop",
+    "Laptop": "laptop",
+    "Smartphone": "phone",
+    "Server": "server",
+    "HardDrive": "disk",
+    "Database": "database",
+    "Cpu": "cpu",
+    "MemoryStick": "memory",
+    "Battery": "battery",
+    "Cloud": "cloud",
+    "Globe": "globe",
+    "Globe2": "browser",
+    "WifiOff": "offline",
+    "RadioTower": "broadcast",
+    "Camera": "camera",
+    "Mic": "microphone",
+    "Volume2": "speaker",
+    "VolumeOff": "mute",
+    "Home": "home",
+    "House": "home",
+    "MousePointer2": "pointer",
+    "MousePointerClick": "pick-element",
+    "QrCode": "qr-code",
+    "Building": "building",
+    "Briefcase": "briefcase",
+    "Coffee": "coffee",
+    "Heart": "heart",
+    "Rocket": "rocket",
+    "Tag": "tag",
+    "Ticket": "ticket",
+    "Scale": "scale",
+    "ChevronsLeftRightEllipsis": "remote-env",
+    "ArrowUpDown": "sort-toggle",
+    "AtSign": "mention",
+    "Languages": "speech-language",
+    "ListOrdered": "numbered-list",
+    "Reply": "reply",
+    "ScrollText": "write-guide",
+    "MicOff": "mic-off",
+    "OctagonX": "check-cancelled",
+    "Eraser": "eraser",
+    "AudioLines": "audio-lines",
+    "MailOpen": "mail-open",
+    "Hash": "hash",
+    "ClipboardPaste": "paste"
+  },
+  "sf": {
+    "xmark": "close",
+    "close": "close",
+    "xmark.circle.fill": "clear-circle",
+    "plus": "add",
+    "minus": "remove",
+    "remove": "remove",
+    "plusminus": "plus-minus",
+    "checkmark": "check",
+    "check": "check",
+    "checkmark.circle": "check-circle",
+    "checkmark.circle.fill": "check-circle",
+    "doc.on.doc": "copy",
+    "document.on.document": "copy",
+    "square.on.square": "copy",
+    "trash": "delete",
+    "pencil": "edit",
+    "edit": "edit",
+    "square.and.pencil": "compose",
+    "magnifyingglass": "search",
+    "line.3.horizontal.decrease": "filter",
+    "line.3.horizontal.decrease.circle": "filter",
+    "line.3.horizontal.decrease.circle.fill": "filter",
+    "arrow.clockwise": "refresh",
+    "arrow.uturn.backward": "undo",
+    "arrow.uturn.forward": "redo",
+    "arrow.down.circle": "download",
+    "tray.and.arrow.down": "download",
+    "tray.and.arrow.up": "upload",
+    "square.and.arrow.up": "share",
+    "safari": "open-in-browser",
+    "ellipsis": "more-horizontal",
+    "ellipsis.circle": "more-circle",
+    "line.3.horizontal": "drag-handle",
+    "pin": "pin",
+    "pin.slash": "unpin",
+    "star": "star",
+    "star.fill": "star",
+    "archivebox": "archive",
+    "archivebox.fill": "archive",
+    "link": "link",
+    "quote.bubble": "quote",
+    "power": "power",
+    "arrow.up.left.and.arrow.down.right": "maximize",
+    "arrow.down.right.and.arrow.up.left": "minimize",
+    "pip.enter": "picture-in-picture",
+    "pip.exit": "picture-in-picture",
+    "play": "play",
+    "pause": "pause",
+    "stop.fill": "stop",
+    "chevron.down": "chevron-down",
+    "chevron.up": "chevron-up",
+    "chevron.left": "chevron-left",
+    "chevron.backward": "chevron-left",
+    "chevron.right": "chevron-right",
+    "arrow.left": "arrow-left",
+    "arrow.right": "arrow-right",
+    "arrow.up": "arrow-up",
+    "arrow.down": "arrow-down",
+    "arrow.up.right": "arrow-up-right",
+    "arrow.turn.left.up": "go-up-parent",
+    "arrow.left.arrow.right": "switch",
+    "arrow.up.circle": "arrow-up-circle",
+    "arrow.right.circle": "arrow-right-circle",
+    "arrow.up.right.circle": "arrow-up-right-circle",
+    "exclamationmark.triangle": "warning",
+    "exclamationmark.circle": "error-circle",
+    "error": "error-circle",
+    "info.circle": "info",
+    "questionmark.bubble": "question",
+    "slash.circle": "blocked",
+    "circle": "circle",
+    "circle.fill": "circle",
+    "circle.dashed": "circle-dashed",
+    "circle.dashed.inset.filled": "circle-dashed-dot",
+    "circle.inset.filled": "circle-dot",
+    "git.issue": "circle-dot",
+    "bell.badge": "notifications",
+    "alarm": "snooze",
+    "clock": "clock",
+    "timer": "timer",
+    "calendar.badge.clock": "scheduled",
+    "build": "usage",
+    "gauge.with.dots.needle.33percent": "usage",
+    "chart.bar.xaxis": "chart",
+    "bolt.circle": "fast",
+    "bolt": "fast",
+    "bolt.fill": "fast",
+    "bolt.horizontal.circle": "connected",
+    "target": "target",
+    "eye": "show",
+    "visibility": "show",
+    "eye.slash": "hide",
+    "lock": "lock",
+    "lock.fill": "lock",
+    "key": "key",
+    "lock.shield": "shield",
+    "checkmark.shield": "shield-check",
+    "exclamationmark.shield": "needs-approval",
+    "person.crop.circle": "user-circle",
+    "person.2": "users",
+    "person.badge.plus": "user-add",
+    "person.fill.checkmark": "user-approved",
+    "person.fill.xmark": "user-rejected",
+    "person.badge.clock": "user-waiting",
+    "text.bubble": "thread",
+    "text.bubble.fill": "thread",
+    "chat": "thread",
+    "bubble.left": "comment",
+    "bubble.left.and.bubble.right": "threads",
+    "bubble.left.and.text.bubble.right": "threads",
+    "plus.bubble": "new-thread-bubble",
+    "face.smiling": "react",
+    "robot": "agent",
+    "sparkles": "ai",
+    "ellipsis.bubble": "ai",
+    "brain": "thinking",
+    "psychology": "thinking",
+    "doc": "file",
+    "doc.text": "file-text",
+    "file.diff": "file-diff",
+    "doc.text.magnifyingglass": "file-diff",
+    "folder": "folder",
+    "folder.fill": "folder",
+    "folder.badge.plus": "folder-add",
+    "image": "image",
+    "photo": "image",
+    "film": "video",
+    "book": "book",
+    "chevron.left.forwardslash.chevron.right": "code",
+    "terminal": "terminal-window",
+    "arrow.branch": "branch",
+    "arrow.triangle.branch": "branch",
+    "commit": "commit",
+    "git.commit": "commit",
+    "arrow.triangle.merge": "merge",
+    "merge": "merge",
+    "arrow.triangle.pull": "pull-request",
+    "git.pull-request.closed": "pull-request-closed",
+    "git.pull-request.draft": "pull-request-draft",
+    "point.topleft.down.curvedto.point.bottomright.up": "git-controls",
+    "flask": "tests",
+    "hammer": "build",
+    "construction": "build",
+    "wrench.and.screwdriver": "tool",
+    "wrench": "tool",
+    "point.3.connected.trianglepath.dotted": "workflow",
+    "flowchart": "workflow",
+    "cable.connector": "plug",
+    "cube": "package",
+    "square.grid.2x2": "apps",
+    "square.3.layers.3d": "layers",
+    "list.number": "list-numbered",
+    "checklist": "checklist",
+    "text.alignleft": "text",
+    "character.cursor.ibeam": "type",
+    "textformat.size": "text-size",
+    "textformat.size.larger": "text-size",
+    "textformat.size.smaller": "text-size",
+    "text.word.spacing": "letter-spacing",
+    "gearshape": "settings",
+    "slider.horizontal.3": "adjust",
+    "paintbrush": "theme",
+    "sidebar.left": "sidebar-left",
+    "sidebar.right": "sidebar-right",
+    "square.split.2x1": "split-horizontal",
+    "keyboard": "keyboard",
+    "keyboard.chevron.compact.down": "keyboard",
+    "sun.max": "theme-light",
+    "moon": "theme-dark",
+    "desktopcomputer": "desktop",
+    "macstudio": "desktop",
+    "laptopcomputer": "laptop",
+    "iphone": "phone",
+    "smartphone": "phone",
+    "server": "server",
+    "server.rack": "server",
+    "macmini": "server",
+    "internaldrive": "disk",
+    "cloud": "cloud",
+    "globe": "globe",
+    "public": "globe",
+    "wifi": "wifi",
+    "wifi.slash": "offline",
+    "camera": "camera",
+    "mic": "microphone",
+    "headphones": "headphones",
+    "car": "car",
+    "house": "home",
+    "qrcode.viewfinder": "qr-code",
+    "tag": "tag",
+    "ticket": "ticket",
+    "stethoscope": "diagnostics",
+    "skill": "skill",
+    "envelope.badge": "mail-open",
+    "envelope.open": "mail-open",
+    "number": "hash",
+    "doc.on.clipboard": "paste"
+  },
+  "chips": {
+    "circle-dashed": "circle-dashed",
+    "message-circle": "comment",
+    "messages-square": "threads",
+    "bot": "agent",
+    "image": "image",
+    "film": "video",
+    "terminal": "terminal",
+    "git-merge": "merge",
+    "git-pull-request-arrow": "pull-request",
+    "git-pull-request-closed": "pull-request-closed",
+    "git-pull-request-draft": "pull-request-draft",
+    "server": "server",
+    "mouse-pointer-click": "pick-element",
+    "skill": "skill"
+  },
+  "concepts": {
+    "close": {
+      "source": "heroicons",
+      "name": "x-mark",
+      "library": "x-mark",
+      "meaning": "Close, dismiss or clear"
+    },
+    "clear-circle": {
+      "source": "heroicons",
+      "name": "x-circle",
+      "library": "x-circle",
+      "meaning": "Clear a field, failed or closed status in a circle"
+    },
+    "add": {
+      "source": "heroicons",
+      "name": "plus",
+      "library": "plus",
+      "meaning": "Add or create"
+    },
+    "remove": {
+      "source": "heroicons",
+      "name": "minus",
+      "library": "minus",
+      "meaning": "Remove, collapse or a neutral/minus state"
+    },
+    "plus-minus": {
+      "source": "generated",
+      "name": "plus-minus",
+      "library": "plus-minus",
+      "meaning": "Increase or decrease a value (stepper)"
+    },
+    "check": {
+      "source": "heroicons",
+      "name": "check",
+      "library": "check",
+      "meaning": "Confirm, selected or done"
+    },
+    "check-circle": {
+      "source": "heroicons",
+      "name": "check-circle",
+      "library": "check-circle",
+      "meaning": "Success, passed or completed"
+    },
+    "copy": {
+      "source": "heroicons",
+      "name": "square-2-stack",
+      "library": "square-2-stack",
+      "meaning": "Copy to clipboard or duplicate"
+    },
+    "delete": {
+      "source": "heroicons",
+      "name": "trash",
+      "library": "trash",
+      "meaning": "Delete"
+    },
+    "edit": {
+      "source": "heroicons",
+      "name": "pencil",
+      "library": "pencil",
+      "meaning": "Edit text or an item"
+    },
+    "compose": {
+      "source": "heroicons",
+      "name": "pencil-square",
+      "library": "pencil-square",
+      "meaning": "New thread or compose (pencil in square)"
+    },
+    "search": {
+      "source": "heroicons",
+      "name": "magnifying-glass",
+      "library": "magnifying-glass",
+      "meaning": "Search or find"
+    },
+    "filter": {
+      "source": "heroicons",
+      "name": "funnel",
+      "library": "funnel",
+      "meaning": "Filter a list"
+    },
+    "sort-order": {
+      "source": "heroicons",
+      "name": "arrows-up-down",
+      "library": "arrows-up-down",
+      "meaning": "Toggle newest/oldest order"
+    },
+    "sort-ascending": {
+      "source": "generated",
+      "name": "calendar-arrow-up",
+      "library": "calendar-arrow-up",
+      "meaning": "Sort by date, oldest first"
+    },
+    "sort-descending": {
+      "source": "generated",
+      "name": "calendar-arrow-down",
+      "library": "calendar-arrow-down",
+      "meaning": "Sort by date, newest first"
+    },
+    "refresh": {
+      "source": "heroicons",
+      "name": "arrow-path",
+      "library": "arrow-path",
+      "meaning": "Refresh or reload"
+    },
+    "retry": {
+      "source": "generated",
+      "name": "arrow-rotate-left",
+      "library": "arrow-rotate-left",
+      "meaning": "Retry, reset or rotate back"
+    },
+    "rotate-forward": {
+      "source": "generated",
+      "name": "arrow-rotate-right",
+      "library": "arrow-rotate-right",
+      "meaning": "Redo-style rotate clockwise (reload media, update ready, renamed file)"
+    },
+    "undo": {
+      "source": "heroicons",
+      "name": "arrow-uturn-left",
+      "library": "arrow-uturn-left",
+      "meaning": "Undo or restore"
+    },
+    "redo": {
+      "source": "heroicons",
+      "name": "arrow-uturn-right",
+      "library": "arrow-uturn-right",
+      "meaning": "Redo or resend"
+    },
+    "download": {
+      "source": "heroicons",
+      "name": "arrow-down-tray",
+      "library": "arrow-down-tray",
+      "meaning": "Download or install"
+    },
+    "upload": {
+      "source": "heroicons",
+      "name": "arrow-up-tray",
+      "library": "arrow-up-tray",
+      "meaning": "Upload or import a file"
+    },
+    "share": {
+      "source": "heroicons",
+      "name": "share",
+      "library": "share",
+      "meaning": "Share or export"
+    },
+    "external-link": {
+      "source": "heroicons",
+      "name": "arrow-top-right-on-square",
+      "library": "arrow-top-right-on-square",
+      "meaning": "Open in a new window or another app"
+    },
+    "open-in-browser": {
+      "source": "heroicons",
+      "name": "arrow-top-right-on-square",
+      "library": "arrow-top-right-on-square",
+      "meaning": "Open in browser (Safari)"
+    },
+    "more-horizontal": {
+      "source": "heroicons",
+      "name": "ellipsis-horizontal",
+      "library": "ellipsis-horizontal",
+      "meaning": "More actions menu"
+    },
+    "more-circle": {
+      "source": "heroicons",
+      "name": "ellipsis-horizontal-circle",
+      "library": "ellipsis-horizontal-circle",
+      "meaning": "More actions in a circle"
+    },
+    "more-vertical": {
+      "source": "heroicons",
+      "name": "ellipsis-vertical",
+      "library": "ellipsis-vertical",
+      "meaning": "More actions (vertical)"
+    },
+    "drag-handle": {
+      "source": "generated",
+      "name": "grip-vertical",
+      "library": "grip-vertical",
+      "meaning": "Drag to reorder"
+    },
+    "pin": {
+      "source": "generated",
+      "name": "pin",
+      "library": "pin",
+      "meaning": "Pin to top"
+    },
+    "unpin": {
+      "source": "generated",
+      "name": "pin-slash",
+      "library": "pin-slash",
+      "meaning": "Unpin"
+    },
+    "bookmark": {
+      "source": "heroicons",
+      "name": "bookmark",
+      "library": "bookmark",
+      "meaning": "Stash or save for later"
+    },
+    "star": {
+      "source": "heroicons",
+      "name": "star",
+      "library": "star",
+      "meaning": "Favorite or star"
+    },
+    "archive": {
+      "source": "heroicons",
+      "name": "archive-box",
+      "library": "archive-box",
+      "meaning": "Archive"
+    },
+    "link": {
+      "source": "heroicons",
+      "name": "link",
+      "library": "link",
+      "meaning": "Link or connect by URL"
+    },
+    "unlink": {
+      "source": "heroicons",
+      "name": "link-slash",
+      "library": "link-slash",
+      "meaning": "Unlink"
+    },
+    "attach": {
+      "source": "heroicons",
+      "name": "paper-clip",
+      "library": "paper-clip",
+      "meaning": "Attach a file"
+    },
+    "send": {
+      "source": "heroicons",
+      "name": "paper-airplane",
+      "library": "paper-airplane",
+      "meaning": "Send a comment or annotation"
+    },
+    "quote": {
+      "source": "generated",
+      "name": "quote",
+      "library": "quote",
+      "meaning": "Quote or cite text"
+    },
+    "login": {
+      "source": "heroicons",
+      "name": "arrow-right-end-on-rectangle",
+      "library": "arrow-right-end-on-rectangle",
+      "meaning": "Sign in"
+    },
+    "power": {
+      "source": "heroicons",
+      "name": "power",
+      "library": "power",
+      "meaning": "Power on/off a device"
+    },
+    "maximize": {
+      "source": "generated",
+      "name": "arrows-diagonal-out",
+      "library": "arrows-diagonal-out",
+      "meaning": "Expand or enlarge"
+    },
+    "fullscreen": {
+      "source": "generated",
+      "name": "corners-out",
+      "library": "corners-out",
+      "meaning": "Fit to screen (corners)"
+    },
+    "minimize": {
+      "source": "generated",
+      "name": "arrows-diagonal-in",
+      "library": "arrows-diagonal-in",
+      "meaning": "Collapse or shrink"
+    },
+    "fit-scan": {
+      "source": "generated",
+      "name": "viewfinder-dot",
+      "library": "viewfinder-dot",
+      "meaning": "Fit or reset zoom in a viewer"
+    },
+    "picture-in-picture": {
+      "source": "generated",
+      "name": "window-picture-in-picture",
+      "library": "window-picture-in-picture",
+      "meaning": "Picture-in-picture or mini player"
+    },
+    "play": {
+      "source": "heroicons",
+      "name": "play",
+      "library": "play",
+      "meaning": "Play or run"
+    },
+    "pause": {
+      "source": "heroicons",
+      "name": "pause",
+      "library": "pause",
+      "meaning": "Pause"
+    },
+    "stop": {
+      "source": "heroicons",
+      "name": "stop",
+      "library": "stop",
+      "meaning": "Stop a run or recording"
+    },
+    "stop-circle": {
+      "source": "heroicons",
+      "name": "stop-circle",
+      "library": "stop-circle",
+      "meaning": "Stopped status"
+    },
+    "chevron-down": {
+      "source": "heroicons",
+      "name": "chevron-down",
+      "library": "chevron-down",
+      "meaning": "Expand or open a menu"
+    },
+    "chevron-up": {
+      "source": "heroicons",
+      "name": "chevron-up",
+      "library": "chevron-up",
+      "meaning": "Collapse or previous match"
+    },
+    "chevron-left": {
+      "source": "heroicons",
+      "name": "chevron-left",
+      "library": "chevron-left",
+      "meaning": "Back or previous"
+    },
+    "chevron-right": {
+      "source": "heroicons",
+      "name": "chevron-right",
+      "library": "chevron-right",
+      "meaning": "Forward, drill in or disclosure"
+    },
+    "chevrons-up-down": {
+      "source": "heroicons",
+      "name": "chevron-up-down",
+      "library": "chevron-up-down",
+      "meaning": "Expand all or a select menu"
+    },
+    "chevrons-down-up": {
+      "source": "generated",
+      "name": "chevrons-down-up",
+      "library": "chevrons-down-up",
+      "meaning": "Collapse all"
+    },
+    "arrow-left": {
+      "source": "heroicons",
+      "name": "arrow-left",
+      "library": "arrow-left",
+      "meaning": "Back"
+    },
+    "arrow-right": {
+      "source": "heroicons",
+      "name": "arrow-right",
+      "library": "arrow-right",
+      "meaning": "Next or go"
+    },
+    "arrow-up": {
+      "source": "heroicons",
+      "name": "arrow-up",
+      "library": "arrow-up",
+      "meaning": "Move up, send or scroll to top"
+    },
+    "arrow-down": {
+      "source": "heroicons",
+      "name": "arrow-down",
+      "library": "arrow-down",
+      "meaning": "Move down or scroll to bottom"
+    },
+    "arrow-up-right": {
+      "source": "heroicons",
+      "name": "arrow-up-right",
+      "library": "arrow-up-right",
+      "meaning": "Open or go to (inline)"
+    },
+    "arrow-up-left": {
+      "source": "heroicons",
+      "name": "arrow-up-left",
+      "library": "arrow-up-left",
+      "meaning": "Return to the parent agent"
+    },
+    "arrow-down-left": {
+      "source": "heroicons",
+      "name": "arrow-down-left",
+      "library": "arrow-down-left",
+      "meaning": "Received message (MCP)"
+    },
+    "arrow-down-to-line": {
+      "source": "generated",
+      "name": "arrow-down-to-line",
+      "library": "arrow-down-to-line",
+      "meaning": "Scroll to the end or follow"
+    },
+    "go-up-parent": {
+      "source": "generated",
+      "name": "arrow-corner-left-up",
+      "library": "arrow-corner-left-up",
+      "meaning": "Go to the parent thread or folder"
+    },
+    "reply-indent": {
+      "source": "generated",
+      "name": "arrow-corner-down-right",
+      "library": "arrow-corner-down-right",
+      "meaning": "Nested or child item"
+    },
+    "forward": {
+      "source": "generated",
+      "name": "arrow-corner-up-right",
+      "library": "arrow-corner-up-right",
+      "meaning": "Forward or hand to"
+    },
+    "switch": {
+      "source": "heroicons",
+      "name": "arrows-right-left",
+      "library": "arrows-right-left",
+      "meaning": "Handoff or switch provider"
+    },
+    "arrow-up-circle": {
+      "source": "heroicons",
+      "name": "arrow-up-circle",
+      "library": "arrow-up-circle",
+      "meaning": "Update available or upgrade"
+    },
+    "arrow-right-circle": {
+      "source": "heroicons",
+      "name": "arrow-right-circle",
+      "library": "arrow-right-circle",
+      "meaning": "Confirm or continue (git sheet)"
+    },
+    "arrow-up-right-circle": {
+      "source": "heroicons",
+      "name": "arrow-up-circle",
+      "library": "arrow-up-circle",
+      "meaning": "Open externally in a circle"
+    },
+    "history": {
+      "source": "generated",
+      "name": "clock-arrow",
+      "library": "clock-arrow",
+      "meaning": "History or previous items"
+    },
+    "warning": {
+      "source": "heroicons",
+      "name": "exclamation-triangle",
+      "library": "exclamation-triangle",
+      "meaning": "Warning"
+    },
+    "error-circle": {
+      "source": "heroicons",
+      "name": "exclamation-circle",
+      "library": "exclamation-circle",
+      "meaning": "Error or attention"
+    },
+    "danger-octagon": {
+      "source": "heroicons",
+      "name": "exclamation-triangle",
+      "library": "exclamation-triangle",
+      "meaning": "Caution callout in markdown"
+    },
+    "info": {
+      "source": "heroicons",
+      "name": "information-circle",
+      "library": "information-circle",
+      "meaning": "Information"
+    },
+    "help": {
+      "source": "heroicons",
+      "name": "question-mark-circle",
+      "library": "question-mark-circle",
+      "meaning": "Help or unknown"
+    },
+    "question": {
+      "source": "generated",
+      "name": "chat-bubble-question",
+      "library": "chat-bubble-question",
+      "meaning": "Agent asks a question"
+    },
+    "blocked": {
+      "source": "heroicons",
+      "name": "no-symbol",
+      "library": "no-symbol",
+      "meaning": "Cancelled, skipped or blocked"
+    },
+    "circle": {
+      "source": "generated",
+      "name": "circle",
+      "library": "circle",
+      "meaning": "Empty, unresolved or pending item"
+    },
+    "circle-dashed": {
+      "source": "generated",
+      "name": "circle-dashed",
+      "library": "circle-dashed",
+      "meaning": "Working: queued or running work (no result yet)"
+    },
+    "circle-dashed-dot": {
+      "source": "generated",
+      "name": "circle-dashed-dot",
+      "library": "circle-dashed-dot",
+      "meaning": "Waiting status (dashed ring with a filled centre dot)"
+    },
+    "circle-dot": {
+      "source": "generated",
+      "name": "circle-dot",
+      "library": "circle-dot",
+      "meaning": "Action required or record"
+    },
+    "spinner": {
+      "source": "generated",
+      "name": "spinner",
+      "library": "spinner",
+      "meaning": "Loading"
+    },
+    "notifications": {
+      "source": "heroicons",
+      "name": "bell-alert",
+      "library": "bell-alert",
+      "meaning": "Notifications"
+    },
+    "snooze": {
+      "source": "heroicons",
+      "name": "bell-snooze",
+      "library": "bell-snooze",
+      "meaning": "Snooze or remind later"
+    },
+    "snooze-off": {
+      "source": "generated",
+      "name": "bell-snooze-slash",
+      "library": "bell-snooze-slash",
+      "meaning": "Cancel snooze"
+    },
+    "clock": {
+      "source": "heroicons",
+      "name": "clock",
+      "library": "clock",
+      "meaning": "Time, pending or waiting"
+    },
+    "timer": {
+      "source": "generated",
+      "name": "stopwatch",
+      "library": "stopwatch",
+      "meaning": "Duration or timing"
+    },
+    "scheduled": {
+      "source": "heroicons",
+      "name": "calendar-days",
+      "library": "calendar-days",
+      "meaning": "Scheduled or queued run"
+    },
+    "calendar": {
+      "source": "heroicons",
+      "name": "calendar",
+      "library": "calendar",
+      "meaning": "Pick a date"
+    },
+    "trend-up": {
+      "source": "heroicons",
+      "name": "arrow-trending-up",
+      "library": "arrow-trending-up",
+      "meaning": "Usage rising"
+    },
+    "trend-down": {
+      "source": "heroicons",
+      "name": "arrow-trending-down",
+      "library": "arrow-trending-down",
+      "meaning": "Usage falling"
+    },
+    "usage": {
+      "source": "generated",
+      "name": "gauge",
+      "library": "gauge",
+      "meaning": "Usage limits or effort level"
+    },
+    "activity": {
+      "source": "generated",
+      "name": "activity",
+      "library": "activity",
+      "meaning": "Activity or telemetry"
+    },
+    "chart": {
+      "source": "heroicons",
+      "name": "chart-bar",
+      "library": "chart-bar",
+      "meaning": "Usage or stats page"
+    },
+    "fast": {
+      "source": "heroicons",
+      "name": "bolt",
+      "library": "bolt",
+      "meaning": "Fast mode or effort level"
+    },
+    "connected": {
+      "source": "heroicons",
+      "name": "bolt",
+      "library": "bolt",
+      "meaning": "Connected (plugs joined)"
+    },
+    "target": {
+      "source": "generated",
+      "name": "target",
+      "library": "target",
+      "meaning": "Goal or objective"
+    },
+    "show": {
+      "source": "heroicons",
+      "name": "eye",
+      "library": "eye",
+      "meaning": "Show, view or watch"
+    },
+    "hide": {
+      "source": "heroicons",
+      "name": "eye-slash",
+      "library": "eye-slash",
+      "meaning": "Hide"
+    },
+    "lock": {
+      "source": "heroicons",
+      "name": "lock-closed",
+      "library": "lock-closed",
+      "meaning": "Locked, secret or protected"
+    },
+    "unlock": {
+      "source": "heroicons",
+      "name": "lock-open",
+      "library": "lock-open",
+      "meaning": "Unlocked"
+    },
+    "key": {
+      "source": "heroicons",
+      "name": "key",
+      "library": "key",
+      "meaning": "Credentials, secret or API key"
+    },
+    "shield": {
+      "source": "generated",
+      "name": "shield",
+      "library": "shield",
+      "meaning": "Approval or permission"
+    },
+    "shield-check": {
+      "source": "heroicons",
+      "name": "shield-check",
+      "library": "shield-check",
+      "meaning": "Security or approved"
+    },
+    "shield-off": {
+      "source": "generated",
+      "name": "shield-slash",
+      "library": "shield-slash",
+      "meaning": "Full access (no sandbox)"
+    },
+    "needs-approval": {
+      "source": "generated",
+      "name": "shield-question",
+      "library": "shield-question",
+      "meaning": "Waiting for approval"
+    },
+    "user": {
+      "source": "heroicons",
+      "name": "user",
+      "library": "user",
+      "meaning": "A person, author or 'me'"
+    },
+    "user-circle": {
+      "source": "heroicons",
+      "name": "user-circle",
+      "library": "user-circle",
+      "meaning": "Account or profile"
+    },
+    "users": {
+      "source": "heroicons",
+      "name": "users",
+      "library": "users",
+      "meaning": "Group, reviewers or guests"
+    },
+    "user-add": {
+      "source": "heroicons",
+      "name": "user-plus",
+      "library": "user-plus",
+      "meaning": "Add a reviewer or invite"
+    },
+    "user-approved": {
+      "source": "generated",
+      "name": "user-check",
+      "library": "user-check",
+      "meaning": "Reviewer approved"
+    },
+    "user-rejected": {
+      "source": "heroicons",
+      "name": "user-minus",
+      "library": "user-minus",
+      "meaning": "Reviewer requested changes or removed"
+    },
+    "user-waiting": {
+      "source": "generated",
+      "name": "user-clock",
+      "library": "user-clock",
+      "meaning": "Review requested, waiting on a person"
+    },
+    "thread": {
+      "source": "heroicons",
+      "name": "chat-bubble-left",
+      "library": "chat-bubble-left",
+      "meaning": "A thread or chat"
+    },
+    "comment": {
+      "source": "heroicons",
+      "name": "chat-bubble-oval-left",
+      "library": "chat-bubble-oval-left",
+      "meaning": "A comment or review comment"
+    },
+    "threads": {
+      "source": "heroicons",
+      "name": "chat-bubble-left-right",
+      "library": "chat-bubble-left-right",
+      "meaning": "Several threads or a conversation"
+    },
+    "new-thread-bubble": {
+      "source": "generated",
+      "name": "chat-bubble-plus",
+      "library": "chat-bubble-plus",
+      "meaning": "New or empty thread"
+    },
+    "comment-text": {
+      "source": "heroicons",
+      "name": "chat-bubble-bottom-center-text",
+      "library": "chat-bubble-bottom-center-text",
+      "meaning": "Annotations or comment with text"
+    },
+    "comments-off": {
+      "source": "generated",
+      "name": "chat-bubble-slash",
+      "library": "chat-bubble-slash",
+      "meaning": "Hide comments"
+    },
+    "callout-warning": {
+      "source": "generated",
+      "name": "chat-bubble-exclamation",
+      "library": "chat-bubble-exclamation",
+      "meaning": "Warning callout in markdown"
+    },
+    "react": {
+      "source": "heroicons",
+      "name": "face-smile",
+      "library": "face-smile",
+      "meaning": "Add a reaction"
+    },
+    "agent": {
+      "source": "generated",
+      "name": "robot",
+      "library": "robot",
+      "meaning": "Agent, bot or subagent"
+    },
+    "ai": {
+      "source": "heroicons",
+      "name": "sparkles",
+      "library": "sparkles",
+      "meaning": "AI suggestion or generated"
+    },
+    "thinking": {
+      "source": "generated",
+      "name": "brain",
+      "library": "brain",
+      "meaning": "Reasoning or thinking"
+    },
+    "idea": {
+      "source": "heroicons",
+      "name": "light-bulb",
+      "library": "light-bulb",
+      "meaning": "Tip callout"
+    },
+    "file": {
+      "source": "heroicons",
+      "name": "document",
+      "library": "document",
+      "meaning": "A file or document"
+    },
+    "file-text": {
+      "source": "heroicons",
+      "name": "document-text",
+      "library": "document-text",
+      "meaning": "Text file, note or contents"
+    },
+    "file-code": {
+      "source": "heroicons",
+      "name": "code-bracket-square",
+      "library": "code-bracket-square",
+      "meaning": "Code or JSON file"
+    },
+    "file-diff": {
+      "source": "generated",
+      "name": "document-diff",
+      "library": "document-diff",
+      "meaning": "Changed files or diff"
+    },
+    "file-search": {
+      "source": "heroicons",
+      "name": "document-magnifying-glass",
+      "library": "document-magnifying-glass",
+      "meaning": "Search files"
+    },
+    "spreadsheet": {
+      "source": "generated",
+      "name": "document-table",
+      "library": "document-table",
+      "meaning": "Spreadsheet file"
+    },
+    "files": {
+      "source": "heroicons",
+      "name": "document-duplicate",
+      "library": "document-duplicate",
+      "meaning": "Files panel"
+    },
+    "folder": {
+      "source": "heroicons",
+      "name": "folder",
+      "library": "folder",
+      "meaning": "Folder or project"
+    },
+    "folder-open": {
+      "source": "heroicons",
+      "name": "folder-open",
+      "library": "folder-open",
+      "meaning": "Open a folder"
+    },
+    "folder-add": {
+      "source": "heroicons",
+      "name": "folder-plus",
+      "library": "folder-plus",
+      "meaning": "Add a project or folder"
+    },
+    "folder-code": {
+      "source": "generated",
+      "name": "folder-code",
+      "library": "folder-code",
+      "meaning": "Project fallback icon"
+    },
+    "folder-git": {
+      "source": "generated",
+      "name": "folder-git",
+      "library": "folder-git",
+      "meaning": "Worktree or git repository"
+    },
+    "file-tree": {
+      "source": "generated",
+      "name": "folder-tree",
+      "library": "folder-tree",
+      "meaning": "Show the file tree"
+    },
+    "image": {
+      "source": "heroicons",
+      "name": "photo",
+      "library": "photo",
+      "meaning": "Image or photo"
+    },
+    "video": {
+      "source": "heroicons",
+      "name": "film",
+      "library": "film",
+      "meaning": "Video"
+    },
+    "table": {
+      "source": "heroicons",
+      "name": "table-cells",
+      "library": "table-cells",
+      "meaning": "Table or CSV preview"
+    },
+    "presentation": {
+      "source": "generated",
+      "name": "presentation-screen",
+      "library": "presentation-screen",
+      "meaning": "Slides file"
+    },
+    "mail": {
+      "source": "heroicons",
+      "name": "envelope",
+      "library": "envelope",
+      "meaning": "Email link"
+    },
+    "inbox": {
+      "source": "heroicons",
+      "name": "inbox",
+      "library": "inbox",
+      "meaning": "Webhook deliveries"
+    },
+    "book": {
+      "source": "heroicons",
+      "name": "book-open",
+      "library": "book-open",
+      "meaning": "Guide or documentation"
+    },
+    "code": {
+      "source": "heroicons",
+      "name": "code-bracket",
+      "library": "code-bracket",
+      "meaning": "Code view or code block"
+    },
+    "terminal": {
+      "source": "heroicons",
+      "name": "command-line",
+      "library": "command-line",
+      "meaning": "Terminal or command"
+    },
+    "terminal-window": {
+      "source": "heroicons",
+      "name": "command-line",
+      "library": "command-line",
+      "meaning": "Terminal panel or drawer"
+    },
+    "branch": {
+      "source": "generated",
+      "name": "git-branch",
+      "library": "git-branch",
+      "meaning": "Git branch"
+    },
+    "branch-add": {
+      "source": "generated",
+      "name": "git-branch-plus",
+      "library": "git-branch-plus",
+      "meaning": "Create a branch"
+    },
+    "commit": {
+      "source": "generated",
+      "name": "git-commit",
+      "library": "git-commit",
+      "meaning": "Git commit"
+    },
+    "fork": {
+      "source": "generated",
+      "name": "git-fork",
+      "library": "git-fork",
+      "meaning": "Fork or child thread"
+    },
+    "merge": {
+      "source": "generated",
+      "name": "git-merge",
+      "library": "git-merge",
+      "meaning": "Merged PR"
+    },
+    "pull-request": {
+      "source": "generated",
+      "name": "git-pull-request",
+      "library": "git-pull-request",
+      "meaning": "Open pull request"
+    },
+    "pull-request-closed": {
+      "source": "generated",
+      "name": "git-pull-request-closed",
+      "library": "git-pull-request-closed",
+      "meaning": "Closed pull request"
+    },
+    "pull-request-draft": {
+      "source": "generated",
+      "name": "git-pull-request-draft",
+      "library": "git-pull-request-draft",
+      "meaning": "Draft pull request"
+    },
+    "git-controls": {
+      "source": "generated",
+      "name": "git-compare",
+      "library": "git-compare",
+      "meaning": "Open git controls or git actions"
+    },
+    "push": {
+      "source": "heroicons",
+      "name": "cloud-arrow-up",
+      "library": "cloud-arrow-up",
+      "meaning": "Push to remote"
+    },
+    "pull": {
+      "source": "heroicons",
+      "name": "cloud-arrow-down",
+      "library": "cloud-arrow-down",
+      "meaning": "Pull from remote"
+    },
+    "diff-split": {
+      "source": "heroicons",
+      "name": "view-columns",
+      "library": "view-columns",
+      "meaning": "Split (side by side) diff"
+    },
+    "diff-unified": {
+      "source": "heroicons",
+      "name": "queue-list",
+      "library": "queue-list",
+      "meaning": "Unified diff"
+    },
+    "whitespace": {
+      "source": "generated",
+      "name": "pilcrow",
+      "library": "pilcrow",
+      "meaning": "Show whitespace"
+    },
+    "wrap-lines": {
+      "source": "generated",
+      "name": "text-wrap",
+      "library": "text-wrap",
+      "meaning": "Wrap long lines"
+    },
+    "tests-off": {
+      "source": "generated",
+      "name": "beaker-slash",
+      "library": "beaker-slash",
+      "meaning": "Hide test files"
+    },
+    "tests": {
+      "source": "heroicons",
+      "name": "beaker",
+      "library": "beaker",
+      "meaning": "Tests or labs"
+    },
+    "debug": {
+      "source": "heroicons",
+      "name": "bug-ant",
+      "library": "bug-ant",
+      "meaning": "Debug"
+    },
+    "build": {
+      "source": "generated",
+      "name": "hammer",
+      "library": "hammer",
+      "meaning": "Build script or tool"
+    },
+    "tool": {
+      "source": "generated",
+      "name": "wrench-plain",
+      "library": "wrench-plain",
+      "meaning": "Tool call or setup script"
+    },
+    "webhook": {
+      "source": "generated",
+      "name": "webhook",
+      "library": "webhook",
+      "meaning": "Webhook or API panel"
+    },
+    "workflow": {
+      "source": "generated",
+      "name": "workflow",
+      "library": "workflow",
+      "meaning": "Workflow or diagram"
+    },
+    "route": {
+      "source": "generated",
+      "name": "route",
+      "library": "route",
+      "meaning": "Network routes"
+    },
+    "plug": {
+      "source": "generated",
+      "name": "plug",
+      "library": "plug",
+      "meaning": "Connect or integration"
+    },
+    "unplug": {
+      "source": "generated",
+      "name": "plug-slash",
+      "library": "plug-slash",
+      "meaning": "Disconnect"
+    },
+    "package": {
+      "source": "heroicons",
+      "name": "cube",
+      "library": "cube",
+      "meaning": "Package, extension or app"
+    },
+    "apps": {
+      "source": "generated",
+      "name": "squares-offset",
+      "library": "squares-offset",
+      "meaning": "Apps or blocks"
+    },
+    "layers": {
+      "source": "heroicons",
+      "name": "square-3-stack-3d",
+      "library": "square-3-stack-3d",
+      "meaning": "All items or stacked groups"
+    },
+    "list": {
+      "source": "heroicons",
+      "name": "list-bullet",
+      "library": "list-bullet",
+      "meaning": "List or requests"
+    },
+    "list-numbered": {
+      "source": "heroicons",
+      "name": "numbered-list",
+      "library": "numbered-list",
+      "meaning": "Numbered steps"
+    },
+    "checklist": {
+      "source": "generated",
+      "name": "list-check",
+      "library": "list-check",
+      "meaning": "Todo or checks"
+    },
+    "list-add": {
+      "source": "generated",
+      "name": "list-plus",
+      "library": "list-plus",
+      "meaning": "Add to queue"
+    },
+    "list-tree": {
+      "source": "generated",
+      "name": "list-tree",
+      "library": "list-tree",
+      "meaning": "Child work tree"
+    },
+    "text-search": {
+      "source": "generated",
+      "name": "text-search",
+      "library": "text-search",
+      "meaning": "Search thread content"
+    },
+    "text": {
+      "source": "heroicons",
+      "name": "bars-3-bottom-left",
+      "library": "bars-3-bottom-left",
+      "meaning": "Text or accessibility contents"
+    },
+    "type": {
+      "source": "generated",
+      "name": "letter-t",
+      "library": "letter-t",
+      "meaning": "Type text or a typed value"
+    },
+    "text-size": {
+      "source": "generated",
+      "name": "text-size",
+      "library": "text-size",
+      "meaning": "Text size"
+    },
+    "letter-spacing": {
+      "source": "generated",
+      "name": "letter-spacing",
+      "library": "letter-spacing",
+      "meaning": "Letter spacing"
+    },
+    "settings": {
+      "source": "heroicons",
+      "name": "cog-6-tooth",
+      "library": "cog-6-tooth",
+      "meaning": "Settings"
+    },
+    "adjust": {
+      "source": "heroicons",
+      "name": "adjustments-horizontal",
+      "library": "adjustments-horizontal",
+      "meaning": "Options or advanced settings"
+    },
+    "theme": {
+      "source": "heroicons",
+      "name": "swatch",
+      "library": "swatch",
+      "meaning": "Theme or palette"
+    },
+    "paint": {
+      "source": "heroicons",
+      "name": "paint-brush",
+      "library": "paint-brush",
+      "meaning": "Theme editor or element style"
+    },
+    "design": {
+      "source": "generated",
+      "name": "pencil-ruler",
+      "library": "pencil-ruler",
+      "meaning": "Design mode"
+    },
+    "clean": {
+      "source": "generated",
+      "name": "broom",
+      "library": "broom",
+      "meaning": "Clear the queue"
+    },
+    "sidebar-left": {
+      "source": "generated",
+      "name": "window-sidebar-left",
+      "library": "window-sidebar-left",
+      "meaning": "Toggle the left sidebar"
+    },
+    "sidebar-right": {
+      "source": "generated",
+      "name": "window-sidebar-right",
+      "library": "window-sidebar-right",
+      "meaning": "Toggle the right panel"
+    },
+    "panel-bottom": {
+      "source": "generated",
+      "name": "window-panel-bottom",
+      "library": "window-panel-bottom",
+      "meaning": "Toggle the bottom panel"
+    },
+    "layout": {
+      "source": "generated",
+      "name": "window-layout",
+      "library": "window-layout",
+      "meaning": "Projects settings or layout"
+    },
+    "panel-menu": {
+      "source": "generated",
+      "name": "window-menu",
+      "library": "window-menu",
+      "meaning": "Panel layout menu"
+    },
+    "split-horizontal": {
+      "source": "generated",
+      "name": "window-split-horizontal",
+      "library": "window-split-horizontal",
+      "meaning": "Split side by side"
+    },
+    "split-vertical": {
+      "source": "generated",
+      "name": "window-split-vertical",
+      "library": "window-split-vertical",
+      "meaning": "Split top and bottom"
+    },
+    "keyboard": {
+      "source": "generated",
+      "name": "keyboard",
+      "library": "keyboard",
+      "meaning": "Keyboard or shortcuts"
+    },
+    "theme-light": {
+      "source": "heroicons",
+      "name": "sun",
+      "library": "sun",
+      "meaning": "Light theme"
+    },
+    "theme-dark": {
+      "source": "heroicons",
+      "name": "moon",
+      "library": "moon",
+      "meaning": "Dark theme"
+    },
+    "desktop": {
+      "source": "heroicons",
+      "name": "computer-desktop",
+      "library": "computer-desktop",
+      "meaning": "Desktop machine or display"
+    },
+    "laptop": {
+      "source": "generated",
+      "name": "laptop",
+      "library": "laptop",
+      "meaning": "Laptop machine"
+    },
+    "phone": {
+      "source": "heroicons",
+      "name": "device-phone-mobile",
+      "library": "device-phone-mobile",
+      "meaning": "Phone or mobile device"
+    },
+    "server": {
+      "source": "heroicons",
+      "name": "server-stack",
+      "library": "server-stack",
+      "meaning": "Server or environment"
+    },
+    "disk": {
+      "source": "heroicons",
+      "name": "server",
+      "library": "server",
+      "meaning": "Disk or storage"
+    },
+    "database": {
+      "source": "heroicons",
+      "name": "circle-stack",
+      "library": "circle-stack",
+      "meaning": "Database"
+    },
+    "cpu": {
+      "source": "heroicons",
+      "name": "cpu-chip",
+      "library": "cpu-chip",
+      "meaning": "CPU"
+    },
+    "memory": {
+      "source": "generated",
+      "name": "memory-stick",
+      "library": "memory-stick",
+      "meaning": "Memory"
+    },
+    "battery": {
+      "source": "heroicons",
+      "name": "battery-100",
+      "library": "battery-100",
+      "meaning": "Battery"
+    },
+    "cloud": {
+      "source": "heroicons",
+      "name": "cloud",
+      "library": "cloud",
+      "meaning": "Cloud environment"
+    },
+    "globe": {
+      "source": "heroicons",
+      "name": "globe-alt",
+      "library": "globe-alt",
+      "meaning": "Web, network or public"
+    },
+    "browser": {
+      "source": "heroicons",
+      "name": "globe-europe-africa",
+      "library": "globe-europe-africa",
+      "meaning": "Browser preview"
+    },
+    "wifi": {
+      "source": "heroicons",
+      "name": "wifi",
+      "library": "wifi",
+      "meaning": "Network connected"
+    },
+    "offline": {
+      "source": "heroicons",
+      "name": "signal-slash",
+      "library": "signal-slash",
+      "meaning": "Offline"
+    },
+    "broadcast": {
+      "source": "heroicons",
+      "name": "signal",
+      "library": "signal",
+      "meaning": "Live preview or broadcast"
+    },
+    "camera": {
+      "source": "heroicons",
+      "name": "camera",
+      "library": "camera",
+      "meaning": "Screenshot or camera"
+    },
+    "microphone": {
+      "source": "heroicons",
+      "name": "microphone",
+      "library": "microphone",
+      "meaning": "Dictation or microphone"
+    },
+    "headphones": {
+      "source": "generated",
+      "name": "headphones",
+      "library": "headphones",
+      "meaning": "Bluetooth headset"
+    },
+    "car": {
+      "source": "heroicons",
+      "name": "truck",
+      "library": "truck",
+      "meaning": "CarPlay"
+    },
+    "speaker": {
+      "source": "heroicons",
+      "name": "speaker-wave",
+      "library": "speaker-wave",
+      "meaning": "Sound on"
+    },
+    "mute": {
+      "source": "heroicons",
+      "name": "speaker-x-mark",
+      "library": "speaker-x-mark",
+      "meaning": "Sound off"
+    },
+    "home": {
+      "source": "generated",
+      "name": "house",
+      "library": "house",
+      "meaning": "Home button or home"
+    },
+    "pointer": {
+      "source": "generated",
+      "name": "cursor-arrow",
+      "library": "cursor-arrow",
+      "meaning": "Agent cursor or pointer"
+    },
+    "pick-element": {
+      "source": "heroicons",
+      "name": "cursor-arrow-rays",
+      "library": "cursor-arrow-rays",
+      "meaning": "Pick a page element"
+    },
+    "qr-code": {
+      "source": "heroicons",
+      "name": "qr-code",
+      "library": "qr-code",
+      "meaning": "QR code pairing"
+    },
+    "building": {
+      "source": "heroicons",
+      "name": "building-office",
+      "library": "building-office",
+      "meaning": "Organization or managed policy"
+    },
+    "briefcase": {
+      "source": "heroicons",
+      "name": "briefcase",
+      "library": "briefcase",
+      "meaning": "Work project"
+    },
+    "coffee": {
+      "source": "generated",
+      "name": "coffee",
+      "library": "coffee",
+      "meaning": "Project icon: coffee"
+    },
+    "heart": {
+      "source": "heroicons",
+      "name": "heart",
+      "library": "heart",
+      "meaning": "Project icon: heart"
+    },
+    "rocket": {
+      "source": "heroicons",
+      "name": "rocket-launch",
+      "library": "rocket-launch",
+      "meaning": "Project icon: rocket"
+    },
+    "tag": {
+      "source": "heroicons",
+      "name": "tag",
+      "library": "tag",
+      "meaning": "Label or tag"
+    },
+    "ticket": {
+      "source": "heroicons",
+      "name": "ticket",
+      "library": "ticket",
+      "meaning": "Credits or usage tickets"
+    },
+    "scale": {
+      "source": "heroicons",
+      "name": "scale",
+      "library": "scale",
+      "meaning": "Auto environment choice"
+    },
+    "remote-env": {
+      "source": "generated",
+      "name": "code-ellipsis",
+      "library": "code-ellipsis",
+      "meaning": "Remote or SSH connection"
+    },
+    "diagnostics": {
+      "source": "generated",
+      "name": "stethoscope",
+      "library": "stethoscope",
+      "meaning": "Diagnostics"
+    },
+    "skill": {
+      "source": "generated",
+      "name": "glasses",
+      "library": "glasses",
+      "meaning": "Skill chip in the composer"
+    },
+    "sort-toggle": {
+      "source": "heroicons",
+      "name": "arrows-up-down",
+      "library": "arrows-up-down",
+      "meaning": "Sort toggle (up/down)"
+    },
+    "mention": {
+      "source": "heroicons",
+      "name": "at-symbol",
+      "library": "at-symbol",
+      "meaning": "Mention someone"
+    },
+    "speech-language": {
+      "source": "heroicons",
+      "name": "language",
+      "library": "language",
+      "meaning": "Speech language"
+    },
+    "numbered-list": {
+      "source": "heroicons",
+      "name": "numbered-list",
+      "library": "numbered-list",
+      "meaning": "Numbered list"
+    },
+    "reply": {
+      "source": "heroicons",
+      "name": "arrow-uturn-left",
+      "library": "arrow-uturn-left",
+      "meaning": "Reply in a review thread"
+    },
+    "write-guide": {
+      "source": "heroicons",
+      "name": "document-text",
+      "library": "document-text",
+      "meaning": "Write or show the PR guide"
+    },
+    "mic-off": {
+      "source": "generated",
+      "name": "microphone-slash",
+      "library": "microphone-slash",
+      "meaning": "Microphone off"
+    },
+    "check-cancelled": {
+      "source": "generated",
+      "name": "octagon-x",
+      "library": "octagon-x",
+      "meaning": "Cancelled check status (failed uses x-circle)"
+    },
+    "eraser": {
+      "source": "generated",
+      "name": "eraser",
+      "library": "eraser",
+      "meaning": "Fresh session / context cleared"
+    },
+    "audio-lines": {
+      "source": "generated",
+      "name": "audio-lines",
+      "library": "audio-lines",
+      "meaning": "Voice / audio settings"
+    },
+    "mail-open": {
+      "source": "heroicons",
+      "name": "envelope-open",
+      "library": "envelope-open",
+      "meaning": "Mark unread or an opened message"
+    },
+    "hash": {
+      "source": "heroicons",
+      "name": "hashtag",
+      "library": "hashtag",
+      "meaning": "An id or number (copy thread ID)"
+    },
+    "paste": {
+      "source": "heroicons",
+      "name": "clipboard-document",
+      "library": "clipboard-document",
+      "meaning": "Paste from the clipboard"
+    },
+    "computer-mini": {
+      "source": "generated",
+      "name": "computer-mini",
+      "library": "computer-mini",
+      "meaning": "Mini PC environment machine (mac-mini)"
+    },
+    "computer-studio": {
+      "source": "generated",
+      "name": "computer-studio",
+      "library": "computer-studio",
+      "meaning": "Workstation environment machine (mac-studio)"
+    },
+    "window-viewfinder": {
+      "source": "generated",
+      "name": "window-viewfinder",
+      "library": "window-viewfinder",
+      "meaning": "App snapshots (Settings \u203a SnapShots)"
+    },
+    "device-rotate": {
+      "source": "generated",
+      "name": "device-rotate",
+      "library": "device-rotate",
+      "meaning": "Rotate the preview device (portrait/landscape)"
+    },
+    "foldable-closed": {
+      "source": "generated",
+      "name": "foldable-closed",
+      "library": "foldable-closed",
+      "meaning": "Foldable posture: closed"
+    },
+    "foldable-open": {
+      "source": "generated",
+      "name": "foldable-open",
+      "library": "foldable-open",
+      "meaning": "Foldable posture: open flat"
+    },
+    "foldable-book": {
+      "source": "generated",
+      "name": "foldable-book",
+      "library": "foldable-book",
+      "meaning": "Foldable posture: book"
+    },
+    "foldable-laptop": {
+      "source": "generated",
+      "name": "foldable-laptop",
+      "library": "foldable-laptop",
+      "meaning": "Foldable posture: laptop stance"
+    },
+    "foldable-tent": {
+      "source": "generated",
+      "name": "foldable-tent",
+      "library": "foldable-tent",
+      "meaning": "Foldable posture: tent stance"
+    }
+  }
+}

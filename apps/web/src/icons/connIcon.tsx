@@ -1,68 +1,63 @@
-import type { Icon as PhosphorIcon, IconProps, IconWeight } from "@phosphor-icons/react";
 import {
   createLucideIcon,
   type LucideIcon as OriginalLucideIcon,
   type LucideProps as OriginalLucideProps,
 } from "lucide-react-original";
-import {
-  createContext,
-  forwardRef,
-  use,
-  type ForwardRefExoticComponent,
-  type ReactNode,
-  type RefAttributes,
-} from "react";
+import { forwardRef, type ForwardRefExoticComponent, type RefAttributes } from "react";
 
+// Hand-drawn stroke icons (createLucideIcon) still render through Lucide.
 export { createLucideIcon };
 export type LucideProps = OriginalLucideProps;
 export type LucideIcon = OriginalLucideIcon;
 
-const ConnIconScopeContext = createContext(false);
+/** One Superheroicons 16px solid glyph: plain paths and rects, filled with the current color. */
+export type IconNode = ReadonlyArray<
+  readonly [tag: "path" | "rect", attrs: Readonly<Record<string, string>>]
+>;
 
-/** Conn: icons inside this scope (the thread timeline) draw Phosphor instead of Lucide. */
-export function ConnIconScope(props: { readonly children: ReactNode }) {
-  return <ConnIconScopeContext value={true}>{props.children}</ConnIconScopeContext>;
-}
-
-function useConnIconScope() {
-  return use(ConnIconScopeContext);
+// Lucide's rule: an icon without a label or children is decorative.
+function hasA11yProp(props: Record<string, unknown>): boolean {
+  return Object.keys(props).some(
+    (key) => key.startsWith("aria-") || key === "role" || key === "title",
+  );
 }
 
 /**
- * Pairs a Lucide icon with a Phosphor one under Lucide's props. Outside a
- * `ConnIconScope` it renders the Lucide icon unchanged. Inside, it renders the
- * Phosphor icon: `size` defaults to 24, stroke props are ignored, and the svg
- * keeps Lucide's `lucide-<name>` class for selectors.
+ * A component with Lucide's props that draws a Conn glyph. `size` (default 24) and `color`
+ * work as in Lucide; stroke props are ignored, since the glyphs are solid. The svg keeps
+ * Lucide's `lucide lucide-<name>` classes for selectors. `viewBox` crops the 16-unit box for
+ * glyphs drawn one size step up.
  */
-export function connIcon(
-  Phosphor: PhosphorIcon,
-  Lucide: LucideIcon,
-  name: string,
-  weight: IconWeight = "fill",
-  options: { readonly mirrored?: boolean } = {},
-): LucideIcon {
+export function connIcon(name: string, node: IconNode, viewBox = "0 0 16 16"): LucideIcon {
   const ConnIcon = forwardRef<SVGSVGElement, Omit<LucideProps, "ref">>(
     function ConnIcon(props, ref) {
-      const scoped = useConnIconScope();
-      if (!scoped) return <Lucide ref={ref} {...props} />;
       const {
         size = 24,
+        color = "currentColor",
         strokeWidth: _strokeWidth,
         absoluteStrokeWidth: _absolute,
         className,
+        children,
         ...rest
       } = props;
       return (
-        <Phosphor
+        <svg
           ref={ref}
-          size={size}
-          weight={weight}
-          mirrored={options.mirrored ?? false}
-          aria-hidden={rest["aria-label"] === undefined}
-          className={className ? `lucide-${name} ${className}` : `lucide-${name}`}
-          // Lucide's svg props allow explicit `undefined`, which Phosphor's types reject.
-          {...(rest as IconProps)}
-        />
+          xmlns="http://www.w3.org/2000/svg"
+          width={size}
+          height={size}
+          viewBox={viewBox}
+          fill={color}
+          className={className ? `lucide lucide-${name} ${className}` : `lucide lucide-${name}`}
+          {...(!children && !hasA11yProp(rest) ? { "aria-hidden": true } : {})}
+          {...rest}
+        >
+          {node.map(([Tag, attrs], index) => (
+            // oxlint-disable-next-line react/no-array-index-key -- a glyph's elements never reorder
+            <Tag key={index} {...attrs} />
+          ))}
+          {children}
+        </svg>
       );
     },
   ) as ForwardRefExoticComponent<Omit<LucideProps, "ref"> & RefAttributes<SVGSVGElement>>;

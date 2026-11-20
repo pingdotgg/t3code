@@ -1020,7 +1020,7 @@ export function ThemeLibrary({
                           );
                         }}
                       />
-                      <CheckIcon className="pointer-events-none col-start-1 row-start-1 size-3.5 shrink-0 self-center justify-self-center stroke-primary-foreground opacity-0 group-has-checked:opacity-100 sm:size-3" />
+                      <CheckIcon className="pointer-events-none col-start-1 row-start-1 size-3.5 shrink-0 self-center justify-self-center text-primary-foreground opacity-0 group-has-checked:opacity-100 sm:size-3" />
                     </span>
                     <span className="flex min-h-12 items-center justify-center gap-1">
                       {card.previews.map((preview) => (

@@ -1,0 +1,154 @@
+#!/usr/bin/env node
+// @effect-diagnostics nodeBuiltinImport:off globalConsole:off - a one-off asset generator run by hand.
+/**
+ * Writes apps/web/src/icons/{lucide-react,glyphs.generated}.ts (`lucide-react` is the web alias) from
+ * assets/conn/superheroicons: one component per manifest Lucide name. Commit the output.
+ * Run: `node scripts/generate-conn-icons.ts`. A manifest entry without a glyph fails here.
+ */
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
+const repoRoot = NodePath.resolve(import.meta.dirname, "..");
+const setDir = NodePath.join(repoRoot, "assets/conn/superheroicons");
+const glyphDir = NodePath.join(setDir, "16/solid");
+const webOut = NodePath.join(repoRoot, "apps/web/src/icons/lucide-react.ts");
+
+interface Manifest {
+  readonly lucide: Readonly<Record<string, string>>;
+  readonly sf: Readonly<Record<string, string>>;
+}
+const manifest = JSON.parse(
+  NodeFS.readFileSync(NodePath.join(setDir, "manifest.json"), "utf8"),
+) as Manifest;
+
+type Element = readonly [tag: "path" | "rect", attrs: Readonly<Record<string, string>>];
+
+const ATTRIBUTES: Readonly<Record<string, string>> = {
+  d: "d",
+  "fill-rule": "fillRule",
+  "clip-rule": "clipRule",
+  x: "x",
+  y: "y",
+  width: "width",
+  height: "height",
+  rx: "rx",
+};
+
+/** Reads one glyph into elements. Anything beyond plain paths and rects fails loudly. */
+function readGlyph(concept: string, size: 16 | 24 = 16): ReadonlyArray<Element> {
+  const file = NodePath.join(setDir, `${size}/solid`, `${concept}.svg`);
+  if (!NodeFS.existsSync(file)) throw new Error(`no glyph for concept "${concept}" (${file})`);
+  const svg = NodeFS.readFileSync(file, "utf8");
+  const root = /<svg\b([^>]*)>/.exec(svg)?.[1] ?? "";
+  if (!root.includes(`viewBox="0 0 ${size} ${size}"`) || !root.includes('fill="currentColor"')) {
+    throw new Error(`${file}: expected viewBox 0 0 ${size} ${size} and fill currentColor`);
+  }
+  const body = svg.slice(svg.indexOf(">") + 1, svg.lastIndexOf("</svg>"));
+  const elements: Element[] = [];
+  const rest = body.replace(/<(path|rect)\b([^>]*?)\/>/g, (_match, tag: "path" | "rect", raw) => {
+    const attrs: Record<string, string> = {};
+    for (const [, name, value] of (raw as string).matchAll(/([a-z-]+)="([^"]*)"/g)) {
+      const prop = ATTRIBUTES[name!];
+      if (!prop) throw new Error(`${file}: unsupported attribute ${name}`);
+      attrs[prop] = value!;
+    }
+    elements.push([tag, attrs]);
+    return "";
+  });
+  if (rest.trim() !== "")
+    throw new Error(`${file}: unsupported markup ${rest.trim().slice(0, 60)}`);
+  if (elements.length === 0) throw new Error(`${file}: empty glyph`);
+  return elements;
+}
+
+const camel = (concept: string) =>
+  concept.replace(/-([a-z0-9])/g, (_m, c: string) => c.toUpperCase());
+// Lucide's own class naming (`lucide-<kebab>`), kept for selectors.
+const kebab = (name: string) => name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+
+const lucideNames = Object.keys(manifest.lucide).sort();
+const concepts = [...new Set(lucideNames.map((name) => manifest.lucide[name]!))].sort();
+
+// One named export per glyph in the set, so a module that needs a single glyph does not bundle
+// the set. Concepts without a Lucide name (hand-drawn replacements) are used by concept id.
+const allConcepts = NodeFS.readdirSync(glyphDir)
+  .filter((file) => file.endsWith(".svg"))
+  .map((file) => file.slice(0, -4))
+  .sort();
+const glyphLines = allConcepts.map(
+  (concept) =>
+    `export const ${camel(concept)}Glyph = ${JSON.stringify(readGlyph(concept))} as const satisfies IconNode;`,
+);
+// The few web glyphs drawn at 24px or more come from 24/solid. Mobile vendors the whole 24px
+// set, so web names its five explicitly.
+const WEB_GLYPHS_24 = [
+  "foldable-book",
+  "foldable-closed",
+  "foldable-laptop",
+  "foldable-open",
+  "foldable-tent",
+] as const;
+const glyph24Lines = WEB_GLYPHS_24.map(
+  (concept) =>
+    `export const ${camel(concept)}Glyph24 = ${JSON.stringify(readGlyph(concept, 24))} as const satisfies IconNode;`,
+);
+const LINT_ALLOW: Readonly<Record<string, string>> = {
+  Sparkles:
+    "// oxlint-disable-next-line t3code/no-sparkles-icon -- the rule targets call sites, not this export\n",
+};
+// Bare ×, + and … fill less of the box than the icons they replace; they draw one size step up
+// (14 → 16) by cropping the box, so they keep the visual weight of the design.
+const STEPPED_CONCEPTS = new Set(["close", "add", "more-horizontal"]);
+const STEPPED_VIEW_BOX = "1 1 14 14";
+const exportLines = lucideNames.map(
+  (name) =>
+    `${LINT_ALLOW[name] ?? ""}export const ${name}Icon = connIcon(${JSON.stringify(kebab(name))}, G.${camel(manifest.lucide[name]!)}${STEPPED_CONCEPTS.has(manifest.lucide[name]!) ? `, ${JSON.stringify(STEPPED_VIEW_BOX)}` : ""}),\n  ${name} = ${name}Icon;`,
+);
+
+const glyphsOut = NodePath.join(NodePath.dirname(webOut), "glyphs.generated.ts");
+const header =
+  "// @generated by scripts/generate-conn-icons.ts from assets/conn/superheroicons. Do not edit.";
+NodeFS.writeFileSync(
+  glyphsOut,
+  `${header}
+import type { IconNode } from "./connIcon";
+
+/** Superheroicons 16px solid glyphs (viewBox 0 0 16 16), by concept. */
+${glyphLines.join("\n")}
+
+/** 24px glyphs (viewBox 0 0 24 24) for icons drawn at 24px or more. */
+${glyph24Lines.join("\n")}
+
+export const GLYPHS = {
+${concepts.map((concept) => `  ${camel(concept)}: ${camel(concept)}Glyph,`).join("\n")}
+} satisfies Record<string, IconNode>;
+
+/** Lucide kebab name to glyph, for code that names icons by string (the web context menu). */
+export const GLYPH_BY_LUCIDE_NAME: Readonly<Record<string, IconNode>> = {
+${lucideNames.map((name) => `  ${JSON.stringify(kebab(name))}: GLYPHS.${camel(manifest.lucide[name]!)},`).join("\n")}
+};
+`,
+);
+NodeFS.writeFileSync(
+  webOut,
+  `${header}
+/**
+ * The web tsconfig and Vite config map \`lucide-react\` here: every Lucide name Conn imports
+ * draws its Superheroicons 16px solid glyph. A Lucide name missing from the manifest fails the
+ * typecheck until the icon set maps it.
+ */
+import { connIcon } from "./connIcon";
+import { GLYPHS as G } from "./glyphs.generated";
+
+export { createLucideIcon, type LucideIcon, type LucideProps } from "./connIcon";
+
+${exportLines.join("\n")}
+`,
+);
+// Format like the rest of the repo, so a fresh run leaves no diff.
+NodeChildProcess.execFileSync("vp", ["fmt", webOut, glyphsOut], {
+  cwd: repoRoot,
+  stdio: "inherit",
+});
+console.log(`${concepts.length} concepts, ${lucideNames.length} Lucide names -> ${webOut}`);

@@ -27,7 +27,7 @@ import { useAssetUrlState } from "../../assets/assetUrls";
 import { cn } from "~/lib/utils";
 import { TimelineRowCtx } from "./timelineRowContext";
 import { CircleHelpIcon } from "lucide-react";
-import { KeyRoundIcon } from "lucide-react";
+import { Globe2Icon, KeyRoundIcon } from "lucide-react";
 
 export const failedToolIconClassName = "text-tool-error-icon/40";
 
@@ -59,26 +59,6 @@ export type WorkEntryIconName =
   | "wrench"
   | "x"
   | "zap";
-
-function BrowserAppIcon({ className }: { className: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.9"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden
-    >
-      <path d="M8.5 19H7.2C4.4 19 3 17.5 3 14.6V7.4C3 4.5 4.5 3 7.4 3h8.2C18.5 3 20 4.5 20 7.4v2.4" />
-      <circle cx="7.4" cy="7.2" r="0.75" fill="currentColor" stroke="none" />
-      <path d="M11.2 7.2h4.3" />
-      <path d="m12.4 11.4 7.5 2.6-3.4 1.6-1.5 3.6z" fill="currentColor" stroke="none" />
-    </svg>
-  );
-}
 
 export function ToolActivityIconView(props: {
   icon: ToolActivityIcon | undefined;
@@ -243,7 +223,7 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
       return <BrainIcon className={className} aria-hidden />;
     case "browser":
     case "computer":
-      return <BrowserAppIcon className={className} />;
+      return <Globe2Icon aria-hidden className={className} />;
     case "code":
       return <Code2Icon className={className} aria-hidden />;
     case "device":

@@ -199,20 +199,7 @@ function MenuCheckboxItem({
           <MenuPrimitive.CheckboxItemIndicator
             className={cn("col-start-1", variant === "icon" && "-mx-0.5")}
           >
-            <svg
-              className={variant === "icon" ? "size-3.5" : undefined}
-              fill="none"
-              height="24"
-              stroke="currentColor"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth="1.75"
-              viewBox="0 0 24 24"
-              width="24"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <path d="M5.252 12.7 10.2 18.63 18.748 5.37" />
-            </svg>
+            <CheckIcon className={variant === "icon" ? "size-3.5" : undefined} />
           </MenuPrimitive.CheckboxItemIndicator>
           <span className="col-start-2">{children}</span>
         </>

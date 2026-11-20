@@ -32,6 +32,7 @@
         "fixtures/*/*.js",
         // Conn fork tools run by hand (symbols, vendored tarballs, local signing).
         "build-conn-symbols.ts",
+        "generate-conn-icons.ts",
         "build-conn-vendored-tarball.ts",
         "sign-macos-local.ts",
         "check-desktop-typecheck.ts",
@@ -120,6 +121,8 @@
         "src/components/ui/*.tsx": ["exports", "nsExports", "duplicates"],
         "src/annotations/**": ["exports"],
         "src/orbit/**": ["exports"],
+        // Generated: one export per glyph so single-glyph users tree-shake the set.
+        "src/icons/glyphs.generated.ts": ["exports"],
         "src/browser/ServerBrowserSurface.tsx": ["exports"],
         "src/components/AppRouteModal.tsx": ["exports"],
         "src/lib/sidebarTree.ts": ["exports"],

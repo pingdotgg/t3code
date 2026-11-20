@@ -386,10 +386,6 @@ export default defineConfig(({ command }) => {
             new URL("./src/icons/lucide-react.ts", import.meta.url),
           ),
         },
-        {
-          find: /^lucide$/,
-          replacement: NodeURL.fileURLToPath(new URL("./src/icons/lucide.ts", import.meta.url)),
-        },
       ],
       tsconfigPaths: true,
       dedupe: ["react", "react-dom"],
