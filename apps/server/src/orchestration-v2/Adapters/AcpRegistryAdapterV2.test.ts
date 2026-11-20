@@ -453,10 +453,32 @@ const claudeUnrelatedChildren = [
 
 describe("AcpRegistryAdapterV2", () => {
   it.effect.each([
-    { commandPath: "/root/.local/bin/agy", offers: 1 },
-    { commandPath: "C:\\tools\\agy.exe", offers: 1 },
-    { commandPath: "/opt/bin/other-agent", offers: 0 },
-  ])("continues late output only for agy ($commandPath)", ({ commandPath, offers }) =>
+    {
+      label: "local agy",
+      settings: { source: "local", commandPath: "/root/.local/bin/agy" },
+      offers: 1,
+    },
+    {
+      label: "local agy.exe",
+      settings: { source: "local", commandPath: "C:\\tools\\agy.exe" },
+      offers: 1,
+    },
+    {
+      label: "registry antigravity-acp",
+      settings: { agentId: "antigravity-acp" },
+      offers: 1,
+    },
+    {
+      label: "local antigravity-acp shim",
+      settings: { source: "local", commandPath: "/opt/bin/antigravity-acp" },
+      offers: 1,
+    },
+    {
+      label: "unrelated agent",
+      settings: { source: "local", commandPath: "/opt/bin/other-agent" },
+      offers: 0,
+    },
+  ])("continues late output only for agy ($label)", ({ settings, offers }) =>
     Effect.gen(function* () {
       const gate = makeProviderReplayGate(["wake"]);
       const update = (sessionUpdate: Record<string, unknown>) =>
@@ -504,7 +526,7 @@ describe("AcpRegistryAdapterV2", () => {
         ],
         gate,
         true,
-        { source: "local", commandPath, commandArgs: ["acp"] },
+        settings,
       );
       yield* session.runtime.startTurn(session.turnInput(1));
       assert.equal((yield* session.terminal).status, "completed");
