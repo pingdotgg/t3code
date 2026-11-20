@@ -821,6 +821,12 @@ export const make = Effect.gen(function* () {
           "gitcafe.list.query": Boolean(input.query?.trim()),
           "gitcafe.list.involvement": input.involvement ?? "none",
         });
+        const annotateOutcome = (pages: number, rows: number, truncated: boolean) =>
+          Effect.annotateCurrentSpan({
+            "gitcafe.list.pages": pages,
+            "gitcafe.list.rows": rows,
+            "gitcafe.list.truncated": truncated,
+          });
         const involved = input.involvement === "authored" || input.involvement === "reviewing";
         let actorId: string | undefined;
         if (involved) {
@@ -843,8 +849,10 @@ export const make = Effect.gen(function* () {
             }),
           );
           if (Option.isSome(principal)) {
-            if (principal.value.handle.toLowerCase() !== input.viewer.toLowerCase())
+            if (principal.value.handle.toLowerCase() !== input.viewer.toLowerCase()) {
+              yield* annotateOutcome(0, 0, false);
               return { items: [], truncated: false, continues: false };
+            }
             actorId = principal.value.actorId;
           }
         }
@@ -853,7 +861,6 @@ export const make = Effect.gen(function* () {
           base,
         );
         yield* Effect.annotateCurrentSpan({
-          "gitcafe.list.filtered": filterParams.length > 0,
           "gitcafe.list.actor_narrowed": actorId !== undefined,
           "gitcafe.list.author_discovery": unresolvedAuthor !== null,
         });
@@ -896,10 +903,13 @@ export const make = Effect.gen(function* () {
           } while (!knownAuthors.has(key) && after !== null && pages < AUTHOR_DISCOVERY_PAGES);
           yield* Effect.annotateCurrentSpan("gitcafe.list.author_discovery_pages", pages);
           const found = knownAuthors.get(key);
-          if (found === undefined)
+          if (found === undefined) {
+            yield* annotateOutcome(0, 0, after !== null);
             return { items: [], truncated: after !== null, continues: false };
+          }
           filterParams.push(["authors", encodeIds([found])]);
         }
+        yield* Effect.annotateCurrentSpan("gitcafe.list.filtered", filterParams.length > 0);
         const limit = Math.max(1, input.limit);
         const items: Array<Json.GitCafePull> = [];
         // GitCafe pages by an opaque token and orders by creation, so a continuation reads from the
@@ -927,11 +937,7 @@ export const make = Effect.gen(function* () {
         const delivered = items.slice(0, limit);
         const last = delivered.at(-1);
         const truncated = next !== null || items.length > limit;
-        yield* Effect.annotateCurrentSpan({
-          "gitcafe.list.pages": listingPages,
-          "gitcafe.list.rows": delivered.length,
-          "gitcafe.list.truncated": truncated,
-        });
+        yield* annotateOutcome(listingPages, delivered.length, truncated);
         return {
           ...(last === undefined ? {} : { resumeAfter: `${last.createdAt}~${last.number}` }),
           items: delivered.map((pull) => {
