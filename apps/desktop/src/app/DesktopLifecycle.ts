@@ -254,9 +254,14 @@ export const make = DesktopLifecycle.of({
     const electronApp = yield* ElectronApp.ElectronApp;
     const electronTheme = yield* ElectronTheme.ElectronTheme;
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const desktopState = yield* DesktopState.DesktopState;
     const context = yield* Effect.context<DesktopLifecycleRegistrationServices>();
     const runEffect = Effect.runPromiseWith(context);
     const quit: QuitState = { phase: "running", waitingSinceNanos: 0n };
+    // Every allowed quit keeps `quitting` set; a refused update install clears it on recovery.
+    const dropRecoveredUpdaterQuit = () => {
+      if (quit.phase === "allowed" && !Ref.getUnsafe(desktopState.quitting)) quit.phase = "running";
+    };
     yield* electronTheme.onUpdated(() => {
       void runEffect(
         desktopWindow.syncAppearance.pipe(Effect.withSpan("desktop.lifecycle.themeUpdated")),
@@ -282,6 +287,7 @@ export const make = DesktopLifecycle.of({
       );
     });
     yield* electronApp.on("before-quit", (event: Electron.Event) => {
+      dropRecoveredUpdaterQuit();
       handleBeforeQuit(event, runEffect, quit);
     });
     yield* electronApp.on("activate", () => {
@@ -312,6 +318,7 @@ export const make = DesktopLifecycle.of({
       process,
       "exit",
       (exitCode: number) => {
+        dropRecoveredUpdaterQuit();
         Effect.runSyncWith(context)(
           Effect.gen(function* () {
             const shutdown = yield* DesktopShutdown.DesktopShutdown;

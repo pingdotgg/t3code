@@ -1,5 +1,7 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Vite config runs before any Effect runtime.
 import * as NodeFSP from "node:fs/promises";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Vite config runs before any Effect runtime.
+import * as NodePath from "node:path";
 import * as NodeZlib from "node:zlib";
 
 import react from "@vitejs/plugin-react";
@@ -18,7 +20,12 @@ import {
   DEV_PROXIED_PATH_PREFIXES,
 } from "@t3tools/shared/devProxy";
 
-import { loadRepoEnv } from "../../scripts/lib/public-config";
+import { appSchemeDefine, loadRepoEnv } from "../../scripts/lib/public-config";
+import { rebrandPlugin } from "../../scripts/lib/rebrand";
+import {
+  standaloneBuildDefine,
+  standaloneWellKnownFiles,
+} from "../../scripts/lib/standalone-build";
 import { resolveTaggedSourceVersion } from "../../scripts/lib/tagged-source-version";
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
 import { tailwindPlugins } from "./vite/tailwind";
@@ -290,6 +297,28 @@ function bootstrapTitlePlugin(): Plugin {
   };
 }
 
+// A standalone build must not declare T3's mobile apps as the handlers for the fork's domain.
+function standaloneWellKnownPlugin(): Plugin | undefined {
+  const files = standaloneWellKnownFiles(repoEnv);
+  if (!files) return undefined;
+  let outDir = "";
+  return {
+    name: "t3code:standalone-well-known",
+    apply: "build",
+    configResolved(config) {
+      outDir = NodePath.resolve(config.root, config.build.outDir);
+    },
+    async closeBundle() {
+      for (const [file, content] of Object.entries(files)) {
+        const path = NodePath.join(outDir, file);
+        await (content === null
+          ? NodeFSP.rm(path, { force: true })
+          : NodeFSP.writeFile(path, content));
+      }
+    },
+  };
+}
+
 // Allow Tailnet hosts for sharing; Tailscale-controlled DNS prevents attacker rebinding.
 const configuredAllowedHosts = (process.env.T3CODE_DEV_ALLOWED_HOSTS ?? "")
   .split(",")
@@ -317,9 +346,11 @@ export default defineConfig(({ command }) => {
     },
     assetsInclude: ["**/*.wasm"],
     plugins: [
+      rebrandPlugin(repoEnv),
       bootstrapTitlePlugin(),
       devCompressionPlugin(),
       chunkCycleGuardPlugin(),
+      standaloneWellKnownPlugin(),
       builtDev
         ? undefined
         : thirdPartyLicensesPlugin({
@@ -371,8 +402,12 @@ export default defineConfig(({ command }) => {
         configuredDesktopUpdateRepository,
       ),
       "import.meta.env.T3CODE_FEATURE_SECRETS": JSON.stringify(configuredFeatureSecrets),
+      "import.meta.env.VITE_T3CODE_STANDALONE": JSON.stringify(repoEnv.T3CODE_STANDALONE ?? ""),
       "import.meta.env.VITE_RELEASE_CHANNEL": JSON.stringify(configuredReleaseChannel),
       "import.meta.env.APP_VERSION": JSON.stringify(configuredAppVersion),
+      // Provider sign-in returns only to this build's own hosted app.
+      ...standaloneBuildDefine({ ...repoEnv, T3CODE_HOSTED_APP_URL: configuredHostedAppUrl }),
+      ...appSchemeDefine(repoEnv),
     },
     resolve: {
       tsconfigPaths: true,

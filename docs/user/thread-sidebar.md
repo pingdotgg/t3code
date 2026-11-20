@@ -160,6 +160,16 @@ Pinned threads stay above the folders, and Snoozed and Settled stay below them. 
 can drag a thread onto the composer to mention it, but not within the sidebar, and the Working
 section is off. Each device keeps its own choice.
 
+### Show one environment
+
+When more than one environment is connected, the device button next to the project filter on web
+and desktop narrows the sidebar to one of them. Projects grouped by repository then list only
+their copies on that environment. It only hides rows: every environment stays connected and
+keeps working, and the button shows a dot while a thread on a hidden environment needs you. Its
+menu counts what needs you and what is working on each environment. Opening a hidden thread
+from a link or the command palette shows all environments again. If you remove the environment,
+the sidebar shows all of them. Each device keeps its own choice.
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list

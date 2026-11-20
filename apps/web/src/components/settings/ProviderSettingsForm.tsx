@@ -240,6 +240,13 @@ const PACKAGE_FIELD_TEXT: ReadonlyMap<string, string> = new Map([
       "A git.cafe token, used before CAFE_TOKEN and the cafe login, so GitCafe works without the CLI signed in.",
     ),
   ],
+  ["Default server", msg("Default server", { $context: "settings field, a Forgejo server URL" })],
+  [
+    "The fj or tea login used when a project has no Forgejo remote, such as when publishing. A project's remote always uses its own login.",
+    msg(
+      "The fj or tea login used when a project has no Forgejo remote, such as when publishing. A project's remote always uses its own login.",
+    ),
+  ],
   ["e.g. --chrome", msg("e.g. --chrome")],
   ["e.g. 300000", msg("e.g. 300000")],
   ["Optional", msg("Optional", { $context: "placeholder of an optional settings field" })],

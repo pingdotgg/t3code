@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ServerNpmReleaseError } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -195,4 +196,17 @@ it.effect.each(["--registry=https://example.com", "../other", "other-package@lat
       const service = yield* makeService(() => Effect.die("invalid specs must not spawn npm"));
       expect(Result.isFailure(yield* service.get({ spec }).pipe(Effect.result))).toBe(true);
     }),
+);
+
+it.effect("a standalone server never asks npm about T3's releases", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService(() => Effect.die("standalone must not spawn npm"));
+    const result = yield* service.get({ spec: "latest" }).pipe(Effect.result);
+    expect(Result.isFailure(result) && result.failure).toBeInstanceOf(ServerNpmReleaseError);
+  }).pipe(
+    Effect.provideService(
+      ConfigProvider.ConfigProvider,
+      ConfigProvider.fromEnv({ env: { T3CODE_STANDALONE: "true" } }),
+    ),
+  ),
 );

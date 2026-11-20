@@ -4,9 +4,13 @@ import * as NodeOS from "node:os";
 import { defaultInclude, defineConfig } from "vite-plus";
 
 import { isDesktopRuntimeExternalDependency } from "../../scripts/lib/desktop-external-packages.ts";
-import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
+import { appSchemeDefine, loadRepoEnv } from "../../scripts/lib/public-config.ts";
+import { rebrandPlugin } from "../../scripts/lib/rebrand.ts";
+import { standaloneBuildDefine } from "../../scripts/lib/standalone-build.ts";
 
 const repoEnv = loadRepoEnv();
+const releaseRepository =
+  repoEnv.T3CODE_DESKTOP_UPDATE_REPOSITORY?.trim() || repoEnv.GITHUB_REPOSITORY?.trim();
 const domTests = ["src/preview/PickPreload.test.ts"];
 
 // Install only bundle externals; the server bundle already carries its dependency tree.
@@ -24,6 +28,14 @@ const publicConfigDefine = {
   __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: JSON.stringify(
     repoEnv.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() ?? "",
   ),
+  // The repository whose releases feed updates; recovery links and SSH CLI downloads use it too.
+  // Omitted when unset so shared code falls back to the official repository instead of "".
+  ...(releaseRepository
+    ? { __T3CODE_BUILD_RELEASE_REPOSITORY__: JSON.stringify(releaseRepository) }
+    : {}),
+  // Standalone builds validate the fork repository and override the value above.
+  ...standaloneBuildDefine(repoEnv),
+  ...appSchemeDefine(repoEnv),
 };
 
 export default defineConfig({
@@ -72,6 +84,7 @@ export default defineConfig({
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
       define: publicConfigDefine,
+      plugins: [rebrandPlugin(repoEnv)],
       outputOptions: { codeSplitting: false },
       entry: ["src/main.ts"],
       clean: true,
@@ -89,6 +102,7 @@ export default defineConfig({
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
       define: publicConfigDefine,
+      plugins: [rebrandPlugin(repoEnv)],
       entry: [
         "src/electron/WindowsForegroundFocusWorker.ts",
         "src/snapShot/GlobalShiftShortcutWorker.ts",
@@ -122,6 +136,7 @@ export default defineConfig({
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
       define: publicConfigDefine,
+      plugins: [rebrandPlugin(repoEnv)],
       entry: ["src/preload.ts"],
       deps: {
         // Sandboxed preloads cannot resolve imports inside ASAR; bundle Clerk's bridge.

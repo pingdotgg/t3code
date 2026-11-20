@@ -44,6 +44,10 @@ import {
   resolveMacPasskeySigningConfiguration,
   resolveMergedStageDependencies,
   resolveBuildOptions,
+  resolveDesktopAppId,
+  resolveDesktopArtifactPrefix,
+  resolveDesktopPublisher,
+  standaloneLinuxMetainfo,
   stageWslRuntimeArchive,
   ancestorNodeModulesPaths,
   copyDirectoryPreservingSymlinks,
@@ -570,6 +574,98 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }),
   );
 
+  it.effect("registers the configured app scheme instead of T3 Code's", () =>
+    Effect.gen(function* () {
+      for (const platform of ["mac", "linux"] as const) {
+        const config = yield* createBuildConfig(
+          platform,
+          platform === "mac" ? "dmg" : "AppImage",
+          "0.0.33",
+          false,
+          false,
+          undefined,
+          undefined,
+        );
+        const protocols = (config[platform] as { protocols: Array<{ schemes: string[] }> })
+          .protocols;
+        assert.deepStrictEqual(protocols[0]?.schemes, ["forkcode", "forkcode-dev"], platform);
+      }
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({
+            env: { GITHUB_REPOSITORY: "fork-owner/t3code", T3CODE_APP_SCHEME: "forkcode" },
+          }),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("names the fork as the publisher of standalone Linux packages", () =>
+    Effect.gen(function* () {
+      const linux = yield* createBuildConfig(
+        "linux",
+        "AppImage",
+        "0.0.33",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+      const publisher = yield* resolveDesktopPublisher();
+      const fs = yield* FileSystem.FileSystem;
+      const metainfo = standaloneLinuxMetainfo(
+        yield* fs.readFileString(
+          NodePath.join(
+            import.meta.dirname,
+            "../apps/desktop/resources/linux/com.t3tools.t3code.metainfo.xml",
+          ),
+        ),
+        publisher,
+      );
+
+      assert.nestedPropertyVal(
+        linux,
+        "linux.maintainer",
+        "EasyDev Soluções Digitais <contato@easydevsolucoes.com.br>",
+      );
+      assert.include(metainfo, "<id>com.t3tools.t3code</id>");
+      assert.include(metainfo, "<name>EasyDev Code</name>");
+      assert.include(metainfo, '<developer id="br.com.easydevsolucoes">');
+      assert.include(
+        metainfo,
+        '<url type="bugtracker">https://github.com/fork-owner/t3code/issues</url>',
+      );
+      assert.notMatch(metainfo, /t3\.codes|pingdotgg|T3 Tools/);
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({
+            env: {
+              T3CODE_STANDALONE: "1",
+              T3CODE_APP_NAME: "EasyDev Code",
+              GITHUB_REPOSITORY: "fork-owner/t3code",
+            },
+          }),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("takes the standalone publisher from the repo env files like the bundle does", () =>
+    Effect.gen(function* () {
+      const publisher = yield* resolveDesktopPublisher({
+        T3CODE_STANDALONE: "1",
+        T3CODE_APP_NAME: "EasyDev Code",
+        T3CODE_DESKTOP_UPDATE_REPOSITORY: "fork-owner/t3code",
+      });
+
+      assert.strictEqual(publisher.appName, "EasyDev Code");
+      assert.strictEqual(publisher.repository, "fork-owner/t3code");
+      assert.notMatch(publisher.maintainer, /t3\.codes/);
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
   it.effect("names updatable AppImages without a version and apart per channel", () =>
     Effect.gen(function* () {
       const appImageName = (version: string) =>
@@ -579,6 +675,20 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
       const stable = yield* appImageName("0.0.37");
       const nightly = yield* appImageName("0.0.38-nightly.20261026.3740");
+      const config = yield* createBuildConfig(
+        "linux",
+        "AppImage",
+        "0.0.37",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      assert.strictEqual(stable, "T3-Code-${arch}.${ext}");
+      assert.strictEqual(nightly, "T3-Code-Nightly-${arch}.${ext}");
+      assert.strictEqual(config.artifactName, "T3-Code-${version}-${arch}.${ext}");
+      assert.strictEqual(config.appId, "com.t3tools.t3code");
 
       assert.notInclude(stable, "${version}");
       assert.notInclude(nightly, "${version}");
@@ -1569,6 +1679,37 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       rpDomains: ["example.clerk.accounts.dev"],
       provisioningProfilePath: "/tmp/t3code.provisionprofile",
     });
+  });
+
+  it("signs and names standalone desktop builds under the fork's identity", () => {
+    const fork = {
+      T3CODE_STANDALONE: "1",
+      T3CODE_APP_NAME: "EasyDev Code",
+      T3CODE_MOBILE_BUNDLE_ID: "br.com.easydevsolucoes.easydevcode",
+    };
+
+    assert.strictEqual(resolveDesktopAppId({}), "com.t3tools.t3code");
+    assert.strictEqual(
+      resolveDesktopArtifactPrefix({ T3CODE_APP_NAME: "EasyDev Code" }),
+      "T3-Code",
+    );
+    assert.strictEqual(resolveDesktopAppId(fork), "br.com.easydevsolucoes.easydevcode");
+    assert.strictEqual(resolveDesktopArtifactPrefix(fork), "EasyDev-Code");
+    assert.strictEqual(
+      resolveMacPasskeySigningConfiguration({
+        ...fork,
+        T3CODE_APPLE_TEAM_ID: "7ZW8Q7FVB2",
+        T3CODE_MACOS_PROVISIONING_PROFILE: "/tmp/easydev.provisionprofile",
+        T3CODE_CLERK_PASSKEY_RP_DOMAINS: "example.clerk.accounts.dev",
+      }).appId,
+      "br.com.easydevsolucoes.easydevcode",
+    );
+    for (const bundleId of [undefined, " ", "easydevcode"]) {
+      assert.throws(
+        () => resolveDesktopAppId({ ...fork, T3CODE_MOBILE_BUNDLE_ID: bundleId }),
+        /T3CODE_MOBILE_BUNDLE_ID/u,
+      );
+    }
   });
 
   it("normalizes explicit macOS passkey RP domains and renders required entitlements", () => {

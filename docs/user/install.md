@@ -167,6 +167,23 @@ sidebar. Each one opens as a project on this computer, the same as `t3 app`.
 Files dropped on a thread still attach to that thread. Browsers do not share
 folder paths, so in the web app use **Add project** instead.
 
+### Add several projects at once
+
+On web and desktop, **Add project** asks for an environment, then offers two lists to add from:
+
+- **Agent history** lists the folders your Claude Code, Codex, and Pi sessions ran in on that
+  environment, the same list as the [Welcome page](./welcome-page.md#projects), and imports their
+  recent threads with them.
+- **Find Git repositories** searches folders you name on that environment. It suggests the
+  folder **Add project starts in** and the folder **New project** creates projects in, and you
+  can add others. It looks four levels deep, stops at each repository, and skips
+  hidden folders, dependency folders such as `node_modules`, and on macOS your Desktop, Documents,
+  Downloads, and Library unless you name them. Links to other folders are not followed. Nothing
+  is searched until you select **Search**.
+
+Projects already in T3 Code are left out. A folder without Git is added with **Local folder**.
+The mobile app does not offer these lists yet.
+
 ## Mobile app
 
 Install T3 Code from the

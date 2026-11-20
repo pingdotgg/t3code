@@ -9,6 +9,13 @@ const CONNECT_AUTHORIZE_PATH = "/connect";
 
 export const DEFAULT_HOSTED_APP_URL = "https://app.t3.codes";
 
+declare const __T3CODE_BUILD_HOSTED_APP_URL__: string | undefined;
+/** The hosted app this build trusts: T3's, or a standalone build's own ("" when it has none). */
+export const BUILD_HOSTED_APP_URL =
+  typeof __T3CODE_BUILD_HOSTED_APP_URL__ === "undefined"
+    ? DEFAULT_HOSTED_APP_URL
+    : __T3CODE_BUILD_HOSTED_APP_URL__;
+
 export const CONNECT_OAUTH_SCOPES = ["openid", "profile", "email", "offline_access"] as const;
 
 export interface ConnectAuthorizeRequest {

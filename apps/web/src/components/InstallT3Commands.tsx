@@ -1,5 +1,6 @@
 import { T } from "gt-react";
 import { cn } from "~/lib/utils";
+import { IS_STANDALONE_BUILD } from "~/projectLinks";
 
 import { CommandBlock } from "./CommandBlock";
 
@@ -14,6 +15,10 @@ export function InstallT3Commands({
   readonly command: string;
   readonly className?: string;
 }) {
+  // T3's installers fetch T3's releases, so a standalone build only shows the command.
+  if (IS_STANDALONE_BUILD) {
+    return <CommandBlock command={command} {...(className ? { className } : {})} />;
+  }
   return (
     <div className={cn("space-y-2", className)}>
       <p className="text-xs text-muted-foreground">macOS, Linux</p>

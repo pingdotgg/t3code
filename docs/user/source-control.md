@@ -59,7 +59,10 @@ fj does not preserve the subpath when checking its account.
 
 When cloning or publishing, use a full repository URL to select a specific server.
 You can use `owner/repo` when only one fj server is configured, or with your default `tea`
-login when fj is unavailable or unconfigured. With multiple fj servers, use the full URL.
+login when fj is unavailable or unconfigured. With multiple servers, set **Default server**
+in **Settings → Source control & issues → Forgejo / Gitea** on that environment. `owner/repo` and
+projects without a Forgejo remote then use that server's login. A project whose remote names
+a server always uses that server's login.
 If you have multiple `tea` accounts on one server, select one with
 `tea login default <login-name>`. Git push and clone also need Git credentials or an SSH key
 for that server.

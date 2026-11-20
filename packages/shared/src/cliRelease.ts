@@ -3,7 +3,14 @@ import * as Schema from "effect/Schema";
 
 import { compareSemverVersions } from "./semver.ts";
 
-const CLI_RELEASE_REPOSITORY = "pingdotgg/t3code";
+declare const __T3CODE_BUILD_RELEASE_REPOSITORY__: string | undefined;
+
+const OFFICIAL_CLI_RELEASE_REPOSITORY = "pingdotgg/t3code";
+/** Releases and source; standalone builds bake in the fork, see scripts/lib/standalone-build.ts. */
+export const CLI_RELEASE_REPOSITORY =
+  typeof __T3CODE_BUILD_RELEASE_REPOSITORY__ === "undefined"
+    ? OFFICIAL_CLI_RELEASE_REPOSITORY
+    : __T3CODE_BUILD_RELEASE_REPOSITORY__;
 export const CLI_RELEASES_PAGE_URL = `https://github.com/${CLI_RELEASE_REPOSITORY}/releases`;
 export const CLI_RELEASE_CHECKSUMS_FILE = "SHA256SUMS";
 export const CLI_RELEASE_BASE_URL_ENV = "T3CODE_RELEASE_BASE_URL";
@@ -36,6 +43,29 @@ export function cliArchiveTarCommand(
   if (platform !== "win32") return "tar";
   const systemRoot = env["SystemRoot"] ?? env["windir"] ?? "C:\\Windows";
   return `${systemRoot}\\System32\\tar.exe`;
+}
+
+/** The shell command that installs the CLI, pinned to `version` when given. */
+export function cliInstallCommand(
+  windows: boolean,
+  version?: string,
+  repository: string = CLI_RELEASE_REPOSITORY,
+): string {
+  if (repository === OFFICIAL_CLI_RELEASE_REPOSITORY) {
+    if (windows) {
+      const pin = version === undefined ? "" : `$env:T3CODE_VERSION="${version}"; `;
+      return `${pin}irm https://t3.codes/install.ps1 | iex`;
+    }
+    const pin = version === undefined ? "" : `T3CODE_VERSION=${version} `;
+    return `curl -fsSL https://t3.codes/install.sh | ${pin}sh`;
+  }
+  const script = `https://raw.githubusercontent.com/${repository}/main/scripts/install`;
+  if (windows) {
+    const pin = version === undefined ? "" : ` $env:T3CODE_VERSION="${version}";`;
+    return `$env:T3CODE_RELEASE_REPOSITORY="${repository}";${pin} irm ${script}.ps1 | iex`;
+  }
+  const pin = version === undefined ? "" : ` T3CODE_VERSION=${version}`;
+  return `curl -fsSL ${script}.sh | T3CODE_RELEASE_REPOSITORY=${repository}${pin} sh`;
 }
 
 export function cliArchiveFileName(version: string, platformKey: CliArchivePlatformKey): string {
@@ -132,8 +162,8 @@ export function acceptsTrackSwitchRelease(
 }
 
 /** Page until the channel matches; nightlies can push preview/stable releases past the first page. */
-export function cliReleaseIndexPageUrl(page: number): string {
-  return `https://api.github.com/repos/${CLI_RELEASE_REPOSITORY}/releases?per_page=100&page=${page}`;
+export function cliReleaseIndexPageUrl(page: number, repository = CLI_RELEASE_REPOSITORY): string {
+  return `https://api.github.com/repos/${repository}/releases?per_page=100&page=${page}`;
 }
 
 /** Draft assets are not downloadable. */

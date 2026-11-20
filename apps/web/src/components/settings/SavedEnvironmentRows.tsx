@@ -57,6 +57,7 @@ import { useManagedTunnelUsage } from "~/cloud/managedRelayState";
 import { useT3ConnectAccountPage } from "../clerk/T3ConnectAccountPages";
 import { TunnelLimitAlert, TunnelUsageMeter } from "../cloud/TunnelUsage";
 import { environmentCatalog } from "~/connection/catalog";
+import { releaseRepository } from "~/projectLinks";
 import { readEnvironmentScope } from "~/state/session";
 import { type EnvironmentPresentation, useRelayEnvironmentDiscovery } from "~/state/environments";
 import { APP_VERSION } from "~/branding";
@@ -646,7 +647,7 @@ function ConfiguredCloudLinkRow({
           .filter(Boolean)
           .join(" ")}{" "}
         <a
-          href={connectReachabilityHelpUrl(reachability.cause)}
+          href={connectReachabilityHelpUrl(reachability.cause, releaseRepository())}
           target="_blank"
           rel="noreferrer"
           className="underline underline-offset-2"

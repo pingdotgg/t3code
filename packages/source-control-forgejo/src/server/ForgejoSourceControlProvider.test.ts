@@ -1,4 +1,4 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -2428,6 +2428,167 @@ it.effect("explains a slow fj instead of advising an install when tea is absent"
           },
         }),
       ),
+    ),
+  ),
+);
+
+const withForgejoDefault = (defaultServer: string) => ({
+  ...DEFAULT_SERVER_SETTINGS,
+  sourceControlHosts: { forgejo: { defaultServer } },
+});
+
+it.effect(
+  "picks the fj login without a project remote by Settings, else the first that works",
+  () =>
+    Effect.forEach(
+      [
+        {
+          defaultServer: "",
+          remoteUrl: undefined,
+          checked: ["https://elsewhere.test", "https://forgejo.test"],
+        },
+        // Settings names one server, so another login that works is never tried.
+        {
+          defaultServer: "https://forgejo.test",
+          remoteUrl: undefined,
+          checked: ["https://forgejo.test"],
+        },
+        { defaultServer: "missing.test", remoteUrl: undefined, checked: [] },
+        {
+          defaultServer: "https://forgejo.test",
+          remoteUrl: "https://other.test/maria/project.git",
+          checked: [],
+        },
+      ],
+      ({ defaultServer, checked: expected, remoteUrl }) => {
+        const checked: string[] = [];
+        return Effect.gen(function* () {
+          const spec = yield* ForgejoSourceControlProvider.makeDiscovery;
+          assert.strictEqual(spec.type, "managed-cli");
+          if (spec.type !== "managed-cli") return;
+          const result = yield* spec.probe("/repo");
+          assert.deepStrictEqual(checked, expected, defaultServer);
+          if (expected.length === 0) {
+            assert.strictEqual(result.auth.status, "unauthenticated");
+            return;
+          }
+          assert.strictEqual(result.executable, "fj");
+          assert.strictEqual(result.auth.status, "authenticated");
+          assert.deepStrictEqual(result.auth.host, Option.some("forgejo.test"));
+          assert.deepStrictEqual(result.auth.account, Option.some("maria"));
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.mock(ForgejoCli.ForgejoCli)({
+                getAccount: (input) => {
+                  assert.strictEqual(input.baseUrl, "https://forgejo.test");
+                  return Effect.succeed("maria");
+                },
+                listLogins: (input) =>
+                  Effect.succeed(
+                    input.command === "tea"
+                      ? []
+                      : [
+                          {
+                            name: "elsewhere.test",
+                            url: "https://elsewhere.test",
+                            user: "",
+                            default: "false",
+                          },
+                          {
+                            name: "forgejo.test",
+                            url: "https://forgejo.test",
+                            user: "",
+                            default: "false",
+                          },
+                        ],
+                  ),
+              }),
+              TestSourceControlHost.layer({
+                settings: withForgejoDefault(defaultServer),
+                process: {
+                  run: (input) => {
+                    // Settings has no project in scope, so there is no origin remote.
+                    if (input.command === "git")
+                      return Effect.succeed(
+                        remoteUrl
+                          ? processOutput(remoteUrl)
+                          : processOutput("", { exitCode: ChildProcessSpawner.ExitCode(2) }),
+                      );
+                    if (input.command === "tea") return Effect.succeed(processOutput("[]"));
+                    assert.strictEqual(input.command, "fj");
+                    if (input.args[0] === "version")
+                      return Effect.succeed(processOutput("fj 0.10.0"));
+                    if (input.args[0] === "auth") return Effect.succeed(processOutput(""));
+                    const host = input.args[1]!;
+                    checked.push(host);
+                    return Effect.succeed(
+                      processOutput("", {
+                        exitCode: ChildProcessSpawner.ExitCode(
+                          host === "https://forgejo.test" ? 0 : 1,
+                        ),
+                      }),
+                    );
+                  },
+                },
+              }),
+            ),
+          ),
+          Effect.provideService(HostProcess.HomeDirectory, "/home/maria"),
+        );
+      },
+      { discard: true },
+    ),
+);
+
+it.effect("resolves a repository without a remote on the Settings default server", () =>
+  Effect.gen(function* () {
+    const cli = yield* ForgejoCli.make;
+    const published = yield* cli.resolveRepository({ cwd: "/new", repository: "maria/project" });
+    assert.strictEqual(published.baseUrl, "https://code.test");
+    assert.strictEqual(published.login, "code");
+    // The project's remote picks its own login over the default.
+    const remote = yield* cli.resolveRepository({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: SourceControlProviderKind.make("forgejo"),
+          name: "Forgejo",
+          baseUrl: "https://forgejo.local",
+        },
+        remoteName: "origin",
+        remoteUrl: "https://forgejo.local/maria/project.git",
+      },
+    });
+    assert.strictEqual(remote.baseUrl, "https://forgejo.local");
+  }).pipe(
+    Effect.provideService(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({ exists: () => Effect.succeed(false) }),
+    ),
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make(() => {
+        throw new Error("tea must handle its own HTTP request");
+      }),
+    ),
+    Effect.provide(
+      TestSourceControlHost.layer({
+        settings: withForgejoDefault("code.test"),
+        process: {
+          run: (input) => {
+            assert.deepStrictEqual(input.args, ["login", "list", "--output", "json"]);
+            return Effect.succeed(
+              processOutput(
+                encodeJson([
+                  { name: "work", url: "https://forgejo.local", user: "maria", default: "true" },
+                  { name: "code", url: "https://code.test", user: "maria", default: "false" },
+                ]),
+              ),
+            );
+          },
+        },
+      }),
     ),
   ),
 );

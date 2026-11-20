@@ -69,7 +69,10 @@ The result is an ordinary session with subject `mcp-client`. A read-only
 grant holds `orchestration:read` alone. On `/mcp` it passes only tools
 declared as reads in [McpToolAccess](../../apps/server/src/mcp/McpToolAccess.ts),
 where every tool must declare who may call it to compile. Any other grant adds
-`orchestration:operate` and a signed ceiling. Only `/mcp` accepts these sessions. Every other HTTP and WebSocket
+`orchestration:operate` and a signed ceiling. A client's OAuth `scope`, when sent, lowers
+that choice to the broadest level whose scopes it names in full, so a token never carries a
+scope the client did not ask for. `scopes_supported` lists every full-access scope because
+clients commonly request all of them. Only `/mcp` accepts these sessions. Every other HTTP and WebSocket
 path rejects that subject, because the RPC surface would let the agent act
 above its ceiling. Inside MCP the credential sets the limits and tool
 parameters only pick targets; see

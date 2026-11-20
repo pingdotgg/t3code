@@ -5,6 +5,7 @@ import {
   type EnvironmentConnectReachability,
   formatConnectReachable,
 } from "@t3tools/contracts";
+import { CLI_RELEASE_REPOSITORY } from "@t3tools/shared/cliRelease";
 import { readTailscaleExitNode, type TailscaleExitNode } from "@t3tools/tailscale";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -206,7 +207,7 @@ export function formatReachabilityFailure(result: Unreachable): string {
     `  ${result.reason}`,
     ...(result.hint ? [`  ${result.hint}`] : []),
     `  Fix: ${result.fix}`,
-    `  More info: ${connectReachabilityHelpUrl(result.cause)}`,
+    `  More info: ${connectReachabilityHelpUrl(result.cause, CLI_RELEASE_REPOSITORY)}`,
   ].join("\n");
 }
 

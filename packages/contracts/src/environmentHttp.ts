@@ -521,9 +521,12 @@ export const T3_CONNECT_TROUBLESHOOTING_SECTIONS = [
 ] as const;
 export type T3ConnectTroubleshootingSection = (typeof T3_CONNECT_TROUBLESHOOTING_SECTIONS)[number];
 
-/** Clients, the CLI, and server logs link here as "More info". */
-export function t3ConnectTroubleshootingUrl(section: T3ConnectTroubleshootingSection): string {
-  return `https://github.com/pingdotgg/t3code/blob/main/docs/user/t3-connect-troubleshooting.md#${section}`;
+/** Clients, the CLI, and server logs link here as "More info". A fork build passes its own owner/repo. */
+export function t3ConnectTroubleshootingUrl(
+  section: T3ConnectTroubleshootingSection,
+  repository = "pingdotgg/t3code",
+): string {
+  return `https://github.com/${repository}/blob/main/docs/user/t3-connect-troubleshooting.md#${section}`;
 }
 
 const REACHABILITY_SECTION = {
@@ -538,8 +541,11 @@ const REACHABILITY_SECTION = {
   timeout: "the-t3-connect-address-does-not-resolve-or-answer",
 } satisfies Record<EnvironmentConnectReachabilityCause, T3ConnectTroubleshootingSection>;
 
-export function connectReachabilityHelpUrl(cause: EnvironmentConnectReachabilityCause): string {
-  return t3ConnectTroubleshootingUrl(REACHABILITY_SECTION[cause]);
+export function connectReachabilityHelpUrl(
+  cause: EnvironmentConnectReachabilityCause,
+  repository?: string,
+): string {
+  return t3ConnectTroubleshootingUrl(REACHABILITY_SECTION[cause], repository);
 }
 
 export const EnvironmentCloudLinkStateResult = Schema.Struct({

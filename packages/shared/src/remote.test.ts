@@ -150,6 +150,10 @@ describe("remote", () => {
     expect(appLink.startsWith("t3code://pair?")).toBe(true);
     expect(readPairingAppLink(appLink)).toBe(pairingUrl);
     expect(readPairingAppLink(appLink.replace("t3code:", "t3code-dev:"))).toBe(pairingUrl);
+    // A fork's scheme reads the same, so its mobile app scans its own server's link.
+    const forkLink = buildPairingAppLink(pairingUrl, "forkcode");
+    expect(forkLink.startsWith("forkcode://pair?")).toBe(true);
+    expect(readPairingAppLink(forkLink)).toBe(pairingUrl);
     expect(readPairingAppLink("t3code://pair")).toBeNull();
     expect(readPairingAppLink(appLink.replace("//pair?", "//pair/other?"))).toBeNull();
     expect(

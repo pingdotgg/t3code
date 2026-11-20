@@ -1,3 +1,4 @@
+import type { EnvironmentId } from "@t3tools/contracts";
 import { useMessages } from "gt-react";
 
 import { orderItemsByPreferredIds, sortSidebarV2ProjectGroups } from "../components/Sidebar.logic";
@@ -11,8 +12,14 @@ import { useDelegatedUnderParent, useProjects, useQuietThreadShells } from "../s
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
 
-export function useSidebarProjectGroups() {
-  const projects = useProjects();
+// With an environment, groups hold only that environment's members, so a repository group keeps
+// its key but lists, targets and counts just the copies there.
+export function useSidebarProjectGroups(environmentId: EnvironmentId | null = null) {
+  const allProjects = useProjects();
+  const projects =
+    environmentId === null
+      ? allProjects
+      : allProjects.filter((project) => project.environmentId === environmentId);
   // Activity order lags a running thread's streaming ticks until its next
   // real change; reading every tick re-rendered the whole sidebar with it.
   const threads = useQuietThreadShells();

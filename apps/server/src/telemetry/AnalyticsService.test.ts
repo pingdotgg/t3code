@@ -113,20 +113,20 @@ const recordTwentyEvents = Effect.gen(function* () {
   }
 });
 
-const analyticsLayerWith = (client: HttpClient.HttpClient, policy?: ManagedPolicyDocument) =>
+const analyticsLayerWith = (
+  client: HttpClient.HttpClient,
+  policy?: ManagedPolicyDocument,
+  config: Record<string, unknown> = {
+    T3CODE_TELEMETRY_ENABLED: true,
+    T3CODE_POSTHOG_KEY: "phc_test_key",
+    T3CODE_POSTHOG_HOST: "http://localhost",
+  },
+) =>
   AnalyticsService.layer.pipe(
     Layer.provideMerge(
       ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-telemetry-retry-" }),
     ),
-    Layer.provide(
-      ConfigProvider.layer(
-        ConfigProvider.fromUnknown({
-          T3CODE_TELEMETRY_ENABLED: true,
-          T3CODE_POSTHOG_KEY: "phc_test_key",
-          T3CODE_POSTHOG_HOST: "http://localhost",
-        }),
-      ),
-    ),
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(config))),
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(HostProcess.Platform, "win32"),
@@ -392,6 +392,41 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
         ),
         true,
       );
+    }),
+  );
+
+  it.effect.each([
+    { name: "nothing by default", env: {}, origins: [] },
+    { name: "nothing to T3 when turned on", env: { T3CODE_TELEMETRY_ENABLED: true }, origins: [] },
+    {
+      name: "nothing without the operator's project key",
+      env: { T3CODE_POSTHOG_HOST: "http://localhost" },
+      origins: [],
+    },
+    {
+      name: "to a host the operator chose",
+      env: { T3CODE_POSTHOG_HOST: "http://localhost", T3CODE_POSTHOG_KEY: "phc_test_key" },
+      origins: ["http://localhost"],
+    },
+  ])("a standalone server sends $name", (input) =>
+    Effect.gen(function* () {
+      const origins = new Set<string>();
+      const client = HttpClient.make((request) => {
+        origins.add(new URL(request.url).origin);
+        return respondWithStatus(204)(request);
+      });
+      yield* Effect.gen(function* () {
+        yield* recordTwentyEvents;
+        yield* (yield* AnalyticsService.AnalyticsService).flush;
+      }).pipe(
+        Effect.provide(
+          analyticsLayerWith(client, undefined, {
+            T3CODE_STANDALONE: true,
+            ...input.env,
+          }),
+        ),
+      );
+      assert.deepEqual([...origins], input.origins);
     }),
   );
 

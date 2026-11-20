@@ -570,6 +570,19 @@ const renderVariant = Effect.fn("iconExport.renderVariant")(function* (
     return yield* new IconExportSourceMissingError({ sourcePath: variant.source });
   }
 
+  // A sibling `-small.icon` project, when present, supplies the 16-32px renditions (heavier strokes).
+  const smallSourcePath = sourcePath.replace(/\.icon$/, "-small.icon");
+  const hasSmallSource = yield* fs.exists(smallSourcePath).pipe(
+    Effect.mapError(
+      (cause) =>
+        new IconExportFileSystemError({
+          operation: "check-path",
+          path: smallSourcePath,
+          cause,
+        }),
+    ),
+  );
+
   const renditionCache = new Map<string, Buffer>();
   const render = Effect.fn("iconExport.renderVariant.rendition")(function* (
     platform: IconPlatform,
@@ -580,7 +593,8 @@ const renderVariant = Effect.fn("iconExport.renderVariant")(function* (
     if (cached) return cached;
 
     const outputPath = path.join(temporaryDirectory, `${variant.label}-${platform}-${size}.png`);
-    const contents = yield* renderIcon(toolPath, sourcePath, outputPath, platform, size);
+    const renditionSource = hasSmallSource && size <= 32 ? smallSourcePath : sourcePath;
+    const contents = yield* renderIcon(toolPath, renditionSource, outputPath, platform, size);
     renditionCache.set(cacheKey, contents);
     return contents;
   });

@@ -289,6 +289,26 @@ export const mcpClientScopes = (access: AuthMcpClientAccess): ReadonlyArray<Auth
         ]
       : [AuthOrchestrationReadScope, AuthOrchestrationOperateScope];
 
+/**
+ * The broadest access whose scopes all appear in an OAuth `scope` request, so an app gets no
+ * scope it did not ask for. Undefined when none fits: every level needs `orchestration:read`.
+ */
+export const mcpClientAccessForScopes = (
+  requested: ReadonlyArray<string>,
+): AuthMcpClientAccess | undefined =>
+  AuthMcpClientAccess.literals.findLast((access) =>
+    mcpClientScopes(access).every((scope) => requested.includes(scope)),
+  );
+
+/** `access`, lowered to `max` when it is broader. */
+export const clampMcpClientAccess = (
+  access: AuthMcpClientAccess,
+  max: AuthMcpClientAccess,
+): AuthMcpClientAccess =>
+  AuthMcpClientAccess.literals.indexOf(access) > AuthMcpClientAccess.literals.indexOf(max)
+    ? max
+    : access;
+
 /** The random part of a one-time pairing code: this many characters from this alphabet. */
 export const PAIRING_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 export const PAIRING_CODE_LENGTH = 12;
@@ -611,6 +631,8 @@ export const AuthMcpAuthorizationRequest = Schema.Struct({
   code_challenge_method: Schema.optionalKey(Schema.String),
   state: Schema.optionalKey(Schema.RedactedFromValue(Schema.String)),
   resource: Schema.optionalKey(Schema.String),
+  /** Caps the grant at the broadest access it fully names; absent grants what the approver picks. */
+  scope: Schema.optionalKey(Schema.String),
 });
 export type AuthMcpAuthorizationRequest = typeof AuthMcpAuthorizationRequest.Type;
 
@@ -623,6 +645,8 @@ export const AuthMcpApprovalDetails = Schema.Struct({
   csrfToken: Schema.optionalKey(Schema.String),
   /** Only scopes held by this session qualify; others need a pairing code. Absent with `csrfToken`. */
   oneClickAccess: Schema.optionalKey(Schema.Array(AuthMcpClientAccess)),
+  /** The broadest access the app's `scope` asked for; any approval is lowered to it. */
+  maxAccess: Schema.optionalKey(AuthMcpClientAccess),
   /** A managed policy's runtime-mode ceiling; the page loads without the server's config. */
   runtimeModeCeiling: Schema.optionalKey(
     Schema.Struct({ organization: Schema.String, maxRuntimeMode: RuntimeMode }),

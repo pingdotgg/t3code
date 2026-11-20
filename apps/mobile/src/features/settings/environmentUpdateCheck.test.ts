@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { environmentReleaseCheckAtom, releaseCheckError } from "./environmentUpdateCheck";
 
+vi.mock("expo-constants", () => ({ default: { expoConfig: { extra: {} } } }));
+
 function stubHangingFetch() {
   const { promise: called, resolve } = Promise.withResolvers<AbortSignal>();
   vi.stubGlobal("fetch", (_url: string, init: { signal: AbortSignal }) => {

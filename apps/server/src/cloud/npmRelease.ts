@@ -16,6 +16,7 @@ import * as Semaphore from "effect/Semaphore";
 import { FetchHttpClient, HttpClient } from "effect/http";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { standaloneConfig } from "../standalone.ts";
 
 const Version = Schema.String.check(Schema.isPattern(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/));
 const Manifest = Schema.Struct({ version: Version, t3code: Schema.optionalKey(Schema.Unknown) });
@@ -56,6 +57,8 @@ function toRelease(spec: string, json: string) {
 }
 
 export const make = Effect.fn("NpmRelease.make")(function* () {
+  // npm's `t3` is T3's package, so its versions say nothing about a standalone build's releases.
+  const standalone = yield* standaloneConfig;
   const runner = yield* ProcessRunner.ProcessRunner;
   const http = yield* HttpClient.HttpClient;
   const lookupPublic = Effect.fn("NpmRelease.lookupPublic")(function* (spec: string) {
@@ -117,6 +120,11 @@ export const make = Effect.fn("NpmRelease.make")(function* () {
   });
   return NpmRelease.of({
     get: Effect.fn("NpmRelease.get")(function* (input) {
+      if (standalone) {
+        return yield* new ServerNpmReleaseError({
+          reason: "this standalone build does not look up T3 releases on npm.",
+        });
+      }
       const { spec } = yield* decodeInput(input).pipe(
         Effect.mapError(
           () => new ServerNpmReleaseError({ reason: "Invalid release version or track." }),

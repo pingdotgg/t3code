@@ -17,6 +17,7 @@ import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
 import { FetchHttpClient, HttpClient, HttpClientError } from "effect/http";
+import { buildT3ProjectFileJsonSchema } from "@t3tools/shared/t3ProjectFile";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -489,7 +490,19 @@ const projectRenameCommand = Command.make("rename", {
   ),
 );
 
+const projectSchemaCommand = Command.make("schema").pipe(
+  Command.withDescription(
+    'Print the t3.json JSON Schema. Save it beside t3.json and set "$schema": "./t3.schema.json" to validate offline.',
+  ),
+  Command.withHandler(() => Console.log(JSON.stringify(buildT3ProjectFileJsonSchema(), null, 2))),
+);
+
 export const projectCommand = Command.make("project").pipe(
   Command.withDescription("Manage projects."),
-  Command.withSubcommands([projectAddCommand, projectRemoveCommand, projectRenameCommand]),
+  Command.withSubcommands([
+    projectAddCommand,
+    projectRemoveCommand,
+    projectRenameCommand,
+    projectSchemaCommand,
+  ]),
 );

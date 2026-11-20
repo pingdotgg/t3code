@@ -17,6 +17,7 @@ import { Linking, View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { environmentCatalog } from "../../connection/catalog";
+import { resolveReleaseRepository } from "../cloud/publicConfig";
 import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 
@@ -44,6 +45,7 @@ export function useConnectionDiagnosis(
       via: relayOnly ? "relay" : "direct",
       clientVersion: Constants.expoConfig?.version,
       serverVersion: presentation.serverConfig?.environment.serverVersion,
+      repository: resolveReleaseRepository(),
     },
     messages,
   );

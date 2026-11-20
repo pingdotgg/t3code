@@ -7,7 +7,17 @@ import type { ProjectScopedServerSettingKey, ServerSettings } from "./settings.t
 
 export const T3_PROJECT_FILE_NAME = "t3.json";
 
-export const T3_PROJECT_FILE_SCHEMA_URL = "https://t3.codes/schema/t3.json";
+declare const __T3CODE_BUILD_STANDALONE__: boolean | undefined;
+declare const __T3CODE_BUILD_RELEASE_REPOSITORY__: string | undefined;
+// Standalone builds point at their own repository; t3.codes documents T3 Code's builds.
+const STANDALONE_REPOSITORY_URL =
+  typeof __T3CODE_BUILD_STANDALONE__ === "boolean" &&
+  __T3CODE_BUILD_STANDALONE__ &&
+  typeof __T3CODE_BUILD_RELEASE_REPOSITORY__ === "string"
+    ? `https://github.com/${__T3CODE_BUILD_RELEASE_REPOSITORY__}`
+    : undefined;
+
+const T3_PROJECT_FILE_SCHEMA_URL = "https://t3.codes/schema/t3.json";
 
 const T3_PROJECT_FILE_PATH_MAX_LENGTH = 512;
 const T3_PROJECT_FILE_MAX_SCRIPTS = 50;
@@ -78,7 +88,9 @@ export type T3ProjectFileScript = typeof T3ProjectFileScript.Type;
 export const T3ProjectFile = Schema.Struct({
   $schema: Schema.optionalKey(
     Schema.String.annotate({
-      description: `URL of the JSON Schema for this file, typically "${T3_PROJECT_FILE_SCHEMA_URL}".`,
+      description: STANDALONE_REPOSITORY_URL
+        ? "URL or relative path of the JSON Schema for this file, such as a local copy from `t3 project schema`."
+        : `URL or relative path of the JSON Schema for this file, such as "${T3_PROJECT_FILE_SCHEMA_URL}" or a local copy from \`t3 project schema\`.`,
     }),
   ),
   iconPath: Schema.optionalKey(
@@ -120,8 +132,7 @@ export const T3ProjectFile = Schema.Struct({
   ),
 }).annotate({
   title: "T3 project file",
-  description:
-    "Checked-in project configuration for T3 Code (t3.json at the repository root). See https://t3.codes for documentation.",
+  description: `Checked-in project configuration for T3 Code (t3.json at the repository root). See ${STANDALONE_REPOSITORY_URL ?? "https://t3.codes"} for documentation.`,
 });
 export type T3ProjectFile = typeof T3ProjectFile.Type;
 

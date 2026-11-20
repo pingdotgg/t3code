@@ -20,13 +20,16 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as AcpErrors from "effect-acp/errors";
 
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import type * as PlatformError from "effect/PlatformError";
 import {
   parseAntigravityAuthorizationUrl,
   type AntigravityAuthorizationUrl,
+  type AntigravityCliLogin,
 } from "./antigravityAuthSupport.ts";
 import {
   forwardAntigravityCallback,
   validateAntigravityCallbackUrl,
+  validateAntigravityCliLoginCode,
 } from "./antigravityCallback.ts";
 import type { ProviderAuthController } from "./ProviderAuthService.ts";
 
@@ -59,6 +62,7 @@ interface AuthFlow {
   readonly expiresAtMillis: number;
   state: ProviderAuthState;
   pending: AntigravityAuthorizationUrl | undefined;
+  login: AntigravityCliLogin | undefined;
   initialized: boolean;
   callbackSent: boolean;
   fiber: Fiber.Fiber<void> | undefined;
@@ -97,6 +101,14 @@ export interface AntigravityAuthOptions<
   readonly onSignedOut: Effect.Effect<void>;
   readonly forwardCallback?: (callback: URL) => Effect.Effect<void, ProviderSetupError>;
   readonly usesBrowser?: boolean;
+  /** Signs in through `agy acp --login` first; yields undefined when the installation has no such CLI. */
+  readonly cliLogin?: (
+    onAuthorizationUrl: (url: string) => Effect.Effect<void, AcpErrors.AcpError>,
+  ) => Effect.Effect<
+    AntigravityCliLogin | undefined,
+    AcpErrors.AcpError | ProviderSetupError | PlatformError.PlatformError,
+    Scope.Scope
+  >;
 }
 
 function visibleSnapshot(snapshot: AuthSnapshot, ownerSessionId: string): ProviderAuthState {
@@ -249,8 +261,8 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
       }),
     );
 
-  const receiveAuthorizationUrl = (flow: AuthFlow, url: string) =>
-    parseAntigravityAuthorizationUrl(url).pipe(
+  const receiveAuthorizationUrl = (flow: AuthFlow, url: string, cliLogin = false) =>
+    parseAntigravityAuthorizationUrl(url, { cliLogin }).pipe(
       Effect.flatMap((authorization) =>
         lock.withPermits(1)(
           Effect.gen(function* () {
@@ -267,8 +279,9 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
               ...flow.state,
               phase: "waiting",
               authorizationUrl: authorization.authorizationUrl,
-              message:
-                "Open the Google sign-in link. If you are remote, paste the redirect URL here.",
+              message: cliLogin
+                ? "Open the Google sign-in link, then paste the code or the URL of the page you land on."
+                : "Open the Google sign-in link. If you are remote, paste the redirect URL here.",
             });
           }),
         ),
@@ -291,6 +304,10 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
   const runSignIn = Effect.fn("AntigravityAuth.runSignIn")(
     function* (flow: AuthFlow, stopSessions: Effect.Effect<void, ProviderSetupError>) {
       yield* stopSessions.pipe(Effect.ensuring(stopOwnedProcesses));
+      if (options.cliLogin) {
+        flow.login = yield* options.cliLogin((url) => receiveAuthorizationUrl(flow, url, true));
+        yield* flow.login?.finished ?? Effect.void;
+      }
       const runtime = yield* options.makeRuntime({
         onAuthorizationUrl: (url) => receiveAuthorizationUrl(flow, url),
       });
@@ -415,6 +432,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
               expiresAtMillis,
               state,
               pending: undefined,
+              login: undefined,
               initialized: false,
               callbackSent: false,
               fiber: undefined,
@@ -443,11 +461,28 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
                 : "Wait for the Google sign-in link before you send a redirect URL.",
             );
           }
-          const callback = yield* validateAntigravityCallbackUrl(
-            options.instanceId,
-            flow.pending,
-            input.callbackUrl,
-          );
+          const login = flow.login;
+          const deliver = login
+            ? login
+                .submit(
+                  yield* validateAntigravityCliLoginCode(
+                    options.instanceId,
+                    flow.pending,
+                    input.callbackUrl,
+                  ),
+                )
+                .pipe(Effect.mapError(() => setupError("complete", FORWARDING_FAILED_MESSAGE)))
+            : yield* validateAntigravityCallbackUrl(
+                options.instanceId,
+                flow.pending,
+                input.callbackUrl,
+              ).pipe(
+                Effect.map(
+                  (callback) =>
+                    options.forwardCallback?.(callback) ??
+                    forwardAntigravityCallback(options.instanceId, callback),
+                ),
+              );
           flow.callbackSent = true;
           yield* publishFlow(flow, {
             ...flow.state,
@@ -455,10 +490,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
             authorizationUrl: null,
             message: "Waiting for Google to finish sign-in.",
           });
-          const forwarding = yield* (
-            options.forwardCallback?.(callback) ??
-            forwardAntigravityCallback(options.instanceId, callback)
-          ).pipe(
+          const forwarding = yield* deliver.pipe(
             // stopFlow interrupts this fiber, so it runs from a sibling fiber.
             Effect.tapError(() =>
               stopFlow(flow, "failed", FORWARDING_FAILED_MESSAGE).pipe(

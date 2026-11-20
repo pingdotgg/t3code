@@ -1,7 +1,15 @@
 import type { ExpoConfig } from "expo/config";
 
-import { BRAND_ASSET_PATHS } from "../../scripts/lib/brand-assets.ts";
-import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
+import {
+  resolveBrandAssetPaths,
+  STANDALONE_ANDROID_ASSETS,
+} from "../../scripts/lib/brand-assets.ts";
+import {
+  isStandaloneBuild as isRepoStandaloneBuild,
+  loadRepoEnv,
+  resolveAppScheme,
+} from "../../scripts/lib/public-config.ts";
+import { rebrandName, rebrandStrings } from "../../scripts/lib/rebrand.ts";
 
 type AppVariant = "development" | "preview" | "production";
 
@@ -11,6 +19,16 @@ Object.assign(process.env, repoEnv);
 process.env.EXPO_NO_TYPESCRIPT_SETUP = "1";
 
 const APP_VARIANT = resolveAppVariant(repoEnv.APP_VARIANT);
+// iOS URL types and Android intent filters claim it; a fork's own keeps official links out.
+const appScheme = resolveAppScheme(repoEnv);
+// Standalone builds use only the fork's own Expo project and hosted app; unset means none.
+const isStandaloneBuild = isRepoStandaloneBuild(repoEnv);
+const easProjectId =
+  repoEnv.T3CODE_EAS_PROJECT_ID?.trim() ||
+  (isStandaloneBuild ? undefined : "d763fcb8-d37c-41ea-a773-b54a0ab4a454");
+const easOwner = repoEnv.T3CODE_EAS_OWNER?.trim() || (isStandaloneBuild ? undefined : "pingdotgg");
+const hostedAppUrl =
+  repoEnv.T3CODE_HOSTED_APP_URL?.trim() || (isStandaloneBuild ? undefined : "https://app.t3.codes");
 const isIosPersonalTeamBuild = repoEnv.T3CODE_IOS_PERSONAL_TEAM === "1";
 const runtimeVersionPolicy =
   process.env.MOBILE_VERSION_POLICY ??
@@ -18,6 +36,13 @@ const runtimeVersionPolicy =
 
 const personalTeamBundleIdentifier = repoEnv.T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID?.trim();
 const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
+const MOBILE_BUNDLE_ID_PATTERN = /^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/;
+// Also the Android package; variants append .dev or .preview.
+const mobileBundleId = repoEnv.T3CODE_MOBILE_BUNDLE_ID?.trim() || undefined;
+const iosTeamId =
+  repoEnv.T3CODE_IOS_TEAM_ID?.trim() || (isStandaloneBuild ? undefined : "ARK85ZXQ4Z");
+const releaseRepository =
+  repoEnv.T3CODE_DESKTOP_UPDATE_REPOSITORY?.trim() || repoEnv.GITHUB_REPOSITORY?.trim() || "";
 
 // Compiled into the native project. Without a relay, Observe's native side could dispatch to
 // Expo's own ingest before observe.ts turns it off; `.invalid` never resolves (RFC 6761).
@@ -26,6 +51,7 @@ const observeEndpointUrl = repoEnv.T3CODE_RELAY_URL?.trim()
   : "https://observe.invalid";
 
 const fromRepoRoot = (relativePath: string) => `../../${relativePath}`;
+const BRAND_ASSET_PATHS = resolveBrandAssetPaths(repoEnv);
 const androidAdaptiveForeground = "./assets/android-icon-foreground.png";
 
 if (
@@ -35,6 +61,12 @@ if (
 ) {
   throw new Error(
     "T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID must be a reverse-DNS identifier such as com.example.t3code when T3CODE_IOS_PERSONAL_TEAM=1.",
+  );
+}
+
+if (mobileBundleId ? !MOBILE_BUNDLE_ID_PATTERN.test(mobileBundleId) : isStandaloneBuild) {
+  throw new Error(
+    "T3CODE_MOBILE_BUNDLE_ID must be a reverse-DNS identifier such as com.example.t3code; T3CODE_STANDALONE=1 requires it.",
   );
 }
 
@@ -77,30 +109,40 @@ const RELEASE_ASSETS = {
   androidNotificationColor: "#FFFFFF",
 } as const;
 
+const STANDALONE_ASSETS = {
+  appIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIosIconPng),
+  iosIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIconComposerProject),
+  splashIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIosIconPng),
+  androidAdaptiveForeground: fromRepoRoot(STANDALONE_ANDROID_ASSETS.adaptiveForeground),
+  androidAdaptiveBackgroundColor: STANDALONE_ANDROID_ASSETS.adaptiveBackgroundColor,
+  androidAdaptiveBackgroundImage: fromRepoRoot(STANDALONE_ANDROID_ASSETS.adaptiveBackgroundImage),
+  androidSplashIcon: fromRepoRoot(STANDALONE_ANDROID_ASSETS.splashIcon),
+  androidMonochromeIcon: fromRepoRoot(STANDALONE_ANDROID_ASSETS.monochromeIcon),
+  androidNotificationIcon: fromRepoRoot(STANDALONE_ANDROID_ASSETS.notificationIcon),
+  androidNotificationColor: STANDALONE_ANDROID_ASSETS.notificationColor,
+} as const;
+
 const VARIANT_CONFIG = {
   development: {
     appName: "T3 Code Dev",
-    scheme: "t3code-dev",
-    iosBundleIdentifier: "com.t3tools.t3code.dev",
-    androidPackage: "com.t3tools.t3code.dev",
+    scheme: `${appScheme}-dev`,
+    bundleIdSuffix: ".dev",
     relyingParty: "clerk.t3.codes",
     assets: DEVELOPMENT_ASSETS,
   },
   preview: {
     appName: "T3 Code Preview",
-    scheme: "t3code-preview",
-    iosBundleIdentifier: "com.t3tools.t3code.preview",
-    androidPackage: "com.t3tools.t3code.preview",
+    scheme: `${appScheme}-preview`,
+    bundleIdSuffix: ".preview",
     relyingParty: "clerk.t3.codes",
-    assets: PREVIEW_ASSETS,
+    assets: isStandaloneBuild ? STANDALONE_ASSETS : PREVIEW_ASSETS,
   },
   production: {
     appName: "T3 Code",
-    scheme: "t3code",
-    iosBundleIdentifier: "com.t3tools.t3code",
-    androidPackage: "com.t3tools.t3code",
+    scheme: appScheme,
+    bundleIdSuffix: "",
     relyingParty: "clerk.t3.codes",
-    assets: RELEASE_ASSETS,
+    assets: isStandaloneBuild ? STANDALONE_ASSETS : RELEASE_ASSETS,
   },
 } as const;
 
@@ -118,11 +160,12 @@ function resolveAppVariant(value: string | undefined): AppVariant {
 }
 
 const variant = VARIANT_CONFIG[APP_VARIANT];
-// Copied thread links open the app. app.t3.codes/.well-known lists every variant's identifiers.
-const HOSTED_APP_HOST = "app.t3.codes";
+const variantBundleIdentifier = `${mobileBundleId ?? "com.t3tools.t3code"}${variant.bundleIdSuffix}`;
+// Copied thread links open the app. The hosted app's /.well-known lists every variant's identifiers.
+const hostedAppHost = hostedAppUrl ? new URL(hostedAppUrl).host : undefined;
 const iosBundleIdentifier = isIosPersonalTeamBuild
   ? personalTeamBundleIdentifier!
-  : variant.iosBundleIdentifier;
+  : variantBundleIdentifier;
 
 const dmSansFonts = {
   regular: "@expo-google-fonts/dm-sans/400Regular/DMSans_400Regular.ttf",
@@ -246,8 +289,8 @@ const config: ExpoConfig = {
   icon: variant.assets.appIcon,
   userInterfaceStyle: "automatic",
   updates: {
-    enabled: repoEnv.T3CODE_MOBILE_UPDATES_ENABLED !== "0",
-    url: "https://u.expo.dev/d763fcb8-d37c-41ea-a773-b54a0ab4a454",
+    enabled: repoEnv.T3CODE_MOBILE_UPDATES_ENABLED !== "0" && easProjectId !== undefined,
+    ...(easProjectId ? { url: `https://u.expo.dev/${easProjectId}` } : {}),
     checkAutomatically: "ON_LOAD",
     fallbackToCacheTimeout: 0,
   },
@@ -257,14 +300,16 @@ const config: ExpoConfig = {
     requireFullScreen: process.env.T3_SHOWCASE_CAPTURE_BUILD === "1",
     bundleIdentifier: iosBundleIdentifier,
     // Avoid Personal Team fallback: it cannot sign App Groups, Apple sign-in or push entitlements.
-    appleTeamId: "ARK85ZXQ4Z",
+    ...(iosTeamId ? { appleTeamId: iosTeamId } : {}),
     associatedDomains: [
-      `applinks:${variant.relyingParty}`,
-      `webcredentials:${variant.relyingParty}`,
-      `applinks:${HOSTED_APP_HOST}`,
+      // T3's Clerk passkey domain; a standalone build has no relying party of its own yet.
+      ...(isStandaloneBuild
+        ? []
+        : [`applinks:${variant.relyingParty}`, `webcredentials:${variant.relyingParty}`]),
+      ...(hostedAppHost ? [`applinks:${hostedAppHost}`] : []),
     ],
     entitlements: {
-      "keychain-access-groups": [`$(AppIdentifierPrefix)${variant.iosBundleIdentifier}`],
+      "keychain-access-groups": [`$(AppIdentifierPrefix)${variantBundleIdentifier}`],
     },
     infoPlist: {
       UISupportedInterfaceOrientations: [
@@ -298,7 +343,7 @@ const config: ExpoConfig = {
   },
   android: {
     icon: variant.assets.appIcon,
-    package: variant.androidPackage,
+    package: variantBundleIdentifier,
     ...(repoEnv.T3CODE_ANDROID_GOOGLE_SERVICES_FILE
       ? { googleServicesFile: repoEnv.T3CODE_ANDROID_GOOGLE_SERVICES_FILE }
       : {}),
@@ -314,14 +359,16 @@ const config: ExpoConfig = {
     predictiveBackGestureEnabled: true,
     // expo-sensors declares this for its pedometer, which the app does not use.
     blockedPermissions: ["android.permission.ACTIVITY_RECOGNITION"],
-    intentFilters: [
-      {
-        action: "VIEW",
-        autoVerify: true,
-        data: [{ scheme: "https", host: HOSTED_APP_HOST, pathPrefix: "/threads/" }],
-        category: ["BROWSABLE", "DEFAULT"],
-      },
-    ],
+    intentFilters: hostedAppHost
+      ? [
+          {
+            action: "VIEW",
+            autoVerify: true,
+            data: [{ scheme: "https", host: hostedAppHost, pathPrefix: "/threads/" }],
+            category: ["BROWSABLE", "DEFAULT"],
+          },
+        ]
+      : [],
   },
   web: {
     favicon: variant.assets.appIcon,
@@ -455,6 +502,7 @@ const config: ExpoConfig = {
     ...(!isIosPersonalTeamBuild ? ["./plugins/withWidgetLogoAsset.cjs", widgetsPlugin] : []),
     "./plugins/withAndroidNetworkSecurityConfig.cjs",
     "./plugins/withAndroidGradleHeap.cjs",
+    ...(isStandaloneBuild ? ["./plugins/withStandaloneNotificationMark.cjs"] : []),
     "./plugins/withAndroidInputBackground.cjs",
     "./plugins/withAndroidModernPopupMenu.cjs",
     "./plugins/withAndroidModernAlertDialog.cjs",
@@ -462,6 +510,7 @@ const config: ExpoConfig = {
     // MainActivity mods run in reverse order; extend the tablet-orientation override.
     "./plugins/withAndroidWindowDisplayMetrics.cjs",
     "./plugins/withAndroidTabletOrientation.cjs",
+    ["./plugins/withProductName.cjs", "T3 Code"],
     ...(isIosPersonalTeamBuild ? ["./plugins/withoutIosPersonalTeamCapabilities.cjs"] : []),
   ],
   extra: {
@@ -470,6 +519,11 @@ const config: ExpoConfig = {
       process.env.T3CODE_FEATURE_SECRETS?.trim().toLowerCase() ?? "",
     ),
     iosPersonalTeamBuild: isIosPersonalTeamBuild,
+    standalone: isStandaloneBuild,
+    // Empty means no hosted app: the manifest turns null into {}.
+    hostedAppUrl: hostedAppUrl ?? "",
+    // owner/repo for release checks and help links; empty means T3's.
+    releaseRepository,
     relay: {
       url: repoEnv.T3CODE_RELAY_URL ?? null,
     },
@@ -488,15 +542,17 @@ const config: ExpoConfig = {
       tracesToken: repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null,
     },
     eas: {
-      projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",
+      ...(easProjectId ? { projectId: easProjectId } : {}),
       observe: { endpointUrl: observeEndpointUrl },
     },
   },
-  owner: "pingdotgg",
+  ...(easOwner ? { owner: easOwner } : {}),
   experiments: {
     // Metro only runs babel-plugin-react-compiler when this is set; see src/reactCompilerCoverage.test.ts.
     reactCompiler: true,
   },
 };
 
-export default config;
+const appName = rebrandName(repoEnv);
+
+export default appName ? rebrandStrings(config, appName) : config;

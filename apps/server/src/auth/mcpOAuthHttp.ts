@@ -4,6 +4,7 @@ import {
   AuthMcpClientAccess,
   AuthMcpClientRegistration,
   AuthMcpRegistrationError,
+  clampMcpClientAccess,
   EnvironmentHttpApi,
   mcpClientScopes,
 } from "@t3tools/contracts";
@@ -15,7 +16,7 @@ import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as HttpEffect from "effect/http/HttpEffect";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
-import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
+import { BUILD_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
 
 import * as CloudLink from "../cloud/CloudLink.ts";
 import { agentApprovalAppUrlConfig } from "../cloud/publicConfig.ts";
@@ -78,13 +79,16 @@ export const layer = HttpApiBuilder.group(
     const cloudLink = yield* CloudLink.CloudLink;
     const serverEnvironment = yield* ServerEnvironment.ServerEnvironmentIdentity;
     const hostedAppUrl = yield* agentApprovalAppUrlConfig.pipe(
-      Effect.orElseSucceed(() => DEFAULT_HOSTED_APP_URL),
+      Effect.orElseSucceed(() => BUILD_HOSTED_APP_URL),
     );
     // T3 Connect serves this host, so the owner can approve on the hosted app by signing in there.
     const hostedApprovalUrl = (issuer: string, search: string) =>
       cloudLink.linkState().pipe(
         Effect.flatMap((state) =>
-          state.linked && !state.linkRevoked && state.tunnelHostname === new URL(issuer).hostname
+          hostedAppUrl !== "" &&
+          state.linked &&
+          !state.linkRevoked &&
+          state.tunnelHostname === new URL(issuer).hostname
             ? serverEnvironment.getEnvironmentId.pipe(
                 Effect.map((environmentId) => {
                   const url = new URL(HOSTED_APPROVAL_PATH, hostedAppUrl);
@@ -176,12 +180,15 @@ export const layer = HttpApiBuilder.group(
             ...(oauth.runtimeModeCeiling === undefined
               ? {}
               : { runtimeModeCeiling: oauth.runtimeModeCeiling }),
+            ...(resolved.maxAccess === "full-access" ? {} : { maxAccess: resolved.maxAccess }),
             ...(session === undefined
               ? {}
               : {
                   csrfToken: session.csrfToken,
-                  oneClickAccess: AuthMcpClientAccess.literals.filter((access) =>
-                    mcpClientScopes(access).every((scope) => session.scopes.includes(scope)),
+                  oneClickAccess: AuthMcpClientAccess.literals.filter(
+                    (access) =>
+                      clampMcpClientAccess(access, resolved.maxAccess) === access &&
+                      mcpClientScopes(access).every((scope) => session.scopes.includes(scope)),
                   ),
                 }),
           };

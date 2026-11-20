@@ -17,6 +17,7 @@ import type * as AcpSchema from "effect-acp/compat";
 import {
   makeAntigravityAuth,
   type AntigravityAuth,
+  type AntigravityAuthOptions,
   type AntigravityAuthRuntime,
 } from "./AntigravityAuth.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
@@ -60,6 +61,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
     readonly supportsLogout?: boolean;
     readonly beforeInitialize?: Effect.Effect<void>;
     readonly forwardCallback?: Effect.Effect<void, ProviderSetupError>;
+    readonly cliLogin?: AntigravityAuthOptions["cliLogin"];
   } = {},
 ) {
   const authenticated = yield* Deferred.make<void, AcpErrors.AcpError>();
@@ -132,6 +134,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
       Effect.sync(() => {
         forwarded += 1;
       }),
+    ...(options.cliLogin ? { cliLogin: options.cliLogin } : {}),
   });
   return {
     auth,
@@ -152,6 +155,48 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
 });
 
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityAuth", (it) => {
+  it.effect("signs in through agy `--login` with the pasted code before checking ACP", () =>
+    Effect.gen(function* () {
+      const cliLoginUrl =
+        "https://accounts.google.com/o/oauth2/auth?response_type=code&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&state=cli-state";
+      const submitted = yield* Deferred.make<string>();
+      const harness = yield* makeHarness({
+        interactive: false,
+        cliLogin: (onAuthorizationUrl) =>
+          Effect.succeed({
+            submit: (code) => Deferred.succeed(submitted, code).pipe(Effect.asVoid),
+            finished: onAuthorizationUrl(cliLoginUrl).pipe(
+              Effect.andThen(Deferred.await(submitted)),
+              Effect.asVoid,
+            ),
+          }),
+      });
+      const state = yield* harness.auth.controller.start(owner);
+      const waiting = yield* phase(harness.auth, "waiting");
+      assert.equal(waiting.authorizationUrl, cliLoginUrl);
+      assert.notInclude(harness.events, "process-open");
+
+      const wrongState = yield* harness.auth.controller
+        .complete(owner, {
+          flowId: state.flowId!,
+          callbackUrl: "https://antigravity.google/oauth-callback?state=other&code=4%2F0Ab",
+        })
+        .pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(wrongState));
+      yield* harness.auth.controller.complete(owner, {
+        flowId: state.flowId!,
+        callbackUrl: "https://antigravity.google/oauth-callback?state=cli-state&code=4%2F0Ab",
+      });
+      assert.equal(yield* Deferred.await(submitted), "4/0Ab");
+      assert.equal(harness.forwarded(), 0);
+
+      yield* Deferred.succeed(harness.authenticated, undefined);
+      yield* Deferred.succeed(harness.discovered, undefined);
+      yield* phase(harness.auth, "succeeded");
+      assert.deepEqual(harness.catalog(), ["gemini-test"]);
+    }),
+  );
+
   it.effect("accepts a delayed duplicate after callback completion starts", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();

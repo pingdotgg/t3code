@@ -6,8 +6,43 @@ import * as Effect from "effect/Effect";
 
 export interface AntigravityPendingCallback {
   readonly redirectUri: string;
-  readonly state: string;
+  readonly state: string | undefined;
 }
+
+// A newline would end the CLI's prompt early, so codes are one printable ASCII token.
+const CLI_LOGIN_CODE = /^[\x21-\x7e]{1,2048}$/;
+
+/** `agy acp --login` takes the code or the URL of Google's code page; return just the code. */
+export const validateAntigravityCliLoginCode = Effect.fn("validateAntigravityCliLoginCode")(
+  function* (instanceId: ProviderInstanceId, pending: AntigravityPendingCallback, pasted: string) {
+    const invalid = (detail: string) =>
+      new ProviderSetupError({ instanceId, operation: "complete", detail });
+    const value = pasted.trim();
+    if (!/^https?:/i.test(value)) {
+      if (CLI_LOGIN_CODE.test(value)) return value;
+      return yield* invalid("Paste the code or the full URL from the Google sign-in page.");
+    }
+    const callback = yield* Effect.try({
+      try: () => new URL(value),
+      catch: () => invalid("Paste the code or the full URL from the Google sign-in page."),
+    });
+    const states = callback.searchParams.getAll("state");
+    if (
+      callback.href.length > 16_384 ||
+      `${callback.origin}${callback.pathname}` !== pending.redirectUri ||
+      callback.username !== "" ||
+      callback.password !== "" ||
+      (pending.state !== undefined && (states.length !== 1 || states[0] !== pending.state))
+    ) {
+      return yield* invalid("This URL does not belong to the current sign-in.");
+    }
+    const [code, ...extra] = callback.searchParams.getAll("code");
+    if (code === undefined || extra.length > 0 || !CLI_LOGIN_CODE.test(code)) {
+      return yield* invalid("The URL must contain one Google sign-in code.");
+    }
+    return code;
+  },
+);
 
 export const validateAntigravityCallbackUrl = Effect.fn("validateAntigravityCallbackUrl")(
   function* (

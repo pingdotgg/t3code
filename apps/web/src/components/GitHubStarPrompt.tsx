@@ -7,6 +7,7 @@ import { StarIcon } from "lucide-react";
 import { m } from "../i18n/messages";
 import { getLocalStorageItem, setLocalStorageItem } from "../hooks/useLocalStorage";
 import { readLocalApi } from "../localApi";
+import { IS_STANDALONE_BUILD } from "../projectLinks";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { toastManager } from "./ui/toast";
@@ -147,7 +148,8 @@ async function starRepository(environmentId: EnvironmentId) {
  * unless the environment's GitHub account already starred the repo. Waits until the user is idle.
  */
 export async function recordPromptSent(environmentId: EnvironmentId): Promise<void> {
-  if (shownThisSession) return;
+  // Starring would star T3 Code's repository, not this build's.
+  if (IS_STANDALONE_BUILD || shownThisSession) return;
   try {
     if (getLocalStorageItem(DISMISSED_KEY, Schema.Boolean)) return;
     const sent = (getLocalStorageItem(SENT_KEY, Schema.Number) ?? 0) + 1;

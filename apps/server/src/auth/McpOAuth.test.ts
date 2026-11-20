@@ -210,6 +210,12 @@ it.effect("derives discovery metadata from the origin the client reached", () =>
         token_endpoint: `${ORIGIN}/oauth/mcp/token`,
         registration_endpoint: `${ORIGIN}/oauth/mcp/register`,
         code_challenge_methods_supported: ["S256"],
+        scopes_supported: [
+          "orchestration:read",
+          "orchestration:operate",
+          "settings:write",
+          "source-control:write",
+        ],
       });
     }),
   ),
@@ -396,6 +402,103 @@ it.live("signs in with a pairing code and issues a token only /mcp accepts", () 
         }),
       );
       expect(ticket.status).toBe(401);
+    }),
+  ),
+);
+
+it.live("an explicit scope caps the grant at the access level it names", () =>
+  withRoutes((handler, auth) =>
+    Effect.gen(function* () {
+      const clientId = yield* registeredClientId(handler);
+      const admin = `Bearer ${(yield* auth.issueSession({ scopes: [...AuthStandardClientScopes] })).token}`;
+      const full = "orchestration:read orchestration:operate settings:write source-control:write";
+      const cases = [
+        { scope: "orchestration:read", max: "read-only", granted: "orchestration:read" },
+        {
+          scope: "orchestration:operate orchestration:read",
+          max: "auto",
+          granted: "orchestration:read orchestration:operate",
+        },
+        // A write scope without its sibling does not reach full access.
+        {
+          scope: "orchestration:read orchestration:operate settings:write",
+          max: "auto",
+          granted: "orchestration:read orchestration:operate",
+        },
+        { scope: full, max: undefined, granted: full },
+        { scope: undefined, max: undefined, granted: full },
+      ] as const;
+      for (const { scope, max, granted } of cases) {
+        const params = { ...authorizeParams(clientId), ...(scope === undefined ? {} : { scope }) };
+        const details = yield* handler(postJson("/oauth/mcp/approval", params, admin)).pipe(
+          Effect.flatMap(
+            json<{
+              csrfToken: string;
+              oneClickAccess: ReadonlyArray<string>;
+              maxAccess?: string;
+            }>,
+          ),
+        );
+        expect(details.maxAccess, scope).toBe(max);
+        expect(details.oneClickAccess.at(-1), scope).toBe(max ?? "full-access");
+
+        for (const decision of [
+          { _tag: "browser-session", access: "full-access", csrfToken: details.csrfToken },
+          {
+            _tag: "pairing-code",
+            access: "full-access",
+            code: (yield* auth.issuePairingCredential()).credential,
+          },
+        ]) {
+          const approved = yield* decide(handler, params, decision, admin);
+          const code = new URL(approved.redirectTo!).searchParams.get("code")!;
+          const token = yield* handler(
+            at(
+              "/oauth/mcp/token",
+              form({
+                grant_type: "authorization_code",
+                code,
+                redirect_uri: params.redirect_uri,
+                client_id: clientId,
+                code_verifier: verifier,
+              }),
+            ),
+          ).pipe(Effect.flatMap(json<{ access_token: string; scope: string }>));
+          expect(token.scope, `${scope} ${decision._tag}`).toBe(granted);
+          const client = yield* auth.authenticateMcpClient(
+            HttpServerRequest.fromWeb(
+              at("/mcp", { headers: { authorization: `Bearer ${token.access_token}` } }),
+            ),
+          );
+          expect(client.access, `${scope} ${decision._tag}`).toBe(max ?? "full-access");
+        }
+      }
+
+      // The approval page's token is bound to the scope it was shown for.
+      const readOnly = { ...authorizeParams(clientId), scope: "orchestration:read" };
+      const shown = yield* handler(postJson("/oauth/mcp/approval", readOnly, admin)).pipe(
+        Effect.flatMap(json<{ csrfToken: string }>),
+      );
+      const widened = yield* decide(
+        handler,
+        { ...readOnly, scope: full },
+        { _tag: "browser-session", access: "full-access", csrfToken: shown.csrfToken },
+        admin,
+      );
+      expect(widened.status).toBe(400);
+
+      for (const scope of ["orchestration:read terminal:operate", "orchestration:operate", ""]) {
+        const response = yield* handler(
+          at(
+            `/oauth/mcp/authorize?${new URLSearchParams({ ...authorizeParams(clientId), scope })}`,
+          ),
+        );
+        expect(response.status, scope).toBe(302);
+        const location = new URL(response.headers.get("location")!, ORIGIN);
+        expect(location.searchParams.get("error"), scope).toBe(
+          scope === "" ? null : "invalid_scope",
+        );
+      }
     }),
   ),
 );

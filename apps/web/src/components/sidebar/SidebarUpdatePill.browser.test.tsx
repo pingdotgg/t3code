@@ -1,10 +1,10 @@
-import type { DesktopUpdateState } from "@t3tools/contracts";
+import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { act, render } from "../../../test/render";
-import { SidebarUpdatePill } from "./SidebarUpdatePill";
+import { installLocalUpdate, SidebarUpdatePill } from "./SidebarUpdatePill";
 import type { UpdateEverythingRow } from "./updateEverything.logic";
 
 const mocks = vi.hoisted(() => {
@@ -166,5 +166,38 @@ describe("SidebarUpdatePill update everything", () => {
     const row = table.getByRole("row", { name: new RegExp(label) });
     await expect.element(row.getByRole("cell", { name: label, exact: true })).toBeVisible();
     await expect.element(row.getByRole("cell", { name: "Claude", exact: true })).toBeVisible();
+  });
+});
+
+describe("installLocalUpdate", () => {
+  it("reports an install the updater refuses after accepting it", async () => {
+    const downloaded = { ...nightlyUpdate([]), status: "downloaded" as const };
+    const subscribed = Promise.withResolvers<(state: DesktopUpdateState) => void>();
+    let listener: ((state: DesktopUpdateState) => void) | undefined;
+    const bridge = {
+      installUpdate: async () => {
+        expect(listener).toBeTypeOf("function");
+        return { accepted: true, completed: false, state: downloaded };
+      },
+      onUpdateState: (callback: (state: DesktopUpdateState) => void) => {
+        listener = callback;
+        subscribed.resolve(callback);
+        return () => {};
+      },
+    } as unknown as DesktopBridge;
+    const reportError = vi.fn();
+
+    const installed = installLocalUpdate(bridge, reportError);
+    const pushState = await Promise.race([subscribed.promise, installed]);
+    expect(pushState).toBeTypeOf("function");
+    // macOS reports a declined install prompt through the updater's error event, after the IPC.
+    (pushState as (state: DesktopUpdateState) => void)({
+      ...downloaded,
+      message: "Install was cancelled.",
+      errorContext: "install",
+    });
+
+    await expect(installed).resolves.toBe(false);
+    expect(reportError).toHaveBeenCalledWith("Could not install update", "Install was cancelled.");
   });
 });

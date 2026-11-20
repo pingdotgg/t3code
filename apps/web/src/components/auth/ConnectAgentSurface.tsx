@@ -4,6 +4,7 @@ import {
   AuthMcpApprovalError,
   AuthMcpClientAccess,
   AuthMcpAuthorizationRequest,
+  clampMcpClientAccess,
   isRuntimeModeAbove,
   parseMcpApprovalCode,
 } from "@t3tools/contracts";
@@ -66,6 +67,7 @@ type Loaded =
   | { readonly status: "ready"; readonly details: AuthMcpApprovalDetails };
 
 const UNREACHABLE = msg("Could not reach this environment. Try again.");
+const NOT_REQUESTED = msg("This app did not ask for this access.");
 const isApprovalError = Schema.is(AuthMcpApprovalError);
 
 export type McpApprovalAnswer<A> =
@@ -154,13 +156,17 @@ export function McpConsent({
   const [requestedAccess, setAccess] = useState<AuthMcpClientAccess | null>(null);
   const [pairingCode, setPairingCode] = useState("");
   const [armed, setArmed] = useState(false);
+  const maxAccess = (loaded.status === "ready" && loaded.details.maxAccess) || "full-access";
   const access =
     requireLevelChoice && requestedAccess === null
       ? null
-      : resolveMcpAccess(
-          requestedAccess,
-          loaded.status === "ready" ? loaded.details.runtimeModeCeiling : undefined,
-          pairingCode.trim().length > 0,
+      : clampMcpClientAccess(
+          resolveMcpAccess(
+            requestedAccess,
+            loaded.status === "ready" ? loaded.details.runtimeModeCeiling : undefined,
+            pairingCode.trim().length > 0,
+          ),
+          maxAccess,
         );
   const [errorMessage, setErrorMessage] = useState("");
   const [pending, setPending] = useState<"approve" | "deny" | null>(null);
@@ -261,7 +267,8 @@ export function McpConsent({
     access !== null &&
     resolveApprovalDecision({ code: pairingCode, access, details }) !== null;
   // A code from "Use T3 Code in another app" names its level, so the page does not ask again.
-  const codeAccess = parseMcpApprovalCode(pairingCode)?.access;
+  const parsedCodeAccess = parseMcpApprovalCode(pairingCode)?.access;
+  const codeAccess = parsedCodeAccess && clampMcpClientAccess(parsedCodeAccess, maxAccess);
   const approveLevel = codeAccess ?? access;
 
   return (
@@ -441,6 +448,9 @@ function ceilingReason(
   access: AuthMcpClientAccess,
   resolve: MessageResolver,
 ) {
+  if (clampMcpClientAccess(access, details.maxAccess ?? access) !== access) {
+    return resolve(NOT_REQUESTED);
+  }
   const ceiling = details.runtimeModeCeiling;
   return ceiling === undefined ||
     access === "read-only" ||

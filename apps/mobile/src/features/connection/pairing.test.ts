@@ -43,4 +43,15 @@ describe("parsePairingUrl", () => {
       code: "pairing-token",
     });
   });
+
+  it("unwraps the app link that `t3 pair` prints", () => {
+    expect(
+      parsePairingUrl(
+        "t3code://pair?pairingUrl=http%3A%2F%2F192.168.1.100%3A3773%2Fpair%23token%3Dpairing-token",
+      ),
+    ).toEqual({
+      host: "http://192.168.1.100:3773",
+      code: "pairing-token",
+    });
+  });
 });

@@ -17,6 +17,8 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import type { SourceControlProviderContext } from "@t3tools/source-control-core/server/SourceControlProvider";
+import { readSourceControlHostSettings } from "@t3tools/source-control-core/shared/definition";
+import * as ForgejoDefinition from "../shared/definition.ts";
 
 // A Gitea list page can hold 50 pull request bodies; tea's output is otherwise capped at 1 MB.
 const API_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
@@ -221,6 +223,30 @@ export function matchForgejoLogin(
       : undefined;
 }
 
+/**
+ * The server Settings names for a project without a Forgejo remote, as a remote to match logins
+ * against, or undefined when unset. One that does not parse matches no login rather than any.
+ */
+export const defaultServer = (
+  settings: SourceControlHost.SourceControlHost["Service"]["settings"],
+) =>
+  settings.get.pipe(
+    Effect.map((current) => {
+      const { defaultServer: value } = readSourceControlHostSettings(
+        ForgejoDefinition.settings,
+        current.sourceControlHosts[ForgejoDefinition.definition.kind],
+      );
+      if (!value) return undefined;
+      const url = /^https?:\/\//i.test(value) ? value : `https://${value}`;
+      const remote = parseForgejoRemote(url);
+      return {
+        url,
+        remote: remote ?? { host: url, hostname: url, ssh: false, path: "" },
+      };
+    }),
+    Effect.orElseSucceed(() => undefined),
+  );
+
 const ForgejoKeysConfig = Config.all({
   dataHome: Config.String("XDG_DATA_HOME").pipe(Config.option),
   appData: Config.String("APPDATA").pipe(Config.option),
@@ -229,7 +255,7 @@ const ForgejoKeysConfig = Config.all({
 export const make = Effect.gen(function* () {
   // Optional strings cannot fail to decode.
   const { dataHome, appData } = yield* Effect.suspend(() => ForgejoKeysConfig).pipe(Effect.orDie);
-  const { process } = yield* SourceControlHost.SourceControlHost;
+  const { process, settings } = yield* SourceControlHost.SourceControlHost;
   const fileSystem = yield* FileSystem.FileSystem;
   const httpClient = yield* HttpClient.HttpClient;
   const authLock = yield* Semaphore.make(1);
@@ -592,17 +618,27 @@ export const make = Effect.gen(function* () {
         ssh: false,
         path: remote?.path ?? "",
       };
-    const schemeRemoteUrl = remote?.ssh ? input.context?.provider.baseUrl : remoteUrl;
+    // Without a remote or a named host, the server Settings names decides which login serves.
+    const fallback = remote ? undefined : yield* defaultServer(settings);
+    const loginRemote = remote ?? fallback?.remote ?? null;
+    const schemeRemoteUrl = remote?.ssh
+      ? input.context?.provider.baseUrl
+      : (remoteUrl ?? fallback?.url);
     const fjLogins = yield* listLogins({
       cwd: input.cwd,
       command: "fj",
       ...(schemeRemoteUrl ? { remoteUrl: schemeRemoteUrl } : {}),
     });
     const requestedHost = input.host ?? input.context?.requestedHost;
-    const matchHostOnly = hostOnly || (!!input.host && !remote?.path);
+    const matchHostOnly = hostOnly || (!!input.host && !remote?.path) || fallback !== undefined;
     const selectLogin = (logins: ReturnType<typeof parseForgejoLogins>) =>
-      remote
-        ? matchForgejoLogin(logins, remote, remote.ssh ? requestedHost : undefined, matchHostOnly)
+      loginRemote
+        ? matchForgejoLogin(
+            logins,
+            loginRemote,
+            loginRemote.ssh ? requestedHost : undefined,
+            matchHostOnly,
+          )
         : (logins.find((item) => item.default === "true") ??
           (new Set(logins.map((item) => item.name)).size === 1 ? logins[0] : undefined));
     let login = selectLogin(fjLogins);
@@ -611,8 +647,13 @@ export const make = Effect.gen(function* () {
       !login &&
       fjLogins.some(
         (item) =>
-          !remote ||
-          matchForgejoLogin([item], remote, remote.ssh ? requestedHost : undefined, matchHostOnly),
+          !loginRemote ||
+          matchForgejoLogin(
+            [item],
+            loginRemote,
+            loginRemote.ssh ? requestedHost : undefined,
+            matchHostOnly,
+          ),
       )
     ) {
       const available = yield* execute({ command: "fj", cwd: input.cwd, args: ["version"] }).pipe(

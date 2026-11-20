@@ -16,6 +16,7 @@ import {
 } from "react";
 
 import { copyThreadReference } from "../../lib/copyThreadReference";
+import { resolveHostedAppUrl } from "../cloud/publicConfig";
 import { m } from "../../i18n/messages";
 import {
   firstWorkspaceDetailOpen,
@@ -71,6 +72,7 @@ export function HardwareKeyboardCommandProvider({
               pullRequests: activeThread?.pullRequests,
               linkedPullRequestUrl:
                 (activeThread?.linkedPullRequest ?? activeThread?.branchPullRequest)?.url ?? null,
+              hostedAppUrl: resolveHostedAppUrl(),
             },
             messages,
           ),
