@@ -56,6 +56,7 @@ interface ChatHeaderProps {
   onOpenThread: (threadId: ThreadId) => void;
   rightPanelOpen: boolean;
   onNewThreadInProject: () => void;
+  newThreadInProjectShortcutLabel: string | null;
   onOpenProjectSettings?: (() => void) | undefined;
   onFindInThread?: ((threadRef: ScopedThreadRef) => void) | undefined;
 }
@@ -81,6 +82,7 @@ export const ChatHeader = memo(function ChatHeader({
   onOpenThread,
   rightPanelOpen,
   onNewThreadInProject,
+  newThreadInProjectShortcutLabel,
   onOpenProjectSettings,
   onFindInThread,
 }: ChatHeaderProps) {
@@ -284,9 +286,16 @@ export const ChatHeader = memo(function ChatHeader({
                   />
                 </TooltipTrigger>
                 <TooltipPopup side="top">
-                  <T>
-                    New thread in <Var>{activeProjectName}</Var>
-                  </T>
+                  {newThreadInProjectShortcutLabel ? (
+                    gt("New thread in {project} ({shortcut})", {
+                      project: activeProjectName,
+                      shortcut: newThreadInProjectShortcutLabel,
+                    })
+                  ) : (
+                    <T>
+                      New thread in <Var>{activeProjectName}</Var>
+                    </T>
+                  )}
                 </TooltipPopup>
               </Tooltip>
             </WorkspaceBreadcrumbItem>
