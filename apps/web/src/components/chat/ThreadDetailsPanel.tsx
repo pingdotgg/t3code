@@ -250,7 +250,6 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                     ) : null}
                     {show.git && props.gitCwd ? (
                       <GitActionsControl
-                        compact={density !== "full"}
                         showActions={visible.gitActions}
                         showChanges={visible.changes}
                         gitCwd={props.gitCwd}

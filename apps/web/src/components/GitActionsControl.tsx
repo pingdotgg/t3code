@@ -140,7 +140,6 @@ interface GitActionsControlProps {
   gitCwd: string | null;
   activeThreadRef: ScopedThreadRef | null;
   draftId?: DraftId;
-  compact?: boolean;
   showActions?: boolean;
   showChanges?: boolean;
   onOpenChanges?: () => void;
@@ -970,7 +969,6 @@ function CheckoutGitActionsControl({
   gitCwd,
   activeThreadRef,
   draftId,
-  compact = false,
   showActions = true,
   showChanges = true,
   onOpenChanges,
@@ -1644,7 +1642,7 @@ function CheckoutGitActionsControl({
             {initAction.isPending ? <T>Initializing...</T> : <T>Initialize Git</T>}
           </span>
         </ThreadDetailsControl>
-      ) : quietEmptyDraft || (compact && !gitActionProgress && !visibleInlineSuccess) ? null : (
+      ) : quietEmptyDraft ? null : (
         <div
           role="group"
           aria-label={gt("Git actions")}
