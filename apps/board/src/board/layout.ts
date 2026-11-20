@@ -24,6 +24,8 @@ export const FRAME_PAD = 8;
 export const CARD_HEIGHT = 62;
 export const CARD_GAP = 6;
 export const EMPTY_HEIGHT = 30;
+export const ARTIFACT_HEIGHT = 36;
+export const ARTIFACT_GAP = 4;
 const FOR_YOU_NOTE = 20;
 const MERGE_CARD = 660;
 const QUESTION_CARD = 260;
@@ -73,10 +75,15 @@ export const hasChips = (ticket: Ticket): boolean =>
 export const headHeight = (ticket: Ticket): number =>
   FRAME_HEAD + (hasChips(ticket) ? CHIPS_HEIGHT : 0);
 
-export const frameHeight = (head: number, agents: number): number =>
+/** The height of a frame's expanded artifact cards: a rule above, and the cards in the frame's padding. */
+export const artifactsHeight = (cards: number): number =>
+  cards === 0 ? 0 : 1 + FRAME_PAD * 2 + cards * ARTIFACT_HEIGHT + (cards - 1) * ARTIFACT_GAP;
+
+export const frameHeight = (head: number, agents: number, artifactCards = 0): number =>
   head +
   FRAME_PAD * 2 +
-  (agents === 0 ? EMPTY_HEIGHT : agents * CARD_HEIGHT + (agents - 1) * CARD_GAP);
+  (agents === 0 ? EMPTY_HEIGHT : agents * CARD_HEIGHT + (agents - 1) * CARD_GAP) +
+  artifactsHeight(artifactCards);
 
 /** Frames in the order the user dragged them to, and any the saved order lacks after them, in file order. */
 export function orderedKeys(keys: ReadonlyArray<string>, saved: ReadonlyArray<string> = []) {
@@ -100,8 +107,16 @@ export function forYouHeight(views: ReadonlyArray<CardView>): number {
   return views.reduce((sum, view) => sum + height(view) + CARD_GAP, FOR_YOU_NOTE);
 }
 
-/** Stacks each lane's frames in its column, and adds one edge for each `dependsOn` between two tickets. */
-export function layoutBoard(model: BoardModel, order: FrameOrder, forYouRows = 0): Layout {
+/**
+ * Stacks each lane's frames in its column, and adds one edge for each `dependsOn` between two
+ * tickets. `expanded` holds the card count of each ticket whose artifacts are open.
+ */
+export function layoutBoard(
+  model: BoardModel,
+  order: FrameOrder,
+  forYouRows = 0,
+  expanded: Readonly<Record<string, number>> = {},
+): Layout {
   const lanes: LaneBox[] = [];
   const edges: Edge[] = [];
   const known = new Set(
@@ -126,7 +141,11 @@ export function layoutBoard(model: BoardModel, order: FrameOrder, forYouRows = 0
         const view = views.find((entry) => entry.ticket.key === key);
         if (view === undefined) continue;
         const head = headHeight(view.ticket);
-        items.push({ key, head, height: frameHeight(head, view.agents.length) });
+        items.push({
+          key,
+          head,
+          height: frameHeight(head, view.agents.length, expanded[key] ?? 0),
+        });
         for (const dependency of view.ticket.dependsOn ?? []) {
           if (known.has(dependency)) edges.push({ from: dependency, to: key });
         }

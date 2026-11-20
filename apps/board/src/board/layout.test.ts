@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { Ticket } from "../domain/ticket";
 import type { AgentView, BoardModel, TicketView } from "../state/boardModel";
 import {
+  artifactsHeight,
   clampDrag,
   edgePath,
   FRAME_WIDTH,
@@ -87,6 +88,15 @@ describe("laying out the lanes", () => {
       ],
     ]);
     expect(building?.frames[0]?.width).toBe(FRAME_WIDTH);
+  });
+
+  it("Given a ticket with open artifact cards, when laid out, then its frame grows by the cards and the frame below moves down", () => {
+    const open = layoutBoard(model, {}, 0, { "T-1": 3 });
+    const frame = (laid: typeof layout, key: string) =>
+      laid.lanes.flatMap((entry) => entry.frames).find((box) => box.key === key);
+    const grown = artifactsHeight(3);
+    expect(frame(open, "T-1")?.height).toBe((frame(layout, "T-1")?.height ?? 0) + grown);
+    expect(frame(open, "T-2")?.y).toBe((frame(layout, "T-2")?.y ?? 0) + grown);
   });
 
   it("Given a dependency on a ticket that exists and one that does not, when laid out, then only the first has an edge", () => {

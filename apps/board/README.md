@@ -100,6 +100,16 @@ T3 can sign in only the instances whose `setup.canAuthenticate` is true, such as
 
 With `localStorage["board:token-marks"] = "1"`, the panel marks `board:token-received` when a streamed token reaches the thread state and `board:token-painted` two frames after its text commits, each with the reply's length in `detail.length`.
 
+## Artifacts
+
+Agents leave evidence files, and the board shows each as a card. A ticket frame and the orchestrator card carry an artifact count, and pressing it opens the cards: under the frame for a ticket, beside the card for the board. `src/domain/artifact.ts` classifies a path under the board folder with a lookup table on the folder and the extension. `artifacts/<KEY>/` holds a ticket's evidence, and its extension says which: images are screenshots, `.sh` and `.mts` are scripts, `.patch` is a diff, `.md` and `README.txt` are reports, and everything else is a proof. `review/<KEY>/` is a review, `inbox/` is a brief, and the board root's `design.md`, `plan.md`, `brief.md`, and `decisions.tsv` are a design, a plan, a brief, and the decisions. Files for a key no ticket carries, and the board-level files, attach to the orchestrator card.
+
+`store/artifacts.ts` lists the board folder one directory at a time with `projects.listEntries`, always with a path relative to its `cwd`, and again every second while the board is open, so a file an agent writes shows within a few seconds. It also lists `.omp/artifacts/` in each ticket's `worktreePath`, with the worktree as the `cwd`, because the engine refuses an absolute `directoryPath`.
+
+Opening a card shows the file in the viewer over the canvas. An image loads from an `assets.createUrl` `media-file` URL, which the engine signs for an absolute path and serves without the app's credentials. The page's `img-src` allows `http://127.0.0.1:*` for that. Text and markdown come from `projects.readFile` with the absolute path, which the engine reads up to 1 MB of: past that the viewer says how much of the file it shows. A file the engine calls binary shows a placeholder. A ticket's `README.txt` shows as its files, each beside what it proves.
+
+Each listing marks `board:artifacts-listed` with the file count and the milliseconds it took in `detail`.
+
 ## Engine probe
 
 `scripts/engine-probe.ts` checks ten engine behaviors the board depends on, each against a real Claude Code session, and writes the results to [docs/engine-findings.md](docs/engine-findings.md). It starts its own T3 engine in `/tmp/engine-probe/run-<id>/t3`, never touches `~/.t3`, and stops that engine and its provider sessions when it ends. It reads `~/.claude/settings.json` without changing it, and deletes the Claude Code project folders its scratch projects created. Build the engine once with `vp run --filter t3 build`, then run it from a checkout.

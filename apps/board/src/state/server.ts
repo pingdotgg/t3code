@@ -6,7 +6,7 @@ import { Atom } from "effect/reactivity";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { engineEnvironmentIdAtom, environmentCatalog } from "./projects";
 
-const environmentSession = createEnvironmentSessionAtoms(connectionAtomRuntime);
+export const environmentSession = createEnvironmentSessionAtoms(connectionAtomRuntime);
 
 export const serverEnvironment = createServerEnvironmentAtoms(connectionAtomRuntime, {
   initialConfigValueAtom: environmentSession.initialConfigValueAtom,
