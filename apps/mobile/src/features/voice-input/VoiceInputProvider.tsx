@@ -14,11 +14,15 @@ import {
   preferredMicrophoneInput,
   rememberMicrophones,
 } from "../../lib/microphonePriority";
-import { getLocalVoiceTranscriber } from "../../native/voiceTranscription";
+import {
+  getLocalVoiceTranscriber,
+  getVoiceTranscriberForLocale,
+} from "../../native/voiceTranscription";
 import { createVoiceRecorder } from "../../native/voiceRecorder";
 import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
 import { getNativeShowcaseScene } from "../showcase/nativeShowcaseScene";
 import {
+  throwIfVoiceTranscriptionAborted,
   voiceInputBlocksSubmission,
   type VoiceTranscriber,
 } from "@t3tools/client-runtime/voice-input";
@@ -55,6 +59,17 @@ function keepScreenAwake(tag: string): () => void {
 
 export const deviceMicrophoneOrder = (saved?: ReadonlyArray<MicrophoneEntry>) =>
   microphoneOrder(saved, Platform.OS === "android" ? "android" : "ios");
+
+type MobilePreferencesResult = Atom.Type<typeof mobilePreferencesAtom>;
+
+/** A chosen dictation language replaces the device language; a failed preference load keeps it. */
+function withDictationLocale(
+  transcriber: VoiceTranscriber,
+  preferences: MobilePreferencesResult,
+): VoiceTranscriber {
+  const locale = AsyncResult.isSuccess(preferences) ? preferences.value.dictationLocale : undefined;
+  return (locale ? getVoiceTranscriberForLocale(locale) : null) ?? transcriber;
+}
 
 /** "checking" until the first availability probe settles; re-probed on foreground. */
 export const localVoiceTranscriberAtom = makePermissionStatusAtom<
@@ -124,7 +139,36 @@ const voiceInputAtom = Atom.make((get) => {
       const route = registry.get(voiceRouteAtom);
       if (route) return route.transcriber;
       const transcriber = registry.get(localVoiceTranscriberAtom);
-      return transcriber === "checking" ? null : transcriber;
+      if (transcriber === "checking" || transcriber === null) return null;
+      const preferences = registry.get(mobilePreferencesAtom);
+      if (!AsyncResult.isInitial(preferences)) return withDictationLocale(transcriber, preferences);
+      // Saved preferences are still loading: start now and pick the language once they arrive,
+      // so a tap during startup neither reports dictation unavailable nor uses the wrong language.
+      return {
+        prepare: async (options) => {
+          throwIfVoiceTranscriptionAborted(options.signal);
+          const loaded = await new Promise<MobilePreferencesResult | null>((resolve) => {
+            const settle = (result: MobilePreferencesResult) => {
+              if (AsyncResult.isInitial(result)) return;
+              stop();
+              resolve(result);
+            };
+            const abort = () => {
+              stop();
+              resolve(null);
+            };
+            const unsubscribe = registry.subscribe(mobilePreferencesAtom, settle);
+            const stop = () => {
+              unsubscribe();
+              options.signal.removeEventListener("abort", abort);
+            };
+            options.signal.addEventListener("abort", abort, { once: true });
+            settle(registry.get(mobilePreferencesAtom));
+          });
+          throwIfVoiceTranscriptionAborted(options.signal);
+          return withDictationLocale(transcriber, loaded!).prepare(options);
+        },
+      };
     },
     requestPermission: permission.requestPermission,
     configureRecording: async () => {
