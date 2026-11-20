@@ -1,7 +1,7 @@
 # Antigravity
 
 T3 Code runs Google's official Antigravity ACP agent on your selected environment.
-It has its own sign-in, separate from the Antigravity IDE or CLI. Google controls
+T3 manages its own CLI installation and sign-in, separate from your terminal or IDE. Google controls
 which models and account access are available through this agent.
 
 ## Set up Antigravity
@@ -18,19 +18,12 @@ Antigravity setup.
 
 ### Sign in from a remote device
 
-Google returns to a `127.0.0.1` address. It can finish directly when your browser is
-on the environment's machine. From another device, the final page will usually
-fail to load because the sign-in listener is on the environment.
+Google finishes on an Antigravity page that shows a code. Paste that code, or the
+page's full address, into the code field in the client where you started sign-in.
+This works the same from any device.
 
-Copy the full return address, including everything after `?`, into the return URL
-field in the client where you started sign-in, then choose
-**Continue**. Keep the original address; do not replace it with the server's
-hostname. Only that T3 Code sign-in session can finish the attempt. If it expires,
-retry sign-in and use the new link.
-
-The return URL contains a temporary sign-in code. Paste it only into the setup
-field. A successful callback page alone does not confirm account access; wait for
-T3 Code's confirmation.
+The code is temporary. Paste it only into the setup field. The page alone does not
+confirm account access; wait for T3 Code's confirmation.
 
 ### Other sign-in methods
 
@@ -51,20 +44,30 @@ account.
 
 ## Runtime installation
 
-Managed installation supports Apple Silicon macOS, Linux x64 or ARM64, and Windows
-x64 or ARM64. Intel Macs can connect to a supported remote environment. Allow
-several GB of free disk space, especially on Linux.
+Managed installation supports Apple Silicon and Intel macOS, Linux x64 or ARM64
+with glibc or musl, and Windows x64 or ARM64. Allow at least 1.25 GiB of free disk
+space for downloading and staging an update.
 
 ### Use a manual installation
 
-Download the archive for your environment from the [official ACP Registry][registry].
-Extract the ACP executable and its `localharness_external` helper into the same
-directory, at the same version. Make both executable on macOS or Linux; Windows
-uses `.exe` files.
-
-Set **Binary path** to the ACP executable on the environment and update it yourself.
+Install [Antigravity CLI](https://antigravity.google/docs/getting-started) on the environment.
+Set **Binary path** to its `agy` executable and update it yourself.
 Leave the field blank to use the managed runtime, or a compatible executable on
 `PATH` if no managed runtime is installed.
+
+## Update the managed runtime
+
+In web or desktop provider settings, choose **Update Antigravity** when an update
+is available. T3 checks Google's CLI release channel while provider update checks
+are enabled. Installing or reinstalling also checks that channel. Updates keep
+your profile and existing runtime available if the new release fails validation.
+
+T3 needs Antigravity 1.5 or newer and recommends 1.5.12 or newer. Sessions do not
+start on an older runtime: update the managed runtime here, or update the executable
+a custom binary path or `PATH` points at. You may need to sign in again after
+updating from a runtime older than 1.5. Threads already running finish with their
+original runtime; new sessions use the updated release. Custom binary paths keep
+using the executable you selected.
 
 ## Models and threads
 
@@ -82,12 +85,14 @@ Use Antigravity's native `/plan` command for planning. Tool approvals follow [Pe
 Questions with fixed choices still need one of the offered answers, even in
 **Full access**.
 
-T3 Code keeps conversation history and file diffs, but Antigravity cannot rewind
-its conversation. Reverting a thread or editing and resubmitting an earlier turn
-is unavailable. Continue with a follow-up message or start a new thread.
+On web and desktop, [Edit from here](./composer.md#edit-an-earlier-prompt) works with
+Antigravity. Antigravity cannot rewind its own conversation, so the next turn
+starts a fresh Antigravity session and T3 Code sends it the kept conversation,
+without the turns you removed.
 
-Manual context compaction is unavailable through Antigravity's ACP runtime, even
-though its CLI has `/compact`. Send `/clear` when you need a fresh context.
+Use `/compact` to summarize a long conversation when your Antigravity runtime
+offers that command. If it is unavailable, update Antigravity in provider settings
+or send `/clear` when you need a fresh context.
 
 ### Skills and attachments
 
@@ -101,9 +106,8 @@ Skills for every project go in `~/.gemini/config/skills` or
 so a skill there only appears when the project itself is your home directory.
 
 Antigravity receives images and audio directly, and reads PDFs and text files as
-documents. With the managed runtime on macOS and Linux, an MP4 video up to 20 MiB
-is sent as video to Gemini models. Other attachments, and videos for other models, are passed as a
-saved file path for the agent to inspect with its tools.
+documents. Other attachments, including videos, are passed as a saved file path for
+the agent to inspect with its tools.
 
 ### Subagents
 
@@ -129,11 +133,22 @@ runtimes are shared on the environment.
 
 All three keep thread history and workspace files. Sending `/logout` by itself in
 a thread signs out its instance, including stopping that instance's other sessions.
+That needs a client allowed to manage providers, and it has to be your own message:
+`/logout` from an agent or a scheduled task is refused.
 Sign out, then sign in again to replace an account.
 
 Before removing a managed runtime, disable its instances and cancel any active
 installation. Clear any explicit binary path pointing into that runtime. Removal
 is refused while the runtime is in use.
+
+## Run a native goal
+
+When your Antigravity runtime offers `/goal`, send `/goal` followed by a verifiable
+objective. Antigravity keeps working until it completes the goal or you cancel it.
+
+Use Stop to interrupt a running goal, then ask Antigravity to stop pursuing it
+before starting more work. Ordinary follow-ups wait until the running turn ends.
+T3 does not support Antigravity goal status, pause, resume, or clear commands.
 
 ## Check access and troubleshoot
 
@@ -152,5 +167,4 @@ If Google reports `SUBSCRIPTION_REQUIRED`, an account restriction, or a usage li
 follow the provider's message and any retry time. See [Google's account plans][plans]
 for eligibility.
 
-[registry]: https://github.com/agentclientprotocol/registry/blob/main/antigravity-acp/agent.json
 [plans]: https://antigravity.google/docs/plans

@@ -35,7 +35,7 @@ runs:
     - name: Cache Vite+
       id: vp_cache
       if: steps.vp.outputs.version != ''
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.vite-plus
         key: vite-plus-home-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.vp.outputs.version }}-node${{ steps.vp.outputs.node }}-${{ steps.vp.outputs.pnpm }}
@@ -56,7 +56,7 @@ runs:
     # partial bytes, so a shorter limit costs a slow download only a retry.
     - name: Setup Vite+
       if: steps.vp_cache.outputs.cache-hit != 'true'
-      uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+      uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
       env:
         VP_DOWNLOAD_TIMEOUT: "120"
       with:
@@ -92,7 +92,7 @@ runs:
     - name: Restore pnpm store
       id: pnpm_cache
       if: inputs.install == 'true'
-      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.pnpm_store.outputs.path }}
         key: pnpm-${{ steps.pnpm_store.outputs.namespace }}-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json') }}
@@ -106,7 +106,7 @@ runs:
     - name: Restore lockfile verification
       id: pnpm_verified
       if: inputs.install == 'true'
-      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.pnpm_store.outputs.verified }}
         key: pnpm-verified-v1-${{ hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json') }}
@@ -121,7 +121,7 @@ runs:
 
     - name: Save lockfile verification
       if: inputs.install == 'true' && steps.pnpm_verified.outputs.cache-hit != 'true'
-      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.pnpm_store.outputs.verified }}
         key: ${{ steps.pnpm_verified.outputs.cache-primary-key }}
@@ -138,7 +138,7 @@ runs:
         steps.pnpm_cache.outputs.cache-hit != 'true' &&
         (steps.pnpm_store.outputs.namespace == 'full' ||
           steps.pnpm_cache.outputs.cache-matched-key != format('pnpm-full-v1-{0}-{1}-{2}', runner.os, runner.arch, hashFiles('pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json')))
-      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.pnpm_store.outputs.path }}
         key: ${{ steps.pnpm_cache.outputs.cache-primary-key }}
