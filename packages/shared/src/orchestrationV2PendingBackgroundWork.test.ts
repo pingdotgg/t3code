@@ -324,6 +324,12 @@ describe("derivePendingBackgroundWork kinds", () => {
             { taskId: "tests", kind: "command", awaited: true },
             { taskId: "watch", kind: "monitor" },
             { taskId: "workflow", kind: "background_task" },
+            {
+              taskId: "followup",
+              kind: "subagent",
+              description: "Review src/math.ts",
+              childThreadId: "thread:child" as never,
+            },
           ],
         },
       ],
@@ -335,6 +341,20 @@ describe("derivePendingBackgroundWork kinds", () => {
           title: "Review src/math.ts",
           nativeItemRef: { nativeId: "sub" },
           childThreadId: "thread:child" as never,
+        },
+        {
+          id: "item-sub-followup" as never,
+          type: "subagent",
+          status: "waiting",
+          title: "Review src/math.ts",
+          childThreadId: "thread:child" as never,
+        },
+        {
+          id: "item-sub-other" as never,
+          type: "subagent",
+          status: "running",
+          title: "Review src/math.ts",
+          childThreadId: "thread:other" as never,
         },
         {
           id: "item-cmd" as never,
@@ -352,10 +372,16 @@ describe("derivePendingBackgroundWork kinds", () => {
       { taskId: "watch", kind: "monitor" },
       { taskId: "workflow", kind: "background_task" },
       {
-        taskId: "sub",
+        taskId: "followup",
         description: "Review src/math.ts",
         kind: "subagent",
         childThreadId: "thread:child",
+      },
+      {
+        taskId: "item-sub-other",
+        description: "Review src/math.ts",
+        kind: "subagent",
+        childThreadId: "thread:other",
       },
       { taskId: "cmd", description: "npm test", kind: "command" },
     ]);

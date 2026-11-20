@@ -380,7 +380,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.isUndefined(options.extraArgs?.["dangerously-skip-permissions"]);
   });
 
-  it("passes every --add-dir launch directory to Claude", () => {
+  it("passes every --add-dir and --plugin-dir launch directory to Claude", () => {
     const options = ClaudeAdapterV2.makeClaudeQueryOptions({
       modelSelection: CLAUDE_TEST_MODEL_SELECTION,
       nativeThreadId: "native-add-dir",
@@ -389,7 +389,8 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       attachmentsDir: "/attachments",
       settings: {
         ...AUTO_COMPACT_CLAUDE_SETTINGS,
-        launchArgs: "--add-dir ../apps ../lib --verbose --add-dir=/shared",
+        launchArgs:
+          '--add-dir ../apps ../lib --verbose --add-dir=/shared --plugin-dir ./a --plugin-dir=./b.zip --append-system-prompt "--plugin-dir=./prompt"',
       },
     });
     assert.deepEqual(options.additionalDirectories, [
@@ -400,6 +401,20 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       "/shared",
     ]);
     assert.isUndefined(options.extraArgs?.["add-dir"]);
+    assert.deepEqual(options.plugins, [
+      { type: "local", path: "./a" },
+      { type: "local", path: "./b.zip" },
+    ]);
+    assert.isUndefined(options.extraArgs?.["plugin-dir"]);
+    const bare = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "native-bare-plugin-dir",
+      resume: false,
+      cwd: "/workspace",
+      settings: { ...AUTO_COMPACT_CLAUDE_SETTINGS, launchArgs: "--plugin-dir --verbose" },
+    });
+    assert.isUndefined(bare.plugins);
+    assert.isNull(bare.extraArgs?.["plugin-dir"]);
   });
 
   it("gives delegated children Claude's subagent prompt cache TTL", () => {
@@ -1988,6 +2003,11 @@ describe("ClaudeAdapterV2 resume compaction", () => {
         },
         { askRule: false, reason: "This shell -c script runs rm and could not be checked" },
         { askRule: false, reason: "A permission rule denies a command in this shell -c script" },
+        {
+          askRule: false,
+          reason:
+            "Claude Code can't be sure it read this command the way the shell will, so it can't rule out a dangerous removal. Read the command, and don't go ahead if you can't tell what it does.",
+        },
       ].entries()) {
         const safetyRequest = yield* runtime.events.pipe(
           Stream.filter((event) => event.type === "runtime_request.updated"),
@@ -9718,6 +9738,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       result:
         "API Error: Request rejected (429) · All credentials for model claude-opus-5-5 are cooling down (reset after 1m) (last error: All credentials for model upstream are cooling down (reset after 1h))",
     },
+    {
+      status: 429,
+      cooldown: "untyped rejection",
+      seconds: 8777,
+      proxy: true,
+      sdkResetSeconds: null,
+      sdkLimitType: null,
+      result:
+        "API Error: Server is temporarily limiting requests (not your usage limit) · All credentials for model claude-opus-5-5 are cooling down (last error: rate_limit_error: This request would exceed your account's rate limit. Please try again later.) (reset after 2h26m17s)",
+    },
   ])("recovers wrapped gateway limits with status $status and cooldown $cooldown", (input) =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
@@ -9739,7 +9769,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 type: "rate_limit_event",
                 rate_limit_info: {
                   status: "rejected",
-                  rateLimitType: "five_hour",
+                  ...(input.sdkLimitType === null
+                    ? { isUsingOverage: false }
+                    : { rateLimitType: "five_hour" }),
                   ...(input.sdkResetSeconds === null
                     ? {}
                     : {

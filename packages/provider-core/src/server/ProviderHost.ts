@@ -10,6 +10,7 @@ import type * as Option from "effect/Option";
 import type * as Scope from "effect/Scope";
 import type * as Stream from "effect/Stream";
 
+import type { ProviderCompatibilityLookup } from "./compatibility.ts";
 import type { ProviderCredentialError } from "./errors.ts";
 
 export interface ProviderHostPaths {
@@ -58,5 +59,7 @@ export class ProviderHost extends Context.Service<
       namespace: string,
       bindingId: string,
     ) => Effect.Effect<ProviderCredentials>;
+    /** A driver declares its minimum version in the policy and asks here, not in a constant. */
+    readonly compatibility: ProviderCompatibilityLookup;
   }
 >()("@t3tools/provider-core/server/ProviderHost") {}
