@@ -272,26 +272,58 @@ export async function rewindToMessage(input: {
   }
 }
 
+function withRestored<T>(
+  existing: ReadonlyArray<T> | undefined,
+  restored: ReadonlyArray<T>,
+  key: (item: T) => string,
+): T[] {
+  const kept = existing ?? [];
+  return [...kept, ...restored.filter((item) => !kept.some((other) => key(other) === key(item)))];
+}
+
 /**
- * Writes a failed send's composer contents back into its draft. Returns the
- * restored images, which are fresh copies so their preview URLs outlive the
- * optimistic row that held the originals.
+ * Writes a failed send's composer contents back into its draft, after anything
+ * typed since. Returns the restored images, which are fresh copies so their
+ * preview URLs outlive the optimistic row that held the originals.
  */
 export function restoreComposerDraft(
   draftTarget: ScopedThreadRef | DraftId,
   snapshot: ComposerSendSnapshot,
 ): ComposerImageAttachment[] {
   const store = useComposerDraftStore.getState();
+  const current = store.getComposerDraft(draftTarget);
   const images = snapshot.images.map(cloneComposerImageForRetry);
-  store.setPrompt(draftTarget, snapshot.draftText);
-  store.setReplyTo(draftTarget, snapshot.replyTo);
+  store.setPrompt(
+    draftTarget,
+    current?.prompt.trim() ? `${current.prompt}\n\n${snapshot.draftText}` : snapshot.draftText,
+  );
+  store.setReplyTo(draftTarget, current?.replyTo ?? snapshot.replyTo);
   store.addImages(draftTarget, images);
   store.addFiles(draftTarget, snapshot.files);
-  store.setTerminalContexts(draftTarget, snapshot.terminalContexts);
-  store.setPreviewAnnotations(draftTarget, snapshot.previewAnnotations);
-  store.setReviewComments(draftTarget, snapshot.reviewComments);
-  store.setThreadContexts(draftTarget, snapshot.threadContexts);
-  store.setEnvironmentContexts(draftTarget, snapshot.environmentContexts);
+  store.setTerminalContexts(
+    draftTarget,
+    withRestored(current?.terminalContexts, snapshot.terminalContexts, (context) => context.id),
+  );
+  store.setPreviewAnnotations(
+    draftTarget,
+    withRestored(current?.previewAnnotations, snapshot.previewAnnotations, (entry) => entry.id),
+  );
+  store.setReviewComments(
+    draftTarget,
+    withRestored(current?.reviewComments, snapshot.reviewComments, (comment) => comment.id),
+  );
+  store.setThreadContexts(
+    draftTarget,
+    withRestored(current?.threadContexts, snapshot.threadContexts, (record) => record.contextId),
+  );
+  store.setEnvironmentContexts(
+    draftTarget,
+    withRestored(
+      current?.environmentContexts,
+      snapshot.environmentContexts,
+      (record) => record.contextId,
+    ),
+  );
   return images;
 }
 

@@ -26,7 +26,30 @@ vi.mock("../../lib/attachmentDownload", () => ({
 }));
 vi.mock("../../lib/previewPresentation", () => ({ usePreviewPresentation: () => {} }));
 vi.mock("./Dialog", () => ({ alert: harness.alert }));
+vi.mock("./Button", () => ({ Button: () => null }));
+vi.mock("./SheetHeader", () => ({ SheetHeader: () => null }));
+vi.mock("./AppText", () => ({ AppText: () => null }));
+vi.mock("../PdfPreview", () => ({ PdfPreview: () => null }));
+vi.mock("../MediaPreviewHeader", () => ({ MediaPreviewHeader: () => null }));
+vi.mock("../../state/mediaActions", () => ({ useMediaActions: () => ({ actions: [] }) }));
+vi.mock("react-native", () => ({ Modal: () => null, View: () => null }));
+vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ top: 0 }) }));
+vi.mock("react-native-image-viewing", () => ({
+  default: function ImageViewing(props: {
+    images: readonly { uri?: string }[];
+    imageIndex: number;
+  }) {
+    useState(() => harness.mounts++);
+    harness.previews.push({
+      kind: "image",
+      images: props.images,
+      selectedIndex: props.imageIndex,
+    });
+    return null;
+  },
+}));
 
+import { FilePreviewModal as AndroidFilePreviewModal } from "./FilePreviewModal.android";
 import type { FilePreviewItem, FilePreviewViewerProps } from "./FilePreviewModal.types";
 import { FilePreviewSession } from "./FilePreviewSession";
 
@@ -57,14 +80,19 @@ async function openGallery(
   harness.alert.mockClear();
   const root = createRoot(document.createElement("div"));
   const onRequestClose = vi.fn();
+  const source = { ...selected, gallery };
   await act(async () =>
     root.render(
-      <FilePreviewSession
-        source={{ ...selected, gallery }}
-        onRequestClose={onRequestClose}
-        progressiveGallery={progressiveGallery}
-        Viewer={Viewer}
-      />,
+      progressiveGallery ? (
+        <FilePreviewSession
+          source={source}
+          onRequestClose={onRequestClose}
+          progressiveGallery
+          Viewer={Viewer}
+        />
+      ) : (
+        <AndroidFilePreviewModal source={source} onRequestClose={onRequestClose} />
+      ),
     ),
   );
   return { onRequestClose, [Symbol.asyncDispose]: () => act(async () => root.unmount()) };
@@ -105,9 +133,17 @@ it.each([true, false])(
   },
 );
 
-it.each([true, false])(
-  "handles a failed sibling without leaving a pending page (progressive: %s)",
-  async (progressiveGallery) => {
+it.each([
+  // The progressive viewer already gave the missing image a page; a viewer that waits opens without it.
+  [
+    true,
+    1,
+    [{ failed: true }, { uri: "https://signed.test/a.png" }, { uri: "https://signed.test/c.png" }],
+  ],
+  [false, 0, [{ uri: "https://signed.test/a.png" }, { uri: "https://signed.test/c.png" }]],
+])(
+  "opens the gallery when a sibling cannot be resolved (progressive: %s)",
+  async (progressiveGallery, selectedIndex, images) => {
     harness.refreshAssetUrl.mockImplementation(async (_environmentId, resource) => {
       if (resource.url.endsWith("missing.png")) throw new Error("not found");
       return `https://signed.test/${resource.url.split("/").pop()}`;
@@ -115,26 +151,16 @@ it.each([true, false])(
     const selected = image("https://github.com/a.png");
     await using preview = await openGallery(
       selected,
-      [selected, image("https://github.com/missing.png"), image("https://github.com/c.png")],
+      [image("https://github.com/missing.png"), selected, image("https://github.com/c.png")],
       progressiveGallery,
     );
 
-    if (!progressiveGallery) {
-      expect(preview.onRequestClose).toHaveBeenCalledOnce();
-      expect(harness.alert).toHaveBeenCalledOnce();
-      expect(harness.previews).toEqual([]);
-      return;
-    }
-
     expect(preview.onRequestClose).not.toHaveBeenCalled();
     expect(harness.alert).not.toHaveBeenCalled();
-    expect(harness.previews.at(-1)).toMatchObject({
-      selectedIndex: 0,
-      images: [
-        { uri: "https://signed.test/a.png" },
-        { failed: true },
-        { uri: "https://signed.test/c.png" },
-      ],
+    expect(harness.previews.at(-1)).toEqual({
+      kind: "image",
+      selectedIndex,
+      images: images.map((page) => expect.objectContaining(page)),
     });
   },
 );
