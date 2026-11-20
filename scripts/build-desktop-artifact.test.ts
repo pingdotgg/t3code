@@ -650,6 +650,20 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
+  it.effect("takes the standalone publisher from the repo env files like the bundle does", () =>
+    Effect.gen(function* () {
+      const publisher = yield* resolveDesktopPublisher({
+        T3CODE_STANDALONE: "1",
+        T3CODE_APP_NAME: "EasyDev Code",
+        T3CODE_DESKTOP_UPDATE_REPOSITORY: "fork-owner/t3code",
+      });
+
+      assert.strictEqual(publisher.appName, "EasyDev Code");
+      assert.strictEqual(publisher.repository, "fork-owner/t3code");
+      assert.notMatch(publisher.maintainer, /t3\.codes/);
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
   it.effect("names updatable AppImages without a version and apart per channel", () =>
     Effect.gen(function* () {
       const appImageName = (version: string) =>

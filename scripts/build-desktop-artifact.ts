@@ -2717,14 +2717,17 @@ const T3_DESKTOP_PUBLISHER: DesktopPublisher = {
 };
 
 /** Who the package names as its publisher: T3, or the fork for `T3CODE_STANDALONE=1` builds. */
-export const resolveDesktopPublisher = Effect.fn("resolveDesktopPublisher")(function* () {
+export const resolveDesktopPublisher = Effect.fn("resolveDesktopPublisher")(function* (
+  repoEnvFiles?: Readonly<Record<string, string | undefined>>,
+) {
+  // The bundle reads `.env`/`.env.local` too, so the package metadata must agree with it.
+  const fileEnv = repoEnvFiles ?? loadRepoEnv({ baseEnv: {}, repoRoot: yield* RepoRoot });
+  const read = (name: string) => Config.String(name).pipe(Config.withDefault(fileEnv[name] ?? ""));
   const env = yield* Config.all({
-    standalone: Config.String("T3CODE_STANDALONE").pipe(Config.withDefault("")),
-    appName: Config.String("T3CODE_APP_NAME").pipe(Config.withDefault("")),
-    updateRepository: Config.String("T3CODE_DESKTOP_UPDATE_REPOSITORY").pipe(
-      Config.withDefault(""),
-    ),
-    githubRepository: Config.String("GITHUB_REPOSITORY").pipe(Config.withDefault("")),
+    standalone: read("T3CODE_STANDALONE"),
+    appName: read("T3CODE_APP_NAME"),
+    updateRepository: read("T3CODE_DESKTOP_UPDATE_REPOSITORY"),
+    githubRepository: read("GITHUB_REPOSITORY"),
   });
   if (!/^(1|true)$/i.test(env.standalone.trim())) return T3_DESKTOP_PUBLISHER;
   return {
