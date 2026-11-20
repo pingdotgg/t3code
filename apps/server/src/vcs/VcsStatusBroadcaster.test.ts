@@ -965,6 +965,59 @@ describe("VcsStatusBroadcaster", () => {
     },
   );
 
+  it.effect("a worktree's fetch automatically pulls its repository's enabled main checkout", () => {
+    const pulledCwds: Array<string> = [];
+    const remoteStatus = (cwd: string): VcsStatusRemoteResult =>
+      cwd === "/repo" ? { ...baseRemoteStatus, behindCount: 2 } : baseRemoteStatus;
+    const localStatus = (cwd: string): VcsStatusLocalResult =>
+      cwd === "/repo"
+        ? { ...baseLocalStatus, isDefaultRef: true, refName: "main" }
+        : baseLocalStatus;
+    const layerTest = VcsStatusBroadcaster.layer.pipe(
+      Layer.provideMerge(
+        Layer.merge(
+          Layer.succeed(
+            FileSystem.FileSystem,
+            FileSystem.makeNoop({ realPath: (cwd) => Effect.succeed(cwd) }),
+          ),
+          Path.layer,
+        ),
+      ),
+      Layer.provide(layerBackgroundPolicy(() => true)),
+      Layer.provide(
+        Layer.succeed(VcsStatusBroadcaster.VcsAutoPullPolicy, {
+          isEnabled: (cwd) => Effect.succeed(cwd === "/repo"),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(GitWorkflowService.GitWorkflowService)({
+          localStatus: (input) => Effect.succeed(localStatus(input.cwd)),
+          currentBranch: (cwd) => Effect.succeed(localStatus(cwd).refName),
+          readRefSnapshot: () => Effect.succeed("refs"),
+          remoteStatus: (input) => Effect.succeed(remoteStatus(input.cwd)),
+          invalidateLocalStatus: () => Effect.void,
+          invalidateRemoteStatus: () => Effect.void,
+          invalidateStatus: () => Effect.void,
+          headPath: (cwd) =>
+            Effect.succeed(
+              cwd === "/worktree" ? "/repo/.git/worktrees/worktree/HEAD" : `${cwd}/.git/HEAD`,
+            ),
+          pullCurrentBranch: (cwd) =>
+            Effect.sync(() => {
+              pulledCwds.push(cwd);
+              return { status: "pulled" as const, refName: "main", upstreamRef: "origin/main" };
+            }),
+        }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      yield* broadcaster.refreshStatus("/worktree");
+      assert.deepStrictEqual(pulledCwds, ["/repo"]);
+    }).pipe(Effect.provide(layerTest));
+  });
+
   it.effect("refreshes a loaded cwd without reusing a previous branch's PR", () => {
     const state: Parameters<typeof layerTestFor>[0] = {
       currentLocalStatus: baseLocalStatus,
