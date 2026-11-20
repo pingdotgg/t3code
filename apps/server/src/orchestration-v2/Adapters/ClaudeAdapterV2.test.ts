@@ -20658,6 +20658,92 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect(
+    "records a foreground subagent's model from its transcript when it called no tool",
+    () =>
+      Effect.gen(function* () {
+        const TOOL_USE_ID = "toolu-unstreamed-model";
+        const harness = yield* makeWakeHarnessWithOptions({
+          subagentModel: "claude-haiku-4-5-20251001",
+        });
+        const parentModel = "claude-opus-4-6";
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-unstreamed-subagent-model"),
+            text: "Ask a subagent one thing.",
+            attachments: [],
+            modelSelection: { ...CLAUDE_TEST_MODEL_SELECTION, model: parentModel },
+          }),
+        );
+        for (const frame of [
+          claudeSdkFrame({
+            type: "assistant",
+            parent_tool_use_id: null,
+            message: {
+              model: parentModel,
+              id: "msg_unstreamed_model_launch",
+              type: "message",
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: TOOL_USE_ID,
+                  name: "Agent",
+                  input: { description: "One thing", prompt: "Check one thing." },
+                },
+              ],
+            },
+            uuid: "00000000-0000-4000-8000-000000000241",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: "task-unstreamed-model",
+            tool_use_id: TOOL_USE_ID,
+            description: "One thing",
+            task_type: "local_agent",
+            uuid: "00000000-0000-4000-8000-000000000242",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: "task-unstreamed-model",
+            tool_use_id: TOOL_USE_ID,
+            status: "completed",
+            summary: "OK",
+            output_file: "",
+            uuid: "00000000-0000-4000-8000-000000000243",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000244", result: "OK" }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* Queue.take(harness.terminalReceipts);
+
+        const subagent = harness.events
+          .filter((event) => event.type === "subagent.updated")
+          .at(-1)?.subagent;
+        assert.equal(subagent?.status, "completed");
+        assert.equal(subagent?.model, "claude-haiku-4-5");
+        assert.equal(subagent?.modelSelection?.model, "claude-haiku-4-5");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   it.effect.each([
     {
       source: "custom model",
@@ -21014,108 +21100,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
     );
   });
-
-  it.effect("records the model a subagent's transcript reports when it streamed no reply", () =>
-    Effect.gen(function* () {
-      const TOOL_USE_ID = "toolu-model-from-transcript";
-      const fileSystem = yield* FileSystem.FileSystem;
-      const configDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-model-" });
-      const subagentsDir = NodePath.join(
-        configDir,
-        "projects",
-        "-workspace",
-        WAKE_NATIVE_SESSION,
-        "subagents",
-      );
-      yield* fileSystem.makeDirectory(subagentsDir, { recursive: true });
-      yield* fileSystem.writeFileString(
-        NodePath.join(subagentsDir, `agent-task-${TOOL_USE_ID}.jsonl`),
-        `{"type":"assistant","effort":"medium","uuid":"model-line-0","message":{"role":"assistant","model":"claude-haiku-4-5-20251001","id":"msg_model_child","content":[{"type":"text","text":"OK"}]}}\n`,
-      );
-      const harness = yield* makeWakeHarnessWithOptions({
-        environment: { CLAUDE_CONFIG_DIR: configDir },
-      });
-      const parentModel = "claude-opus-4-6";
-      yield* harness.runtime.startTurn(
-        makeClaudeTestTurnInput({
-          threadId: harness.threadId,
-          providerThread: harness.providerThread,
-          now: yield* DateTime.now,
-          attemptId: RunAttemptId.make("attempt-subagent-transcript-model"),
-          text: "Ask a subagent one thing.",
-          attachments: [],
-          modelSelection: { ...CLAUDE_TEST_MODEL_SELECTION, model: parentModel },
-        }),
-      );
-      for (const frame of [
-        claudeSdkFrame({
-          type: "assistant",
-          parent_tool_use_id: null,
-          message: {
-            model: parentModel,
-            id: "msg_transcript_model_launch",
-            type: "message",
-            role: "assistant",
-            content: [
-              {
-                type: "tool_use",
-                id: TOOL_USE_ID,
-                name: "Agent",
-                input: {
-                  description: "One thing",
-                  subagent_type: "general-purpose",
-                  prompt: "Check one thing.",
-                },
-              },
-            ],
-          },
-          uuid: "00000000-0000-4000-8000-000000000241",
-          session_id: WAKE_NATIVE_SESSION,
-        }),
-        claudeSdkFrame({
-          type: "system",
-          subtype: "task_started",
-          task_id: `task-${TOOL_USE_ID}`,
-          tool_use_id: TOOL_USE_ID,
-          description: "One thing",
-          task_type: "local_agent",
-          uuid: "00000000-0000-4000-8000-000000000242",
-          session_id: WAKE_NATIVE_SESSION,
-        }),
-        claudeSdkFrame({
-          type: "system",
-          subtype: "task_notification",
-          task_id: `task-${TOOL_USE_ID}`,
-          tool_use_id: TOOL_USE_ID,
-          status: "completed",
-          output_file: "/tmp/claude-replay/tasks/model.output",
-          summary: "OK",
-          uuid: "00000000-0000-4000-8000-000000000243",
-          session_id: WAKE_NATIVE_SESSION,
-        }),
-        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000244", result: "OK" }),
-      ]) {
-        yield* Queue.offer(harness.sdkMessages, frame);
-      }
-      yield* Queue.take(harness.terminalReceipts);
-
-      const subagent = harness.events
-        .filter((event) => event.type === "subagent.updated")
-        .at(-1)?.subagent;
-      assert.equal(subagent?.status, "completed");
-      assert.equal(subagent?.model, "claude-haiku-4-5");
-      assert.equal(subagent?.modelSelection?.model, "claude-haiku-4-5");
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          IdAllocator.layer,
-          McpProviderSessions.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
-        ),
-      ),
-    ),
-  );
 
   // From the nested subagent result in claude_nested_subagent_model's transcript.
   const CLAUDE_HAND_BACK_FRAME =

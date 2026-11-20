@@ -7377,7 +7377,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
         // A `context: fork` skill has no Agent call and streams none of its own frames;
         // only its transcript records the model, written after the fork reports its outcome.
-        const forkedSkillModel = Effect.fnUntraced(function* (
+        const transcriptModel = Effect.fnUntraced(function* (
           context: ActiveClaudeTurnContext,
           nativeThreadId: string,
           taskId: string,
@@ -7385,7 +7385,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const registered = (yield* Ref.get(sessionSubagentsByTaskId)).get(taskId);
           if (
             registered === undefined ||
-            registered.runToolUseId !== null ||
             registered.task.model !== null ||
             registered.task.status === "running"
           ) {
@@ -7956,8 +7955,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : new Map(current).set(nativeThreadId, { ...entry, messages });
           });
 
-        // Only the transcript records a subagent's effort, and its model when no frame of its reply streamed.
-        const readSubagentTranscriptMetadata = Effect.fnUntraced(function* (
+        // Claude Code records the effort a subagent ran at only in its transcript.
+        const readSubagentTranscriptEffort = Effect.fnUntraced(function* (
           context: ActiveClaudeTurnContext,
           taskId: string,
           completed: boolean,
@@ -8010,7 +8009,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             yield* Effect.sleep(WORKFLOW_MEMBER_TRANSCRIPT_FLUSH_MS);
             yield* read();
           }
-          return metadata;
+          return metadata.effort;
         });
 
         const updateClaudeSubagentNode = Effect.fnUntraced(function* (input: {
@@ -8117,31 +8116,24 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             workflow === undefined
               ? undefined
               : withWorkflowMemberThreadIds(workflow, childThreadId);
-          const knownModel = input.model ?? priorTask?.model ?? null;
-          // Unstated effort and model stay unknown until the transcript reports them: a custom agent definition may override the owner's.
+          // Unstated effort stays unknown until the transcript reports it: a custom agent definition may override the owner's.
           // Read it before the settle: a run stops consuming events once its subagents settle.
-          const transcript =
-            existingSubagent !== undefined &&
-            (existingSubagent.effort === undefined || knownModel === null) &&
-            lifecycleChanged &&
-            input.status !== "running" &&
-            existingSubagent.task.modelSelection !== undefined &&
-            (input.nativeTaskType ?? existingSubagent.nativeTaskType) !== CLAUDE_WORKFLOW_TASK_TYPE
-              ? yield* readSubagentTranscriptMetadata(
-                  input.context,
-                  input.taskId,
-                  input.status === "completed",
-                )
-              : undefined;
           const effort =
             existingSubagent === undefined
               ? input.effort
-              : (existingSubagent.effort ?? transcript?.effort);
-          const model =
-            knownModel ??
-            (transcript?.model === undefined
-              ? null
-              : canonicalClaudeSubagentModel(modelCatalog, transcript.model));
+              : (existingSubagent.effort ??
+                (lifecycleChanged &&
+                input.status !== "running" &&
+                existingSubagent.task.modelSelection !== undefined &&
+                (input.nativeTaskType ?? existingSubagent.nativeTaskType) !==
+                  CLAUDE_WORKFLOW_TASK_TYPE
+                  ? yield* readSubagentTranscriptEffort(
+                      input.context,
+                      input.taskId,
+                      input.status === "completed",
+                    )
+                  : undefined));
+          const model = input.model ?? priorTask?.model ?? null;
           const task = {
             ...(priorTask ?? {
               id: nodeId,
@@ -12064,7 +12056,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               return next;
             });
             for (const taskId of context.subagentsByTaskId.keys()) {
-              const model = yield* forkedSkillModel(context, liveQuery.nativeThreadId, taskId);
+              const model = yield* transcriptModel(context, liveQuery.nativeThreadId, taskId);
               const status = (yield* Ref.get(sessionSubagentsByTaskId)).get(taskId)?.task.status;
               if (
                 model !== undefined &&
