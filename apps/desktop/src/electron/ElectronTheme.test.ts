@@ -42,7 +42,7 @@ describe("ElectronTheme", () => {
       assert.equal(nativeTheme.themeSource, "light");
       portal.report(null);
       assert.equal(nativeTheme.themeSource, "system");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("keeps an explicit appearance over the desktop color scheme", () =>
@@ -57,7 +57,7 @@ describe("ElectronTheme", () => {
 
       yield* theme.setSource("system");
       assert.equal(nativeTheme.themeSource, "dark");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("stops following the desktop when the layer is released", () =>
@@ -76,6 +76,6 @@ describe("ElectronTheme", () => {
       });
       yield* theme.setSource("system");
       assert.equal(nativeTheme.themeSource, "system");
-    }).pipe(Effect.scoped),
+    }),
   );
 });

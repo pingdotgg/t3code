@@ -1,4 +1,8 @@
-import { buildProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
+import {
+  buildProjectGroups,
+  pickableProjectGroups,
+  resolveScratchProjectScopeKey,
+} from "@t3tools/client-runtime/state/project-grouping";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -16,6 +20,7 @@ import type {
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
+import { m, type MessageResolver } from "../../i18n/messages";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 
@@ -42,22 +47,28 @@ function getProjectSortTimestamp(
         Number.NEGATIVE_INFINITY);
 }
 
-export function buildHomeProjectScopes(input: {
-  readonly projects: ReadonlyArray<EnvironmentProject>;
-  readonly environmentId: EnvironmentId | null;
-  readonly projectGroupingMode: SidebarProjectGroupingMode;
-}): ReadonlyArray<HomeProjectScope> {
+export function buildHomeProjectScopes(
+  input: {
+    readonly projects: ReadonlyArray<EnvironmentProject>;
+    readonly environmentId: EnvironmentId | null;
+    readonly projectGroupingMode: SidebarProjectGroupingMode;
+  },
+  resolve: MessageResolver = m,
+): ReadonlyArray<HomeProjectScope> {
   const projects = input.projects.filter(
     (project) => input.environmentId === null || project.environmentId === input.environmentId,
   );
-  return buildProjectGroups({
-    projects,
-    groupScratchProjects: true,
-    settings: {
-      sidebarProjectGroupingMode: input.projectGroupingMode,
-      sidebarProjectGroupingOverrides: {},
+  return buildProjectGroups(
+    {
+      projects,
+      groupScratchProjects: true,
+      settings: {
+        sidebarProjectGroupingMode: input.projectGroupingMode,
+        sidebarProjectGroupingOverrides: {},
+      },
     },
-  }).map((group) => {
+    resolve,
+  ).map((group) => {
     return {
       key: group.key,
       title: group.label,
@@ -68,6 +79,24 @@ export function buildHomeProjectScopes(input: {
       archived: group.archived,
     };
   });
+}
+
+/** The scope the thread list's project filter shows; an archived or unknown key shows all projects. */
+export function resolveHomeProjectFilterScope(
+  scopes: ReadonlyArray<HomeProjectScope>,
+  projects: ReadonlyArray<EnvironmentProject>,
+  options: {
+    readonly selectedProjectKey: string | null;
+    readonly projectGroupingMode: SidebarProjectGroupingMode;
+  },
+): HomeProjectScope | null {
+  // A legacy per-environment scratch key resolves here; the stored value is only
+  // rewritten when the user picks a filter.
+  const key = resolveScratchProjectScopeKey(options.selectedProjectKey, projects, {
+    sidebarProjectGroupingMode: options.projectGroupingMode,
+    sidebarProjectGroupingOverrides: {},
+  });
+  return pickableProjectGroups(scopes).find((scope) => scope.key === key) ?? null;
 }
 
 export function findHomeProjectScope(

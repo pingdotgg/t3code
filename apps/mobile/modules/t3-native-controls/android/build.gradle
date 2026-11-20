@@ -29,4 +29,11 @@ dependencies {
   implementation 'androidx.activity:activity:1.8.2'
   implementation 'androidx.compose.material3:material3-android:1.5.0-alpha17'
   implementation 'androidx.window:window:1.5.1'
+  testImplementation 'junit:junit:4.13.2'
+}
+
+tasks.withType(Test).configureEach {
+  javaLauncher = javaToolchains.launcherFor {
+    languageVersion = JavaLanguageVersion.of(21)
+  }
 }
