@@ -86,6 +86,18 @@ rl.on("line", (line) => {
     if (mode === "exit-after-done") {
       rawWrite("", () => process.exit(0));
     }
+    if (mode === "background-shell" && req.listenBackgroundShells) {
+      send({ type: "backgroundShell", sessionId: req.sessionId, event: { type: "started", id: "sh-1", pid: 4101, command: "sleep 60" } });
+      send({ type: "backgroundShell", sessionId: req.sessionId, event: { type: "started", id: "sh-2", pid: 4102, command: "tail -f" } });
+    }
+    return;
+  }
+  if (req.type === "stopBackgroundShell") {
+    send({ type: "backgroundShell", sessionId: req.sessionId, event: { type: "ended", id: req.shellId, pid: 4101, command: "sleep 60", stopped: true, exitCode: undefined, outputPath: undefined } });
+    send({ type: "response", id: req.id, ok: true, result: null });
+    if (mode === "background-shell") {
+      rawWrite("", () => process.exit(19));
+    }
     return;
   }
   if (req.type === "steer") {
@@ -651,6 +663,79 @@ describe("CursorAgentSdkProcessRunner", () => {
           assert.isTrue(sessionB.isAlive?.());
           assert.lengthOf(yield* sessionB.listMessages, 1);
           yield* sessionB.close;
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live(
+    "forwards background shell events across IPC, routes stop(), and ends orphans on worker crash",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const scriptPath = yield* writeFakeWorker;
+          const executable = yield* HostProcess.ExecutablePath;
+
+          const runner = yield* CursorAgentSdkProcessRunner.makeCursorAgentSdkProcessRunner({
+            resolveLaunch: Effect.succeed({
+              command: executable,
+              args: [scriptPath],
+              env: { FAKE_WORKER_MODE: "background-shell" },
+            }),
+            protocolLoggerFor: () => undefined,
+          });
+
+          const events: Array<object> = [];
+          const startedFirst = yield* Deferred.make<() => void>();
+          const bothEnded = yield* Deferred.make<void>();
+          let endedCount = 0;
+
+          const session = yield* runner.open(openInput);
+          const run = yield* session.send({
+            message: "watch it",
+            onBackgroundShell: (event) =>
+              Effect.gen(function* () {
+                if (event.type === "started") {
+                  const { stop, ...started } = event;
+                  events.push(started);
+                  if (event.id === "sh-1") yield* Deferred.succeed(startedFirst, stop);
+                  return;
+                }
+                events.push(event);
+                endedCount += 1;
+                if (endedCount === 2) yield* Deferred.succeed(bothEnded, undefined);
+              }),
+          });
+          yield* run.wait;
+
+          // Stopping sh-1 triggers a worker-side ended event, then the fake worker crashes to
+          // verify sh-2 gets a synthesized ended(stopped: true) event.
+          const stopFirst = yield* Deferred.await(startedFirst);
+          stopFirst();
+          yield* Deferred.await(bothEnded);
+
+          assert.deepEqual(events, [
+            { type: "started", id: "sh-1", pid: 4101, command: "sleep 60" },
+            { type: "started", id: "sh-2", pid: 4102, command: "tail -f" },
+            {
+              type: "ended",
+              id: "sh-1",
+              pid: 4101,
+              command: "sleep 60",
+              stopped: true,
+              exitCode: undefined,
+              outputPath: undefined,
+            },
+            {
+              type: "ended",
+              id: "sh-2",
+              pid: 4102,
+              command: "tail -f",
+              stopped: true,
+              exitCode: undefined,
+              outputPath: undefined,
+            },
+          ]);
+          yield* session.close;
         }),
       ).pipe(Effect.provide(NodeServices.layer)),
   );

@@ -7,6 +7,7 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -106,6 +107,12 @@ interface SpawnedCursorWorker {
   readonly registerRun: (sessionId: number, sendId: number) => Effect.Effect<ActiveWorkerRun>;
   readonly unregisterRun: (sendId: number) => Effect.Effect<void>;
   readonly failSessionRuns: (sessionId: number) => Effect.Effect<void>;
+  readonly setBackgroundShellListener: (
+    sessionId: number,
+    listener: (event: CursorAgentSdk.CursorBackgroundShellEvent) => Effect.Effect<void>,
+  ) => Effect.Effect<void>;
+  readonly drainBackgroundShellStops: (sessionId: number) => Effect.Effect<void>;
+  readonly closeBackgroundShellSession: (sessionId: number) => void;
   readonly isAlive: () => boolean;
   readonly close: (graceful: boolean) => Effect.Effect<void>;
 }
@@ -121,6 +128,7 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const agentScope = yield* AgentScope;
     const hostEnvironment = yield* HostProcess.Environment;
+    const runnerContext = yield* Effect.context<never>();
     const activeCleanups = new Set<Effect.Effect<void>>();
 
     yield* Effect.addFinalizer(() =>
@@ -232,6 +240,24 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
           }
         >();
         const activeRuns = new Map<number, ActiveWorkerRun>();
+        const backgroundShellSessions = new Map<
+          number,
+          {
+            listener: (event: CursorAgentSdk.CursorBackgroundShellEvent) => Effect.Effect<void>;
+            readonly queue: Queue.Queue<CursorAgentSdk.CursorBackgroundShellEvent | null>;
+            closed: boolean;
+          }
+        >();
+        const activeBackgroundShells = new Map<
+          string,
+          {
+            readonly sessionId: number;
+            readonly id: string;
+            readonly pid: number | undefined;
+            readonly command: string;
+          }
+        >();
+        const pendingShellStops = new Map<string, Fiber.Fiber<void, never>>();
 
         const hasDrainingRuns = () => {
           for (const run of activeRuns.values()) {
@@ -266,6 +292,28 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
             } else if (forceActiveRuns) {
               // Forced teardown interrupts the FIFO consumer, so settle waiters directly.
               yield* Deferred.fail(run.waitDeferred, error);
+            }
+          }
+          // Background shells live in the worker's process tree, so a dead worker ends them too.
+          for (const [key, shell] of activeBackgroundShells) {
+            activeBackgroundShells.delete(key);
+            const sessionState = backgroundShellSessions.get(shell.sessionId);
+            if (sessionState !== undefined && !sessionState.closed) {
+              Queue.offerUnsafe(sessionState.queue, {
+                type: "ended",
+                id: shell.id,
+                pid: shell.pid,
+                command: shell.command,
+                stopped: true,
+                exitCode: undefined,
+                outputPath: undefined,
+              });
+            }
+          }
+          for (const sessionState of backgroundShellSessions.values()) {
+            if (!sessionState.closed) {
+              sessionState.closed = true;
+              Queue.offerUnsafe(sessionState.queue, null);
             }
           }
           if (!wasTerminated && options.onWorkerTerminated !== undefined) {
@@ -330,6 +378,62 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
                   : sessionProtocolLoggers.get(parsed.sessionId)) ??
                 protocolLoggers.get(parsed.providerSessionId);
               return logger === undefined ? Effect.void : logger(parsed.event).pipe(Effect.ignore);
+            }
+            case "backgroundShell": {
+              const sessionState = backgroundShellSessions.get(parsed.sessionId);
+              if (sessionState === undefined || sessionState.closed) return Effect.void;
+              const key = `${parsed.sessionId}:${parsed.event.id}`;
+              if (parsed.event.type === "started") {
+                const { id, pid, command } = parsed.event;
+                activeBackgroundShells.set(key, {
+                  sessionId: parsed.sessionId,
+                  id,
+                  pid,
+                  command,
+                });
+                const stop = () => {
+                  const stopFiber = Effect.runForkWith(runnerContext)(
+                    request(
+                      (reqId) => ({
+                        id: reqId,
+                        type: "stopBackgroundShell",
+                        sessionId: parsed.sessionId,
+                        shellId: id,
+                      }),
+                      "shell.stop",
+                    ).pipe(
+                      Effect.ignore,
+                      Effect.ensuring(
+                        Effect.sync(() => {
+                          if (pendingShellStops.get(key) === stopFiber) {
+                            pendingShellStops.delete(key);
+                          }
+                        }),
+                      ),
+                    ),
+                  );
+                  pendingShellStops.set(key, stopFiber);
+                };
+                Queue.offerUnsafe(sessionState.queue, {
+                  type: "started",
+                  id,
+                  pid,
+                  command,
+                  stop,
+                });
+                return Effect.void;
+              }
+              activeBackgroundShells.delete(key);
+              Queue.offerUnsafe(sessionState.queue, {
+                type: "ended",
+                id: parsed.event.id,
+                pid: parsed.event.pid,
+                command: parsed.event.command,
+                stopped: parsed.event.stopped,
+                exitCode: parsed.event.exitCode,
+                outputPath: parsed.event.outputPath,
+              });
+              return Effect.void;
             }
           }
         };
@@ -540,6 +644,58 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
               return Effect.void;
             }),
           failSessionRuns,
+          // Untraced: called inside session.send which already carries a span.
+          setBackgroundShellListener: Effect.fnUntraced(function* (
+            sessionId: number,
+            listener: (event: CursorAgentSdk.CursorBackgroundShellEvent) => Effect.Effect<void>,
+          ) {
+            const existing = backgroundShellSessions.get(sessionId);
+            if (existing !== undefined && !existing.closed) {
+              existing.listener = listener;
+              return;
+            }
+            const queue =
+              yield* Queue.unbounded<CursorAgentSdk.CursorBackgroundShellEvent | null>();
+            const state = { listener, queue, closed: false };
+            backgroundShellSessions.set(sessionId, state);
+            // Detached from workerScope so synthesized ended events finish draining on worker crash.
+            yield* Effect.forkDetach(
+              Effect.gen(function* () {
+                while (true) {
+                  const event = yield* Queue.take(queue);
+                  if (event === null) return;
+                  yield* state.listener(event).pipe(Effect.ignore);
+                }
+              }),
+            );
+          }),
+          drainBackgroundShellStops: (sessionId) =>
+            Effect.suspend(() => {
+              const prefix = `${sessionId}:`;
+              const fibers: Array<Fiber.Fiber<void, never>> = [];
+              for (const [key, fiber] of pendingShellStops) {
+                if (key.startsWith(prefix)) fibers.push(fiber);
+              }
+              if (fibers.length === 0) return Effect.void;
+              return Effect.forEach(fibers, (fiber) => Fiber.await(fiber), {
+                concurrency: "unbounded",
+                discard: true,
+              }).pipe(Effect.timeoutOption(WORKER_CLOSE_TIMEOUT), Effect.asVoid);
+            }),
+          closeBackgroundShellSession: (sessionId) => {
+            const prefix = `${sessionId}:`;
+            for (const key of activeBackgroundShells.keys()) {
+              if (key.startsWith(prefix)) activeBackgroundShells.delete(key);
+            }
+            const state = backgroundShellSessions.get(sessionId);
+            if (state !== undefined) {
+              backgroundShellSessions.delete(sessionId);
+              if (!state.closed) {
+                state.closed = true;
+                Queue.offerUnsafe(state.queue, null);
+              }
+            }
+          },
           isAlive: () => terminated === undefined && !closing,
           close,
         };
@@ -613,6 +769,7 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
         let sessionClosed = false;
         let handedOff = false;
         const forgetLogger = Effect.sync(() => {
+          worker.closeBackgroundShellSession(sessionId);
           worker.sessionProtocolLoggers.delete(sessionId);
           if (worker.protocolLoggers.get(input.providerSessionId) === protocolLogger) {
             worker.protocolLoggers.delete(input.providerSessionId);
@@ -621,8 +778,11 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
         const closeWorkerSession = Effect.suspend(() => {
           sessionClosed = true;
           return worker
-            .request((id) => ({ id, type: "closeSession", sessionId }), "agent.close")
+            .drainBackgroundShellStops(sessionId)
             .pipe(
+              Effect.andThen(
+                worker.request((id) => ({ id, type: "closeSession", sessionId }), "agent.close"),
+              ),
               Effect.timeoutOption(WORKER_CLOSE_TIMEOUT),
               Effect.ignore,
               Effect.ensuring(worker.failSessionRuns(sessionId)),
@@ -700,6 +860,9 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
                   });
 
               const sendId = worker.nextId();
+              if (sendInput.onBackgroundShell !== undefined) {
+                yield* worker.setBackgroundShellListener(sessionId, sendInput.onBackgroundShell);
+              }
               const runState = yield* worker.registerRun(sessionId, sendId);
               let transmitted = false;
               let acknowledged = false;
@@ -718,6 +881,9 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
                       ? {}
                       : { summarize: sendInput.summarize }),
                     ...(sendInput.resume === undefined ? {} : { resume: sendInput.resume }),
+                    ...(sendInput.onBackgroundShell === undefined
+                      ? {}
+                      : { listenBackgroundShells: true }),
                   },
                   sendInput.resume === true ? "run.resume" : "run.start",
                   {

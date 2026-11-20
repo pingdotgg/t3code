@@ -17,6 +17,23 @@ import type {
 } from "./CursorAgentSdk.ts";
 import { type CursorSdkErrorKind, getCursorSdkErrorKind, tagCursorSdkError } from "./sdk.ts";
 
+export type SerializedBackgroundShellEvent =
+  | {
+      readonly type: "started";
+      readonly id: string;
+      readonly pid: number | undefined;
+      readonly command: string;
+    }
+  | {
+      readonly type: "ended";
+      readonly id: string;
+      readonly pid: number | undefined;
+      readonly command: string;
+      readonly stopped: boolean;
+      readonly exitCode: number | undefined;
+      readonly outputPath: string | undefined;
+    };
+
 export interface SerializedWorkerError {
   readonly name: string;
   readonly message: string;
@@ -55,6 +72,13 @@ export type CursorWorkerRequest =
       readonly options?: Omit<SendOptions, "onDelta">;
       readonly summarize?: boolean;
       readonly resume?: boolean;
+      readonly listenBackgroundShells?: boolean;
+    }
+  | {
+      readonly id: number;
+      readonly type: "stopBackgroundShell";
+      readonly sessionId: number;
+      readonly shellId: string;
     }
   | {
       readonly id: number;
@@ -154,6 +178,11 @@ export type CursorWorkerMessage =
       readonly providerSessionId: OrchestrationV2ProviderSession["id"];
       readonly sessionId?: number;
       readonly event: CursorAgentSdkProtocolLogEvent;
+    }
+  | {
+      readonly type: "backgroundShell";
+      readonly sessionId: number;
+      readonly event: SerializedBackgroundShellEvent;
     };
 
 const MAX_ERROR_CAUSE_DEPTH = 8;
