@@ -2569,6 +2569,8 @@ function renderFeedEntry(
       >
         {renderedText.trim().length > 0 ? (
           <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
+            {/* Read aloud highlights here once the native markdown view can paint ranges of
+                `renderedText`: pass it useReadAloudHighlight with the read-aloud button's id. */}
             <AssistantMarkdownContent
               markdown={renderedText}
               environmentId={props.environmentId}

@@ -7,7 +7,19 @@ import { Pressable } from "react-native";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import * as Dialog from "../../components/ui/Dialog";
+import type { ReadAloudHighlight } from "@t3tools/client-runtime/read-aloud";
 import { readAloudController, warmReadAloud } from "./playback";
+
+/**
+ * The block and word being read in message `id` (the button's id), as markdown ranges of the
+ * text that message renders plus text cues, or null while another message or none is read.
+ */
+export function useReadAloudHighlight(id: string): ReadAloudHighlight | null {
+  return useSyncExternalStore(readAloudController.subscribeHighlight, () => {
+    const highlight = readAloudController.getHighlight();
+    return highlight?.id === id ? highlight : null;
+  });
+}
 
 export function ReadAloudButton({
   id,
