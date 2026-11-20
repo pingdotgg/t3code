@@ -186,6 +186,15 @@ const isHermes = (
   initializeResult: AcpSessionRuntime.AcpSessionRuntimeStartResult["initializeResult"],
 ) => initializeResult.agentInfo?.name === "hermes-agent";
 
+/** A local install launches the binary directly with no registry id, so detect it by basename. */
+export function matchesLocalAgentCommand(
+  commandPath: string,
+  source: string,
+  pattern: RegExp,
+): boolean {
+  return source === "local" && pattern.test(commandPath.split(/[\\/]/).pop() ?? "");
+}
+
 export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(function* (
   options: AcpRegistryAdapterV2Options,
 ) {
@@ -214,40 +223,46 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
   // also be named after the published package id.
   const isCopilot =
     registryAgentId === "github-copilot-cli" ||
-    (options.settings.source === "local" &&
-      /^(?:github-)?copilot(?:-cli)?(\.exe|\.cmd)?$/i.test(
-        options.settings.commandPath.split(/[\\/]/).pop() ?? "",
-      ));
+    matchesLocalAgentCommand(
+      options.settings.commandPath,
+      options.settings.source,
+      /^(?:github-)?copilot(?:-cli)?(\.exe|\.cmd)?$/i,
+    );
   const isKimi =
     registryAgentId === "kimi-code" ||
-    (options.settings.source === "local" &&
-      /^kimi(?:-code)?(\.exe|\.cmd)?$/i.test(
-        options.settings.commandPath.split(/[\\/]/).pop() ?? "",
-      ));
+    matchesLocalAgentCommand(
+      options.settings.commandPath,
+      options.settings.source,
+      /^kimi(?:-code)?(\.exe|\.cmd)?$/i,
+    );
   const isClaude =
     registryAgentId === "claude-acp" ||
-    (options.settings.source === "local" &&
-      /^claude(?:-agent)?-acp(\.exe|\.cmd)?$/i.test(
-        options.settings.commandPath.split(/[\\/]/).pop() ?? "",
-      ));
+    matchesLocalAgentCommand(
+      options.settings.commandPath,
+      options.settings.source,
+      /^claude(?:-agent)?-acp(\.exe|\.cmd)?$/i,
+    );
   const isDroid =
     registryAgentId === "factory-droid" ||
-    (options.settings.source === "local" &&
-      /^(?:factory-)?droid(\.exe|\.cmd)?$/i.test(
-        options.settings.commandPath.split(/[\\/]/).pop() ?? "",
-      ));
+    matchesLocalAgentCommand(
+      options.settings.commandPath,
+      options.settings.source,
+      /^(?:factory-)?droid(\.exe|\.cmd)?$/i,
+    );
   const isGlm =
     registryAgentId === "glm-acp-agent" ||
-    (options.settings.source === "local" &&
-      /^glm(?:-acp-agent)?(\.exe|\.cmd)?$/i.test(
-        options.settings.commandPath.split(/[\\/]/).pop() ?? "",
-      ));
+    matchesLocalAgentCommand(
+      options.settings.commandPath,
+      options.settings.source,
+      /^glm(?:-acp-agent)?(\.exe|\.cmd)?$/i,
+    );
   const isVibe =
     registryAgentId === "mistral-vibe" ||
-    (options.settings.source === "local" &&
-      /^(?:mistral-)?vibe(?:-acp)?(\.exe|\.cmd)?$/i.test(
-        options.settings.commandPath.split(/[\\/]/).pop() ?? "",
-      ));
+    matchesLocalAgentCommand(
+      options.settings.commandPath,
+      options.settings.source,
+      /^(?:mistral-)?vibe(?:-acp)?(\.exe|\.cmd)?$/i,
+    );
   const runtimeOptions = isClaude
     ? {
         ...options,
