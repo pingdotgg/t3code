@@ -23,10 +23,12 @@ const neutralOutline = cn(
   "dark:[html[data-theme-id=t3-chat]_&]:[--chat-composer-attached-outline:#241e28]",
 );
 
+const errorColors =
+  "[--chat-composer-attached-outline:color-mix(in_srgb,var(--error)_32%,transparent)] [--chat-composer-attached-tint:color-mix(in_srgb,var(--error)_8%,transparent)]";
+
 const variantColors: Record<ComposerBannerVariant, string> = {
   default: neutralOutline,
-  error:
-    "[--chat-composer-attached-outline:color-mix(in_srgb,var(--error)_32%,transparent)] [--chat-composer-attached-tint:color-mix(in_srgb,var(--error)_8%,transparent)]",
+  error: errorColors,
   info: neutralOutline,
   success: neutralOutline,
   warning:
@@ -77,6 +79,8 @@ function Attachment({ className, ...props }: ComponentProps<"div">) {
       data-slot="composer-banner-attachment"
       className={cn(
         "mx-auto -mb-[calc(1rem+1px)] w-[calc(100%-2*var(--chat-composer-drawer-inset))]",
+        // Only the banner touching the composer gets the dark seam shade; stacked ones would band.
+        "[&:has(+[data-slot=composer-banner-attachment])]:[--chat-composer-attached-seam:transparent]",
         "[&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:rounded-none [&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:border-t-0 [&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:[--composer-banner-corner-top:var(--control-radius)]",
         className,
       )}
