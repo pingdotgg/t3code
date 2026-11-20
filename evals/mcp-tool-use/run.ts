@@ -38,6 +38,7 @@ import { Tool } from "effect/ai";
 import * as McpSchema from "effect/ai/McpSchema";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
+import { formatMessageWithProvenance } from "@t3tools/provider-core/server/messageProvenance";
 import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationContext.ts";
 import { advertisedJsonSchema } from "../../apps/server/src/mcp/advertisedJsonSchema.ts";
@@ -123,6 +124,7 @@ const MODELS = {
   "claude-sonnet-5-5": "Sonnet 5.5",
   "claude-opus-5-5": "Opus 5.5",
   "gpt-6.1-sol": "GPT-6.1 Sol",
+  "gpt-6.2-sol": "GPT-6.2 Sol",
   "gpt-6-astra": "GPT-6 Astra",
   "morph-kimik31": "Kimi K3.1",
   "morph-dsv41flash": "DeepSeek V4.1 Flash",
@@ -1248,7 +1250,16 @@ export const buildMessages = (sample: Sample) => {
     sideChatContext ?? (handoff === undefined ? undefined : contextHandoffPrompt(handoff));
   const prompt =
     inlineContext === undefined ? userText : withInlineContext(inlineContext, userText);
-  const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
+  const childPrompt = () =>
+    formatMessageWithProvenance(
+      taskPrompt({ task: prompt, role: delegateRole }),
+      {
+        createdBy: "agent",
+        creationSource: "mcp",
+        senderThreadId: ThreadId.make("parent-thread"),
+      },
+      "delegated-assignment",
+    );
   if (testCase.prompt !== "")
     push("user", text(role === "delegated-child" ? childPrompt() : prompt));
   // Claude Code gives a subagent its SubagentStart hooks' context as a reminder after the task.

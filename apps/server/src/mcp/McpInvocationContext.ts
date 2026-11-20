@@ -133,6 +133,22 @@ export const withRuntimeModeCeiling = (
   };
 };
 
+export function linkedMessageSender(
+  client: McpClientCaller | undefined,
+  origin: { readonly sessionId: string } | undefined,
+): { readonly linkedSender?: OrchestrationV2LinkedSender } {
+  if (client?.linked !== true || client.senderThread === undefined) return {};
+  const { environmentId, threadId, title } = client.senderThread;
+  return {
+    linkedSender: {
+      environmentId,
+      threadId,
+      title,
+      ...(client.sessionId === origin?.sessionId ? { fromOriginatingLink: true } : {}),
+    },
+  };
+}
+
 /** Thread callers default to their own thread; client callers need thread for tools that act as the caller. */
 export interface McpInvocationScope {
   readonly environmentId: EnvironmentId;

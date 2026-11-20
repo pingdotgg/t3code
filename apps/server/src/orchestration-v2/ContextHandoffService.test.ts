@@ -13,6 +13,7 @@ import {
   RunId,
   ThreadId,
   TurnItemId,
+  withMessageSenderNote,
   type OrchestrationV2AppThread,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2HistoricalMessage,
@@ -729,7 +730,11 @@ it.effect(
         ordinal: 1,
       });
       if (source.type !== "user_message") return assert.fail("Expected user message fixture");
-      const forwarded = { ...source, senderThreadId: ThreadId.make("thread:coordinator") };
+      const forwarded = {
+        ...source,
+        createdBy: "agent" as const,
+        senderThreadId: ThreadId.make("thread:coordinator"),
+      };
       const human = {
         ...source,
         id: TurnItemId.make("item:human"),
@@ -790,6 +795,7 @@ it.effect(
           speaker: { label: "Reviewer", model: "review-model" },
         },
         historicalMessage(missingMessage)!,
+        { ...known, text: withMessageSenderNote(forwarded, forwarded.text) },
       ];
       const requested: Array<ReadonlyArray<TurnItemId>> = [];
       const thread = threadFixture(source.threadId);
@@ -836,9 +842,11 @@ it.effect(
       assert.deepEqual(refreshed[8], saved[8]);
       assert.isTrue(refreshed[9]?.senderUnknown);
       assert.deepEqual(
-        refreshed.map((entry) => entry.text),
-        saved.map((entry) => entry.text),
+        refreshed.slice(0, -1).map((entry) => entry.text),
+        saved.slice(0, -1).map((entry) => entry.text),
       );
+      assert.equal(refreshed.at(-1)?.text, forwarded.text);
+      assert.deepEqual(refreshed.at(-1)?.provenance, known.provenance);
       assert.isUndefined(saved[0]?.provenance);
     }),
 );

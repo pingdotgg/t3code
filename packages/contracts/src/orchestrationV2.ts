@@ -3261,6 +3261,7 @@ export const OrchestrationV2Command = Schema.Union([
         titleSeed: Schema.optional(TrimmedNonEmptyString),
         scheduledTaskId: Schema.optional(ScheduledTaskId),
         senderThreadId: Schema.optional(ThreadId),
+        linkedSender: Schema.optional(OrchestrationV2LinkedSender),
         workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
       }),
     ),

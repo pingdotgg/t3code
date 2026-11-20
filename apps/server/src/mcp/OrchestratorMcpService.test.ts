@@ -524,7 +524,7 @@ describe("OrchestratorMcpService", () => {
       const childThreadId = ThreadId.make("thread:mcp-report-child");
       const taskA = NodeId.make("node:mcp-report-task-a");
       const taskB = NodeId.make("node:mcp-report-task-b");
-      const silent = "Child task completed without an assistant result.";
+      const silent = "Child run completed without an assistant result.";
       const parentProjection = {
         thread: { id: parentThreadId },
         runs: [],
@@ -606,10 +606,11 @@ describe("OrchestratorMcpService", () => {
       yield* Effect.gen(function* () {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
         // Task A reported, then a run queued behind the report ended without text.
-        reports = [[1, "REPORT-A"]];
+        reports = [[1, "I need access before I can review the change."]];
         const reported = yield* service.taskStatus(scope, taskA);
         assert.equal(reported.status, "completed");
-        assert.equal(reported.summary, "REPORT-A");
+        assert.equal(reported.assignmentOutcome, "unverified");
+        assert.equal(reported.summary, "I need access before I can review the change.");
         assert.equal(reported.latestTerminalRunId, runs[2]!.id);
         assert.equal(reported.latestTerminalSummary, silent);
         assert.equal((yield* service.taskStatus(scope, taskB)).summary, silent);
@@ -5576,16 +5577,19 @@ describe("OrchestratorMcpService thread lookup", () => {
 
   it.effect("records the linked environment's thread that sent a message", () =>
     Effect.gen(function* () {
-      const target = liveThreadShell(ThreadId.make("thread:target"));
+      const target = {
+        ...liveThreadShell(ThreadId.make("thread:target")),
+        linkOrigin: { sessionId: "link-a", label: "A", access: "full-access" as const },
+      };
       const sender = {
         environmentId: EnvironmentId.make("environment:a"),
         threadId: ThreadId.make("thread:orc"),
         title: "orc lead",
       };
-      const linked = (senderThread?: typeof sender): McpInvocationScope => ({
+      const linked = (senderThread?: typeof sender, sessionId = "link-a"): McpInvocationScope => ({
         ...client,
         client: {
-          sessionId: "link-a",
+          sessionId,
           label: "A",
           access: "full-access",
           linked: true,
@@ -5617,7 +5621,8 @@ describe("OrchestratorMcpService thread lookup", () => {
         });
 
       const fromLink = yield* sendAs(linked(sender));
-      assert.deepStrictEqual(fromLink?.linkedSender, sender);
+      assert.deepStrictEqual(fromLink?.linkedSender, { ...sender, fromOriginatingLink: true });
+      assert.deepStrictEqual((yield* sendAs(linked(sender, "another-link")))?.linkedSender, sender);
       assert.isUndefined(fromLink?.senderThreadId);
       assert.isUndefined((yield* sendAs(linked()))?.linkedSender);
     }),

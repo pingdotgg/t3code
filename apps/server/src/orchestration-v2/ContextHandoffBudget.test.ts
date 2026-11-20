@@ -43,6 +43,9 @@ const decodeHandoff = Schema.decodeUnknownSync(OrchestrationV2ContextHandoff);
 
 const now = DateTime.makeUnsafe("2026-09-17T00:00:00Z");
 const threadId = ThreadId.make("thread:handoff");
+const thread = {
+  lineage: { relationshipToParent: null, parentThreadId: null, rootThreadId: threadId },
+};
 const summaryScope = { projectId: ProjectId.make("project:handoff"), threadId };
 const providerThread: OrchestrationV2ProviderThread = {
   id: ProviderThreadId.make("provider-thread:target"),
@@ -208,7 +211,7 @@ describe("handoff budget", () => {
     assert.include(imageCommand!.text, "image/png");
     assert.include(imageCommand!.text, "read screenshot.png");
     const native = nativeContextHistory(
-      { runs: [], attempts: [], providerTurns: [], contextHandoffs: [] },
+      { thread, runs: [], attempts: [], providerTurns: [], contextHandoffs: [] },
       providerThread,
     );
     native.nativeInputRunIds.add(base.runId);
@@ -349,6 +352,7 @@ describe("handoff budget", () => {
         inputIntent: "turn_start",
         attachments: [],
       })!;
+      assert.equal(peer.text, peerText);
       assert.deepEqual(peer.provenance, { createdBy: "agent", creationSource: "mcp", ...sender });
       for (const rendered of [
         renderHistory([peer], "Historical context"),
@@ -707,7 +711,7 @@ describe("handoff delivery", () => {
         const first = yield* deliver();
         assert.equal(
           nativeContextHistory(
-            { runs: [], attempts: [], providerTurns: [], contextHandoffs: durable },
+            { thread, runs: [], attempts: [], providerTurns: [], contextHandoffs: durable },
             providerThread,
           ).estimate([tail]),
           native ? deliveredCost : 0,
@@ -720,7 +724,7 @@ describe("handoff delivery", () => {
           target = providerThread,
         ) =>
           nativeContextHistory(
-            { runs: [], attempts: [], providerTurns: [], contextHandoffs },
+            { thread, runs: [], attempts: [], providerTurns: [], contextHandoffs },
             target,
           );
         const estimate = occupancy(durable.map((entry) => decodeHandoff(entry))).estimate([tail]);

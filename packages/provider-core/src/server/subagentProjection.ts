@@ -338,7 +338,7 @@ function resultOfRun(
     message?.text ??
     turnItem?.text ??
     (run.status === "completed"
-      ? ["Child task completed without an assistant result.", stopNotice(projection, run)]
+      ? ["Child run completed without an assistant result.", stopNotice(projection, run)]
           .filter((part) => part !== undefined)
           .join("\n\n")
       : `Child task ended with status ${run.status}.`);

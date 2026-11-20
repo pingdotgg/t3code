@@ -145,6 +145,7 @@ function makeProjection(input: {
 
 function layerProjectionStore(
   getProviderControlContext: ProjectionStore.ProjectionStoreV2["Service"]["getProviderControlContext"],
+  thread?: OrchestrationV2ThreadProjection["thread"],
 ) {
   return Layer.succeed(
     ProjectionStore.ProjectionStoreV2,
@@ -169,7 +170,8 @@ function layerProjectionStore(
       getThreadTitles: () => Effect.die("unused getThreadTitles"),
       getThreadLinkMetadata: () => Effect.die("unused getThreadLinkMetadata"),
       findGuestShareThreadId: () => Effect.die("unused findGuestShareThreadId"),
-      getThread: () => Effect.die("unused getThread"),
+      getThread: () =>
+        thread === undefined ? Effect.die("unused getThread") : Effect.succeed(thread),
       findThread: () => Effect.die("unused findThread"),
       getSettlementCandidates: () => Effect.die("unused getSettlementCandidates"),
       getThreadsWithPullRequests: () => Effect.die("unused getThreadsWithPullRequests"),
@@ -650,7 +652,7 @@ it.effect.each([
       });
     }).pipe(Effect.provide(Layer.merge(layers, fixture.settingsLayer)));
     const locates = mode === "plain-name";
-    assert.equal(threadReads, shouldExpand || locates ? 1 : 0);
+    assert.equal(threadReads, shouldExpand || locates || mode === "local-peer" ? 1 : 0);
     assert.lengthOf(received, 1);
     assert.include(received[0]!, "native:review");
     if (mode === "local-peer" || mode === "linked-peer") {
@@ -1095,27 +1097,36 @@ it.effect("steers a running turn with its sender and the thread's MCP app model 
     const layerControl = ProviderTurnControlService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
-          layerProjectionStore(() =>
-            Effect.succeed({
-              providerThread,
-              providerTurn: projection.providerTurns[0],
-              attempt: projection.attempts[0],
-              message: {
-                id: MessageId.make("message:steer-app-context"),
-                text: "What did the app report?",
-                attachments: [],
-                createdBy: "agent",
-                creationSource: "mcp",
-                senderThreadId: ThreadId.make("thread:steer-sender"),
-              } as unknown as NonNullable<
-                ProjectionStore.ProjectionProviderControlContext["message"]
-              >,
-              run: {
-                id: RunId.make("run:steer-app-context"),
-                status: "running",
-                activeAttemptId: attemptId,
-              } as OrchestrationV2Run,
-            }),
+          layerProjectionStore(
+            () =>
+              Effect.succeed({
+                providerThread,
+                providerTurn: projection.providerTurns[0],
+                attempt: projection.attempts[0],
+                message: {
+                  id: MessageId.make("message:steer-app-context"),
+                  text: "What did the app report?",
+                  attachments: [],
+                  createdBy: "agent",
+                  creationSource: "mcp",
+                  senderThreadId: ThreadId.make("thread:steer-sender"),
+                } as unknown as NonNullable<
+                  ProjectionStore.ProjectionProviderControlContext["message"]
+                >,
+                run: {
+                  id: RunId.make("run:steer-app-context"),
+                  status: "running",
+                  activeAttemptId: attemptId,
+                } as OrchestrationV2Run,
+              }),
+            {
+              ...projection.thread,
+              lineage: {
+                ...projection.thread.lineage,
+                relationshipToParent: "subagent",
+                parentThreadId: ThreadId.make("thread:steer-sender"),
+              },
+            },
           ),
           layerSessions(sessionId, runtime),
           Layer.mock(EventSink.EventSinkV2)({}),
@@ -1153,6 +1164,7 @@ it.effect("steers a running turn with its sender and the thread's MCP app model 
       steered[0]!.message.text,
       '[T3 message source: agent (thread "thread:steer-sender")]',
     );
+    assert.include(steered[0]!.message.text, "Your parent agent assigned this work to you.");
     assert.isTrue(steered[0]!.message.text.endsWith("What did the app report?"));
     assert.deepEqual("appContext" in steered[0]! ? steered[0].appContext : undefined, [
       { key: "mcp_app_turn-item_call-1", text: "Pressed: blue" },

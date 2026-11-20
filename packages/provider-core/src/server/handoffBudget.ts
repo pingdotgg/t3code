@@ -8,11 +8,11 @@ import type {
   OrchestrationV2ProviderThread,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
-import { withMessageSenderNote } from "@t3tools/contracts";
 
 import * as Config from "effect/Config";
 import {
   formatMessageWithProvenance,
+  liveMessagePurpose,
   messageProvenance,
   messageProvenanceLabel,
 } from "./messageProvenance.ts";
@@ -110,7 +110,7 @@ export function nativeContextHistory(
   projection: Pick<
     OrchestrationV2ThreadProjection,
     "runs" | "attempts" | "providerTurns" | "contextHandoffs"
-  >,
+  > & { thread: Pick<OrchestrationV2ThreadProjection["thread"], "lineage" | "delegatedFrom"> },
   providerThread: OrchestrationV2ProviderThread,
 ) {
   const settledHandoffs = projection.contextHandoffs.filter(
@@ -194,7 +194,13 @@ export function nativeContextHistory(
         const historical = historicalMessage(item);
         const nativeBytes = acceptedNatively
           ? item.type === "user_message"
-            ? Buffer.byteLength(formatMessageWithProvenance(item.text, messageProvenance(item)))
+            ? Buffer.byteLength(
+                formatMessageWithProvenance(
+                  item.text,
+                  messageProvenance(item),
+                  liveMessagePurpose(item, projection.thread),
+                ),
+              )
             : item.type === "assistant_message"
               ? Buffer.byteLength(item.text)
               : rawToolEvidenceBytes(item)
@@ -283,7 +289,7 @@ export function historicalMessage(
   let text: string;
   switch (item.type) {
     case "user_message":
-      text = withMessageSenderNote(item, item.text);
+      text = item.text;
       break;
     case "assistant_message":
       text = item.text;

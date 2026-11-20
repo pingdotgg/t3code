@@ -18,6 +18,7 @@ import {
 } from "@t3tools/provider-core/server/handoffBudget";
 import {
   formatMessageWithProvenance,
+  liveMessagePurpose,
   messageProvenance,
 } from "@t3tools/provider-core/server/messageProvenance";
 import {
@@ -530,6 +531,14 @@ export const layer: Layer.Layer<
             (supportsNativeGoals && parseNativeGoalCommand(message) !== null)
               ? undefined
               : messageProvenance(message);
+          const getThread = yield* Effect.cached(projections.getThread(input.threadId));
+          const purpose = liveMessagePurpose(
+            message,
+            message.senderThreadId === undefined &&
+              message.linkedSender?.fromOriginatingLink !== true
+              ? undefined
+              : yield* getThread,
+          );
           let composer = { text: message.text, records: message.context?.records ?? [] };
           if (
             referencesPstack(composer, message) &&
@@ -539,7 +548,7 @@ export const layer: Layer.Layer<
               Effect.orElseSucceed(() => true),
             ))
           ) {
-            const thread = yield* projections.getThread(input.threadId);
+            const thread = yield* getThread;
             composer = yield* pstack.expandComposer(
               {
                 ...composer,
@@ -557,7 +566,7 @@ export const layer: Layer.Layer<
             | Effect.Success<ReturnType<typeof prepareKnowledgeDelivery>>
             | undefined;
           if (hasKnowledge) {
-            const thread = yield* projections.getThread(input.threadId);
+            const thread = yield* getThread;
             const attemptId = loaded.providerTurn.runAttemptId;
             if (attemptId === null)
               return yield* new ProviderTurnControlError({
@@ -642,6 +651,7 @@ export const layer: Layer.Layer<
                 userText: formatMessageWithProvenance(
                   knowledgeDelivery.composer.baseText,
                   provenance,
+                  purpose,
                 ),
                 attachments: message.attachments,
                 providerThread,
@@ -706,7 +716,7 @@ export const layer: Layer.Layer<
               ...(appContext.length === 0 ? {} : { appContext }),
               message: {
                 messageId: message.id,
-                text: formatMessageWithProvenance(text, provenance),
+                text: formatMessageWithProvenance(text, provenance, purpose),
                 attachments: message.attachments,
                 createdBy: message.createdBy,
                 creationSource: message.creationSource,

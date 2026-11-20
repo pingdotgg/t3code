@@ -10,6 +10,7 @@ import {
   type OrchestrationV2Actor,
   type OrchestrationV2CreationSource,
   type OrchestrationV2DelegatedFrom,
+  type OrchestrationV2LinkedSender,
   type OrchestrationV2LinkOrigin,
   type OrchestrationV2ProviderThreadNativeMetadata,
   type OrchestrationV2ThreadProjection,
@@ -85,6 +86,7 @@ export interface ThreadLaunchInitialMessage {
   readonly messageId?: MessageId;
   readonly scheduledTaskId?: ScheduledTaskId;
   readonly senderThreadId?: ThreadId;
+  readonly linkedSender?: OrchestrationV2LinkedSender;
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly context?: import("@t3tools/contracts").OrchestrationMessageContext | undefined;
@@ -1335,6 +1337,9 @@ const make = Effect.gen(function* () {
                 ...(input.initialMessage.senderThreadId === undefined
                   ? {}
                   : { senderThreadId: input.initialMessage.senderThreadId }),
+                ...(input.initialMessage.linkedSender === undefined
+                  ? {}
+                  : { linkedSender: input.initialMessage.linkedSender }),
                 attachments: input.initialMessage.attachments,
                 ...(input.initialMessage.context ? { context: input.initialMessage.context } : {}),
                 ...(input.generateTitle === true ? { titleSeed: input.title } : {}),

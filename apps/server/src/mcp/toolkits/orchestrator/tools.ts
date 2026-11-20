@@ -102,7 +102,7 @@ const DelegateTaskTool = Tool.make("delegate_task", {
 
 const TaskStatusTool = Tool.make("task_status", {
   description:
-    "Read a child task you started only after its completion wakes you. workState: working, waiting_for_children, result_available. A finished turn with live child work is not done. Reading summary marks the final result delivered.",
+    "Read your child after its wake. workState: working, waiting_for_children, result_available. Child work can outlive a finished run. A completed run may report a blocker. Reading summary marks the result delivered.",
   parameters: OrchestratorMcpTaskStatusInput,
   success: OrchestratorMcpDelegateTaskResult,
   failure: OrchestratorMcpFailure,

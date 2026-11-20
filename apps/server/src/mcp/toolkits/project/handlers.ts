@@ -392,6 +392,19 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             )?.supportedRuntimeModes,
           });
         }
+        const { linkedSender } = McpInvocationContext.linkedMessageSender(scope.client, linkOrigin);
+        const declaredParent = input.delegatedFrom;
+        const delegatedFrom =
+          caller === undefined &&
+          linkedSender?.fromOriginatingLink === true &&
+          declaredParent?.environmentId === linkedSender.environmentId &&
+          declaredParent.threadId === linkedSender.threadId
+            ? {
+                environmentId: linkedSender.environmentId,
+                threadId: linkedSender.threadId,
+                title: linkedSender.title,
+              }
+            : undefined;
         const result = yield* ThreadMessageIntake.launchThread({
           commandId,
           threadId,
@@ -407,6 +420,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 initialMessage: {
                   messageId,
                   ...(caller === undefined ? {} : { senderThreadId: caller.id }),
+                  ...(linkedSender === undefined ? {} : { linkedSender }),
                   text: input.message ?? "",
                   attachments,
                 },
@@ -414,8 +428,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           createdBy: "agent",
           creationSource: "mcp",
           ...(linkOrigin === undefined ? {} : { linkOrigin }),
-          // Kept only alongside linkOrigin: thread.create drops it otherwise.
-          ...(input.delegatedFrom === undefined ? {} : { delegatedFrom: input.delegatedFrom }),
+          ...(delegatedFrom === undefined ? {} : { delegatedFrom }),
         }).pipe(
           Effect.mapError((error) => {
             if (error._tag === "AttachmentClaimError") {

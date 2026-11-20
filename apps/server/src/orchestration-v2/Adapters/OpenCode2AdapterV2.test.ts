@@ -118,6 +118,7 @@ const withBrowserRules = (rules: ReadonlyArray<unknown>, browser: ReadonlyArray<
 const TITLE = "Prime check";
 const sessionInfo = (overrides: Record<string, unknown> = {}) => ({
   id: SESSION,
+  agent: "build",
   title: TITLE,
   permissions: t3Rules,
   projectID: "global",
@@ -344,6 +345,7 @@ const resumed = (
     readonly version?: "2.2.1" | "2.2.5" | "2.2.6";
     readonly shellRecovery?: ReadonlyArray<ProviderReplayEntry>;
     readonly lastRunOrdinal?: number;
+    readonly missingAgent?: boolean;
     readonly pendingBackgroundTasks?: OrchestrationV2ProviderThread["pendingBackgroundTasks"];
     readonly goal?: OrchestrationV2ProviderThread["goal"];
     readonly contextUsage?: OrchestrationV2ProviderThread["contextUsage"];
@@ -365,7 +367,7 @@ const resumed = (
       [
         ...opening,
         out("session.get", { sessionID: SESSION }),
-        replyData("session.get", sessionInfo()),
+        replyData("session.get", sessionInfo(options?.missingAgent ? { agent: undefined } : {})),
         ...noOpenRequests,
         ...(options?.version === "2.2.5" || options?.version === "2.2.6"
           ? [out("rpc.call", "<any>"), reply("rpc.call", { output: null })]
@@ -507,6 +509,26 @@ const nativeGoal = (status: "active" | "paused" | "complete") => ({
 });
 
 it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
+  it.effect(
+    "selects build before prompting a resumed session that uses the native default agent",
+    () =>
+      Effect.gen(function* () {
+        const { runtime, thread } = yield* resumed(
+          [
+            out("session.switchAgent", { sessionID: SESSION, agent: "build" }),
+            reply("session.switchAgent", null),
+            out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+            promptAccepted,
+            event("session.execution.succeeded", { sessionID: SESSION }),
+          ],
+          { missingAgent: true },
+        );
+        const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+        yield* runtime.startTurn(turnInput(thread));
+        assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+      }),
+  );
+
   it.effect("switches the session's model and variant before a turn that changed them", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
@@ -3701,6 +3723,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         out("agent.list", "<any>"),
         reply("agent.list", agentList),
         out("session.create", {
+          agent: "build",
           location: { directory: WORK },
           model: { providerID: "opencode", id: "big-pickle" },
           permissions: supervisedRules,
@@ -6805,6 +6828,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           })),
         }),
         out("session.create", {
+          agent: "build",
           location: { directory: custom },
           model: { providerID: "opencode", id: "big-pickle" },
           permissions: t3Rules,
