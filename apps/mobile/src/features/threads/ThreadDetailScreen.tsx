@@ -170,11 +170,12 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import type { PendingUserInputDraftAnswer } from "@t3tools/client-runtime/state/pending-user-input";
 import type { RunStopPresentation } from "@t3tools/client-runtime/state/thread-execution";
-import type {
-  PendingApproval,
-  PendingUserInput,
-  ThreadFeedEntry,
-  ThreadFeedLatestRun,
+import {
+  isFeedJumpTarget,
+  type PendingApproval,
+  type PendingUserInput,
+  type ThreadFeedEntry,
+  type ThreadFeedLatestRun,
 } from "../../lib/threadActivity";
 import { PendingApprovalCard } from "./PendingApprovalCard";
 import { ComposerErrorNotice } from "./ComposerErrorNotice";
@@ -932,7 +933,7 @@ function ThreadDetailBody(
   );
   const jumpMessageLoaded =
     jumpMessageId !== null &&
-    selectedThreadFeed.some((entry) => entry.type === "message" && entry.id === jumpMessageId);
+    selectedThreadFeed.some((entry) => isFeedJumpTarget(entry, jumpMessageId));
   const historyForJump = props.historyControls;
   // History down to the message in one request; another page if it is not
   // there yet.

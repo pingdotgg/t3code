@@ -4,6 +4,9 @@ import {
   type ThemeAppearance,
   type ThemeColors,
 } from "./themePalettes.ts";
+import { ASSISTANT_CITATION_MAX_TEXT_LENGTH } from "@t3tools/contracts";
+
+import { createAssistantTextSelector, type AssistantTextSelector } from "./assistantCitations.ts";
 import { EVENT_CODE_SHORTCUT_KEYS } from "./keybindings.ts";
 
 export const HTML_RENDER_TOOL_NAME = "html_render";
@@ -244,6 +247,11 @@ const SIZE_CHANGED_METHOD = "ui/notifications/size-changed";
 const SHORTCUTS_METHOD = "t3/notifications/shortcuts";
 const KEY_DOWN_METHOD = "t3/notifications/keydown";
 const OPEN_IMAGE_METHOD = "t3/notifications/open-image";
+const SELECTION_METHOD = "t3/notifications/selection";
+const CLEAR_SELECTION_METHOD = "t3/clear-selection";
+const SELECTION_CONTEXT_LENGTH = 64;
+// One character over the limit tells the client to ask for a shorter selection.
+const SELECTION_MAX_TEXT_LENGTH = ASSISTANT_CITATION_MAX_TEXT_LENGTH + 1;
 
 export function readHtmlRenderContentHeight(data: unknown): number | undefined {
   if (typeof data !== "object" || data === null) return undefined;
@@ -354,6 +362,67 @@ export function readHtmlRenderKeyDown(data: unknown):
   };
 }
 
+export interface HtmlRenderSelection {
+  readonly selector: AssistantTextSelector;
+  /** The selection's last line box, in the page's viewport. */
+  readonly rect: {
+    readonly left: number;
+    readonly top: number;
+    readonly right: number;
+    readonly bottom: number;
+  };
+}
+
+/** Undefined for other messages; null once the page's selection is gone. */
+export function readHtmlRenderSelection(data: unknown): HtmlRenderSelection | null | undefined {
+  if (typeof data !== "object" || data === null) return undefined;
+  const { jsonrpc, method, params } = data as Record<string, unknown>;
+  if (jsonrpc !== "2.0" || method !== SELECTION_METHOD) return undefined;
+  if (typeof params !== "object" || params === null) return null;
+  const { text, before, after, offset, rect } = params as Record<string, unknown>;
+  if (
+    typeof text !== "string" ||
+    text.length > SELECTION_MAX_TEXT_LENGTH ||
+    typeof before !== "string" ||
+    before.length > SELECTION_CONTEXT_LENGTH ||
+    typeof after !== "string" ||
+    after.length > SELECTION_CONTEXT_LENGTH ||
+    typeof offset !== "number" ||
+    !Number.isSafeInteger(offset) ||
+    offset < 0 ||
+    typeof rect !== "object" ||
+    rect === null
+  ) {
+    return null;
+  }
+  const { left, top, right, bottom } = rect as Record<string, unknown>;
+  if (
+    typeof left !== "number" ||
+    typeof top !== "number" ||
+    typeof right !== "number" ||
+    typeof bottom !== "number" ||
+    ![left, top, right, bottom].every(Number.isFinite)
+  ) {
+    return null;
+  }
+  const selector = createAssistantTextSelector(
+    before + text + after,
+    before.length,
+    before.length + text.length,
+  );
+  if (selector === null) return null;
+  // The page counts normalized characters before the selection; the context window starts that much later.
+  const base = Math.max(0, offset - before.replace(/\s+/g, " ").length);
+  return {
+    selector: { ...selector, start: selector.start + base, end: selector.end + base },
+    rect: { left, top, right, bottom },
+  };
+}
+
+export function htmlRenderClearSelectionMessage() {
+  return { jsonrpc: "2.0", method: CLEAR_SELECTION_METHOD } as const;
+}
+
 export interface HtmlRenderShortcut {
   readonly key: string;
   readonly metaKey: boolean;
@@ -412,9 +481,14 @@ function rootRule(theme: HtmlRenderTheme): string {
 // scroll-padding, clamped offsets), and stops there. A fixed target or ancestor leaves the viewport alone.
 const CONTAINED_SCROLL_INTO_VIEW = `Element.prototype.scrollIntoView=function(v){var o=v!==null&&(typeof v==="object"||typeof v==="function")?v:{block:v===undefined||v===null||v?"start":"end"},B=o.block||"start",I=o.inline||"nearest",H=o.behavior||"auto",m=function(z){return parseFloat(z)||0;},g=getComputedStyle(this),r=this.getBoundingClientRect(),t=r.top-m(g.scrollMarginTop),b=r.bottom+m(g.scrollMarginBottom),l=r.left-m(g.scrollMarginLeft),R=r.right+m(g.scrollMarginRight),x=0,y=0,e=this,f=g.position==="fixed",d=function(a,z,lo,hi,k){var L=z-a>hi-lo;return k==="start"?a-lo:k==="end"?z-hi:k==="center"?(a+z-lo-hi)/2:a<lo&&z>hi?0:a<lo?L?z-hi:a-lo:z>hi?L?a-lo:z-hi:0;},w=function(top,left,c,s,go){var p=function(n){return m(s["scrollPadding"+n]);},n=s.direction==="rtl"?c.clientWidth-c.scrollWidth:0,dy=d(t-y,b-y,top+p("Top"),top+c.clientHeight-p("Bottom"),B),dx=d(l-x,R-x,left+p("Left"),left+c.clientWidth-p("Right"),I);dy=Math.max(-c.scrollTop,Math.min(c.scrollHeight-c.clientHeight-c.scrollTop,dy));dx=Math.max(n-c.scrollLeft,Math.min(n+c.scrollWidth-c.clientWidth-c.scrollLeft,dx));if(dx||dy)go({left:dx,top:dy,behavior:H});x+=dx;y+=dy;},u=document.scrollingElement||document.documentElement;while(!f){e=e.parentElement||(e.getRootNode&&e.getRootNode().host);if(!e)break;if(e===u||e===document.documentElement)continue;var h=getComputedStyle(document.documentElement),s=getComputedStyle(e),c=e.getBoundingClientRect();if(e===document.body&&h.overflowX+h.overflowY==="visiblevisible")continue;if(/auto|scroll|hidden/.test(s.overflowX+s.overflowY))w(c.top+e.clientTop,c.left+e.clientLeft,e,s,e.scrollBy.bind(e));f=s.position==="fixed";}if(!f)w(0,0,u,getComputedStyle(u),window.scrollBy.bind(window));};`;
 
+// Reports the page's text selection once it settles, with the visible text around it (no script or style
+// source), to an embedding page or the app's WebView so the client can offer Cite. Mouse drags report on
+// release; touch selection is the platform's own.
+const SELECTION_SCRIPT = `(function(){var L="null",W=0,U=0,X=function(m){if(window.parent!==window)window.parent.postMessage(m,"*");else if(window.ReactNativeWebView)window.ReactNativeWebView.postMessage(JSON.stringify(m));},G=function(){var g=getSelection(),d=document.body,b="",f="",r,t,x,n,v,q,R;if(!g||!g.rangeCount||g.isCollapsed||!d)return null;t=g.toString();if(!t.trim())return null;try{r=g.getRangeAt(0);x=document.createTreeWalker(d,4,{acceptNode:function(n){return/^(?:SCRIPT|STYLE|NOSCRIPT)$/.test(n.parentNode.nodeName)?2:1;}});while((n=x.nextNode())&&f.length<${SELECTION_CONTEXT_LENGTH}){v=n.nodeValue;if(n===r.startContainer)b+=v.slice(0,r.startOffset);else if(r.comparePoint(n,0)<0)b+=v;if(n===r.endContainer)f+=v.slice(r.endOffset);else if(r.comparePoint(n,0)>0)f+=v;}}catch(e){return null;}R=r.getClientRects();q=R.length?R[R.length-1]:r.getBoundingClientRect();return{text:t.slice(0,${SELECTION_MAX_TEXT_LENGTH}),before:b.slice(-${SELECTION_CONTEXT_LENGTH}),after:f.slice(0,${SELECTION_CONTEXT_LENGTH}),offset:b.replace(/\\s+/g," ").length,rect:{left:Math.round(q.left),top:Math.round(q.top),right:Math.round(q.right),bottom:Math.round(q.bottom)}};},E=function(p){var s=JSON.stringify(p);U=0;if(s===L)return;L=s;X({jsonrpc:"2.0",method:${JSON.stringify(SELECTION_METHOD)},params:p});},Y=function(d){clearTimeout(U);U=setTimeout(function(){E(W?null:G());},d);},O=function(e){if(e.isPrimary&&e.pointerType==="mouse"&&W){W=0;Y(0);}},V;document.addEventListener("selectionchange",function(){Y(W?0:150);});window.addEventListener("pointerdown",function(e){if(e.isPrimary&&e.pointerType==="mouse"){W=1;Y(0);}},true);window.addEventListener("pointerup",O,true);window.addEventListener("pointercancel",O,true);V=function(){if(L!=="null")Y(100);};window.addEventListener("scroll",V,true);window.addEventListener("resize",V);window.addEventListener("keydown",function(e){if(e.key==="Escape"&&L!=="null"){clearTimeout(U);E(null);}},true);window.addEventListener("message",function(e){var d=e.data,g;if((e.source===window.parent||e.source===window)&&d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(CLEAR_SELECTION_METHOD)}){g=getSelection();if(g)g.removeAllRanges();}});})();`;
+
 // Apply overridable theme CSS before paint and strip the fragment before routing; framed navigation uses the client.
 // Forward shortcuts after page handlers; text fields retain their keys.
-const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("t3-theme"),n=0,P=/[#&]${CONTAIN_SCROLL_FRAGMENT_KEY}(?:&|$)/.test(location.hash);if(!s)return;var b=${JSON.stringify(BASE_CSS)};function a(t){if(!t||typeof t!=="object"||!t.variables||typeof t.variables!=="object")return;var c=":root{color-scheme:"+(t.appearance==="light"?"light":"dark")+";";for(var k in t.variables){if(/^--[a-z0-9-]+$/.test(k))c+=k+":"+String(t.variables[k]).replace(/[;{}<>]/g,"")+";";}s.textContent=c+"}"+b;}try{var m=/[#&]${THEME_FRAGMENT_KEY}=([^&]*)/.exec(location.hash);if(m){a(JSON.parse(decodeURIComponent(m[1])));history.replaceState(history.state,"",location.pathname+location.search);}}catch(e){}window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(HOST_CONTEXT_CHANGED_METHOD)}&&p&&p.styles)a({appearance:p.theme,variables:p.styles.variables});});document.addEventListener("click",function(e){var l=e.isTrusted?e.composedPath().find(function(t){return t&&t.matches&&t.matches("a[href]");}):null,u;if(!l)return;try{u=new URL(l.getAttribute("href"),document.baseURI);}catch(x){return;}if(!/^https?:$/.test(u.protocol)||u.href.split("#")[0]===location.href.split("#")[0])return;if(window.parent!==window){e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",id:"t3-link-"+(++n),method:${JSON.stringify(OPEN_LINK_METHOD)},params:{url:u.href,metaKey:e.metaKey,ctrlKey:e.ctrlKey}},"*");}else{l.setAttribute("target","_blank");l.setAttribute("rel","noopener");}},true);document.addEventListener("click",function(e){var t=e.composedPath()[0],l=t&&t.closest?t.closest("label,a[href],button,input,select,textarea"):null,c=l&&l.tagName==="LABEL"?l.control:null;if(e.isTrusted&&c&&document.activeElement!==c)c.focus({preventScroll:true});},true);if(window.parent!==window){if(P){${CONTAINED_SCROLL_INTO_VIEW}}var h,o,z=function(){var r=document.documentElement,v=Math.ceil(r.scrollHeight>r.clientHeight?r.scrollHeight:r.getBoundingClientRect().height);if(v===h)return;h=v;window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(SIZE_CHANGED_METHOD)},params:{height:v}},"*");};if(window.ResizeObserver){o=new ResizeObserver(z);o.observe(document.documentElement);}document.addEventListener("DOMContentLoaded",function(){if(o&&document.body)o.observe(document.body);z();});window.addEventListener("load",z);window.addEventListener("click",function(e){var t=e.composedPath()[0],u;if(!e.isTrusted||e.defaultPrevented||e.button!==0||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey||!t||t.tagName!=="IMG"||t.closest("a[href],button"))return;u=t.currentSrc||t.src;if(u)setTimeout(function(){var g=[],i=-1;if(e.defaultPrevented)return;Array.prototype.forEach.call(document.images,function(m){var v=m.currentSrc||m.src;if(!v||m.closest("a[href],button"))return;if(m===t)i=g.length;g.push({src:v,name:m.alt||m.title||""});});window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(OPEN_IMAGE_METHOD)},params:{src:u,name:t.alt||t.title||"",images:g,index:i}},"*");});});var K=[],B=[],C=${JSON.stringify(EVENT_CODE_SHORTCUT_KEYS)};window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(e.source===window.parent&&d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(SHORTCUTS_METHOD)}&&p&&Array.isArray(p.shortcuts)&&Array.isArray(p.blocked)){K=p.shortcuts;B=p.blocked;}});window.addEventListener("keydown",function(e){var t=e.composedPath()[0],c=e.code||"",l=e.key.toLowerCase(),x=/^[a-z]$/.test(l)?[l]:[l,/^Key[A-Z]$/.test(c)?c.slice(3).toLowerCase():"",l==="+"&&!e.shiftKey&&!e.altKey&&!/^Digit/.test(c)?"":C.hasOwnProperty(c)?C[c]:""],f,m=function(s){return s&&s.metaKey===e.metaKey&&s.ctrlKey===e.ctrlKey&&s.shiftKey===e.shiftKey&&s.altKey===e.altKey&&x.indexOf(s.key)>-1;};if(!e.isTrusted||e.isComposing||e.getModifierState("AltGraph")&&!/^[a-z0-9]$/i.test(e.key)||t&&(t.isContentEditable||/^(?:INPUT|TEXTAREA|SELECT)$/.test(t.tagName))||!K.some(m)||B.some(m))return;f=function(v){window.removeEventListener("keydown",f);if(v!==e||e.defaultPrevented)return;e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(KEY_DOWN_METHOD)},params:{key:e.key,code:e.code,metaKey:e.metaKey,ctrlKey:e.ctrlKey,shiftKey:e.shiftKey,altKey:e.altKey,repeat:e.repeat}},"*");};window.addEventListener("keydown",f);setTimeout(function(){window.removeEventListener("keydown",f);});},true);}})();`;
+const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("t3-theme"),n=0,P=/[#&]${CONTAIN_SCROLL_FRAGMENT_KEY}(?:&|$)/.test(location.hash);if(!s)return;var b=${JSON.stringify(BASE_CSS)};function a(t){if(!t||typeof t!=="object"||!t.variables||typeof t.variables!=="object")return;var c=":root{color-scheme:"+(t.appearance==="light"?"light":"dark")+";";for(var k in t.variables){if(/^--[a-z0-9-]+$/.test(k))c+=k+":"+String(t.variables[k]).replace(/[;{}<>]/g,"")+";";}s.textContent=c+"}"+b;}try{var m=/[#&]${THEME_FRAGMENT_KEY}=([^&]*)/.exec(location.hash);if(m){a(JSON.parse(decodeURIComponent(m[1])));history.replaceState(history.state,"",location.pathname+location.search);}}catch(e){}window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(HOST_CONTEXT_CHANGED_METHOD)}&&p&&p.styles)a({appearance:p.theme,variables:p.styles.variables});});document.addEventListener("click",function(e){var l=e.isTrusted?e.composedPath().find(function(t){return t&&t.matches&&t.matches("a[href]");}):null,u;if(!l)return;try{u=new URL(l.getAttribute("href"),document.baseURI);}catch(x){return;}if(!/^https?:$/.test(u.protocol)||u.href.split("#")[0]===location.href.split("#")[0])return;if(window.parent!==window){e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",id:"t3-link-"+(++n),method:${JSON.stringify(OPEN_LINK_METHOD)},params:{url:u.href,metaKey:e.metaKey,ctrlKey:e.ctrlKey}},"*");}else{l.setAttribute("target","_blank");l.setAttribute("rel","noopener");}},true);document.addEventListener("click",function(e){var t=e.composedPath()[0],l=t&&t.closest?t.closest("label,a[href],button,input,select,textarea"):null,c=l&&l.tagName==="LABEL"?l.control:null;if(e.isTrusted&&c&&document.activeElement!==c)c.focus({preventScroll:true});},true);if(window.parent!==window){if(P){${CONTAINED_SCROLL_INTO_VIEW}}var h,o,z=function(){var r=document.documentElement,v=Math.ceil(r.scrollHeight>r.clientHeight?r.scrollHeight:r.getBoundingClientRect().height);if(v===h)return;h=v;window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(SIZE_CHANGED_METHOD)},params:{height:v}},"*");};if(window.ResizeObserver){o=new ResizeObserver(z);o.observe(document.documentElement);}document.addEventListener("DOMContentLoaded",function(){if(o&&document.body)o.observe(document.body);z();});window.addEventListener("load",z);window.addEventListener("click",function(e){var t=e.composedPath()[0],u;if(!e.isTrusted||e.defaultPrevented||e.button!==0||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey||!t||t.tagName!=="IMG"||t.closest("a[href],button"))return;u=t.currentSrc||t.src;if(u)setTimeout(function(){var g=[],i=-1;if(e.defaultPrevented)return;Array.prototype.forEach.call(document.images,function(m){var v=m.currentSrc||m.src;if(!v||m.closest("a[href],button"))return;if(m===t)i=g.length;g.push({src:v,name:m.alt||m.title||""});});window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(OPEN_IMAGE_METHOD)},params:{src:u,name:t.alt||t.title||"",images:g,index:i}},"*");});});var K=[],B=[],C=${JSON.stringify(EVENT_CODE_SHORTCUT_KEYS)};window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(e.source===window.parent&&d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(SHORTCUTS_METHOD)}&&p&&Array.isArray(p.shortcuts)&&Array.isArray(p.blocked)){K=p.shortcuts;B=p.blocked;}});window.addEventListener("keydown",function(e){var t=e.composedPath()[0],c=e.code||"",l=e.key.toLowerCase(),x=/^[a-z]$/.test(l)?[l]:[l,/^Key[A-Z]$/.test(c)?c.slice(3).toLowerCase():"",l==="+"&&!e.shiftKey&&!e.altKey&&!/^Digit/.test(c)?"":C.hasOwnProperty(c)?C[c]:""],f,m=function(s){return s&&s.metaKey===e.metaKey&&s.ctrlKey===e.ctrlKey&&s.shiftKey===e.shiftKey&&s.altKey===e.altKey&&x.indexOf(s.key)>-1;};if(!e.isTrusted||e.isComposing||e.getModifierState("AltGraph")&&!/^[a-z0-9]$/i.test(e.key)||t&&(t.isContentEditable||/^(?:INPUT|TEXTAREA|SELECT)$/.test(t.tagName))||!K.some(m)||B.some(m))return;f=function(v){window.removeEventListener("keydown",f);if(v!==e||e.defaultPrevented)return;e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(KEY_DOWN_METHOD)},params:{key:e.key,code:e.code,metaKey:e.metaKey,ctrlKey:e.ctrlKey,shiftKey:e.shiftKey,altKey:e.altKey,repeat:e.repeat}},"*");};window.addEventListener("keydown",f);setTimeout(function(){window.removeEventListener("keydown",f);});},true);}${SELECTION_SCRIPT}})();`;
 
 function bootstrapMarkup(markup: string): string {
   const dark = htmlRenderTheme(T3_CODE_DARK_THEME_COLORS, "dark");

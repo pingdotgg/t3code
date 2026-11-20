@@ -388,15 +388,33 @@ export function HtmlRenderTimelineRow({
   if (ctx.renderHtmlRender) {
     return <div className="min-w-0 px-1">{ctx.renderHtmlRender(row)}</div>;
   }
+  const { onCiteAssistantText, threadRef } = ctx;
+  // Published pages have no message id; citations name their turn item instead.
+  const messageId = MessageId.make(row.id);
   return (
     <div className="min-w-0 px-1">
-      <HtmlRenderFrame
-        key={row.htmlRender.attachmentId}
-        environmentId={ctx.activeThreadEnvironmentId}
-        htmlRender={row.htmlRender}
-        threadRef={ctx.threadRef ?? undefined}
-        onFullscreenChange={onFullscreenChange}
-      />
+      <AssistantCitationSource
+        messageId={messageId}
+        {...(threadRef ? { threadRef } : {})}
+        itemKey={row.id}
+        request={ctx.citationRequest}
+        listRef={ctx.listRef}
+        textless
+      >
+        <HtmlRenderFrame
+          key={row.htmlRender.attachmentId}
+          environmentId={ctx.activeThreadEnvironmentId}
+          htmlRender={row.htmlRender}
+          threadRef={threadRef ?? undefined}
+          onFullscreenChange={onFullscreenChange}
+          onCite={
+            onCiteAssistantText && threadRef
+              ? (selector) =>
+                  onCiteAssistantText({ version: 1, ...threadRef, messageId, ...selector })
+              : undefined
+          }
+        />
+      </AssistantCitationSource>
     </div>
   );
 }

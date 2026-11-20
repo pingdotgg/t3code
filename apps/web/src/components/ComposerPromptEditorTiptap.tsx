@@ -216,7 +216,7 @@ export type ComposerCitationCommentRequest = {
   previousValue: string;
   value: string;
   citationStart: number;
-  sourceAnchor: AssistantCitationSourceAnchor;
+  sourceAnchor: AssistantCitationSourceAnchor | undefined;
   insertedSpaces: CitationInsertedSpaces;
 };
 
@@ -224,7 +224,7 @@ type CitationInsertedSpaces = { before: boolean; after: boolean };
 
 type OpenCitationComment = {
   key: string;
-  sourceAnchor?: AssistantCitationSourceAnchor;
+  sourceAnchor?: AssistantCitationSourceAnchor | undefined;
   removeOnCancel?: CitationInsertedSpaces;
 };
 

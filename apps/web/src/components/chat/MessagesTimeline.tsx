@@ -12,7 +12,6 @@ import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
 import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
 import { deriveTimelineMinimapItems } from "./timelineMinimapItems";
 import {
-  type AssistantCitation,
   type EnvironmentId,
   type MessageId,
   type OrchestrationV2TurnItem,
@@ -74,11 +73,10 @@ import {
   resolveDisclosureRevealScrollDelta,
 } from "./timelineScrollAnchoring";
 import { AssistantSelectionToolbar } from "./AssistantSelectionToolbar";
-import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { type AssistantCitationRequest } from "./AssistantCitationSource";
 import { useAssistantCitationTarget } from "./useAssistantCitationTarget";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
-import { resolveCitationPhase, type CitedHistory } from "./citationProcedure";
+import { isCitationSource, resolveCitationPhase, type CitedHistory } from "./citationProcedure";
 import {
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
@@ -228,10 +226,7 @@ interface MessagesTimelineProps {
   onRespondToApproval?: TimelineRowSharedState["onRespondToApproval"];
   citationRequest?: AssistantCitationRequest | null;
   citationHistory?: CitedHistory;
-  onCiteAssistantText?: (
-    citation: AssistantCitation,
-    sourceAnchor: AssistantCitationSourceAnchor,
-  ) => boolean;
+  onCiteAssistantText?: TimelineRowSharedState["onCiteAssistantText"];
   onReplyToResponse?: TimelineRowSharedState["onReplyToResponse"];
   isWorking: boolean;
   /** The thread is catching up from a cached copy, whose working state may be stale. */
@@ -682,10 +677,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     citationHistory._tag !== "failed"
       ? timelineEntries.find(
           (entry) =>
-            (entry.kind === "message" &&
-              entry.message.role === "assistant" &&
-              entry.message.id === citationRequest.citation.messageId) ||
-            (entry.kind === "sent-message" && entry.id === citationRequest.citation.messageId),
+            isCitationSource(entry, citationRequest.citation.messageId) &&
+            (entry.kind !== "message" || entry.message.role === "assistant"),
         )
       : undefined;
   if (citationRequest && citedEntry) {
@@ -1109,6 +1102,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     canOperateThread,
     onRespondToApproval,
     citationRequest: readyCitationRequest,
+    onCiteAssistantText,
     onReplyToResponse,
     listRef,
     timestampFormat,

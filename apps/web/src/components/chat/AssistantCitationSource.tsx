@@ -106,11 +106,13 @@ function observeAssistantCitationSource({
   itemKey,
   request,
   list,
+  textless,
 }: {
   root: HTMLElement;
   itemKey: string;
   request: AssistantCitationTarget;
   list: LegendListRef;
+  textless: boolean;
 }) {
   const activation = request.activationRef.current;
   if (activation.dismissed) return;
@@ -165,7 +167,7 @@ function observeAssistantCitationSource({
     const state = list.getState();
     const index = state.indexByKey(itemKey);
     if (index === undefined || !(state.sizeAtIndex(index) > 0)) return;
-    const range = resolveAssistantCitationRange(root, request.citation);
+    const range = textless ? null : resolveAssistantCitationRange(root, request.citation);
     const rect = (range ?? root).getBoundingClientRect();
     if (rect.height <= 0 || scrollNode.clientHeight <= 0) {
       clear();
@@ -214,7 +216,7 @@ function observeAssistantCitationSource({
       ) {
         root.focus({ preventScroll: true });
       }
-      if (!range) {
+      if (!range && !textless) {
         toastManager.add({
           type: "warning",
           title: m(msg("The quoted text has changed")),
@@ -348,6 +350,7 @@ export function AssistantCitationSource({
   itemKey,
   request,
   listRef,
+  textless = false,
   children,
 }: {
   messageId: MessageId;
@@ -355,6 +358,8 @@ export function AssistantCitationSource({
   itemKey: string;
   request: AssistantCitationTarget | null;
   listRef: RefObject<LegendListRef | null>;
+  /** The quoted text lives outside this document, as in a published page's frame: reveal the source only. */
+  textless?: boolean;
   children: ReactNode;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -363,8 +368,8 @@ export function AssistantCitationSource({
     const root = rootRef.current;
     const list = listRef.current;
     if (!root || !list || !request || request.citation.messageId !== messageId) return;
-    return observeAssistantCitationSource({ root, itemKey, request, list });
-  }, [itemKey, listRef, messageId, request]);
+    return observeAssistantCitationSource({ root, itemKey, request, list, textless });
+  }, [itemKey, listRef, messageId, request, textless]);
 
   return (
     <div

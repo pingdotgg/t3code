@@ -4,6 +4,7 @@ import {
   injectHtmlRenderBootstrap,
   readHtmlRenderImageRequest,
   readHtmlRenderLinkRequest,
+  readHtmlRenderSelection,
 } from "./htmlRender.ts";
 import { htmlRenderFromToolItem } from "./toolOutput.ts";
 
@@ -107,6 +108,58 @@ describe("readHtmlRenderLinkRequest", () => {
     ).toBeUndefined();
     expect(
       readHtmlRenderLinkRequest({ type: "t3-html-render-link", url: "https://example.com" }),
+    ).toBeUndefined();
+  });
+});
+
+describe("readHtmlRenderSelection", () => {
+  const selection = (params: unknown) => ({
+    jsonrpc: "2.0",
+    method: "t3/notifications/selection",
+    params,
+  });
+  const rect = { left: 10, top: 20, right: 110, bottom: 40 };
+
+  it("places a selection from its context window at its offset in the whole page", () => {
+    // The page reads "Header\n\n  First   paragraph. Second sentence here." and sent only the last
+    // part of the text before the selection.
+    expect(
+      readHtmlRenderSelection(
+        selection({
+          text: "Second sentence",
+          before: "paragraph. ",
+          after: " here.",
+          offset: "Header First paragraph. ".length,
+          rect,
+        }),
+      ),
+    ).toEqual({
+      selector: {
+        text: "Second sentence",
+        start: 24,
+        end: 39,
+        prefix: "paragraph. ",
+        suffix: " here.",
+      },
+      rect,
+    });
+  });
+
+  it("reads a cleared or malformed selection as none, and ignores other messages", () => {
+    const valid = { text: "Quote", before: "", after: "", offset: 0, rect };
+    expect(readHtmlRenderSelection(selection(null))).toBeNull();
+    expect(readHtmlRenderSelection(selection({ ...valid, text: "  " }))).toBeNull();
+    expect(readHtmlRenderSelection(selection({ ...valid, text: "a".repeat(8_002) }))).toBeNull();
+    expect(readHtmlRenderSelection(selection({ ...valid, before: "a".repeat(65) }))).toBeNull();
+    expect(readHtmlRenderSelection(selection({ ...valid, offset: -1 }))).toBeNull();
+    expect(
+      readHtmlRenderSelection(selection({ ...valid, rect: { ...rect, top: "0" } })),
+    ).toBeNull();
+    expect(
+      readHtmlRenderSelection(selection({ ...valid, text: "a".repeat(8_001) }))?.selector.text,
+    ).toHaveLength(8_001);
+    expect(
+      readHtmlRenderSelection({ ...selection(valid), method: "ui/open-link" }),
     ).toBeUndefined();
   });
 });

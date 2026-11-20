@@ -6,7 +6,15 @@ import {
 } from "@t3tools/contracts";
 import { useGT } from "gt-react";
 import { QuoteIcon } from "lucide-react";
-import { use, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  use,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type Ref,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   captureAssistantTextSelection,
@@ -38,7 +46,6 @@ export function AssistantSelectionToolbar({
   const toolbarRef = useRef<HTMLButtonElement>(null);
   const actionsRef = useRef<ReturnType<typeof observeSelectionActions> | null>(null);
   const backgroundThread = use(BackgroundThreadContext);
-  const gt = useGT();
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the toolbar DOM node and clamps its position inside the window before paint
   useLayoutEffect(() => {
@@ -191,22 +198,52 @@ export function AssistantSelectionToolbar({
     return true;
   };
   return createPortal(
-    <Button
+    <CiteSelectionButton
       ref={toolbarRef}
+      tooLong={tooLong}
+      className="fixed z-50 max-w-[calc(100vw-1rem)]"
+      style={{ left: selection.position.x, top: selection.position.y }}
+      onCite={cite}
+      onDismiss={dismiss}
+    />,
+    document.body,
+  );
+}
+
+/** Keeps the source selection on press; the caller positions it. */
+export function CiteSelectionButton({
+  ref,
+  tooLong,
+  className,
+  style,
+  onCite,
+  onDismiss,
+}: {
+  ref?: Ref<HTMLButtonElement>;
+  tooLong: boolean;
+  className: string;
+  style: CSSProperties;
+  onCite: () => void;
+  onDismiss: () => void;
+}) {
+  const gt = useGT();
+  return (
+    <Button
+      ref={ref}
       type="button"
       size="xs"
       variant="glass"
       disabled={tooLong}
       aria-label={tooLong ? gt("Selection is too long to cite") : gt("Cite selection in composer")}
-      className="fixed z-50 max-w-[calc(100vw-1rem)]"
-      style={{ left: selection.position.x, top: selection.position.y }}
+      className={className}
+      style={style}
       onPointerDown={(event) => event.preventDefault()}
-      onClick={cite}
+      onClick={onCite}
       onKeyDown={(event) => {
         event.stopPropagation();
         if (event.key === "Escape" && !event.nativeEvent.isComposing) {
           event.preventDefault();
-          dismiss();
+          onDismiss();
         }
       }}
     >
@@ -214,7 +251,6 @@ export function AssistantSelectionToolbar({
       {tooLong
         ? gt("Shorten selection")
         : gt("Cite", { $context: "verb, button that quotes the selected text" })}
-    </Button>,
-    document.body,
+    </Button>
   );
 }

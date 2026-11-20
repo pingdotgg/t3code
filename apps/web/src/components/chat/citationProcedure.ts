@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
-import { sentMessageFromToolItem } from "@t3tools/shared/toolOutput";
+import { htmlRenderFromToolItem, sentMessageFromToolItem } from "@t3tools/shared/toolOutput";
 import type * as Effect from "effect/Effect";
 import { Atom, type AtomRegistry } from "effect/reactivity";
 import { msg } from "gt-react";
@@ -90,6 +90,18 @@ export async function loadCitedHistory(input: {
   }
 }
 
+/** Sent messages and published pages have no message id; their citations name the turn item. */
+export function isCitationSource(
+  candidate: TimelineEntry | MessagesTimelineRow,
+  messageId: string,
+): boolean {
+  if (candidate.kind === "message") return candidate.message.id === messageId;
+  return (
+    (candidate.kind === "sent-message" || candidate.kind === "html-render") &&
+    candidate.id === messageId
+  );
+}
+
 /** Where the citation stands for the rows the timeline currently shows. */
 export function resolveCitationPhase(input: {
   readonly history: CitedHistory;
@@ -98,19 +110,11 @@ export function resolveCitationPhase(input: {
   readonly rows: ReadonlyArray<MessagesTimelineRow>;
 }): CitationPhase {
   if (input.history._tag === "failed") return { _tag: "failed" };
-  const source = input.entries.find(
-    (entry) =>
-      (entry.kind === "message" && entry.message.id === input.messageId) ||
-      (entry.kind === "sent-message" && entry.id === input.messageId),
-  );
+  const source = input.entries.find((entry) => isCitationSource(entry, input.messageId));
   // The history store can hold the message a render before the entries do.
   if (!source) return { _tag: "loading" };
   if (source.kind === "message" && source.message.role !== "assistant") return { _tag: "failed" };
-  const row = input.rows.find(
-    (candidate) =>
-      (candidate.kind === "message" && candidate.message.id === input.messageId) ||
-      (candidate.kind === "sent-message" && candidate.id === input.messageId),
-  );
+  const row = input.rows.find((candidate) => isCitationSource(candidate, input.messageId));
   if (row) return { _tag: "ready", rowId: row.id };
   return { _tag: "expanding" };
 }
@@ -144,7 +148,8 @@ export function citedThreadSnapshot(input: {
       (item.type === "dynamic_tool" &&
         item.id === input.messageId &&
         item.status === "completed" &&
-        sentMessageFromToolItem(item) !== undefined),
+        (sentMessageFromToolItem(item) !== undefined ||
+          htmlRenderFromToolItem(item) !== undefined)),
   )?.item;
   return {
     message: item === undefined ? null : item.type === "user_message" ? "other" : "assistant",

@@ -186,6 +186,8 @@ type RawThreadFeedEntry =
   | {
       readonly type: "html-render";
       readonly id: string;
+      /** The turn item that published the page; citations name it, since pages have no message id. */
+      readonly itemId: string;
       readonly createdAt: string;
       readonly runId: RunId | null;
       readonly render: HtmlRenderReference;
@@ -1136,6 +1138,16 @@ export function failedFeedRunIds(
  * it, or the segment after its run's last steer when `presented` shows that
  * fold. Null for user messages, which never fold.
  */
+/** A message jump lands on the message, or on a published page named by its turn item. */
+export function isFeedJumpTarget(
+  entry: { readonly type: string; readonly id: string; readonly itemId?: string },
+  id: string,
+): boolean {
+  return entry.type === "message"
+    ? entry.id === id
+    : entry.type === "html-render" && entry.itemId === id;
+}
+
 export function messageFoldRunId(
   feed: ReadonlyArray<ThreadFeedEntry>,
   entryId: string,
@@ -2643,6 +2655,7 @@ export function buildThreadFeed(
       const entry: RawThreadFeedEntry = {
         type: "html-render",
         id: `html-render:${row.visibility}:${row.sourceThreadId}:${row.sourceItemId}`,
+        itemId: item.id,
         createdAt,
         runId: item.runId,
         render,

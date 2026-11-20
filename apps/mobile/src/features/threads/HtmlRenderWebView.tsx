@@ -1,12 +1,17 @@
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { useNavigation } from "@react-navigation/native";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { ASSISTANT_CITATION_MAX_TEXT_LENGTH } from "@t3tools/contracts";
+import type { AssistantTextSelector } from "@t3tools/shared/assistantCitations";
 import {
+  htmlRenderClearSelectionMessage,
   htmlRenderFileName,
   htmlRenderFrameHeight,
   htmlRenderThemeFragment,
   htmlRenderThemeMessage,
+  readHtmlRenderSelection,
   type HtmlRenderReference,
+  type HtmlRenderSelection,
   type HtmlRenderTheme,
 } from "@t3tools/shared/htmlRender";
 import { T, useGT } from "gt-react-native";
@@ -16,6 +21,7 @@ import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
+import * as Dialog from "../../components/ui/Dialog";
 import { mobileHtmlRenderTheme } from "../../lib/htmlRenderTheme";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
@@ -25,6 +31,11 @@ import { webViewDecelerationRate } from "../../lib/webViewDecelerationRate";
 const ROW_BOTTOM_MARGIN = 8;
 const ACTION_ROW_HEIGHT = 32;
 const FULL_SCREEN_GUTTER = 16;
+const CITE_HEIGHT = 30;
+const CITE_GAP = 6;
+
+// One page offers Cite at a time; a selection in another page takes it over.
+let dismissPageCite: (() => void) | null = null;
 
 export function htmlRenderRowHeight(frameHeight: number) {
   return ACTION_ROW_HEIGHT + frameHeight + ROW_BOTTOM_MARGIN;
@@ -56,22 +67,25 @@ type Overflow = { readonly x: boolean; readonly y: boolean };
 
 const NO_OVERFLOW: Overflow = { x: false, y: false };
 
-function readOverflowMessage(data: string): Overflow | null {
+function parseMessage(data: string): unknown {
   try {
-    const message: unknown = JSON.parse(data);
-    return typeof message === "object" &&
-      message !== null &&
-      "type" in message &&
-      message.type === OVERFLOW_MESSAGE_TYPE &&
-      "x" in message &&
-      typeof message.x === "boolean" &&
-      "y" in message &&
-      typeof message.y === "boolean"
-      ? { x: message.x, y: message.y }
-      : null;
+    return JSON.parse(data);
   } catch {
-    return null;
+    return undefined;
   }
+}
+
+function readOverflowMessage(message: unknown): Overflow | null {
+  return typeof message === "object" &&
+    message !== null &&
+    "type" in message &&
+    message.type === OVERFLOW_MESSAGE_TYPE &&
+    "x" in message &&
+    typeof message.x === "boolean" &&
+    "y" in message &&
+    typeof message.y === "boolean"
+    ? { x: message.x, y: message.y }
+    : null;
 }
 
 const withoutFragment = (url: string) => url.split("#", 1)[0];
@@ -81,6 +95,8 @@ export function HtmlRenderWebView(props: {
   readonly title: string;
   readonly nested: boolean;
   readonly onLoadError?: () => void;
+  /** The reader's text selection in a nested page, or null once it is gone. */
+  readonly onSelection?: (selection: HtmlRenderSelection | null, clear: () => void) => void;
 }) {
   const theme = useHtmlRenderTheme();
   const [initialTheme] = useState(theme);
@@ -159,8 +175,20 @@ export function HtmlRenderWebView(props: {
           ? {
               injectedJavaScript: OVERFLOW_SCRIPT,
               onMessage: (event: WebViewMessageEvent) => {
-                const next = readOverflowMessage(event.nativeEvent.data);
-                if (next !== null) setOverflow(next);
+                const message = parseMessage(event.nativeEvent.data);
+                const next = readOverflowMessage(message);
+                if (next !== null) {
+                  setOverflow(next);
+                  return;
+                }
+                const selection = readHtmlRenderSelection(message);
+                if (selection !== undefined) {
+                  props.onSelection?.(selection, () =>
+                    webView.current?.injectJavaScript(
+                      `window.postMessage(${JSON.stringify(htmlRenderClearSelectionMessage())}, "*"); true;`,
+                    ),
+                  );
+                }
               },
             }
           : {})}
@@ -180,6 +208,8 @@ export function ThreadHtmlRender(props: {
   readonly render: HtmlRenderReference;
   readonly frameWidth: number;
   readonly iconColor: ColorValue;
+  /** Offers Cite for text the reader selects in the page. */
+  readonly onCite?: ((selector: AssistantTextSelector) => void) | undefined;
 }) {
   const gt = useGT();
   const navigation = useNavigation();
@@ -200,6 +230,25 @@ export function ThreadHtmlRender(props: {
   if (uri === null && asset._tag === "Success") setUri(asset.url);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const [selection, setSelection] = useState<{
+    readonly value: HtmlRenderSelection;
+    readonly clear: () => void;
+  } | null>(null);
+  const [citeWidth, setCiteWidth] = useState(0);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- hands the one Cite slot over from another page's selection
+  useEffect(() => {
+    if (selection === null) return;
+    const dismiss = () => setSelection(null);
+    dismissPageCite?.();
+    dismissPageCite = dismiss;
+    return () => {
+      if (dismissPageCite === dismiss) dismissPageCite = null;
+    };
+  }, [selection]);
+  const citeTop = (rect: HtmlRenderSelection["rect"]) => {
+    const below = rect.bottom + CITE_GAP;
+    return Math.max(0, below + CITE_HEIGHT <= height ? below : rect.top - CITE_GAP - CITE_HEIGHT);
+  };
   const retried = useRef(false);
   const handleLoadError = () => {
     if (retried.current) {
@@ -246,13 +295,52 @@ export function ThreadHtmlRender(props: {
       </View>
       <View style={{ height }}>
         {uri !== null && !failed ? (
-          <HtmlRenderWebView
-            key={`${uri}:${attempt}`}
-            uri={uri}
-            title={title}
-            nested
-            onLoadError={handleLoadError}
-          />
+          <>
+            <HtmlRenderWebView
+              key={`${uri}:${attempt}`}
+              uri={uri}
+              title={title}
+              nested
+              onLoadError={handleLoadError}
+              onSelection={
+                props.onCite ? (value, clear) => setSelection(value && { value, clear }) : undefined
+              }
+            />
+            {selection !== null && props.onCite ? (
+              <Pressable
+                accessibilityRole="button"
+                hitSlop={6}
+                className="absolute justify-center rounded-full border border-border/60 bg-card px-3"
+                style={{
+                  height: CITE_HEIGHT,
+                  left: Math.max(
+                    0,
+                    Math.min(selection.value.rect.right - citeWidth, props.frameWidth - citeWidth),
+                  ),
+                  top: citeTop(selection.value.rect),
+                }}
+                onLayout={(event) => setCiteWidth(Math.ceil(event.nativeEvent.layout.width))}
+                onPress={() => {
+                  if (selection.value.selector.text.length > ASSISTANT_CITATION_MAX_TEXT_LENGTH) {
+                    Dialog.alert(
+                      gt("Quote is too long"),
+                      gt("Select up to {max} characters to cite.", {
+                        max: ASSISTANT_CITATION_MAX_TEXT_LENGTH.toLocaleString(),
+                      }),
+                    );
+                    return;
+                  }
+                  props.onCite?.(selection.value.selector);
+                  selection.clear();
+                  setSelection(null);
+                }}
+              >
+                <Text className="text-[13px] font-medium text-foreground">
+                  {gt("Cite", { $context: "verb, quote selected text" })}
+                </Text>
+              </Pressable>
+            ) : null}
+          </>
         ) : failed || asset._tag === "Failure" ? (
           <Pressable
             accessibilityRole="button"

@@ -1,13 +1,20 @@
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import {
+  ASSISTANT_CITATION_MAX_TEXT_LENGTH,
+  type EnvironmentId,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
+import type { AssistantTextSelector } from "@t3tools/shared/assistantCitations";
 import {
   HTML_RENDER_COLUMN_WIDTH,
+  htmlRenderClearSelectionMessage,
   htmlRenderFileName,
   htmlRenderFrameHeight,
   type HtmlRenderReference,
+  type HtmlRenderSelection,
 } from "@t3tools/shared/htmlRender";
 import { T, useGT, Var } from "gt-react";
 import { Maximize2Icon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useAssetUrlRefresh } from "~/assets/assetUrls";
 import { useLongLivedAssetUrl } from "~/assets/longLivedAssetUrls";
@@ -16,11 +23,17 @@ import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { CiteSelectionButton } from "./AssistantSelectionToolbar";
 import { HtmlRenderDialog } from "./HtmlRenderDialog";
 import { observeResize } from "~/lib/observeResize";
 
 const MIN_URL_LIFE_MS = 5 * 60_000;
 const MAX_MEASURED_CONTENT_HEIGHTS = 200;
+
+const CITE_GAP = 4;
+
+// One page offers Cite at a time; a selection in another page takes it over.
+let dismissPageCite: (() => void) | null = null;
 
 // The height each render's page last reported, so a remounted frame opens at it before its page loads.
 const measuredContentHeights = new Map<string, number>();
@@ -39,6 +52,8 @@ export function HtmlRenderFrame(props: {
   readonly htmlRender: HtmlRenderReference;
   readonly threadRef: ScopedThreadRef | undefined;
   readonly onFullscreenChange?: (fullscreen: boolean) => void;
+  /** Offers Cite for text the reader selects in the page. */
+  readonly onCite?: ((selector: AssistantTextSelector) => boolean) | undefined;
 }) {
   const gt = useGT();
   const { attachmentId, title } = props.htmlRender;
@@ -72,6 +87,42 @@ export function HtmlRenderFrame(props: {
   const failed = loaded === null && assetUrl._tag === "Failure";
   const refresh = useAssetUrlRefresh(props.environmentId, resource);
   const [expandedSrc, setExpandedSrc] = useState<string | null>(null);
+  const [selection, setSelection] = useState<{
+    readonly value: HtmlRenderSelection;
+    readonly frame: HTMLIFrameElement;
+  } | null>(null);
+  const citeRef = useRef<HTMLButtonElement>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- dismisses Cite on a press elsewhere in the app, and hands the one Cite slot over from another page
+  useEffect(() => {
+    if (selection === null) return;
+    const dismiss = () => setSelection(null);
+    dismissPageCite?.();
+    dismissPageCite = dismiss;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!citeRef.current?.contains(event.target as Node)) dismiss();
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => {
+      if (dismissPageCite === dismiss) dismissPageCite = null;
+      document.removeEventListener("pointerdown", onPointerDown, true);
+    };
+  }, [selection]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the Cite button and keeps it inside the frame, below the selection or above it, before paint
+  useLayoutEffect(() => {
+    const button = citeRef.current;
+    if (!button || !selection) return;
+    const { rect } = selection.value;
+    const size = button.getBoundingClientRect();
+    const below = rect.bottom + CITE_GAP;
+    const top = below + size.height <= height ? below : rect.top - CITE_GAP - size.height;
+    button.style.left = `${Math.max(0, Math.min(rect.right, width - size.width))}px`;
+    button.style.top = `${Math.max(0, top)}px`;
+  }, [height, selection, width]);
+  const cite = () => {
+    if (!selection || !props.onCite?.(selection.value.selector)) return;
+    selection.frame.contentWindow?.postMessage(htmlRenderClearSelectionMessage(), "*");
+    setSelection(null);
+  };
   const { onFullscreenChange } = props;
   // Tied to the viewer's lifetime: unmounting while expanded must still release
   // the timeline's follow pin, which a close handler alone never reaches.
@@ -98,7 +149,20 @@ export function HtmlRenderFrame(props: {
               setContentHeight(height);
             }}
             onFullscreenChange={onFullscreenChange}
+            onSelection={
+              props.onCite ? (value, frame) => setSelection(value && { value, frame }) : undefined
+            }
           />
+          {selection !== null ? (
+            <CiteSelectionButton
+              ref={citeRef}
+              tooLong={selection.value.selector.text.length > ASSISTANT_CITATION_MAX_TEXT_LENGTH}
+              className="absolute z-10"
+              style={{ left: selection.value.rect.right, top: selection.value.rect.bottom }}
+              onCite={cite}
+              onDismiss={() => setSelection(null)}
+            />
+          ) : null}
           <div className="absolute end-2 top-2 flex gap-1 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/html-render:opacity-100 pointer-coarse:opacity-100">
             <Tooltip>
               <TooltipTrigger

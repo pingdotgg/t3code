@@ -1,4 +1,5 @@
 import { EnvironmentId } from "@t3tools/contracts";
+import { injectHtmlRenderBootstrap } from "@t3tools/shared/htmlRender";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
@@ -23,6 +24,11 @@ import { HtmlRenderFrame } from "./HtmlRenderFrame";
 
 function setup() {
   assetUrl.current = "about:blank";
+}
+
+function pageUrl(html: string) {
+  const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+  return { url, [Symbol.dispose]: () => URL.revokeObjectURL(url) };
 }
 
 const sizeChanged = (height: number) => ({
@@ -79,5 +85,38 @@ describe("HtmlRenderFrame", () => {
     assetUrl.current = "about:blank";
     await using second = await render(frame());
     expect(frameHeight(second)).toBe("1500px");
+  });
+
+  it("offers Cite for text selected in the page, with the visible text around it", async () => {
+    setup();
+    // The sandboxed page is out of the test's reach, so it selects its own text once it loads.
+    using page = pageUrl(
+      injectHtmlRenderBootstrap(
+        `<p>Intro line.</p><p id="quote">Quoted words</p><p>Outro.</p><script>getSelection().selectAllChildren(document.getElementById("quote"));</script>`,
+      ),
+    );
+    assetUrl.current = page.url;
+    const onCite = vi.fn(() => true);
+    await using screen = await render(
+      <HtmlRenderFrame
+        environmentId={EnvironmentId.make("environment")}
+        htmlRender={{ attachmentId: "quoted", title: "Notes", height: 200 }}
+        threadRef={undefined}
+        onCite={onCite}
+      />,
+    );
+    (screen.getByTitle("Notes").element() as HTMLIFrameElement).focus();
+    const cite = screen.getByRole("button", { name: "Cite selection in composer" });
+    await expect.element(cite).toBeVisible();
+
+    await userEvent.click(cite);
+    expect(onCite).toHaveBeenCalledWith({
+      text: "Quoted words",
+      start: "Intro line.".length,
+      end: "Intro line.Quoted words".length,
+      prefix: "Intro line.",
+      suffix: "Outro.",
+    });
+    await expect.element(cite).not.toBeInTheDocument();
   });
 });

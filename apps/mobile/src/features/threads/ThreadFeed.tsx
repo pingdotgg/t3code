@@ -77,7 +77,7 @@ import {
   type ChatFileAttachment,
   type ChatImageAttachment,
   type EnvironmentId,
-  type MessageId,
+  MessageId,
   type OrchestrationV2ProjectedTurnItem,
   type RunId,
   type ScheduledTaskId,
@@ -247,6 +247,7 @@ import {
   isSecretRequestActivityGroup,
   type ThreadFeedEntry,
   type ThreadFeedLatestRun,
+  isFeedJumpTarget,
   messageFoldRunId,
 } from "../../lib/threadActivity";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
@@ -2116,6 +2117,7 @@ function renderFeedEntry(
   }
 
   if (entry.type === "html-render") {
+    const { onCiteAssistantText } = props;
     return (
       <ThreadHtmlRender
         environmentId={props.environmentId}
@@ -2123,6 +2125,18 @@ function renderFeedEntry(
         render={entry.render}
         frameWidth={props.contentWidth}
         iconColor={iconSubtleColor}
+        onCite={
+          onCiteAssistantText
+            ? (selector) =>
+                onCiteAssistantText({
+                  version: 1,
+                  environmentId: props.environmentId,
+                  threadId: props.threadId,
+                  messageId: MessageId.make(entry.itemId),
+                  ...selector,
+                })
+            : undefined
+        }
       />
     );
   }
@@ -3914,8 +3928,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const pendingFoldMessageId =
     presentedFeed.findLast((entry) => entry.type === "pending-fold")?.messageId ?? null;
   const jumpRunId =
-    jumpReady &&
-    !presentedFeed.some((entry) => entry.type === "message" && entry.id === jumpToMessageId)
+    jumpReady && !presentedFeed.some((entry) => isFeedJumpTarget(entry, jumpToMessageId))
       ? messageFoldRunId(props.feed, jumpToMessageId, presentedFeed)
       : null;
   if (jumpRunId && !expandedTurnIds.has(jumpRunId)) {
@@ -3951,7 +3964,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     if (list && bottom > 0) list.reportContentInset({ bottom });
   };
   const jumpIndex = jumpReady
-    ? presentedFeed.findIndex((entry) => entry.type === "message" && entry.id === jumpToMessageId)
+    ? presentedFeed.findIndex((entry) => isFeedJumpTarget(entry, jumpToMessageId))
     : null;
   const landJump = useEffectEvent((index: number) => {
     const list = listRef.current;

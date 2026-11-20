@@ -11,6 +11,7 @@ import {
   filePreviewRestoreScrollMessage,
   isFilePreviewScrollRestored,
   readFilePreviewScroll,
+  type HtmlRenderSelection,
   type HtmlRenderShortcut,
   htmlRenderShortcutsMessage,
   HTML_RENDER_CONTAIN_SCROLL_FRAGMENT,
@@ -21,6 +22,7 @@ import {
   readHtmlRenderImageRequest,
   readHtmlRenderKeyDown,
   readHtmlRenderLinkRequest,
+  readHtmlRenderSelection,
 } from "@t3tools/shared/htmlRender";
 import {
   isMacPlatform,
@@ -301,6 +303,10 @@ export function HtmlRenderDocument(props: {
   readonly containScroll?: boolean | undefined;
   /** Reports fullscreen changes so virtualized rows can stay mounted. */
   readonly onFullscreenChange?: ((fullscreen: boolean) => void) | undefined;
+  /** The reader's text selection in the page, or null once it is gone. */
+  readonly onSelection?:
+    | ((selection: HtmlRenderSelection | null, frame: HTMLIFrameElement) => void)
+    | undefined;
 }) {
   const theme = useHtmlRenderTheme();
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -402,6 +408,14 @@ export function HtmlRenderDocument(props: {
     const height = readHtmlRenderContentHeight(event.data);
     if (height !== undefined) {
       props.onContentHeight?.(height);
+      return;
+    }
+    const selection = readHtmlRenderSelection(event.data);
+    if (selection !== undefined) {
+      // A script can select text on load; only a selection in the frame the reader focused offers Cite.
+      if (selection === null || document.activeElement === frame) {
+        props.onSelection?.(selection, frame);
+      }
       return;
     }
     if (document.activeElement !== frame || navigator.userActivation?.isActive === false) return;

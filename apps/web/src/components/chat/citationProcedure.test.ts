@@ -181,6 +181,24 @@ describe("resolveCitationPhase", () => {
     });
   });
 
+  it("finds a page an agent published with html_render by its item id", () => {
+    const htmlRender = { attachmentId: "page.html", title: "Page", height: 200 };
+    const page: TimelineEntry = {
+      kind: "html-render",
+      id: messageId,
+      createdAt: at,
+      runId,
+      htmlRender,
+    };
+    expect(phase({ entries: [page] })).toEqual({ _tag: "expanding" });
+    expect(
+      phase({
+        entries: [page],
+        rows: [{ kind: "html-render", id: messageId, createdAt: at, htmlRender }],
+      }),
+    ).toEqual({ _tag: "ready", rowId: messageId });
+  });
+
   it("finds text an agent sent with send_to_user by its item id", () => {
     const sent: TimelineEntry = {
       kind: "sent-message",

@@ -1,5 +1,6 @@
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import type {
+  AssistantCitation,
   ProviderApprovalDecision,
   ResponseContextRecord,
   RuntimeRequestId,
@@ -26,6 +27,7 @@ import type { PendingApproval } from "../../session-logic";
 import { type ChatFileAttachment } from "../../types";
 import { type ExpandedImageItem, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { type AssistantCitationTarget } from "./AssistantCitationSource";
+import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { type MessagesTimelineRow, type WorkGroupScrollAnchor } from "./MessagesTimeline.logic";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import type { TurnItemDetailSource } from "../../state/queries";
@@ -51,6 +53,10 @@ export interface TimelineRowSharedState {
     | ((requestId: RuntimeRequestId, decision: ProviderApprovalDecision) => Promise<unknown>)
     | undefined;
   citationRequest: AssistantCitationTarget | null;
+  /** Absent hides Cite, as in the guest view. */
+  onCiteAssistantText:
+    | ((citation: AssistantCitation, sourceAnchor?: AssistantCitationSourceAnchor) => boolean)
+    | undefined;
   /** Absent hides "Reply", as in the guest view. */
   onReplyToResponse: ((response: ResponseContextRecord) => boolean) | undefined;
   listRef: React.RefObject<LegendListRef | null>;
