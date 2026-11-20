@@ -216,7 +216,7 @@ export function evaluatePullRequestWatch(
     const at = Date.parse(activeAt(remark));
     return (
       (at > through || (at === through && !watch.remarkIds.includes(remark.id))) &&
-      remark.author?.login.toLowerCase() !== own
+      (watch.includeOwnComments === true || remark.author?.login.toLowerCase() !== own)
     );
   });
   if (fresh.length > 0) changes.push({ kind: "remarks", remarks: fresh });
@@ -287,6 +287,7 @@ export function evaluatePullRequestWatch(
       checksAwaitedSince,
       checksPending,
       ...(watch.until !== undefined && { until: watch.until }),
+      ...(watch.includeOwnComments === true && { includeOwnComments: true }),
     },
     exhausted: commentsOnly && wakes >= PULL_REQUEST_WATCH_WAKE_LIMIT,
   };

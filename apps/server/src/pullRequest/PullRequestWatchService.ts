@@ -71,6 +71,7 @@ export class PullRequestWatchService extends Context.Service<
       readonly target: PullRequestTarget;
       readonly watching: boolean;
       readonly until?: PullRequestWatchUntil | undefined;
+      readonly includeOwnComments?: boolean | undefined;
     }) => Effect.Effect<
       ResolvedTarget & { readonly watching: boolean; readonly wasWatching: boolean },
       | PullRequestWatchFailedError
@@ -107,6 +108,7 @@ const make = Effect.gen(function* () {
     readonly target: PullRequestTarget;
     readonly watching: boolean;
     readonly until?: PullRequestWatchUntil | undefined;
+    readonly includeOwnComments?: boolean | undefined;
   }) {
     const { watching } = input;
     const thread = yield* requireThread(input.threadId);
@@ -165,6 +167,10 @@ const make = Effect.gen(function* () {
         watching,
         ...(watching ? { link: { url: target.url, source: "agent" as const } } : {}),
         ...(watching && input.until !== undefined && { until: input.until }),
+        ...(watching &&
+          input.includeOwnComments !== undefined && {
+            includeOwnComments: input.includeOwnComments,
+          }),
         ...(watching && checksPendingAtStart !== undefined
           ? { checksPending: checksPendingAtStart }
           : {}),

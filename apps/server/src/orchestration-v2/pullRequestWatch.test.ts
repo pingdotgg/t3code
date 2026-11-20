@@ -901,7 +901,7 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(evaluatePullRequestWatch(watch(), noViewer, [reply]).changes, []);
   });
 
-  it("reports remarks from others once and never the agent's own", () => {
+  it("reports fresh remarks once and includes the authenticated account only when requested", () => {
     const comments = [
       remark("agent-user", "2026-10-02T12:05:00Z", "Fixed in the latest push."),
       remark("macroscope-app[bot]", "2026-10-02T12:06:00Z"),
@@ -911,6 +911,15 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(report.changes, [{ kind: "remarks", remarks: [comments[1]!] }]);
     assert.equal(report.next.remarksThrough, "2026-10-02T12:06:00Z");
     assert.deepEqual(evaluatePullRequestWatch(report.next, detail(), comments).changes, []);
+
+    const optedIn = evaluatePullRequestWatch(
+      watch({ includeOwnComments: true }),
+      detail(),
+      comments,
+    );
+    assert.deepEqual(optedIn.changes, [{ kind: "remarks", remarks: comments.slice(0, 2) }]);
+    assert.equal(optedIn.next.includeOwnComments, true);
+    assert.deepEqual(evaluatePullRequestWatch(optedIn.next, detail(), comments).changes, []);
   });
 
   it("cuts a long remark in the wake message without splitting an emoji", () => {

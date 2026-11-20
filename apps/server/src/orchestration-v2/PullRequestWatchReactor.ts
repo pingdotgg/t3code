@@ -125,7 +125,8 @@ interface HeldWake {
   readonly reason?: WatchEndReason;
 }
 
-const watchKey = ({ thread, watch }: WatchTarget) => `${thread.id} ${watch.startedAt}`;
+const watchKey = ({ thread, watch }: WatchTarget) =>
+  `${thread.id} ${watch.startedAt} ${watch.includeOwnComments === true}`;
 
 type WatchEndReason =
   | "merged"
@@ -230,7 +231,8 @@ function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatc
     left.awaitingBaseline === right.awaitingBaseline &&
     left.checksAwaitedSince === right.checksAwaitedSince &&
     left.checksPending === right.checksPending &&
-    left.until === right.until
+    left.until === right.until &&
+    left.includeOwnComments === right.includeOwnComments
   );
 }
 

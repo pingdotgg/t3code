@@ -123,6 +123,7 @@ export const ThreadPullRequestWatch = Schema.Struct({
   checksPending: Schema.optional(Schema.Boolean),
   /** How long the watch holds its thread. Absent means until every check finished. */
   until: Schema.optional(Schema.Literal("merged")),
+  includeOwnComments: Schema.optional(Schema.Literal(true)),
 });
 export type ThreadPullRequestWatch = typeof ThreadPullRequestWatch.Type;
 

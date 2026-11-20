@@ -4309,7 +4309,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect("keeps how long a watch holds across reads until the agent changes it", () =>
+  it.effect("keeps watch options across reads until the agent changes them", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const maintenance = yield* ProjectionReplay.ProjectionReplay;
@@ -4333,7 +4333,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         orchestrator.getThreadShell(threadId),
         (thread) => thread?.pullRequests?.[0]?.watch,
       );
-      const watch = (id: string, until?: PullRequestWatchUntil) =>
+      const watch = (id: string, until?: PullRequestWatchUntil, includeOwnComments?: boolean) =>
         orchestrator.dispatch({
           type: "thread.pull-request.watch",
           commandId: CommandId.make(id),
@@ -4342,15 +4342,31 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           watching: true,
           link: { url: "https://github.com/pingdotgg/t3code/pull/7", source: "agent" },
           ...(until !== undefined && { until }),
+          ...(includeOwnComments !== undefined && { includeOwnComments }),
         });
 
       yield* watch("pr-watch-until-start");
-      assert.isUndefined((yield* watchOf)?.until);
+      const initial = yield* watchOf;
+      assert.isUndefined(initial?.until);
+      assert.isUndefined(initial?.includeOwnComments);
+      if (initial === undefined) return;
 
-      yield* watch("pr-watch-until-on", "merged");
+      yield* watch("pr-watch-until-on", "merged", true);
       const started = yield* watchOf;
       assert.equal(started?.until, "merged");
+      assert.equal(started?.includeOwnComments, true);
       if (started === undefined) return;
+
+      yield* orchestrator
+        .dispatch({
+          type: "thread.pull-request-watch.sync",
+          commandId: CommandId.make("pr-watch-old-comment-filter"),
+          threadId,
+          ...key,
+          startedAt: initial.startedAt,
+          watch: initial,
+        })
+        .pipe(Effect.flip);
 
       // A read that began before the agent set it must not drop it.
       const { until: _read, ...readBefore } = started;
@@ -4369,9 +4385,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.equal((yield* watchOf)?.until, "merged");
       assert.isTrue((yield* maintenance.rebuild).valid);
       assert.equal((yield* watchOf)?.until, "merged");
+      assert.equal((yield* watchOf)?.includeOwnComments, true);
 
-      yield* watch("pr-watch-until-off", "checks");
+      yield* watch("pr-watch-until-off", "checks", false);
       assert.isUndefined((yield* watchOf)?.until);
+      assert.isUndefined((yield* watchOf)?.includeOwnComments);
       assert.equal((yield* watchOf)?.headSha, "abc123");
     }),
   );

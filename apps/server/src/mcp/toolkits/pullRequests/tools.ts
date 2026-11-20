@@ -380,6 +380,12 @@ const ListThreadPullRequestsTool = Tool.make("list_thread_pull_requests", {
 
 const WatchPullRequestInput = Schema.Struct({
   ...PullRequestTargetInput.fields,
+  includeOwnComments: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "Wake on comments and reviews from the authenticated account too, including ones you post. Defaults to false for a new watch. Omit to keep the active watch's setting.",
+    }),
+  ),
   until: Schema.optional(
     PullRequestWatchUntil.annotate({
       description:

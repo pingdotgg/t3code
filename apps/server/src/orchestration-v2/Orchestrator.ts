@@ -896,8 +896,8 @@ function syncedPullRequestWatch(
   },
 ): ThreadPullRequestWatch | undefined {
   if (command.watch === null) return undefined;
-  // Only the agent sets `until`, so a read in flight keeps what the watch has now.
-  const watch = withUntil(command.watch, existing?.until ?? "checks");
+  // A read in flight keeps the current hold duration.
+  const watch = withPullRequestWatchOptions(command.watch, { until: existing?.until ?? "checks" });
   // A push cleared the answer while this read was in flight, so its answer is the old head's.
   if (command.checksPendingBefore === undefined || existing?.checksPending !== undefined) {
     return watch;
@@ -905,14 +905,27 @@ function syncedPullRequestWatch(
   return withoutChecksAnswer(watch);
 }
 
-function withUntil(
+function withPullRequestWatchOptions(
   watch: ThreadPullRequestWatch,
-  until: PullRequestWatchUntil | undefined,
+  options: {
+    readonly until?: PullRequestWatchUntil | undefined;
+    readonly includeOwnComments?: boolean | undefined;
+  },
 ): ThreadPullRequestWatch {
-  if (until === undefined || until === (watch.until ?? "checks")) return watch;
-  if (until === "merged") return { ...watch, until };
-  const { until: _checks, ...rest } = watch;
-  return rest;
+  const until = options.until ?? watch.until ?? "checks";
+  const includeOwnComments = options.includeOwnComments ?? watch.includeOwnComments ?? false;
+  if (
+    until === (watch.until ?? "checks") &&
+    includeOwnComments === Boolean(watch.includeOwnComments)
+  ) {
+    return watch;
+  }
+  const { until: _until, includeOwnComments: _includeOwnComments, ...state } = watch;
+  return {
+    ...state,
+    ...(until === "merged" && { until }),
+    ...(includeOwnComments && { includeOwnComments: true as const }),
+  };
 }
 
 const withoutChecksAnswer = ({
@@ -4176,7 +4189,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           pullRequestSnapshotEndsWatch(link?.snapshot ?? null, entry.startedAt),
       );
       if (
-        entries.some(({ entry, link }) => link?.watch?.startedAt !== entry.startedAt) ||
+        entries.some(({ entry, link }) => {
+          const evaluated = entry.watch ?? entry.endedWatch;
+          return (
+            link?.watch?.startedAt !== entry.startedAt ||
+            (evaluated !== undefined &&
+              evaluated.includeOwnComments !== link.watch.includeOwnComments)
+          );
+        }) ||
         (wake && inactive) ||
         // One wake cannot drop the news of just some of its pull requests; the sender splits it.
         (entries.length > 1 && outdated.some(Boolean))
@@ -4184,7 +4204,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
-          cause: "The pull request watch ended or its thread settled while it was read.",
+          cause: "The pull request watch changed or its thread settled while it was read.",
         });
       }
       for (const { entry } of entries) {
@@ -5302,7 +5322,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : existing.watch
               : !command.watching
                 ? undefined
-                : withUntil(
+                : withPullRequestWatchOptions(
                     existing.watch ?? {
                       startedAt,
                       headSha: null,
@@ -5346,7 +5366,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                       remarkIds: [],
                       wakes: 0,
                     },
-                    command.until,
+                    command,
                   );
           if (watch === existing.watch && links === linked) return thread;
           const final =
