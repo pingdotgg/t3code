@@ -1005,7 +1005,7 @@ const registerLiveActivityPushTokenValue = Effect.fn(
   "remoteRegistration.registerLiveActivityPushTokenValue",
 )(function* (input: {
   readonly activityPushToken: string;
-}): Effect.fn.Return<boolean, unknown, AgentAwarenessRegistrationServices> {
+}): Effect.fn.Return<boolean, AgentAwarenessRegistrationError, AgentAwarenessRegistrationServices> {
   // Signed out, the relay cannot reach this device; connected T3 servers push to it directly.
   if (!relayTokenProvider) {
     setDirectLiveActivityTokens({ activityPushToken: input.activityPushToken });
