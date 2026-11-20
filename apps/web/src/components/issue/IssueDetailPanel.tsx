@@ -547,8 +547,8 @@ export function IssueDetailPanel({
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
-      <div className="shrink-0 border-b border-border/60">
-        <div className="px-4 pb-4">
+      <div className="flex max-h-1/2 shrink-0 flex-col border-b border-border/60">
+        <div className="min-h-0 overflow-y-auto px-4 pb-4">
           <PullRequestDetailTitleRow className="h-7 gap-1 text-sm sm:text-xs">
             <span className="min-w-0 truncate font-medium text-muted-foreground">
               {detail.scope}

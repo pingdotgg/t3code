@@ -43,8 +43,8 @@ function IssuePropertyValue({ value }: { readonly value: IssueProperty["value"] 
     return (
       <View className="gap-1">
         {value.map((entry, index) => (
-          // oxlint-disable-next-line react/no-array-index-key -- Tracker values have no ids of their own.
-          <IssuePropertyValue key={index} value={entry} />
+          // oxlint-disable-next-line react/no-array-index-key -- Values have no ids; the content keeps an expanded entry from passing to the next.
+          <IssuePropertyValue key={`${index}:${JSON.stringify(entry)}`} value={entry} />
         ))}
       </View>
     );

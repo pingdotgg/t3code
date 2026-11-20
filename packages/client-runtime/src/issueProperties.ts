@@ -6,7 +6,7 @@ export const ISSUE_PROPERTY_PIN_LIMIT = 100;
 /** Pinned property ids per issue, keyed by `issuePropertyPinKey`. Kept on the device. */
 export const IssuePropertyPins = Schema.Record(
   Schema.String,
-  Schema.Array(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))).check(
+  Schema.Array(Schema.String.check(Schema.isMinLength(1))).check(
     Schema.isMaxLength(ISSUE_PROPERTY_PIN_LIMIT),
   ),
 );
@@ -105,7 +105,8 @@ export function formatIssuePropertyScalar(value: string | number): string {
 export function issuePropertyObjectLabel(value: IssuePropertyObject): string | null {
   for (const key of ["displayName", "name", "value", "title", "login", "key"]) {
     const candidate = value[key];
-    if (typeof candidate === "string" || typeof candidate === "number") return String(candidate);
+    if (typeof candidate === "number") return String(candidate);
+    if (typeof candidate === "string" && candidate.trim() !== "") return candidate;
   }
   return null;
 }

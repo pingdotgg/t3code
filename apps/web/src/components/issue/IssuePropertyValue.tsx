@@ -51,9 +51,10 @@ export function IssuePropertyValue({ value }: { value: IssueProperty["value"] })
     return (
       <ul className="space-y-1">
         {value.map((entry, index) => (
-          // Values have no ids, and these read-only rows hold no state of their own.
+          // Values have no ids; with the content in the key, an open disclosure is not handed
+          // to the entry that takes its place.
           // oxlint-disable-next-line react/no-array-index-key
-          <li key={index}>
+          <li key={`${index}:${JSON.stringify(entry)}`}>
             <IssuePropertyValue value={entry} />
           </li>
         ))}

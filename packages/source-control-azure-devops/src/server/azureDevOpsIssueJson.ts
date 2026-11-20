@@ -302,9 +302,12 @@ function fieldLabel(referenceName: string): string {
   );
 }
 
-/** Azure keeps rich text as HTML; a property shows the text a reader would see. */
+/**
+ * Azure keeps rich text as HTML; a property shows the text a reader would see. The read carries
+ * no field types, so HTML needs a closing or void tag too: plain "<TBD>" stays as written.
+ */
 function htmlText(value: string): string {
-  if (!/^\s*<[a-z]/i.test(value)) return value;
+  if (!/^\s*<[a-z]/i.test(value) || !/<\/[a-z]|<(?:br|hr|img)\b/i.test(value)) return value;
   return value
     .replace(/<br\s*\/?>|<\/(?:p|div|li|h[1-6]|tr)>/gi, "\n")
     .replace(/<[^>]*>/g, "")

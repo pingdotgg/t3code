@@ -38,6 +38,7 @@ const WORK_ITEM = {
       _links: { avatar: { href: "https://dev.azure.com/acme/_apis/avatar" } },
     },
     "Custom.SLABreached": false,
+    "Custom.Placeholder": "<TBD>",
     "WEF_6CB513B6_Kanban.Column": "Doing",
   },
   relations: [
@@ -195,7 +196,7 @@ describe("AzureDevOpsIssueTracker", () => {
         viewerPermissions: { setState: true, edit: true, labels: true, assignees: true },
       });
       // Custom fields too, named as Azure's form names them; its bookkeeping and the fields the
-      // summary already shows are left out, and rich text reads as text.
+      // summary already shows are left out, and rich text reads as text while plain text stays.
       expect(issue.properties?.slice(3, -4)).toEqual([
         { id: "System.WorkItemType", label: "Work Item Type", value: "Bug" },
         { id: "System.AreaPath", label: "Area Path", value: "Web App\\Composer" },
@@ -207,6 +208,7 @@ describe("AzureDevOpsIssueTracker", () => {
         },
         { id: "System.ChangedBy", label: "Changed By", value: "Theo" },
         { id: "Custom.SLABreached", label: "SLA Breached", value: false },
+        { id: "Custom.Placeholder", label: "Placeholder", value: "<TBD>" },
       ]);
       // The first page is the newest comments, handed over oldest first.
       expect(seen.find((args) => args.includes("comments"))).toContain("order=desc");

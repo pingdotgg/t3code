@@ -1,7 +1,9 @@
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   ISSUE_PROPERTY_PIN_LIMIT,
+  IssuePropertyPins,
   isEmptyIssuePropertyValue,
   issuePropertyObjectLabel,
   issuePropertyPinKey,
@@ -11,6 +13,7 @@ import {
 } from "./issueProperties.ts";
 
 const issue = { tracker: "linear", host: "linear.app", scope: "ENG", key: "ENG-7" };
+const isIssuePropertyPins = Schema.is(IssuePropertyPins);
 
 describe("issue property pins", () => {
   it("keeps each issue's pins apart and forgets an issue with none left", () => {
@@ -36,6 +39,8 @@ describe("issue property pins", () => {
 
     const full = Array.from({ length: ISSUE_PROPERTY_PIN_LIMIT }, (_, index) => `field_${index}`);
     expect(toggleIssuePropertyPin({ [key]: full }, key, "one_more")[key]).toEqual(full);
+    const long = toggleIssuePropertyPin(pins, key, `Custom.${"x".repeat(250)}`);
+    expect(isIssuePropertyPins(long)).toBe(true);
   });
 
   it("shows pins in the order they were made, skipping a field the tracker stopped sending", () => {
@@ -60,6 +65,8 @@ describe("issue property values", () => {
     }
     expect(issuePropertyObjectLabel({ displayName: "Alex", accountId: "acc_1" })).toBe("Alex");
     expect(issuePropertyObjectLabel({ value: 0 })).toBe("0");
+    expect(issuePropertyObjectLabel({ displayName: "", name: "Alex" })).toBe("Alex");
+    expect(issuePropertyObjectLabel({ displayName: " ", accountId: "acc_1" })).toBeNull();
     expect(issuePropertyObjectLabel({ nested: { value: "Gold" } })).toBeNull();
   });
 
