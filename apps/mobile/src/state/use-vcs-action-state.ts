@@ -1,10 +1,16 @@
 import { useAtomValue } from "@effect/atom-react";
 import { secondTick } from "@t3tools/client-runtime/clock";
-import { type VcsActionState, type VcsActionTarget } from "@t3tools/client-runtime/state/vcs";
+import {
+  vcsActionLabelText,
+  type VcsActionState,
+  type VcsActionTarget,
+} from "@t3tools/client-runtime/state/vcs";
 import { Atom } from "effect/reactivity";
 import * as Haptics from "expo-haptics";
+import { msg, useMessages } from "gt-react-native";
 import { useSyncExternalStore } from "react";
 
+import type { MessageResolver } from "../i18n/messages";
 import { appAtomRegistry } from "./atom-registry";
 import { vcsActionManager } from "./vcs";
 
@@ -77,16 +83,21 @@ const EMPTY_PROGRESS: GitActionProgress = {
   description: null,
 };
 
-function formatElapsedSeconds(ms: number | null, nowMs: number): string | null {
+function formatElapsedSeconds(
+  ms: number | null,
+  nowMs: number,
+  resolve: MessageResolver,
+): string | null {
   if (ms === null) return null;
   const elapsed = Math.max(0, Math.floor((nowMs - ms) / 1000));
   if (elapsed < 2) return null;
-  return `Running for ${elapsed}s`;
+  return resolve(msg("Running for {elapsed}s", { elapsed: String(elapsed) }));
 }
 
 export function useGitActionProgress(target: VcsActionTarget): GitActionProgress {
   const actionState = useVcsActionState(target);
   const { result } = useGitActionResultNotification();
+  const resolve = useMessages();
 
   // Only a running action shows elapsed time, so only it subscribes to the second tick.
   const nowMs = useSyncExternalStore(
@@ -97,10 +108,14 @@ export function useGitActionProgress(target: VcsActionTarget): GitActionProgress
   if (actionState.isRunning) {
     const description =
       actionState.lastOutputLine ??
-      formatElapsedSeconds(actionState.hookStartedAtMs ?? actionState.phaseStartedAtMs, nowMs);
+      formatElapsedSeconds(
+        actionState.hookStartedAtMs ?? actionState.phaseStartedAtMs,
+        nowMs,
+        resolve,
+      );
     return {
       phase: "running",
-      label: actionState.currentLabel,
+      label: vcsActionLabelText(actionState, resolve),
       description,
     };
   }
