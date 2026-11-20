@@ -84,6 +84,39 @@ const Comment = Schema.Struct({
 });
 export type JiraComment = typeof Comment.Type;
 
+/** A pull request as the issue's development panel lists it. */
+const DevelopmentPullRequest = Schema.Struct({
+  id: Schema.optional(Schema.NullOr(Schema.String)),
+  name: Schema.optional(Schema.NullOr(Schema.String)),
+  url: Schema.optional(Schema.NullOr(Schema.String)),
+  status: Schema.optional(Schema.NullOr(Schema.String)),
+  repositoryName: Schema.optional(Schema.NullOr(Schema.String)),
+});
+export type JiraDevelopmentPullRequest = typeof DevelopmentPullRequest.Type;
+
+const DevelopmentSummary = Schema.Struct({
+  summary: Schema.Struct({
+    pullrequest: Schema.optional(
+      Schema.NullOr(
+        Schema.Struct({
+          byInstanceType: Schema.Record(
+            Schema.String,
+            Schema.Struct({ count: Schema.optional(Schema.Number) }),
+          ),
+        }),
+      ),
+    ),
+  }),
+});
+
+const DevelopmentDetail = Schema.Struct({
+  detail: Schema.Array(
+    Schema.Struct({
+      pullRequests: Schema.optional(Schema.NullOr(Schema.Array(DevelopmentPullRequest))),
+    }),
+  ),
+});
+
 const ISSUE_FIELDS = [
   "summary",
   "status",
@@ -228,6 +261,13 @@ export class JiraApi extends Context.Service<
     readonly findUsers: (
       query: string,
     ) => Effect.Effect<ReadonlyArray<JiraUser>, IssueTrackerError>;
+    /**
+     * The pull requests the development panel shows for an issue, by its numeric id. Jira serves
+     * them only through `dev-status`, the undocumented API behind that panel.
+     */
+    readonly developmentPullRequests: (
+      issueId: string,
+    ) => Effect.Effect<ReadonlyArray<JiraDevelopmentPullRequest>, IssueTrackerError>;
   }
 >()("@t3tools/issue-tracker-jira/server/JiraApi") {}
 
@@ -492,6 +532,33 @@ export const make = Effect.gen(function* () {
       query: { query, maxResults: 20 },
     });
 
+  const developmentPullRequests: JiraApi["Service"]["developmentPullRequests"] = Effect.fn(
+    "JiraApi.developmentPullRequests",
+  )(function* (issueId) {
+    // The detail is read per integration; the summary names those holding pull requests.
+    const summary = yield* send("developmentSummary", DevelopmentSummary, {
+      method: "GET",
+      path: "/rest/dev-status/latest/issue/summary",
+      query: { issueId },
+    });
+    const integrations = Object.entries(summary.summary.pullrequest?.byInstanceType ?? {})
+      .filter(([, instance]) => instance.count !== 0)
+      .map(([applicationType]) => applicationType);
+    const details = yield* Effect.forEach(
+      integrations,
+      (applicationType) =>
+        send("developmentPullRequests", DevelopmentDetail, {
+          method: "GET",
+          path: "/rest/dev-status/latest/issue/detail",
+          query: { issueId, applicationType, dataType: "pullrequest" },
+        }),
+      { concurrency: "unbounded" },
+    );
+    return details.flatMap((answer) =>
+      answer.detail.flatMap((instance) => instance.pullRequests ?? []),
+    );
+  });
+
   return JiraApi.of({
     origin: storedSite("origin").pipe(Effect.map((site) => site.origin)),
     myself,
@@ -508,6 +575,7 @@ export const make = Effect.gen(function* () {
     labels,
     assignable,
     findUsers,
+    developmentPullRequests,
   });
 });
 

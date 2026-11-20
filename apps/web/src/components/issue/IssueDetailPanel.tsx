@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { issueEventSentence, issueWriteAccess } from "@t3tools/client-runtime/issue-presentation";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { prependIssueComments } from "@t3tools/client-runtime/state/issues";
 import {
   issueAssigneeHeld,
@@ -504,6 +505,9 @@ export function IssueDetailPanel({
   const otherStates = access.states;
   const tracker = issueTrackerPresentation(detail.tracker);
   const currentState = issueStatePresentation(detail.state);
+  // Only a git host's tracker shares its host with the change requests it links.
+  const selectPullRequest =
+    sourceControlClients.find(detail.tracker) === undefined ? undefined : onSelectPullRequest;
 
   const loadOlder = async () => {
     if (nextCursor === null || loadingOlder) return;
@@ -819,9 +823,9 @@ export function IssueDetailPanel({
                   link={link}
                   scope={detail.scope}
                   onSelect={
-                    onSelectPullRequest
+                    selectPullRequest
                       ? () =>
-                          onSelectPullRequest({
+                          selectPullRequest({
                             projectId: reference.projectId,
                             ...(reference.host === undefined ? {} : { host: reference.host }),
                             repository: link.repository,
