@@ -358,6 +358,15 @@ provider does not offer is refused, and an inherited or default one steps down
 to the broadest mode it offers. `create_threads` remains the batch option for a
 shared checkout.
 
+A thread here that launches one becomes its parent: the server stamps the new
+thread's `delegatedFrom` with the caller, so the parent's lineage lists it, the
+sidebar nests it there, and it counts as a delegated thread
+(`isDelegatedAppThread`). Each of its runs that ends completed, failed, or
+interrupted sends the parent a `delegated_task` notice with the run's last reply,
+steered into the parent's turn or queued to wake it, so the parent need not wait
+or poll. Runs the thread's own monitor woke, cancelled runs, and archived parents
+get no notice. A launch from an outside agent has no parent.
+
 Set `clientRequestId` on the initial launch to make it retryable. After an error
 or a lost reply, resend the same request with the same key from the same
 provider session. This reuses any thread already created by that request. If the

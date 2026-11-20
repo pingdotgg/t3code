@@ -77,7 +77,7 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
     plan: Effect.fn("ThreadForkService.plan")(function* (input) {
       const { sourceRun } = input;
       const sourceLineage = input.sourceProjection.thread.lineage;
-      // A task a linked environment delegated here is a subagent of a remote thread.
+      // A thread another thread's agent launched, here or from a linked environment, is its agent.
       if (
         input.sideChat &&
         (sourceLineage.sideChat ||

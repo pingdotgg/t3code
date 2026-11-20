@@ -2875,7 +2875,7 @@ export default function ChatView(props: ChatViewProps) {
   ]);
 
   usePasteToFocusComposer(embedded ? null : activeThreadId, composerRef);
-  // A delegated task is a remote thread's subagent.
+  // A thread another thread's agent launched, here or from a linked environment, is its agent.
   const isSubagentThread =
     activeThread?.lineage.relationshipToParent === "subagent" || delegatedFrom !== null;
   // Side chats do not nest or start from subagents, and older servers would fork a listed thread.
