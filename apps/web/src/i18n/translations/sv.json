@@ -4111,6 +4111,7 @@
   "1b16346722b65812": "{timeLeft} % av fönstret kvar",
   "728c6cc1431e76c8": "Återställs om {duration} · {time}",
   "e16b0b9b490c8bc7": "{label}: {value}",
+  "d2a0e263c30db77f": "Dokument",
   "ba67d0a9ff5dabf0": "Urklipps-API:t är inte tillgängligt vid kopiering av administratörsbegäran.",
   "aef4bec20e799aab": "Kunde inte kopiera administratörsbegäran till urklipp.",
   "409185e3d9bbdb2c": "Begäran kopierades",

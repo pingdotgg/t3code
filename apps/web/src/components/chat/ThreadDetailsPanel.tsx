@@ -27,6 +27,7 @@ import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 import { ThreadServersPanel } from "./ThreadServersPanel";
+import { ThreadDocumentsPanel } from "./ThreadDocumentsPanel";
 import {
   ThreadDetailsContext,
   ThreadDetailsUsage,
@@ -281,6 +282,14 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                   threadId={props.threadId}
                   showLineage={visible.lineage}
                   showSideChats={visible.sideChats}
+                />
+              ) : null}
+
+              {density === "full" && !props.draftId && visible.documents ? (
+                <ThreadDocumentsPanel
+                  environmentId={props.environmentId}
+                  threadId={props.threadId}
+                  workspaceRoot={props.gitCwd}
                 />
               ) : null}
 

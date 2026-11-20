@@ -2088,6 +2088,15 @@ const WsOrchestrationV2GetTurnItemRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.get
   error: Schema.Union([OrchestrationV2GetThreadProjectionError, EnvironmentAuthorizationError]),
 });
 
+const WsOrchestrationV2GetThreadChangedFilesRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.getThreadChangedFiles,
+  {
+    payload: OrchestrationV2RpcSchemas.getThreadChangedFiles.input,
+    success: OrchestrationV2RpcSchemas.getThreadChangedFiles.output,
+    error: Schema.Union([OrchestrationV2GetThreadProjectionError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsOrchestrationV2LaunchThreadRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.launchThread, {
   payload: OrchestrationV2RpcSchemas.launchThread.input,
   success: OrchestrationV2RpcSchemas.launchThread.output,
@@ -2473,6 +2482,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2StopWorkflowRpc,
   WsOrchestrationV2ForceStopThreadRpc,
   WsOrchestrationV2GetTurnItemRpc,
+  WsOrchestrationV2GetThreadChangedFilesRpc,
   WsOrchestrationV2GetTurnDiffRpc,
   WsOrchestrationV2GetFullThreadDiffRpc,
   WsOrchestrationV2SearchThreadsRpc,

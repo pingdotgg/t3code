@@ -4113,6 +4113,7 @@
   "1b16346722b65812": "{timeLeft} % des Zeitfensters übrig",
   "728c6cc1431e76c8": "Wird in {duration} zurückgesetzt · {time}",
   "e16b0b9b490c8bc7": "{label}: {value}",
+  "d2a0e263c30db77f": "Dokumente",
   "ba67d0a9ff5dabf0": "Die Zwischenablage-API ist beim Kopieren der Admin-Anfrage nicht verfügbar.",
   "aef4bec20e799aab": "Die Admin-Anfrage konnte nicht in die Zwischenablage kopiert werden.",
   "409185e3d9bbdb2c": "Anfrage kopiert",

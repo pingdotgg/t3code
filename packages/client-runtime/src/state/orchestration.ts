@@ -215,6 +215,13 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       target.input.revision === undefined || target.input.revision === "live"
         ? liveTurnItem(target)
         : settledTurnItem(target),
+    // Each revision is its own query, so a newer one asks again; the idle ones expire.
+    threadChangedFiles: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:orchestration:thread-changed-files",
+      tag: ORCHESTRATION_V2_WS_METHODS.getThreadChangedFiles,
+      staleTimeMs: 60_000,
+      idleTtlMs: 60_000,
+    }),
     fullThreadDiff: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:full-thread-diff",
       tag: ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff,

@@ -4112,6 +4112,7 @@
   "1b16346722b65812": "{timeLeft}% of the window left",
   "728c6cc1431e76c8": "Resets in {duration} · {time}",
   "e16b0b9b490c8bc7": "{label}: {value}",
+  "d2a0e263c30db77f": "Documents",
   "ba67d0a9ff5dabf0": "Clipboard API is unavailable while copying admin request.",
   "aef4bec20e799aab": "Failed to copy admin request to the clipboard.",
   "409185e3d9bbdb2c": "Request copied",
