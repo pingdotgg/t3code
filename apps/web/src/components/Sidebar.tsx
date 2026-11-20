@@ -2923,23 +2923,22 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       if (event.defaultPrevented || event.repeat || isCommandPaletteOpen() || isModelPickerOpen()) {
         return;
       }
-      const command = resolveShortcutCommand(event, keybindings, {
-        platform: navigator.platform,
-        context: threadShortcutContext(routeThreadRef),
-      });
-      // A shortcut the user bound to the key keeps it.
-      if (
-        command === null &&
-        routeThreadRef &&
-        routeThreadKey &&
-        isOpenThreadRenameKey(event, routeThreadKey)
-      ) {
+      const platform = navigator.platform;
+      const context = threadShortcutContext(routeThreadRef);
+      if (routeThreadRef && routeThreadKey && isOpenThreadRenameKey(event, routeThreadKey)) {
+        // A shortcut bound to the key in the composer keeps it.
+        const bound = resolveShortcutCommand(event, keybindings, {
+          platform,
+          context: { ...context, composerFocus: true },
+        });
         const routeThread = threadByKey.get(routeThreadKey);
-        if (!routeThread) return;
-        event.preventDefault();
-        startThreadRename(routeThreadRef, routeThread.title);
-        return;
+        if (bound === null && routeThread) {
+          event.preventDefault();
+          startThreadRename(routeThreadRef, routeThread.title);
+          return;
+        }
       }
+      const command = resolveShortcutCommand(event, keybindings, { platform, context });
       const navigateToThreadKey = (targetThreadKey: string | null) => {
         if (!targetThreadKey) return false;
         const targetThread = threadByKey.get(targetThreadKey);
