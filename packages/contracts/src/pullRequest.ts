@@ -600,6 +600,8 @@ export const PullRequestReferenceCandidate = Schema.Struct({
   number: PositiveInt,
   title: Schema.String,
   state: Schema.Literals(["open", "closed", "merged"]),
+  /** Its page on the host, where the host reports one. */
+  url: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type PullRequestReferenceCandidate = typeof PullRequestReferenceCandidate.Type;
 

@@ -56,6 +56,7 @@ import { useMentionableEnvironments } from "../../state/environments";
 import { useLinkedEnvironments } from "../../state/peerLinks";
 import { useEnvironmentScopeDenied } from "../../state/session";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -433,6 +434,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     projectCwd: props.projectCwd,
     pullRequestProjectId: props.serverConfig ? (project?.id ?? null) : null,
     pullRequestRepository: project?.repositoryIdentity?.displayName ?? null,
+    pullRequestSigil:
+      sourceControlClients.find(project?.repositoryIdentity?.provider ?? "")?.changeRequestSigil ??
+      "#",
     threadPullRequests: props.selectedThread.pullRequests,
     selectedProviderStatus,
     hasThread: !props.isDraft,

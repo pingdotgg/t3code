@@ -1115,6 +1115,15 @@ describe("decodeReferenceCandidatesJson", () => {
     });
     const issues = decodeReferenceCandidatesJson(raw, "issue");
     expect(Result.isSuccess(issues) && issues.success.items[0]?.reference).toBe("#5");
+    const linked = decodeReferenceCandidatesJson(
+      JSON.stringify([
+        { iid: 8, title: "Crash", state: "opened", web_url: "https://gitlab.com/g/p/-/issues/8" },
+      ]),
+      "issue",
+    );
+    expect(Result.isSuccess(linked) && linked.success.items[0]?.url).toBe(
+      "https://gitlab.com/g/p/-/issues/8",
+    );
   });
 });
 

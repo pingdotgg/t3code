@@ -3,6 +3,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import type {
   EnvironmentId,
   ProjectId,
+  PullRequestReferenceSigil,
   ServerProvider,
   ThreadId,
   ThreadPullRequestLink,
@@ -22,7 +23,11 @@ import {
   formatComposerContextReference,
   threadContextRecord,
 } from "@t3tools/shared/composerContextReferences";
-import { environmentComposerContext, pullRequestComposerContext } from "../../lib/composerContext";
+import {
+  environmentComposerContext,
+  issueComposerContext,
+  pullRequestComposerContext,
+} from "../../lib/composerContext";
 import { uuidv4 } from "../../lib/uuid";
 import {
   getComposerDraftSnapshot,
@@ -62,6 +67,7 @@ import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import { providerWorkspaceSnapshotRefresh } from "../../state/provider-workspace-snapshot-refresh";
 import {
   useComposerPathSearch,
+  useComposerIssueReferenceSearch,
   useComposerPullRequestSearch,
   useThreadSearch,
 } from "../../state/queries";
@@ -259,6 +265,7 @@ export function useComposerCommandMenu({
   projectCwd,
   pullRequestProjectId = null,
   pullRequestRepository = null,
+  pullRequestSigil = "#",
   threadPullRequests,
   selectedProviderStatus,
   hasThread,
@@ -284,6 +291,8 @@ export function useComposerCommandMenu({
   readonly projectCwd: string | null;
   readonly pullRequestProjectId?: ProjectId | null;
   readonly pullRequestRepository?: string | null;
+  /** How the project's host references a change request by number: `#12`, or GitLab's `!12`. */
+  readonly pullRequestSigil?: PullRequestReferenceSigil;
   readonly threadPullRequests?: ReadonlyArray<ThreadPullRequestLink>;
   readonly selectedProviderStatus: ServerProvider | null;
   readonly hasThread: boolean;
@@ -349,7 +358,7 @@ export function useComposerCommandMenu({
     if (!enabled || selection.start !== selection.end) {
       return null;
     }
-    return detectComposerTrigger(draftMessage, selection.end);
+    return detectComposerTrigger(draftMessage, selection.end, undefined, pullRequestSigil);
   })();
   const pathSearch = useComposerPathSearch({
     environmentId,
@@ -371,8 +380,24 @@ export function useComposerCommandMenu({
     query: trigger?.kind === "pull-request" ? trigger.query : null,
   });
 
+  const issueSearch = useComposerIssueReferenceSearch({
+    environmentId,
+    projectId: pullRequestProjectId,
+    query: trigger?.kind === "issue" ? trigger.query : null,
+  });
+
   const items = ((): ComposerCommandItem[] => {
     if (!trigger) return [];
+
+    if (trigger.kind === "issue") {
+      return issueSearch.candidates.map((candidate) => ({
+        id: `issue-reference:${candidate.reference}`,
+        type: "issue-reference",
+        candidate,
+        label: candidate.reference,
+        description: candidate.title,
+      }));
+    }
 
     if (trigger.kind === "pull-request") {
       return pullRequestSearch.entries.map((entry) => ({
@@ -387,7 +412,7 @@ export function useComposerCommandMenu({
           state: entry.state,
           isDraft: entry.isDraft,
         },
-        label: `#${entry.number}`,
+        label: `${pullRequestSigil}${entry.number}`,
         description: `${entry.isDraft ? gt("Draft", { $context: "pull request state" }) : messages(PULL_REQUEST_STATE_LABELS[entry.state])} · ${
           entry.repository.toLowerCase() === pullRequestRepository?.toLowerCase()
             ? ""
@@ -628,14 +653,17 @@ export function useComposerCommandMenu({
       setSelection({ start: result.cursor, end: result.cursor });
       return;
     }
-    if (item.type === "pull-request") {
+    if (item.type === "pull-request" || item.type === "issue-reference") {
       if (
         !ownerKey ||
-        trigger.kind !== "pull-request" ||
+        trigger.kind !== (item.type === "pull-request" ? "pull-request" : "issue") ||
         !items.some((candidate) => candidate.id === item.id)
       )
         return;
-      const record = pullRequestComposerContext(item.pullRequest, uuidv4());
+      const record =
+        item.type === "pull-request"
+          ? pullRequestComposerContext(item.pullRequest, uuidv4())
+          : issueComposerContext(item.candidate, uuidv4());
       if (
         (getComposerDraftSnapshot(ownerKey).context?.records.length ?? 0) >=
         COMPOSER_CONTEXT_MAX_RECORDS
@@ -697,7 +725,11 @@ export function useComposerCommandMenu({
     items,
     skills,
     isLoading:
-      trigger?.kind === "pull-request" ? pullRequestSearch.isPending : pathSearch.isPending,
+      trigger?.kind === "issue"
+        ? issueSearch.isPending
+        : trigger?.kind === "pull-request"
+          ? pullRequestSearch.isPending
+          : pathSearch.isPending,
     error:
       trigger?.kind === "pull-request"
         ? pullRequestProjectId === null || pullRequestRepository === null

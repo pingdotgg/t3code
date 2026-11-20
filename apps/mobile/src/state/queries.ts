@@ -45,6 +45,7 @@ import { useEnvironmentQuery } from "./query";
 import { msg, useMessages } from "gt-react-native";
 import { vcsEnvironment } from "./vcs";
 import { composerPullRequests } from "./pull-requests";
+import { narrowPullRequestReferences } from "@t3tools/shared/pullRequestComposerTrigger";
 import {
   buildCheckpointDiffTargets,
   normalizeComposerPathSearchQuery,
@@ -107,6 +108,40 @@ export function useDebouncedValue<A>(value: A, delayMs: number): A {
   }, [delayMs, value]);
 
   return debounced;
+}
+
+/** The issues `#` references on hosts whose change requests take another sigil. */
+export function useComposerIssueReferenceSearch(input: {
+  environmentId: EnvironmentId | null;
+  projectId: ProjectId | null;
+  query: string | null;
+}) {
+  const query = useDebouncedValue(input.query?.slice(0, 100) ?? null, 250);
+  const lookup = useEnvironmentQuery(
+    input.query === null || input.environmentId === null || input.projectId === null
+      ? null
+      : composerPullRequests.filterOptions({
+          environmentId: input.environmentId,
+          input: {
+            kind: "references",
+            projectId: input.projectId,
+            sigil: "#",
+            // Older answers narrow locally while the debounced search catches up.
+            ...(query ? { query } : {}),
+          },
+        }),
+  );
+  return {
+    candidates:
+      input.query === null
+        ? []
+        : narrowPullRequestReferences(
+            lookup.data?.references ?? [],
+            { sigil: "#", query: input.query },
+            20,
+          ),
+    isPending: lookup.isPending || query !== (input.query?.slice(0, 100) ?? null),
+  };
 }
 
 export function useComposerPullRequestSearch(input: {
