@@ -262,6 +262,64 @@ describe("sidebar thread rename", () => {
       expect(updateMetadata).not.toHaveBeenCalled();
     },
   );
+
+  // Opening a thread moves focus from its row to the composer, where F2 used to do nothing.
+  it.each([
+    { focus: "the composer", area: "composer", renames: true },
+    { focus: "another text field", area: "details", renames: false },
+  ])("F2 from $focus renames the open thread: $renames", async ({ area, renames }) => {
+    const { tree } = createTestContext({ area });
+    await using screen = await render(tree);
+    await userEvent.click(screen.getByRole("textbox", { name: "Outside the sidebar" }));
+
+    await userEvent.keyboard("{F2}");
+
+    const input = screen.getByRole("textbox", { name: "Thread title" });
+    if (renames) {
+      await expect.element(input).toHaveValue("Fix the login redirect");
+      await expect.element(input).toHaveFocus();
+    } else {
+      await expect.element(input).not.toBeInTheDocument();
+    }
+  });
+
+  function createTestContext({ area }: { area: string }) {
+    const activeProject = project("active");
+    const routeThreadRef: ScopedThreadRef = {
+      environmentId: activeProject.environmentId,
+      threadId: ThreadId.make("thread-0"),
+    };
+    vi.mocked(readEnvironmentScope).mockReturnValue(true);
+    vi.mocked(useEnvironmentScope).mockReturnValue(true);
+    vi.mocked(useProjects).mockReturnValue([activeProject]);
+    vi.mocked(useQuietThreadShells).mockReturnValue([
+      { ...threadShell(activeProject.id, 0), title: "Fix the login redirect" },
+    ]);
+    vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: routeThreadRef });
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: {
+        environmentId: activeProject.environmentId,
+        projectId: activeProject.id,
+      },
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef,
+    });
+    const tree = (
+      <>
+        <SidebarProvider>
+          <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+        </SidebarProvider>
+        <div data-workspace-area={area}>
+          <textarea aria-label="Outside the sidebar" />
+        </div>
+      </>
+    );
+    return { tree };
+  }
 });
 
 describe("sidebar thread menu", () => {
