@@ -663,6 +663,38 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  // A linked worktree's HEAD is `<main>/.git/worktrees/<name>/HEAD`.
+  const mainCheckoutOf = Effect.fn("VcsStatusBroadcaster.mainCheckoutOf")(function* (cwd: string) {
+    const headPath = yield* workflow.headPath(cwd);
+    if (headPath === null) return null;
+    const worktreesDirectory = path.dirname(path.dirname(headPath));
+    if (path.basename(worktreesDirectory) !== "worktrees") return null;
+    const gitDirectory = path.dirname(worktreesDirectory);
+    if (path.basename(gitDirectory) !== ".git") return null;
+    return yield* withFileSystem(normalizeCwd(path.dirname(gitDirectory)));
+  });
+
+  // A worktree's fetch also moves the references of its repository's main checkout, which
+  // is usually the project folder on the default branch and has no poll of its own.
+  const autoPullMainCheckout = Effect.fn("VcsStatusBroadcaster.autoPullMainCheckout")(
+    function* (cwd: string) {
+      const mainCheckout = yield* mainCheckoutOf(cwd);
+      if (mainCheckout === null || !(yield* autoPullPolicy.isEnabled(mainCheckout))) return;
+      yield* withRemoteWriteLock(
+        mainCheckout,
+        Effect.gen(function* () {
+          const remoteRead = yield* readRemoteStatus(mainCheckout, { refreshUpstream: false });
+          yield* maybeAutoPull(mainCheckout, remoteRead, [mainCheckout]);
+        }),
+      );
+    },
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Automatic pull of a worktree's main checkout failed", { cause }),
+    ),
+    Effect.forkIn(broadcasterScope),
+    Effect.asVoid,
+  );
+
   const refreshRemoteStatus = Effect.fn("VcsStatusBroadcaster.refreshRemoteStatus")(function* (
     cwd: string,
     options?: {
@@ -678,6 +710,7 @@ export const make = Effect.gen(function* () {
           options?.refreshUpstream === false
             ? null
             : yield* maybeAutoPull(cwd, remoteRead, options?.policyCwds ?? [cwd]);
+        if (options?.refreshUpstream !== false) yield* autoPullMainCheckout(cwd);
         if (pulled !== null) return pulled.remote;
         // Base refs and merge bases can move without changing divergence counts.
         yield* refreshLocalStatusCore(cwd);
@@ -699,6 +732,7 @@ export const make = Effect.gen(function* () {
           const pulled = refreshUpstream
             ? yield* maybeAutoPull(cwd, remoteRead, [policyCwd])
             : null;
+          if (refreshUpstream) yield* autoPullMainCheckout(cwd);
           if (pulled !== null) return mergeGitStatusParts(pulled.local, pulled.remote);
           yield* updateCachedRemoteStatus(cwd, remoteRead, { publish: true });
           // A fetch, ours or not, can move the base used for local Changes totals.
