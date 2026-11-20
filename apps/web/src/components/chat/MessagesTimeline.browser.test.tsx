@@ -553,13 +553,13 @@ describe("MessagesTimeline messages", () => {
   });
 
   it.each([
-    { surface: "#000000", muted: "#000000", contrast: 200 },
-    { surface: "#565656", muted: "#565656", contrast: 100 },
-    // Black muted text reads on this gray, on the far side of it from the white prose.
-    { surface: "#767676", muted: "#000000", foreground: "#ffffff", contrast: 150 },
+    { surface: "#000000", contrast: 200 },
+    { surface: "#565656", contrast: 100 },
+    // An edited theme: its black muted text reads on this gray, across it from the white prose.
+    { surface: "#767676", contrast: 150, foreground: "#ffffff", mutedForeground: "#000000" },
   ])(
     "keeps muted text and controls readable on an imported $surface bubble at $contrast%",
-    async ({ surface, muted, foreground, contrast }) => {
+    async ({ surface, contrast, foreground, mutedForeground }) => {
       setup();
       const root = document.documentElement;
       const theme = parseVsCodeThemeFile({
@@ -567,11 +567,14 @@ describe("MessagesTimeline messages", () => {
         colors: {
           "editor.background": "#ffffff",
           "chat.requestBubbleBackground": surface,
-          descriptionForeground: muted,
+          descriptionForeground: surface,
           ...(foreground ? { "editor.foreground": foreground } : {}),
         },
       });
-      applyThemeColorPreview(theme.colors, theme.appearance);
+      applyThemeColorPreview(
+        { ...theme.colors, ...(mutedForeground ? { mutedForeground } : {}) },
+        theme.appearance,
+      );
       applyAppearanceContrast(root, contrast);
       onTestFinished(() => {
         applyAppearanceContrast(root, 100);
