@@ -3746,9 +3746,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     }
                     placeholderSuffix={
                       offeredPromptSuggestion !== null ? (
-                        <span className="ml-2 inline-flex align-[1px]">
+                        // The placeholder ignores pointer events so clicks reach the editor; only this hint opts back in.
+                        <button
+                          type="button"
+                          tabIndex={-1}
+                          aria-label={gt("Use suggested prompt")}
+                          className="pointer-events-auto ml-2 inline-flex cursor-pointer rounded align-[1px] [&:hover_kbd]:text-foreground"
+                          onPointerDown={(event) => event.preventDefault()}
+                          onClick={() =>
+                            applyPromptReplacementStable(0, 0, offeredPromptSuggestion)
+                          }
+                        >
                           <Kbd variant="outline">⇥ Tab</Kbd>
-                        </span>
+                        </button>
                       ) : undefined
                     }
                     disabled={
