@@ -9,6 +9,7 @@ import {
   type ProviderSetupInput,
 } from "@t3tools/contracts";
 import { resolveCommandPath } from "@t3tools/shared/shell";
+import * as Exit from "effect/Exit";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -45,12 +46,13 @@ export class ProviderInstallation extends Context.Service<
       input: ProviderSetupInput,
     ) => Effect.Effect<ProviderInstallState, ProviderSetupError>;
     /**
-     * Starts an install, or joins the one running, and waits for it. Fails with the install's
-     * own message unless it succeeds, and cancels an install it started when interrupted.
+     * Starts an Antigravity update or joins the matching operation. Cancels an operation
+     * this request started when interrupted.
      */
     readonly run: (
       input: ProviderSetupInput,
       onProgress: (message: string) => Effect.Effect<void>,
+      expectedVersion?: string,
     ) => Effect.Effect<ProviderInstallState, ProviderSetupError>;
     readonly cancel: (
       input: ProviderInstallCancelInput,
@@ -168,29 +170,32 @@ const make = Effect.fn("makeProviderInstallation")(function* () {
     }
   });
 
-  const start = Effect.fn("ProviderInstallation.start")(function* (input: ProviderSetupInput) {
-    const { installation, driver } = yield* requireInstance(input.instanceId, "install", true);
-    const started = yield* installation.start.pipe(Effect.mapError(failure(input.instanceId)));
-    if (
-      driver === ANTIGRAVITY &&
-      started.operationId !== null &&
-      accountCheckOperation !== started.operationId
-    ) {
-      accountCheckOperation = started.operationId;
+  const watchAntigravityInstall = Effect.fn("ProviderInstallation.watchAntigravityInstall")(
+    function* (instanceId: ProviderInstanceId, operationId: string | null) {
+      if (operationId === null || accountCheckOperation === operationId) return;
+      accountCheckOperation = operationId;
       // Installation outlives the request and may finish while every client is disconnected.
-      yield* installation.changes.pipe(
-        Stream.filter(hasSettled(started.operationId)),
+      yield* antigravityInstallation.changes.pipe(
+        Stream.filter(hasSettled(operationId)),
         Stream.runHead,
         Effect.flatMap((result) =>
           Option.isSome(result) &&
-          result.value.operationId === started.operationId &&
+          result.value.operationId === operationId &&
           result.value.phase === "succeeded"
-            ? checkManagedRuntimeInstances(input.instanceId)
+            ? checkManagedRuntimeInstances(instanceId)
             : Effect.void,
         ),
         Effect.ignore({ log: true }),
         Effect.forkIn(scope),
       );
+    },
+  );
+
+  const start = Effect.fn("ProviderInstallation.start")(function* (input: ProviderSetupInput) {
+    const { installation, driver } = yield* requireInstance(input.instanceId, "install", true);
+    const started = yield* installation.start.pipe(Effect.mapError(failure(input.instanceId)));
+    if (driver === ANTIGRAVITY) {
+      yield* watchAntigravityInstall(input.instanceId, started.operationId);
     }
     return started;
   });
@@ -198,40 +203,55 @@ const make = Effect.fn("makeProviderInstallation")(function* () {
   const run = Effect.fn("ProviderInstallation.run")(function* (
     input: ProviderSetupInput,
     onProgress: (message: string) => Effect.Effect<void>,
+    expectedVersion?: string,
   ) {
-    const { installation } = yield* requireInstance(input.instanceId, "install", true);
-    const before = yield* installation.state;
-    const started = yield* start(input);
-    const { operationId } = started;
-    const settled = yield* installation.changes.pipe(
-      // Download progress changes the state several times a second; report each message once.
-      Stream.changesWith(
-        (a, b) => a.operationId === b.operationId && a.phase === b.phase && a.message === b.message,
-      ),
-      Stream.tap((state) =>
-        state.message !== null && !hasSettled(operationId)(state)
-          ? onProgress(state.message)
-          : Effect.void,
-      ),
-      Stream.filter(hasSettled(operationId)),
-      Stream.runHead,
-      Effect.onInterrupt(() =>
-        operationId !== null && operationId !== before.operationId
-          ? installation.cancel(operationId).pipe(Effect.ignore)
-          : Effect.void,
-      ),
-    );
-    const final = Option.getOrElse(settled, () => started);
-    if (final.operationId !== operationId || final.phase !== "succeeded") {
+    const { driver } = yield* requireInstance(input.instanceId, "install", true);
+    if (driver !== ANTIGRAVITY) {
       return yield* new ProviderSetupError({
         instanceId: input.instanceId,
         operation: "install",
-        detail:
-          (final.operationId === operationId ? final.message : null) ??
-          "The installation did not finish.",
+        detail: "Managed updates are not available for this provider instance.",
       });
     }
-    return final;
+    return yield* Effect.acquireUseRelease(
+      antigravityInstallation
+        .startOperation(expectedVersion)
+        .pipe(Effect.mapError(failure(input.instanceId))),
+      ({ state: started }) =>
+        Effect.gen(function* () {
+          const { operationId } = started;
+          yield* watchAntigravityInstall(input.instanceId, operationId);
+          const settled = yield* antigravityInstallation.changes.pipe(
+            // Download progress changes the state several times a second; report each message once.
+            Stream.changesWith(
+              (a, b) =>
+                a.operationId === b.operationId && a.phase === b.phase && a.message === b.message,
+            ),
+            Stream.tap((state) =>
+              state.message !== null && !hasSettled(operationId)(state)
+                ? onProgress(state.message)
+                : Effect.void,
+            ),
+            Stream.filter(hasSettled(operationId)),
+            Stream.runHead,
+          );
+          const final = Option.getOrElse(settled, () => started);
+          if (final.operationId !== operationId || final.phase !== "succeeded") {
+            return yield* new ProviderSetupError({
+              instanceId: input.instanceId,
+              operation: "install",
+              detail:
+                (final.operationId === operationId ? final.message : null) ??
+                "The installation did not finish.",
+            });
+          }
+          return final;
+        }),
+      ({ state: started, owned }, exit) =>
+        owned && started.operationId !== null && Exit.hasInterrupts(exit)
+          ? antigravityInstallation.cancel(started.operationId).pipe(Effect.ignore)
+          : Effect.void,
+    );
   });
 
   const cancel = Effect.fn("ProviderInstallation.cancel")(function* (

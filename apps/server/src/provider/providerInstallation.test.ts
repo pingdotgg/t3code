@@ -39,6 +39,13 @@ const state: ProviderInstallState = {
   message: null,
 };
 
+const running = {
+  ...state,
+  operationId: "install-1",
+  phase: "downloading",
+  message: "Downloading.",
+} satisfies ProviderInstallState;
+
 function instance(kind = driver, id = instanceId): ProviderInstance {
   return {
     instanceId: id,
@@ -60,6 +67,7 @@ function instance(kind = driver, id = instanceId): ProviderInstance {
 
 const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function* (
   input: {
+    beforeInstallStart?: Effect.Effect<void>;
     instance?: ProviderInstance;
     others?: ReadonlyArray<ProviderInstance>;
     settings?: Parameters<typeof ServerSettings.layerTest>[0];
@@ -76,6 +84,14 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
   const all = [configured, ...(input.others ?? [])];
   const refreshedInstances: ProviderInstanceId[] = [];
   let watches = 0;
+  const startOperation = Effect.gen(function* () {
+    calls.push("start");
+    yield* input.beforeInstallStart ?? Effect.void;
+    const current = yield* SubscriptionRef.get(installationState);
+    if (current.phase === "downloading") return { state: current, owned: false };
+    yield* SubscriptionRef.set(installationState, running);
+    return { state: running, owned: true };
+  });
   const dependencies = Layer.mergeAll(
     ServerSettings.layerTest(input.settings),
     Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
@@ -118,15 +134,8 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
     Layer.mock(AntigravityInstallation.AntigravityInstallation)({
       managedDirectory: "/unused-managed-runtime",
       checkForUpdate: Effect.void,
-      start: Effect.sync(() => {
-        calls.push("start");
-        return {
-          ...state,
-          operationId: "install-1",
-          phase: "downloading" as const,
-          message: "Downloading.",
-        };
-      }).pipe(Effect.tap((started) => SubscriptionRef.set(installationState, started))),
+      start: startOperation.pipe(Effect.map((operation) => operation.state)),
+      startOperation: () => startOperation,
       cancel: () =>
         Effect.sync(() => {
           calls.push("cancel");
@@ -286,12 +295,6 @@ describe("provider installation routing", () => {
   );
 
   const watched = () => Object.assign(instance(), { refreshModels: () => Effect.void });
-  const running = {
-    ...state,
-    operationId: "install-1",
-    phase: "downloading",
-    message: "Downloading.",
-  } satisfies ProviderInstallState;
 
   it.effect.each([
     { phase: "succeeded", message: null, error: null },
@@ -338,6 +341,29 @@ describe("provider installation routing", () => {
       yield* Deferred.await(reported);
       yield* Fiber.interrupt(run);
       assert.deepEqual(harness.calls, calls);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("leaves a setup install running when it starts during the update's lookup", () =>
+    Effect.gen(function* () {
+      const lookingUp = yield* Deferred.make<void>();
+      const resumeLookup = yield* Deferred.make<void>();
+      const reported = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        instance: watched(),
+        beforeInstallStart: Deferred.succeed(lookingUp, undefined).pipe(
+          Effect.andThen(Deferred.await(resumeLookup)),
+        ),
+      });
+      const run = yield* harness.router
+        .run({ instanceId }, () => Deferred.succeed(reported, undefined))
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(lookingUp);
+      yield* SubscriptionRef.set(harness.installationState, running);
+      yield* Deferred.succeed(resumeLookup, undefined);
+      yield* Deferred.await(reported);
+      yield* Fiber.interrupt(run);
+      assert.deepEqual(harness.calls, ["start"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

@@ -33,6 +33,7 @@ import {
   ANTIGRAVITY_AUTH_STDOUT_PREFIX,
   resolveAntigravityInstanceDirectories,
 } from "../antigravityAuthSupport.ts";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ModelManifest from "../ModelManifest.ts";
@@ -85,9 +86,17 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     /** Extra instance variables, such as ones a parent T3 turn already exported. */
     readonly environment?: ReadonlyArray<{ readonly name: string; readonly value: string }>;
     readonly updateChecks?: boolean;
+    readonly awaitServerReady?: Effect.Effect<void>;
+    readonly refreshUpdate?: (
+      state: SubscriptionRef.SubscriptionRef<ProviderInstallState>,
+    ) => Effect.Effect<void>;
   } = {},
 ) {
   const host = yield* ProviderHost.ProviderHost;
+  const serverSettings = yield* SubscriptionRef.make({
+    ...(yield* host.settings.get),
+    enableProviderUpdateChecks: options.updateChecks ?? true,
+  });
   const installState = yield* SubscriptionRef.make(idleInstallState);
   const checkedForUpdate = yield* Deferred.make<void>();
   const fs = yield* FileSystem.FileSystem;
@@ -180,6 +189,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     managedDirectory: root,
     state: SubscriptionRef.get(installState),
     changes: SubscriptionRef.changes(installState),
+    refreshUpdate: options.refreshUpdate?.(installState) ?? Effect.void,
     checkForUpdate: Deferred.succeed(checkedForUpdate, undefined).pipe(Effect.asVoid),
     compatibility: (version) =>
       Effect.succeed(
@@ -268,14 +278,11 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, observedSpawner),
     Effect.provideService(ProviderHost.ProviderHost, {
       ...host,
+      ...(options.awaitServerReady ? { awaitServerReady: options.awaitServerReady } : {}),
       settings: {
         ...host.settings,
-        get: host.settings.get.pipe(
-          Effect.map((settings) => ({
-            ...settings,
-            enableProviderUpdateChecks: options.updateChecks ?? true,
-          })),
-        ),
+        get: SubscriptionRef.get(serverSettings),
+        changes: SubscriptionRef.changes(serverSettings),
       },
     }),
   );
@@ -310,6 +317,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     signedOut,
     controls,
     installState,
+    serverSettings,
     checkedForUpdate,
     acquisitions,
     releases,
@@ -342,6 +350,7 @@ const layerDeps = ServerConfig.layerTest(process.cwd(), {
     ),
   ),
   Layer.provideMerge(ModelManifest.layerTest),
+  Layer.provideMerge(ProviderLatestVersions.layer),
   Layer.provideMerge(IdAllocator.layer),
   Layer.provideMerge(McpProviderSessions.layer),
 );
@@ -409,6 +418,53 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
       yield* SubscriptionRef.update(h.installState, (state) => ({ ...state, version: "1.5.13" }));
       expect(yield* Fiber.join(published)).toMatchObject({
         value: { versionAdvisory: { latestVersion: "1.5.13", canUpdate: true } },
+      });
+    }),
+  );
+
+  it.effect("awaits a release lookup on an explicit refresh", () =>
+    Effect.gen(function* () {
+      const lookupStarted = yield* Deferred.make<void>();
+      const lookupFinished = yield* Deferred.make<void>();
+      const h = yield* makeHarness({
+        awaitServerReady: Effect.never,
+        refreshUpdate: (state) =>
+          Deferred.succeed(lookupStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(lookupFinished)),
+            Effect.andThen(
+              SubscriptionRef.update(state, (current) => ({
+                ...current,
+                version: "1.5.13",
+              })),
+            ),
+          ),
+      });
+      const refreshing = yield* h.instance.snapshot.refresh.pipe(Effect.forkScoped);
+      yield* Deferred.await(lookupStarted);
+      yield* Deferred.succeed(lookupFinished, undefined);
+      expect((yield* Fiber.join(refreshing)).versionAdvisory).toMatchObject({
+        status: "behind_latest",
+        latestVersion: "1.5.13",
+      });
+    }),
+  );
+
+  it.effect("clears a published update when update checks are disabled", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({ awaitServerReady: Effect.never });
+      yield* SubscriptionRef.update(h.installState, (state) => ({ ...state, version: "1.5.13" }));
+      expect((yield* h.instance.snapshot.refresh).versionAdvisory?.status).toBe("behind_latest");
+      const cleared = yield* h.instance.snapshot.streamChanges.pipe(
+        Stream.filter((snapshot) => snapshot.versionAdvisory?.status === "unknown"),
+        Stream.runHead,
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* SubscriptionRef.update(h.serverSettings, (settings) => ({
+        ...settings,
+        enableProviderUpdateChecks: false,
+      }));
+      expect(yield* Fiber.join(cleared)).toMatchObject({
+        value: { versionAdvisory: { latestVersion: null } },
       });
     }),
   );

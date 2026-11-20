@@ -595,7 +595,18 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                 if (command === null) {
                   // A managed install has no command. A failed one fails here with its own
                   // message, which recordFailedUpdate reports.
-                  yield* providerInstallation.run({ instanceId }, setRunningMessage);
+                  if (candidateVersion === null) {
+                    return yield* new ServerProviderUpdateError({
+                      provider,
+                      reason:
+                        "Could not determine the Antigravity release to install. Check for updates and try again.",
+                    });
+                  }
+                  yield* providerInstallation.run(
+                    { instanceId },
+                    setRunningMessage,
+                    candidateVersion,
+                  );
                   return null;
                 }
                 yield* setRunningMessage(`Running ${describeCommand(command)}`);

@@ -119,7 +119,8 @@ with a readable, current version.
 A runtime T3 Code installs itself, such as Antigravity's, has no command to run. Its capabilities
 set `managedInstall` instead, and the runner updates it through
 [`ProviderInstallation`](../../apps/server/src/provider/providerInstallation.ts), the same install
-its setup section starts, so validation, activation and the model refresh are not repeated here.
+its setup section starts. The runner passes the version it checked for compatibility, and the
+installer refuses if the selected release changed before the install could start.
 
 ## Protocol traps
 

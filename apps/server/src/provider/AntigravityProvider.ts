@@ -32,6 +32,10 @@ import {
   makeManagedServerProvider,
 } from "@t3tools/provider-core/server/managedProvider";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
+import {
+  haveProviderSnapshotSettingsChanged,
+  makeProviderSnapshotSettingsSource,
+} from "@t3tools/provider-core/server/snapshotSettings";
 import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
 import {
   buildServerProvider,
@@ -169,6 +173,7 @@ interface AntigravityProviderOptions {
   readonly probeUsage?: Effect.Effect<ServerProviderUsageLimits>;
   readonly clearUsage?: Effect.Effect<void>;
   readonly resolveMaintenance?: ManagedServerProvider["resolveMaintenance"];
+  readonly releaseChanges?: Stream.Stream<void>;
   readonly auth?: { readonly type: string; readonly label: string };
 }
 
@@ -371,15 +376,24 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     provider: ProviderDriverKind.make("antigravity"),
     packageName: null,
   });
+  const snapshotSettings = yield* makeProviderSnapshotSettingsSource(settings);
+  const metadataChanges = SubscriptionRef.changes(metadata);
+  const snapshotChanges = options.releaseChanges
+    ? Stream.merge(
+        metadataChanges,
+        options.releaseChanges.pipe(Stream.mapEffect(() => SubscriptionRef.get(metadata))),
+      )
+    : metadataChanges;
   const managed = yield* makeManagedServerProvider({
     resolveMaintenance: options.resolveMaintenance ?? (() => Effect.succeed(manualMaintenance)),
-    getSettings: Effect.succeed(settings),
-    streamSettings: Stream.empty,
-    haveSettingsChanged: () => false,
+    getSettings: snapshotSettings.getSettings,
+    streamSettings: snapshotSettings.streamSettings,
+    haveSettingsChanged: haveProviderSnapshotSettingsChanged,
+    checkProviderOnSettingsChange: () => false,
     initialSnapshot: () => getSnapshot,
     checkProvider: checkProvider(),
     enrichSnapshot: ({ publishSnapshot }) =>
-      SubscriptionRef.changes(metadata).pipe(
+      snapshotChanges.pipe(
         Stream.runForEach((state) =>
           options.stampIdentity(state.draft).pipe(Effect.flatMap(publishSnapshot)),
         ),
