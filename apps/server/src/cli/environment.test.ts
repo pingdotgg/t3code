@@ -184,7 +184,10 @@ it.effect("the wizard links with the pairing code it never shows", () =>
         Effect.provideService(Terminal.Terminal, terminal),
       );
 
-      const output = [...shown, ...(yield* TestConsole.logLines).map(String)].join("\n");
+      // The wizard wraps its command at 88 characters, so the temp dir's length moves each break.
+      const output = [...shown, ...(yield* TestConsole.logLines).map(String)]
+        .join("\n")
+        .replaceAll(" \\\n    ", " ");
       expect(output).toContain("--pairing-code '<redacted>'");
       expect(output).toContain("Linked Box (environment-box)");
       expect(output).not.toContain(code);
