@@ -5221,9 +5221,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : link,
             );
           }
+          // Unlinking the last open pull request leaves nothing to wake a PR snooze, so it wakes now.
+          const pullRequestSnoozeOrphaned =
+            command.type === "thread.pull-request.unlink" &&
+            thread.snoozeWakesOnPullRequest === true &&
+            thread.snoozedUntil != null &&
+            DateTime.isGreaterThan(thread.snoozedUntil, now) &&
+            !hasOpenThreadPullRequest(pullRequests);
           return {
             ...thread,
             pullRequests,
+            ...(pullRequestSnoozeOrphaned && { snoozedUntil: now, lastSnoozeWakeAt: now }),
             linkedPullRequest:
               thread.linkedPullRequest &&
               pullRequests.some(
@@ -5507,7 +5515,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadId: command.threadId,
           providerInstanceId: updatedThread.providerInstanceId,
           occurredAt: now,
-          payload: { ...updatedThread, snoozedUntil: now, updatedAt: now },
+          payload: { ...updatedThread, snoozedUntil: now, lastSnoozeWakeAt: now, updatedAt: now },
         });
       }
       return;

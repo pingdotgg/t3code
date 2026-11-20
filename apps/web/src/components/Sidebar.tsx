@@ -149,6 +149,7 @@ import {
   usePrimaryEnvironmentId,
 } from "../state/environments";
 import {
+  readEnvironmentSupportsPullRequestSnooze,
   readThreadShell,
   useAllEnvironmentProjectSnapshotsReady,
   useDelegatedUnderParent,
@@ -2340,6 +2341,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         menuOpenedAt,
         timestampFormat,
         selectedThreads[0]!.environmentId,
+        {
+          pullRequest: selectedThreads.every(
+            (thread) =>
+              readEnvironmentSupportsPullRequestSnooze(thread.environmentId) &&
+              canSnoozeUntilPullRequest(thread),
+          ),
+        },
       );
       const clicked = await settlePromise(() =>
         api.contextMenu.show(
@@ -2647,8 +2655,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           thread.environmentId,
           {
             pullRequest:
-              serverConfigs.get(thread.environmentId)?.environment.capabilities
-                .threadSnoozeOnPullRequest === true && canSnoozeUntilPullRequest(thread),
+              readEnvironmentSupportsPullRequestSnooze(thread.environmentId) &&
+              canSnoozeUntilPullRequest(thread),
           },
         );
         const threadProjectGroup =

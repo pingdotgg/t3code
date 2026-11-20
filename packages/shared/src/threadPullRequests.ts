@@ -29,8 +29,8 @@ export function pullRequestSyncWakesSnooze(input: {
   const { previous, next } = input;
   const updatedAtMs = next.updatedAt === null ? Number.NaN : Date.parse(next.updatedAt);
   if (updatedAtMs > input.snoozedAtMs) return true;
-  // A first read has nothing to compare, so only a pull request that already ended is news.
-  if (previous === null) return next.state !== "open";
+  // A first read cannot tell old state from new; a later update time already covers new news.
+  if (previous === null) return false;
   return (
     previous.state !== next.state ||
     (next.mergeability === "conflicting" && previous.mergeability !== "conflicting")

@@ -33,7 +33,18 @@ describe("pullRequestSyncWakesSnooze", () => {
       snapshot({ mergeability: "conflicting" }),
       false,
     ],
-    ["a merge on the first read", null, snapshot({ state: "merged" }), true],
+    [
+      "a merge from before the snooze on the first read",
+      null,
+      snapshot({ state: "merged" }),
+      false,
+    ],
+    [
+      "a merge after the snooze on the first read",
+      null,
+      snapshot({ state: "merged", updatedAt: "2026-10-02T12:05:00Z" }),
+      true,
+    ],
     ["a close", snapshot(), snapshot({ state: "closed" }), true],
   ] as const)("%s", (_name, previous, next, wakes) => {
     expect(pullRequestSyncWakesSnooze({ previous, next, snoozedAtMs: Date.parse(snoozedAt) })).toBe(

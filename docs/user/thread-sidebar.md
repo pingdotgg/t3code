@@ -348,6 +348,7 @@ question and answer when the thread wakes; the question stays unanswered.
 For a thread with an open pull request, choose **Snooze → Until PR activity** to hide it
 until something happens on the pull request: a comment, review, push, merge, or close, or the
 branch starting to conflict. Your own comments count too. If nothing happens, it wakes after
-30 days. A merge wakes it too, so your merge settling setting applies as usual. Azure DevOps
+30 days. A merge wakes it and your merge settling setting applies as usual; a close wakes it and
+leaves it active. Unlinking the pull request wakes it too. Azure DevOps
 does not report when a pull request was last updated, so there only a merge, close, or conflict
 wakes it.

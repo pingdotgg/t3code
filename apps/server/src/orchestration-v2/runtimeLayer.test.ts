@@ -4395,7 +4395,26 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* sync({ updatedAt: at(2), state: "merged" });
       assert.equal(yield* snoozedUntilNow, snoozedUntil);
 
+      // Unlinking the last open pull request leaves nothing to wait on, so it wakes now.
+      yield* sync({ updatedAt: at(2) });
+      yield* snooze(true);
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.unlink",
+        commandId: CommandId.make("pr-snooze-unlink"),
+        threadId,
+        ...key,
+      });
+      assert.equal(yield* snoozedUntilNow, at(0));
+
       // Sync stops reading a settled thread's pull requests, so it cannot wait on one.
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.link",
+        commandId: CommandId.make("pr-snooze-relink"),
+        threadId,
+        ...key,
+        url: "https://github.com/pingdotgg/t3code/pull/9",
+        source: "manual",
+      });
       yield* sync({ updatedAt: at(2) });
       yield* orchestrator.dispatch({
         type: "thread.settle",
