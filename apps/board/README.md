@@ -64,6 +64,18 @@ The `+` in the sidebar's Projects header adds a project. Its folder button opens
 
 The bar along the bottom of the window shows each provider's usage limits as T3 reports them in the server config (`providers[].usageLimits`), so the board never calls Anthropic or OpenAI. A session window reads `8% 5d 22h`, a model window `3% Fable`, and a provider without readable limits shows a dash with the reason on hover.
 
+## Engine probe
+
+`scripts/engine-probe.ts` checks ten engine behaviors the board depends on, each against a real Claude Code session, and writes the results to [docs/engine-findings.md](docs/engine-findings.md). It starts its own T3 engine in `/tmp/engine-probe/run-<id>/t3`, never touches `~/.t3`, and stops that engine and its provider sessions when it ends. It reads `~/.claude/settings.json` without changing it, and deletes the Claude Code project folders its scratch projects created. Build the engine once with `vp run --filter t3 build`, then run it from a checkout.
+
+```sh
+node apps/board/scripts/engine-probe.ts                  # all ten checks, rewrites docs/engine-findings.md
+node apps/board/scripts/engine-probe.ts --checks B,C     # some checks; leaves the findings file alone
+node apps/board/scripts/engine-probe.ts --findings out.md --run-dir /tmp/probe
+```
+
+Each check prints `PASS` or `FAIL` with its evidence lines and wall time. The exit code is 1 when any check fails. The probe uses the operator's Claude Code login and costs usage, so run it once per change.
+
 ## Tests
 
 ```sh
