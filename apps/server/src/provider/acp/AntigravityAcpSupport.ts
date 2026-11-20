@@ -116,11 +116,17 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
   EffectAcpErrors.AcpError,
   SecureRandom.SecureRandom | Scope.Scope
 > {
+  const authMethodId = input.authMethod ?? "oauth-personal";
+  // The CLI opens the system browser and waits for a signed-out Google `authenticate`. Without a
+  // caller to show the sign-in, `session/new` reads the stored sign-in or reports it missing.
+  const backgroundGoogleSession =
+    authMethodId === "oauth-personal" && input.onAuthorizationUrl === undefined;
   const context = yield* Layer.build(
     AcpSessionRuntime.layer({
       ...input,
-      authMethodId: input.authMethod ?? "oauth-personal",
-      authenticateEagerly: true,
+      authMethodId,
+      authenticateEagerly: !backgroundGoogleSession,
+      ...(backgroundGoogleSession ? { authenticateOnAuthRequired: false } : {}),
       resumeMethod: "resume",
       cancelBehavior: "wait-for-prompt",
       clientInfo: antigravityClientInfo(input.runtimeVersion),

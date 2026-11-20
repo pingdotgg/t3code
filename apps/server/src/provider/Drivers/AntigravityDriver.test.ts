@@ -24,10 +24,7 @@ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as AntigravityInstallation from "../AntigravityInstallation.ts";
-import {
-  ANTIGRAVITY_AUTH_STDOUT_PREFIX,
-  resolveAntigravityInstanceDirectories,
-} from "../antigravityAuthSupport.ts";
+import { resolveAntigravityInstanceDirectories } from "../antigravityAuthSupport.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ModelManifest from "../ModelManifest.ts";
@@ -98,14 +95,12 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     const directory = path.join(root, name);
     const executablePath = path.join(directory, "agy");
     yield* fs.makeDirectory(directory, { recursive: true });
-    const authorizationUrl =
-      "https://accounts.google.com/o/oauth2/v2/auth?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A51234%2F&state=fixture-state";
     yield* fs.writeFileString(
       executablePath,
       [
         "#!/bin/sh",
         ...(options.loginRequired
-          ? [`printf '%s\\n' ${shellQuote(ANTIGRAVITY_AUTH_STDOUT_PREFIX + authorizationUrl)}`]
+          ? ["export T3_ACP_REQUIRE_AUTH=1", "export T3_ACP_AUTHENTICATE_SIGN_IN_TIMES_OUT=1"]
           : []),
         ...(options.newSessionErrorData === undefined
           ? []
@@ -358,17 +353,10 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         const requests = yield* h.readRequests;
         expect(requests.map((request) => request.method)).toEqual([
           "initialize",
-          "auth/login",
           "session/new",
           "initialize",
-          "auth/login",
           "session/new",
         ]);
-        expect(
-          requests
-            .filter((request) => request.method === "auth/login")
-            .map((request) => request.params?.methodId),
-        ).toEqual(["oauth-personal", "oauth-personal"]);
         expect(
           requests
             .filter((request) => request.method === "session/new")
@@ -587,6 +575,12 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         expect(snapshot.supportsTextGeneration).toBe(false);
         expect(h.acquisitions).toHaveLength(2);
         expect(h.releases).toEqual([h.first.version, h.signedOut.version]);
+        expect((yield* h.readRequests).map((request) => request.method)).toEqual([
+          "initialize",
+          "session/new",
+          "initialize",
+          "session/new",
+        ]);
         yield* h.assertClosed;
       }),
   );

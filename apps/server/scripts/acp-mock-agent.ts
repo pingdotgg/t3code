@@ -109,6 +109,9 @@ const advertisedAuthMethodId = process.env.T3_ACP_AUTH_METHOD_ID?.trim();
 const initializeAuthMethodId =
   advertisedAuthMethodId ?? (supportsSessionLifecycle ? "test" : undefined);
 const requiresAuthentication = process.env.T3_ACP_REQUIRE_AUTH === "1";
+// Antigravity 1.5 answers a signed-out Google `authenticate` by opening the system browser and
+// failing once nobody finishes signing in there.
+const authenticateSignInTimesOut = process.env.T3_ACP_AUTHENTICATE_SIGN_IN_TIMES_OUT === "1";
 const permissionOptionIds = {
   allowOnce: "allow-once",
   allowAlways: "allow-always",
@@ -594,6 +597,9 @@ const program = Effect.gen(function* () {
           return yield* AcpError.AcpRequestError.invalidParams(
             `Mock Antigravity rejected auth method ${request.methodId}.`,
           );
+        }
+        if (authenticateSignInTimesOut && request.methodId === "oauth-personal") {
+          return yield* AcpError.AcpRequestError.internalError("Sign-in timed out. Try again.");
         }
       } else if (advertisedAuthMethodId && request.methodId !== advertisedAuthMethodId) {
         return yield* AcpError.AcpRequestError.invalidParams(
