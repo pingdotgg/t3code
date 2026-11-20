@@ -13,6 +13,9 @@ const MAX_LOCATE_ATTEMPTS = 40;
 /** Skip ahead of fast writers; only the tail is displayed. */
 const MAX_READ_BYTES = 256 * 1024;
 
+/** Session and task ids arrive from the provider stream and become path segments below. */
+const SAFE_TASK_OUTPUT_ID = /^[A-Za-z0-9_-]+$/;
+
 /** Claude Code's per-user temp root, or none where it has no uid (Windows). */
 export function claudeTaskOutputRoot(
   environment: Readonly<Record<string, string | undefined>> | undefined,
@@ -65,6 +68,8 @@ export const tailClaudeTaskOutput = Effect.fn("ClaudeTaskOutputTail.tail")(funct
   readonly stop: Deferred.Deferred<void>;
   readonly onChunk: (chunk: string) => Effect.Effect<void>;
 }) {
+  // A rejected id drops live output only; the tool result still carries the final read.
+  if (!SAFE_TASK_OUTPUT_ID.test(input.sessionId) || !SAFE_TASK_OUTPUT_ID.test(input.taskId)) return;
   const fileSystem = yield* FileSystem.FileSystem;
   const pause = Deferred.await(input.stop).pipe(
     Effect.as(true),

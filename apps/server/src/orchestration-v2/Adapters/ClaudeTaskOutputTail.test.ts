@@ -101,6 +101,51 @@ describe("tailClaudeTaskOutput", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live("does not follow a task id that would leave the session directory", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { root, tasks } = yield* makeTaskFile;
+      // Claude's task ids are tokens, so a traversal id reaches this file instead of a task file.
+      const escaped = path.join(tasks, "..", "leak.output");
+      yield* fileSystem.makeDirectory(path.dirname(escaped), { recursive: true });
+      yield* fileSystem.writeFileString(escaped, "secret\n");
+      const chunks = yield* Queue.unbounded<string>();
+      const fiber = yield* tailClaudeTaskOutput({
+        root,
+        sessionId: SESSION_ID,
+        taskId: "../leak",
+        stop: yield* Deferred.make<void>(),
+        onChunk: (chunk) => Queue.offer(chunks, chunk),
+      }).pipe(Effect.forkScoped);
+      yield* Effect.sleep("200 millis");
+      assert.equal(yield* Queue.size(chunks), 0);
+      yield* Fiber.interrupt(fiber);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("does not follow a session id that would leave the project directory", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { root } = yield* makeTaskFile;
+      const escaped = path.join(root, SESSION_ID, "tasks", "leak.output");
+      yield* fileSystem.makeDirectory(path.dirname(escaped), { recursive: true });
+      yield* fileSystem.writeFileString(escaped, "secret\n");
+      const chunks = yield* Queue.unbounded<string>();
+      const fiber = yield* tailClaudeTaskOutput({
+        root,
+        sessionId: `../${SESSION_ID}`,
+        taskId: "leak",
+        stop: yield* Deferred.make<void>(),
+        onChunk: (chunk) => Queue.offer(chunks, chunk),
+      }).pipe(Effect.forkScoped);
+      yield* Effect.sleep("200 millis");
+      assert.equal(yield* Queue.size(chunks), 0);
+      yield* Fiber.interrupt(fiber);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("reads what was written last when the tool result stops it", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
