@@ -242,6 +242,8 @@ export class TerminalManager extends Context.Service<
       readonly terminalId?: string;
     }) => Effect.Effect<void>;
 
+    readonly hasActiveSubprocess: (input: { readonly threadId: string }) => Effect.Effect<boolean>;
+
     readonly subscribe: (
       listener: (event: TerminalEvent) => Effect.Effect<void>,
       registerCleanup?: (stop: () => void) => void,
@@ -1931,6 +1933,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   yield* fileSystem.makeDirectory(logsDir, { recursive: true }).pipe(Effect.orDie);
 
+  const managerId = NodeCrypto.randomUUID();
   const managerStateRef = yield* SynchronizedRef.make<TerminalManagerState>({
     sessions: new Map(),
     killFibers: new Map(),
@@ -2166,6 +2169,17 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       Deferred.doneUnsafe(exited, Effect.void);
     });
     yield* Effect.gen(function* () {
+      // Interactive shells ignore SIGTERM but pass SIGHUP to their background jobs, skipping nohup'd and disowned ones.
+      // Windows ignores the signal and node-pty kills the whole tree there.
+      if (platform !== "win32") {
+        yield* Effect.sync(() => {
+          try {
+            process.kill("SIGHUP");
+          } catch {
+            // The SIGTERM below reports a shell that can no longer be signalled.
+          }
+        });
+      }
       const terminated = yield* Effect.try({
         try: () => process.kill("SIGTERM"),
         catch: (cause) =>
@@ -3733,6 +3747,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       yield* listener({
         type: "snapshot",
         terminals,
+        managerId,
       });
 
       for (const event of bufferedEvents) {
@@ -3925,6 +3940,28 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     yield* closeIdle(input);
   });
 
+  const hasActiveSubprocess = Effect.fn("terminal.hasActiveSubprocess")(function* (input: {
+    readonly threadId: string;
+  }) {
+    const running = (yield* sessionsForThread(input.threadId)).filter(
+      (session): session is TerminalSessionState & { pid: number } =>
+        session.status === "running" && Number.isInteger(session.pid),
+    );
+    if (running.length === 0) return false;
+    const { inspector } = yield* acquireSubprocessInspector(
+      platform === "win32" ? CLOSE_IDLE_QUERY_TIMEOUT.win32 : CLOSE_IDLE_QUERY_TIMEOUT.posix,
+    );
+    // A failed process query falls back to the last poll's answer.
+    const isActive = (session: (typeof running)[number]) =>
+      Result.isFailure(inspector)
+        ? Effect.succeed(session.hasRunningSubprocess)
+        : inspector.success(session.pid, session.shell).pipe(
+            Effect.map((result) => result.hasRunningSubprocess),
+            Effect.orElseSucceed(() => session.hasRunningSubprocess),
+          );
+    return Option.isSome(yield* Effect.findFirst(running, isActive));
+  });
+
   return TerminalManager.of({
     open,
     getShell,
@@ -3938,6 +3975,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     close,
     closeIdle,
     closeOnSettle,
+    hasActiveSubprocess,
     subscribe,
     subscribeMetadata,
   });

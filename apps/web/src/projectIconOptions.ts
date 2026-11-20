@@ -1,7 +1,10 @@
+import { ProjectMonogramText } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { msg } from "gt-react";
-
 import { lucideIconNames } from "./lib/lucideIconByName";
 export { PROJECT_ICON_COLORS, projectIconColorClassName } from "./projectIconColors";
+
+const isProjectMonogramText = Schema.is(ProjectMonogramText);
 
 const POPULAR_PROJECT_ICONS: ReadonlyArray<string> = [
   "folder-code",
@@ -67,6 +70,13 @@ export function filterProjectIconNames(query: string): ReadonlyArray<string> {
   const normalized = query.trim().toLowerCase().replaceAll(/\s+/g, "-");
   if (!normalized) return POPULAR_PROJECT_ICONS;
   return lucideIconNames.filter((name) => name.includes(normalized)).slice(0, 60);
+}
+
+// The server also rejects monograms longer than two graphemes (ProjectCommands.ts).
+export function isValidProjectMonogram(text: string): boolean {
+  if (!isProjectMonogramText(text)) return false;
+  const segments = new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text);
+  return Array.from(segments).length <= 2;
 }
 
 export function firstEmoji(value: string): string | null {
