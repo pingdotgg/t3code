@@ -28,13 +28,14 @@ describe("custom snooze calendar conversion", () => {
   });
 
   it.each([
-    { language: SYSTEM_LANGUAGE, catalog: "en", dateLabel: "5 May" },
-    { language: "fr", catalog: "fr", dateLabel: "5 mai" },
-  ])("labels the picked date and time for the $language preference", (test) => {
+    { language: SYSTEM_LANGUAGE, systemLocale: "it-IT", catalog: "it", dateLabel: "5 mag" },
+    { language: SYSTEM_LANGUAGE, systemLocale: "zh-Hant-TW", catalog: "en", dateLabel: "5 May" },
+    { language: "fr", systemLocale: "it-IT", catalog: "fr", dateLabel: "5 mai" },
+  ])("labels the picked date and time for $language with $systemLocale", (test) => {
     const date = new Date(2027, 4, 5, 14, 30);
     const { catalogLocale, formattingLocale } = resolveLocaleSelection(
       test.language,
-      ["it-IT", "en-GB"],
+      [test.systemLocale, "en-GB"],
       SUPPORTED_LOCALES,
       DEFAULT_LOCALE,
     );
