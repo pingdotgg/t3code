@@ -106,10 +106,10 @@ const MEDIA_EDGE_CLASS_NAME =
 const BUBBLE_CHIP_CLASS_NAME =
   "[&_[data-slot=context-chip]]:[--context-chip-message-ink:var(--context-chip-message)]";
 
-// Muted text and ghost controls read the canvas's ink, which a themed bubble can hide.
-// Applied to what sits directly on the bubble, they take the bubble's ink instead.
-const BUBBLE_INK_CLASS_NAME =
-  "[--contrast-muted-foreground:var(--contrast-message-muted-foreground)] [--contrast-foreground:var(--contrast-message-foreground)] [--accent:color-mix(in_srgb,var(--contrast-message-foreground)_10%,transparent)]";
+// Muted text and idle ghost controls read the canvas's muted ink, which a themed bubble can
+// hide. Applied to what sits directly on the bubble, they read the bubble's instead.
+const BUBBLE_MUTED_INK_CLASS_NAME =
+  "[--contrast-muted-foreground:var(--contrast-message-muted-foreground)]";
 
 function UserFileCard({
   file,
@@ -153,7 +153,7 @@ function UserFileCard({
       data-markdown-copy={copyMarkdown}
       className={cn(
         "flex w-64 max-w-full items-center gap-1 rounded-2xl bg-message py-2 ps-2 pe-1 text-message-foreground",
-        BUBBLE_INK_CLASS_NAME,
+        BUBBLE_MUTED_INK_CLASS_NAME,
       )}
     >
       {file.downloadable === false ? (
@@ -430,7 +430,7 @@ export function FoldedMessageHeader(props: {
       onClick={props.onToggle}
       className={cn(
         "flex w-full min-w-0 items-center gap-1.5 rounded-2xl px-3 py-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-ring",
-        props.onBubble && BUBBLE_INK_CLASS_NAME,
+        props.onBubble && BUBBLE_MUTED_INK_CLASS_NAME,
       )}
     >
       <Icon className="size-4 shrink-0 stroke-2 text-muted-foreground" />
@@ -1032,7 +1032,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               </div>
             ) : null}
             {!fileCardsOnly && (unchippedFiles.length > 0 || unknownAttachments.length > 0) ? (
-              <div className={cn("mb-2 flex flex-col gap-1", BUBBLE_INK_CLASS_NAME)}>
+              <div className={cn("mb-2 flex flex-col gap-1", BUBBLE_MUTED_INK_CLASS_NAME)}>
                 {unchippedFiles.map((file) => {
                   const pastedText = file.source?._tag === "pasted-text";
                   const label = userMessageFileLabel(file, m);
@@ -1277,7 +1277,7 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
       ) : null}
       {showCollapseControl ? (
         <div
-          className={cn("mt-1.5 flex items-center justify-end gap-2", BUBBLE_INK_CLASS_NAME)}
+          className={cn("mt-1.5 flex items-center justify-end gap-2", BUBBLE_MUTED_INK_CLASS_NAME)}
           data-user-message-footer="true"
         >
           {showCollapseControl ? (
