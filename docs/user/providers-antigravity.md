@@ -18,7 +18,11 @@ Antigravity setup.
 
 ### Sign in from a remote device
 
-Google returns to a `127.0.0.1` address. It can finish directly when your browser is
+With the native CLI, Google finishes on an Antigravity page that shows a code. Paste that
+code, or the page's full address, into the code field in the client where you started
+sign-in. This works the same from any device.
+
+With the older 1.4.5 runtime, Google returns to a `127.0.0.1` address. It can finish directly when your browser is
 on the environment's machine. From another device, the final page will usually
 fail to load because the sign-in listener is on the environment.
 
@@ -98,8 +102,9 @@ Antigravity. Antigravity cannot rewind its own conversation, so the next turn
 starts a fresh Antigravity session and T3 Code sends it the kept conversation,
 without the turns you removed.
 
-Manual context compaction is unavailable through Antigravity's ACP runtime, even
-though its CLI has `/compact`. Send `/clear` when you need a fresh context.
+Use `/compact` to summarize a long conversation when your Antigravity runtime
+offers that command. If it is unavailable, update Antigravity in provider settings
+or send `/clear` when you need a fresh context.
 
 ### Skills and attachments
 
@@ -141,6 +146,8 @@ runtimes are shared on the environment.
 
 All three keep thread history and workspace files. Sending `/logout` by itself in
 a thread signs out its instance, including stopping that instance's other sessions.
+That needs a client allowed to manage providers, and it has to be your own message:
+`/logout` from an agent or a scheduled task is refused.
 Sign out, then sign in again to replace an account.
 
 Before removing a managed runtime, disable its instances and cancel any active

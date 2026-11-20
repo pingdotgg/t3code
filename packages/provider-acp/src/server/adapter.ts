@@ -70,6 +70,7 @@ import type * as EffectAcpProtocol from "effect-acp/protocol";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
+import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { makeAcpMcpOverAcpBridge, type AcpMcpOverAcpBridge } from "./mcpOverAcpBridge.ts";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
@@ -146,6 +147,8 @@ const ACP_DEFERRED_FINALIZE_DEBOUNCE: Duration.Input = "3000 millis";
 // A model can stay silent this long before the first token of a reply the agent started itself.
 const ACP_OPEN_REPLY_QUIET_LIMIT: Duration.Input = "2 minutes";
 const ACP_BUSY_PROMPT_RETRY_INTERVAL: Duration.Input = "1 second";
+const ACP_PROMPT_INACTIVITY_SLICE_MILLIS = 60_000;
+const ACP_HOST_SLEEP_TOLERANCE_MILLIS = 10_000;
 
 // pi-agent-core agents (oh-my-pi) end a turn while background work runs and reject
 // prompts until it finishes; the prompt is resent rather than failing the turn.
@@ -891,6 +894,13 @@ export const AcpProviderCapabilitiesV2 = {
   },
 } satisfies OrchestrationV2ProviderCapabilities;
 
+function canSwitchModelInSession(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+  models: EffectAcpSchema.SessionModelState | null | undefined,
+): boolean {
+  return findModelConfigOption(configOptions) !== undefined || models != null;
+}
+
 const STEER_DELIVERY_BOUND = "2 seconds";
 
 /**
@@ -945,9 +955,7 @@ function negotiatedCapabilities(
   const session = agent.sessionCapabilities;
   const setup = started.sessionSetupResult;
   const canSwitchModel =
-    modelOptionArrivesLate ||
-    findModelConfigOption(setup.configOptions) !== undefined ||
-    setup.models != null;
+    modelOptionArrivesLate || canSwitchModelInSession(setup.configOptions, setup.models);
   const canLoad = agent.loadSession === true;
   const canFork = session?.fork != null;
   return {
@@ -2642,6 +2650,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           Queue.offer(events, event).pipe(Effect.asVoid);
         let scheduleDeferredFinalize: (context: ActiveAcpTurn) => Effect.Effect<void> = () =>
           Effect.void;
+        let refreshModelSwitchCapability: Effect.Effect<void> = Effect.void;
+        // openSession configures the session itself; a late setup that lands
+        // first waits here and is adopted once that configuration is in place.
+        const lateSessionSetup: {
+          openSessionConfigured: boolean;
+          pending: Effect.Effect<void> | null;
+        } = { openSessionConfigured: false, pending: null };
 
         const nativeLogging = options.nativeLogging?.(input.threadId);
         const promptInactivityTimeoutMillis =
@@ -4712,6 +4727,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   title: path ? formatReadToolLabel(path) : (title ?? "Read file"),
                   type: "dynamic_tool",
                   toolName: "Read",
+                  ...(path !== undefined &&
+                  path.length <= 4096 &&
+                  !/[\r\n]/.test(path) &&
+                  isWorkspaceImagePreviewPath(path)
+                    ? { viewedImagePath: path }
+                    : {}),
                   input:
                     path === undefined ||
                     ["path", "filePath", "file_path"].some((key) => rawInputRecord?.[key] === path)
@@ -7094,6 +7115,41 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           );
         });
 
+        // The adopted response never passes through the raw session-update
+        // handler, so this is its one catalog publication.
+        const adoptLateSessionSetup = Effect.fnUntraced(function* (
+          targetRuntime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+          result: AcpSessionRuntime.AcpSessionRuntimeStartResult,
+          provisionalBuildSnapshot: AcpNativeBuildConfiguration | undefined,
+        ) {
+          const current = yield* Ref.get(activeSessionSetup);
+          if (current === null || current.sessionId !== result.sessionId) {
+            return;
+          }
+          yield* Ref.set(activeSessionSetup, result);
+          // The selection was configured against the provisional setup's
+          // options, so the next turn re-applies it against the real ones.
+          yield* Ref.set(activeSelection, null);
+          yield* Ref.set(activeInteractionMode, null);
+          // A build snapshot saved before the adoption was seen holds the
+          // provisional state; one saved by a deferred openSession
+          // configuration already read the adopted options and stays.
+          if (
+            provisionalBuildSnapshot !== undefined &&
+            nativeBuildConfigurationBySessionId.get(result.sessionId) === provisionalBuildSnapshot
+          ) {
+            nativeBuildConfigurationBySessionId.delete(result.sessionId);
+          }
+          yield* refreshModelSwitchCapability;
+          yield* (
+            flavor.onSessionConfigurationUpdate?.(
+              yield* targetRuntime.getConfigOptions,
+              yield* targetRuntime.getModeState,
+              result.sessionSetupResult.models,
+            ) ?? Effect.void
+          );
+        });
+
         const wireAcpRuntimeHandlers = Effect.fnUntraced(function* (
           targetRuntime: AcpSessionRuntime.AcpSessionRuntime["Service"],
           handlerGeneration: number,
@@ -7111,8 +7167,24 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
               return runRuntimeCallbackAtGeneration(
                 handlerGeneration,
-                flavor.onSessionEvent?.(event, input.runtimePolicy.cwd ?? process.cwd()) ??
-                  Effect.void,
+                Effect.andThen(
+                  event._tag === "ConfigOptionsUpdated"
+                    ? refreshModelSwitchCapability
+                    : event._tag === "SessionSetupAdopted"
+                      ? Effect.suspend(() => {
+                          const adopt = adoptLateSessionSetup(
+                            targetRuntime,
+                            event.result,
+                            nativeBuildConfigurationBySessionId.get(event.result.sessionId),
+                          );
+                          if (lateSessionSetup.openSessionConfigured) return adopt;
+                          lateSessionSetup.pending = adopt;
+                          return Effect.void;
+                        })
+                      : Effect.void,
+                  flavor.onSessionEvent?.(event, input.runtimePolicy.cwd ?? process.cwd()) ??
+                    Effect.void,
+                ),
               ).pipe(Effect.asVoid);
             }),
             Effect.forkIn(handlerOptions.scope ?? runtimeScope ?? sessionScope),
@@ -8220,18 +8292,60 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         yield* Ref.set(activeSelection, input.modelSelection);
         yield* Ref.set(activeInteractionMode, input.runtimePolicy.interactionMode);
         const createdAt = yield* DateTime.now;
-        const providerSession: OrchestrationV2ProviderSession = {
+        let providerSession: OrchestrationV2ProviderSession = {
           id: input.providerSessionId,
           driver,
           providerInstanceId: options.instanceId,
           status: "ready",
           cwd: input.runtimePolicy.cwd ?? process.cwd(),
           model: input.modelSelection.model,
-          capabilities,
+          capabilities: {
+            ...capabilities,
+            sessions: {
+              ...capabilities.sessions,
+              supportsModelSwitchInSession:
+                capabilities.sessions.supportsModelSwitchInSession ||
+                canSwitchModelInSession(
+                  yield* runtime.getConfigOptions,
+                  (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models,
+                ),
+            },
+          },
           createdAt,
           updatedAt: createdAt,
           lastError: null,
         };
+        // Config options can first offer a model after setup, e.g. when a
+        // session/load response arrives after replay idle. Upgrade-only: a
+        // later partial config update must not revoke the switch mid-session.
+        refreshModelSwitchCapability = Effect.gen(function* () {
+          const { capabilities } = providerSession;
+          if (capabilities.sessions.supportsModelSwitchInSession) {
+            return;
+          }
+          const supportsModelSwitchInSession = canSwitchModelInSession(
+            yield* runtime.getConfigOptions,
+            (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models,
+          );
+          if (!supportsModelSwitchInSession) {
+            return;
+          }
+          providerSession = {
+            ...providerSession,
+            capabilities: {
+              ...capabilities,
+              sessions: { ...capabilities.sessions, supportsModelSwitchInSession },
+            },
+            updatedAt: yield* DateTime.now,
+          };
+          yield* emitProviderEvent({ type: "provider_session.updated", driver, providerSession });
+        });
+        lateSessionSetup.openSessionConfigured = true;
+        const pendingLateSessionSetup = lateSessionSetup.pending;
+        lateSessionSetup.pending = null;
+        if (pendingLateSessionSetup !== null) {
+          yield* pendingLateSessionSetup;
+        }
 
         const providerTurnPayload = (
           context: ActiveAcpTurn,
@@ -8655,10 +8769,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* Deferred.await(context.promptDispatched);
           context.lastProgressAt = yield* Clock.currentTimeMillis;
           while (true) {
-            const remaining =
-              context.lastProgressAt + timeoutMillis - (yield* Clock.currentTimeMillis);
+            const sliceStartedAt = yield* Clock.currentTimeMillis;
+            const remaining = context.lastProgressAt + timeoutMillis - sliceStartedAt;
             if (remaining > 0) {
-              yield* Effect.sleep(Duration.millis(remaining));
+              const slice = Math.min(remaining, ACP_PROMPT_INACTIVITY_SLICE_MILLIS);
+              yield* Effect.sleep(Duration.millis(slice));
+              // Host sleep is not agent silence. Timers either fire late on wake (macOS, Windows)
+              // or pause while the wall clock jumps (Linux); both overrun a short slice.
+              const now = yield* Clock.currentTimeMillis;
+              if (now - sliceStartedAt > slice + ACP_HOST_SLEEP_TOLERANCE_MILLIS) {
+                context.lastProgressAt = now;
+              }
               continue;
             }
             const outcome = yield* runtimeTransitionPermit.withPermit(
@@ -9525,6 +9646,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 yield* Ref.update(continuationGeneration, (value) => value + 1);
               }),
             );
+            // A session released mid-prompt (worktree handoff) never sees its prompt settle.
+            const openTurn = yield* Ref.get(activeTurn);
+            if (openTurn !== null && !openTurn.finalized) {
+              openTurn.interrupted = true;
+              yield* finalizeTurn(openTurn, "interrupted");
+            }
             const requests = [...(yield* Ref.get(pendingRuntimeRequests)).values()];
             yield* Effect.forEach(
               requests,
@@ -9582,7 +9709,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           instanceId: options.instanceId,
           driver,
           providerSessionId: input.providerSessionId,
-          providerSession,
+          get providerSession() {
+            return providerSession;
+          },
           canResumeAfterRestart: canLoadSession || canResumeSession,
           events: Stream.fromEffectRepeat(Queue.take(events)),
           ...(flavor.getModelContextWindow === undefined
@@ -9858,6 +9987,29 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 ),
               ),
           ),
+          // The held turn already waits on these commands; their tool calls carry no task id,
+          // so any id matches while one runs on this thread.
+          ...(flavor.toolOutlivesPrompt === undefined
+            ? {}
+            : {
+                awaitBackgroundTasks: Effect.fn("AcpAdapterV2.awaitBackgroundTasks")(function* ({
+                  providerThread,
+                  taskIds,
+                }) {
+                  const outlives = flavor.toolOutlivesPrompt;
+                  const context = yield* Ref.get(activeTurn);
+                  const holdsCommand =
+                    outlives !== undefined &&
+                    defersFinalizeForBackgroundWork &&
+                    context !== null &&
+                    !context.finalized &&
+                    context.nativeThreadId === providerThread.nativeThreadRef?.nativeId &&
+                    [...context.tools.values()].some(
+                      (tool) => toolStatus(tool.status) === "running" && outlives(tool),
+                    );
+                  return { matched: holdsCommand ? [...new Set(taskIds)] : [] };
+                }),
+              }),
           interruptTurn: Effect.fn("AcpAdapterV2.interruptTurn")(
             function* (turnInput: ProviderAdapter.ProviderAdapterV2InterruptInput) {
               return yield* Effect.uninterruptibleMask((restore) =>

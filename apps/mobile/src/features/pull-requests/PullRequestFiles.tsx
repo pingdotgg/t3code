@@ -32,6 +32,7 @@ import {
 import { usePullRequestFileFilter } from "./usePullRequestFileFilter";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
 import { requestPullRequestFileJump } from "./pullRequestFileJump";
+import { fileDirectory, groupByDirectory } from "./pullRequestFileSections";
 import type { MessageResolver } from "../../i18n/messages";
 
 const BREAKDOWN_LABELS = {
@@ -41,11 +42,6 @@ const BREAKDOWN_LABELS = {
   generated: msg("Generated", { $context: "kind of changed file" }),
   docs: msg("Docs", { $context: "kind of changed file" }),
 } satisfies Record<keyof NonNullable<PullRequestChangeBreakdown>, string>;
-
-function fileDirectory(path: string) {
-  const separator = path.lastIndexOf("/");
-  return separator < 0 ? "" : path.slice(0, separator);
-}
 
 function useChangedFiles(params: PullRequestDiffParams) {
   const detail = useEnvironmentQuery(composerPullRequests.detail(pullRequestTarget(params)));
@@ -373,39 +369,6 @@ export function usePullRequestFilesSection(params: PullRequestParams) {
         })),
     footer: <FilesFooter files={files} />,
   };
-}
-
-type SheetItem =
-  | {
-      readonly kind: "directory";
-      readonly key: string;
-      readonly directory: string;
-      readonly collapsed: boolean;
-    }
-  | { readonly kind: "file"; readonly key: string; readonly file: ReviewRenderableFile };
-
-function groupByDirectory(
-  files: ReadonlyArray<ReviewRenderableFile>,
-  collapsed: ReadonlySet<string>,
-) {
-  const sorted = files
-    .map((file) => ({ file, directory: fileDirectory(file.path) }))
-    .sort(
-      (a, b) => a.directory.localeCompare(b.directory) || a.file.path.localeCompare(b.file.path),
-    );
-  const items: SheetItem[] = [];
-  sorted.forEach(({ file, directory }, index) => {
-    if (directory !== sorted[index - 1]?.directory) {
-      items.push({
-        kind: "directory",
-        key: `directory:${directory}`,
-        directory,
-        collapsed: collapsed.has(directory),
-      });
-    }
-    if (!collapsed.has(directory)) items.push({ kind: "file", key: file.id, file });
-  });
-  return items;
 }
 
 function DirectoryRow(props: {

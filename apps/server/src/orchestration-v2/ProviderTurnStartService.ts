@@ -5,6 +5,7 @@ import {
   CommandId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   latestProviderTurnForAttempt,
+  withMessageSenderNote,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2ExecutionNode,
@@ -549,9 +550,20 @@ export const layer: Layer.Layer<
             projection.runs.some(
               (source) =>
                 source.id === handoff.targetRunId &&
-                (source.status === "failed" ||
+                // A settled delivery retires history of this thread: the session that took it
+                // holds it, and a fresh session starts from a full summary of the thread. That
+                // summary lacks another thread's history (a fork source, a merge-back).
+                (((source.status === "failed" ||
                   source.status === "interrupted" ||
-                  source.status === "cancelled" ||
+                  source.status === "cancelled") &&
+                  !(
+                    (handoff.delivery?.status === "injected" ||
+                      handoff.delivery?.status === "inline") &&
+                    handoff.fromProviderThreadIds.length > 0 &&
+                    handoff.fromProviderThreadIds.every((id) =>
+                      projection.providerThreads.some((candidate) => candidate.id === id),
+                    )
+                  )) ||
                   (source.status === "completed" &&
                     handoff.delivery === undefined &&
                     // Compaction and /goal turns defer history to the next turn.
@@ -730,6 +742,10 @@ export const layer: Layer.Layer<
                   records: providerMessage.context?.records ?? [],
                 }),
                 hasAttachments: false,
+                // A scheduled delivery keeps its task author's createdBy.
+                sentByPerson:
+                  providerMessage.createdBy === "user" &&
+                  providerMessage.scheduledTaskId === undefined,
               }),
             );
         if (isEmptyCompaction || authResult?._tag === "Failure" || authResult?.success) {
@@ -970,10 +986,13 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
-      const userText = projectComposerContextForProvider({
-        text: providerMessage.text,
-        records: providerMessage.context?.records ?? [],
-      });
+      const userText = withMessageSenderNote(
+        providerMessage,
+        projectComposerContextForProvider({
+          text: providerMessage.text,
+          records: providerMessage.context?.records ?? [],
+        }),
+      );
       // Native goal commands go verbatim; handoff history waits a turn.
       const goalDriver =
         session.driver === "codex" ||
@@ -990,15 +1009,16 @@ export const layer: Layer.Layer<
       const restartCancelledWork = pendingRestartCancelledBackgroundWork({
         runs: projection.runs,
         providerTurns: projection.providerTurns,
-        compactionMessageIds: new Set(
-          projection.messages
-            .filter(
-              (candidate) =>
-                isCompactionCommandMessage(candidate) ||
-                (goalDriver && parseGoalCommand(candidate) !== null),
-            )
-            .map((candidate) => candidate.id),
-        ),
+        compactionMessageIds: () =>
+          new Set(
+            projection.messages
+              .filter(
+                (candidate) =>
+                  isCompactionCommandMessage(candidate) ||
+                  (goalDriver && parseGoalCommand(candidate) !== null),
+              )
+              .map((candidate) => candidate.id),
+          ),
         run,
         attempts: projection.attempts,
       });
@@ -1198,27 +1218,26 @@ export const layer: Layer.Layer<
           // History delivery (inline or injected) is text only, so missed images ride on prompts
           // until a later run's is accepted. Compaction and /goal starts carry none. A missed run's
           // own accepted attempt predates its unsent steering input, so it does not count.
-          const lastPromptOrdinal = Math.max(
-            0,
-            ...acceptedAttempts.flatMap((attempt) => {
-              if (missedRunIds.has(attempt.runId)) return [];
-              const source = projection.runs.find((candidate) => candidate.id === attempt.runId);
-              const message = projection.messages.find(
-                (candidate) => candidate.id === source?.userMessageId,
-              );
-              return source === undefined ||
-                (message !== undefined &&
-                  (isCompactionCommandMessage(message) ||
-                    (goalDriver && parseGoalCommand(message) !== null)))
-                ? []
-                : [source.ordinal];
-            }),
-          );
+          const runsById = new Map(projection.runs.map((source) => [source.id, source]));
+          const messagesById = new Map(projection.messages.map((message) => [message.id, message]));
+          let lastPromptOrdinal = 0;
+          for (const attempt of acceptedAttempts) {
+            if (missedRunIds.has(attempt.runId)) continue;
+            const source = runsById.get(attempt.runId);
+            if (source === undefined) continue;
+            const message = messagesById.get(source.userMessageId);
+            if (
+              message !== undefined &&
+              (isCompactionCommandMessage(message) ||
+                (goalDriver && parseGoalCommand(message) !== null))
+            )
+              continue;
+            lastPromptOrdinal = Math.max(lastPromptOrdinal, source.ordinal);
+          }
           const attachments = missedHistory.flatMap((item) =>
             item.type === "user_message" &&
-            missedRuns.some(
-              (source) => source.id === item.runId && source.ordinal > lastPromptOrdinal,
-            )
+            item.runId !== null &&
+            (runsById.get(item.runId)?.ordinal ?? 0) > lastPromptOrdinal
               ? item.attachments
               : [],
           );
@@ -1632,9 +1651,32 @@ export const layer: Layer.Layer<
           }),
         );
         if (replacement === undefined) return undefined;
+        if (
+          replacement.nativeThreadRef?.nativeId != null &&
+          replacement.nativeThreadRef.driver === providerThread.nativeThreadRef?.driver &&
+          replacement.nativeThreadRef.nativeId === providerThread.nativeThreadRef.nativeId
+        ) {
+          // Never retried. Forget the load first, or the next turn would skip resume and start on
+          // the reused session without this error or the recovery handoff.
+          yield* providerSessions.forgetLoadedProviderThread({
+            providerSessionId: session.providerSessionId,
+            threadId: projection.thread.id,
+            providerThread: replacement,
+            modelSelection: run.modelSelection,
+            runtimePolicy: resolvedRuntimePolicy,
+          });
+          yield* settleStartFailure({
+            signal: "provider-thread-load-failure",
+            title: "Provider turn failed to start",
+            error: new ProviderAdapter.ProviderAdapterProtocolError({
+              driver: session.driver,
+              detail:
+                "the provider returned its existing session when asked for a fresh one, so the conversation context could not be moved to a new session",
+            }),
+          });
+          return undefined;
+        }
         const { handoff, transferId, createdAt } = yield* recoveryHandoff;
-        effectiveHandoffs = withRecoveryHandoff(handoff);
-        resumeFellBack = true;
         const previousRun = projection.runs.findLast(
           (candidate) =>
             candidate.providerThreadId === providerThread.id &&
@@ -1679,7 +1721,11 @@ export const layer: Layer.Layer<
           strategy: handoff.strategy,
           summary: handoff.summaryText,
         };
-        yield* eventSink.write({
+        const replacementWrite = yield* eventSink.writeIfRunCurrent({
+          threadId: projection.thread.id,
+          runId: run.id,
+          activeAttemptId: attempt.id,
+          expectedStatus: "starting",
           events: [
             {
               id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
@@ -1718,6 +1764,9 @@ export const layer: Layer.Layer<
             },
           ],
         });
+        if (!replacementWrite.committed) return undefined;
+        effectiveHandoffs = withRecoveryHandoff(handoff);
+        resumeFellBack = true;
         recoveryTurnItem = handoffTurnItem;
         return replacement;
       });
