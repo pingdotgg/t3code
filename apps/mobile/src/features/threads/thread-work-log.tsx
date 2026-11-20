@@ -1014,9 +1014,10 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
           server: notice.mcpSignIn.server,
         }
       : null;
+  // Signed in, the notice is an ordinary row again.
+  const opensMcpSignIn = mcpSignInTarget !== null && !mcpSignedIn;
   // A sign-in notice opens its sheet instead; a nested button would be out of VoiceOver's reach.
-  const canExpand =
-    row.canExpand && notifiedSubagentThreadId === undefined && mcpSignInTarget === null;
+  const canExpand = row.canExpand && notifiedSubagentThreadId === undefined && !opensMcpSignIn;
   const reasoning = row.projectedItem.item.type === "reasoning" ? row.projectedItem.item : null;
   const fetchedItem = fetchedDetail.data?.item ?? null;
   const isRead = toolGroupAction(row.workEntry) === "read";
@@ -1093,19 +1094,21 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
         accessibilityRole={
           notifiedSubagentThreadId !== undefined
             ? "link"
-            : canExpand || mcpSignInTarget !== null
+            : canExpand || opensMcpSignIn
               ? "button"
               : undefined
         }
         accessibilityLabel={
           failed
             ? gt("{preview}, tool call failed", { preview: accessiblePreview })
-            : accessiblePreview
+            : mcpSignInTarget !== null && mcpSignedIn
+              ? gt("{preview}, signed in", { preview: accessiblePreview })
+              : accessiblePreview
         }
         accessibilityHint={
           notifiedSubagentThreadId !== undefined
             ? gt("Opens this agent's thread. Long press to copy.")
-            : mcpSignInTarget !== null
+            : opensMcpSignIn
               ? gt("Opens the sign-in. Long press to copy.")
               : canExpand
                 ? expanded
@@ -1122,7 +1125,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
             });
             return;
           }
-          if (mcpSignInTarget !== null) {
+          if (opensMcpSignIn) {
             void Haptics.selectionAsync();
             setMcpSignInOpen(true);
             return;
