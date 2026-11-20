@@ -993,6 +993,7 @@ function useChatMarkdownState(
     fileLinkMeta: MarkdownFileLinkMeta,
     copyMarkdown: string,
     mediaSource?: string,
+    label?: string,
   ) => {
     const resolveHostPath = () =>
       resolveMarkdownFileHostPath({
@@ -1030,15 +1031,19 @@ function useChatMarkdownState(
         workspaceRelativePath={fileLinkMeta.workspaceRelativePath}
         panelPath={isAppBundle ? null : panelPath}
         line={fileLinkMeta.line}
-        label={fileLinkLabel(
-          {
-            path: fileLinkMeta.filePath,
-            ...(fileLinkMeta.line !== undefined ? { line: fileLinkMeta.line } : {}),
-            ...(fileLinkMeta.column !== undefined ? { column: fileLinkMeta.column } : {}),
-            ...(fileLinkMeta.endLine !== undefined ? { endLine: fileLinkMeta.endLine } : {}),
-          },
-          fileLinkParentSuffixByPath,
-        )}
+        label={
+          label ??
+          fileLinkLabel(
+            {
+              path: fileLinkMeta.filePath,
+              ...(fileLinkMeta.line !== undefined ? { line: fileLinkMeta.line } : {}),
+              ...(fileLinkMeta.column !== undefined ? { column: fileLinkMeta.column } : {}),
+              ...(fileLinkMeta.endLine !== undefined ? { endLine: fileLinkMeta.endLine } : {}),
+            },
+            fileLinkParentSuffixByPath,
+          )
+        }
+        wrapLabel={label !== undefined}
         copyMarkdown={copyMarkdown}
         theme={resolvedTheme}
         threadRef={threadRef}
@@ -1642,6 +1647,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
           fileLinkMeta,
           `\`${codeText}\``,
           inlineCodeFilePathCandidate(codeText) ?? codeText.trim(),
+          codeText,
         );
       }
       return (
