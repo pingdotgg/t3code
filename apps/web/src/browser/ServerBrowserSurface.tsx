@@ -34,10 +34,10 @@ import {
 } from "react";
 import { msg, T, useGT, useMessages } from "gt-react";
 
+import { BrowserDialogCard } from "./BrowserDialogCard";
 import { AgentCursorMark } from "~/components/preview/AgentBrowserCursor";
 import { CommandBlock } from "~/components/CommandBlock";
 import { Button } from "~/components/ui/button";
-import { Input } from "~/components/ui/input";
 import { toastManager } from "~/components/ui/toast";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
@@ -188,7 +188,6 @@ export function ServerBrowserSurface(props: {
   const hasFrameRef = useRef(false);
   const controlRef = useRef<PreviewStreamControl | null>(null);
   const [control, setControl] = useState<PreviewStreamControl | null>(null);
-  const [promptText, setPromptText] = useState("");
   const [fileChooser, setFileChooser] = useState<PreviewStreamFileChooser | null>(null);
   const [agentCursor, setAgentCursor] = useState<AgentCursorPlacement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -429,11 +428,6 @@ export function ServerBrowserSurface(props: {
           controlRef.current = next;
           setControl(next);
           controlChanged(next);
-          if (
-            next.dialog?.message !== previous?.dialog?.message ||
-            next.dialog?.defaultValue !== previous?.dialog?.defaultValue
-          )
-            setPromptText(next.dialog?.defaultValue ?? "");
           if (next.controller !== "you") {
             clearInput();
           } else if (previous?.controller !== "you") {
@@ -897,49 +891,14 @@ export function ServerBrowserSurface(props: {
           </div>
         ) : null}
         {control?.dialog ? (
-          <div
-            className="absolute inset-x-2 top-2 z-10 flex flex-col gap-2 rounded-lg border border-border bg-background p-3 shadow-lg"
-            role="dialog"
-            aria-label={gt("Browser dialog")}
-          >
-            <p className="break-words text-sm">{control.dialog.message}</p>
-            {control.controller === "you" ? (
-              <>
-                {control.dialog.type === "prompt" ? (
-                  <Input
-                    aria-label={gt("Dialog response")}
-                    value={promptText}
-                    onChange={(event) => setPromptText(event.target.value)}
-                  />
-                ) : null}
-                <div className="flex justify-end gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => send({ type: "dialog", accept: false })}
-                  >
-                    <T>Dismiss</T>
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={() =>
-                      send({
-                        type: "dialog",
-                        accept: true,
-                        ...(control.dialog?.type === "prompt" ? { promptText } : {}),
-                      })
-                    }
-                  >
-                    <T>Accept</T>
-                  </Button>
-                </div>
-              </>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                <T>Take control to respond.</T>
-              </p>
-            )}
-          </div>
+          <BrowserDialogCard
+            key={`${control.dialog.message}\n${control.dialog.defaultValue}`}
+            dialog={control.dialog}
+            canAnswer={control.controller === "you"}
+            onAnswer={(accept, promptText) =>
+              send({ type: "dialog", accept, ...(promptText === undefined ? {} : { promptText }) })
+            }
+          />
         ) : null}
       </div>
       {visible && hostSetup ? (
