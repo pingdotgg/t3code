@@ -131,6 +131,14 @@ rename a thread, regenerate its title, or link and unlink a pull request. These 
 appear on web, desktop, and mobile without requiring the originating browser to remain
 open.
 
+### Keep the project filter focused
+
+On web and desktop, opening a thread outside the sidebar's project filter shows all
+projects by default. To keep the list focused, set **Settings → General → Sidebar →
+Open threads outside the project filter** to **Switch to thread's project**. Each
+device keeps its own choice. For a new draft, the filter switches when you send its
+first message. If its project is unavailable in the filter, all projects are shown.
+
 ### Fold working threads (beta)
 
 Threads that are working or waiting on work they will resume from move into a collapsed
