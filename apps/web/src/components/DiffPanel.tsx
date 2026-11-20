@@ -436,7 +436,11 @@ export default function DiffPanel({
           ? "commit"
           : "branch-range"),
   );
-  const comparisonHeadRef = gitStatusQuery.data?.refName ?? "HEAD";
+  // A committed comparison pins its head to a commit SHA, so name the branch instead.
+  const comparisonHeadRef =
+    (selectedGitSource?.branchMode === "committed" ? null : selectedGitSource?.headRef) ??
+    gitStatusQuery.data?.refName ??
+    "HEAD";
   const comparisonBaseRef =
     selectedGitSource?.baseRef ??
     selectedBaseRef ??

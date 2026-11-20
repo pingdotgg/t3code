@@ -2077,6 +2077,7 @@
   "72941c977ef9beab": "HEAD desacoplado: crea una rama y haz checkout para activar las acciones de push y de {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}}.",
   "511aca627fadc47d": "Acciones de Git",
   "02310c860a9eb34f": "Opciones de acciones de Git",
+  "5c7e97a9c2acd4f1": "{term, select, mr {MR} cr {solicitud de cambios} other {PR}} #{number}",
   "36c716131a71059e": "Ver",
   "f21ea1110f9bd1c9": "Ninguno",
   "5f5b08b4f5838831": "(HEAD desacoplado)",

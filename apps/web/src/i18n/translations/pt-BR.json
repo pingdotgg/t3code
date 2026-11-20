@@ -2077,6 +2077,7 @@
   "72941c977ef9beab": "HEAD desanexado: crie um branch e faça checkout dele para ativar as ações de push e de {term, select, mr {merge request} cr {solicitação de alteração} other {pull request}}.",
   "511aca627fadc47d": "Ações do Git",
   "02310c860a9eb34f": "Opções de ações do Git",
+  "5c7e97a9c2acd4f1": "{term, select, mr {MR} cr {Solicitação de alteração} other {PR}} #{number}",
   "36c716131a71059e": "Ver",
   "f21ea1110f9bd1c9": "Nenhuma",
   "5f5b08b4f5838831": "(HEAD desanexado)",

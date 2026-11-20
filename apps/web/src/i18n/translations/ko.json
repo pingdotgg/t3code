@@ -2077,6 +2077,7 @@
   "72941c977ef9beab": "분리된 HEAD: 푸시 및 {term, select, mr {병합 요청} cr {변경 요청} other {풀 리퀘스트}} 작업을 사용하려면 브랜치를 만들고 체크아웃하세요.",
   "511aca627fadc47d": "Git 작업",
   "02310c860a9eb34f": "Git 작업 옵션",
+  "5c7e97a9c2acd4f1": "{term, select, mr {MR} cr {변경 요청} other {PR}} #{number}",
   "36c716131a71059e": "보기",
   "f21ea1110f9bd1c9": "없음",
   "5f5b08b4f5838831": "(분리된 HEAD)",

@@ -2077,6 +2077,7 @@
   "72941c977ef9beab": "HEAD détachée : créez une branche et basculez dessus pour activer le push et les actions de {term, select, mr {merge request} cr {demande de modification} other {pull request}}.",
   "511aca627fadc47d": "Actions Git",
   "02310c860a9eb34f": "Options des actions Git",
+  "5c7e97a9c2acd4f1": "{term, select, mr {MR} cr {demande de modification} other {PR}} #{number}",
   "36c716131a71059e": "Voir",
   "f21ea1110f9bd1c9": "Aucune",
   "5f5b08b4f5838831": "(HEAD détachée)",

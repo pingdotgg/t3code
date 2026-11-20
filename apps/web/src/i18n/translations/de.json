@@ -2076,6 +2076,7 @@
   "72941c977ef9beab": "{term, select, mr {Detached HEAD: Erstelle einen Branch und checke ihn aus, um Push- und Merge Request-Aktionen zu aktivieren.} cr {Detached HEAD: Erstelle einen Branch und checke ihn aus, um Push- und Änderungsanfrage-Aktionen zu aktivieren.} other {Detached HEAD: Erstelle einen Branch und checke ihn aus, um Push- und Pull Request-Aktionen zu aktivieren.}}",
   "511aca627fadc47d": "Git-Aktionen",
   "02310c860a9eb34f": "Optionen für Git-Aktionen",
+  "5c7e97a9c2acd4f1": "{term, select, mr {MR} cr {Änderungsanfrage} other {PR}} #{number}",
   "36c716131a71059e": "Anzeigen",
   "f21ea1110f9bd1c9": "Keine",
   "5f5b08b4f5838831": "(Detached HEAD)",

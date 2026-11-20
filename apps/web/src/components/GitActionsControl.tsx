@@ -1180,7 +1180,10 @@ function CheckoutGitActionsControl({
   const changesTotals = resolvedChangesTotals ?? { insertions: 0, deletions: 0 };
   const changesBreakdown = resolvedChangesTotals?.breakdown ?? null;
   const changesBaseLabel = changesTarget
-    ? `${changeRequestTerminology.shortLabel} #${changesTarget.number}`
+    ? gt("{term, select, mr {MR} cr {change request} other {PR}} #{number}", {
+        term: changeRequestTermKind(changeRequestTerminology),
+        number: changesTarget.number,
+      })
     : resolvedChangesTotals
       ? resolvedChangesTotals.baseRef
         ? gt("vs {ref}", { ref: resolvedChangesTotals.baseRef })
@@ -1896,7 +1899,9 @@ function CheckoutGitActionsControl({
                         ? gitStatus.hasWorkingTreeChanges
                           ? gt("View", { $context: "open uncommitted changes" })
                           : gt("None", { $context: "no uncommitted changes" })
-                        : gt("Loading…")}
+                        : gitStatusQuery.isPending
+                          ? gt("Loading…")
+                          : gt("Unavailable")}
                     </span>
                   ) : totals ? (
                     <span className="ml-auto flex shrink-0 items-baseline gap-2 ps-2 font-mono tabular-nums">

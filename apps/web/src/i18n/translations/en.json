@@ -2077,6 +2077,7 @@
   "72941c977ef9beab": "Detached HEAD: create and check out a branch to enable push and {term, select, mr {merge request} cr {change request} other {pull request}} actions.",
   "511aca627fadc47d": "Git actions",
   "02310c860a9eb34f": "Git action options",
+  "5c7e97a9c2acd4f1": "{term, select, mr {MR} cr {change request} other {PR}} #{number}",
   "36c716131a71059e": "View",
   "f21ea1110f9bd1c9": "None",
   "5f5b08b4f5838831": "(detached HEAD)",

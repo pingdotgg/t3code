@@ -2080,6 +2080,7 @@
   "72941c977ef9beab": "分离的 HEAD：请创建并检出一个分支以启用推送和 {term, select, mr {merge request} cr {change request} other {pull request}} 操作。",
   "511aca627fadc47d": "Git 操作",
   "02310c860a9eb34f": "Git 操作选项",
+  "5c7e97a9c2acd4f1": "{term, select, mr {MR} cr {change request} other {PR}} #{number}",
   "36c716131a71059e": "查看",
   "f21ea1110f9bd1c9": "无",
   "5f5b08b4f5838831": "（游离 HEAD）",

@@ -2077,6 +2077,7 @@
   "72941c977ef9beab": "Frånkopplat HEAD: skapa och checka ut en gren för att aktivera push och åtgärder för {term, select, mr {merge request} cr {ändringsbegäran} other {pull request}}.",
   "511aca627fadc47d": "Git-åtgärder",
   "02310c860a9eb34f": "Alternativ för Git-åtgärder",
+  "5c7e97a9c2acd4f1": "{term, select, mr {MR} cr {Ändringsbegäran} other {PR}} #{number}",
   "36c716131a71059e": "Visa",
   "f21ea1110f9bd1c9": "Inga",
   "5f5b08b4f5838831": "(frånkopplat HEAD)",
