@@ -20,6 +20,7 @@ import {
   saveBranchNaming,
   saveCleanupMode,
   saveCleanupRules,
+  saveProviderUpdateChecks,
   saveSetupScript,
   worktreeValues,
 } from "./settingsModel";
@@ -394,5 +395,13 @@ describe("removedWorktreePaths", () => {
       ]),
     );
     expect([...paths]).toEqual(["/w/a"]);
+  });
+});
+
+describe("saveProviderUpdateChecks", () => {
+  it("Given the switch turned off, when saved, then the patch sets T3's update checks to false", () => {
+    expect(saveProviderUpdateChecks(false)).toEqual({
+      patch: { enableProviderUpdateChecks: false },
+    });
   });
 });

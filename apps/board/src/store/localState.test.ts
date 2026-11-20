@@ -31,8 +31,8 @@ describe("local state", () => {
       cardPositions: {},
     });
     expect(await createLocalState(fakeStorage(saved).storage).read()).toEqual({
+      ...EMPTY_LOCAL_STATE,
       lastOpenedBoard: { projectId: "p1", folder: "a" },
-      frameOrder: {},
     });
   });
 

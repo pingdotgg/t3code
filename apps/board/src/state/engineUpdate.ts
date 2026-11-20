@@ -4,6 +4,8 @@ import type {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
+import type { UpdateNote } from "./updates";
+
 export type UpdateStage = "downloading" | "installing" | "resuming";
 
 export interface UpdateOutcome {
@@ -85,4 +87,34 @@ export function offeredRelease(version: string | null, latest: string | null): s
     if (difference !== 0) return difference > 0 ? latest : null;
   }
   return null;
+}
+
+const STAGE_TEXT = {
+  downloading: "Downloading",
+  installing: "Installing",
+  resuming: "Restarting",
+} as const;
+
+/** The line the footer and the Updates page show for an engine update, or null while there is none. */
+export function describeEngineUpdate(update: EngineUpdateState): UpdateNote | null {
+  switch (update.status) {
+    case "idle":
+      return null;
+    case "running":
+      return {
+        text: `${STAGE_TEXT[update.stage]} ${update.targetVersion}…`,
+        tone: "progress",
+      };
+    case "failed":
+      return { text: update.message, tone: "problem" };
+    case "finished": {
+      const { status, version, reason } = update.outcome;
+      return status === "committed"
+        ? { text: `Update committed: now on ${version}`, tone: "progress" }
+        : {
+            text: `Update ${status}: still on ${version}${reason === undefined ? "" : `. ${reason}`}`,
+            tone: "problem",
+          };
+    }
+  }
 }
