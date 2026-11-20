@@ -66,7 +66,9 @@ export const layer: Layer.Layer<
       readonly scopeId: CheckpointScopeId;
     }) {
       const { run, rootNode, scope, providerThread, preservedCheckpointOrdinals, sideChat } =
-        yield* projections.getCheckpointCaptureContext(input.threadId, input);
+        yield* projections.getCheckpointCaptureContext(input.threadId, input, {
+          preservedCheckpoints: "baselines",
+        });
       // Stopped runs remain terminal; their checkpoint is the next message's rollback point.
       const stopped = run?.status === "interrupted" || run?.status === "cancelled";
 
