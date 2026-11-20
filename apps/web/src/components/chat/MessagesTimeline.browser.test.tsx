@@ -3,6 +3,7 @@ import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
 import { flushSync } from "react-dom";
 import { AudioPreview } from "../files/AudioPreview";
 import { cdp, page, userEvent } from "vite-plus/test/browser";
+import { converter, formatHex } from "culori/fn";
 import {
   ComposerContextId,
   EnvironmentId,
@@ -33,7 +34,10 @@ import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 
 import "~/index.css";
 
+import { applyAppearanceContrast } from "../../appearanceContrast";
 import { environmentThreadDetails } from "../../state/threads";
+import { applyThemeColorPreview, applyThemePalette } from "../../themePalette";
+import { parseVsCodeThemeFile } from "../../vscodeThemeImport";
 import { act, fakeTimers, render, stubGlobal } from "../../../test/render";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { MessagesTimeline } from "./MessagesTimeline";
@@ -225,6 +229,31 @@ async function click(element: HTMLElement) {
 function setup({ scheduledTasks = [] as ReadonlyArray<{ id: string; title: string }> } = {}) {
   environmentQuery.error = "Pull request not found";
   environmentQuery.data = { tasks: scheduledTasks };
+}
+
+const toRgb = converter("rgb");
+
+function relativeLuminance(color: string) {
+  const { r, g, b } = toRgb(color)!;
+  const [red, green, blue] = [r, g, b].map((channel) =>
+    channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4,
+  );
+  return 0.2126 * red! + 0.7152 * green! + 0.0722 * blue!;
+}
+
+/** The nearest background painted behind an element. */
+function surfaceBehind(element: HTMLElement) {
+  for (let node = element.parentElement; node; node = node.parentElement) {
+    const background = getComputedStyle(node).backgroundColor;
+    if (toRgb(background)?.alpha !== 0) return background;
+  }
+  throw new Error("Missing surface");
+}
+
+function contrastWithSurface(element: HTMLElement) {
+  const ink = relativeLuminance(getComputedStyle(element).color);
+  const surface = relativeLuminance(surfaceBehind(element));
+  return (Math.max(ink, surface) + 0.05) / (Math.min(ink, surface) + 0.05);
 }
 
 const TASK_ID = ScheduledTaskId.make("task-1");
@@ -522,6 +551,64 @@ describe("MessagesTimeline messages", () => {
     await click(screen.button("Show full message"));
     expect(long!.offsetHeight).toBeGreaterThanOrEqual(foldedHeight * 2);
   });
+
+  it.each([
+    { surface: "#000000", muted: "#000000", contrast: 200 },
+    { surface: "#565656", muted: "#565656", contrast: 100 },
+    // Black muted text reads on this gray, on the far side of it from the white prose.
+    { surface: "#767676", muted: "#000000", foreground: "#ffffff", contrast: 150 },
+  ])(
+    "keeps muted text and controls readable on an imported $surface bubble at $contrast%",
+    async ({ surface, muted, foreground, contrast }) => {
+      setup();
+      const root = document.documentElement;
+      const theme = parseVsCodeThemeFile({
+        type: "light",
+        colors: {
+          "editor.background": "#ffffff",
+          "chat.requestBubbleBackground": surface,
+          descriptionForeground: muted,
+          ...(foreground ? { "editor.foreground": foreground } : {}),
+        },
+      });
+      applyThemeColorPreview(theme.colors, theme.appearance);
+      applyAppearanceContrast(root, contrast);
+      onTestFinished(() => {
+        applyAppearanceContrast(root, 100);
+        applyThemePalette("system", "light");
+        root.classList.remove("dark");
+      });
+      const file = { type: "file", id: "notes", name: "notes.txt", mimeType: "text/plain" };
+      const lines = Array.from({ length: 60 }, (_, index) => `Line ${index}`).join("\n");
+      await using screen = await renderTimeline([
+        message(`###### Small heading\n\n${lines}`, {}, "long"),
+        message("See the notes", { attachments: [{ ...file, sizeBytes: 100 }] }, "file-row"),
+        message("", { attachments: [{ ...file, id: "card", sizeBytes: 100 }] }, "file-card"),
+        message(AGENT_MESSAGE, { createdBy: "agent", senderThreadId: SENDER_THREAD_ID }, "agent"),
+      ]);
+      await vi.waitFor(() => expect(screen.buttons("Show full message")).toHaveLength(1));
+      const body = screen.container.querySelector<HTMLElement>("[data-user-message-body]")!;
+      expect(formatHex(surfaceBehind(body))).toBe(surface);
+
+      const inks = {
+        disclosure: screen.button("Show full message"),
+        heading: screen.container.querySelector<HTMLElement>("h6")!,
+        fileRowDownload: screen.buttons("Download notes.txt")[0]!,
+        fileCardDownload: screen.buttons("Download notes.txt")[1]!,
+        fileCardSize: screen.getByText("TXT · 100 B").element() as HTMLElement,
+        foldedLabel: screen.button(/^Agent/).querySelector<HTMLElement>("span")!,
+      };
+      for (const [name, element] of Object.entries(inks)) {
+        expect(contrastWithSurface(element), name).toBeGreaterThanOrEqual(4.5);
+      }
+
+      await click(inks.disclosure);
+      expect(body.dataset.userMessageCollapsed).toBe("false");
+      expect(contrastWithSurface(screen.button("Show less"))).toBeGreaterThanOrEqual(4.5);
+      await click(screen.button("Show less"));
+      expect(body.dataset.userMessageCollapsed).toBe("true");
+    },
+  );
 
   it("keeps the first and last message headings reachable from either end", async () => {
     setup();
