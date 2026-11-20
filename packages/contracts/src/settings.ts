@@ -1042,6 +1042,13 @@ export const ObservabilitySettings = Schema.Struct({
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
+export const BlenderSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Empty detects Blender on PATH and in standard installs. */
+  executablePath: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+});
+export type BlenderSettings = typeof BlenderSettings.Type;
+
 export const SourceControlWritingStyleMode = Schema.Literals([
   "repo_conventions",
   "conventional_commits",
@@ -1573,6 +1580,8 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  /** Per environment: Blender runs on the environment that owns the workspace. */
+  blender: BlenderSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   sourceControlHosts: Schema.Record(Schema.String, SourceControlHostSettings).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -1960,6 +1969,13 @@ export const ServerSettingsPatch = Schema.Struct({
   reviewGuideModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   reviewGuideInstructions: Schema.optionalKey(TrimmedString),
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
+  // Fields merge separately, so a toggle and an override edit cannot overwrite each other.
+  blender: Schema.optionalKey(
+    Schema.Struct({
+      enabled: Schema.optionalKey(Schema.Boolean),
+      executablePath: Schema.optionalKey(TrimmedString),
+    }),
+  ),
   observability: Schema.optionalKey(
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),
@@ -2011,6 +2027,10 @@ export function requiredScopesForServerSettingsPatch(
     if (value === undefined) continue;
     if (key === "requireConnectDeviceApproval" || key === "enablePreviewTunnel") {
       changesAccess = true;
+    } else if (key === "blender") {
+      // Choosing the executable the server runs is provider authority, as a provider binaryPath is.
+      if (patch.blender?.executablePath !== undefined) changesProviders = true;
+      if (patch.blender?.enabled !== undefined) changesSettings = true;
     } else if (
       key === "providers" ||
       key === "providerInstances" ||

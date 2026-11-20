@@ -329,13 +329,13 @@ describe("settings mutation authorization", () => {
     "does not let a settings grant manage providers or turn off T3 Connect device approval",
     () =>
       Effect.gen(function* () {
-        let handled = false;
+        let handled = 0;
         const client = yield* RpcTest.makeClient(group).pipe(
           Effect.provide(
             Layer.mergeAll(
               group.toLayerHandler(WS_METHODS.serverUpdateSettings, () =>
                 Effect.sync(() => {
-                  handled = true;
+                  handled++;
                   return DEFAULT_SERVER_SETTINGS;
                 }),
               ),
@@ -359,6 +359,13 @@ describe("settings mutation authorization", () => {
             patch: { requireConnectDeviceApproval: false },
           }).pipe(Effect.flip),
         ).toMatchObject({ requiredPermission: AuthAccessWriteScope });
+        // Turning Blender on is a setting; choosing the executable it runs is not.
+        yield* client[WS_METHODS.serverUpdateSettings]({ patch: { blender: { enabled: true } } });
+        expect(
+          yield* client[WS_METHODS.serverUpdateSettings]({
+            patch: { blender: { executablePath: "/tmp/payload" } },
+          }).pipe(Effect.flip),
+        ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
         // A reference names any secret the store holds, and the host entry names where it goes.
         expect(
           yield* client[WS_METHODS.serverUpdateSettings]({
@@ -380,7 +387,7 @@ describe("settings mutation authorization", () => {
             },
           }).pipe(Effect.flip),
         ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
-        expect(handled).toBe(false);
+        expect(handled).toBe(1);
       }),
   );
 

@@ -1546,6 +1546,12 @@ export function createServerEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
       refreshIntervalMs: 5 * 60_000,
     }),
+    // Each read probes the destination's Blender, so it reruns only on mount or an explicit refresh.
+    blenderStatus: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:blender:status",
+      tag: WS_METHODS.blenderGetStatus,
+      idleTtlMs: 0,
+    }),
     processDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:process-diagnostics",
       tag: WS_METHODS.serverGetProcessDiagnostics,
