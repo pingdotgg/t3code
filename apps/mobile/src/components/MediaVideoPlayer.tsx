@@ -10,7 +10,7 @@ import { AppText } from "./ui/AppText";
 import { SymbolView } from "./ui/AppSymbol";
 import { VideoThumbnailImage } from "./VideoThumbnailImage";
 import { useMediaActions } from "../state/mediaActions";
-import { fitVideoFrame } from "../lib/videoFrameFit";
+import { fitVideoFrame, inlineVideoFrame } from "../lib/videoFrameFit";
 import { loadVideoThumbnail } from "../lib/videoThumbnails";
 import { type MediaActionsSource } from "../lib/mediaActionsSource";
 import { useMediaVideoPlayback } from "../lib/useMediaVideoPlayback";
@@ -148,6 +148,8 @@ interface MediaVideoPlayerProps {
   readonly expanded?: boolean;
   /** Fill the parent and size the frame to the video's shape instead of a fixed 16:9 slot. */
   readonly fitToVideo?: boolean;
+  /** The video's display size from the server, used for the inline frame's shape. */
+  readonly knownSize?: { readonly width: number; readonly height: number } | undefined;
   readonly autoPlay?: boolean;
   readonly paused?: boolean;
   readonly onPlaybackStart?: () => void;
@@ -195,7 +197,12 @@ function MediaVideoPlayerContent(props: MediaVideoPlayerProps) {
       style={[
         props.expanded
           ? { flex: 1 }
-          : (fittedFrame ?? { width: "100%", maxWidth: 480, aspectRatio: 16 / 9 }),
+          : (fittedFrame ??
+            inlineVideoFrame(props.knownSize, 480) ?? {
+              width: "100%",
+              maxWidth: 480,
+              aspectRatio: 16 / 9,
+            }),
         props.borderRadius === undefined ? null : { borderRadius: props.borderRadius },
       ]}
     >

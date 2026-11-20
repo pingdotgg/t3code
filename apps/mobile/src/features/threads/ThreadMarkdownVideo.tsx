@@ -56,6 +56,7 @@ export function ThreadMarkdownVideo(props: {
       }
       actionsSource={source.actionsSource}
       borderRadius={props.borderRadius}
+      knownSize={asset._tag === "Success" ? asset.imageDimensions : undefined}
     />
   );
 }

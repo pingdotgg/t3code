@@ -298,6 +298,24 @@ export function ChatMarkdownImage(props: {
   );
 }
 
+/** A Markdown width or height alone only bounds a video; both together replace its own ratio. */
+function videoSizeStyle(
+  size: { readonly width: number; readonly height: number } | undefined,
+  authored: CSSProperties | undefined,
+): CSSProperties | undefined {
+  if (!size) return authored;
+  const own = authoredImageSizeStyle(size.width, size.height);
+  if (!own || authored?.aspectRatio !== undefined) return authored ?? own;
+  const bounds = [
+    own.maxWidth,
+    authored?.maxWidth,
+    authored?.maxHeight === undefined
+      ? undefined
+      : `calc(${authored.maxHeight} * ${size.width / size.height})`,
+  ].filter((bound) => bound !== undefined);
+  return { ...own, maxWidth: `min(${bounds.join(", ")})` };
+}
+
 export function ChatMarkdownVideo(props: {
   readonly src: string | null;
   readonly alt: string;
@@ -309,16 +327,26 @@ export function ChatMarkdownVideo(props: {
   readonly mediaIdentity?: string | undefined;
   readonly actionsSource?: MediaActionSource | undefined;
   readonly onRetry?: (() => Promise<unknown>) | undefined;
+  /** The server's read of the file header; the loaded video's own size replaces it. */
+  readonly knownSize?: { readonly width: number; readonly height: number } | undefined;
 }) {
+  const identity = props.mediaIdentity ?? props.copyMarkdown ?? props.src;
+  const [loaded, setLoaded] = useState<{
+    identity: typeof identity;
+    size: { width: number; height: number };
+  } | null>(null);
+  const size = (loaded?.identity === identity ? loaded.size : undefined) ?? props.knownSize;
+  const style = videoSizeStyle(size, props.style);
   return (
     <MediaVideoPlayer
-      key={props.mediaIdentity ?? props.copyMarkdown ?? props.src}
+      key={identity}
       src={props.src}
       sourceFailed={props.sourceFailed}
       unavailableDetail={props.unavailableDetail}
       label={props.alt}
       originalUrl={props.originalUrl}
-      style={props.style}
+      style={style}
+      onVideoSize={(videoSize) => setLoaded({ identity, size: videoSize })}
       copyMarkdown={props.copyMarkdown}
       className={cn(
         CHAT_MARKDOWN_MEDIA_LAYOUT_CLASS_NAME,
@@ -466,6 +494,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
         copyMarkdown={props.copyMarkdown}
         originalUrl={props.originalUrl}
         style={props.style}
+        knownSize={knownSize}
         mediaIdentity={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
         // Re-signing cannot grant the file access this connection lacks.
         onRetry={missingFileAccess ? undefined : refreshAssetUrl}
