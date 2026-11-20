@@ -158,7 +158,7 @@ it.effect("parks automatic pull until activation without delaying command readin
             Effect.onInterrupt(() => Deferred.succeed(statusInterrupted, undefined)),
           ),
       }),
-      Layer.mock(AnalyticsService.AnalyticsService)({ record: () => Effect.void }),
+      Layer.mock(AnalyticsService.AnalyticsService)({ record: () => Effect.succeed(true) }),
       // No provider logins or Connect link, so startup records no owners.
       FileSystem.layerNoop({}),
       Layer.mock(ServerSecretStore.ServerSecretStore)({ get: () => Effect.succeedNone }),

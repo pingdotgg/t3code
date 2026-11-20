@@ -427,6 +427,33 @@ describe("AcpMcpStdioBridge", () => {
     }),
   );
 
+  it.effect("keeps the server's JSON-RPC error on a failed tool call", () =>
+    Effect.gen(function* () {
+      const rpcError = { code: -32602, message: "Tool 't3_feedback' not found" };
+      const error = yield* mcpToolSession({
+        endpoint: "http://127.0.0.1:1/mcp",
+        authorization: "Bearer bridge-test",
+        clientName: "t3-thread-cli",
+        fetchImplementation: async (_url, init) => {
+          if (init?.method === "DELETE") return new Response(null, { status: 204 });
+          const message = JSON.parse(String(init?.body)) as { id?: unknown; method?: string };
+          if (message.method === "initialize") {
+            return Response.json({ jsonrpc: "2.0", id: message.id, result: {} });
+          }
+          if (message.method !== "tools/call") return new Response(null, { status: 202 });
+          return Response.json({ jsonrpc: "2.0", id: message.id, error: rpcError });
+        },
+      }).pipe(
+        Effect.flatMap((session) => session.call("t3_feedback", {})),
+        Effect.scoped,
+        Effect.asVoid,
+        Effect.flip,
+      );
+
+      expect(error.rpcError).toEqual(rpcError);
+    }),
+  );
+
   it.effect("aborts the pending fetch when the stdio bridge is interrupted", () =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<AbortSignal | undefined>();
