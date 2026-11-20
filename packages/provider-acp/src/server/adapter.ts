@@ -9145,7 +9145,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       error.success._tag === "AcpRequestError" &&
                       error.success.code === -32800);
                   const failure = Cause.squash(cause);
-                  if (!interrupted && flavor.restartRuntimeAfterPromptError?.(failure) === true) {
+                  // A resumed prompt stands in for an outcome failure, which always restarts.
+                  if (
+                    !interrupted &&
+                    (context.outcomeResumed ||
+                      flavor.restartRuntimeAfterPromptError?.(failure) === true)
+                  ) {
                     yield* Ref.set(runtimeRestartRequired, true);
                   }
                   // An agent that answered with an error may still finish tools it started,
