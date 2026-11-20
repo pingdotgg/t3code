@@ -164,7 +164,8 @@ function UserMessagePreviewAnnotationDetails(props: {
   const messages = useMessages();
   const visibleElements = props.record.elements ?? [];
   const targetText = previewAnnotationTargetText(props.record, messages);
-  const modelTarget = ctx.threadRef ? modelAnnotationFileTarget(props.record.pageUrl) : null;
+  const threadRef = ctx.threadRef;
+  const modelTarget = threadRef ? modelAnnotationFileTarget(props.record.pageUrl) : null;
   return (
     <div className="max-w-full overflow-hidden rounded-lg border border-border/70 bg-background/70">
       {props.image?.previewUrl ? (
@@ -194,14 +195,11 @@ function UserMessagePreviewAnnotationDetails(props: {
           <div className="min-w-0 flex-1 truncate text-message-foreground text-xs font-medium">
             {props.record.pageTitle?.trim() || props.record.pageUrl || gt("Preview annotation")}
           </div>
-          {modelTarget && ctx.threadRef ? (
+          {modelTarget && threadRef ? (
             <Button
               size="micro"
               variant="outline"
-              onClick={() => {
-                if (ctx.threadRef)
-                  openFileAtModelView(ctx.threadRef, modelTarget.path, modelTarget.view);
-              }}
+              onClick={() => openFileAtModelView(threadRef, modelTarget.path, modelTarget.view)}
             >
               <T>Open view</T>
             </Button>
