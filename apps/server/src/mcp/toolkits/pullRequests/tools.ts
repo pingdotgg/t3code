@@ -528,6 +528,9 @@ export const ReadPullRequestResult = Schema.Struct({
     passed: Schema.Int,
     pending: Schema.Int,
     failed: Schema.Array(Schema.String),
+    incomplete: Schema.optional(Schema.Literal(true)).annotate({
+      description: "The host could not list some checks; checkRuns says which.",
+    }),
   }),
   unresolvedThreads: Schema.Int,
   unresolvedThreadsTruncated: Schema.optional(Schema.Literal(true)).annotate({

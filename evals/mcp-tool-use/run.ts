@@ -1444,7 +1444,9 @@ export const t3Default = (
         status:
           check.state === "fail"
             ? "failure"
-            : check.state === "cancelled" || check.state === "pending"
+            : check.state === "cancelled" ||
+                check.state === "pending" ||
+                check.state === "action-required"
               ? check.state
               : "success",
         description: null,
@@ -1471,7 +1473,9 @@ export const t3Default = (
         autoMergeEnabled: false,
         checks: {
           passed: checkRuns.filter((check) => check.status === "success").length,
-          pending: checkRuns.filter((check) => check.status === "pending").length,
+          pending: checkRuns.filter(
+            (check) => check.status === "pending" || check.status === "action-required",
+          ).length,
           failed: checkRuns
             .filter((check) => check.status === "failure" || check.status === "cancelled")
             .map((check) => check.name),

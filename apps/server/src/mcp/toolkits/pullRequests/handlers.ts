@@ -162,14 +162,15 @@ function conversationPage(
 function checksSummary(checks: ReadonlyArray<PullRequestCheck>) {
   let passed = 0;
   let pending = 0;
+  let incomplete = false;
   const failed: Array<string> = [];
   for (const check of checks) {
-    if (check.placeholder === true) pending += 1;
+    if (check.placeholder === true) incomplete = true;
     else if (check.status === "failure" || check.status === "cancelled") failed.push(check.name);
     else if (check.status === "pending" || check.status === "action-required") pending += 1;
     else passed += 1;
   }
-  return { passed, pending, failed };
+  return { passed, pending, failed, ...(incomplete ? { incomplete: true as const } : {}) };
 }
 
 function entryOf(
@@ -663,7 +664,9 @@ const make = Effect.gen(function* () {
                     })),
                   }
                 : {}),
-              truncated: activity.commentsTruncated || activity.reviewThreadsTruncated === true,
+              truncated:
+                (wantsComments && activity.commentsTruncated) ||
+                (wantsThreads && activity.reviewThreadsTruncated === true),
               nextCursor: page.value.next === null ? null : readCursors.encode(page.value.next),
             },
           }

@@ -893,7 +893,7 @@ describe("source control tools", () => {
       const compact = yield* harness.call("pull_request_read", {});
       expect(compact).toMatchObject({
         headSha: "abc123",
-        checks: { passed: 2, pending: 2, failed: ["Lint", "E2E"] },
+        checks: { passed: 2, pending: 1, failed: ["Lint", "E2E"], incomplete: true },
         unresolvedThreads: 1,
       });
       expect(compact.body).toBeUndefined();
@@ -920,6 +920,10 @@ describe("source control tools", () => {
         unresolvedThreads: 1,
         unresolvedThreadsTruncated: true,
       });
+      const commentsOnly = yield* harness.call("pull_request_read", { include: ["comments"] });
+      expect(commentsOnly.conversation?.truncated).toBe(false);
+      const threadsOnly = yield* harness.call("pull_request_read", { include: ["threads"] });
+      expect(threadsOnly.conversation?.truncated).toBe(true);
     }),
   );
 

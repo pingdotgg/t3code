@@ -895,6 +895,7 @@ it("lists and reads world PRs in their own state, with the diff when asked", () 
               checks: [
                 { name: "Test", state: "pass" },
                 { name: "Lint", state: "cancelled" },
+                { name: "Deploy", state: "action-required" },
               ],
             },
           ],
@@ -939,7 +940,7 @@ it("lists and reads world PRs in their own state, with the diff when asked", () 
   const ciRead: Readonly<Record<string, unknown>> = t3Default(ciSample, "pull_request_read", {
     number: 7,
   });
-  assert.deepEqual(ciRead.checks, { passed: 1, pending: 0, failed: ["Lint"] });
+  assert.deepEqual(ciRead.checks, { passed: 1, pending: 1, failed: ["Lint"] });
   const read: Readonly<Record<string, unknown>> = t3Default(sample, "pull_request_read", {
     number: 5,
     include: ["diff", "comments"],
