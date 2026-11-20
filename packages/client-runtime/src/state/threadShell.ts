@@ -149,11 +149,12 @@ function sideChatRequest(thread: OrchestrationV2ThreadShell): PendingSubagentReq
 
 /**
  * The threads to flag for a subagent's live approval, up its
- * subagent chain and through a side chat to its parent. `delegated` are tasks this
+ * subagent chain and through a side chat or a launch to its parent. `delegated` are tasks this
  * environment's threads delegated to linked environments, with what each one, or its
  * own subagents, asks.
  */
 function pendingSubagentRequestsByThread(
+  environmentId: EnvironmentId,
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
   delegated: ReadonlyArray<{
     readonly parentThreadId: ThreadId;
@@ -162,9 +163,17 @@ function pendingSubagentRequestsByThread(
 ): ReadonlyMap<ThreadId, RolledUpRequest> {
   const requests = new Map<ThreadId, RolledUpRequest>();
   let byId: ReadonlyMap<ThreadId, OrchestrationV2ThreadShell> | undefined;
-  const flag = (firstParentId: ThreadId | null, request: RolledUpRequest, seen: Set<ThreadId>) => {
+  // A thread launched from one here shows under its launcher, as a subagent does.
+  const launcherOf = (thread: OrchestrationV2ThreadShell) =>
+    thread.delegatedFrom?.environmentId === environmentId ? thread.delegatedFrom.threadId : null;
+  const flag = (
+    firstParentId: ThreadId | null,
+    request: RolledUpRequest,
+    seen: Set<ThreadId>,
+    withQuestions = false,
+  ) => {
     // The coordinator answers child questions; approvals and user-only cards need the user.
-    if (request === "user_input") return;
+    if (request === "user_input" && !withQuestions) return;
     byId ??= new Map(threads.map((thread) => [thread.id, thread] as const));
     let parentId = firstParentId;
     while (parentId !== null && !seen.has(parentId)) {
@@ -172,9 +181,11 @@ function pendingSubagentRequestsByThread(
       if (requests.get(parentId) !== "approval") requests.set(parentId, request);
       const parent = byId.get(parentId);
       parentId =
-        parent?.lineage.relationshipToParent === "subagent" || parent?.lineage.sideChat === true
-          ? parent.lineage.parentThreadId
-          : null;
+        parent === undefined
+          ? null
+          : parent.lineage.relationshipToParent === "subagent" || parent.lineage.sideChat === true
+            ? parent.lineage.parentThreadId
+            : launcherOf(parent);
     }
   };
   for (const child of threads) {
@@ -186,7 +197,13 @@ function pendingSubagentRequestsByThread(
       }
       continue;
     }
-    if (child.lineage.relationshipToParent !== "subagent") continue;
+    if (child.lineage.relationshipToParent !== "subagent") {
+      // No agent is woken to answer a launched thread's question, so it needs the user too.
+      const launcherId = launcherOf(child);
+      const request = launcherId === null ? null : rolledUpRequest(child, subagentRequest(child));
+      if (request !== null) flag(launcherId, request, new Set([child.id]), true);
+      continue;
+    }
     const request = rolledUpRequest(child, subagentRequest(child));
     if (request !== null) flag(parentId, request, new Set([child.id]));
   }
@@ -337,7 +354,10 @@ export function createEnvironmentThreadShellAtoms(input: {
   const localSubagentRequestsAtom = Atom.family((environmentId: EnvironmentId) => {
     let previous: ReadonlyMap<ThreadId, RolledUpRequest> = EMPTY_SUBAGENT_REQUESTS;
     return Atom.make((get) => {
-      const next = pendingSubagentRequestsByThread(get(environmentThreadsAtom(environmentId)));
+      const next = pendingSubagentRequestsByThread(
+        environmentId,
+        get(environmentThreadsAtom(environmentId)),
+      );
       if (sameRequests(previous, next)) return previous;
       previous = next;
       return next;
@@ -381,6 +401,7 @@ export function createEnvironmentThreadShellAtoms(input: {
         });
         if (delegated.length === 0) continue;
         const requests = pendingSubagentRequestsByThread(
+          environmentId,
           get(environmentThreadsAtom(environmentId)),
           delegated,
         );

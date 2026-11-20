@@ -452,6 +452,64 @@ describe("v2 thread shell lists", () => {
     registry.dispose();
   });
 
+  it("lists threads launched from a thread here under it, with their questions and approvals", () => {
+    const { registry, threads, snapshotAtom } = makeHarness();
+    const launcher = v2ThreadShell;
+    const worker = {
+      ...v2ThreadShell,
+      id: ThreadId.make("worker"),
+      creationSource: "mcp" as const,
+      status: "running" as const,
+      activityRunStatus: "running" as const,
+      delegatedFrom: { environmentId, threadId: launcher.id, title: launcher.title },
+    };
+    // The worker launched one of its own, which shows under the worker, so under the launcher.
+    const nested = {
+      ...worker,
+      id: ThreadId.make("nested-worker"),
+      delegatedFrom: { environmentId, threadId: worker.id, title: worker.title },
+    };
+    const request = { id: RuntimeRequestId.make("ask"), createdAt: v2Now };
+    const launcherRef = { environmentId, threadId: launcher.id };
+    const disposeNavigation = registry.mount(threads.navigationThreadShellsAtom);
+    const disposeLauncher = registry.mount(threads.threadShellAtom(launcherRef));
+    const show = (asking: typeof worker, kind: "user_input" | "command") =>
+      registry.set(snapshotAtom(environmentId), {
+        ...v2ShellSnapshot,
+        threads: [
+          launcher,
+          ...[worker, nested].map((thread) =>
+            thread === asking ? { ...thread, pendingRuntimeRequest: { ...request, kind } } : thread,
+          ),
+        ],
+      });
+
+    show(worker, "user_input");
+    expect(registry.get(threads.navigationThreadShellsAtom).map((thread) => thread.id)).toEqual([
+      launcher.id,
+    ]);
+    // No agent is woken to answer a launched thread's question, so it reaches the user.
+    expect(registry.get(threads.threadShellAtom(launcherRef))?.pendingSubagentRequest).toBe(
+      "user_input",
+    );
+    show(nested, "command");
+    expect(registry.get(threads.threadShellAtom(launcherRef))?.pendingSubagentRequest).toBe(
+      "approval",
+    );
+
+    // An archived launcher leaves navigation, so its worker is listed on its own.
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [{ ...launcher, archivedAt: v2Now }, worker],
+    });
+    expect(registry.get(threads.navigationThreadShellsAtom).map((thread) => thread.id)).toEqual([
+      worker.id,
+    ]);
+    disposeLauncher();
+    disposeNavigation();
+    registry.dispose();
+  });
+
   it("brings an approval up a chain of tasks across three environments to its root", () => {
     const thirdEnvironmentId = EnvironmentId.make("third-environment-v2");
     const { registry, threads, snapshotAtom } = makeHarness([
