@@ -1144,6 +1144,7 @@ const make = Effect.gen(function* () {
     // precedes this override, so its Sec-CH-UA brands still name HeadlessChrome.
     if (!desktop) await presentAsChrome(cdp, host);
     if (!desktop) await recordCopies(cdp);
+    if (!desktop) await allowLoopback(cdp).catch(constVoid);
     page.setDefaultTimeout(NAVIGATION_TIMEOUT_MS);
     page.setDefaultNavigationTimeout(NAVIGATION_TIMEOUT_MS);
     const control = new SessionControl(snapshot.automationOwner ?? null, () =>
@@ -1633,6 +1634,19 @@ const make = Effect.gen(function* () {
     if (preparedContexts.has(context)) return;
     preparedContexts.add(context);
     await context.grantPermissions(["clipboard-write"]);
+  };
+
+  // Like the desktop's loopback-network allowlist: without it Chromium refuses a public page's
+  // request to localhost before sending it, and reports a CORS failure. Playwright's
+  // local-network-access would also open the host's LAN, so only loopback is granted here.
+  // This runs after prepareContext, whose grantPermissions would reset it.
+  const allowLoopback = async (cdp: CDPSession) => {
+    const { browserContextId } = (await cdp.send("Target.getTargetInfo")).targetInfo;
+    await cdp.send("Browser.setPermission", {
+      permission: { name: "loopback-network" },
+      setting: "granted",
+      ...(browserContextId === undefined ? {} : { browserContextId }),
+    });
   };
 
   const recordCopies = async (cdp: CDPSession) => {

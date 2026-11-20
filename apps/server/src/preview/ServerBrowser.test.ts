@@ -124,6 +124,7 @@ function makeSession(
       // Snapshots shrink their screenshot in the page; the header stands in for the result.
       if (method === "Runtime.callFunctionOn") return { result: { value: PNG_HEADER } };
       if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main" } } };
+      if (method === "Target.getTargetInfo") return { targetInfo: { browserContextId: "ctx" } };
       if (method === "Page.createIsolatedWorld") {
         const worldContexts: Record<string, number> = {
           "t3-preview-viewport": 9,
@@ -975,6 +976,41 @@ it.effect("a tab the desktop does not draw is marked headless, so the desktop st
 
       expect(headlessOf(tabId)).toBe(true);
       expect(headlessOf(desktopTab.tabId)).toBeUndefined();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("headless tabs let public pages reach loopback, but not the LAN", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker } = yield* ready;
+      const opened = contexts.length;
+      yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false },
+      });
+      const grantsLoopback = (context: (typeof contexts)[number]) =>
+        context.sessions.some((session) =>
+          session.send.mock.calls.some(
+            ([method, input]) =>
+              method === "Browser.setPermission" &&
+              JSON.stringify(input) ===
+                JSON.stringify({
+                  permission: { name: "loopback-network" },
+                  setting: "granted",
+                  browserContextId: "ctx",
+                }),
+          ),
+        );
+
+      // The ready tab and the one opened here each get the grant.
+      expect(opened).toBeGreaterThan(0);
+      expect(contexts.length).toBeGreaterThan(opened);
+      for (const context of contexts) {
+        expect(grantsLoopback(context)).toBe(true);
+        expect(context.grantPermissions).toHaveBeenCalledWith(["clipboard-write"]);
+      }
     }),
   ).pipe(Effect.provide(layer)),
 );
