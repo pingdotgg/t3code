@@ -8703,13 +8703,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           });
           if (!(yield* readDetachedWork())) return;
           yield* Effect.gen(function* () {
-            yield* Effect.sleep(debounce);
-            if (!canFinalize()) return;
-            // Wait one more debounce after the work stops, for the last worker's wake.
-            while (context.detachedWorkPending) {
-              if (!(yield* readDetachedWork())) return;
+            while (true) {
               yield* Effect.sleep(debounce);
               if (!canFinalize()) return;
+              // Finalize only on two idle reads in a row, so the last worker's wake can arrive.
+              const wasPending = context.detachedWorkPending;
+              if (!(yield* readDetachedWork())) return;
+              if (!context.detachedWorkPending && !wasPending) break;
             }
             const status = context.promptSettledStatus ?? "completed";
             yield* finalizeTurn(context, status);
@@ -9131,20 +9131,22 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   }
                   yield* idleReportedSubagents(context);
                   if (context.finalized) return;
+                  let detachedWorkSeen = false;
                   if (
                     defersFinalizeForBackgroundWork &&
                     status === "completed" &&
                     flavor.detachedWorkOutlivingPrompt !== undefined
                   ) {
-                    context.detachedWorkPending = yield* flavor.detachedWorkOutlivingPrompt(
+                    detachedWorkSeen = yield* flavor.detachedWorkOutlivingPrompt(
                       context.nativeThreadId,
                     );
-                    if (context.detachedWorkPending) yield* scheduleDeferredFinalize(context);
+                    context.detachedWorkPending = detachedWorkSeen;
+                    if (detachedWorkSeen) yield* scheduleDeferredFinalize(context);
                   }
                   if (
                     defersFinalizeForBackgroundWork &&
                     !context.interrupted &&
-                    (context.detachedWorkPending || hasDeferredBackgroundWork(context))
+                    (detachedWorkSeen || hasDeferredBackgroundWork(context))
                   ) {
                     yield* closeTextStreams(context);
                     yield* (
