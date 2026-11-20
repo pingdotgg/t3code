@@ -1787,21 +1787,35 @@ const make = Effect.gen(function* () {
         (candidate) => Cache.get(routeProbes, { candidate, driver: activeDriver }),
         { concurrency: "unbounded" },
       );
+      const availableCandidates = (probes: typeof candidates, now: number) =>
+        probes.flatMap((candidate, index) => {
+          if (!candidate) return [];
+          const host = matching[index]!;
+          const cooling = (slug: string) => routeCoolingDown(activeDriver, host.hostId, slug, now);
+          const models = candidate.models.filter((slug) => !cooling(slug));
+          const unavailableModels = includeUnavailable
+            ? [...new Set([...candidate.unavailableModels, ...host.models.filter(cooling)])]
+            : [];
+          return (models.length && (model === undefined || models.includes(model))) ||
+            unavailableModels.length
+            ? [{ ...candidate, hostId: host.hostId, models, unavailableModels }]
+            : [];
+        });
       const now = yield* Clock.currentTimeMillis;
-      const available = candidates.flatMap((candidate, index) => {
-        if (!candidate) return [];
-        const host = matching[index]!;
-        const cooling = (slug: string) => routeCoolingDown(activeDriver, host.hostId, slug, now);
-        const models = candidate.models.filter((slug) => !cooling(slug));
-        const unavailableModels = includeUnavailable
-          ? [...new Set([...candidate.unavailableModels, ...host.models.filter(cooling)])]
-          : [];
-        return (models.length && (model === undefined || models.includes(model))) ||
-          unavailableModels.length
-          ? [{ ...candidate, hostId: host.hostId, models, unavailableModels }]
-          : [];
-      });
-      return available;
+      const available = availableCandidates(candidates, now);
+      if (
+        available.length ||
+        !model ||
+        matching.every((candidate) => routeCoolingDown(activeDriver, candidate.hostId, model, now))
+      )
+        return available;
+
+      const refreshed = yield* Effect.forEach(
+        matching,
+        (candidate) => Cache.refresh(routeProbes, { candidate, driver: activeDriver }),
+        { concurrency: "unbounded" },
+      );
+      return availableCandidates(refreshed, yield* Clock.currentTimeMillis);
     },
     Effect.mapError(safeFailure("Could not resolve inference hosts.")),
   );
