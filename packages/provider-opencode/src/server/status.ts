@@ -859,26 +859,30 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   if (probed.generation === "v2") {
     return yield* checkOpenCode2(openCodeSettings, probed.version, checkedAt, loadOpenCode2Models);
   }
-  const broken = brokenVersionDetail({
-    name: "OpenCode",
-    version: probed.version,
-    advisory: yield* compatibility(ProviderDriverKind.make("opencode"), probed.version),
-  });
-  if (broken !== undefined) {
-    return buildServerProvider({
-      presentation: OPENCODE_PRESENTATION,
-      enabled: openCodeSettings.enabled,
-      checkedAt,
-      models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
-      probe: {
-        installed: true,
-        version: probed.version,
-        status: "error",
-        auth: { status: "unknown" },
-        message: broken,
-      },
+  const refuseBroken = Effect.fnUntraced(function* (detected: string) {
+    const broken = brokenVersionDetail({
+      name: "OpenCode",
+      version: detected,
+      advisory: yield* compatibility(ProviderDriverKind.make("opencode"), detected),
     });
-  }
+    return broken === undefined
+      ? undefined
+      : buildServerProvider({
+          presentation: OPENCODE_PRESENTATION,
+          enabled: openCodeSettings.enabled,
+          checkedAt,
+          models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
+          probe: {
+            installed: true,
+            version: detected,
+            status: "error",
+            auth: { status: "unknown" },
+            message: broken,
+          },
+        });
+  });
+  const refused = yield* refuseBroken(probed.version);
+  if (refused !== undefined) return refused;
 
   const installedVersion = isExternalServer ? {} : { installedVersion: probed.version };
   let version = probed.version;
@@ -921,6 +925,9 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
       ),
     ),
   );
+  // The server that answered can differ from the CLI the probe ran.
+  const refusedServer = version === probed.version ? undefined : yield* refuseBroken(version);
+  if (refusedServer !== undefined) return { ...refusedServer, ...installedVersion };
   if (inventoryExit._tag === "Failure") {
     yield* logDiscoveryFailure({
       phase: "inventory",
