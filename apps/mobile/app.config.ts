@@ -306,6 +306,9 @@ const config: ExpoConfig = {
         }),
     entitlements: {
       "keychain-access-groups": [`$(AppIdentifierPrefix)${variant.iosBundleIdentifier}`],
+      ...(isIosPersonalTeamBuild
+        ? {}
+        : { "aps-environment": APP_VARIANT === "development" ? "development" : "production" }),
     },
     infoPlist: {
       UISupportedInterfaceOrientations: [
@@ -406,8 +409,8 @@ const config: ExpoConfig = {
       {
         icon: variant.assets.androidNotificationIcon,
         color: variant.assets.androidNotificationColor,
-        mode: APP_VARIANT === "development" ? "development" : "production",
         // Direct push sends silent widget refreshes; a Personal Team cannot sign push at all.
+        enableRemoteNotifications: !isIosPersonalTeamBuild,
         enableBackgroundRemoteNotifications: !isIosPersonalTeamBuild,
       },
     ],

@@ -1,6 +1,8 @@
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -151,9 +153,12 @@ function makeForgejo(input: {
 }) {
   const requests: Array<URLSearchParams> = [];
   const pullDetails: number[] = [];
+  const latestUpdate = DateTime.makeUnsafe("2026-10-12T00:00:00Z");
   const pulls = input.pulls.map((pull, index) => ({
     ...pull,
-    updated_at: new Date(Date.UTC(2026, 9, 12, 0, 0, -index)).toISOString(),
+    updated_at: DateTime.formatIso(
+      DateTime.subtractDuration(latestUpdate, Duration.seconds(index)),
+    ),
   }));
   const provider = make.pipe(
     Effect.provide(
