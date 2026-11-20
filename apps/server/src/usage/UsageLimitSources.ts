@@ -4,12 +4,14 @@ import {
   type UsageLimitSourceConsumeResetCreditInput,
   type ProviderConsumeResetCreditResult,
   type ProviderDriverKind,
+  type ServerProviderAuth,
   type ServerSettings,
   UsageLimitSourceConfig,
   settingsSecretLiteral,
   type UsageLimitSourceId,
   type UsageLimitSourceSnapshot,
 } from "@t3tools/contracts";
+import { hubUsageSources } from "@t3tools/shared/usageLimits";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -279,7 +281,7 @@ export function hubPoolResetAt(
 export class UsageLimitResetFallback extends Context.Reference<{
   readonly resetAt: (
     driver: ProviderDriverKind,
-    endpoint: string,
+    auth: ServerProviderAuth,
     model: string | null,
   ) => Effect.Effect<string | null>;
 }>("t3/usage/UsageLimitResetFallback", {
@@ -291,11 +293,9 @@ export const layerResetFallback = Layer.effect(
   Effect.gen(function* () {
     const sources = yield* UsageLimitSources;
     return {
-      resetAt: Effect.fn("UsageLimitResetFallback.resetAt")(function* (driver, endpoint, model) {
+      resetAt: Effect.fn("UsageLimitResetFallback.resetAt")(function* (driver, auth, model) {
         // Only the hub at the instance's endpoint serves its turns.
-        const atEndpoint = Effect.map(sources.current, (current) =>
-          current.filter((source) => source.origin === endpoint),
-        );
+        const atEndpoint = Effect.map(sources.current, (current) => hubUsageSources(current, auth));
         if ((yield* atEndpoint).length === 0) return null;
         // The pool usually ran out after the last poll, so the cached accounts still show room.
         yield* sources.refresh.pipe(Effect.timeout("5 seconds"), Effect.ignore);

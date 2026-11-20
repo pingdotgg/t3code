@@ -11,6 +11,7 @@ import {
   isProviderAvailable,
   PROVIDER_DISPLAY_NAMES,
   type ServerProvider,
+  type ServerProviderAuth,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
   type UsageLimitSourceSnapshot,
@@ -260,8 +261,34 @@ function accountKeyResolver(reports: Iterable<AccountReport>) {
 
 const hubAccountName = (account: { readonly id: string }) => account.id.replace(/\.json$/i, "");
 
+export function hubUsageSources(
+  sources: UsageLimitSourceSnapshots,
+  {
+    endpoint,
+    endpointPath,
+    endpointPathWithoutApiVersion,
+  }: Pick<ServerProviderAuth, "endpoint" | "endpointPath" | "endpointPathWithoutApiVersion">,
+): UsageLimitSourceSnapshots {
+  if (!endpoint) return [];
+  const exact =
+    endpointPath === undefined ? undefined : endpoint + endpointPath.replace(/\/+$/, "");
+  const alternate =
+    endpointPathWithoutApiVersion === undefined
+      ? undefined
+      : endpoint + endpointPathWithoutApiVersion.replace(/\/+$/, "");
+  const matches = sources.filter((source) => {
+    if (source.origin !== endpoint) return false;
+    const mount = source.endpoint ?? source.origin;
+    return exact === undefined || mount === exact || mount === alternate;
+  });
+  // Cached auth can lack a path, and a version suffix can itself be a literal mount.
+  return new Set(matches.map((source) => source.endpoint ?? source.origin)).size === 1
+    ? matches
+    : [];
+}
+
 // Source ids are environment-local, so only a remote endpoint names the same hub across environments.
-function hubIdentity(environmentId: EnvironmentId, source: UsageLimitSourceSnapshot): string {
+function hubIdentity(source: UsageLimitSourceSnapshot, environmentId?: EnvironmentId): string {
   // The server supplies canonical endpoints; native URL polyfills can misparse IPv6 hosts.
   const endpoint = source.endpoint;
   const host = endpoint?.match(/^https?:\/\/(\[[\da-f:.]+\]|[^:/?#@]+)(?::\d+)?(?:\/|$)/)?.[1];
@@ -271,7 +298,12 @@ function hubIdentity(environmentId: EnvironmentId, source: UsageLimitSourceSnaps
     isWildcardHost(host) ||
     // Each machine resolves these to itself too; shared host classification leaves them out.
     /\.localhost\.*$|^\[::ffff:(?:127\.|7f[\da-f]{2}:)/i.test(host);
-  return endpoint && !local ? endpoint : `${environmentId}:${source.id}`;
+  if (endpoint && !local) return endpoint;
+  return environmentId === undefined ? source.id : `${environmentId}:${source.id}`;
+}
+
+function hubAccountFileKey(hub: string, account: UsageLimitSourceSnapshot["accounts"][number]) {
+  return `${hub}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
 }
 
 export interface LimitAccount {
@@ -402,8 +434,8 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         if (limitsNotice(account.usageLimits) !== null) continue;
         const resolved = resolveKey(account);
         // A resolved account already has an identity; its public key must stay distinct from others'.
-        const hub = resolved ? `${environmentId}:${source.id}` : hubIdentity(environmentId, source);
-        const key = `${hub}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
+        const hub = resolved ? `${environmentId}:${source.id}` : hubIdentity(source, environmentId);
+        const key = hubAccountFileKey(hub, account);
         merge(resolved ?? key, {
           key,
           driver: account.driver,
@@ -678,7 +710,7 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
       columns: accounts.map(
         (account) => memberByAccount.get(account.key) ?? { account, window: null },
       ),
-      usedPercent: Math.round(usedPercent),
+      usedPercent,
       remainingPercent: Math.round(100 - usedPercent),
       pace: meanElapsed === null ? null : paceOfShares(timedUsed, meanElapsed),
       resets,
@@ -964,4 +996,84 @@ export function collectProviderUsageLimits(
     }
   }
   return { createdAt: DateTime.formatIso(DateTime.makeUnsafe(now)), accounts, notices };
+}
+
+/**
+ * The limits an instance's turns spend: the pool of the CLIProxyAPI hub it sends requests to,
+ * otherwise its own account's. Shown for the selected instance in the thread details card.
+ */
+export function instanceUsageLimits(
+  instanceId: ProviderInstanceId,
+  providers: readonly ServerProvider[],
+  sources: UsageLimitSourceSnapshots,
+  now: number,
+): ServerProviderUsageLimits | undefined {
+  const selected = providers.find((provider) => provider.instanceId === instanceId);
+  if (!selected) return undefined;
+  const hubs = hubUsageSources(sources, selected.auth);
+  const reports = hubs.flatMap((source) =>
+    source.accounts
+      .filter((account) => account.driver === selected.driver)
+      .map((account) => ({ source, account })),
+  );
+  const resolveKey = accountKeyResolver(reports.map(({ account }) => account));
+  const hubAccounts = new Map<string, UsageLimitSourceSnapshot["accounts"][number]>();
+  for (const { source, account } of reports) {
+    if (limitsNotice(account.usageLimits) !== null) continue;
+    const key = resolveKey(account) ?? hubAccountFileKey(hubIdentity(source), account);
+    const previous = hubAccounts.get(key);
+    if (
+      !previous ||
+      Date.parse(account.usageLimits.checkedAt) > Date.parse(previous.usageLimits.checkedAt)
+    ) {
+      hubAccounts.set(key, account);
+    }
+  }
+  const readable = [...hubAccounts];
+  const [pool] = collectLimitPools(
+    readable.map(([key, account]) => ({
+      key,
+      driver: account.driver,
+      displayName: null,
+      email: account.email,
+      plan: account.plan,
+      accentColor: undefined,
+      environments: [],
+      sourceLabel: null,
+      redeem: null,
+      limits: account.usageLimits,
+    })),
+    now,
+  );
+  if (pool) {
+    return {
+      checkedAt: readable
+        .map(([, account]) => account.usageLimits.checkedAt)
+        .reduce((oldest, next) => (Date.parse(next) < Date.parse(oldest) ? next : oldest)),
+      // A pool refills account by account, so only a lone account's window has one reset clock.
+      windows: displayLimitWindows(pool).map(({ id, kind, label, usedPercent, members }) =>
+        members.length === 1 ? members[0]!.window : { id, kind, label, usedPercent },
+      ),
+    };
+  }
+  const hubError = hubs.find((source) => source.error)?.error;
+  const failed = reports.find(
+    ({ account }) => account.usageLimits.unavailable?.reason === "probeFailed",
+  );
+  if (hubError || failed) {
+    return {
+      checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
+      windows: [],
+      unavailable: { reason: "probeFailed", ...(hubError ? { message: hubError } : {}) },
+    };
+  }
+  const empty = reports.find(({ account }) => !account.usageLimits.unavailable) ?? reports[0];
+  if (empty) return empty.account.usageLimits;
+  // The report keeps one instance per login, and any other entry may be a different login or
+  // workspace, so fall back to the instance's own snapshot.
+  return (
+    collectProviderUsageLimits(instanceId, providers, sources, now)?.accounts.find(
+      (entry) => entry.instanceId === instanceId,
+    )?.limits ?? selected.usageLimits
+  );
 }

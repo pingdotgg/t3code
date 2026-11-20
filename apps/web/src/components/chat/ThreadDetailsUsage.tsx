@@ -5,7 +5,7 @@ import type {
   UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
 import {
-  collectProviderUsageLimits,
+  instanceUsageLimits,
   type LimitPace,
   paceOf,
   paceRemainingPercent,
@@ -51,15 +51,10 @@ export function ThreadDetailsUsage({
   const m = useMessages();
   const nowMinute = useNowMinute();
   const now = Date.parse(`${nowMinute}:00Z`);
-  const report =
-    providerInstanceId !== null
-      ? collectProviderUsageLimits(providerInstanceId, providers, sources, now)
-      : null;
-  // Only this instance's data: the report keeps one instance per login, and any other entry may be
-  // a different login or workspace, so fall back to the instance's own snapshot.
   const limits =
-    report?.accounts.find((entry) => entry.instanceId === providerInstanceId)?.limits ??
-    providers.find((provider) => provider.instanceId === providerInstanceId)?.usageLimits;
+    providerInstanceId !== null
+      ? instanceUsageLimits(providerInstanceId, providers, sources, now)
+      : undefined;
   if (!limits) return null;
   const notice = limitsNotice(limits, m);
 

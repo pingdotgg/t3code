@@ -671,15 +671,15 @@ export const layer: Layer.Layer<
                 ? { ...input.event.failure, message: "Killed: out of memory.", code: "oom_kill" }
                 : input.event.failure;
               // A proxied CLI can drop the reset time; the hub still knows when its pool refills.
-              const endpoint =
+              const auth =
                 reported.class === "usage_limit" && reported.resetAt == null
                   ? (yield* Effect.flatMap(
                       instances.getInstance(input.providerInstanceId),
                       (instance) => instance?.snapshot.getSnapshot ?? Effect.undefined,
-                    ))?.auth.endpoint
+                    ))?.auth
                   : undefined;
               const hubResetAt =
-                endpoint === undefined
+                auth?.endpoint === undefined
                   ? null
                   : yield* Effect.gen(function* () {
                       // The failing run's model, which may differ from a selection changed mid-turn.
@@ -696,7 +696,7 @@ export const layer: Layer.Layer<
                     }).pipe(
                       Effect.orElseSucceed(() => null),
                       Effect.flatMap((model) =>
-                        usageLimitResets.resetAt(input.event.driver, endpoint, model),
+                        usageLimitResets.resetAt(input.event.driver, auth, model),
                       ),
                     );
               const failure = hubResetAt === null ? reported : { ...reported, resetAt: hubResetAt };

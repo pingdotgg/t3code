@@ -187,9 +187,12 @@ The hub's Codex, Claude, xAI (shown as Grok) and Antigravity accounts appear und
 accounts for other providers are not read. Codex accounts show banked reset credits; select an
 account and choose **Use reset** to redeem one. No hub plugin is required.
 
-This connection supplies usage information; configure
-the provider separately to send agent requests through the hub. Remove the hub from the same
-settings section when you no longer need it.
+Configure the provider separately to send agent requests through the hub. When the Codex or Claude
+instance's API base URL points to the hub, the thread details card shows the hub's pooled limits for
+that provider. Use the same hostname, port, and reverse proxy path in both settings. A Codex API
+base URL can include the OpenAI `/v1` suffix. When that URL matches both a hub with the suffix and
+a hub without it, the card uses the instance's own limits. Remove the hub from the same settings
+section when you no longer need it.
 
 ## Subscription usage widget
 

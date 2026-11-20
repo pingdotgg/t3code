@@ -20,8 +20,10 @@ import {
   collectLimitPools,
   elapsedShare,
   exhaustedUsageWindow,
+  instanceUsageLimits,
   paceOf,
   paceRemainingPercent,
+  remainingPercent,
   usesChatGptSharing,
   resolveNewThreadModelSelection,
 } from "./usageLimits.ts";
@@ -1726,6 +1728,231 @@ describe("/usage-limits", () => {
     ]);
     expect(mixed[2]).toBe(unrelated);
     expect(mixed[3]).toBe(disabled);
+  });
+});
+
+describe("instance usage limits", () => {
+  const hubOrigin = "http://127.0.0.1:8317";
+  const checkedAt = "2026-09-03T11:00:00.000Z";
+  const unsupported = { checkedAt, windows: [], unavailable: { reason: "unsupported" as const } };
+  const routed = provider({
+    usageLimits: unsupported,
+    auth: { status: "authenticated", type: "customEndpoint", endpoint: hubOrigin },
+  });
+  const weekly = {
+    id: "weekly",
+    kind: "weekly",
+    label: "Weekly",
+    usedPercent: 10,
+    windowDurationMins: 10_080,
+    resetsAt: "2026-09-08T12:00:00.000Z",
+  } as const;
+  const hubAccount = (id: string, usedPercent: number, extra: object = {}) => ({
+    id,
+    driver: routed.driver,
+    email: `${id}@example.com`,
+    usageLimits: { checkedAt, windows: [{ ...window, usedPercent }, weekly] },
+    ...extra,
+  });
+  const hub = (accounts: ReadonlyArray<ReturnType<typeof hubAccount>>, extra: object = {}) => ({
+    id: UsageLimitSourceId.make("hub"),
+    kind: "cliproxy" as const,
+    label: "Hub",
+    origin: hubOrigin,
+    endpoint: hubOrigin,
+    checkedAt,
+    accounts,
+    ...extra,
+  });
+  const limitsOf = (selected: ServerProvider, sources: ReadonlyArray<ReturnType<typeof hub>>) =>
+    instanceUsageLimits(selected.instanceId, [selected], sources, now);
+
+  it.each([
+    ["one hub account", [hub([hubAccount("a", 30)])], [30, 10]],
+    ["the pool of hub accounts", [hub([hubAccount("a", 30), hubAccount("b", 70)])], [50, 10]],
+    [
+      "each account once across hubs on one origin",
+      [
+        hub([hubAccount("a", 30)]),
+        hub(
+          [
+            hubAccount("a", 90, {
+              usageLimits: {
+                checkedAt: "2026-09-03T11:30:00.000Z",
+                windows: [{ ...window, usedPercent: 90 }, weekly],
+              },
+            }),
+            hubAccount("b", 70),
+          ],
+          {
+            id: UsageLimitSourceId.make("hub-2"),
+            endpoint: `${hubOrigin}/second`,
+          },
+        ),
+      ],
+      [80, 10],
+    ],
+    [
+      "the readable hub accounts when others cannot be read",
+      [
+        hub([
+          hubAccount("a", 30),
+          hubAccount("b", 0, {
+            usageLimits: { ...unsupported, unavailable: { reason: "probeFailed" as const } },
+          }),
+        ]),
+      ],
+      [30, 10],
+    ],
+  ])("shows %s for an instance routed through its hub", (_, sources, usedPercents) => {
+    if (sources.some((source) => source.endpoint !== hubOrigin)) {
+      expect(limitsOf(routed, sources)).toEqual(unsupported);
+      // Two registrations of the same mount can report overlapping accounts.
+      sources = sources.map((source) => ({ ...source, endpoint: hubOrigin }));
+    }
+    const limits = limitsOf(routed, sources);
+    expect(limits?.unavailable).toBeUndefined();
+    expect(limits?.windows.map((entry) => entry.usedPercent)).toEqual(usedPercents);
+  });
+
+  it.each([
+    ["root", "/v1", "/", hubOrigin],
+    ["a reverse proxy path", "/second/v1/", "/second", `${hubOrigin}/second`],
+  ])(
+    "selects the hub for %s even when another hub shares its origin",
+    (_, endpointPath, endpointPathWithoutApiVersion, endpoint) => {
+      const selected = {
+        ...routed,
+        auth: { ...routed.auth, endpointPath, endpointPathWithoutApiVersion },
+      };
+      const limits = limitsOf(selected, [
+        hub([hubAccount("a", endpoint === hubOrigin ? 100 : 0)]),
+        hub([hubAccount("b", endpoint === hubOrigin ? 0 : 100)], {
+          id: UsageLimitSourceId.make("hub-2"),
+          endpoint: `${hubOrigin}/second`,
+        }),
+      ]);
+      expect(limits?.windows[0]?.usedPercent).toBe(100);
+    },
+  );
+
+  it("keeps the instance's own state when cached Claude auth matches multiple hub mounts", () => {
+    const claude = { ...routed, driver: ProviderDriverKind.make("claudeAgent") };
+    expect(
+      limitsOf(claude, [
+        hub([hubAccount("exhausted", 100, { driver: claude.driver })]),
+        hub([hubAccount("unused", 0, { driver: claude.driver })], {
+          id: UsageLimitSourceId.make("hub-2"),
+          endpoint: `${hubOrigin}/second`,
+        }),
+      ]),
+    ).toEqual(unsupported);
+  });
+
+  it("uses a literal Codex /v1 mount only when the same URL cannot also name a root hub", () => {
+    const selected = {
+      ...routed,
+      auth: { ...routed.auth, endpointPath: "/v1", endpointPathWithoutApiVersion: "/" },
+    };
+    const versionMount = hub([hubAccount("exhausted", 100)], {
+      endpoint: `${hubOrigin}/v1`,
+    });
+    const rootMount = hub([hubAccount("unused", 0)], {
+      id: UsageLimitSourceId.make("hub-2"),
+    });
+    expect(limitsOf(selected, [versionMount, rootMount])).toEqual(unsupported);
+    expect(limitsOf(selected, [versionMount])?.windows[0]?.usedPercent).toBe(100);
+  });
+
+  it.each([
+    ["http://127.0.0.1:8317", 33],
+    ["https://hub.example.com", 50],
+  ])("uses the same auth file identity as Usage at %s", (origin, remaining) => {
+    const selected = { ...routed, auth: { ...routed.auth, endpoint: origin } };
+    const authFile = hubAccount("spent.json", 100, { email: undefined });
+    const sources = [
+      { ...hub([authFile, hubAccount("unused", 0)]), origin, endpoint: origin },
+      { ...hub([authFile]), id: UsageLimitSourceId.make("hub-2"), origin, endpoint: origin },
+    ];
+    const presentations = new Map([
+      [
+        EnvironmentId.make("local"),
+        {
+          entry: { target: { label: "Local" } },
+          serverConfig: { providers: [], usageLimitSources: sources },
+        },
+      ],
+    ]);
+    const [pool] = collectLimitPools(collectLimitAccounts(presentations), now);
+    expect(displayLimitWindows(pool!).map(remainingPercent)).toEqual([remaining, 90]);
+    expect(limitsOf(selected, sources)?.windows.map(remainingPercent)).toEqual([remaining, 90]);
+  });
+
+  it("keeps a readable snapshot when a newer duplicate failed", () => {
+    const limits = limitsOf(routed, [
+      hub([hubAccount("a", 30)]),
+      hub(
+        [
+          hubAccount("a", 0, {
+            usageLimits: {
+              checkedAt: "2026-09-03T11:30:00.000Z",
+              windows: [],
+              unavailable: { reason: "probeFailed" },
+            },
+          }),
+        ],
+        { id: UsageLimitSourceId.make("hub-2") },
+      ),
+    ]);
+    expect(limits?.windows[0]?.usedPercent).toBe(30);
+  });
+
+  it("rounds remaining quota for a pool of accounts the same way as Usage", () => {
+    const limits = limitsOf(routed, [hub([hubAccount("a", 99), hubAccount("b", 100)])]);
+    expect(limits?.windows.map(remainingPercent)).toEqual([1, 90]);
+  });
+
+  it("keeps a lone hub account's reset clock", () => {
+    expect(limitsOf(routed, [hub([hubAccount("a", 30)])])?.windows[0]).toMatchObject({
+      resetsAt: window.resetsAt,
+      windowDurationMins: window.windowDurationMins,
+    });
+  });
+
+  it.each([
+    [
+      "an instance not routed through a hub",
+      provider({ usageLimits: unsupported }),
+      [hub([hubAccount("a", 30)])],
+    ],
+    [
+      "a hub on another origin",
+      routed,
+      [hub([hubAccount("a", 30)], { origin: "http://127.0.0.1:9999" })],
+    ],
+    [
+      "a hub without accounts for the driver",
+      routed,
+      [hub([hubAccount("a", 30, { driver: ProviderDriverKind.make("claudeAgent") })])],
+    ],
+  ])("keeps the instance's own state for %s", (_, selected, sources) => {
+    expect(limitsOf(selected, sources)).toEqual(unsupported);
+  });
+
+  it("reports an unreadable hub as unreadable, not as an account without limits", () => {
+    expect(limitsOf(routed, [hub([], { error: "token expired" })])?.unavailable).toEqual({
+      reason: "probeFailed",
+      message: "token expired",
+    });
+    expect(
+      limitsOf(routed, [
+        hub([
+          hubAccount("a", 0, {
+            usageLimits: { ...unsupported, unavailable: { reason: "probeFailed" as const } },
+          }),
+        ]),
+      ])?.unavailable?.reason,
+    ).toBe("probeFailed");
   });
 });
 

@@ -4679,7 +4679,9 @@ it.layer(
 
     it.effect.each([
       {
-        settings: { env: { ANTHROPIC_BASE_URL: "https://hub.example.ts.net:8317" } },
+        settings: { env: { ANTHROPIC_BASE_URL: "https://hub.example.ts.net:8317/team" } },
+        endpoint: "https://hub.example.ts.net:8317",
+        endpointPath: "/team",
         baseUrl: "https://api.anthropic.com",
         type: "customEndpoint",
         label: "Custom API endpoint",
@@ -4689,16 +4691,20 @@ it.layer(
         baseUrl: "https://proxy.example",
         type: "apiKey",
         label: "Claude API Key",
+        endpoint: undefined,
+        endpointPath: undefined,
       },
       {
         settings: {},
         baseUrl: "https://proxy.example",
+        endpoint: "https://proxy.example",
+        endpointPath: "/",
         type: "customEndpoint",
         label: "Custom API endpoint",
       },
     ])(
       "uses the settings endpoint before the process endpoint: $type / $baseUrl",
-      ({ settings, baseUrl, type, label }) =>
+      ({ settings, baseUrl, type, label, endpoint, endpointPath }) =>
         Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
@@ -4728,6 +4734,8 @@ it.layer(
           assert.strictEqual(status.status, "ready");
           assert.strictEqual(status.auth.type, type);
           assert.strictEqual(status.auth.label, label);
+          assert.strictEqual(status.auth.endpoint, endpoint);
+          assert.strictEqual(status.auth.endpointPath, endpointPath);
         }).pipe(
           Effect.provide(
             layerMockSpawner((args) => {

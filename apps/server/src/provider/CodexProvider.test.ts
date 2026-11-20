@@ -312,7 +312,7 @@ it("reports native quota only for an OpenAI login on a native route", () => {
   const chatgpt = { type: "chatgpt", email: "a@example.com", planType: "pro" } as const;
   const hub = {
     model_provider: "hub",
-    model_providers: { hub: { base_url: "https://hub.example.com/v1" } },
+    model_providers: { hub: { base_url: "https://hub.example.com/team/v1" } },
   };
   const cases = [
     ["default route", chatgpt, true, {}, true],
@@ -332,11 +332,20 @@ it("reports native quota only for an OpenAI login on a native route", () => {
     );
   }
   // The custom endpoint is what a usage-limit hub is matched against.
-  assert.strictEqual(codexCustomEndpoint(hub), "https://hub.example.com");
-  assert.strictEqual(
-    codexCustomEndpoint({ openai_base_url: "http://127.0.0.1:8317/v1" }),
-    "http://127.0.0.1:8317",
-  );
+  assert.deepStrictEqual(codexCustomEndpoint(hub), {
+    endpoint: "https://hub.example.com",
+    endpointPath: "/team/v1",
+    endpointPathWithoutApiVersion: "/team",
+  });
+  assert.deepStrictEqual(codexCustomEndpoint({ openai_base_url: "http://127.0.0.1:8317/v1/" }), {
+    endpoint: "http://127.0.0.1:8317",
+    endpointPath: "/v1/",
+    endpointPathWithoutApiVersion: "/",
+  });
+  assert.deepStrictEqual(codexCustomEndpoint({ openai_base_url: "https://hub.example.com/team" }), {
+    endpoint: "https://hub.example.com",
+    endpointPath: "/team",
+  });
   assert.strictEqual(codexCustomEndpoint({ openai_base_url: "https://chatgpt.com/x" }), undefined);
   assert.strictEqual(codexCustomEndpoint({}), undefined);
 });

@@ -120,13 +120,19 @@ function routesToNativeOpenai(config: unknown): boolean {
   );
 }
 
-/** The origin of the custom endpoint Codex sends model requests to, if it uses one. */
-export function codexCustomEndpoint(config: unknown): string | undefined {
+/** The custom endpoint Codex sends model requests to, without URL credentials. */
+export function codexCustomEndpoint(config: unknown) {
   const baseUrl = codexRouteBaseUrl(config);
   const url = baseUrl ? URL.parse(baseUrl) : null;
-  return url && /^https?:$/.test(url.protocol) && !routesToNativeOpenai(config)
-    ? url.origin
-    : undefined;
+  if (!url || !/^https?:$/.test(url.protocol) || routesToNativeOpenai(config)) return undefined;
+  const pathWithoutVersion = url.pathname.replace(/\/v1\/*$/, "");
+  return {
+    endpoint: url.origin,
+    endpointPath: url.pathname,
+    ...(pathWithoutVersion !== url.pathname
+      ? { endpointPathWithoutApiVersion: pathWithoutVersion || "/" }
+      : {}),
+  };
 }
 
 // A stored login does not mean this provider's traffic spends that login's quota.
@@ -156,7 +162,7 @@ const CODEX_PRESENTATION = {
 
 export interface CodexAppServerProviderSnapshot {
   readonly account: CodexSchema.V2GetAccountResponse;
-  readonly endpoint?: string | undefined;
+  readonly customEndpoint?: ReturnType<typeof codexCustomEndpoint>;
   readonly nativeUsage?: boolean;
   readonly rateLimits?: CodexRateLimitsProbe;
   readonly version: string | undefined;
@@ -811,7 +817,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   const cyberAccess = Option.getOrUndefined(decodeCodexCyberAccessConfig(config));
   return {
     account: accountResponse,
-    endpoint: config ? codexCustomEndpoint(config) : undefined,
+    customEndpoint: config ? codexCustomEndpoint(config) : undefined,
     nativeUsage,
     ...(rateLimits ? { rateLimits } : {}),
     version,
@@ -1176,9 +1182,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       installed: true,
       version: snapshot.version ?? null,
       status: snapshot.models === undefined ? "warning" : accountStatus.status,
-      auth: snapshot.endpoint
-        ? { ...accountStatus.auth, endpoint: snapshot.endpoint }
-        : accountStatus.auth,
+      auth: { ...accountStatus.auth, ...snapshot.customEndpoint },
       ...(accountStatus.message
         ? { message: accountStatus.message }
         : snapshot.models === undefined
