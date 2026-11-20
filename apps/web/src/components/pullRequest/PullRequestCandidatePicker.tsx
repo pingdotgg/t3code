@@ -1,7 +1,4 @@
-/**
- * The same combobox as the project and branch pickers, and dressed the same, rather than a menu:
- * a menu's typeahead claims every keypress to jump between rows, which a search box cannot share.
- */
+// Menu typeahead consumes search keystrokes; use a combobox.
 import type { ReactNode } from "react";
 
 import { Button } from "../ui/button";
@@ -35,7 +32,6 @@ export function PullRequestCandidatePicker<T>({
   truncated,
   truncatedLabel,
   candidateKey,
-  disabled,
   onSelect,
   children,
 }: {
@@ -57,7 +53,6 @@ export function PullRequestCandidatePicker<T>({
   truncated: boolean;
   truncatedLabel: string;
   candidateKey: (candidate: T) => string;
-  disabled: boolean;
   onSelect: (candidate: T) => void;
   children: (candidate: T) => ReactNode;
 }) {
@@ -91,9 +86,7 @@ export function PullRequestCandidatePicker<T>({
       }}
       open={open}
       onOpenChange={(nextOpen, details) => {
-        // Cancelled rather than ignored, so the combobox also skips its own close work: freezing
-        // the query and returning focus to the trigger, either of which would take the next
-        // keystroke away from the box.
+        // Item-press closure steals search focus and the next keystroke.
         if (!nextOpen && details.reason === "item-press") {
           details.cancel();
           return;
@@ -128,13 +121,7 @@ export function PullRequestCandidatePicker<T>({
             </p>
           ) : (
             candidates.map((candidate, index) => (
-              <ComboboxItem
-                key={keys[index]}
-                hideIndicator
-                index={index}
-                value={keys[index]}
-                disabled={disabled}
-              >
+              <ComboboxItem key={keys[index]} hideIndicator index={index} value={keys[index]}>
                 {children(candidate)}
               </ComboboxItem>
             ))

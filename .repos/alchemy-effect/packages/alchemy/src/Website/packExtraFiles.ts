@@ -26,11 +26,7 @@ const exists = (target: string) =>
 export const packSiteExtraFiles = (
   from: string,
   mode: "client" | "next",
-): Effect.Effect<
-  ExtraFile[] | undefined,
-  never,
-  FileSystem.FileSystem | Path.Path
-> =>
+): Effect.Effect<ExtraFile[] | undefined, never, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
     if (mode === "client") {
       return [{ source: from, dest: "." }];
@@ -43,11 +39,7 @@ export const packSiteExtraFiles = (
       target: path.join(from, name),
     }));
     const [hasNext, hasPublic, ...configHits] = yield* Effect.all(
-      [
-        exists(nextDir),
-        exists(publicDir),
-        ...configPaths.map((file) => exists(file.target)),
-      ],
+      [exists(nextDir), exists(publicDir), ...configPaths.map((file) => exists(file.target))],
       { concurrency: "unbounded" },
     );
     const files: ExtraFile[] = [];

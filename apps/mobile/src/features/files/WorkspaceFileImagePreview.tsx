@@ -1,9 +1,10 @@
-import { useId, useMemo, useState } from "react";
+import { useGT } from "gt-react-native";
+import { useId, useState } from "react";
 import { Image, Pressable, View } from "react-native";
 
 import { FilePreviewLoading } from "./FilePreviewFeedback";
 import { EmptyState } from "../../components/ui/EmptyState";
-import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
 import { PresentationSource } from "../../components/ui/NativePresentation";
 import { useMediaActions } from "../../state/mediaActions";
 import { type MediaActionsSource } from "../../lib/mediaActionsSource";
@@ -14,23 +15,23 @@ function ResolvedWorkspaceFileImagePreview(props: {
   readonly uri: string;
   readonly actionsSource?: MediaActionsSource;
 }) {
+  const gt = useGT();
   const [loadError, setLoadError] = useState<string | null>(null);
   const [preview, setPreview] = useState<FilePreviewSource | null>(null);
   const sourceIdentifier = useId();
   const mediaActions = useMediaActions(props.actionsSource);
-  const imageSource = useMemo(
-    () => ({ uri: props.uri, cache: "force-cache" as const }),
-    [props.uri],
-  );
+  const imageSource = { uri: props.uri, cache: "force-cache" as const };
 
   return (
     <View className="relative flex-1 bg-subtle">
       <MediaActionsMenu media={mediaActions} style={{ flex: 1 }}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Open full-screen preview of ${props.accessibilityLabel}`}
+          accessibilityLabel={gt("Open full-screen preview of {name}", {
+            name: props.accessibilityLabel,
+          })}
           accessibilityHint={
-            mediaActions.actions.length > 0 ? "Touch and hold for media actions" : undefined
+            mediaActions.actions.length > 0 ? gt("Touch and hold for media actions") : undefined
           }
           disabled={loadError !== null}
           className="flex-1 p-4 active:bg-subtle-strong"
@@ -52,7 +53,7 @@ function ResolvedWorkspaceFileImagePreview(props: {
               resizeMode="contain"
               onLoadStart={() => setLoadError(null)}
               onError={(event) => {
-                setLoadError(event.nativeEvent.error || "The image could not be rendered.");
+                setLoadError(event.nativeEvent.error || gt("The image could not be rendered."));
               }}
             />
           </PresentationSource>
@@ -63,7 +64,7 @@ function ResolvedWorkspaceFileImagePreview(props: {
           pointerEvents="none"
           className="absolute inset-0 items-center justify-center bg-card px-6"
         >
-          <EmptyState title="Image unavailable" detail={loadError} />
+          <EmptyState title={gt("Image unavailable")} detail={loadError} />
         </View>
       ) : null}
       <FilePreviewModal source={preview} onRequestClose={() => setPreview(null)} />
@@ -76,8 +77,9 @@ export function WorkspaceFileImagePreview(props: {
   readonly uri: string | null;
   readonly actionsSource?: MediaActionsSource;
 }) {
+  const gt = useGT();
   if (props.uri === null) {
-    return <FilePreviewLoading message="Preparing image preview..." background="card" />;
+    return <FilePreviewLoading message={gt("Preparing image preview...")} background="card" />;
   }
 
   return (

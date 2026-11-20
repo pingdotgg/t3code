@@ -3,33 +3,53 @@ import {
   type EasDeviceHostConfig as EasDeviceHostConfigType,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 export const parseEasDeviceHostDraft = Schema.decodeUnknownOption(EasDeviceHostConfig);
 
-export const newEasDeviceHost = (id: string): EasDeviceHostConfigType => ({
+export const newEasDeviceHost = (
+  id: string,
+  resolve: MessageResolver = m,
+): EasDeviceHostConfigType => ({
   kind: "eas",
   id,
-  label: "EAS Simulator",
+  label: resolve(msg("Expo Simulators")),
   accessToken: "",
   maxSessionMinutes: 30,
   idleMinutes: 10,
   maxConcurrentSessions: 2,
 });
 
-/** Adds, replaces, or removes one EAS host. */
+/** Adds, replaces, or removes one Expo host. */
+/**
+ * With `keepToken`, the environment keeps the token it holds: a saved token arrives redacted, and
+ * one environment's token says nothing about another's. One new to the host uses its own Expo login.
+ */
 export function updateEasDeviceHosts(
   hosts: ReadonlyArray<EasDeviceHostConfigType>,
   host: EasDeviceHostConfigType,
   remove: boolean,
+  keepToken = false,
 ): ReadonlyArray<EasDeviceHostConfigType> {
   if (remove) return hosts.filter((candidate) => candidate.id !== host.id);
-  return hosts.some((candidate) => candidate.id === host.id)
-    ? hosts.map((candidate) => (candidate.id === host.id ? host : candidate))
-    : [...hosts, host];
+  const existing = hosts.find((candidate) => candidate.id === host.id);
+  const next = keepToken ? { ...host, accessToken: existing?.accessToken ?? "" } : host;
+  return existing
+    ? hosts.map((candidate) => (candidate.id === host.id ? next : candidate))
+    : [...hosts, next];
 }
 
-export function easSessionLimits(host: EasDeviceHostConfigType) {
-  const sessions =
-    host.maxConcurrentSessions === 1 ? "1 session" : `${host.maxConcurrentSessions} sessions`;
-  return `Up to ${sessions} at once, each stopped after ${host.maxSessionMinutes} min or ${host.idleMinutes} idle min`;
+export function easSessionLimits(host: EasDeviceHostConfigType, resolve: MessageResolver = m) {
+  return resolve(
+    msg(
+      "Up to {sessions, plural, one {{sessions} session} other {{sessions} sessions}} at once, each stopped after {maxMinutes} min or {idleMinutes} idle min",
+      {
+        sessions: host.maxConcurrentSessions,
+        maxMinutes: host.maxSessionMinutes,
+        idleMinutes: host.idleMinutes,
+      },
+    ),
+  );
 }

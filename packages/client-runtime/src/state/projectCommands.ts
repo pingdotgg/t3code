@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { type MarkedText, markedTextEnglish } from "../errors/translatable.ts";
 import {
   type EnvironmentId,
   ProjectId,
@@ -5,7 +7,7 @@ import {
   type ScopedProjectRef,
   WS_METHODS,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
@@ -26,14 +28,7 @@ import {
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
 } from "./runtime.ts";
-import {
-  type CreateProjectInput,
-  type DeleteProjectInput,
-  type UpdateProjectInput,
-  createProject,
-  deleteProject,
-  updateProject,
-} from "../operations/commands.ts";
+import { createProject, deleteProject, updateProject } from "../operations/commands.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { createFileMetadataAtoms } from "./fileMetadata.ts";
 import { resolveWorkspaceFilePath } from "@t3tools/shared/path";
@@ -44,10 +39,16 @@ export type {
   UpdateProjectInput,
 } from "../operations/commands.ts";
 
-export interface OptimisticProjectFile {
+export type OptimisticProjectFile = {
   readonly data: ProjectReadFileResult;
-  readonly confirmedAgainst: object | null | undefined;
-}
+} & (
+  | { readonly saved: false }
+  | {
+      readonly saved: true;
+      /** Only this query's next successful answer can replace the saved contents. */
+      readonly confirmingQuery: Atom.Atom<unknown>;
+    }
+);
 
 export interface OptimisticProjectFileTarget {
   readonly environmentId: EnvironmentId;
@@ -75,12 +76,18 @@ export class ScratchProjectNotLoadedError extends Schema.TaggedError<ScratchProj
   { projectId: ProjectId },
 ) {
   override get message(): string {
-    return "The folder for threads without a project has not reached this device yet. Try again.";
+    return markedTextEnglish(this.i18nMessage);
+  }
+
+  get i18nMessage(): MarkedText {
+    return [
+      msg("The folder for threads without a project has not reached this device yet. Try again."),
+    ];
   }
 }
 
 export function createProjectEnvironmentAtoms<R, E>(
-  runtime: Atom.AtomRuntime<EnvironmentRegistry | Crypto.Crypto | R, E>,
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | SecureRandom.SecureRandom | R, E>,
   options: {
     readonly projectAtom: (ref: ScopedProjectRef) => Atom.Atom<EnvironmentProject | null>;
   },
@@ -93,6 +100,29 @@ export function createProjectEnvironmentAtoms<R, E>(
       Atom.withLabel(`environment-data:projects:optimistic-file:${key}`),
     ),
   );
+  const readFile = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:projects:read-file",
+    tag: WS_METHODS.projectsReadFile,
+    staleTimeMs: 30_000,
+    idleTtlMs: 5 * 60_000,
+    onAnswer: (target, _value, registry): Effect.Effect<void> =>
+      Effect.sync(() => {
+        const atom = optimisticFileFamily(
+          optimisticProjectFileKey({ environmentId: target.environmentId, ...target.input }),
+        );
+        const overlay = registry.get(atom);
+        if (overlay?.saved && overlay.confirmingQuery === readFile(target))
+          registry.set(atom, null);
+      }),
+    execute: (input) =>
+      fileMetadata.seedAfterRead(
+        request(WS_METHODS.projectsReadFile, input),
+        (result, isCurrent) =>
+          result.exists === false
+            ? Effect.void
+            : fileMetadata.rememberFile(input.cwd, result, isCurrent),
+      ),
+  });
   const projectConcurrency = {
     mode: "serial" as const,
     key: ({ environmentId, input }: { environmentId: string; input: { projectId: string } }) =>
@@ -140,37 +170,24 @@ export function createProjectEnvironmentAtoms<R, E>(
       tag: WS_METHODS.projectsListIgnoredFiles,
       staleTimeMs: 15_000,
     }),
-    readFile: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:projects:read-file",
-      tag: WS_METHODS.projectsReadFile,
-      staleTimeMs: 30_000,
-      idleTtlMs: 5 * 60_000,
-      execute: (input) =>
-        fileMetadata.seedAfterRead(
-          request(WS_METHODS.projectsReadFile, input),
-          (result, isCurrent) =>
-            result.exists === false
-              ? Effect.void
-              : fileMetadata.rememberFile(input.cwd, result, isCurrent),
-        ),
-    }),
+    readFile,
     optimisticFile: (target: OptimisticProjectFileTarget) =>
       optimisticFileFamily(optimisticProjectFileKey(target)),
     create: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:project:create",
-      execute: (input: CreateProjectInput) => createProject(input),
+      execute: createProject,
       scheduler: projectScheduler,
       concurrency: projectConcurrency,
     }),
     update: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:project:update",
-      execute: (input: UpdateProjectInput) => updateProject(input),
+      execute: updateProject,
       scheduler: projectScheduler,
       concurrency: projectConcurrency,
     }),
     delete: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:project:delete",
-      execute: (input: DeleteProjectInput) => deleteProject(input),
+      execute: deleteProject,
       scheduler: projectScheduler,
       concurrency: projectConcurrency,
     }),
@@ -205,6 +222,12 @@ export function createProjectEnvironmentAtoms<R, E>(
     createNew: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:projects:create-new",
       tag: WS_METHODS.projectsCreateNew,
+      scheduler: projectScheduler,
+      concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
+    }),
+    createFromThread: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:create-from-thread",
+      tag: WS_METHODS.projectsCreateFromThread,
       scheduler: projectScheduler,
       concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
     }),

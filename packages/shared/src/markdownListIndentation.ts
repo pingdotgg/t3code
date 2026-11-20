@@ -1,3 +1,6 @@
+import { keepLeadingWhitespace, keepsLeadingWhitespace } from "./markdownLeadingWhitespace.ts";
+import { keepOrderedListNumbers, keepsOrderedListNumbers } from "./markdownOrderedListNumbers.ts";
+
 interface MarkdownPosition {
   readonly start?: {
     readonly line?: number;
@@ -57,10 +60,7 @@ function isSameLineOverIndentedCode(
 }
 
 function parseRecoveredMarkdown(value: string, parser: MarkdownParser): RecoveredMarkdown {
-  // A text prefix forces block-looking input into a paragraph while preserving
-  // the processor's configured inline extensions (for example, GFM syntax).
-  // Later root children are kept as blocks so blank-line-separated content is
-  // never discarded.
+  // Prefix block-looking input to parse inline extensions; retain later block children after blank lines.
   const source = `${INLINE_PARSE_PREFIX}${value}`;
   const document = parser.parse(source) as MarkdownAstNode;
   const blocks = document.children;
@@ -94,6 +94,18 @@ function parseRecoveredMarkdown(value: string, parser: MarkdownParser): Recovere
 function blocksFromIndentedCode(node: MarkdownAstNode, parser: MarkdownParser): RecoveredMarkdown {
   const value = typeof node.value === "string" ? node.value.trim() : "";
   const recovered = parseRecoveredMarkdown(value, parser);
+  if (keepsOrderedListNumbers(parser)) {
+    for (const block of recovered.blocks) keepOrderedListNumbers(block, recovered.source);
+  }
+  if (keepsLeadingWhitespace(parser)) {
+    // The trimmed first line sets where the item's content starts.
+    const indent = /^[\t ]*/.exec(String(node.value))![0];
+    const columns = [...indent].reduce(
+      (column, character) => (character === "\t" ? (Math.floor(column / 4) + 1) * 4 : column + 1),
+      0,
+    );
+    keepLeadingWhitespace({ type: "root", children: recovered.blocks }, recovered.source, columns);
+  }
   const first = recovered.blocks[0];
   return {
     ...recovered,
@@ -104,10 +116,7 @@ function blocksFromIndentedCode(node: MarkdownAstNode, parser: MarkdownParser): 
   };
 }
 
-/**
- * CommonMark treats four or more spaces after a list marker as an indented code
- * block.
- */
+// CommonMark treats four or more spaces after a list marker as code.
 function attachListItemIndentationNormalizer(this: MarkdownParser) {
   return (tree: MarkdownAstNode, file: MarkdownFile) => {
     if (typeof file.value !== "string") {
@@ -117,6 +126,10 @@ function attachListItemIndentationNormalizer(this: MarkdownParser) {
 
     const visit = (node: MarkdownAstNode, source: string) => {
       if (!node.children) {
+        return;
+      }
+      if (!node.children.some((child) => isSameLineOverIndentedCode(child, node, source))) {
+        for (const child of node.children) visit(child, source);
         return;
       }
       node.children = node.children.flatMap((child) => {

@@ -2,10 +2,6 @@ import {
   makeAggregateState,
   TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS,
 } from "./agentActivityAggregate.ts";
-export {
-  makeAggregateState,
-  TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS,
-} from "./agentActivityAggregate.ts";
 import type {
   RelayAgentActivityState,
   RelayDeliveryResult,
@@ -55,7 +51,7 @@ export class AgentActivityPublisher extends Context.Service<
   }
 >()("t3code-relay/agentActivity/AgentActivityPublisher") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const rows = yield* AgentActivityRows.AgentActivityRows;
   const links = yield* EnvironmentLinks.EnvironmentLinks;
   const liveActivities = yield* LiveActivities.LiveActivities;
@@ -67,53 +63,33 @@ export const make = Effect.gen(function* () {
     readonly state: RelayAgentActivityState | null;
     readonly nowMs: number;
   }) {
-    const activeStates = input.deliveryUser.liveActivitiesEnabled
-      ? yield* rows.listForUser({ userId: input.deliveryUser.userId })
-      : [];
-    const liveActivityAggregate = input.deliveryUser.liveActivitiesEnabled
-      ? makeAggregateState({
-          activeStates,
-          terminalState: input.state && isTerminalPhase(input.state) ? input.state : null,
-          nowMs: input.nowMs,
-        })
-      : null;
-    const notificationOnlyAggregate =
-      input.deliveryUser.notificationsEnabled &&
-      !input.deliveryUser.liveActivitiesEnabled &&
-      input.state !== null
+    const targets = yield* liveActivities.listTargets({ userId: input.deliveryUser.userId });
+    // Only iOS targets with a running Live Activity read the aggregate, and few users have one,
+    // so skip the per-user activity query otherwise.
+    const liveActivityAggregate =
+      input.deliveryUser.liveActivitiesEnabled &&
+      targets.some((target) => target.platform !== "android" && target.activity_push_token)
         ? makeAggregateState({
-            activeStates: isTerminalPhase(input.state) ? [] : [input.state],
-            terminalState: isTerminalPhase(input.state) ? input.state : null,
+            activeStates: yield* rows.listForUser({ userId: input.deliveryUser.userId }),
+            terminalState: input.state && isTerminalPhase(input.state) ? input.state : null,
             nowMs: input.nowMs,
           })
         : null;
-    const targets = yield* liveActivities.listTargets({ userId: input.deliveryUser.userId });
-    const deliveriesByTarget = yield* Effect.forEach(
+    return yield* Effect.forEach(
       targets,
       Effect.fnUntraced(function* (target) {
         if (target.platform === "android") {
-          return [yield* fcmDeliveries.enqueue({ target, state: input.state })];
+          return yield* fcmDeliveries.enqueue({ target, state: input.state });
         }
-        return yield* Effect.all(
-          [
-            apnsDeliveries.sendForTarget({
-              target,
-              aggregate: liveActivityAggregate,
-              nowMs: input.nowMs,
-            }),
-            notificationOnlyAggregate === null
-              ? Effect.succeed(null)
-              : apnsDeliveries.sendPushNotificationForTarget({
-                  target,
-                  aggregate: notificationOnlyAggregate,
-                }),
-          ],
-          { concurrency: 2 },
-        );
+        return yield* apnsDeliveries.sendForTarget({
+          target,
+          aggregate: liveActivityAggregate,
+          state: input.deliveryUser.notificationsEnabled ? input.state : null,
+          nowMs: input.nowMs,
+        });
       }),
       { concurrency: 4 },
     );
-    return deliveriesByTarget.flat();
   });
 
   return AgentActivityPublisher.of({
@@ -211,10 +187,7 @@ export const make = Effect.gen(function* () {
         "relay.agent_activity.phase": input.state?.phase ?? "deleted",
       });
       if (input.state) {
-        // Terminal states are persisted too (pruned by the cron after they
-        // age out) so a thread that finishes while other agents are active
-        // stays visible as Done/Failed in subsequent aggregates instead of
-        // silently vanishing from the Live Activity.
+        // Retain terminal rows until cron pruning so completed threads remain visible alongside active ones.
         yield* rows.upsert({
           environmentPublicKey: input.environmentPublicKey,
           state: input.state,

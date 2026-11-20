@@ -143,7 +143,7 @@ const makeHarness = Effect.fnUntraced(function* (options: {
     ),
     Layer.provide(
       Layer.mock(ProjectService.ProjectService)({
-        getById: () => Effect.succeed(Option.some({ id: PROJECT_ID, title: "Project" } as never)),
+        getById: () => Effect.succeedSome({ id: PROJECT_ID, title: "Project" } as never),
         snapshot: Effect.succeed({ projects: [{ id: PROJECT_ID, title: "Project" }] } as never),
       }),
     ),

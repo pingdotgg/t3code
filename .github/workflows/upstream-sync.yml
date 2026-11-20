@@ -1,0 +1,135 @@
+name: Upstream sync
+
+# Daily, ahead of the patched nightly: merge the newest upstream nightly into main through a PR,
+# wait for its checks, and merge it with a merge commit. A conflict or failing check wakes the
+# fix-forward agent instead. Docs: docs/operations/upstream-sync.md
+
+on:
+  schedule:
+    - cron: "17 13 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    name: Merge upstream nightly into main
+    if: github.repository != 'pingdotgg/t3code'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      # A PR opened with the default token does not start CI, and pushing a branch that adds
+      # upstream workflow files needs Workflows write. Same secret patched-nightly.yml uses.
+      GH_TOKEN: ${{ secrets.PATCHED_NIGHTLY_RELEASE_TOKEN || github.token }}
+      FIX_WEBHOOK_URL: ${{ secrets.NIGHTLY_FIX_WEBHOOK_URL }}
+    steps:
+      - name: Check out fork main
+        uses: actions/checkout@v6
+        with:
+          token: ${{ secrets.PATCHED_NIGHTLY_RELEASE_TOKEN || github.token }}
+          ref: main
+          fetch-depth: 0
+
+      - name: Merge the latest upstream nightly
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Starts the fix-forward agent; without the secret the failed run alone is the alert.
+          fail() {
+            echo "::error::$1"
+            echo "## Upstream sync problem: $1" >> "$GITHUB_STEP_SUMMARY"
+            if [[ -n "${FIX_WEBHOOK_URL:-}" ]]; then
+              jq -n --arg run "$GITHUB_RUN_ID" --arg problems "upstream sync: $1" '{run_id: $run, problems: $problems}' \
+                | curl -fsS -X POST -H 'Content-Type: application/json' --data @- "$FIX_WEBHOOK_URL" >/dev/null \
+                || echo "::warning::could not reach the fix-forward webhook"
+            fi
+            exit 1
+          }
+
+          open_prs="$(gh pr list --state open --json headRefName --jq '[.[] | select(.headRefName | startswith("chore/upstream-sync-"))] | length')"
+          if [[ "$open_prs" != "0" ]]; then
+            echo "An upstream sync PR is already open; the health check reports it if it goes stale."
+            exit 0
+          fi
+
+          # Same selection the health check uses for "newest upstream nightly".
+          source_tag="$(gh api repos/pingdotgg/t3code/releases?per_page=100 \
+            --jq '[.[] | select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-nightly\\.[0-9]{8}\\.[0-9]+$"))] | sort_by(.published_at) | last | .tag_name')"
+          if [[ -z "$source_tag" || "$source_tag" == "null" ]]; then
+            fail "no upstream nightly release was found"
+          fi
+
+          git fetch --no-tags https://github.com/pingdotgg/t3code.git "$source_tag"
+          source_sha="$(git rev-parse 'FETCH_HEAD^{commit}')"
+          current_base="$(sed -n 's/^ *PATCH_BASE_SHA: //p' .github/workflows/patched-nightly.yml)"
+
+          if git merge-base --is-ancestor "$source_sha" HEAD; then
+            echo "main already contains $source_tag."
+            exit 0
+          fi
+          if ! git merge-base --is-ancestor "$current_base" "$source_sha"; then
+            fail "$source_tag does not descend from the pinned base $current_base; upstream may have rewritten history"
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          branch="chore/upstream-sync-${source_tag#v}"
+          git switch -c "$branch"
+          if ! git merge --no-ff -m "chore: merge upstream nightly $source_tag" "$source_sha"; then
+            conflicts="$(git diff --name-only --diff-filter=U | head -20 | tr '\n' ' ')"
+            git merge --abort
+            fail "merging $source_tag into main conflicts in: $conflicts"
+          fi
+
+          old_tag="$(sed -n 's/^ *PATCH_BASE: //p' .github/workflows/patched-nightly.yml)"
+          sed -i \
+            -e "s|^\( *PATCH_BASE: \).*|\1$source_tag|" \
+            -e "s|^\( *PATCH_BASE_SHA: \).*|\1$source_sha|" \
+            .github/workflows/patched-nightly.yml
+          git add .github/workflows/patched-nightly.yml
+          git commit -m "ci: pin patched nightly to upstream $source_tag"
+          git push origin "$branch"
+
+          body="$(cat <<EOF
+          ## Problem
+
+          main is behind upstream, and the patched nightly builds main.
+
+          ## Change
+
+          Merges upstream nightly \`$source_tag\` into main and moves \`PATCH_BASE\` / \`PATCH_BASE_SHA\` in \`patched-nightly.yml\` from \`$old_tag\` to it. No fork behavior changes.
+
+          Merged with a merge commit once its checks pass.
+
+          ## Patched nightly
+
+          - [ ] Include this change in patched nightlies
+          - [x] Keep this change out of patched nightlies
+
+          Opened by the Upstream sync workflow.
+          EOF
+          )"
+          # Upstream grows the agent context budget on its own; without the label that check fails every sync.
+          gh label create agent-context-increase --color ededed --description "Accept agent context growth (upstream syncs)" 2>/dev/null || true
+          pr_url="$(gh pr create --base main --head "$branch" --label agent-context-increase \
+            --title "chore: merge upstream nightly $source_tag" --body "$body")"
+          echo "Opened $pr_url" | tee -a "$GITHUB_STEP_SUMMARY"
+
+          # Checks start a few seconds after the PR opens; wait for the first to appear.
+          for _ in $(seq 1 30); do
+            [[ "$(gh pr checks "$pr_url" --json name --jq length 2>/dev/null || echo 0)" != "0" ]] && break
+            sleep 10
+          done
+          if ! gh pr checks "$pr_url" --watch --fail-fast --interval 30; then
+            fail "checks failed on $pr_url"
+          fi
+          # Merge commit, never squash or rebase: that keeps upstream's history so the next sync stays small.
+          gh pr merge "$pr_url" --merge --delete-branch
+          echo "Merged $pr_url" >> "$GITHUB_STEP_SUMMARY"

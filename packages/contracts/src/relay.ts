@@ -50,8 +50,7 @@ export const RelayDeviceRegistrationRequest = Schema.Struct({
   iosMajorVersion: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(18))),
   androidApiLevel: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(24))),
   appVersion: Schema.optional(TrimmedNonEmptyString),
-  // APNs routing for this install: the topic must match the app's bundle id (dev/preview/prod
-  // variants differ) and development-signed builds receive sandbox tokens.
+  // APNs topic must match the variant's bundle id; development-signed builds use sandbox tokens.
   bundleId: Schema.optional(TrimmedNonEmptyString),
   apsEnvironment: Schema.optional(RelayApnsEnvironment),
   pushToken: Schema.optional(TrimmedNonEmptyString),
@@ -267,7 +266,6 @@ export const RelayAgentActivityPublishProofPayload = Schema.Struct({
 });
 export type RelayAgentActivityPublishProofPayload =
   typeof RelayAgentActivityPublishProofPayload.Type;
-export type RelayAgentActivityPublishProof = string;
 
 export const RelayAgentActivityPublishRequest = Schema.Struct({
   state: Schema.NullOr(RelayAgentActivityState).annotate({
@@ -354,6 +352,7 @@ export const RelayEnvironmentLinkProofInvalidReason = Schema.Literals([
   "challenge_invalid",
   "origin_not_allowed",
   "endpoint_not_secure",
+  "environment_key_mismatch",
 ]);
 export type RelayEnvironmentLinkProofInvalidReason =
   typeof RelayEnvironmentLinkProofInvalidReason.Type;
@@ -886,12 +885,7 @@ export const RelayCloudEnvironmentHealthProofPayload = Schema.Struct({
 export type RelayCloudEnvironmentHealthProofPayload =
   typeof RelayCloudEnvironmentHealthProofPayload.Type;
 
-/**
- * Sent with every webhook the relay forwards, signed with the relay's mint key
- * (`x-t3-relay-delivery`). The environment trusts the relay's delivery id,
- * receive time and trace context only when this verifies, since its webhook
- * URL can also be called directly.
- */
+/** Verify x-t3-relay-delivery with the relay mint key before trusting delivery id, time, or trace context. */
 export const RelayHookDeliveryProofPayload = Schema.Struct({
   ...RelaySignedJwtRegisteredClaims,
   environmentId: EnvironmentId,
@@ -969,6 +963,34 @@ export const RelayOkResponse = Schema.Struct({
   ok: Schema.Boolean,
 });
 export type RelayOkResponse = typeof RelayOkResponse.Type;
+
+export const RelayT3ChatPlan = Schema.Literals(["free", "pro", "premier"]);
+export type RelayT3ChatPlan = typeof RelayT3ChatPlan.Type;
+
+export const DEFAULT_MANAGED_TUNNEL_LIMIT = 3;
+
+// A linked paid T3 Chat plan raises the default managed tunnel cap.
+export const T3CHAT_PLAN_TUNNEL_LIMITS = { pro: 10, premier: 100 } as const;
+
+export const RelayT3ChatLink = Schema.Struct({
+  email: Schema.String,
+  plan: RelayT3ChatPlan,
+});
+export type RelayT3ChatLink = typeof RelayT3ChatLink.Type;
+
+export const RelayT3ChatLinkResponse = Schema.Struct({
+  // False when this relay has no T3 Chat secret, so clients hide the feature.
+  available: Schema.Boolean,
+  link: Schema.NullOr(RelayT3ChatLink),
+  // A manual cap that replaces the plan's; T3 Chat upgrades do not raise it.
+  maxTunnelsOverride: Schema.optionalKey(Schema.Number),
+});
+export type RelayT3ChatLinkResponse = typeof RelayT3ChatLinkResponse.Type;
+
+export const RelayT3ChatLinkRequestResponse = Schema.Struct({
+  url: TrimmedNonEmptyString,
+});
+export type RelayT3ChatLinkRequestResponse = typeof RelayT3ChatLinkRequestResponse.Type;
 
 export const RelayPublishResponse = Schema.Struct({
   ok: Schema.Boolean,
@@ -1114,6 +1136,21 @@ const RelayClientGroup = HttpApiGroup.make("client")
         OpenApi.Description,
         "Deletes the provisioned Cloudflare tunnel while keeping the environment link and its hostname reservation, so a later link re-provisions the tunnel under the same URL. Environments call this when they shut down; Cloudflare bills per provisioned tunnel, so idle tunnels should not outlive their environment.",
       ),
+    HttpApiEndpoint.get("getT3ChatLink", "/v1/client/t3chat-link", {
+      headers: RelayBearerRequestHeaders,
+      success: RelayT3ChatLinkResponse,
+      error: RelayAuthAndInternalErrors,
+    }).annotate(OpenApi.Summary, "Get the linked T3 Chat account"),
+    HttpApiEndpoint.post("createT3ChatLinkRequest", "/v1/client/t3chat-link-requests", {
+      headers: RelayBearerRequestHeaders,
+      success: RelayT3ChatLinkRequestResponse,
+      error: RelayAuthAndInternalErrors,
+    }).annotate(OpenApi.Summary, "Start linking a T3 Chat account"),
+    HttpApiEndpoint.delete("unlinkT3Chat", "/v1/client/t3chat-link", {
+      headers: RelayBearerRequestHeaders,
+      success: RelayOkResponse,
+      error: RelayAuthAndInternalErrors,
+    }).annotate(OpenApi.Summary, "Unlink the T3 Chat account"),
   )
   .annotate(OpenApi.Description, "Cloud-user environment links and registered devices.")
   .middleware(RelayClientAuth);
@@ -1226,6 +1263,19 @@ const RelayServerGroup = HttpApiGroup.make("server")
         error: RelayAuthAndInternalErrors,
       },
     ).annotate(OpenApi.Summary, "Update an environment's link preferences"),
+    HttpApiEndpoint.post(
+      "updateLiveActivityPreference",
+      "/v1/environments/:environmentId/live-activity-preference",
+      {
+        params: Schema.Struct({ environmentId: EnvironmentId }),
+        payload: Schema.Struct({
+          cloudUserId: Schema.String,
+          liveActivitiesEnabled: Schema.Boolean,
+        }),
+        success: RelayOkResponse,
+        error: RelayAuthAndInternalErrors,
+      },
+    ),
     HttpApiEndpoint.post("wakeHeldHooks", "/v1/environments/:environmentId/hooks/wake", {
       params: Schema.Struct({ environmentId: EnvironmentId }),
       success: RelayWakeHeldHooksResponse,
@@ -1238,14 +1288,8 @@ const RelayServerGroup = HttpApiGroup.make("server")
   .annotate(OpenApi.Description, "Environment-authenticated activity publication.")
   .middleware(RelayEnvironmentAuth);
 
-/**
- * Public, stateless webhook forwarding to an environment's managed tunnel.
- * Unauthenticated: the token in the path is the environment's credential, and
- * the relay only routes and forwards. Raw, so the body reaches the
- * environment byte for byte and signatures still verify there. `endpointKey`
- * names one managed endpoint (its tunnel's hash of user and environment), not
- * the environment id, which any account can link.
- */
+// Path token authenticates; forward raw bytes for signature verification.
+// endpointKey is the managed endpoint hash, not the account-linkable environment id.
 const RelayHookParams = Schema.Struct({
   endpointKey: Schema.String,
   hookId: Schema.String,
@@ -1262,6 +1306,22 @@ const RelayHooksGroup = HttpApiGroup.make("hooks")
   )
   .annotate(OpenApi.Description, "Forward webhook requests to an environment.");
 
+export const RelayMobileTelemetrySignal = Schema.Literals(["logs", "metrics", "traces"]);
+export type RelayMobileTelemetrySignal = typeof RelayMobileTelemetrySignal.Type;
+
+// expo-observe appends `<easProjectId>/v1/<signal>` to its endpoint URL and cannot send credentials.
+const RelayMobileTelemetryParams = Schema.Struct({
+  projectId: Schema.String.check(Schema.isGUID()),
+  signal: RelayMobileTelemetrySignal,
+});
+const RelayMobileTelemetryGroup = HttpApiGroup.make("mobileTelemetry")
+  .add(
+    HttpApiEndpoint.post("ingest", "/v1/mobile/observe/:projectId/v1/:signal", {
+      params: RelayMobileTelemetryParams,
+    }),
+  )
+  .annotate(OpenApi.Description, "Receive mobile app telemetry from expo-observe.");
+
 export const RelayApi = HttpApi.make("RelayApi")
   .add(
     RelayHealthGroup,
@@ -1272,6 +1332,7 @@ export const RelayApi = HttpApi.make("RelayApi")
     RelayDpopClientGroup,
     RelayServerGroup,
     RelayHooksGroup,
+    RelayMobileTelemetryGroup,
   )
   .annotate(OpenApi.Title, "T3 Code Relay API")
   .annotate(OpenApi.Version, "1.0.0")

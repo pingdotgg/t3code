@@ -6,15 +6,29 @@ import type {
 
 type Route = StackNavigationState<ParamListBase>["routes"][number];
 
-export function projectWorkspaceStack(
+/** Keep the presenting history mounted while modal routes cover the whole workspace. */
+export function projectStackPresentation(
   state: StackNavigationState<ParamListBase>,
   isOverlay: (route: Route) => boolean,
 ) {
   const firstOverlay = state.routes.findIndex(isOverlay);
-  const workspaceRoutes = state.routes.slice(0, firstOverlay < 0 ? undefined : firstOverlay);
+  return {
+    workspace: state.routes.slice(0, firstOverlay < 0 ? undefined : firstOverlay),
+    overlays: firstOverlay < 0 ? [] : state.routes.slice(firstOverlay),
+  };
+}
+
+/** Project one router history into native columns and a modal presentation stack. */
+export function projectWorkspaceStack(
+  state: StackNavigationState<ParamListBase>,
+  isOverlay: (route: Route) => boolean,
+) {
+  const { workspace: workspaceRoutes, overlays } = projectStackPresentation(state, isOverlay);
   const primary = workspaceRoutes.find((route) => route.name === "Home");
-  const detail = workspaceRoutes.filter((route) => route.name !== "Home");
-  const overlays = firstOverlay < 0 ? [] : state.routes.slice(firstOverlay);
+  // The Settings tab's route only selects what Home shows; its pages are the detail.
+  const detail = workspaceRoutes.filter(
+    (route) => route.name !== "Home" && route.name !== "Settings",
+  );
   return { primary, detail, overlays };
 }
 
@@ -50,10 +64,13 @@ export function nativeStackPopAction(
   destinationKey?: string,
 ) {
   const sourceIndex = state.routes.findIndex((route) => route.key === dismissedKey);
-  const destinationIndex =
+  let destinationIndex =
     destinationKey === undefined
       ? sourceIndex - 1
       : state.routes.findIndex((route) => route.key === destinationKey);
+  // Home's screen draws the Settings list, so going back to it from a Settings page stops there.
+  if (destinationIndex >= 0 && state.routes[destinationIndex + 1]?.name === "Settings")
+    destinationIndex += 1;
   if (
     sourceIndex <= 0 ||
     sourceIndex > state.index ||
@@ -74,6 +91,8 @@ export function nativeStackPopAction(
 export interface CollapsedSplitColumn {
   readonly visible: "primary" | "secondary";
   readonly leaving: string | null;
+  /** Back reveals another screen; a full-screen presentation covers the detail without one. */
+  readonly revealed?: boolean;
 }
 
 /**
@@ -83,7 +102,10 @@ export interface CollapsedSplitColumn {
  */
 export function collapsedSplitTransition(
   column: CollapsedSplitColumn,
-  event: { readonly type: "willAppear" | "didAppear" | "willDisappear"; readonly key: string },
+  event: {
+    readonly type: "willAppear" | "didAppear" | "willDisappear" | "didDisappear";
+    readonly key: string;
+  },
   state: Pick<NavigationState, "key" | "index" | "routes">,
   primaryKey: string,
 ): {
@@ -96,14 +118,18 @@ export function collapsedSplitTransition(
       return {
         column:
           state.index > 0 && state.routes[state.index]?.key === event.key
-            ? { ...column, leaving: event.key }
+            ? { ...column, leaving: event.key, revealed: false }
             : column,
         pop: null,
       };
     case "willAppear":
       // A cancelled swipe, or an expansion that keeps the detail on screen.
+      if (column.leaving === event.key) return { column: { ...column, leaving: null }, pop: null };
+      return { column: column.leaving ? { ...column, revealed: true } : column, pop: null };
+    case "didDisappear":
       return {
-        column: column.leaving === event.key ? { ...column, leaving: null } : column,
+        column:
+          column.leaving === event.key && !column.revealed ? { ...column, leaving: null } : column,
         pop: null,
       };
     case "didAppear":
@@ -143,4 +169,10 @@ export function reconcileStackScreens<T extends { readonly key: string }>(
     }
   });
   return screens;
+}
+
+/** Whether a route is presented over the stack (a sheet or modal) rather than pushed. */
+export function isPresentedRoute(options: { readonly presentation?: string } | undefined) {
+  const presentation = options?.presentation;
+  return presentation !== undefined && presentation !== "card";
 }

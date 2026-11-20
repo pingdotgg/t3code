@@ -1,8 +1,6 @@
-import {
-  ProviderDriverKind,
-  ProviderInstanceId,
-  type ProviderInstanceEnvironment,
-} from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import type { ProviderDriverCreateInput } from "./driver.ts";
+export type { ProviderDriverCreateInput as ProviderAdapterDriverCreateInput } from "./driver.ts";
 import * as Schema from "effect/Schema";
 import type * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
@@ -23,21 +21,12 @@ export class ProviderAdapterDriverCreateError extends Schema.TaggedError<Provide
   }
 }
 
-export interface ProviderAdapterDriverCreateInput<Config> {
-  readonly instanceId: ProviderInstanceId;
-  readonly displayName: string | undefined;
-  readonly accentColor?: string | undefined;
-  readonly environment: ProviderInstanceEnvironment;
-  readonly enabled: boolean;
-  readonly config: Config;
-}
-
 export interface ProviderAdapterDriver<Config, R = never> {
   readonly driverKind: ProviderDriverKind;
   readonly configSchema: Schema.Codec<Config, unknown>;
   readonly defaultConfig: () => Config;
   readonly create: (
-    input: ProviderAdapterDriverCreateInput<Config>,
+    input: ProviderDriverCreateInput<Config>,
   ) => Effect.Effect<
     ProviderAdapter.ProviderAdapterV2["Service"],
     ProviderAdapterDriverCreateError,

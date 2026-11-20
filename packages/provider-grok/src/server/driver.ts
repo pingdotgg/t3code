@@ -1,6 +1,6 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { GrokSettings } from "../settings.ts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -32,11 +32,13 @@ import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/
 import { discoverGrokSkills } from "./skills.ts";
 import {
   homebrewOwnershipFromCommandPath,
+  isNixStoreCommandPath,
   makeCachedProviderMaintenanceResolution,
   makeManualOnlyProviderMaintenanceCapabilities,
   makeProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilitiesResolver,
   resolveHomebrewProviderMaintenance,
+  resolveMiseProviderMaintenance,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import {
@@ -47,20 +49,30 @@ import {
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("grok");
-// npm's `latest` tracks Grok's stable channel, the one `grok update` installs
-// by default, so the registry stays the source for "latest".
+// npm latest matches the stable channel installed by grok update.
 const GROK_NPM_PACKAGE = "@xai-official/grok";
-// `grok update` finds the installer that owns the binary itself, so the
-// resolved executable is its own updater. It installs under `GROK_HOME`, so it
-// runs with the instance's environment. The exception is a Homebrew cask
-// (normally `grok-build`), which brew upgrades and versions: `grok update` would install
-// a second copy beside it, so a cask its brew cannot vouch for stays manual.
+// npm 12 blocks the postinstall that moves the new binary in, yet exits 0, so allow it by env.
+// Mise and Homebrew casks upgrade through their manager; `grok update` would install a second
+// copy, so a cask its brew cannot vouch for stays manual, as does a Nix store install.
 const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
   resolve: Effect.fn("resolveGrokMaintenance")(function* (context) {
     if (!context) {
       return makeManualOnlyProviderMaintenanceCapabilities({
         provider: DRIVER_KIND,
         packageName: GROK_NPM_PACKAGE,
+      });
+    }
+    const mise = yield* resolveMiseProviderMaintenance(
+      { provider: DRIVER_KIND, packageName: GROK_NPM_PACKAGE },
+      { tool: "grok" },
+      context,
+    );
+    if (mise) return mise;
+    if ([context.resolvedCommandPath, context.realCommandPath].some(isNixStoreCommandPath)) {
+      return makeManualOnlyProviderMaintenanceCapabilities({
+        provider: DRIVER_KIND,
+        packageName: GROK_NPM_PACKAGE,
+        installPath: context.realCommandPath,
       });
     }
     const homebrew = homebrewOwnershipFromCommandPath(context.realCommandPath);
@@ -79,6 +91,24 @@ const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
         })
       );
     }
+    const path = yield* Path.Path;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const name = path.basename(context.realCommandPath).toLowerCase();
+    const installDir = path.dirname(context.realCommandPath);
+    const installDirName = path.basename(installDir).toLowerCase();
+    const home = path.dirname(installDir);
+    // `grok update` installs under `$GROK_HOME`, so a script install keeps its own home even if the
+    // instance sets another: `<home>/bin/grok` links into `<home>/downloads`, or on Windows is a copy
+    // beside it. Only an install script creates `downloads`, so a bare `bin/grok` elsewhere is not one.
+    const isScriptInstall =
+      (installDirName === "downloads" && name.startsWith("grok-")) ||
+      (installDirName === "bin" &&
+        (/^grok-\d/.test(name) ||
+          ((name === "grok" || name === "grok.exe") &&
+            (yield* fileSystem
+              .exists(path.join(home, "downloads"))
+              .pipe(Effect.orElseSucceed(() => false))))));
+    const scriptHome = isScriptInstall ? { GROK_HOME: home } : {};
     return makeProviderMaintenanceCapabilities({
       provider: DRIVER_KIND,
       packageName: GROK_NPM_PACKAGE,
@@ -86,7 +116,14 @@ const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
       updateArgs: ["update"],
       updateLockKey: "grok",
       platform: context.platform,
-      env: context.env,
+      env: {
+        ...context.env,
+        ...scriptHome,
+        npm_config_allow_scripts: GROK_NPM_PACKAGE,
+        // An npx-launched server's npm_config_user_agent outranks Grok's `[cli] installer`, steering
+        // a script install to npm. The runner extends process.env; only undefined removes a key.
+        npm_config_user_agent: undefined,
+      },
     });
   }),
 };
@@ -95,7 +132,7 @@ export type GrokDriverEnv =
   | GrokAdapterV2DriverEnv
   | ProviderHost.ProviderHost
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | ProviderLatestVersions.ProviderLatestVersions
@@ -119,7 +156,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv, Path.Path> 
     enabled,
     config,
   }) {
-    const crypto = yield* Crypto.Crypto;
+    const random = yield* SecureRandom.SecureRandom;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const httpClient = yield* HttpClient.HttpClient;
     const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
@@ -171,22 +208,27 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv, Path.Path> 
     const textGeneration = yield* makeGrokTextGeneration(effectiveConfig, processEnv);
 
     const checkProvider = checkGrokProviderStatus(effectiveConfig, processEnv, cwd).pipe(
-      Effect.flatMap((snapshot) =>
-        effectiveConfig.enabled && snapshot.installed && snapshot.auth.status === "authenticated"
-          ? readGrokAccount(processEnv).pipe(
-              Effect.map(({ email, usageLimits }) => ({
-                ...snapshot,
-                auth: email ? { ...snapshot.auth, email } : snapshot.auth,
-                usageLimits,
-              })),
-            )
-          : Effect.succeed(snapshot),
+      Effect.filterOrElse(
+        (snapshot) =>
+          !(
+            effectiveConfig.enabled &&
+            snapshot.installed &&
+            snapshot.auth.status === "authenticated"
+          ),
+        (snapshot) =>
+          readGrokAccount(processEnv).pipe(
+            Effect.map(({ email, usageLimits }) => ({
+              ...snapshot,
+              auth: email ? { ...snapshot.auth, email } : snapshot.auth,
+              usageLimits,
+            })),
+          ),
       ),
       Effect.map(stampIdentity),
       Effect.provideService(HttpClient.HttpClient, httpClient),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
-      Effect.provideService(Crypto.Crypto, crypto),
+      Effect.provideService(SecureRandom.SecureRandom, random),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
 
@@ -196,6 +238,9 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv, Path.Path> 
       getSettings: snapshotSettings.getSettings,
       streamSettings: snapshotSettings.streamSettings,
       haveSettingsChanged: haveProviderSnapshotSettingsChanged,
+      // Each check starts the Grok CLI four times. A ready instance is rechecked on refresh or a
+      // settings change; only an unhealthy one keeps polling until it recovers.
+      refreshOnInterval: (snapshot) => snapshot.status !== "ready",
       initialSnapshot: (settings) =>
         buildInitialGrokProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
       checkProvider,

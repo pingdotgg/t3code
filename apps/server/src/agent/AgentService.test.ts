@@ -247,7 +247,7 @@ it.layer(NodeServices.layer)("agent discovery", (it) => {
 });
 
 describe("resolveModelForAgent", () => {
-  const claude = provider("claudeAgent", "claudeAgent", ["claude-fable-5-1", "claude-haiku-5-5"]);
+  const claude = provider("claudeAgent", "claudeAgent", ["claude-opus-5-5", "claude-haiku-5-5"]);
   const codex = provider("codex", "codex", ["gpt-5.4"]);
 
   it("prefers an explicit model in the agent file over its tier", () => {
@@ -266,7 +266,7 @@ describe("resolveModelForAgent", () => {
     });
     assert.deepEqual(resolveModelForAgent(definition({ tier: "reasoning" }), [claude]), {
       instanceId: ProviderInstanceId.make("claudeAgent"),
-      model: "claude-fable-5-1",
+      model: "claude-opus-5-5",
     });
     assert.isUndefined(resolveModelForAgent(definition({}), [claude]));
   });

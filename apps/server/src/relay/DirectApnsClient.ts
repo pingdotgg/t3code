@@ -146,7 +146,7 @@ export const makeNodeHttp2Transport = Effect.gen(function* () {
   };
 
   return DirectApnsTransport.of({
-    post: (request) =>
+    post: Effect.fn("DirectApnsTransport.post")((request) =>
       Effect.tryPromise({
         try: (signal) =>
           new Promise<ApnsHttp2Response>((resolve, reject) => {
@@ -178,6 +178,7 @@ export const makeNodeHttp2Transport = Effect.gen(function* () {
             Effect.fail(new DirectApnsTransportError({ cause: "APNs request timed out" })),
         }),
       ),
+    ),
   });
 });
 
@@ -210,7 +211,7 @@ const make = Effect.gen(function* () {
     if (Option.isNone(path)) return yield* readSecret(PRIVATE_KEY_SECRET);
     // An unreadable key file is a misconfiguration, never a reason to fail a thread.
     return yield* fileSystem.readFileString(path.value).pipe(
-      Effect.map(Option.some),
+      Effect.asSome,
       Effect.tapError(() =>
         Effect.logWarning("direct APNs key file could not be read", {
           envVar: PRIVATE_KEY_PATH_ENV,
@@ -247,9 +248,10 @@ const make = Effect.gen(function* () {
       yield* Effect.logDebug("direct APNs push skipped; credentials not configured");
       return { outcome: "unconfigured" } as const;
     }
-    const jwt = yield* Effect.try(() =>
-      providerTokens.getJwt(credentials.value, input.nowSeconds),
-    ).pipe(Effect.option);
+    const jwt = yield* Effect.try({
+      try: () => providerTokens.getJwt(credentials.value, input.nowSeconds),
+      catch: (cause) => new DirectApnsTransportError({ cause }),
+    }).pipe(Effect.option);
     if (Option.isNone(jwt)) {
       yield* Effect.logWarning("direct APNs provider token could not be signed; check the .p8 key");
       return { outcome: "error", removeToken: false } as const;

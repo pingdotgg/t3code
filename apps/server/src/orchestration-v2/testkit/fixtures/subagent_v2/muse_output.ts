@@ -9,11 +9,7 @@ import {
   SUBAGENT_V2_PROMPT,
 } from "../shared.ts";
 
-/**
- * A Muse native subagent opens a child thread with its prompt and result. Muse
- * cannot address the child's own session, so the thread shows nothing else and
- * the result appears exactly once.
- */
+/** Muse cannot address child sessions; their threads contain only the prompt and one result. */
 export function assertMuseSubagentV2Output(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,

@@ -1,9 +1,4 @@
-/**
- * The column is nullable on purpose — backfilling it during the migration would
- * require knowing which configured instance "owned" each historical session,
- * and that mapping is ambiguous when the user later configures multiple
- * instances of the same driver.
- */
+// Historical sessions cannot be mapped unambiguously to configured instances; leave the column nullable.
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Effect from "effect/Effect";
 

@@ -1,4 +1,4 @@
-import { type ProviderSetupError, TextGenerationError } from "@t3tools/contracts";
+import { ProviderSetupError, TextGenerationError } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -11,14 +11,23 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { type AcpError, AcpRequestError } from "effect-acp/errors";
 
-import { applyAntigravityAcpModelSelection } from "../provider/acp/AntigravityAcpSupport.ts";
+import {
+  antigravityThinkingConfig,
+  applyAntigravityAcpModelSelection,
+} from "../provider/acp/AntigravityAcpSupport.ts";
 import { removeAntigravitySessionFiles } from "../provider/acp/AntigravitySessionFiles.ts";
+import {
+  ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE,
+  isAntigravitySignInRequiredError,
+} from "../provider/antigravityAuthSupport.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import { collectSessionConfigOptionValues } from "@t3tools/provider-acp/server/runtimeModel";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 
 const ANTIGRAVITY_TIMEOUT_MS = 180_000;
 const MAX_OUTPUT_CHARS = 128_000;
 const isTextGenerationError = Schema.is(TextGenerationError);
+const isProviderSetupError = Schema.is(ProviderSetupError);
 const isNativeSessionId = Schema.is(Schema.String.check(Schema.isUUID(4)));
 const Configuration = Schema.Record(Schema.String, Schema.Unknown);
 const decodeConfiguration = Schema.decodeEffect(Schema.fromJsonString(Configuration));
@@ -31,6 +40,7 @@ type AntigravityTextRuntime = Pick<
   | "getConfigOptions"
   | "getEvents"
   | "setModel"
+  | "setConfigOption"
   | "prompt"
   | "cancel"
   | "handleSessionUpdate"
@@ -73,14 +83,20 @@ export const isAntigravityTextGenerationAvailable = Effect.fn(
     if (info.type !== "File" || info.size > 64_000n) {
       return false;
     }
+    // CLI 1.5.8 writes a 0-byte mcp_config.json before any server exists.
     const empty = yield* fs.readFileString(configurationPath).pipe(
-      Effect.flatMap(decodeConfiguration),
-      Effect.flatMap((configuration) =>
-        decodeConfigurationObject(
-          configuration[name === "hooks.json" ? "hooks" : "mcpServers"] ?? configuration,
-        ),
+      Effect.flatMap((text) =>
+        text.trim().length === 0
+          ? Effect.succeed(true)
+          : decodeConfiguration(text).pipe(
+              Effect.flatMap((configuration) =>
+                decodeConfigurationObject(
+                  configuration[name === "hooks.json" ? "hooks" : "mcpServers"] ?? configuration,
+                ),
+              ),
+              Effect.map((configuration) => Object.keys(configuration).length === 0),
+            ),
       ),
-      Effect.map((configuration) => Object.keys(configuration).length === 0),
       Effect.orElseSucceed(() => false),
     );
     if (!empty) return false;
@@ -93,6 +109,34 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const hasOnlyRuntimeDirectories = Effect.fn(
+    "AntigravityTextGeneration.hasOnlyRuntimeDirectories",
+  )(function* (cwd: string) {
+    const root = yield* fs.realPath(cwd);
+    // ACP creates these empty skill directories before the first prompt.
+    const allowed = new Set([
+      path.join(root, ".agents"),
+      path.join(root, ".agents", "skills"),
+      path.join(root, ".gemini"),
+      path.join(root, ".gemini", "skills"),
+    ]);
+    const directories = [root];
+    for (const directory of directories) {
+      for (const name of yield* fs.readDirectory(directory)) {
+        const entry = path.join(directory, name);
+        if (
+          !allowed.has(entry) ||
+          (yield* fs.realPath(entry)) !== entry ||
+          (yield* fs.stat(entry)).type !== "Directory"
+        ) {
+          return false;
+        }
+        directories.push(entry);
+      }
+    }
+    return true;
+  });
+
   const available = isAntigravityTextGenerationAvailable(options.profileDirectory).pipe(
     Effect.provideService(FileSystem.FileSystem, fs),
     Effect.provideService(Path.Path, path),
@@ -220,6 +264,29 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
                   cause,
                 }),
             });
+            const savedOptions = input.modelSelection.options;
+            if (savedOptions?.length) {
+              const thinking = antigravityThinkingConfig(yield* runtime.getConfigOptions);
+              const selected = savedOptions.find((option) => option.id === thinking?.id)?.value;
+              if (
+                thinking !== undefined &&
+                typeof selected === "string" &&
+                selected !== thinking.currentValue &&
+                collectSessionConfigOptionValues(thinking).includes(selected)
+              ) {
+                yield* runtime.setConfigOption(thinking.id, selected).pipe(
+                  Effect.catchTags({
+                    AcpRequestError: (error) =>
+                      error.code === -32602
+                        ? Effect.logDebug("Antigravity rejected the saved thinking level", {
+                            optionId: thinking.id,
+                            value: selected,
+                          })
+                        : Effect.fail(error),
+                  }),
+                );
+              }
+            }
 
             const result = yield* runtime.prompt({
               prompt: [
@@ -252,7 +319,7 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
           );
         }).pipe(Effect.scoped);
 
-        if ((yield* fs.readDirectory(cwd)).length > 0) {
+        if (!(yield* hasOnlyRuntimeDirectories(cwd))) {
           return yield* new TextGenerationError({
             operation,
             detail: "Antigravity wrote files during text generation.",
@@ -293,7 +360,11 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
             ? cause
             : new TextGenerationError({
                 operation: input.operation,
-                detail: "Antigravity text generation failed.",
+                detail: isProviderSetupError(cause)
+                  ? cause.detail
+                  : isAntigravitySignInRequiredError(cause)
+                    ? ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE
+                    : "Antigravity text generation failed.",
                 cause,
               }),
         ),

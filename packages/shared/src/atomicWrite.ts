@@ -7,28 +7,36 @@ import * as Result from "effect/Result";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
 
-/**
- * Windows refuses to rename over or away from a file another process holds open
- * without delete sharing, such as a virus scanner or the search indexer. The same
- * codes also mean a denial that never clears, so retries need a bound.
- */
+/** Windows open-file locks block renames; the same codes can mean permanent denial, so bound retries. */
 export const isWindowsRenameLock = (error: PlatformError.PlatformError) => {
   const code = (error.reason.cause as NodeJS.ErrnoException | undefined)?.code;
   return code === "EBUSY" || code === "EPERM" || code === "EACCES";
 };
 
-// About 2 seconds in total. Settings and keybinding saves wait on this while holding
-// their write lock, so a denial that is not a brief scan has to surface quickly.
+// Bound denial delays to about two seconds because settings saves hold their write lock.
 const LOCKED_RENAME_RETRIES = 20;
 const LOCKED_RENAME_RETRY_DELAY = "100 millis";
+const CHUNK_WRITE_LENGTH = 1 << 20;
 
-/**
- * A symlinked target is resolved first so the link survives and its destination is
- * rewritten, since renaming over the link itself would swap it for a regular file.
- */
+// Saves keep the replaced file's mode and create new files owner-only; chmod, since the umask narrows an open mode.
+const replacedMode = (fs: FileSystem.FileSystem, targetPath: string) =>
+  fs.stat(targetPath).pipe(
+    Effect.map((info) => info.mode & 0o777),
+    Effect.catchIf(
+      (error) => error.reason._tag === "NotFound",
+      () => Effect.succeed(0o600),
+    ),
+  );
+
+const isUnsupportedSync = (error: PlatformError.PlatformError) => {
+  const code = (error.reason.cause as NodeJS.ErrnoException | undefined)?.code;
+  return code === "EINVAL" || code === "ENOTSUP" || code === "ENOSYS";
+};
+
+/** Resolves symlink targets before renaming so writes preserve the link. Iterable contents stream in bounded batches. */
 export const writeFileStringAtomically = (input: {
   readonly filePath: string;
-  readonly contents: string;
+  readonly contents: string | Iterable<string>;
 }) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -39,24 +47,60 @@ export const writeFileStringAtomically = (input: {
       const targetDirectory = path.dirname(targetPath);
 
       yield* fs.makeDirectory(targetDirectory, { recursive: true });
-      // The temp directory is cleanup, not part of the write: failing to remove
-      // it (a virus scanner holding it on Windows) must not fail a write that
-      // already landed.
+      // Cleanup failure must not fail a write that already landed.
       const tempDirectory = yield* Effect.acquireRelease(
         fs.makeTempDirectory({
           directory: targetDirectory,
-          prefix: `${path.basename(targetPath)}.`,
+          prefix: "t3-write-",
         }),
         (directory) => fs.remove(directory, { recursive: true }).pipe(Effect.ignore({ log: true })),
       );
       const tempPath = path.join(tempDirectory, "contents.tmp");
 
-      yield* fs.writeFileString(tempPath, input.contents);
-      if (platform !== "win32") return yield* fs.rename(tempPath, targetPath);
+      // One write-only handle: a reopen fails when the umask or the chmod drops access.
+      // Without the sync, a crash soon after the rename can leave the target empty.
+      // Closed before the rename, which Windows refuses for open files.
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const file = yield* fs.open(tempPath, { flag: "w" });
+          const encoder = new TextEncoder();
+          const contents = input.contents;
+          if (typeof contents === "string") {
+            yield* file.writeAll(encoder.encode(contents));
+          } else {
+            let batch: string[] = [];
+            let batchLength = 0;
+            for (const chunk of contents) {
+              batch.push(chunk);
+              batchLength += chunk.length;
+              if (batchLength < CHUNK_WRITE_LENGTH) continue;
+              yield* file.writeAll(encoder.encode(batch.join("")));
+              batch = [];
+              batchLength = 0;
+            }
+            if (batchLength > 0) yield* file.writeAll(encoder.encode(batch.join("")));
+          }
+          if (platform !== "win32") {
+            yield* fs.chmod(tempPath, yield* replacedMode(fs, targetPath));
+          }
+          yield* file.sync;
+        }),
+      );
+      if (platform !== "win32") {
+        yield* fs.rename(tempPath, targetPath);
+        // Persists the rename. A directory without read access cannot be opened to sync, and
+        // replacing in one needs only write and search access, so that save stands.
+        return yield* fs.open(targetDirectory, { flag: "r" }).pipe(
+          Effect.flatMap((directory) => directory.sync),
+          Effect.scoped,
+          Effect.catchIf(
+            (error) => error.reason._tag === "PermissionDenied" || isUnsupportedSync(error),
+            (error) => Effect.logWarning(error),
+          ),
+        );
+      }
 
-      // A retry must not replace a save another process landed while this one
-      // waited, so it gives up once the target is no longer the file seen here.
-      // A read-only target fails with the same EPERM as a held one but never clears.
+      // Stop retrying if another save changes the target; read-only targets also return permanent EPERM.
       const targetVersion = fs.stat(targetPath).pipe(
         Effect.map((info) => ({
           id: `${Option.getOrUndefined(info.ino)}:${info.size}:${Option.getOrUndefined(info.mtime)?.getTime()}`,

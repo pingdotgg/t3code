@@ -4,7 +4,7 @@ on:
   schedule:
     - cron: "23 20 * * *"
   workflow_dispatch:
-  # PRs only replay the patches onto the latest upstream nightly; nothing is built or released.
+  # Kept so the "Prepare latest upstream nightly" check still reports on PRs; nothing is built from one.
   pull_request:
     branches: [main]
 
@@ -39,97 +39,41 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           FORK_REPOSITORY: ${{ github.repository }}
           WORKFLOW_SHA: ${{ github.sha }}
-          PATCH_BASE: v0.1.2-nightly.20261022.3526
-          PATCH_BASE_SHA: f054d1b8018721bd997d99cbb918a7b17bf098a4
+          # Newest upstream nightly merged into main; upstream-sync.yml moves these two together.
+          PATCH_BASE: v0.1.12-nightly.20261120.5009
+          PATCH_BASE_SHA: f0a2aa10f5165413e863db9f1502dc4bb6fa42e8
         run: |
           set -euo pipefail
 
-          source_tag="$(gh api repos/pingdotgg/t3code/releases?per_page=100 \
-            --jq '[.[] | select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-nightly\\.[0-9]{8}\\.[0-9]+$"))] | sort_by(.published_at) | last | .tag_name')"
-          if [[ -z "$source_tag" || "$source_tag" == "null" ]]; then
-            echo "No upstream nightly release was found." >&2
+          # A pull request only proves the workflow parses and its resolve job runs; CI covers the code.
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            echo "Pull request: nothing to build."
+            exit 0
+          fi
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Patched nightlies build main; this run is on $GITHUB_REF." >&2
             exit 1
           fi
 
-          # These changes are carried by portable-nightly-fixes.patch because their original commits conflict upstream.
-          # Patch-only artifacts live in the fork workflow checkout and are applied separately below.
-          patch_commits=""
-          while IFS= read -r patch_commit; do
-            [[ -z "$patch_commit" ]] && continue
-            if [[ "$patch_commit" == "6611d52bdf24eb30ae3708f8fc7718334d1892d5" \
-              || "$patch_commit" == "31a1311b2017ccb5e1b9a86735699b766069fa48" \
-              || "$patch_commit" == "78e8c7c9ddb1"* \
-              || "$patch_commit" == "69a119dc1b"* \
-              || "$patch_commit" == "01ef456545"* ]]; then
-              echo "Skipping $patch_commit; its behavior is carried by portable-nightly-fixes.patch."
-              continue
-            fi
-            # This commit is the fork-source copy of direct-apns-push.patch, which is re-anchored for upstream.
-            if [[ "$patch_commit" == "a165c53a2b"* || "$patch_commit" == "4291a714e5"* ]]; then
-              echo "Skipping $patch_commit; its behavior is carried by direct-apns-push.patch."
-              continue
-            fi
-            # This commit is the fork-source copy of direct-apns-live-activities.patch, which is re-anchored for upstream.
-            if [[ "$patch_commit" == "b60614d45b"* ]]; then
-              echo "Skipping $patch_commit; its behavior is carried by direct-apns-live-activities.patch."
-              continue
-            fi
-            has_source_changes=false
-            while IFS= read -r changed_path; do
-              case "$changed_path" in
-                apps/server/*|apps/web/*|apps/desktop/*|apps/mobile/*|packages/*|native/*|scripts/*|packaging/*|patches/*|package.json|pnpm-lock.yaml|pnpm-workspace.yaml)
-                  has_source_changes=true
-                  break
-                  ;;
-              esac
-            done < <(git diff-tree --no-commit-id --name-only -r "$patch_commit")
-            if [[ "$has_source_changes" != "true" ]]; then
-              echo "Skipping patch artifact commit $patch_commit; patch files are applied separately."
-              continue
-            fi
-            patch_commits+="${patch_commit}"$'\n'
-          done < <(git log --reverse --format='%H%x09%s' "$PATCH_BASE_SHA..$WORKFLOW_SHA" \
-            | awk -F '\t' '$2 ~ /^patch: [^[:space:]]/ { print $1 }')
-          patch_commits="${patch_commits%$'\n'}"
-          if [[ -z "$patch_commits" ]]; then
-            echo "No patch commits were found after $PATCH_BASE." >&2
+          # main already contains the upstream nightly named by PATCH_BASE (docs/operations/upstream-sync.md
+          # keeps it current), so the source of every build is main itself.
+          source_tag="$PATCH_BASE"
+          source_sha="$PATCH_BASE_SHA"
+          fork_sha="$WORKFLOW_SHA"
+          if ! git merge-base --is-ancestor "$source_sha" "$fork_sha"; then
+            echo "main does not contain $source_tag ($source_sha); PATCH_BASE_SHA is stale." >&2
             exit 1
           fi
-          compatibility_patch="$RUNNER_TEMP/portable-nightly-fixes.patch"
-          git show "$WORKFLOW_SHA:.github/patches/portable-nightly-fixes.patch" > "$compatibility_patch"
-          compatibility_patch_sha="$(sha256sum "$compatibility_patch" | cut -d' ' -f1)"
-          lineage_agent_patch="$RUNNER_TEMP/lineage-custom-agents.patch"
-          git show "$WORKFLOW_SHA:.github/patches/lineage-custom-agents.patch" > "$lineage_agent_patch"
-          lineage_agent_patch_sha="$(sha256sum "$lineage_agent_patch" | cut -d' ' -f1)"
-          thread_list_patch="$RUNNER_TEMP/mobile-thread-list.patch"
-          git show "$WORKFLOW_SHA:.github/patches/mobile-thread-list.patch" > "$thread_list_patch"
-          thread_list_patch_sha="$(sha256sum "$thread_list_patch" | cut -d' ' -f1)"
-          fork_config_patch="$RUNNER_TEMP/mobile-fork-config.patch"
-          git show "$WORKFLOW_SHA:.github/patches/mobile-fork-config.patch" > "$fork_config_patch"
-          fork_config_patch_sha="$(sha256sum "$fork_config_patch" | cut -d' ' -f1)"
-          remote_delegate_patch="$RUNNER_TEMP/remote-delegate-worktree.patch"
-          git show "$WORKFLOW_SHA:.github/patches/remote-delegate-worktree.patch" > "$remote_delegate_patch"
-          remote_delegate_patch_sha="$(sha256sum "$remote_delegate_patch" | cut -d' ' -f1)"
-          direct_apns_patch="$RUNNER_TEMP/direct-apns-push.patch"
-          git show "$WORKFLOW_SHA:.github/patches/direct-apns-push.patch" > "$direct_apns_patch"
-          direct_apns_patch_sha="$(sha256sum "$direct_apns_patch" | cut -d' ' -f1)"
-          live_activities_patch="$RUNNER_TEMP/direct-apns-live-activities.patch"
-          git show "$WORKFLOW_SHA:.github/patches/direct-apns-live-activities.patch" > "$live_activities_patch"
-          live_activities_patch_sha="$(sha256sum "$live_activities_patch" | cut -d' ' -f1)"
-          patch_set="$( { printf '%s\n' "$patch_commits"; printf '%s\n' "$compatibility_patch_sha"; printf '%s\n' "$lineage_agent_patch_sha"; printf '%s\n' "$thread_list_patch_sha"; printf '%s\n' "$fork_config_patch_sha"; printf '%s\n' "$remote_delegate_patch_sha"; printf '%s\n' "$direct_apns_patch_sha"; printf '%s\n' "$live_activities_patch_sha"; } \
-            | sha256sum | cut -c1-16)"
 
-          dry_run=false
-          [[ "$GITHUB_EVENT_NAME" == "pull_request" ]] && dry_run=true
-          if [[ "$dry_run" == "false" ]]; then
           releases="$(gh api "repos/$FORK_REPOSITORY/releases?per_page=100")"
-          prior="$(jq -r --arg source "Source nightly: $source_tag" --arg patch_set "Patch set: $patch_set" \
-            '[.[] | select(((.body // "") | contains($source)) and ((.body // "") | contains($patch_set)))] | first // empty' <<<"$releases")"
+          prior="$(jq -r --arg source "Source nightly: $source_tag" --arg fork "Fork commit: $fork_sha" \
+            '[.[] | select(((.body // "") | contains($source)) and ((.body // "") | contains($fork)))] | first // empty' <<<"$releases")"
           if [[ -n "$prior" ]]; then
             release_tag="$(jq -r '.tag_name' <<<"$prior")"
             draft="$(jq -r '.draft' <<<"$prior")"
             if [[ "$draft" != "true" ]]; then
-              echo "Upstream nightly $source_tag with patch set $patch_set is already published as $release_tag; no build needed."
+              echo "main at ${fork_sha:0:12} on $source_tag is already published as $release_tag; no build needed."
               echo "should_build=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
@@ -165,72 +109,17 @@ jobs:
             echo "Reusing incomplete draft release $release_tag for $source_tag."
             exit 0
           fi
-          fi
 
-          git fetch --no-tags https://github.com/pingdotgg/t3code.git "$source_tag"
-          source_sha="$(git rev-parse 'FETCH_HEAD^{commit}')"
-          if ! git merge-base --is-ancestor "$PATCH_BASE_SHA" "$source_sha"; then
-            echo "Upstream nightly $source_tag does not contain the patch base $PATCH_BASE; refusing to apply patches to an older source." >&2
-            exit 1
-          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout --detach "$source_sha"
-          while IFS= read -r patch_commit; do
-            [[ -z "$patch_commit" ]] && continue
-            if [[ "$patch_commit" == "bfdc8821b7a6dda5f5b293dbf0b2e7dbe885582b" ]] \
-              && git grep -q 'gitfile does not point to a valid repository' -- apps/server/src/vcs/GitVcsDriverCore.ts \
-              && git grep -q 'isNonRepositoryGitStderr(result.stderr)' -- apps/server/src/storageCleanup.ts; then
-              echo "Selected upstream already handles both broken-worktree diagnostics; skipping the duplicate patch commit."
-              continue
-            fi
-            if [[ "$patch_commit" == "c5826fef3d"* ]] \
-              && git grep -q 'gitfile does not point to a valid repository' -- apps/server/src/vcs/GitVcsDriverCore.ts \
-              && git grep -q 'isNonRepositoryGitStderr(result.stderr)' -- apps/server/src/storageCleanup.ts; then
-              echo "Selected upstream already handles both broken-worktree diagnostics; skipping the duplicate patch commit."
-              continue
-            fi
-            if [[ "$patch_commit" == "d7afd796203feea11e62d22c2925ca81c73fb4dd" \
-              || "$patch_commit" == "1bb59c3810"* ]]; then
-              # Upstream rewrote this test file; keep its version while replaying the implementation.
-              git cherry-pick -X ours "$patch_commit"
-            elif [[ "$patch_commit" == "928b4493bc"* ]]; then
-              # Upstream relabelled the Model field; keep its markup while replaying the effort picker.
-              git cherry-pick -X ours "$patch_commit"
-            else
-              git cherry-pick "$patch_commit"
-            fi
-          done <<<"$patch_commits"
-          git apply --check "$compatibility_patch"
-          git apply "$compatibility_patch"
-          git apply --check "$lineage_agent_patch"
-          git apply "$lineage_agent_patch"
-          git apply --check "$thread_list_patch"
-          git apply "$thread_list_patch"
-          git apply --check "$fork_config_patch"
-          git apply "$fork_config_patch"
-          git apply --check "$remote_delegate_patch"
-          git apply "$remote_delegate_patch"
-          git apply --check "$direct_apns_patch"
-          git apply "$direct_apns_patch"
-          git apply --check "$live_activities_patch"
-          git apply "$live_activities_patch"
-          git add -A
-          git commit -m "patch: apply portable fork fixes to upstream nightly"
-          if [[ "$dry_run" == "true" ]]; then
-            echo "should_build=false" >> "$GITHUB_OUTPUT"
-            echo "Patches replay cleanly onto $source_tag ($source_sha)."
-            exit 0
-          fi
-
           if git show-ref --verify --quiet "refs/tags/$release_tag"; then
             existing_sha="$(git rev-parse "$release_tag^{commit}")"
-            if [[ "$existing_sha" != "$(git rev-parse HEAD)" ]]; then
+            if [[ "$existing_sha" != "$fork_sha" ]]; then
               echo "Tag $release_tag already points at a different source commit." >&2
               exit 1
             fi
           else
-            git tag "$release_tag"
+            git tag "$release_tag" "$fork_sha"
             git push origin "refs/tags/$release_tag"
           fi
           upstream_notes="$(gh api "repos/pingdotgg/t3code/releases/tags/$source_tag" --jq '.body // empty' \
@@ -247,7 +136,6 @@ jobs:
           - Show Mark unread in the mobile thread hold menu instead of under More.
           - Keep mobile thread rows on three lines: project, title, then branch and machine.
           - Send iOS push alerts straight from the T3 server to APNs for the fork's bundle ID, without the relay.
-          - Update, start and end iOS Live Activities straight from the T3 server, so the Live Activity toggle works without T3 Connect.
 
           ### Desktop
           - Add named workspace agents, a Composer picker, a project default agent, and per-launch model or reasoning/economy tier selection.
@@ -258,9 +146,11 @@ jobs:
 
           ### Server
           - Allow named T3 delegate_task targets according to each lead agent's allowlist.
+          - Publish a Linux x64 server archive (`t3-<version>-linux-x64.tar.gz` plus `SHA256SUMS`) built from the patched source.
 
           ---
-          Patched nightly · source $source_tag (${source_sha:0:7}) · patch set $patch_set
+          Source nightly: $source_tag
+          Fork commit: $fork_sha
           EOF
           if gh release view "$release_tag" --repo "$FORK_REPOSITORY" >/dev/null 2>&1; then
             gh release edit "$release_tag" --repo "$FORK_REPOSITORY" \
@@ -424,6 +314,144 @@ jobs:
             --app-dir "$(cygpath -w "$PWD/verify/win-unpacked")" \
             --arch x64 --build-version "$BUILD_VERSION" --verbose
 
+  linux:
+    name: Build Linux x64 server archive
+    needs: resolve
+    if: needs.resolve.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+      BUILD_VERSION: ${{ needs.resolve.outputs.version }}
+    steps:
+      - name: Check out fork workflow
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Check out prepared patched nightly source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$RELEASE_TAG"
+          git checkout --detach 'FETCH_HEAD^{commit}'
+
+      - name: Set up Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      # The CLI archive embeds the server bundle and web client only, so the
+      # desktop and mobile workspaces are not installed.
+      - name: Install server dependencies
+        run: vp install --filter=t3... --filter=@t3tools/web... --filter=@t3tools/scripts...
+
+      - name: Restore Linux resource monitor cache
+        id: resource_monitor_cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: native/resource-monitor/target/x86_64-unknown-linux-gnu/release/t3-resource-monitor
+          key: resource-monitor-x86_64-unknown-linux-gnu-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
+
+      - name: Set up Rust
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: stable
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Build Linux resource monitor
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        run: cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml --target x86_64-unknown-linux-gnu
+
+      - name: Save Linux resource monitor cache
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: native/resource-monitor/target/x86_64-unknown-linux-gnu/release/t3-resource-monitor
+          key: ${{ steps.resource_monitor_cache.outputs.cache-primary-key }}
+
+      - name: Load official upstream T3 Connect settings
+        shell: bash
+        run: cp .env.example .env
+
+      # Every key must resolve through loadRepoEnv, the loader the build scripts use, so a build
+      # without T3 Connect settings fails here instead of shipping an unconfigured app.
+      - name: Verify official upstream T3 Connect settings
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'EOF'
+          import { loadRepoEnv } from "./scripts/lib/public-config.ts";
+          const env = loadRepoEnv({ baseEnv: {} });
+          const required = [
+            "T3CODE_CLERK_PUBLISHABLE_KEY",
+            "T3CODE_CLERK_JWT_TEMPLATE",
+            "T3CODE_CLERK_CLI_OAUTH_CLIENT_ID",
+            "T3CODE_RELAY_URL",
+          ];
+          const missing = required.filter((name) => !env[name]?.trim());
+          if (missing.length > 0) {
+            console.error(`Missing official T3 Connect settings: ${missing.join(", ")}`);
+            process.exit(1);
+          }
+          console.log("Official T3 Connect settings resolved.");
+          EOF
+
+      # The launcher on a server refuses a child whose package version differs
+      # from the version directory it was started from.
+      - name: Align package versions to the patched release version
+        run: node scripts/update-release-package-versions.ts "$BUILD_VERSION"
+
+      - name: Build server bundle and web client
+        run: vp run --filter t3 build
+
+      - name: Apply nightly web client branding
+        run: node scripts/apply-web-brand-assets.ts nightly apps/server/dist/client
+
+      - name: Build CLI single-executable
+        env:
+          T3CODE_TELEMETRY_CHANNEL: dev
+        run: node apps/server/scripts/cli.ts build-exe --verbose
+
+      - name: Stage resource monitor for the CLI archive
+        run: |
+          set -euo pipefail
+          target_dir="$RUNNER_TEMP/cli-resource-monitor/linux-x64"
+          mkdir -p "$target_dir"
+          cp native/resource-monitor/target/x86_64-unknown-linux-gnu/release/t3-resource-monitor "$target_dir/"
+
+      # The archive ships libatomic.so.1 and points t3's RUNPATH at it.
+      - name: Install patchelf
+        run: command -v patchelf || { sudo apt-get update && sudo apt-get install -y patchelf; }
+
+      - name: Build Linux x64 CLI archive
+        run: |
+          set -euo pipefail
+          node scripts/build-cli-archive.ts \
+            --platform linux --arch x64 \
+            --version "$BUILD_VERSION" \
+            --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" \
+            --output-dir release-cli
+
+      - name: Smoke-test CLI archive
+        run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "$BUILD_VERSION"
+
+      # The server's own runtime installer reads this file next to the archive,
+      # so a server pointed at this repository's releases can install it.
+      - name: Upload Linux server archive to the release
+        run: |
+          set -euo pipefail
+          (cd release-cli && sha256sum t3-*.tar.gz > SHA256SUMS)
+          gh release upload "$RELEASE_TAG" release-cli/* \
+            --clobber --repo "$GITHUB_REPOSITORY"
+
   macos:
     name: Build macOS installers
     needs: resolve
@@ -512,8 +540,8 @@ jobs:
 
   publish:
     name: Publish completed nightly
-    needs: [resolve, windows, windows_verify, macos]
-    if: ${{ always() && needs.resolve.outputs.should_build == 'true' && needs.windows.result == 'success' && needs.windows_verify.result == 'success' && needs.macos.result == 'success' }}
+    needs: [resolve, windows, windows_verify, linux, macos]
+    if: ${{ always() && needs.resolve.outputs.should_build == 'true' && needs.windows.result == 'success' && needs.windows_verify.result == 'success' && needs.linux.result == 'success' && needs.macos.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -555,6 +583,34 @@ jobs:
         with:
           fetch-depth: 1
           ref: refs/tags/${{ needs.resolve.outputs.release_tag }}
+
+      # app.config.ts reads only .env and .env.local, never .env.example. The file holds public
+      # identifiers only; telemetry tokens and other credentials stay out of the build.
+      - name: Load official upstream T3 Connect settings
+        run: cp .env.example .env
+
+      # Every key must resolve through loadRepoEnv, the loader the build scripts use, so a build
+      # without T3 Connect settings fails here instead of shipping an unconfigured app.
+      - name: Verify official upstream T3 Connect settings
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'EOF'
+          import { loadRepoEnv } from "./scripts/lib/public-config.ts";
+          const env = loadRepoEnv({ baseEnv: {} });
+          const required = [
+            "T3CODE_CLERK_PUBLISHABLE_KEY",
+            "T3CODE_CLERK_JWT_TEMPLATE",
+            "T3CODE_CLERK_CLI_OAUTH_CLIENT_ID",
+            "T3CODE_RELAY_URL",
+          ];
+          const missing = required.filter((name) => !env[name]?.trim());
+          if (missing.length > 0) {
+            console.error(`Missing official T3 Connect settings: ${missing.join(", ")}`);
+            process.exit(1);
+          }
+          console.log("Official T3 Connect settings resolved.");
+          EOF
 
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1

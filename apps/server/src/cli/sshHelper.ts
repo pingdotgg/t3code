@@ -6,7 +6,14 @@ import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { Argument, Command } from "effect/cli";
+
+import packageJson from "../../package.json" with { type: "json" };
+import { compareExactServiceVersions, isExactServiceVersion } from "../cloud/serviceProtocol.ts";
+import * as DesktopUpdateMarker from "../desktopUpdate/DesktopUpdateMarker.ts";
+import { serviceLauncherIsServing, stateDirOwned } from "../serviceLauncher.ts";
 
 const canBind = (port: number) =>
   new Promise<boolean>((resolve) => {
@@ -18,8 +25,7 @@ const canBind = (port: number) =>
     });
   });
 
-// macOS lets the bind above succeed while another process listens on
-// *:<port>, so also skip any port that already answers on loopback.
+// macOS permits this bind over a wildcard listener, so also check loopback connectivity.
 const answersOnLoopback = (port: number) =>
   new Promise<boolean>((resolve) => {
     const socket = NodeNet.connect({ port, host: "127.0.0.1" });
@@ -57,22 +63,24 @@ const pickPort = Command.make("pick-port", {
 );
 
 const probe = (port: number, probeTimeoutMs: number) =>
-  new Promise<boolean>((resolve) => {
+  new Promise<"ready" | "refused" | "not-ready">((resolve) => {
     const request = NodeHttp.get(
       { hostname: "127.0.0.1", port, path: "/", timeout: probeTimeoutMs },
       (response) => {
         response.resume();
         response.once("end", () => {
           const status = response.statusCode ?? 0;
-          resolve(status >= 200 && status < 300);
+          resolve(status >= 200 && status < 300 ? "ready" : "not-ready");
         });
       },
     );
     request.once("timeout", () => {
       request.destroy();
-      resolve(false);
+      resolve("not-ready");
     });
-    request.once("error", () => resolve(false));
+    request.once("error", (error: NodeJS.ErrnoException) =>
+      resolve(error.code === "ECONNREFUSED" ? "refused" : "not-ready"),
+    );
   });
 
 const waitReady = Command.make("wait-ready", {
@@ -83,11 +91,15 @@ const waitReady = Command.make("wait-ready", {
   Command.withHandler(({ port, timeoutMs, probeTimeoutMs }) =>
     Effect.promise(async () => {
       const deadline = Date.now() + timeoutMs;
+      let refusedOnly = true;
       while (Date.now() < deadline) {
-        if (await probe(port, probeTimeoutMs)) return;
+        const result = await probe(port, probeTimeoutMs);
+        if (result === "ready") return;
+        refusedOnly &&= result === "refused";
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
-      process.exitCode = 1;
+      // The launcher reads 2 as "nothing listens on this port".
+      process.exitCode = refusedOnly ? 2 : 1;
     }),
   ),
 );
@@ -99,7 +111,7 @@ const runtimePort = Command.make("runtime-port", {
   Command.withHandler(({ runtimeFile }) =>
     Effect.sync(() => {
       try {
-        // @effect-diagnostics-next-line preferSchemaOverJson:off - mirrors the shell snippet's loose parse.
+        // @effect-diagnostics-next-line globalJsonInEffect:off - mirrors the shell snippet's loose parse.
         const runtime = JSON.parse(NodeFS.readFileSync(runtimeFile, "utf8")) as {
           pid?: unknown;
           port?: unknown;
@@ -125,7 +137,71 @@ const runtimePort = Command.make("runtime-port", {
   ),
 );
 
+const decodeRunningServer = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ pid: Schema.Number, serverVersion: Schema.String })),
+);
+
+/** True when the runtime file names `pid` and a server version at or above `ownVersion`. */
+export const keepsRunningServer = (runtimeJson: string, pid: number, ownVersion: string) =>
+  Option.match(decodeRunningServer(runtimeJson), {
+    onNone: () => false,
+    onSome: (runtime) =>
+      runtime.pid === pid &&
+      isExactServiceVersion(runtime.serverVersion) &&
+      compareExactServiceVersions(runtime.serverVersion, ownVersion) >= 0,
+  });
+
+/** Exits 0 when the managed server `pid` runs this version or a newer one, else 1. */
+const keepServer = Command.make("keep-server", {
+  runtimeFile: Argument.String("runtime-file"),
+  pid: Argument.Int("pid"),
+}).pipe(
+  Command.withHandler(({ runtimeFile, pid }) =>
+    Effect.sync(() => {
+      const runtimeJson = NodeFS.existsSync(runtimeFile)
+        ? NodeFS.readFileSync(runtimeFile, "utf8")
+        : "";
+      if (!keepsRunningServer(runtimeJson, pid, packageJson.version)) process.exitCode = 1;
+    }),
+  ),
+);
+
+const updateRemaining = Command.make("update-remaining", {
+  markerFile: Argument.String("marker-file"),
+}).pipe(
+  Command.withHandler(({ markerFile }) =>
+    DesktopUpdateMarker.DesktopUpdateMarker.use((marker) => marker.remainingWait(markerFile)).pipe(
+      Effect.flatMap((remaining) =>
+        Effect.sync(() => {
+          process.stdout.write(Option.match(remaining, { onNone: () => "", onSome: String }));
+        }),
+      ),
+    ),
+  ),
+  Command.provide(DesktopUpdateMarker.layer),
+);
+
+/** Exits 0 while a server holds this home or a boot service is about to start one. */
+const homeOwned = Command.make("home-owned", {
+  baseDir: Argument.String("base-dir"),
+}).pipe(
+  Command.withHandler(({ baseDir }) =>
+    Effect.promise(async () => {
+      if (!((await serviceLauncherIsServing(baseDir)) || (await stateDirOwned(baseDir)))) {
+        process.exitCode = 1;
+      }
+    }),
+  ),
+);
+
 export const sshHelperCommand = Command.make("__ssh-helper").pipe(
   Command.unlisted,
-  Command.withSubcommands([pickPort, waitReady, runtimePort]),
+  Command.withSubcommands([
+    pickPort,
+    waitReady,
+    runtimePort,
+    updateRemaining,
+    homeOwned,
+    keepServer,
+  ]),
 );

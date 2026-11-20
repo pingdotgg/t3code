@@ -10,13 +10,16 @@ import {
   verifyRelayJwt,
 } from "@t3tools/shared/relayJwt";
 import * as Context from "effect/Context";
+import * as Signature from "effect/crypto/Signature";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as SqlError from "effect/sql/SqlError";
 
 import * as DpopProofs from "../auth/DpopProofs.ts";
 import * as RelayTokens from "../auth/RelayTokens.ts";
+import * as RelayDb from "../db.ts";
 import * as EnvironmentCredentials from "./EnvironmentCredentials.ts";
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 import * as ManagedEndpointProvider from "./ManagedEndpointProvider.ts";
@@ -52,6 +55,7 @@ export class EnvironmentLinkProofInvalid extends Schema.TaggedError<EnvironmentL
       "consume_proof_nonce",
       "consume_challenge_nonce",
       "validate_origin",
+      "validate_existing_link",
       "validate_endpoint",
     ]),
     cause: Schema.optional(Schema.Defect()),
@@ -67,6 +71,8 @@ export type EnvironmentLinkError =
   | EnvironmentLinkProofInvalid
   | DpopProofs.DpopProofReplayPersistenceError
   | EnvironmentLinks.EnvironmentLinkUpsertPersistenceError
+  | EnvironmentLinks.EnvironmentLinkLookupPersistenceError
+  | ManagedEndpointProvider.ManagedEndpointDeprovisioningFailed
   | EnvironmentCredentials.EnvironmentCredentialCreatePersistenceError
   | ManagedEndpointProvider.ManagedEndpointProviderError;
 
@@ -137,27 +143,30 @@ function isLoopbackManagedTunnelOrigin(
 
 const make = Effect.gen(function* () {
   const links = yield* EnvironmentLinks.EnvironmentLinks;
+  const transactions = yield* RelayDb.RelayTransactions;
   const credentials = yield* EnvironmentCredentials.EnvironmentCredentials;
   const managedEndpointProvider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
   const proofReplay = yield* DpopProofs.DpopProofReplay;
   const relayTokens = yield* RelayTokens.RelayTokens;
   const config = yield* RelayConfiguration.RelayConfiguration;
+  const signature = yield* Signature.Signature;
 
   return EnvironmentLinker.of({
     link: Effect.fn("relay.environment_linker.link")(function* (input) {
       const now = yield* DateTime.now;
       const nowSeconds = Math.floor(now.epochMilliseconds / 1_000);
-      const unverified = yield* Effect.try({
-        try: () => decodeRelayJwt(input.request.proof),
-        catch: (cause) =>
-          new EnvironmentLinkProofInvalid({
-            userId: input.userId,
-            environmentId: "unknown",
-            reason: "invalid_signature_or_scope",
-            stage: "decode_token",
-            cause,
-          }),
-      });
+      const unverified = yield* decodeRelayJwt(input.request.proof).pipe(
+        Effect.mapError(
+          (cause) =>
+            new EnvironmentLinkProofInvalid({
+              userId: input.userId,
+              environmentId: "unknown",
+              reason: "invalid_signature_or_scope",
+              stage: "decode_token",
+              cause,
+            }),
+        ),
+      );
       const candidate = yield* decodeProof(unverified).pipe(
         Effect.mapError(
           (cause) =>
@@ -185,15 +194,14 @@ const make = Effect.gen(function* () {
       }
       const issuer = `t3-env:${candidate.environmentId}`;
       const relayIssuer = normalizeRelayIssuer(config.relayIssuer);
-      const verified = yield* verifyRelayJwt({
+      const verified = yield* verifyRelayJwt(RelayEnvironmentLinkProofPayload, {
         publicKey: candidate.environmentPublicKey,
         token: input.request.proof,
         typ: RELAY_LINK_PROOF_TYP,
         issuer,
         audience: relayIssuer,
-        nowEpochSeconds: nowSeconds,
       }).pipe(
-        Effect.flatMap(decodeProof),
+        Effect.provideService(Signature.Signature, signature),
         Effect.mapError(
           (cause) =>
             new EnvironmentLinkProofInvalid({
@@ -232,7 +240,6 @@ const make = Effect.gen(function* () {
           liveActivitiesEnabled: input.request.liveActivitiesEnabled,
           managedTunnelsEnabled: input.request.managedTunnelsEnabled,
         },
-        nowEpochSeconds: nowSeconds,
       });
       if (challenge === null) {
         return yield* new EnvironmentLinkProofInvalid({
@@ -287,12 +294,36 @@ const make = Effect.gen(function* () {
           stage: "validate_origin",
         });
       }
-      // Downgrading a managed link to publish-only must release the tunnel and
-      // DNS that were provisioned for it — nothing else cleans them up until a
-      // full unlink. Best effort: a cleanup failure must not block the link
-      // itself, and the provider treats an absent allocation as already
-      // deprovisioned, so retrying on every non-tunnel link is cheap.
-      if (!input.request.managedTunnelsEnabled) {
+      // The account bearer alone must not move an active link, its tunnel and its trusted key to
+      // another key. Unlinking first releases the tunnel.
+      const existing = yield* links.getForUser({
+        userId: input.userId,
+        environmentId: verified.environmentId,
+      });
+      if (existing !== null && existing.environmentPublicKey !== verified.environmentPublicKey) {
+        return yield* new EnvironmentLinkProofInvalid({
+          userId: input.userId,
+          environmentId: verified.environmentId,
+          reason: "environment_key_mismatch",
+          stage: "validate_existing_link",
+        });
+      }
+      // An unlink whose teardown failed leaves its tunnel behind, and provisioning would reuse it by
+      // name. Finish the teardown before any new link, publish-only too: once that link is active
+      // it could turn tunnels on and inherit the old one.
+      if (existing === null) {
+        const key = { userId: input.userId, environmentId: verified.environmentId };
+        const leftover = yield* managedEndpointProvider.prepareDeprovision(key);
+        if (!(yield* managedEndpointProvider.deprovision({ ...key, target: leftover }))) {
+          return yield* new ManagedEndpointProvider.ManagedEndpointDeprovisioningFailed({
+            ...key,
+            stage: "claim-deprovision",
+            cause: "an earlier tunnel for this environment is still being torn down",
+          });
+        }
+      }
+      // An active link going publish-only releases its own tunnel/DNS; best-effort deprovision is idempotent.
+      if (existing !== null && !input.request.managedTunnelsEnabled) {
         yield* managedEndpointProvider
           .deprovision({
             userId: input.userId,
@@ -316,10 +347,7 @@ const make = Effect.gen(function* () {
           })
         : null;
       const endpoint = provisioned?.endpoint ?? verified.endpoint;
-      // The secure-endpoint requirement only matters when the relay advertises
-      // this endpoint for other devices to reach (managed tunnel). Publish-only
-      // links are reached out of band (e.g. Tailscale) and their stored endpoint
-      // is never used for routing, so a nominal endpoint is acceptable.
+      // Only advertised managed endpoints need secure URLs; publish-only links route out of band.
       if (input.request.managedTunnelsEnabled && !isSecureManagedEndpoint(endpoint)) {
         return yield* new EnvironmentLinkProofInvalid({
           userId: input.userId,
@@ -328,11 +356,28 @@ const make = Effect.gen(function* () {
           stage: "validate_endpoint",
         });
       }
-      yield* links.upsert({ ...input, proof: verified, endpoint });
-      const environmentCredential = yield* credentials.create({
-        environmentId: verified.environmentId,
-        environmentPublicKey: verified.environmentPublicKey,
-      });
+      const environmentCredential = yield* transactions
+        .withTransaction(
+          links.upsert({ ...input, proof: verified, endpoint }).pipe(
+            Effect.andThen(
+              credentials.create({
+                environmentId: verified.environmentId,
+                environmentPublicKey: verified.environmentPublicKey,
+              }),
+            ),
+          ),
+        )
+        .pipe(
+          Effect.mapError((cause) =>
+            SqlError.isSqlError(cause)
+              ? new EnvironmentLinks.EnvironmentLinkUpsertPersistenceError({
+                  userId: input.userId,
+                  environmentId: verified.environmentId,
+                  cause,
+                })
+              : cause,
+          ),
+        );
       return {
         environmentId: verified.environmentId,
         endpoint,

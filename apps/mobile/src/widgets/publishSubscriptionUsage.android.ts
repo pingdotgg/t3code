@@ -1,5 +1,5 @@
 import { requireOptionalNativeModule } from "expo";
-import * as Linking from "expo-linking";
+import { tryOpenExternalUrl } from "../lib/openExternalUrl";
 import type { SubscriptionUsageSnapshot } from "./subscriptionUsageSnapshot";
 
 let tapUrl: string | undefined;
@@ -13,17 +13,14 @@ export async function publishSubscriptionUsage(snapshot: SubscriptionUsageSnapsh
   ]);
   tapUrl = snapshot.url;
   if (!listening) {
-    // expo-widgets has no Android counterpart to widgetURL: the card is a
-    // button whose tap is delivered to this process, so opening the app needs
-    // a live JS runtime.
+    // expo-widgets lacks Android widgetURL. Button events need a live JS runtime to open the app.
     listening = true;
     addUserInteractionListener((event) => {
-      if (event.source === "SubscriptionUsage" && tapUrl) void Linking.openURL(tapUrl);
+      if (event.source === "SubscriptionUsage" && tapUrl) void tryOpenExternalUrl(tapUrl);
     });
   }
   widget.updateSnapshot(snapshot);
-  // Android has no timeline; an alarm re-renders the stored snapshot at each
-  // deadline so stale readings flip to "Open T3 to refresh" unattended.
+  // Android lacks timelines; alarms re-render snapshots at expiry to mark readings stale.
   requireOptionalNativeModule<{ schedule: (name: string, deadlines: number[]) => void }>(
     "T3WidgetExpiry",
   )?.schedule(
