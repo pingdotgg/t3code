@@ -158,6 +158,31 @@ const layerPausingAttachEventSink = (pause: {
     }),
   ).pipe(Layer.provide(layerTestEventSink));
 
+const layerReleaseRecordedEventSink = (recorded: Deferred.Deferred<void>) =>
+  Layer.effect(
+    EventSink.EventSinkV2,
+    Effect.gen(function* () {
+      const delegate = yield* EventSink.EventSinkV2;
+      return EventSink.EventSinkV2.of({
+        ...delegate,
+        write: (input) =>
+          delegate
+            .write(input)
+            .pipe(
+              Effect.tap(() =>
+                input.events.some(
+                  (event) =>
+                    event.type === "provider-session.updated" &&
+                    (event.payload.status === "stopped" || event.payload.status === "error"),
+                )
+                  ? Deferred.succeed(recorded, undefined)
+                  : Effect.void,
+              ),
+            ),
+      });
+    }),
+  ).pipe(Layer.provide(layerTestEventSink));
+
 const layerBeforeUnchangedWriteEventSink = (
   before: Ref.Ref<Effect.Effect<void>>,
   // One effect runs before each turn-item write, in order.
@@ -467,6 +492,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly archive?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
     readonly spawnBeforeOpen?: boolean;
     readonly scopeCloseReached?: Deferred.Deferred<void>;
+    readonly eventStreamsEnded?: Queue.Queue<ProviderSessionId>;
   } = {},
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -559,6 +585,11 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
                     if (event.type === "provider_session.updated") session = event.providerSession;
                   }),
                 ),
+                Stream.ensuring(
+                  options.eventStreamsEnded === undefined
+                    ? Effect.void
+                    : Queue.offer(options.eventStreamsEnded, input.providerSessionId),
+                ),
               ),
           ...(options.backgroundTasksEndWithProcess === false
             ? {}
@@ -649,6 +680,8 @@ function layerTest(input: {
   readonly archive?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
   readonly spawnBeforeOpen?: boolean;
   readonly scopeCloseReached?: Deferred.Deferred<void>;
+  readonly eventStreamsEnded?: Queue.Queue<ProviderSessionId>;
+  readonly releaseRecorded?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
   readonly installationGateLayer?: Layer.Layer<ProviderInstallationGate.ProviderInstallationGate>;
@@ -665,7 +698,9 @@ function layerTest(input: {
             )
           : input.failReleaseEventWrites
             ? layerFailingReleaseEventSink
-            : layerTestEventSink;
+            : input.releaseRecorded !== undefined
+              ? layerReleaseRecordedEventSink(input.releaseRecorded)
+              : layerTestEventSink;
   const layerRegistry = Layer.unwrap(
     makeProviderAdapter(input.state, {
       failEventStream: input.failEventStream ?? false,
@@ -699,6 +734,9 @@ function layerTest(input: {
       ...(input.scopeCloseReached === undefined
         ? {}
         : { scopeCloseReached: input.scopeCloseReached }),
+      ...(input.eventStreamsEnded === undefined
+        ? {}
+        : { eventStreamsEnded: input.eventStreamsEnded }),
     }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
   );
   const layerConfiguredMcpRegistry =
@@ -1100,6 +1138,7 @@ it.effect("ProviderSessionManagerV2 opens independent sessions concurrently", ()
 it.effect("ProviderSessionManagerV2 closes every live session for a provider instance", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
+    const eventStreamsEnded = yield* Queue.unbounded<ProviderSessionId>();
     const effect = Effect.gen(function* () {
       const eventSink = yield* EventSink.EventSinkV2;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -1140,6 +1179,9 @@ it.effect("ProviderSessionManagerV2 closes every live session for a provider ins
       assert.isTrue(Option.isNone(yield* manager.get(firstProviderSessionId)));
       assert.isTrue(Option.isNone(yield* manager.get(secondProviderSessionId)));
       assert.equal((yield* Ref.get(state)).closeCount, 2);
+      // Like Codex and Claude, the fake adapter never ends its event queue; release must still stop the pump.
+      const ended = [yield* Queue.take(eventStreamsEnded), yield* Queue.take(eventStreamsEnded)];
+      assert.sameMembers(ended, [firstProviderSessionId, secondProviderSessionId]);
     });
 
     yield* effect.pipe(
@@ -1147,6 +1189,7 @@ it.effect("ProviderSessionManagerV2 closes every live session for a provider ins
         layerTest({
           state,
           idleTimeoutMs: 60_000,
+          eventStreamsEnded,
         }),
       ),
     );
@@ -2217,6 +2260,7 @@ it.effect("ProviderSessionManagerV2 interrupts event subscriptions on server shu
 it.effect("ProviderSessionManagerV2 drains subscribers when the provider stops", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
+    const unloads = yield* Queue.unbounded<string>();
     const effect = Effect.gen(function* () {
       const eventSink = yield* EventSink.EventSinkV2;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -2274,11 +2318,12 @@ it.effect("ProviderSessionManagerV2 drains subscribers when the provider stops",
         events.map((event) => event.type),
         ["turn.terminal", "provider_session.updated"],
       );
+      assert.equal(yield* Queue.take(unloads), "close");
       assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
       assert.equal((yield* Ref.get(state)).closeCount, 1);
     });
 
-    yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
+    yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, unloads })));
   }),
 );
 
@@ -3370,8 +3415,12 @@ const openSessionWithBackgroundCommand = (fixtureName: string) =>
         toolName: "mcp__t3-code__t3_worktree_handoff",
         input: {},
       }) satisfies OrchestrationV2TurnItem;
+    const cutOffNodeId = idAllocator.derive.nodeFromProviderItem({
+      driver: CODEX_DRIVER,
+      nativeItemId: "cut-off",
+    });
     const seededToolCalls = {
-      cutOff: toolCall("cut-off", providerThreads[0]!, "running", now),
+      cutOff: { ...toolCall("cut-off", providerThreads[0]!, "running", now), nodeId: cutOffNodeId },
       finished: toolCall("finished", providerThreads[0]!, "completed", now),
       otherSession: toolCall("other-session", providerThreads[1]!, "running", now),
       // Started by a replacement session after the release.
@@ -3397,7 +3446,41 @@ const openSessionWithBackgroundCommand = (fixtureName: string) =>
           ],
         });
       });
+    yield* eventSink.write({
+      events: [
+        {
+          id: yield* idAllocator.allocate.event({ threadId }),
+          type: "node.updated",
+          threadId,
+          nodeId: cutOffNodeId,
+          driver: CODEX_DRIVER,
+          occurredAt: now,
+          payload: {
+            id: cutOffNodeId,
+            threadId,
+            runId: null,
+            parentNodeId: null,
+            rootNodeId: cutOffNodeId,
+            kind: "tool_call",
+            status: "running",
+            countsForRun: true,
+            providerThreadId: providerThreads[0]!.id,
+            providerTurnId: null,
+            nativeItemRef: null,
+            runtimeRequestId: null,
+            checkpointScopeId: null,
+            startedAt: now,
+            completedAt: null,
+          },
+        },
+      ],
+    });
     yield* Effect.forEach(Object.values(seededToolCalls), writeToolCall);
+    const cutOffNodeStatus = Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const projection = yield* projectionStore.getThreadProjection(threadId);
+      return projection.nodes.find((node) => node.id === cutOffNodeId)?.status;
+    });
     // A background native subagent that outlived its completed run; Claude records no provider thread on it.
     const nativeSubagentRunId = idAllocator.derive.run({ threadId, ordinal: 1 });
     const nativeSubagentId = idAllocator.derive.nodeFromProviderItem({
@@ -3481,6 +3564,7 @@ const openSessionWithBackgroundCommand = (fixtureName: string) =>
       toolCalls,
       toolCallStatus,
       nativeSubagentStatus,
+      cutOffNodeStatus,
     };
   });
 
@@ -3500,6 +3584,7 @@ it.effect.each(["detach", "stream failure", "provider stop", "early close"] as c
           seededToolCalls,
           writeToolCall,
           nativeSubagentStatus,
+          cutOffNodeStatus,
         } = yield* openSessionWithBackgroundCommand("provider-session-manager-detach-roster");
         const runtime = Option.getOrThrow(yield* manager.get(providerSessionId));
         const subscription = yield* runtime.subscribeEvents!;
@@ -3584,6 +3669,7 @@ it.effect.each(["detach", "stream failure", "provider stop", "early close"] as c
           otherSession: "running",
           replacement: "running",
         });
+        assert.equal(yield* cutOffNodeStatus, "interrupted");
         // regression: #36548 a native subagent the dead process ran stayed running after its run completed
         assert.notInclude(["pending", "running", "waiting"], yield* nativeSubagentStatus);
       });
@@ -3848,6 +3934,7 @@ it.effect(
 it.effect("ProviderSessionManagerV2 releases sessions when provider event streams fail", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
+    const releaseRecorded = yield* Deferred.make<void>();
     const effect = Effect.gen(function* () {
       const eventSink = yield* EventSink.EventSinkV2;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -3876,7 +3963,7 @@ it.effect("ProviderSessionManagerV2 releases sessions when provider event stream
         runtimePolicy,
       });
       yield* runtime.events.pipe(Stream.runDrain, Effect.ignore, Effect.forkScoped);
-      yield* Effect.yieldNow;
+      yield* Deferred.await(releaseRecorded);
 
       const liveSession = yield* manager.get(providerSessionId);
       const runtimeState = yield* Ref.get(state);
@@ -3897,6 +3984,7 @@ it.effect("ProviderSessionManagerV2 releases sessions when provider event stream
           state,
           idleTimeoutMs: 1000,
           failEventStream: true,
+          releaseRecorded,
         }),
       ),
     );
