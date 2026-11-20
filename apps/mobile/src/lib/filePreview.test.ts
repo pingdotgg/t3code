@@ -184,6 +184,7 @@ vi.mock("../state/threads", () => ({ environmentThreadShells: {}, threadEnvironm
 vi.mock("../state/entities", () => ({
   useLiveThreadLinkLabels: (text: string) => text,
   useThreadChipIcons: () => new Map(),
+  useEnvironmentPreviewTunnelOff: () => false,
 }));
 vi.mock("../state/use-thread-selection", () => ({
   useThreadSelection: () => ({ selectedThread: null }),

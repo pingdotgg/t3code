@@ -12,12 +12,16 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { isLoopbackHost } from "@t3tools/shared/preview";
 import { T, useGT, Var } from "gt-react";
 import { m } from "~/i18n/messages";
 import { CableIcon, GlobeIcon, SquareIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { type MouseEvent, useState } from "react";
 
-import { resolveExternalServerUrl } from "../../browser/browserTargetResolver";
+import {
+  resolveExternalServerUrl,
+  tunnelsEnvironmentLoopback,
+} from "../../browser/browserTargetResolver";
 import { readLocalApi } from "../../localApi";
 import { cn, isMacPlatform } from "../../lib/utils";
 import { useThreadDiscoveredPorts } from "../../portDiscoveryState";
@@ -69,7 +73,7 @@ function ThreadServersList(props: ThreadServersPanelProps) {
   const forwardable =
     useEnvironmentScope(props.environmentId, AuthTerminalOperateScope) &&
     environment?.connection.phase === "connected" &&
-    canForwardPorts(environment.entry.target);
+    canForwardPorts(environment);
   const locality = useForwardLocality(forwardable ? props.environmentId : null);
   const canForward = locality === "remote";
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
@@ -113,6 +117,23 @@ function ThreadServersList(props: ThreadServersPanelProps) {
             )
           : resolveExternalServerUrl(props.environmentId, server.url);
       if (url === null) return;
+      // Without a forward, a remote environment's localhost would open this machine's instead.
+      if (
+        locality !== "local" &&
+        tunnelsEnvironmentLoopback(environment?.entry.target) &&
+        isLoopbackHost(new URL(url).hostname)
+      ) {
+        reportFailure(
+          gt("Unable to open in browser"),
+          new Error(
+            gt(
+              "localhost:{port} runs on another machine, and port forwarding isn't available for it right now.",
+              { port: server.port },
+            ),
+          ),
+        );
+        return;
+      }
       await readLocalApi()
         ?.shell.openExternal(url)
         .catch((error: unknown) => reportFailure(gt("Unable to open in browser"), error));
