@@ -194,6 +194,7 @@ const make = Effect.fn("FeedbackService.make")(function* (
           driverOf: (candidate) =>
             providerList.find((provider) => provider.instanceId === candidate.providerInstanceId)
               ?.driver,
+          submittingRunId: run.id,
         });
       return { outline: build(false), conversation: build(true) };
     }).pipe(Effect.mapError(storageError));

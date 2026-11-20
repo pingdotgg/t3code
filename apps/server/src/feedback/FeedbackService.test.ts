@@ -99,6 +99,10 @@ const turnItems = [
     ),
   ),
   item(6, { type: "dynamic_tool", toolName: "t3-code.t3_thread_read", status: "running" }),
+  item(5, { type: "dynamic_tool", toolName: "mcp__t3-code__t3_feedback", status: "running" }),
+  item(6, { type: "dynamic_tool", toolName: "mcp__t3-code__t3_feedback", status: "failed" }),
+  // The call making the card in the active run.
+  item(6, { type: "dynamic_tool", toolName: "mcp__t3-code__t3_feedback", status: "running" }),
 ];
 
 const harness = Effect.gen(function* () {
@@ -248,7 +252,7 @@ const harness = Effect.gen(function* () {
       });
     }),
   );
-  const layer = Feedback.layer(() => ["t3_thread_read"]).pipe(
+  const layer = Feedback.layer(() => ["t3_thread_read", "t3_feedback"]).pipe(
     Layer.provideMerge(Store.layer),
     Layer.provideMerge(
       Layer.mergeAll(
@@ -553,6 +557,7 @@ it.effect("a card holds the outline and the conversation, and sends the one the 
       const unprompted = yield* feedback.submit(input, fromThread);
       expect("trace" in unprompted && unprompted.trace).toBeNull();
 
+      yield* Ref.set(runId, RunId.make("run:6"));
       const card = yield* show(cards, requested);
       const outline = card.preview.trace!;
       expect(outline).toMatchObject({ turns: 5, textTurns: 0, truncated: true });
@@ -568,6 +573,11 @@ it.effect("a card holds the outline and the conversation, and sends the one the 
         { turn: 5, type: "tool", tool: "Read", outcome: "ok" },
         { turn: 5, type: "tool", tool: "shell", outcome: "error" },
         { turn: 5, type: "tool", tool: "t3_thread_read", outcome: "unfinished" },
+        { turn: 5, type: "tool", tool: "t3_feedback", outcome: "error" },
+      ]);
+      expect(outline.entries.filter((entry) => entry.tool === "t3_feedback")).toEqual([
+        { turn: 4, type: "tool", tool: "t3_feedback", outcome: "unfinished" },
+        { turn: 5, type: "tool", tool: "t3_feedback", outcome: "error" },
       ]);
 
       // The conversation is the same outline with the scrubbed text of its turns, newest kept

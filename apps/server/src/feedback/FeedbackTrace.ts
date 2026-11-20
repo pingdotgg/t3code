@@ -69,15 +69,28 @@ export const buildFeedbackTrace = (input: {
   readonly sensitive: ReadonlyArray<string>;
   readonly t3Tools: ReadonlyArray<string>;
   readonly driverOf: (run: OrchestrationV2Run) => string | undefined;
+  readonly submittingRunId: OrchestrationV2Run["id"];
 }): FeedbackTrace => {
   const runs = input.runs
     .filter((run) => run.startedAt !== null)
     .toSorted((a, b) => a.ordinal - b.ordinal)
     .slice(-FEEDBACK_TRACE_TURNS);
   const turnOf = new Map(runs.map((run, index) => [run.id, { turn: index + 1, run }] as const));
+  // The `t3_feedback` call making this report is still running; listed, it reads as a hung call.
+  const submitting = (item: OrchestrationV2TurnItem) =>
+    item.runId === input.submittingRunId &&
+    item.type === "dynamic_tool" &&
+    outcome(item) === "unfinished" &&
+    resolveT3ToolName(item.toolName ?? "", input.t3Tools) === "t3_feedback";
   let truncated = false;
   const entries = input.items
-    .filter((item) => item.parentItemId === null && item.runId !== null && turnOf.has(item.runId))
+    .filter(
+      (item) =>
+        item.parentItemId === null &&
+        item.runId !== null &&
+        turnOf.has(item.runId) &&
+        !submitting(item),
+    )
     .map((item) => ({ item, ...turnOf.get(item.runId!)! }))
     .toSorted((a, b) => a.turn - b.turn || a.item.ordinal - b.item.ordinal)
     .map(({ item, turn, run }): Entry => {
