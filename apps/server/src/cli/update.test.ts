@@ -629,34 +629,34 @@ it.layer(NodeServices.layer)("t3 update checks the database before switching", (
     stdoutInvalidUtf8: false,
     stderrInvalidUtf8: false,
   });
-  const blockedReason = "This database has migrations that t3@0.1.8 does not know: 79_example.";
+  const olderVersion = "0.0.79";
+  const blockedReason = `This database has migrations that t3@${olderVersion} does not know: 79_example.`;
 
   it.effect.each([
     {
       name: "installs an older target that accepts this database",
-      targetVersion: "0.1.8",
+      targetVersion: olderVersion,
       launcherProtocol: 3,
       preflight: preflightOutput(
-        JSON.stringify({ status: "ready", version: "0.1.8", launcherProtocol: 3 }),
+        JSON.stringify({ status: "ready", version: olderVersion, launcherProtocol: 3 }),
       ),
       failure: undefined,
     },
     {
       name: "refuses an older target the database is too new for",
-      targetVersion: "0.1.8",
+      targetVersion: olderVersion,
       launcherProtocol: 3,
       preflight: preflightOutput(
-        JSON.stringify({ status: "blocked", version: "0.1.8", reason: blockedReason }),
+        JSON.stringify({ status: "blocked", version: olderVersion, reason: blockedReason }),
       ),
       failure: blockedReason,
     },
     {
       name: "refuses an older target too old to check the database",
-      targetVersion: "0.1.8",
+      targetVersion: olderVersion,
       launcherProtocol: 3,
       preflight: preflightOutput("", 1),
-      failure:
-        "t3@0.1.8 could not confirm it supports this database (its check exited with code 1), so t3 did not switch to it.",
+      failure: `t3@${olderVersion} could not confirm it supports this database (its check exited with code 1), so t3 did not switch to it.`,
     },
     {
       // Newer builds keep accepting the current launcher protocol, which may drop 3.

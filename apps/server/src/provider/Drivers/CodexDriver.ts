@@ -196,7 +196,7 @@ export const CodexDriver: ProviderDriver<
         : (yield* mergeProviderInstanceEnvironment(environment, {})).CODEX_HOME;
     const { providerHomesDir } = yield* ServerConfig.ServerConfig;
     const homeLayout = yield* resolveCodexInstanceHomeLayout(
-      !config.homePath.trim() && !config.shadowHomePath.trim() && environmentHome?.trim()
+      !config.homePath.trim() && environmentHome?.trim()
         ? { ...config, homePath: environmentHome }
         : config,
       instanceId,
