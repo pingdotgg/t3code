@@ -169,12 +169,9 @@ function LimitRow({
   const pace = paceOf(window, now);
   const timeLeft = paceRemainingPercent(window, now);
   const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
-  const resets =
+  const resetTime =
     window.resetsAt && resetsAt > now
-      ? gt("Resets in {duration} · {time}", {
-          duration: formatDuration(resetsAt - now, m),
-          time: formatUpcomingTimestamp(window.resetsAt, timestampFormat, now, undefined, m),
-        })
+      ? formatUpcomingTimestamp(window.resetsAt, timestampFormat, now, undefined, m)
       : null;
   return (
     <UsageRow
@@ -188,7 +185,8 @@ function LimitRow({
           ? gt("{left}% left. {pace}", { left, pace: m(PACE_LABEL[pace]) })
           : gt("{left}% left", { left })
       }
-      ariaDetail={resets}
+      // The absolute time only: a per-minute countdown in the name makes NVDA re-read the focused row.
+      ariaDetail={resetTime ? gt("Resets {time}", { time: resetTime }) : null}
       opensUsage
       tooltip={
         <>
@@ -200,7 +198,14 @@ function LimitRow({
               {m(PACE_LABEL[pace])} · {gt("{timeLeft}% of the window left", { timeLeft })}
             </span>
           ) : null}
-          {resets ? <span className="text-muted-foreground">{resets}</span> : null}
+          {resetTime ? (
+            <span className="text-muted-foreground">
+              {gt("Resets in {duration} · {time}", {
+                duration: formatDuration(resetsAt - now, m),
+                time: resetTime,
+              })}
+            </span>
+          ) : null}
         </>
       }
     />
