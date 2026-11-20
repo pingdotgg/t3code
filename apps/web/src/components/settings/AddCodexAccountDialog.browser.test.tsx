@@ -111,6 +111,8 @@ describe("AddCodexAccountDialog", () => {
       await userEvent.click(page.getByRole("button", { name: "Continue" }));
       await expect.element(page.getByRole("button", { name: "Adding account…" })).toBeDisabled();
       expect(close.query()).toBeNull();
+      await userEvent.keyboard("{Escape}");
+      await expect.element(page.getByRole("dialog")).toBeVisible();
     } finally {
       await act(() => save.resolve({ _tag: "Failure" }));
     }
