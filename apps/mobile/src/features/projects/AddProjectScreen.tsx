@@ -1,3 +1,4 @@
+import { errorDisplayMessage, type MarkedText } from "@t3tools/client-runtime/errors";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import * as Dialog from "../../components/ui/Dialog";
@@ -70,6 +71,7 @@ import {
   type ParamListBase,
 } from "@react-navigation/native";
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { msg, useGT, useMessages } from "gt-react-native";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -78,6 +80,7 @@ import * as Cause from "effect/Cause";
 import * as Order from "effect/Order";
 import { AsyncResult } from "effect/reactivity";
 import { cn } from "../../lib/cn";
+import { m } from "../../i18n/messages";
 import { useProjects, useServerConfigs, waitForProject } from "../../state/entities";
 import { filesystemEnvironment } from "../../state/filesystem";
 import { projectEnvironment } from "../../state/projects";
@@ -119,6 +122,7 @@ interface EnvironmentOption {
   readonly newProjectsRoot: string | null;
   readonly connectionState: EnvironmentConnectionPhase;
   readonly connectionError: string | null;
+  readonly i18nConnectionError?: MarkedText;
   readonly connectionErrorTraceId: string | null;
   readonly ghqCloneLayout: boolean;
   readonly offeredSourceControlProviders: OfferedSourceControlProviders | undefined;
@@ -139,9 +143,9 @@ function platformFromOs(os: string | null | undefined): string {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error && error.message.trim().length > 0
-    ? error.message
-    : "An error occurred.";
+  return error instanceof Error && errorDisplayMessage(error, m) !== null
+    ? (errorDisplayMessage(error, m) ?? error.message)
+    : m(msg("An error occurred."));
 }
 
 function stringParam(value: string | string[] | undefined): string | null {
@@ -200,6 +204,35 @@ function ListSection(props: { readonly children: ReactNode }) {
     >
       {props.children}
     </View>
+  );
+}
+
+function EnvironmentOptionRow(
+  props: Omit<Parameters<typeof ListRow>[0], "subtitle"> & {
+    readonly environment: EnvironmentOption;
+  },
+) {
+  const { environment, ...row } = props;
+  const messages = useMessages();
+  return (
+    <ListRow
+      {...row}
+      subtitle={
+        canCreateProjectInEnvironment(environment.connectionState)
+          ? undefined
+          : connectionStatusText(
+              {
+                phase: environment.connectionState,
+                error: environment.connectionError,
+                ...(environment.i18nConnectionError === undefined
+                  ? {}
+                  : { i18nError: environment.i18nConnectionError }),
+                traceId: environment.connectionErrorTraceId,
+              },
+              messages,
+            )
+      }
+    />
   );
 }
 
@@ -434,6 +467,9 @@ function useEnvironmentOptions(
         newProjectsRoot: config?.newProjectsRoot ?? null,
         connectionState: runtime?.connectionState ?? "available",
         connectionError: runtime?.connectionError ?? null,
+        ...(runtime?.i18nConnectionError === undefined
+          ? {}
+          : { i18nConnectionError: runtime.i18nConnectionError }),
         connectionErrorTraceId: runtime?.connectionErrorTraceId ?? null,
         ghqCloneLayout: config?.settings.ghqCloneLayout === true,
         offeredSourceControlProviders: config?.settings.offeredSourceControlProviders,
@@ -478,16 +514,17 @@ function useSelectedEnvironment(requestedEnvironmentId: EnvironmentId | null): {
 
 function EmptyEnvironmentState() {
   const navigation = useNavigation();
+  const gt = useGT();
 
   return (
     <View className="items-center gap-3 rounded-2xl bg-grouped-card px-5 py-8">
-      <Text className="text-center text-lg font-t3-bold">Environment unavailable</Text>
+      <Text className="text-center text-lg font-t3-bold">{gt("Environment unavailable")}</Text>
       <Text className="text-center text-sm leading-normal text-foreground-muted">
-        Start or reconnect an environment before adding a project.
+        {gt("Start or reconnect an environment before adding a project.")}
       </Text>
       <View className="mt-1">
         <Button
-          label="Add environment"
+          label={gt("Add environment")}
           tone="primary"
           onPress={() => navigation.dispatch(StackActions.replace("ConnectionsNew"))}
         />
@@ -504,12 +541,21 @@ function SourceControlRow(props: {
   readonly isFirst: boolean;
 }) {
   const navigation = useNavigation();
+  const gt = useGT();
+  const messages = useMessages();
   const title =
-    props.source === "url" ? "Git URL" : `${addProjectRemoteSourceLabel(props.source)} repository`;
+    props.source === "url"
+      ? gt("Git URL")
+      : gt("{provider} repository", {
+          provider: addProjectRemoteSourceLabel(props.source, messages),
+        });
   const subtitle =
     props.source === "url"
-      ? "Clone from a remote URL"
-      : `Clone ${addProjectRemoteSourceLabel(props.source)} ${props.hint}`;
+      ? gt("Clone from a remote URL")
+      : gt("Clone {provider} {hint}", {
+          provider: addProjectRemoteSourceLabel(props.source, messages),
+          hint: props.hint,
+        });
   const icon =
     props.source === "url" ? (
       <SymbolView
@@ -572,29 +618,23 @@ export function AddProjectSourceScreen(props: { readonly environmentId?: string 
           input: {},
         }),
   );
-  const readiness = buildAddProjectRemoteSourceReadiness(discoveryState.data);
+  const messages = useMessages();
+  const readiness = buildAddProjectRemoteSourceReadiness(discoveryState.data, messages);
+  const gt = useGT();
 
   return (
-    <AddProjectShell title="Add project">
+    <AddProjectShell title={gt("Add project")}>
       {selectedEnvironment === null ? <EmptyEnvironmentState /> : null}
 
       {environmentOptions.length > 1 || (selectedEnvironment !== null && !isConnected) ? (
         <>
-          <SectionTitle>Environments</SectionTitle>
+          <SectionTitle>{gt("Environments")}</SectionTitle>
           <ListSection>
             {environmentOptions.map((environment, index) => (
-              <ListRow
+              <EnvironmentOptionRow
                 key={environment.environmentId}
+                environment={environment}
                 title={environment.label}
-                subtitle={
-                  canCreateProjectInEnvironment(environment.connectionState)
-                    ? undefined
-                    : connectionStatusText({
-                        phase: environment.connectionState,
-                        error: environment.connectionError,
-                        traceId: environment.connectionErrorTraceId,
-                      })
-                }
                 icon={
                   <EnvironmentMachineSymbol
                     kind={environment.machine}
@@ -627,8 +667,8 @@ export function AddProjectSourceScreen(props: { readonly environmentId?: string 
           <ListSection>
             {selectedEnvironment.newProjectsRoot !== null ? (
               <ListRow
-                title="New project"
-                subtitle="Start a new Git repository from a name"
+                title={gt("New project")}
+                subtitle={gt("Start a new Git repository from a name")}
                 disabled={!isConnected}
                 icon={
                   <SymbolView
@@ -649,11 +689,11 @@ export function AddProjectSourceScreen(props: { readonly environmentId?: string 
               />
             ) : null}
             <ListRow
-              title="Local folder"
+              title={gt("Local folder")}
               subtitle={
                 canCreateProject
-                  ? "Browse a folder on disk"
-                  : "This connection cannot add projects."
+                  ? gt("Browse a folder on disk")
+                  : gt("This connection cannot add projects.")
               }
               icon={
                 <SymbolView
@@ -689,9 +729,9 @@ export function AddProjectSourceScreen(props: { readonly environmentId?: string 
                 ready={canCloneProject && readiness(candidate).ready}
                 hint={
                   !canCloneProject
-                    ? "This connection cannot clone projects."
+                    ? gt("This connection cannot clone projects.")
                     : readiness(candidate).ready
-                      ? addProjectRemoteSourcePathHint(candidate)
+                      ? addProjectRemoteSourcePathHint(candidate, messages)
                       : (readiness(candidate).hint ?? "")
                 }
                 isFirst={false}
@@ -789,8 +829,10 @@ function useOpenExistingProject(environment: EnvironmentOption | null) {
         })
       )._tag === "Success";
     Dialog.alert(
-      "Project already exists",
-      unarchived ? existing.title : `${existing.title} is still archived. Try again later.`,
+      m(msg("Project already exists")),
+      unarchived
+        ? existing.title
+        : m(msg("{title} is still archived. Try again later.", { title: existing.title })),
     );
     openNewTaskDraft(
       {
@@ -827,8 +869,13 @@ function useCreateProject(environment: EnvironmentOption | null) {
       !readEnvironmentScope(environment.environmentId, AuthOrchestrationOperateScope)
     ) {
       Dialog.alert(
-        "Project not added",
-        `This connection cannot add projects right now. Any existing files remain at ${workspaceRoot}.`,
+        m(msg("Project not added")),
+        m(
+          msg(
+            "This connection cannot add projects right now. Any existing files remain at {path}.",
+            { path: workspaceRoot },
+          ),
+        ),
       );
       return;
     }
@@ -858,8 +905,12 @@ function useCreateProject(environment: EnvironmentOption | null) {
     );
     if (project === null) {
       Dialog.alert(
-        "Project added",
-        "The project was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
+        m(msg("Project added")),
+        m(
+          msg(
+            "The project was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
+          ),
+        ),
       );
       return result;
     }
@@ -896,10 +947,16 @@ export function AddProjectRepositoryScreen(props: {
   const [repositoryInput, setRepositoryInput] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const gt = useGT();
+  const messages = useMessages();
 
   const lookupRepository = async () => {
     if (!environment || repositoryInput.trim().length === 0 || isSubmitting) return;
-    const incompleteOwnerMessage = githubIncompleteOwnerRepositoryMessage(source, repositoryInput);
+    const incompleteOwnerMessage = githubIncompleteOwnerRepositoryMessage(
+      source,
+      repositoryInput,
+      m,
+    );
     if (incompleteOwnerMessage) {
       setError(incompleteOwnerMessage);
       return;
@@ -947,7 +1004,9 @@ export function AddProjectRepositoryScreen(props: {
   };
 
   return (
-    <AddProjectShell title={source === "url" ? "Git URL" : addProjectRemoteSourceLabel(source)}>
+    <AddProjectShell
+      title={source === "url" ? gt("Git URL") : addProjectRemoteSourceLabel(source, messages)}
+    >
       {error ? <ErrorBanner message={error} /> : null}
       {environment ? (
         <>
@@ -960,13 +1019,13 @@ export function AddProjectRepositoryScreen(props: {
             placeholder={
               source === "url"
                 ? (defaultHostCloneUrl("org/repo") ?? "https://example.com/org/repo.git")
-                : addProjectRemoteSourcePathHint(source)
+                : addProjectRemoteSourcePathHint(source, messages)
             }
             returnKeyType="next"
             onSubmitEditing={() => void lookupRepository()}
           />
           <PrimaryActionButton
-            label={source === "url" ? "Continue" : "Lookup repository"}
+            label={source === "url" ? gt("Continue") : gt("Lookup repository")}
             disabled={isSubmitting || repositoryInput.trim().length === 0}
             onPress={() => void lookupRepository()}
             loading={isSubmitting}
@@ -990,6 +1049,7 @@ function FolderBrowser(props: {
   readonly pinnedDirectoryName?: string;
   readonly cloning?: boolean;
 }) {
+  const messages = useMessages();
   const browsePath = getFilesystemBrowsePath(
     props.pathInput,
     props.environment.platform,
@@ -1012,12 +1072,15 @@ function FolderBrowser(props: {
     environmentSession.sessionStateAtom(props.environment.environmentId),
   );
   const fileEnvironment = useEnvironmentPresentation(props.environment.environmentId);
-  const fileAccess = resolveFilesystemReadAccess({
-    isCatalogReady: fileEnvironment.isReady,
-    connection: fileEnvironment.presentation?.connection ?? null,
-    session: fileAccessSession.data,
-    sessionError: fileAccessSession.error,
-  });
+  const fileAccess = resolveFilesystemReadAccess(
+    {
+      isCatalogReady: fileEnvironment.isReady,
+      connection: fileEnvironment.presentation?.connection ?? null,
+      session: fileAccessSession.data,
+      sessionError: fileAccessSession.error,
+    },
+    messages,
+  );
   const { canReadFiles } = fileAccess;
   const browseState = useEnvironmentQuery(
     !canReadFiles || browseInput === null
@@ -1036,19 +1099,22 @@ function FolderBrowser(props: {
     ? browseState.data.entries
     : filterFilesystemBrowseEntries(browseState.data?.entries ?? [], browseFilterQuery)
         .visibleEntries;
+  const gt = useGT();
 
   return (
     <>
-      <SectionTitle>Browse folders</SectionTitle>
+      <SectionTitle>{gt("Browse folders")}</SectionTitle>
       {!canReadFiles && !fileAccess.isPending ? (
-        <ErrorBanner message={fileAccess.error ?? "This connection cannot browse host folders."} />
+        <ErrorBanner
+          message={fileAccess.error ?? gt("This connection cannot browse host folders.")}
+        />
       ) : null}
       {browseState.error === null ? null : isMissingCloneParentBrowseFailure({
           cloning: props.cloning === true,
           failure: browseState.failure,
         }) ? (
         <Text className="text-sm text-foreground-muted">
-          This folder does not exist yet. Cloning creates it.
+          {gt("This folder does not exist yet. Cloning creates it.")}
         </Text>
       ) : (
         <ErrorBanner message={browseState.error} />
@@ -1059,8 +1125,8 @@ function FolderBrowser(props: {
             <AppActivityIndicator colorClassName="accent-icon-muted" />
             <Text className="shrink text-sm text-foreground-muted" numberOfLines={1}>
               {browseInput?.searchQuery
-                ? `Searching folders for “${browseInput.searchQuery}”…`
-                : "Loading folders…"}
+                ? gt("Searching folders for {query}…", { query: browseInput.searchQuery })
+                : gt("Loading folders…")}
             </Text>
           </View>
         ) : null}
@@ -1152,6 +1218,7 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const trimmedName = name.trim();
+  const gt = useGT();
   const pathPreview =
     environment?.newProjectsRoot != null
       ? getNewProjectPathPreview(environment.newProjectsRoot, trimmedName)
@@ -1214,7 +1281,7 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
     }
     const { projectId, workspaceRoot, commitError } = result.value;
     if (commitError !== undefined) {
-      Dialog.alert("Created without a first commit", commitError);
+      Dialog.alert(m(msg("Created without a first commit")), commitError);
     }
     if (publishes && publishTarget !== null) {
       void publishRepository({
@@ -1228,7 +1295,11 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
       }).then((publishResult) => {
         if (AsyncResult.isFailure(publishResult)) {
           Dialog.alert(
-            `Could not create the ${publishTarget.definition.label} repository`,
+            m(
+              msg("Could not create the {provider} repository", {
+                provider: publishTarget.definition.label,
+              }),
+            ),
             errorMessage(Cause.squash(publishResult.cause)),
           );
         } else {
@@ -1251,7 +1322,11 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
     if (project === null) {
       setName("");
       setError(
-        "The project was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
+        m(
+          msg(
+            "The project was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
+          ),
+        ),
       );
       return;
     }
@@ -1266,7 +1341,7 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
   };
 
   return (
-    <AddProjectShell title="New project">
+    <AddProjectShell title={gt("New project")}>
       {error ? <ErrorBanner message={error} /> : null}
       {environment ? (
         <>
@@ -1276,23 +1351,34 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
             onChangeText={setName}
             autoCorrect={false}
             autoFocus
-            placeholder="Project name"
+            placeholder={gt("Project name")}
             returnKeyType="done"
             onSubmitEditing={() => void submit()}
           />
           {pathPreview !== null ? (
             <Text className="px-1 text-sm leading-snug text-foreground-muted" numberOfLines={2}>
               {trimmedName.length > 0
-                ? `Creates ${pathPreview}`
-                : `Goes in ${environment.newProjectsRoot}`}
-              {showMachines ? ` on ${environment.label}` : null}
+                ? showMachines
+                  ? gt("Creates {path} on {environment}", {
+                      path: pathPreview,
+                      environment: environment.label,
+                    })
+                  : gt("Creates {path}", { path: pathPreview })
+                : showMachines
+                  ? gt("Goes in {path} on {environment}", {
+                      path: environment.newProjectsRoot,
+                      environment: environment.label,
+                    })
+                  : gt("Goes in {path}", { path: environment.newProjectsRoot })}
             </Text>
           ) : null}
           {machineRows}
           {publishTarget !== null ? (
             <ListSection>
               <ListRow
-                title={`Create private repository on ${publishTarget.definition.label}`}
+                title={gt("Create private repository on {provider}", {
+                  provider: publishTarget.definition.label,
+                })}
                 subtitle={
                   trimmedName.length > 0 && pathPreview !== null
                     ? getNewProjectRepository(publishTarget, pathPreview)
@@ -1308,7 +1394,9 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
                 isFirst
                 right={
                   <ThemedSwitch
-                    accessibilityLabel={`Create private repository on ${publishTarget.definition.label}`}
+                    accessibilityLabel={gt("Create private repository on {provider}", {
+                      provider: publishTarget.definition.label,
+                    })}
                     value={publishes}
                     onValueChange={setPublishes}
                   />
@@ -1349,15 +1437,15 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
             </ListSection>
           ) : null}
           <PrimaryActionButton
-            label="Create project"
+            label={gt("Create project")}
             disabled={isSubmitting || trimmedName.length === 0}
             onPress={() => void submit()}
             loading={isSubmitting}
           />
           <ListSection>
             <ListRow
-              title="Add existing project"
-              subtitle="Open a folder or clone a repository"
+              title={gt("Add existing project")}
+              subtitle={gt("Open a folder or clone a repository")}
               icon={
                 <SymbolView
                   name="folder.badge.plus"
@@ -1396,6 +1484,7 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
     useBrowsePathInput(environment);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const gt = useGT();
 
   const canSubmitPath =
     canCreateProject &&
@@ -1405,11 +1494,14 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
   const submitPath = async () => {
     if (!environment || !canSubmitPath || isBrowseNavigating || isSubmitting) return;
     setError(null);
-    const resolved = resolveAddProjectPath({
-      rawPath: pathInput,
-      currentProjectCwd: null,
-      platform: environment.platform,
-    });
+    const resolved = resolveAddProjectPath(
+      {
+        rawPath: pathInput,
+        currentProjectCwd: null,
+        platform: environment.platform,
+      },
+      m,
+    );
     if (!resolved.ok) {
       setError(resolved.error);
       return;
@@ -1428,16 +1520,16 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
   };
 
   return (
-    <AddProjectShell title="Local folder">
+    <AddProjectShell title={gt("Local folder")}>
       {error ? <ErrorBanner message={error} /> : null}
       {environment ? (
         <>
           {!canCreateProject ? (
-            <ErrorBanner message="This connection cannot add projects." />
+            <ErrorBanner message={gt("This connection cannot add projects.")} />
           ) : null}
           <ProjectPathInput value={pathInput} onChangeText={setPathInput} onSubmit={submitPath} />
           <PrimaryActionButton
-            label="Add project"
+            label={gt("Add project")}
             disabled={!canSubmitPath || isBrowseNavigating || isSubmitting}
             onPress={submitPath}
             loading={isSubmitting}
@@ -1496,6 +1588,7 @@ export function AddProjectDestinationScreen(props: {
   const openExistingProject = useOpenExistingProject(environment);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const gt = useGT();
 
   const submitPath = async () => {
     if (
@@ -1509,11 +1602,14 @@ export function AddProjectDestinationScreen(props: {
       return;
     }
     setError(null);
-    const resolved = resolveAddProjectPath({
-      rawPath: pathInput,
-      currentProjectCwd: null,
-      platform: environment.platform,
-    });
+    const resolved = resolveAddProjectPath(
+      {
+        rawPath: pathInput,
+        currentProjectCwd: null,
+        platform: environment.platform,
+      },
+      m,
+    );
     if (!resolved.ok) {
       setError(resolved.error);
       return;
@@ -1553,7 +1649,11 @@ export function AddProjectDestinationScreen(props: {
       );
       if (project === null) {
         setError(
-          "The project was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
+          m(
+            msg(
+              "The project was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
+            ),
+          ),
         );
       } else {
         openNewTaskDraft(
@@ -1577,7 +1677,7 @@ export function AddProjectDestinationScreen(props: {
   };
 
   return (
-    <AddProjectShell title="Clone destination">
+    <AddProjectShell title={gt("Clone destination")}>
       {error ? <ErrorBanner message={error} /> : null}
       {repositoryTitle ? (
         <View className="rounded-[24px] bg-grouped-card px-4 py-3">
@@ -1591,14 +1691,14 @@ export function AddProjectDestinationScreen(props: {
         <>
           <ProjectPathInput value={pathInput} onChangeText={setPathInput} onSubmit={submitPath} />
           <PrimaryActionButton
-            label="Clone project"
+            label={gt("Clone project")}
             disabled={!canCloneProject || isBrowseNavigating || isSubmitting || !remoteUrl}
             onPress={submitPath}
             loading={isSubmitting}
           />
           {!canCloneProject ? (
             <Text className="text-sm text-foreground-muted">
-              This connection cannot clone projects.
+              {gt("This connection cannot clone projects.")}
             </Text>
           ) : null}
           <FolderBrowser

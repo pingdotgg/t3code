@@ -82,6 +82,7 @@ import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as NativeChildWorkQuery from "./orchestration-v2/NativeChildWorkQuery.ts";
 import * as CommandOutputHub from "./orchestration-v2/CommandOutputHub.ts";
+import * as ThreadViewers from "./orchestration-v2/ThreadViewers.ts";
 import * as CodexInstallation from "./provider/CodexInstallation.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import * as DocumentText from "./provider/DocumentText.ts";
@@ -114,6 +115,9 @@ import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewGuideService.ts";
+import * as IssueService from "./issue/IssueService.ts";
+import * as ThreadIssueService from "./orchestration-v2/ThreadIssueService.ts";
+import * as IssueTrackerConnections from "./issue/IssueTrackerConnections.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
@@ -829,6 +833,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({}),
   Layer.mock(NativeChildWorkQuery.NativeChildWorkQuery)({}),
   Layer.mock(CommandOutputHub.CommandOutputHub)({}),
+  ThreadViewers.layer,
   Layer.mock(CodexInstallation.CodexInstallation)({ managedDirectory: "/unused" }),
   Layer.mock(DeviceService.DeviceService)({}),
   Layer.mock(EnvironmentTheme.EnvironmentThemeService)({}),
@@ -858,6 +863,9 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
   Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
   Layer.mock(PullRequestService.PullRequestService)({}),
+  Layer.mock(IssueService.IssueService)({}),
+  Layer.mock(ThreadIssueService.ThreadIssueService)({}),
+  Layer.mock(IssueTrackerConnections.IssueTrackerConnections)({}),
   Layer.mock(PullRequestSyncReactor.PullRequestSyncReactor)({}),
   Layer.mock(RelayClient.RelayClient)({}),
   Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({}),

@@ -39,7 +39,7 @@ machine's setting. Every other provider setting stays per machine.
 
 On mobile, open **Settings** and use the filter in its header to choose connected environments
 and a project. The filter stays available in server-setting pages. With **All projects** selected,
-the server-setting pages, such as Threads, Source control and Worktrees, edit the selected
+the server-setting pages, such as Threads, Source control & issues and Worktrees, edit the selected
 environments' defaults. Choosing a project edits its overrides on the selected
 environments. Use **Use defaults** in a page to remove that page's project overrides.
 Open **Settings → Projects** to rename the project across its selected
@@ -175,7 +175,7 @@ than** on the task.
 ## Defaults and inheritance
 
 Threads contains the model and workspace for new threads. Browser controls agent browser
-access. Source control contains automatic pull, the default pull request merge method and text
+access. Source control & issues contains automatic pull, the default pull request merge method and text
 generation. The same rows edit environment defaults or project overrides depending on the
 project crumb.
 
@@ -287,9 +287,9 @@ from the icon palette, derived from the saved project name. For example, `Nebula
 
 ## Keep the default branch current
 
-In Source control, enable **Automatically pull** to keep the default-branch checkout up to date
+In Source control & issues, enable **Automatically pull** to keep the default-branch checkout up to date
 with its configured upstream. Choose an environment to set the default or a project to override it.
-On mobile, use **Settings → Source control** to change selected environment defaults or project overrides.
+On mobile, use **Settings → Source control & issues** to change selected environment defaults or project overrides.
 
 T3 Code only pulls when it can fast-forward and the checkout has no changed files, untracked files,
 or local commits. It skips checkouts on another branch or without an upstream. If a checkout has
