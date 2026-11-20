@@ -379,8 +379,8 @@ To list a Linear team's issues beside a project's, connect Linear with an API ke
 Settings → Source control & issues, then choose the team for that project there. The team sets
 what the Issues page lists for the project, and where agents in its threads look up an issue by its
 key alone or file a new one. An issue linked by its full URL needs no team: once Linear is
-connected, a Linear issue linked to any thread, No project threads included, opens and can be
-changed as far as your Linear account allows.
+connected, a Linear issue linked to any thread, No project threads included, opens beside it.
+While no project has a team, you can also change it as far as your Linear account allows.
 
 Select an issue to open it beside the list: description, comments, state changes, linked pull
 requests, labels, assignees, and reactions. Linked pull requests open in the same panel. You can

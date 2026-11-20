@@ -162,10 +162,10 @@ export class IssueService extends Context.Service<
       projectId: ProjectId,
     ) => Effect.Effect<IssueScopeRef & { readonly host: string }, IssueError>;
     /**
-     * Resolve through a matching project, preferring `preferredProjectId`; another git-host
-     * repository is read-only. A standalone link with no project bound to its tracker resolves
-     * through `preferredProjectId`, and must match the workspace in the issue's canonical URL from
-     * the connected tracker; that read comes back as `issue`, so callers need not read it again.
+     * Resolve through a matching project, preferring `preferredProjectId`; other scopes are read-only.
+     * A standalone link with no project bound to its tracker resolves through `preferredProjectId`,
+     * and must match the workspace in the issue's canonical URL from the connected tracker; that
+     * read comes back as `issue`, so callers need not read it again.
      */
     readonly resolveUrl: (
       url: string,
@@ -290,9 +290,8 @@ const make = Effect.gen(function* () {
     );
 
   /**
-   * A standalone tracker signs in with the environment's credential, not a checkout's, so any
-   * project serves its references, bound or not (No project included). The tracker itself
-   * decides what the account may change.
+   * A project with no binding for a standalone tracker, the No project included, serves its
+   * references with the environment's credential. The tracker decides what the account may change.
    */
   const requireStandaloneProject = (
     ref: IssueScopeRef,
@@ -330,21 +329,23 @@ const make = Effect.gen(function* () {
 
   /**
    * The project whose checkout and credentials serve a reference, and whether the reference is
-   * one of the project's own scopes. A reference naming another repository on the same git host
-   * is served by the project but marked read-only. A project with two trackers serves the one the
-   * reference names.
+   * one of the project's own scopes. A reference naming another scope on the same tracker and
+   * host is served by the project but marked read-only. A project with two trackers serves the
+   * one the reference names, and one with no binding for a standalone tracker still serves it.
    */
   const requireProject = (
     ref: IssueScopeRef,
-  ): Effect.Effect<SupportedProject & { readonly writable: boolean }, IssueError> => {
-    const api = registry.get(ref.tracker);
-    if (api !== null && isStandaloneIssueTracker(api)) return requireStandaloneProject(ref, api);
-    return listProjects({ projectId: ref.projectId }).pipe(
+  ): Effect.Effect<SupportedProject & { readonly writable: boolean }, IssueError> =>
+    listProjects({ projectId: ref.projectId }).pipe(
       Effect.flatMap(({ supported }) => {
         const host = ref.host?.trim().toLowerCase();
-        const onHost = supported.filter(
-          (candidate) =>
-            candidate.tracker === ref.tracker && (host === undefined || candidate.host === host),
+        const onTracker = supported.filter((candidate) => candidate.tracker === ref.tracker);
+        const api = registry.get(ref.tracker);
+        if (onTracker.length === 0 && api !== null && isStandaloneIssueTracker(api)) {
+          return requireStandaloneProject(ref, api);
+        }
+        const onHost = onTracker.filter(
+          (candidate) => host === undefined || candidate.host === host,
         );
         const scope = ref.scope.trim();
         const own = onHost.find(
@@ -357,7 +358,6 @@ const make = Effect.gen(function* () {
         return Effect.succeed({ ...served, scope, writable: own !== undefined });
       }),
     );
-  };
 
   const requireWritable = (ref: IssueScopeRef, operation: string) =>
     requireProject(ref).pipe(
@@ -778,7 +778,7 @@ const make = Effect.gen(function* () {
           ? {
               ...lender,
               scope: own === undefined ? link.scope : lender.scope,
-              writable: standalone !== null || own !== undefined,
+              writable: own !== undefined,
             }
           : standalone !== null && preferredProjectId !== undefined
             ? yield* requireStandaloneProject(

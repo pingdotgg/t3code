@@ -689,8 +689,13 @@ describe("IssueService with a standalone tracker", () => {
         },
       });
 
-      // Another team on the bound tracker is reached by the same environment credential.
-      yield* bound.update({ ...linearRef, scope: "OPS", key: "OPS-1", title: "Renamed" });
+      // Another team on the bound tracker is served by the project, read-only.
+      const otherTeam = { ...linearRef, scope: "OPS", key: "OPS-1" };
+      expect(yield* bound.detail(otherTeam)).toMatchObject({ scope: "OPS", writable: false });
+      expect(yield* Effect.flip(bound.update({ ...otherTeam, title: "Renamed" }))).toMatchObject({
+        _tag: "IssueOperationError",
+        reason: "read-only",
+      });
 
       // Unbound, the standalone scope leaves the listing, but the environment's credential still
       // serves references, from a project with no repository (No project) too.
