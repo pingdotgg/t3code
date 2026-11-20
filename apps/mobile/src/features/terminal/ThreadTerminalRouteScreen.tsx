@@ -125,7 +125,7 @@ function TerminalHeader(props: {
         Platform.OS === "android" && props.isEnvironmentReady
           ? [
               {
-                accessibilityLabel: "Close terminal",
+                accessibilityLabel: gt("Close terminal"),
                 icon: "trash",
                 // Tabler's trash is 18 units tall; the terminal glyph beside it is 16.
                 iconScale: 16 / 18,
@@ -749,17 +749,20 @@ function ThreadTerminal(props: {
 
   const handleCloseTerminal = () => {
     Dialog.confirm({
-      title: `Close terminal "${resolveTerminalSessionLabel(terminalId, terminal.summary)}"?`,
-      message: "This stops the running process and clears its history.",
-      confirmText: "Confirm",
+      title: gt('Close terminal "{label}"?', {
+        label: resolveTerminalSessionLabel(terminalId, terminal.summary),
+      }),
+      message: gt("This stops the running process and clears its history."),
+      confirmText: gt("Confirm"),
       destructive: true,
       onConfirm: () => {
         if (!readEnvironmentScope(selectedThread.environmentId, AuthTerminalOperateScope)) return;
         void closeTerminal({
           environmentId: selectedThread.environmentId,
           input: { threadId: selectedThread.id, terminalId, deleteHistory: true },
+        }).then((result) => {
+          if (AsyncResult.isSuccess(result)) exitNavigation.exited();
         });
-        exitNavigation.exited();
       },
     });
   };
