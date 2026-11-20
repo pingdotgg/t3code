@@ -728,8 +728,8 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   const runtime = preflight.runtime;
   const launchPath =
     runtime.kind === "executable"
-      ? `${WSL_SERVER_SYSTEM_PATH}:${preflight.resolvedPath}`
-      : `${nodeBinDirOf(runtime.nodePath)}:${WSL_SERVER_SYSTEM_PATH}:${preflight.resolvedPath}`;
+      ? `${preflight.resolvedPath}:${WSL_SERVER_SYSTEM_PATH}`
+      : `${nodeBinDirOf(runtime.nodePath)}:${preflight.resolvedPath}:${WSL_SERVER_SYSTEM_PATH}`;
   const command =
     runtime.kind === "executable"
       ? [runtime.entryPath]
