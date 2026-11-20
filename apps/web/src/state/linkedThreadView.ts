@@ -7,7 +7,7 @@ import {
   resolveLinkedThreadOpen,
 } from "@t3tools/client-runtime/linked-thread";
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useRouter } from "@tanstack/react-router";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import type { TurnItemSource } from "../components/chat/timelineRowContext";
@@ -182,6 +182,7 @@ export function useConnectLinkedEnvironment(
   surface: LinkedThreadSurface,
 ) {
   const navigate = useNavigate();
+  const router = useRouter();
   const setPrefill = useAtomSet(addEnvironmentPrefillAtom);
   const mayPair = useAtomValue(
     peerLinkEnvironment.pairClient.permissionAtom(surface.viaEnvironmentId),
@@ -201,6 +202,9 @@ export function useConnectLinkedEnvironment(
   };
   const connect = async () => {
     setState({ phase: "connecting" });
+    const startedOn = router.state.location.href;
+    // Pairing takes a moment; a user who has gone elsewhere since is not moved again.
+    const stayed = () => router.state.location.href === startedOn;
     const outcome = await connectLinkedEnvironment({
       label: surface.label,
       requestPairing: async () => {
@@ -233,6 +237,7 @@ export function useConnectLinkedEnvironment(
       setState({ phase: "idle" });
       // The thread opens where every thread on a connected environment does, so its tab is done.
       if (panelRef !== null) useRightPanelStore.getState().closeSurface(panelRef, surface.id);
+      if (!stayed()) return outcome;
       void navigate({
         to: "/$environmentId/$threadId",
         params: buildThreadRouteParams(scopeThreadRef(surface.environmentId, surface.threadId)),
@@ -247,7 +252,7 @@ export function useConnectLinkedEnvironment(
       host: outcome.host,
     };
     setState({ phase: "manual", prefill });
-    addWithCode(prefill);
+    if (stayed()) addWithCode(prefill);
     return outcome;
   };
   return { state, connect, addWithCode };

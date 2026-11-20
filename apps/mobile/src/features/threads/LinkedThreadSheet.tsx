@@ -17,7 +17,7 @@ import {
 } from "@t3tools/client-runtime/work-log/item-detail";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { T, useGT, useLocale, useMessages } from "gt-react-native";
-import { useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type * as React from "react";
 import { AppState, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -290,9 +290,17 @@ export function LinkedThreadView(props: {
   const connection = useConnectLinkedEnvironment(target);
   const connectState = connection.state;
   const openThread = useOpenLinkedThread();
+  const shown = useRef(true);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records unmount, so a connect that resolves after the view is gone navigates nowhere
+  useEffect(() => {
+    shown.current = true;
+    return () => {
+      shown.current = false;
+    };
+  }, []);
   const connect = async () => {
     const outcome = await connection.connect();
-    if (outcome.type === "unreachable") return;
+    if (outcome.type === "unreachable" || !shown.current) return;
     // The read-only view gives way either way: the thread opens where the app is now connected,
     // or the add-environment screen takes its place. In the inspector the thread replaces it there.
     if (outcome.type === "connected") {
