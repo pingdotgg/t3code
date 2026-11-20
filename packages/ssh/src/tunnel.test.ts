@@ -832,9 +832,13 @@ describe("ssh tunnel scripts", () => {
     }),
   );
 
-  it.effect("connects and reuses a tunnel whose responses take over a second", () =>
+  it.effect.each([
+    // Over a ~1s RTT link each request through the forward takes a few round trips.
+    { condition: "responses take over a second", reconnectResponseMs: 2_500 },
+    // An alive server whose event loop stalls (e.g. on a blocked fsync) answers late.
+    { condition: "server stalls for 20 seconds", reconnectResponseMs: 20_000 },
+  ])("connects and reuses a tunnel whose $condition", ({ reconnectResponseMs }) =>
     Effect.gen(function* () {
-      // Over a ~1s RTT link each request through the forward takes a few round trips.
       const RESPONSE_MS = 2_500;
       const tunnelSpawned = yield* Deferred.make<void>();
       const reconnectProbed = yield* Deferred.make<void>();
@@ -854,7 +858,7 @@ describe("ssh tunnel scripts", () => {
       const httpClient = HttpClient.make((request) =>
         Effect.gen(function* () {
           if (connected) yield* Deferred.succeed(reconnectProbed, undefined);
-          yield* Effect.sleep(Duration.millis(RESPONSE_MS));
+          yield* Effect.sleep(Duration.millis(connected ? reconnectResponseMs : RESPONSE_MS));
           return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
         }),
       );
