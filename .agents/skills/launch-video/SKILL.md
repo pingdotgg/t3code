@@ -41,6 +41,13 @@ There are two ways to build one:
      `delegate_task`. Match generated titles with a `{ match: "title", repeat: true }` turn.
      `<var:name>` is filled from the JSON file at `T3_DEV_REPLAY_VARS`, for ids that change
      every run. `fake-claude.log` in the home records the protocol, for debugging.
+   - Data a real flow can't produce cheaply goes into the app's own stores, never into pixels.
+     `stagings/environments-map/` shows the tools: `insertPeerLinks` writes link rows into a
+     stopped server, `serveDescriptors` makes fake machines answer the reachability probe,
+     and its drive seeds the client's saved environments and routes into IndexedDB
+     (`t3code:connection-runtime` / `catalog` / `document`). Route kinds come from hostnames:
+     `*.localhost` is LAN, `*.ts.net` is Tailscale; Chrome's
+     `--host-resolver-rules=MAP *.tail-demo.ts.net 127.0.0.1` makes fake tailnet names work.
    - The free replay agent (`apps/server/scripts/dev-replay-agent.ts`) still works without
      `claude`, but it shows as an ACP provider.
 4. **Create the story:** `scripts/new.sh ~/launch-videos/<slug>`, then copy the beats in, or
@@ -130,10 +137,14 @@ seeks every animation (in the story and inside each beat) to each frame's time.
   1440×720 and `.app` scales them 1.0556× into the 1520×760 window, so beat point (x, y) is
   canvas (40 + 1.0556·x, 26 + 1.0556·y).
 - **Targets** are `"<beat> >> <css>"` (or `"* >> <css>"` for every beat). Prefer the app's
-  `data-*` and `aria-label` attributes; `find.mjs` prints them.
+  `data-*` and `aria-label` attributes; `find.mjs` prints them. A trailing `:text(words)`
+  keeps the matches containing those words, e.g. `[role=menuitem]:text(From MacBook)`.
+- **Beat size.** Each beat records the viewport it was frozen at (`kit-viewport` meta).
+  Size `.app` and its iframes to match and scale them to the 1520×760 window
+  (1440×720 → 1.0556, 1600×800 → .95).
 - **`setup()`**: `Kit.beats([[name, at, fade?], ...])` gives each beat one visibility window.
   Then the motion, all at absolute times:
-  `Kit.pop / rise / slide / stagger / type / press / punch / fadeIn` animate elements inside
+  `Kit.pop / rise / slide / stagger / type / press / punch / fadeIn / draw` animate elements inside
   a beat; `Kit.glow(target, at)` draws a ring on the story layer, so app overflow can't
   clip it; `Kit.anim` takes raw keyframes; `Kit.text` makes a static edit (say so at
   handback).
