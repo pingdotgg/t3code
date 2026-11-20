@@ -1,4 +1,9 @@
-import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import {
+  StackActions,
+  useIsFocused,
+  useNavigation,
+  type StaticScreenProps,
+} from "@react-navigation/native";
 import {
   isLinkedThreadWorking,
   linkedThreadFailure,
@@ -12,7 +17,7 @@ import {
 } from "@t3tools/client-runtime/work-log/item-detail";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { T, useGT, useLocale, useMessages } from "gt-react-native";
-import { useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type * as React from "react";
 import { AppState, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -21,7 +26,6 @@ import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { ScreenContent } from "../../components/ui/ScreenContent";
-import { SheetHeader } from "../../components/ui/SheetHeader";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import { useEnvironments } from "../../state/environments";
 import {
@@ -31,32 +35,14 @@ import {
   type ThreadFeedActivity,
   type ThreadFeedEntry,
 } from "../../lib/threadActivity";
-import { useLinkedThreadView } from "../../state/linkedThread";
+import { useConnectLinkedEnvironment, useLinkedThreadView } from "../../state/linkedThread";
 import { peerLinkEnvironment } from "../../state/peerLinks";
 import { useEnvironmentQuery } from "../../state/query";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
+import type { LinkedThreadRouteParams } from "./linkedThreadRoute";
 import { ReadOnlyComposerBar } from "./ReadOnlyComposerBar";
-
-type LinkedThreadRouteParams = {
-  readonly viaEnvironmentId: string;
-  readonly environmentId: string;
-  readonly threadId: string;
-  readonly label: string;
-  readonly title?: string;
-};
-
-/** The route params that open a linked environment's thread read-only. */
-export const linkedThreadRouteParams = (
-  thread: { readonly environmentId: EnvironmentId; readonly threadId: ThreadId },
-  linked: { readonly viaEnvironmentId: EnvironmentId; readonly label: string },
-  title: string | null,
-): LinkedThreadRouteParams => ({
-  viaEnvironmentId: linked.viaEnvironmentId,
-  environmentId: thread.environmentId,
-  threadId: thread.threadId,
-  label: linked.label,
-  ...(title === null ? {} : { title }),
-});
+import { ThreadInspectorHeader, type ThreadInspectorPresentation } from "./thread-inspector-header";
+import { useOpenLinkedThread } from "./useOpenLinkedThread";
 
 function ActivityRow(props: {
   readonly activity: ThreadFeedActivity;
@@ -257,12 +243,23 @@ const subscribeAppState = (onChange: () => void) => {
 };
 const appIsActive = () => AppState.currentState === "active";
 
-function LinkedThreadView(props: { readonly target: LinkedThreadTarget }) {
+/**
+ * A linked environment's thread, read through the environment this app is connected to. The app
+ * never connects to the linked one, so the view only reads. It shows in the inspector, where
+ * `presentation` maximizes it, or as its own screen, where `presentation` closes it.
+ */
+export function LinkedThreadView(props: {
+  readonly target: LinkedThreadTarget;
+  /** Closes the screen by going back when absent. */
+  readonly presentation?: ThreadInspectorPresentation;
+}) {
   const { target } = props;
   const gt = useGT();
   const m = useMessages();
   const locale = useLocale();
   const navigation = useNavigation();
+  const presentation = props.presentation ?? { onClose: () => navigation.goBack() };
+  const inInspector = "onMaximize" in presentation;
   const insets = useSafeAreaInsets();
   const via =
     useEnvironments().environments.find(
@@ -290,11 +287,37 @@ function LinkedThreadView(props: { readonly target: LinkedThreadTarget }) {
   // Follows new items only while the reader is already at the end.
   const atEnd = useRef(true);
   const working = projection !== null && isLinkedThreadWorking(projection);
+  const connection = useConnectLinkedEnvironment(target);
+  const connectState = connection.state;
+  const openThread = useOpenLinkedThread();
+  const shown = useRef(true);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records unmount, so a connect that resolves after the view is gone navigates nowhere
+  useEffect(() => {
+    shown.current = true;
+    return () => {
+      shown.current = false;
+    };
+  }, []);
+  const connect = async () => {
+    const outcome = await connection.connect();
+    if (outcome.type === "unreachable" || !shown.current) return;
+    // The read-only view gives way either way: the thread opens where the app is now connected,
+    // or the add-environment screen takes its place. In the inspector the thread replaces it there.
+    if (outcome.type === "connected") {
+      if (!inInspector) navigation.goBack();
+      openThread({ environmentId: target.environmentId, threadId: target.threadId });
+      return;
+    }
+    if (inInspector) navigation.navigate("ConnectionsNew", { linked: target.environmentId });
+    else {
+      navigation.dispatch(StackActions.replace("ConnectionsNew", { linked: target.environmentId }));
+    }
+  };
   return (
-    <View collapsable={false} className="flex-1 bg-sheet">
-      <SheetHeader
+    <View collapsable={false} className={inInspector ? "flex-1 bg-screen" : "flex-1 bg-sheet"}>
+      <ThreadInspectorHeader
+        {...presentation}
         title={projection?.thread.title || target.title || gt("Thread on {label}", { label })}
-        onClose={() => navigation.goBack()}
       />
       <ScreenContent>
         <ScrollView
@@ -355,17 +378,53 @@ function LinkedThreadView(props: { readonly target: LinkedThreadTarget }) {
           className="gap-2 px-3 pt-1.5"
           style={{ paddingBottom: Math.max(insets.bottom, 10) + 6 }}
         >
-          <LinkedThreadComposer label={label} via={via} working={working} />
+          <LinkedThreadComposer
+            label={label}
+            via={via}
+            working={working}
+            action={
+              <Button
+                tone="secondary"
+                label={gt("Connect to interact")}
+                loading={connectState.phase === "connecting"}
+                onPress={() => void connect()}
+              />
+            }
+            notice={
+              connectState.phase === "connecting" ? (
+                <Text
+                  accessibilityLiveRegion="polite"
+                  className="px-2 text-xs text-foreground-muted"
+                >
+                  {gt("Connecting to {environment}...", { environment: label })}
+                </Text>
+              ) : connectState.phase === "unreachable" ? (
+                <View
+                  accessibilityLiveRegion="polite"
+                  className="gap-1 rounded-2xl border border-danger-border bg-danger px-3.5 py-3"
+                >
+                  <Text className="font-t3-medium text-sm text-danger-foreground">
+                    {gt("{label} is not reachable from this device", {
+                      label: connectState.label,
+                    })}
+                  </Text>
+                  <Text className="text-sm text-danger-foreground">
+                    <T>
+                      Join a network it is on, such as its Tailscale network, and try again. You can
+                      keep reading here.
+                    </T>
+                  </Text>
+                </View>
+              ) : null
+            }
+          />
         </View>
       </ScreenContent>
     </View>
   );
 }
 
-/**
- * A linked environment's thread, read through the environment this app is connected to. The app
- * never connects to the linked one, so the screen only reads.
- */
+/** The read-only view as its own screen: a sheet, or the whole screen when maximized from the inspector. */
 export function LinkedThreadSheet({ route }: StaticScreenProps<LinkedThreadRouteParams>) {
   const { viaEnvironmentId, environmentId, threadId, label, title } = route.params;
   return (

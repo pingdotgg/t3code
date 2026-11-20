@@ -13,6 +13,7 @@ import {
 import { useRef, useState, type ReactNode } from "react";
 
 import { useIncrementalTimelineEntries } from "~/hooks/useIncrementalTimelineEntries";
+import { SideThreadsOpenContext } from "~/hooks/useSideThreadTrigger";
 import { useTheme } from "~/hooks/useTheme";
 import { deriveActiveWorkStartedAt, derivePhase } from "~/session-logic";
 import type { ChatFileAttachment } from "~/types";
@@ -93,42 +94,44 @@ export function ReadOnlyThreadTimeline(props: {
   return (
     <>
       <div className="relative min-h-0 flex-1">
-        <MessagesTimeline
-          listRef={listRef}
-          timelineEntries={entries}
-          isWorking={isWorking}
-          activeTurnStartedAt={workStartedAt}
-          latestRun={activityRun}
-          runningRunId={runningRunId}
-          turnDiffSummaries={NO_TURN_DIFFS}
-          runs={projection.runs}
-          routeThreadKey={threadKey}
-          onOpenThread={ignore}
-          supportsConversationRollback={false}
-          onRevertToTurnCount={ignore}
-          isRevertingCheckpoint={false}
-          onImageExpand={props.onImageExpand}
-          onFileOpen={props.onFileOpen}
-          onFileDownload={props.onFileOpen}
-          renderHtmlRender={props.renderHtmlRender}
-          turnItemSource={props.turnItemSource}
-          historyControls={props.historyControls}
-          activeThreadEnvironmentId={NO_ENVIRONMENT_ID}
-          markdownCwd={undefined}
-          resolvedTheme={resolvedTheme}
-          timestampFormat="locale"
-          workspaceRoot={undefined}
-          anchorMessageId={null}
-          onAnchorReady={ignore}
-          onAnchorSizeChanged={ignore}
-          contentInsetEndAdjustment={0}
-          emptyPlaceholderInset={0}
-          liveFollowEnabled={follow.timelineLiveFollowEnabled}
-          onIsAtEndChange={follow.onIsAtEndChangeStable}
-          onViewportAttach={follow.attachTimelineViewport}
-          onFooterGrow={follow.onTimelineFooterGrowStable}
-          footer={props.renderFooter?.(items) ?? null}
-        />
+        <SideThreadsOpenContext value={false}>
+          <MessagesTimeline
+            listRef={listRef}
+            timelineEntries={entries}
+            isWorking={isWorking}
+            activeTurnStartedAt={workStartedAt}
+            latestRun={activityRun}
+            runningRunId={runningRunId}
+            turnDiffSummaries={NO_TURN_DIFFS}
+            runs={projection.runs}
+            routeThreadKey={threadKey}
+            onOpenThread={ignore}
+            supportsConversationRollback={false}
+            onRevertToTurnCount={ignore}
+            isRevertingCheckpoint={false}
+            onImageExpand={props.onImageExpand}
+            onFileOpen={props.onFileOpen}
+            onFileDownload={props.onFileOpen}
+            renderHtmlRender={props.renderHtmlRender}
+            turnItemSource={props.turnItemSource}
+            historyControls={props.historyControls}
+            activeThreadEnvironmentId={NO_ENVIRONMENT_ID}
+            markdownCwd={undefined}
+            resolvedTheme={resolvedTheme}
+            timestampFormat="locale"
+            workspaceRoot={undefined}
+            anchorMessageId={null}
+            onAnchorReady={ignore}
+            onAnchorSizeChanged={ignore}
+            contentInsetEndAdjustment={0}
+            emptyPlaceholderInset={0}
+            liveFollowEnabled={follow.timelineLiveFollowEnabled}
+            onIsAtEndChange={follow.onIsAtEndChangeStable}
+            onViewportAttach={follow.attachTimelineViewport}
+            onFooterGrow={follow.onTimelineFooterGrowStable}
+            footer={props.renderFooter?.(items) ?? null}
+          />
+        </SideThreadsOpenContext>
         {follow.showScrollToBottom ? (
           <ScrollToEndButton
             summary={null}
