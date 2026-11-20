@@ -37,6 +37,7 @@ import {
   type LinearReaction,
   type LinearTeamLabel,
   type LinearUser,
+  type LinearWorkflowState,
   type T3Issue,
   type T3Team,
   type Template,
@@ -97,6 +98,8 @@ export class LinearApi extends Context.Service<
     readonly viewer: (token?: string) => Effect.Effect<
       {
         readonly viewer: LinearUser;
+        /** The workspace's URL key, the first path segment of its issue links. */
+        readonly workspace: string;
         readonly teams: ReadonlyArray<{
           readonly id: string;
           readonly key: string;
@@ -128,6 +131,18 @@ export class LinearApi extends Context.Service<
       IssueTrackerError
     >;
     readonly getTeam: (key: string) => Effect.Effect<LinearTeamScope | null, IssueTrackerError>;
+    /** A team's workflow states by the team's id, which stays when its key is renamed. */
+    readonly getTeamStates: (
+      teamId: string,
+    ) => Effect.Effect<ReadonlyArray<LinearWorkflowState>, IssueTrackerError>;
+    /** The state of each issue with one of these numbers in the team; up to 250 numbers. */
+    readonly getIssueStates: (input: {
+      readonly teamId: string;
+      readonly numbers: ReadonlyArray<number>;
+    }) => Effect.Effect<
+      ReadonlyArray<{ readonly identifier: string; readonly stateId: string }>,
+      IssueTrackerError
+    >;
     readonly createIssue: (
       input: IssueCreateInput,
     ) => Effect.Effect<{ readonly identifier: string; readonly url: string }, IssueTrackerError>;
@@ -294,7 +309,11 @@ export const make = Effect.gen(function* () {
 
   const viewer: LinearApi["Service"]["viewer"] = (token) =>
     call("viewer", (linear) => linear.T3Viewer(), token).pipe(
-      Effect.map((data) => ({ viewer: data.viewer, teams: data.teams.nodes })),
+      Effect.map((data) => ({
+        viewer: data.viewer,
+        workspace: data.organization.urlKey,
+        teams: data.teams.nodes,
+      })),
     );
 
   const listIssues: LinearApi["Service"]["listIssues"] = (input) =>
@@ -364,6 +383,23 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const getTeamStates: LinearApi["Service"]["getTeamStates"] = (teamId) =>
+    call("getTeamStates", (linear) => linear.T3TeamStates({ id: teamId })).pipe(
+      Effect.map((data) => data.team.states.nodes),
+    );
+
+  const getIssueStates: LinearApi["Service"]["getIssueStates"] = (input) =>
+    call("getIssueStates", (linear) =>
+      linear.T3IssueStates({ teamId: input.teamId, numbers: input.numbers }),
+    ).pipe(
+      Effect.map((data) =>
+        data.issues.nodes.map((issue) => ({
+          identifier: issue.identifier,
+          stateId: issue.state.id,
+        })),
+      ),
+    );
+
   const createIssue: LinearApi["Service"]["createIssue"] = (input) =>
     call("createIssue", (linear) => linear.T3IssueCreate({ input })).pipe(
       Effect.flatMap(({ issueCreate }) =>
@@ -423,6 +459,8 @@ export const make = Effect.gen(function* () {
     getIssue,
     getComments,
     getTeam,
+    getTeamStates,
+    getIssueStates,
     createIssue,
     updateIssue,
     createComment,

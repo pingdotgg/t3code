@@ -12,6 +12,7 @@ import {
   EVENT_LOG_PRUNED_THROUGH,
 } from "../persistence/OrchestrationEventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { THREAD_ORGANIZATION_EVENT_CONDITION } from "./threadOrganizationEvent.ts";
 
 export class ProjectionMaintenanceError extends Schema.TaggedError<ProjectionMaintenanceError>()(
   "ProjectionMaintenanceError",
@@ -133,6 +134,14 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
                 SELECT MAX(newer.sequence) FROM orchestration_events AS newer
                 WHERE newer.aggregate_kind = event.aggregate_kind
                   AND newer.stream_id = event.stream_id
+              ) THEN 0
+              -- A thread's newest organizing event is its issue automation revision, which must
+              -- never fall back to a value a waiting action recorded.
+              WHEN event.sequence = (
+                SELECT MAX(sequence) FROM orchestration_events
+                  INDEXED BY idx_orchestration_events_thread_organization
+                WHERE stream_id = event.stream_id
+                  AND ${sql.literal(THREAD_ORGANIZATION_EVENT_CONDITION)}
               ) THEN 0
               ELSE 1
             END AS prunable

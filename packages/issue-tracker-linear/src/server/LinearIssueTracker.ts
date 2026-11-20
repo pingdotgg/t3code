@@ -37,6 +37,7 @@ const DESCRIPTOR: StandaloneIssueTrackerDescriptor = {
     label: "Personal API key",
     helpUrl: "https://linear.app/settings/account/security",
   },
+  automationContainer: "team",
 };
 
 /**
@@ -120,9 +121,21 @@ const CONTENT_BY_EMOJI = new Map(
   ),
 );
 
+/** Linear filters issues by number, at most this many per read. */
+const STATUS_READ_BATCH = 250;
+
 /** `ENG-123`, or null for anything that is not a Linear identifier. */
 function parseIdentifier(key: string): string | null {
   return /^[A-Za-z][A-Za-z0-9]*-[1-9]\d*$/.test(key.trim()) ? key.trim().toUpperCase() : null;
+}
+
+/** `https://linear.app/<workspace>/issue/<TEAM>-<n>[/<slug>]`, keeping the workspace. */
+function parseIssueUrl(url: URL) {
+  if (url.protocol !== "https:" || url.host.toLowerCase() !== DESCRIPTOR.host) return null;
+  const [, workspace, resource, key] = url.pathname.split("/");
+  if (!workspace || resource !== "issue" || key === undefined) return null;
+  const scope = /^([A-Z][A-Z0-9_]*)-[1-9][0-9]*$/.exec(key)?.[1];
+  return scope === undefined ? null : { host: DESCRIPTOR.host, workspace, scope, key };
 }
 
 function toState(state: LinearApi.LinearWorkflowState): IssueState {
@@ -418,6 +431,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
       kind: LinearApi.KIND,
       capabilities: CAPABILITIES,
       standalone: DESCRIPTOR,
+      parseIssueUrl,
 
       probeCredential: ({ token }) =>
         linear.viewer(token).pipe(
@@ -426,6 +440,49 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
             scopes: data.teams.map((team) => ({ key: team.key, name: team.name })),
           })),
         ),
+
+      // Team ids are unique across workspaces, so another workspace's credential finds none.
+      automation: {
+        listContainers: Effect.fn("LinearIssueTracker.listContainers")(() =>
+          linear.viewer().pipe(
+            Effect.map((data) => ({
+              workspace: data.workspace,
+              containers: data.teams.map((team) => ({
+                id: team.id,
+                name: `${team.name} (${team.key})`,
+              })),
+            })),
+          ),
+        ),
+        listStates: Effect.fn("LinearIssueTracker.listStates")(({ containerId }) =>
+          linear
+            .getTeamStates(containerId)
+            .pipe(
+              Effect.map((states) => inWorkflowOrder(states).map(({ id, name }) => ({ id, name }))),
+            ),
+        ),
+        readStatuses: Effect.fn("LinearIssueTracker.readStatuses")(({ containerId, keys }) => {
+          const numbers = [
+            ...new Set(
+              keys.flatMap((key) => {
+                const identifier = parseIdentifier(key);
+                return identifier === null ? [] : [Number(identifier.split("-")[1])];
+              }),
+            ),
+          ];
+          const batches = Array.from(
+            { length: Math.ceil(numbers.length / STATUS_READ_BATCH) },
+            (_, index) => numbers.slice(index * STATUS_READ_BATCH, (index + 1) * STATUS_READ_BATCH),
+          );
+          return Effect.forEach(batches, (batch) =>
+            linear.getIssueStates({ teamId: containerId, numbers: batch }),
+          ).pipe(
+            Effect.map((pages) =>
+              pages.flat().map((issue) => ({ key: issue.identifier, stateId: issue.stateId })),
+            ),
+          );
+        }),
+      },
 
       // The id, not the display name: it is what the involvement filters compare against.
       getViewer: () => linear.viewer().pipe(Effect.map((data) => toActor(data.viewer).login)),

@@ -81,6 +81,21 @@ function threadCreated(thread: OrchestrationV2AppThread, now: DateTime.Utc) {
   } satisfies OrchestrationV2DomainEvent;
 }
 
+function threadOrganized(
+  thread: OrchestrationV2AppThread,
+  now: DateTime.Utc,
+  type: "thread.pinned" | "thread.unpinned",
+) {
+  return {
+    id: EventId.make(`event:prune:${type}`),
+    type,
+    threadId: thread.id,
+    providerInstanceId,
+    occurredAt: now,
+    payload: thread,
+  } satisfies OrchestrationV2DomainEvent;
+}
+
 const itemSpecs = [
   { key: "command", type: "command_execution", ordinal: 10 },
   { key: "reasoning", type: "reasoning", ordinal: 20 },
@@ -254,7 +269,14 @@ it.effect("prunes events the projections cover once the retained day has passed"
     const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
     const now = yield* DateTime.now;
     const threadId = ThreadId.make("thread:prune");
-    yield* sink.write({ events: [threadCreated(makeThread(threadId, now), now)] });
+    const thread = makeThread(threadId, now);
+    yield* sink.write({ events: [threadCreated(thread, now)] });
+    yield* sink.write({
+      events: [
+        threadOrganized(thread, now, "thread.pinned"),
+        threadOrganized(thread, now, "thread.unpinned"),
+      ],
+    });
     for (const revision of [0, 1, 2]) {
       yield* sink.write({ events: [itemEvent(threadId, now, itemSpecs[0], revision)] });
     }
@@ -271,14 +293,17 @@ it.effect("prunes events the projections cover once the retained day has passed"
     yield* sink.write({ events: [itemEvent(threadId, now, itemSpecs[0], 3)] });
     const highWater = yield* eventStore.latestSequence();
     const projection = yield* projections.getThreadProjection(threadId);
+    const revision = yield* projections.getIssueAutomationRevision(threadId);
 
     yield* TestClock.adjust("23 hours");
     assert.equal((yield* maintenance.pruneEventStore()).deletedEventCount, 0);
     yield* TestClock.adjust("1 hour");
-    assert.equal((yield* maintenance.pruneEventStore()).deletedEventCount, 4);
+    assert.equal((yield* maintenance.pruneEventStore()).deletedEventCount, 5);
 
+    // Only the newest organizing event stays, so issue automation's revision does not move.
     assert.deepEqual(yield* remainingEventIds(threadId), [
       "event:turn-item-compaction:thread",
+      "event:prune:thread.unpinned",
       "event:turn-item-compaction:subagent:0",
       "event:turn-item-compaction:subagent-item:0",
       "event:prune:run-running",
@@ -290,6 +315,8 @@ it.effect("prunes events the projections cover once the retained day has passed"
     assert.equal(yield* eventStore.latestSequence(), highWater);
     assert.equal(yield* eventStore.latestSequence({ threadId }), highWater);
     assert.deepEqual(yield* projections.getThreadProjection(threadId), projection);
+    assert.isAbove(revision, 0);
+    assert.equal(yield* projections.getIssueAutomationRevision(threadId), revision);
     const repeated = yield* eventStore
       .read({ threadId, eventType: "subagent.updated", afterSequence: markedThrough })
       .pipe(Stream.runCollect);

@@ -170,6 +170,11 @@ import {
 } from "./provider.ts";
 import { ProviderInstanceId, ProviderInstanceMutation } from "./providerInstance.ts";
 import {
+  IssueAutomationCatalog,
+  IssueAutomationCatalogInput,
+  IssueAutomationError,
+  IssueAutomationOverview,
+  IssueAutomationSaveInput,
   IssueCandidates,
   IssueCommentInput,
   IssueCommentsPage,
@@ -186,6 +191,7 @@ import {
   IssueSetStateInput,
   IssueTemplateList,
   IssueTrackerBindProjectInput,
+  IssueTrackerKind,
   IssueTrackerConnectInput,
   IssueTrackerConnection,
   IssueTrackerConnectionError,
@@ -637,9 +643,13 @@ export const WS_METHODS = {
   issuesUpdate: "issues.update",
   issuesSetState: "issues.setState",
   issuesReact: "issues.react",
+  issuesSubscribeStatusRefreshes: "issues.subscribeStatusRefreshes",
   issueTrackersList: "issueTrackers.list",
   issueTrackersConnect: "issueTrackers.connect",
   issueTrackersBindProject: "issueTrackers.bindProject",
+  issueTrackersAutomation: "issueTrackers.automation",
+  issueTrackersAutomationCatalog: "issueTrackers.automationCatalog",
+  issueTrackersSaveAutomation: "issueTrackers.saveAutomation",
 
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
@@ -1416,6 +1426,35 @@ const WsIssueTrackersBindProjectRpc = Rpc.make(WS_METHODS.issueTrackersBindProje
   payload: IssueTrackerBindProjectInput,
   success: Schema.Void,
   error: IssueTrackerRpcError,
+});
+
+const IssueAutomationRpcError = Schema.Union([IssueAutomationError, EnvironmentAuthorizationError]);
+
+/** Issue status rules and how each one's last status read went. */
+const WsIssueTrackersAutomationRpc = Rpc.make(WS_METHODS.issueTrackersAutomation, {
+  payload: Schema.Struct({}),
+  success: IssueAutomationOverview,
+  error: IssueAutomationRpcError,
+});
+
+const WsIssueTrackersAutomationCatalogRpc = Rpc.make(WS_METHODS.issueTrackersAutomationCatalog, {
+  payload: IssueAutomationCatalogInput,
+  success: IssueAutomationCatalog,
+  error: IssueAutomationRpcError,
+});
+
+const WsIssueTrackersSaveAutomationRpc = Rpc.make(WS_METHODS.issueTrackersSaveAutomation, {
+  payload: IssueAutomationSaveInput,
+  success: IssueAutomationOverview,
+  error: IssueAutomationRpcError,
+});
+
+/** Counts each status change rules saw on one issue, so an open detail reads it again. */
+const WsIssuesSubscribeStatusRefreshesRpc = Rpc.make(WS_METHODS.issuesSubscribeStatusRefreshes, {
+  payload: Schema.Struct({ tracker: IssueTrackerKind, key: TrimmedNonEmptyString }),
+  success: NonNegativeInt,
+  error: EnvironmentAuthorizationError,
+  stream: true,
 });
 
 const WsSourceControlLookupRepositoryRpc = Rpc.make(WS_METHODS.sourceControlLookupRepository, {
@@ -2251,6 +2290,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsIssuesCommentsRpc,
   WsIssuesTemplatesRpc,
   WsIssuesCandidatesRpc,
+  WsIssuesSubscribeStatusRefreshesRpc,
   WsIssuesCreateRpc,
   WsIssuesCommentRpc,
   WsIssuesUpdateRpc,
@@ -2259,6 +2299,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsIssueTrackersListRpc,
   WsIssueTrackersConnectRpc,
   WsIssueTrackersBindProjectRpc,
+  WsIssueTrackersAutomationRpc,
+  WsIssueTrackersAutomationCatalogRpc,
+  WsIssueTrackersSaveAutomationRpc,
   WsGuestShareCreateRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,

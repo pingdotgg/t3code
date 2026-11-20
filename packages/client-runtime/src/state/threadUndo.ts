@@ -1,3 +1,5 @@
+import { effectiveSnoozed, type ThreadSnoozeShell } from "./threadSettled.ts";
+
 // Shared across hook instances so sidebar, header and menu actions invalidate each other.
 const currentActions = new Map<string, symbol>();
 const listeners = new Set<() => void>();
@@ -40,29 +42,34 @@ export type ThreadUndoStep =
   | { readonly action: "unsnooze" }
   | { readonly action: "pin"; readonly orderKey?: string }
   | { readonly action: "reorderActive"; readonly orderKey: string }
-  | { readonly action: "snooze"; readonly snoozedUntil: string };
+  /** A null wake time restores a snooze that lasts until the thread is woken. */
+  | { readonly action: "snooze"; readonly snoozedUntil: string | null };
 
 export type ThreadUndoPlan = readonly [ThreadUndoStep, ...ThreadUndoStep[]];
 
 export function planThreadUndo(
   action: "settle" | "snooze" | "unpin",
-  thread?: {
-    readonly pinnedAt?: string | null;
-    readonly pinOrderKey?: string | null;
-    readonly activeOrderKey?: string | null;
-    readonly unsettledAt?: string | null;
-    readonly snoozedUntil?: string | null;
-  } | null,
+  thread?:
+    | (ThreadSnoozeShell & {
+        readonly pinnedAt?: string | null;
+        readonly pinOrderKey?: string | null;
+        readonly activeOrderKey?: string | null;
+        readonly unsettledAt?: string | null;
+      })
+    | null,
+  // @effect-diagnostics-next-line globalDate:off
+  now = new Date().toISOString(),
 ): ThreadUndoPlan {
   if (action === "snooze") return [{ action: "unsnooze" }];
   const pin: ThreadUndoStep = {
     action: "pin",
     ...(thread?.pinOrderKey != null ? { orderKey: thread.pinOrderKey } : {}),
   };
-  // Pinning clears snooze on the server; restore it after restoring pin placement.
+  // Pinning clears snooze on the server; restore it after restoring pin placement. A snooze a
+  // question or failure already woke stays woken, or the restore would hide the thread again.
   const snooze =
-    thread?.snoozedUntil != null
-      ? [{ action: "snooze" as const, snoozedUntil: thread.snoozedUntil }]
+    thread != null && effectiveSnoozed(thread, { now })
+      ? [{ action: "snooze" as const, snoozedUntil: thread.snoozedUntil ?? null }]
       : [];
   if (action === "unpin") return [pin, ...snooze];
   // Settling clears a manual active position; pinned threads are placed by their pin instead.
@@ -88,8 +95,13 @@ export async function executeThreadUndo<Result>(
   for (const step of plan.slice(1)) {
     if (!succeeded(result)) return result;
     // A snooze can expire before Undo runs, and the server rejects an expired restore.
-    // @effect-diagnostics-next-line globalDate:off
-    if (step.action === "snooze" && Date.parse(step.snoozedUntil) <= Date.now()) continue;
+    if (
+      step.action === "snooze" &&
+      step.snoozedUntil !== null &&
+      // @effect-diagnostics-next-line globalDate:off
+      Date.parse(step.snoozedUntil) <= Date.now()
+    )
+      continue;
     result = await execute(step);
   }
   return result;
