@@ -419,7 +419,7 @@ it.effect("cancels a stale waiting run when no checkpoint capture can finish it"
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("recovery closes a secret card's form but leaves a link card open", () => {
+it.effect("recovery closes a secret card but leaves a link card and an unread steer open", () => {
   const threadId = ThreadId.make("thread_secret_recovery");
   const runId = RunId.make("run_secret_recovery");
   let committedInput: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0] | null =
@@ -467,6 +467,16 @@ it.effect("recovery closes a secret card's form but leaves a link card open", ()
         url: "https://box.example.ts.net",
         reason: "Run the suite there.",
       },
+      {
+        id: "turn-item:steer:recovery",
+        threadId,
+        runId,
+        nodeId: null,
+        type: "user_message",
+        status: "pending",
+        inputIntent: "steer",
+        messageId: "message:steer:recovery",
+      },
     ],
   } as unknown as OrchestrationV2ThreadProjection;
   const layer = ProviderRuntimeRecovery.layer.pipe(
@@ -504,9 +514,10 @@ it.effect("recovery closes a secret card's form but leaves a link card open", ()
     assert.equal(secret?.status, "cancelled");
     assert.equal(secret?.type === "secret_request" ? secret.secretStatus : null, "cancelled");
     // Nothing in memory waits on a link card; the user can still answer it.
-    assert.equal(
-      cards.some((card) => card.type === "link_request"),
-      false,
+    // Claude never reported reading the steer, so the orchestrator queues it.
+    assert.deepEqual(
+      cards.filter((card) => card.type === "link_request" || card.type === "user_message"),
+      [],
     );
   }).pipe(Effect.provide(layer));
 });
@@ -901,6 +912,7 @@ it.effect(
       assert.equal(summary.retiredEffects, 2);
       assert.deepEqual(committedInput?.cancelUnsettledEffects?.effectTypes, [
         "provider-session.apply-model-selection",
+        "provider-session.apply-thread-title",
         "provider-turn.start",
         "provider-turn.interrupt",
         "provider-turn.steer",

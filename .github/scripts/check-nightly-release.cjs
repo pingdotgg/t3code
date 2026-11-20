@@ -124,7 +124,12 @@ async function resolveLatestNightlyCommit({ github, context, core }) {
 // The two places a nightly install looks for an update: the `update-feed` pointer, and
 // releases.atom, which holds the 10 newest git tags of any kind. Older installs take the first
 // nightly in the feed. Reports what each names beside the newest published nightly.
-async function readNightlyUpdateFeed({ github, context, fetch = globalThis.fetch }) {
+async function readNightlyUpdateFeed({
+  github,
+  context,
+  fetch = globalThis.fetch,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+}) {
   const latest = await findLatestNightly({ github, context });
   if (!latest) return {};
 
@@ -150,19 +155,28 @@ async function readNightlyUpdateFeed({ github, context, fetch = globalThis.fetch
 
   // An unreadable feed leaves `feedTags` unset, so the pointer is still repaired. An error page
   // can answer HTTP 200, so only an Atom document counts as read.
-  let feedTags;
-  try {
-    const feed = await fetch(`${base}/releases.atom`, { signal: signal() });
-    const body = feed.ok ? await feed.text() : "";
-    if (/<feed[\s>]/.test(body)) {
-      feedTags = Array.from(body.matchAll(/href="[^"]*\/releases\/tag\/([^"]+)"/g), (match) =>
+  const readFeed = async () => {
+    try {
+      const feed = await fetch(`${base}/releases.atom`, { signal: signal() });
+      const body = feed.ok ? await feed.text() : "";
+      if (!/<feed[\s>]/.test(body)) return {};
+      const feedTags = Array.from(body.matchAll(/href="[^"]*\/releases\/tag\/([^"]+)"/g), (match) =>
         decodeURIComponent(match[1]),
       );
+      const feedNightly = feedTags.find((tag) => /^v?\d+\.\d+\.\d+-nightly\./.test(tag));
+      return { feedTags, feedNightly };
+    } catch {
+      return {};
     }
-  } catch {}
-  const feedNightly = feedTags?.find((tag) => /^v?\d+\.\d+\.\d+-nightly\./.test(tag));
+  };
+  // The feed can lag a release published seconds ago, so read it again before calling it hidden.
+  let feed = await readFeed();
+  for (let retry = 0; retry < 3 && feed.feedTags && feed.feedNightly !== latest.tagName; retry++) {
+    await sleep(30_000);
+    feed = await readFeed();
+  }
 
-  return { tag: latest.tagName, pointerTag, feedNightly, feedTags };
+  return { tag: latest.tagName, pointerTag, ...feed };
 }
 
 module.exports = {
