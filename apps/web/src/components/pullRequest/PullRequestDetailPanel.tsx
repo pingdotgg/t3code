@@ -1529,6 +1529,7 @@ export function PullRequestDetailPanel({
         number={reference.number}
         tabs={visibleTabs}
         activeTab={tab}
+        threadRef={threadRef}
         {...(onBack ? { onBack } : {})}
         {...(onClose ? { onClose } : {})}
         actions={
@@ -1572,6 +1573,7 @@ export function PullRequestDetailPanel({
           repositoryUrl={repositoryUrl}
           openOnHostText={openOnHostText}
           onBack={onBack}
+          threadRef={threadRef}
         />
         <div className="mr-4 flex h-7 shrink-0 select-none items-center justify-end gap-1">
           {detail ? (
@@ -1631,6 +1633,7 @@ export function PullRequestDetailPanel({
                 pullRequestKey={pullRequestKey}
                 detail={detail}
                 terminology={terminology}
+                threadRef={threadRef}
                 linkThreadRef={
                   threadRef ??
                   (typeof composerDraftTarget === "object" ? composerDraftTarget : null)

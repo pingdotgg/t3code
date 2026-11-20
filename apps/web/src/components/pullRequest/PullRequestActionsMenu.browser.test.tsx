@@ -1,4 +1,5 @@
 import "~/index.css";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { Cause } from "effect";
@@ -9,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   update:
     vi.fn<(input: unknown) => Promise<{ _tag: "Success" } | { _tag: "Failure"; cause: unknown }>>(),
   notify: vi.fn(),
+  openLink: vi.fn<(url: string, options?: unknown) => Promise<void>>(),
 }));
 vi.mock(
   import("~/state/pullRequests"),
@@ -20,9 +22,14 @@ vi.mock(
 );
 
 vi.mock(import("../ui/toast"), () => ({ toastManager: { add: mocks.notify } }) as never);
-vi.mock(import("~/state/server"), async () => {
+vi.mock(import("~/browser/useOpenLink"), () => ({
+  useOpenLink: (threadRef: unknown) => (url: string, options?: unknown) =>
+    mocks.openLink(url, { ...(options as object | undefined), threadRef }),
+}));
+vi.mock(import("~/state/server"), async (original) => {
+  const actual = await original();
   const { Atom } = await import("effect/reactivity");
-  return { primaryServerKeybindingsAtom: Atom.make([]) } as never;
+  return { ...actual, primaryServerKeybindingsAtom: Atom.make([]) } as never;
 });
 vi.mock(import("./PullRequestThreadLinks"), () => ({ PullRequestThreadLinks: () => null }));
 vi.mock(
@@ -68,13 +75,15 @@ const openDetail: Detail = {
 function setup() {
   mocks.update.mockReset().mockResolvedValue({ _tag: "Success" });
   mocks.notify.mockReset();
-  return (detail: Detail = openDetail) => (
+  mocks.openLink.mockReset().mockResolvedValue(undefined);
+  return (detail: Detail = openDetail, threadRef: ScopedThreadRef | null = null) => (
     <PullRequestActionsMenu
       environmentId={environmentId}
       reference={reference}
       pullRequestKey="owner/repo/7"
       detail={detail}
       terminology={sourceControlClients.get("github").changeRequest}
+      threadRef={threadRef}
       linkThreadRef={null}
       onThreadPickerOpenChange={() => {}}
       refreshing={false}
@@ -209,4 +218,29 @@ it.each<[string, Detail]>([
   await screen.getByRole("button", { name: "More pull request actions" }).click();
   await expect.element(page.getByRole("menuitem", { name: "Open on GitHub" })).toBeVisible();
   expect(document.querySelector('[role="menuitemcheckbox"]')).toBeNull();
+});
+
+it("opens on host through openLink when Open on GitHub is clicked", async () => {
+  const control = setup();
+  await using screen = await render(control());
+  await screen.getByRole("button", { name: "More pull request actions" }).click();
+  const openOnHost = page.getByRole("menuitem", { name: "Open on GitHub" });
+  await openOnHost.click();
+  expect(mocks.openLink).toHaveBeenCalledWith(
+    openDetail.url,
+    expect.objectContaining({ threadRef: null }),
+  );
+});
+
+it("passes threadRef to openLink when Open on GitHub is clicked", async () => {
+  const threadRef = { environmentId, threadId: "thread-1" as never };
+  const control = setup();
+  await using screen = await render(control(openDetail, threadRef));
+  await screen.getByRole("button", { name: "More pull request actions" }).click();
+  const openOnHost = page.getByRole("menuitem", { name: "Open on GitHub" });
+  await openOnHost.click();
+  expect(mocks.openLink).toHaveBeenCalledWith(
+    openDetail.url,
+    expect.objectContaining({ threadRef }),
+  );
 });
