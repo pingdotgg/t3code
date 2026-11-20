@@ -17,6 +17,11 @@ const threadId = ThreadId.make("thread-1");
 // The per-turn diff sizes of a 13-turn review session measured on the desktop app.
 const REVIEW_TURN_CHARACTERS = 562_571;
 const REVIEW_LAST_TURN_CHARACTERS = 4_735_494;
+// How many of those turns fit the byte budget. The turn whose diff is larger than the
+// whole budget is left out, so the kept turns are the newest ones that fit.
+const KEPT_REVIEW_TURNS = Math.floor(MAX_CACHED_REVIEW_SOURCE_CHARACTERS / REVIEW_TURN_CHARACTERS);
+const newestTurns = (newest: number, count: number) =>
+  Array.from({ length: count }, (_, index) => newest - count + 1 + index);
 
 const answer = (
   registry: AtomRegistry.AtomRegistry,
@@ -92,12 +97,48 @@ describe("recordReviewTurnDiffAnswer", () => {
 
       const cached = registry.get(lastReviewTurnDiffsAtom(environmentId, threadId));
       const characters = Object.values(cached).reduce((total, diff) => total + diff.length, 0);
-      expect(Object.keys(cached).length).toBeLessThanOrEqual(MAX_CACHED_REVIEW_DIFFS);
-      expect(characters).toBeLessThanOrEqual(MAX_CACHED_REVIEW_SOURCE_CHARACTERS);
+      // The kept set is the newest turns that fit, so an implementation that keeps
+      // every turn fails here with the map it retained.
+      expect({ turns: Object.keys(cached).map(Number), characters }).toEqual({
+        turns: newestTurns(turns - 1, KEPT_REVIEW_TURNS),
+        characters: KEPT_REVIEW_TURNS * REVIEW_TURN_CHARACTERS,
+      });
       // The turn whose diff is larger than the whole budget is left out, and the
       // turns around it stay.
       expect(cached[turns]).toBeUndefined();
       expect(cached[turns - 1]).toBeDefined();
+      registry.dispose();
+    }),
+  );
+
+  it.effect("keeps the same turns when the first review section read the whole thread", () =>
+    Effect.gen(function* () {
+      const registry = AtomRegistry.make();
+      const turns = 13;
+      // The desktop capture's first read covered the whole thread, and the recorder
+      // leaves ranges out, so only turns 2..13 are answered one turn at a time.
+      yield* answer(registry, {
+        fromTurnCount: 0,
+        toTurnCount: turns,
+        diff: "a".repeat(REVIEW_TURN_CHARACTERS),
+      });
+      for (let turn = 2; turn <= turns; turn += 1) {
+        yield* answer(registry, {
+          fromTurnCount: turn - 1,
+          toTurnCount: turn,
+          diff:
+            turn === turns
+              ? "l".repeat(REVIEW_LAST_TURN_CHARACTERS)
+              : "a".repeat(REVIEW_TURN_CHARACTERS),
+        });
+      }
+
+      const cached = registry.get(lastReviewTurnDiffsAtom(environmentId, threadId));
+      const characters = Object.values(cached).reduce((total, diff) => total + diff.length, 0);
+      expect({ turns: Object.keys(cached).map(Number), characters }).toEqual({
+        turns: newestTurns(turns - 1, KEPT_REVIEW_TURNS),
+        characters: KEPT_REVIEW_TURNS * REVIEW_TURN_CHARACTERS,
+      });
       registry.dispose();
     }),
   );
