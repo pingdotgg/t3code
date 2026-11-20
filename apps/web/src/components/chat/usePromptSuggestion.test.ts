@@ -8,7 +8,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { offeredPromptSuggestion, promptSuggestionToAccept } from "./usePromptSuggestion";
+import { offeredPromptSuggestion } from "./usePromptSuggestion";
 
 const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
 const run = (
@@ -67,14 +67,5 @@ describe("offeredPromptSuggestion", () => {
     // Cached detail that predates the shell's cancelled run cannot vouch for what ran in between.
     const unseen = run(RunId.make("run-3"), 3, "cancelled", false);
     expect(offeredPromptSuggestion(suggestion, summary(unseen), [turn])).toBeNull();
-  });
-});
-
-describe("promptSuggestionToAccept", () => {
-  it("fills only an empty draft, so a late Tab or hint click never prepends to typed text", () => {
-    expect(promptSuggestionToAccept("run the tests", "")).toBe("run the tests");
-    // The hint is still mounted for one render after the first keystroke.
-    expect(promptSuggestionToAccept("run the tests", "f")).toBeNull();
-    expect(promptSuggestionToAccept(null, "")).toBeNull();
   });
 });
