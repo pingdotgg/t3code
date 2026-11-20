@@ -41,12 +41,9 @@ export function resolveChatCanvasLayout({
   findBar?: PreviewMiniPlayerObstacles["detailsCard"];
 }) {
   const centeredWidth = Math.max(0, Math.min(maxChatWidth, container.width - padding * 2));
-  const laneRight = detailsCard
-    ? detailsCard.left - DETAILS_CARD_CLEARANCE
-    : container.width - padding;
-  const normalWidth = Math.max(0, Math.min(centeredWidth, laneRight - padding));
-  const canvasCenterLeft = (container.width - normalWidth) / 2;
-  const normalLeft = Math.max(padding, Math.min(canvasCenterLeft, laneRight - normalWidth));
+  // The details card floats over the chat, so only the canvas bounds the lane.
+  const normalWidth = centeredWidth;
+  const normalLeft = Math.max(padding, (container.width - normalWidth) / 2);
   let chat = {
     left: normalLeft,
     width: normalWidth,
