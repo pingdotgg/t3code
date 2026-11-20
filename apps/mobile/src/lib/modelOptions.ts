@@ -492,6 +492,9 @@ export function buildModelOptions(
         providerLabel,
         providerDriver,
         providerBadge: providerBadgeFor(fallbackModelSelection.instanceId),
+        ...((provider?.iconUrl ?? instanceConfig?.iconUrl)
+          ? { providerIconUrl: provider?.iconUrl ?? instanceConfig?.iconUrl }
+          : {}),
         isDefault: false,
         isLegacy: model?.isLegacy === true,
         ...(isModelSelectionUnavailable(config, fallbackModelSelection, projectId) ||
