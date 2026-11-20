@@ -1974,7 +1974,7 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
 
 describe("AntigravityAdapterV2 session system prompt", () => {
   it.effect.each(["1.5.0"])(
-    "carries PR linking once per turn on %s, which does not advertise a system prompt append",
+    "carries PR linking and background command guidance on %s without a system prompt append",
     (agentVersion) =>
       Effect.gen(function* () {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -2094,6 +2094,12 @@ describe("AntigravityAdapterV2 session system prompt", () => {
         assert.include(sent, "through the Antigravity harness, as gemini-test-low");
         assert.notInclude(append, "systemPrompt");
         assert.include(sent, "<pull_request_linking>");
+        assert.include(sent, "<antigravity_background_work>");
+        assert.include(sent, "explicitly reports a running background task ID");
+        assert.include(sent, "When it wakes you, check the result and continue");
+        assert.include(sent, "If there is no pending wakeup, keep working or explain the blocker");
+        assert.include(sent, "does not wake you when it becomes ready");
+        assert.include(sent, "run a separate, finite readiness check with a timeout");
       }).pipe(Effect.provide(layerSession)),
   );
 });

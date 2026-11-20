@@ -593,6 +593,7 @@ export interface AcpAdapterV2Flavor {
     ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   };
   readonly runtimeHarness?: string;
+  readonly additionalRuntimeInstructions?: string;
   readonly registerExtensions?: (
     context: AcpAdapterV2ExtensionContext,
   ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
@@ -8902,13 +8903,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               : { previousState: previousInstructionState }),
           });
           const sessionSetup = yield* Ref.get(activeSessionSetup);
-          const runtimeInstructions = buildRuntimeInstructions({
+          const baseRuntimeInstructions = buildRuntimeInstructions({
             harness: flavor.runtimeHarness ?? driver,
             model: turnInput.modelSelection.model,
             pullRequestLinking:
               sessionSetup === null ||
               flavor.sessionCarriesPullRequestLinking?.(sessionSetup.initializeResult) !== true,
           });
+          const runtimeInstructions =
+            flavor.additionalRuntimeInstructions === undefined
+              ? baseRuntimeInstructions
+              : `${baseRuntimeInstructions}\n\n${flavor.additionalRuntimeInstructions}`;
           // The agent keeps its own history, so resend only after compaction or when the text changes.
           const sendRuntimeInstructions =
             !isNativeSlashCommand &&

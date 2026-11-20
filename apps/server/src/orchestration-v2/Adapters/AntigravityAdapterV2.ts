@@ -141,6 +141,14 @@ interface AntigravityFlavorServices {
   readonly host: ProviderHost.ProviderHost["Service"];
 }
 
+const ANTIGRAVITY_BACKGROUND_WORK_INSTRUCTIONS = `<antigravity_background_work>
+If \`run_command\` for a finite step you need (a test, build, or capture) explicitly reports a running background task ID, Antigravity wakes you when the command exits. Report what you are waiting for, not that the request is done. When it wakes you, check the result and continue the remaining steps without asking the user to resume you. Do not add a monitor, timer, or polling loop for that command.
+
+If the launch returns an exit result or fails to start, handle that result now. If there is no pending wakeup, keep working or explain the blocker; do not end with a promise to keep working.
+
+A dev server or watcher does not wake you when it becomes ready. If a dependent step reports that it is not ready, run a separate, finite readiness check with a timeout. Continue when the check succeeds, or report its failure. Do not end your turn merely waiting for the server to be ready, and do not wait for it to exit.
+</antigravity_background_work>`;
+
 export function makeAntigravityAcpAdapterFlavor(
   options: AntigravityAdapterV2Options & AntigravityFlavorServices,
 ): AcpAdapterV2Flavor {
@@ -217,6 +225,7 @@ export function makeAntigravityAcpAdapterFlavor(
   return {
     driver: ANTIGRAVITY_PROVIDER,
     runtimeHarness: "Antigravity",
+    additionalRuntimeInstructions: ANTIGRAVITY_BACKGROUND_WORK_INSTRUCTIONS,
     capabilities: AntigravityProviderCapabilitiesV2,
     supportsNativeGoals: options.supportsNativeGoals ?? Effect.succeed(false),
     // Agents that advertise HTTP MCP skip the stdio bridge process; others keep stdio.
