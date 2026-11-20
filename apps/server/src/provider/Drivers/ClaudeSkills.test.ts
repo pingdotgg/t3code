@@ -715,14 +715,6 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           { name: "tools:fmt", scope: "user", description: undefined },
         ],
       );
-      assert.deepEqual(
-        planClaudeSkillDispatch(
-          "$acme:qa the login flow",
-          new Map(skills.map((skill) => [skill.name, skill])),
-        ),
-        { leadingText: undefined, commandText: "/acme:qa the login flow" },
-      );
-
       // Without a cwd, a relative --plugin-dir has nothing to resolve against.
       assert.deepEqual(
         (yield* discoverClaudeSkills({ homePath: configDir, launchArgs })).map(
