@@ -1,0 +1,117 @@
+name: Upstream sync
+
+# Weekly: open a PR that merges the latest upstream nightly into main and moves the
+# patched-nightly pins with it. It never pushes to main and never builds or releases;
+# patched-nightly.yml keeps replaying the `patch:` commits onto the newest nightly on its own.
+# Docs: docs/operations/upstream-sync.md
+
+on:
+  schedule:
+    - cron: "41 7 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    name: Open upstream sync PR
+    if: github.repository != 'pingdotgg/t3code'
+    runs-on: ubuntu-latest
+    env:
+      # A PR opened with the default token does not start CI, and pushing a branch that adds
+      # upstream workflow files needs Workflows write. Same secret patched-nightly.yml uses.
+      GH_TOKEN: ${{ secrets.PATCHED_NIGHTLY_RELEASE_TOKEN || github.token }}
+    steps:
+      - name: Check out fork main
+        uses: actions/checkout@v6
+        with:
+          token: ${{ secrets.PATCHED_NIGHTLY_RELEASE_TOKEN || github.token }}
+          ref: main
+          fetch-depth: 0
+
+      - name: Merge the latest upstream nightly
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          open_prs="$(gh pr list --state open --json headRefName --jq '[.[] | select(.headRefName | startswith("chore/upstream-sync-"))] | length')"
+          if [[ "$open_prs" != "0" ]]; then
+            echo "An upstream sync PR is already open; merge or close it first."
+            exit 0
+          fi
+
+          # Same selection as patched-nightly.yml, so both always agree on "latest".
+          source_tag="$(gh api repos/pingdotgg/t3code/releases?per_page=100 \
+            --jq '[.[] | select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-nightly\\.[0-9]{8}\\.[0-9]+$"))] | sort_by(.published_at) | last | .tag_name')"
+          if [[ -z "$source_tag" || "$source_tag" == "null" ]]; then
+            echo "No upstream nightly release was found." >&2
+            exit 1
+          fi
+
+          git fetch --no-tags https://github.com/pingdotgg/t3code.git "$source_tag"
+          source_sha="$(git rev-parse 'FETCH_HEAD^{commit}')"
+          current_base="$(sed -n 's/^ *PATCH_BASE_SHA: //p' .github/workflows/patched-nightly.yml)"
+
+          if git merge-base --is-ancestor "$source_sha" HEAD; then
+            echo "main already contains $source_tag."
+            exit 0
+          fi
+          if ! git merge-base --is-ancestor "$current_base" "$source_sha"; then
+            echo "$source_tag does not descend from the pinned base $current_base. Upstream may have rewritten history; see docs/operations/upstream-sync.md." >&2
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          branch="chore/upstream-sync-${source_tag#v}"
+          git switch -c "$branch"
+          if ! git merge --no-ff -m "chore: merge upstream nightly $source_tag" "$source_sha"; then
+            conflicts="$(git diff --name-only --diff-filter=U | head -20)"
+            git merge --abort
+            {
+              echo "## Upstream sync needs a manual merge"
+              echo "Merging $source_tag into main conflicts in:"
+              echo '```'
+              echo "$conflicts"
+              echo '```'
+              echo "Run it locally and resolve it: see docs/operations/upstream-sync.md."
+            } | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          old_tag="$(sed -n 's/^ *PATCH_BASE: //p' .github/workflows/patched-nightly.yml)"
+          sed -i \
+            -e "s|^\( *PATCH_BASE: \).*|\1$source_tag|" \
+            -e "s|^\( *PATCH_BASE_SHA: \).*|\1$source_sha|" \
+            .github/workflows/patched-nightly.yml
+          git add .github/workflows/patched-nightly.yml
+          git commit -m "ci: pin patched nightly to upstream $source_tag"
+          git push origin "$branch"
+
+          body="$(cat <<EOF
+          ## Problem
+
+          main is behind upstream. Left alone, the fork's \`patch:\` commits replay onto an ever-newer nightly and eventually stop applying.
+
+          ## Change
+
+          Merges upstream nightly \`$source_tag\` into main and moves \`PATCH_BASE\` / \`PATCH_BASE_SHA\` in \`patched-nightly.yml\` from \`$old_tag\` to it. No fork behavior changes.
+
+          **Merge this PR with a merge commit**, not squash or rebase. The \`Prepare latest upstream nightly\` check is the dry run that proves the patches still replay.
+
+          ## Patched nightly
+
+          - [ ] Include this change in patched nightlies
+          - [x] Keep this change out of patched nightlies
+
+          Opened by the Upstream sync workflow.
+          EOF
+          )"
+          gh pr create --base main --head "$branch" \
+            --title "chore: merge upstream nightly $source_tag" --body "$body"
