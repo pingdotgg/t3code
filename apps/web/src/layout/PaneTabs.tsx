@@ -647,7 +647,7 @@ function revealPaneTab(strip: HTMLElement, tabId: string | null): number | null 
     ? PANE_JOIN_EAR_PX
     : 0;
   const start = bounds.left + clipped + PANE_JOIN_EAR_PX + PANE_STRIP_FADE_PX;
-  const end = bounds.right - PANE_JOIN_EAR_PX - PANE_JOIN_TAIL_PX;
+  const end = bounds.right - PANE_JOIN_EAR_PX - PANE_JOIN_TAIL_PX - PANE_STRIP_FADE_PX;
   // A file tab's trailing breadcrumb names the file; reveal it before its thread label.
   if (rect.width > end - start && tab.dataset.layoutTabReveal === "end") return rect.right - end;
   if (rect.left < start) return rect.left - start;
