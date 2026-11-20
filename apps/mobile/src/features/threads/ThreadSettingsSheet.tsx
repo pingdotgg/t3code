@@ -1039,10 +1039,18 @@ function buildThreadSettingsCatalogItems(
 function SettingSegments(props: {
   readonly label: string;
   readonly trailing?: ReactNode;
-  readonly choices: ReadonlyArray<{ readonly value: string | boolean; readonly label: string }>;
+  readonly choices: ReadonlyArray<{
+    readonly value: string | boolean;
+    readonly label: string;
+    readonly description?: string | undefined;
+  }>;
   readonly selected: string | boolean | undefined;
   readonly onChange: (value: string | boolean) => void;
 }) {
+  const selectedDescription = props.choices
+    .find((choice) => choice.value === props.selected)
+    ?.description?.trim();
+
   return (
     <View className="gap-2">
       <View className="flex-row flex-wrap items-center justify-between gap-2">
@@ -1057,6 +1065,7 @@ function SettingSegments(props: {
           return (
             <Pressable
               key={String(choice.value)}
+              accessibilityHint={choice.description}
               accessibilityRole="radio"
               accessibilityState={{ checked: selected }}
               className={cn(
@@ -1080,6 +1089,9 @@ function SettingSegments(props: {
           );
         })}
       </View>
+      {selectedDescription ? (
+        <Text className="text-xs leading-4 text-foreground-muted">{selectedDescription}</Text>
+      ) : null}
     </View>
   );
 }
@@ -1240,6 +1252,7 @@ function ThreadSettingsOptionsItem(props: {
           ).map((choice) => ({
             value: choice.id,
             label: choice.label,
+            description: choice.description,
           }))}
           selected={reasoningUltrathinkControlled ? "ultrathink" : currentValue(reasoning)}
           onChange={(value) => {
@@ -1768,52 +1781,56 @@ function ThreadSettingsModelsScreen() {
                 </Pressable>
               </View>
               <ScrollView bounces={false} className="grow-0 rounded-xl bg-grouped-card">
-                {session.runtimeModeChoices.map((choice, index) => (
-                  <Pressable
-                    key={choice.mode}
-                    accessibilityRole="radio"
-                    accessibilityState={{
-                      checked: choice.mode === session.runtimeMode,
-                      disabled: choice.disabledReason !== undefined,
-                    }}
-                    accessibilityHint={choice.disabledReason}
-                    disabled={choice.disabledReason !== undefined}
-                    className={cn(
-                      "min-h-12 flex-row items-center gap-3 px-3 py-2 active:bg-subtle",
-                      index !== session.runtimeModeChoices.length - 1 &&
-                        "border-b border-border-subtle",
-                      choice.disabledReason !== undefined && "opacity-50",
-                    )}
-                    onPress={() => {
-                      void Haptics.selectionAsync();
-                      session.onUpdateRuntimeMode(choice.mode);
-                      dismissPermissions();
-                    }}
-                  >
-                    <SymbolView
-                      name={PERMISSION_SYMBOLS[choice.mode]}
-                      size={17}
-                      tintColorClassName="accent-foreground"
-                    />
-                    <View className="min-w-0 flex-1">
-                      <Text className="text-base text-foreground">{m(choice.label)}</Text>
-                      {choice.disabledReason ? (
-                        <Text className="text-xs text-foreground-muted">
-                          {choice.disabledReason}
-                        </Text>
-                      ) : null}
-                    </View>
-                    <View className="w-5 items-center">
-                      {choice.mode === session.runtimeMode ? (
-                        <SymbolView
-                          name="checkmark"
-                          size={16}
-                          tintColorClassName="accent-foreground"
-                        />
-                      ) : null}
-                    </View>
-                  </Pressable>
-                ))}
+                {session.runtimeModeChoices.map((choice, index) => {
+                  const label = m(choice.label);
+                  const description = choice.disabledReason ?? m(choice.description);
+                  return (
+                    <Pressable
+                      key={choice.mode}
+                      accessibilityLabel={description ? `${label}. ${description}` : label}
+                      accessibilityRole="radio"
+                      accessibilityState={{
+                        checked: choice.mode === session.runtimeMode,
+                        disabled: choice.disabledReason !== undefined,
+                      }}
+                      disabled={choice.disabledReason !== undefined}
+                      className={cn(
+                        "min-h-14 flex-row items-center gap-3 px-3.5 py-2.5 active:bg-subtle",
+                        index !== session.runtimeModeChoices.length - 1 &&
+                          "border-b border-border-subtle",
+                        choice.disabledReason !== undefined && "opacity-50",
+                      )}
+                      onPress={() => {
+                        void Haptics.selectionAsync();
+                        session.onUpdateRuntimeMode(choice.mode);
+                        dismissPermissions();
+                      }}
+                    >
+                      <SymbolView
+                        name={PERMISSION_SYMBOLS[choice.mode]}
+                        size={17}
+                        tintColorClassName="accent-foreground"
+                      />
+                      <View className="min-w-0 flex-1 gap-0.5">
+                        <Text className="text-base font-t3-medium text-foreground">{label}</Text>
+                        {description ? (
+                          <Text className="text-xs leading-4 text-foreground-muted">
+                            {description}
+                          </Text>
+                        ) : null}
+                      </View>
+                      <View className="w-5 items-center">
+                        {choice.mode === session.runtimeMode ? (
+                          <SymbolView
+                            name="checkmark"
+                            size={16}
+                            tintColorClassName="accent-foreground"
+                          />
+                        ) : null}
+                      </View>
+                    </Pressable>
+                  );
+                })}
               </ScrollView>
             </SafeAreaView>
           </View>
