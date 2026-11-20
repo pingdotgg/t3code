@@ -72,18 +72,16 @@ function describeStatus(status: BlenderStatus, gt: Translate): string | null {
 export function BlenderEnvironmentSettings({
   environmentId,
   settings,
-  connected,
 }: {
   readonly environmentId: EnvironmentId;
   readonly settings: BlenderSettings;
-  readonly connected: boolean;
 }) {
   const gt = useGT();
   const canRead = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
   const canEnable = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const canChooseExecutable = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const status = useEnvironmentQuery(
-    connected && canRead && settings.enabled
+    canRead && settings.enabled
       ? serverEnvironment.blenderStatus({ environmentId, input: {} })
       : null,
   );
@@ -108,7 +106,7 @@ export function BlenderEnvironmentSettings({
         label={gt("Use Blender")}
         subtitle={gt("Run the Blender installed on this environment.")}
         value={settings.enabled}
-        disabled={!connected || !canEnable}
+        disabled={!canEnable}
         onValueChange={(enabled) => void save({ enabled })}
       />
       <View className="gap-2 p-4">
@@ -122,12 +120,11 @@ export function BlenderEnvironmentSettings({
             placeholder={gt("Detect automatically")}
             autoCapitalize="none"
             autoCorrect={false}
-            editable={connected && canChooseExecutable}
+            editable={canChooseExecutable}
             value={value}
             onChangeText={setDraft}
             onSubmitEditing={() => {
-              if (hasEdit && connected && canChooseExecutable)
-                void save({ executablePath: value.trim() });
+              if (hasEdit && canChooseExecutable) void save({ executablePath: value.trim() });
             }}
             returnKeyType="done"
           />
@@ -135,7 +132,7 @@ export function BlenderEnvironmentSettings({
             <Button
               label={gt("Save")}
               tone="secondary"
-              disabled={!connected || !canChooseExecutable}
+              disabled={!canChooseExecutable}
               onPress={() => void save({ executablePath: value.trim() })}
             />
           ) : null}
@@ -145,7 +142,7 @@ export function BlenderEnvironmentSettings({
             ? gt("Leave empty to find Blender on PATH or in standard install locations.")
             : gt("This connection cannot choose which executable the environment runs.")}
         </AppText>
-        {settings.enabled && connected && canRead ? (
+        {settings.enabled && canRead ? (
           <AppText selectable className="text-sm text-foreground-muted">
             {status.isPending
               ? gt("Checking…")
@@ -153,7 +150,7 @@ export function BlenderEnvironmentSettings({
           </AppText>
         ) : null}
       </View>
-      {settings.enabled && connected && canRead ? (
+      {settings.enabled && canRead ? (
         <ListActionRow
           label={gt("Check again")}
           disabled={status.isPending}
