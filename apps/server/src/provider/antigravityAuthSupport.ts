@@ -227,6 +227,11 @@ function antigravityEnvironment(
     baseEnv.SSL_CERT_DIR === undefined
       ? { SSL_CERT_FILE: profile.caBundlePath }
       : {}),
+    // The 1.5 CLI ignores AGY_ACP_FORCE_FILE_STORAGE and keeps Google sign-ins in one OS keyring
+    // entry for every profile, unless it believes it runs over SSH. Sign-in then uses `--login`.
+    ...(auth.authMethod === "oauth-personal"
+      ? { SSH_CONNECTION: baseEnv.SSH_CONNECTION || "127.0.0.1 0 127.0.0.1 0" }
+      : {}),
     GEMINI_HOME: profile.geminiHome,
     AGY_ACP_FORCE_FILE_STORAGE: "1",
     AGY_CLI_DISABLE_AUTO_UPDATE: "1",
