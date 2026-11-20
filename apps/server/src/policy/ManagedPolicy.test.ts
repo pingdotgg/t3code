@@ -360,6 +360,31 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
         '"defaultRuntimeMode" is above "limits.maxRuntimeMode"',
         '"defaultRuntimeMode" is above "limits.maxRuntimeMode"',
       ]);
+
+      const sparrowTooHigh = yield* loadFrom(
+        JSON.stringify({
+          schemaVersion: 1,
+          organization: "Example Corp",
+          settings: { sparrowDefaultRuntimeMode: { value: "workspace-write", locked: false } },
+          limits: { maxRuntimeMode: "approval-required" },
+        }),
+      ).pipe(
+        Effect.flip,
+        Effect.map((error) => error.reason),
+      );
+      assert.equal(sparrowTooHigh, '"sparrowDefaultRuntimeMode" is above "limits.maxRuntimeMode"');
+
+      const capped = yield* loadFrom(
+        JSON.stringify({
+          schemaVersion: 1,
+          organization: "Example Corp",
+          limits: { maxRuntimeMode: "approval-required" },
+        }),
+      );
+      assert.equal(
+        capped.settings.applyLocks(DEFAULT_SERVER_SETTINGS).sparrowDefaultRuntimeMode,
+        "read-only",
+      );
     }),
   );
 

@@ -3,6 +3,7 @@ import {
   clampManagedRuntimeMode,
   type ManagedPolicySummary,
   type RuntimeMode,
+  type ServerProviderRuntimeMode,
 } from "@t3tools/contracts";
 import { useGT, useMessages } from "gt-react-native";
 import { View } from "react-native";
@@ -23,6 +24,7 @@ export function ManagedRuntimeModeNotice(props: {
   readonly threadKey: string;
   readonly threadRuntimeMode: RuntimeMode;
   readonly supportedRuntimeModes: ReadonlyArray<RuntimeMode> | undefined;
+  readonly runtimeModes?: ReadonlyArray<ServerProviderRuntimeMode> | undefined;
   readonly policy: ManagedPolicySummary | undefined;
 }) {
   const gt = useGT();
@@ -31,7 +33,10 @@ export function ManagedRuntimeModeNotice(props: {
   const runtimeMode = draftSettings.runtimeMode ?? props.threadRuntimeMode;
   const denial = managedRuntimeModeDenial(props.policy, runtimeMode, messages);
   if (denial === undefined) return null;
-  const choices = runtimeModeChoicesForSupportedModes(props.supportedRuntimeModes);
+  const choices = runtimeModeChoicesForSupportedModes(
+    props.supportedRuntimeModes,
+    props.runtimeModes,
+  );
   const target = clampManagedRuntimeMode(
     props.policy,
     runtimeMode,

@@ -1,4 +1,9 @@
-import { DEFAULT_SERVER_SETTINGS, type ServerSettingsPatch } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerSettingsPatch,
+} from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import type { ReactNode } from "react";
 import { act } from "react";
@@ -12,6 +17,7 @@ const { Children, mocks } = vi.hoisted(() => ({
     updateSettings: vi.fn(),
     alert: vi.fn(),
     targets: [] as ReturnType<typeof environment>[],
+    providersByEnvironment: new Map<string, Array<{ instanceId: string; driver: string }>>(),
     readOnly: new Set<string>(),
     projectSelected: false,
   },
@@ -36,8 +42,12 @@ vi.mock("react-native", () => ({
     </button>
   ),
 }));
+vi.mock("../../state/presentation", () => ({
+  environmentPresentations: { providersByEnvironmentAtom: "providers-by-env" },
+}));
 vi.mock("@effect/atom-react", () => ({
-  useAtomValue: () => AsyncResult.success({}),
+  useAtomValue: (atom: unknown) =>
+    atom === "providers-by-env" ? mocks.providersByEnvironment : AsyncResult.success({}),
   useAtomSet: () => () => {},
 }));
 vi.mock("../../state/preferences", () => ({
@@ -65,10 +75,14 @@ vi.mock("../../state/environments", () => ({ useEnvironments: () => ({ environme
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: () => mocks.updateSettings,
 }));
-vi.mock("../threads/thread-settings-options", () => ({
-  RUNTIME_MODE_CHOICES: [],
-  withManagedRuntimeModeLimits: (choices: readonly unknown[]) => choices,
-}));
+vi.mock("../threads/thread-settings-options", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../threads/thread-settings-options")>();
+  return {
+    ...actual,
+    RUNTIME_MODE_CHOICES: [],
+    withManagedRuntimeModeLimits: (choices: readonly unknown[]) => choices,
+  };
+});
 vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: Children }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
 vi.mock("../../components/ui/Button", () => ({
@@ -95,8 +109,14 @@ vi.mock("./components/SettingsEnvironmentFilterHeader", () => ({
   }),
 }));
 vi.mock("./components/DatabaseStorageNotice", () => ({ DatabaseStorageNotice: () => null }));
-vi.mock("./components/SettingsSection", () => ({ SettingsSection: Children }));
-vi.mock("../../components/ui/ListChoiceRow", () => ({ ListChoiceRow: () => null }));
+vi.mock("./components/SettingsSection", () => ({
+  SettingsSection: ({ title, children }: { title?: string; children?: ReactNode }) => (
+    <section data-title={title}>{children}</section>
+  ),
+}));
+vi.mock("../../components/ui/ListChoiceRow", () => ({
+  ListChoiceRow: ({ label }: { label: string }) => <div>{label}</div>,
+}));
 vi.mock("./components/SettingsSwitchRow", () => ({
   SettingsSwitchRow: ({
     label,
@@ -173,6 +193,7 @@ beforeEach(() => {
   container = document.createElement("div");
   root = createRoot(container);
   mocks.targets = [environment("local", "Local")];
+  mocks.providersByEnvironment = new Map();
   mocks.projectSelected = false;
   mocks.readOnly = new Set();
   mocks.alert.mockReset();
@@ -235,5 +256,29 @@ describe("SettingsServerControlsRouteScreen", () => {
       (button) => button.textContent === "Auto-settle merged threads",
     )!;
     expect(autoSettle.disabled).toBe(true);
+  });
+
+  it("shows Sparrow permissions only when a Sparrow provider is enabled", () => {
+    act(() => root.render(<SettingsThreadsRouteScreen />));
+    expect(container.querySelector('[data-title="Sparrow permissions"]')).toBeNull();
+
+    const withSparrow = environment("local", "Local");
+    const sparrowId = ProviderInstanceId.make("sparrow");
+    const sparrowDriver = ProviderDriverKind.make("sparrow");
+    mocks.providersByEnvironment = new Map([
+      ["local", [{ instanceId: sparrowId, driver: sparrowDriver }]],
+    ]);
+    withSparrow.serverConfig.settings = {
+      ...withSparrow.serverConfig.settings,
+      providerInstances: {
+        [sparrowId]: { driver: sparrowDriver, enabled: true },
+      },
+    };
+    mocks.targets = [withSparrow];
+    act(() => root.unmount());
+    root = createRoot(container);
+    act(() => root.render(<SettingsThreadsRouteScreen />));
+    expect(container.querySelector('[data-title="Sparrow permissions"]')).not.toBeNull();
+    expect(container.textContent).toContain("Workspace write");
   });
 });

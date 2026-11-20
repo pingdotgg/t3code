@@ -17,7 +17,9 @@ import {
 } from "../../lib/providerOptions";
 import {
   RUNTIME_MODE_CHOICES,
+  compatibleRuntimeModeForChoices,
   resolveNewThreadRuntimeMode,
+  runtimeModeChoicesForSupportedModes,
   selectableChoices,
   withManagedRuntimeModeLimits,
 } from "./thread-settings-options";
@@ -52,6 +54,36 @@ describe("managed runtime mode limits", () => {
     );
     expect(resolveNewThreadRuntimeMode(undefined, "auto", capped)).toBe("auto");
     expect(resolveNewThreadRuntimeMode("full-access", "auto", undefined)).toBe("full-access");
+  });
+
+  it("uses per-provider runtime modes when provided and falls back cleanly for unadapted modes", () => {
+    const sparrowModes = [
+      {
+        mode: "read-only" as const,
+        label: "Read only",
+        description: "Read and search only.",
+      },
+      {
+        mode: "workspace-write" as const,
+        label: "Workspace write",
+        description: "Workspace sandbox.",
+      },
+      {
+        mode: "full-access" as const,
+        label: "Full access",
+        description: "Unrestricted.",
+      },
+    ];
+    const choices = runtimeModeChoicesForSupportedModes(
+      sparrowModes.map((m) => m.mode),
+      sparrowModes,
+    );
+    expect(choices.map((c) => c.label)).toEqual(["Read only", "Workspace write", "Full access"]);
+    expect(compatibleRuntimeModeForChoices("auto", choices)).toBe("workspace-write");
+    expect(compatibleRuntimeModeForChoices("approval-required", choices)).toBe("workspace-write");
+    expect(compatibleRuntimeModeForChoices("read-only", RUNTIME_MODE_CHOICES)).toBe(
+      "approval-required",
+    );
   });
 });
 

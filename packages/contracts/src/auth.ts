@@ -276,6 +276,10 @@ export const AuthMcpClientAccess = Schema.Literals([
 ]);
 export type AuthMcpClientAccess = typeof AuthMcpClientAccess.Type;
 
+/** Maps any thread runtime mode (such as provider-specific `workspace-write`) to MCP pairing access. */
+export const mcpClientAccessFromRuntimeMode = (runtimeMode: RuntimeMode): AuthMcpClientAccess =>
+  runtimeMode === "workspace-write" ? "auto-accept-edits" : runtimeMode;
+
 /** The scopes an agent session gets for an access level, and a pairing code must carry. */
 export const mcpClientScopes = (access: AuthMcpClientAccess): ReadonlyArray<AuthGrantScope> =>
   access === "read-only"

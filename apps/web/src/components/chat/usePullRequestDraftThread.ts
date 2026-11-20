@@ -1,7 +1,11 @@
 import { msg } from "gt-react";
 import { m } from "~/i18n/messages";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import type { UnifiedSettings } from "@t3tools/contracts";
+import {
+  defaultRuntimeModeForProvider,
+  type ServerProvider,
+  type UnifiedSettings,
+} from "@t3tools/contracts";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -26,6 +30,7 @@ interface PullRequestDraftThreadInput {
   readonly settings: UnifiedSettings;
   readonly projectGroupingSettings: ReturnType<typeof selectProjectGroupingSettings>;
   readonly activeProject: EnvironmentProject | null;
+  readonly providers?: ReadonlyArray<ServerProvider>;
   readonly activeThreadKey: string | null;
   readonly isServerThread: boolean;
   readonly canCheckoutPullRequestIntoThread: boolean;
@@ -42,6 +47,7 @@ export function usePullRequestDraftThread(input: PullRequestDraftThreadInput) {
     settings,
     projectGroupingSettings,
     activeProject,
+    providers = [],
     activeThreadKey,
     isServerThread,
     canCheckoutPullRequestIntoThread,
@@ -113,13 +119,24 @@ export function usePullRequestDraftThread(input: PullRequestDraftThreadInput) {
       return activeDraftSession.threadId;
     }
 
+    const projectSettings = resolveProjectSettings(
+      settings,
+      activeProject.id,
+      activeProject,
+    ).settings;
+    const defaultModelDriver = providers.find(
+      (provider) => provider.instanceId === projectSettings.defaultModelSelection?.instanceId,
+    )?.driver;
     const nextDraftId = newDraftId();
     const nextThreadId = newThreadId();
     setLogicalProjectDraftThreadId(logicalProjectKey, activeProjectRef, nextDraftId, {
       threadId: nextThreadId,
       createdAt: new Date().toISOString(),
-      runtimeMode: resolveProjectSettings(settings, activeProject.id, activeProject).settings
-        .defaultRuntimeMode,
+      runtimeMode: defaultRuntimeModeForProvider({
+        driverKind: defaultModelDriver,
+        defaultRuntimeMode: projectSettings.defaultRuntimeMode,
+        sparrowDefaultRuntimeMode: projectSettings.sparrowDefaultRuntimeMode,
+      }),
       interactionMode: DEFAULT_INTERACTION_MODE,
       ...input,
     });

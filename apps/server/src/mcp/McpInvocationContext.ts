@@ -84,10 +84,12 @@ export interface ClientModes {
 }
 
 const runtimeModeRank: Record<RuntimeMode, number> = {
-  "approval-required": 0,
-  "auto-accept-edits": 1,
-  auto: 2,
-  "full-access": 3,
+  "read-only": 0,
+  "approval-required": 1,
+  "auto-accept-edits": 2,
+  "workspace-write": 2,
+  auto: 3,
+  "full-access": 4,
 };
 const interactionModeRank: Record<ProviderInteractionMode, number> = { plan: 0, default: 1 };
 

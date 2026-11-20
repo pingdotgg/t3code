@@ -3,6 +3,7 @@ import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
   GitCommandError,
+  mcpClientAccessFromRuntimeMode,
   ProjectId,
   ProviderInstanceId,
   ProviderDriverKind,
@@ -51,6 +52,7 @@ import { ProjectToolkit } from "./tools.ts";
 const clientLaunchHarness = (input: {
   readonly runtimeModeCeiling: RuntimeMode;
   readonly defaultRuntimeMode?: RuntimeMode;
+  readonly sparrowDefaultRuntimeMode?: "read-only" | "workspace-write" | "full-access";
   readonly newWorktreesStartFromOrigin?: boolean;
   readonly defaultThreadEnvMode?: "local" | "worktree";
   readonly fallbackModel?: ModelSelection;
@@ -84,6 +86,19 @@ const clientLaunchHarness = (input: {
       ...(input.defaultRuntimeMode === undefined
         ? {}
         : { defaultRuntimeMode: input.defaultRuntimeMode }),
+      ...(input.sparrowDefaultRuntimeMode === undefined
+        ? {}
+        : { sparrowDefaultRuntimeMode: input.sparrowDefaultRuntimeMode }),
+      ...(input.providers === undefined || input.providers.length === 0
+        ? {}
+        : {
+            providerInstances: Object.fromEntries(
+              input.providers.map((provider) => [
+                provider.instanceId,
+                { driver: provider.driver, enabled: provider.enabled },
+              ]),
+            ),
+          }),
       ...(input.newWorktreesStartFromOrigin === undefined
         ? {}
         : { newWorktreesStartFromOrigin: input.newWorktreesStartFromOrigin }),
@@ -111,7 +126,7 @@ const clientLaunchHarness = (input: {
       client: {
         sessionId: "session-1",
         label: "Claude Code",
-        access: input.runtimeModeCeiling,
+        access: mcpClientAccessFromRuntimeMode(input.runtimeModeCeiling),
         hostedAppUrl: input.hostedAppUrl,
       },
       issuedAt: 0,
@@ -291,7 +306,47 @@ it.effect(
       });
       expect(fromSettings.launched[0]?.modelSelection).toEqual(overrideModel);
 
-      // An administrator's ceiling the orchestrator enforces is named, not reported as unavailable.
+      // A project override pointing at a Sparrow model starts from Sparrow's dedicated default.
+      const sparrowProvider: ServerProvider = {
+        instanceId: ProviderInstanceId.make("sparrow"),
+        driver: ProviderDriverKind.make("sparrow"),
+        displayName: "Sparrow",
+        status: "ready",
+        installed: true,
+        enabled: true,
+        version: null,
+        auth: { status: "authenticated" },
+        supportedRuntimeModes: ["read-only", "workspace-write", "full-access"],
+        models: [
+          { slug: "deepseek-flash", name: "DeepSeek Flash", isCustom: false, capabilities: null },
+        ],
+        slashCommands: [],
+        skills: [],
+        checkedAt: "2026-01-01T00:00:00.000Z",
+      };
+      const sparrowLaunched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+      const sparrowLaunch = clientLaunchHarness({
+        runtimeModeCeiling: "full-access",
+        defaultRuntimeMode: "full-access",
+        providers: [sparrowProvider],
+        overrideModel: {
+          instanceId: sparrowProvider.instanceId,
+          model: "deepseek-flash",
+        },
+        launched: sparrowLaunched,
+      });
+      const sparrowToolkit = yield* ProjectToolkit.pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+            Layer.provide(sparrowLaunch.dependencies),
+          ),
+        ),
+      );
+      yield* sparrowToolkit
+        .handle("t3_thread_launch", { projectId: sparrowLaunch.projectId, title: "Sparrow task" })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(sparrowLaunch.dependencies));
+      expect(sparrowLaunched[0]?.modelSelection.instanceId).toBe("sparrow");
+      expect(sparrowLaunched[0]?.runtimeMode).toBe("workspace-write");
       const managed = yield* launchWith("full-access", "full-access", {
         title: "Fix",
         refusedByCeiling: true,

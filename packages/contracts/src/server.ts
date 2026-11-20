@@ -227,6 +227,23 @@ export const ServerProviderUpdateState = Schema.Struct({
 });
 export type ServerProviderUpdateState = typeof ServerProviderUpdateState.Type;
 
+export const ServerProviderRuntimeModeIcon = Schema.Literals([
+  "eye",
+  "lock",
+  "edit",
+  "shield-check",
+  "shield-off",
+]);
+export type ServerProviderRuntimeModeIcon = typeof ServerProviderRuntimeModeIcon.Type;
+
+export const ServerProviderRuntimeMode = Schema.Struct({
+  mode: RuntimeMode,
+  label: TrimmedNonEmptyString,
+  description: TrimmedNonEmptyString,
+  icon: Schema.optional(ServerProviderRuntimeModeIcon),
+});
+export type ServerProviderRuntimeMode = typeof ServerProviderRuntimeMode.Type;
+
 export const ServerProvider = Schema.Struct({
   // Only instanceId is stable enough for provider routing.
   instanceId: ProviderInstanceId,
@@ -240,6 +257,7 @@ export const ServerProvider = Schema.Struct({
   showInteractionModeToggle: Schema.optional(Schema.Boolean),
   reportsContextWindow: Schema.optional(Schema.Boolean),
   supportedRuntimeModes: Schema.optional(ForwardCompatibleArray(RuntimeMode)),
+  runtimeModes: Schema.optional(Schema.Array(ServerProviderRuntimeMode)),
   supportsConversationRollback: Schema.optional(Schema.Boolean),
   supportsTextGeneration: Schema.optional(Schema.Boolean),
   setup: Schema.optional(

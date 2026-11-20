@@ -1,19 +1,39 @@
 import { managedRuntimeModeDenial } from "@t3tools/client-runtime/contract-labels";
-import type { ManagedPolicySummary, RuntimeMode } from "@t3tools/contracts";
+import {
+  CLASSIC_RUNTIME_MODES,
+  compatibleRuntimeMode,
+  type ClassicRuntimeMode,
+  type ManagedPolicySummary,
+  type RuntimeMode,
+  type ServerProviderRuntimeMode,
+  type ServerProviderRuntimeModeIcon,
+} from "@t3tools/contracts";
 import { msg } from "gt-react";
 import { m, type MessageResolver } from "~/i18n/messages";
 import {
   type LucideIcon,
+  EyeIcon,
   LockIcon,
   PenLineIcon,
   ShieldCheckIcon,
   ShieldOffIcon,
 } from "lucide-react";
 
-export const runtimeModeConfig: Record<
-  RuntimeMode,
-  { label: string; description: string; icon: LucideIcon }
-> = {
+type RuntimeModeDisplayEntry = {
+  label: string;
+  description: string;
+  icon: LucideIcon;
+};
+
+const PROVIDER_RUNTIME_MODE_ICONS: Record<ServerProviderRuntimeModeIcon, LucideIcon> = {
+  eye: EyeIcon,
+  lock: LockIcon,
+  edit: PenLineIcon,
+  "shield-check": ShieldCheckIcon,
+  "shield-off": ShieldOffIcon,
+};
+
+export const classicRuntimeModeConfig: Record<ClassicRuntimeMode, RuntimeModeDisplayEntry> = {
   "approval-required": {
     label: msg("Supervised", { $context: "permission mode, agent asks before acting" }),
     description: msg("Ask before commands and file changes."),
@@ -37,23 +57,43 @@ export const runtimeModeConfig: Record<
   },
 };
 
-export const runtimeModeOptions = Object.keys(runtimeModeConfig) as RuntimeMode[];
+export const runtimeModeConfig: Record<RuntimeMode, RuntimeModeDisplayEntry> = {
+  "read-only": {
+    label: msg("Read only"),
+    description: msg(
+      "Allow read and search tools only; block edits, shell commands, and MCP calls.",
+    ),
+    icon: EyeIcon,
+  },
+  "workspace-write": {
+    label: msg("Workspace write"),
+    description: msg("Auto-approve workspace edits and shell; ask otherwise."),
+    icon: ShieldCheckIcon,
+  },
+  ...classicRuntimeModeConfig,
+};
 
-/** The modes a provider supports (all when it reports none) and the mode a thread really runs in. */
+export const runtimeModeOptions: RuntimeMode[] = [...CLASSIC_RUNTIME_MODES];
+
+/** The modes a provider supports (all classic modes when it reports none) and the mode a thread really runs in. */
 export function resolveCompatibleRuntimeMode(
   runtimeMode: RuntimeMode,
   supportedRuntimeModes: ReadonlyArray<RuntimeMode> | undefined,
+  providerRuntimeModes?: ReadonlyArray<ServerProviderRuntimeMode> | undefined,
 ) {
   const modes =
-    supportedRuntimeModes && supportedRuntimeModes.length > 0
-      ? runtimeModeOptions.filter((mode) => supportedRuntimeModes.includes(mode))
-      : runtimeModeOptions;
-  return { modes, mode: modes.includes(runtimeMode) ? runtimeMode : (modes[0] ?? runtimeMode) };
+    providerRuntimeModes && providerRuntimeModes.length > 0
+      ? providerRuntimeModes.map((entry) => entry.mode)
+      : supportedRuntimeModes && supportedRuntimeModes.length > 0
+        ? runtimeModeOptions.filter((mode) => supportedRuntimeModes.includes(mode))
+        : runtimeModeOptions;
+  return { modes, mode: compatibleRuntimeMode(runtimeMode, modes) };
 }
 
 export function resolveRuntimeModeOption(
   mode: RuntimeMode,
   resolve: MessageResolver = m,
+  providerRuntimeModes?: ReadonlyArray<ServerProviderRuntimeMode> | undefined,
 ): {
   mode: RuntimeMode;
   label: string;
@@ -61,12 +101,14 @@ export function resolveRuntimeModeOption(
   icon: LucideIcon;
   disabledReason?: string;
 } {
-  const config = runtimeModeConfig[mode];
+  const custom = providerRuntimeModes?.find((entry) => entry.mode === mode);
+  const fallback = runtimeModeConfig[mode];
+  const icon = custom?.icon ? PROVIDER_RUNTIME_MODE_ICONS[custom.icon] : fallback.icon;
   return {
     mode,
-    ...config,
-    label: resolve(config.label),
-    description: resolve(config.description),
+    icon,
+    label: resolve(custom?.label ?? fallback.label),
+    description: resolve(custom?.description ?? fallback.description),
   };
 }
 
@@ -75,15 +117,17 @@ export function runtimeModeDenial(
   managedPolicy: ManagedPolicySummary | undefined,
   mode: RuntimeMode,
   resolve: MessageResolver = m,
+  providerRuntimeModes?: ReadonlyArray<ServerProviderRuntimeMode> | undefined,
 ) {
   const ceiling = managedPolicy?.limits?.maxRuntimeMode;
   if (ceiling === undefined || managedRuntimeModeDenial(managedPolicy, mode) === undefined) {
     return undefined;
   }
+  const ceilingCustom = providerRuntimeModes?.find((entry) => entry.mode === ceiling);
   return resolve(
     msg("{organization} limits threads to {mode}.", {
       organization: managedPolicy!.organization,
-      mode: resolve(runtimeModeConfig[ceiling].label),
+      mode: resolve(ceilingCustom?.label ?? runtimeModeConfig[ceiling].label),
     }),
   );
 }
@@ -92,10 +136,11 @@ export function resolveRuntimeModeOptions(
   modes: ReadonlyArray<RuntimeMode>,
   managedPolicy: ManagedPolicySummary | undefined,
   resolve: MessageResolver = m,
+  providerRuntimeModes?: ReadonlyArray<ServerProviderRuntimeMode> | undefined,
 ) {
   return modes.map((mode) => {
-    const option = resolveRuntimeModeOption(mode, resolve);
-    const disabledReason = runtimeModeDenial(managedPolicy, mode, resolve);
+    const option = resolveRuntimeModeOption(mode, resolve, providerRuntimeModes);
+    const disabledReason = runtimeModeDenial(managedPolicy, mode, resolve, providerRuntimeModes);
     return disabledReason === undefined ? option : { ...option, disabledReason };
   });
 }

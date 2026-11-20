@@ -1,4 +1,4 @@
-import type { EnvironmentId, RuntimeMode } from "@t3tools/contracts";
+import type { EnvironmentId, RuntimeMode, ServerProviderRuntimeMode } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { T, useGT, useMessages } from "gt-react";
 
@@ -10,8 +10,8 @@ import { ComposerPermissionsSection } from "./chat/ComposerFooterControls";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import {
   resolveCompatibleRuntimeMode,
+  resolveRuntimeModeOption,
   resolveRuntimeModeOptions,
-  runtimeModeConfig,
 } from "./chat/runtimeModeConfig";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { Menu, MenuPopup, MenuTrigger } from "./ui/menu";
@@ -21,6 +21,7 @@ export function ComposerContextPermissions(props: {
   environmentId: EnvironmentId | null;
   runtimeMode: RuntimeMode;
   supportedRuntimeModes: ReadonlyArray<RuntimeMode> | undefined;
+  providerRuntimeModes?: ReadonlyArray<ServerProviderRuntimeMode> | undefined;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
   const gt = useGT();
@@ -32,11 +33,20 @@ export function ComposerContextPermissions(props: {
   const { mode, modes } = resolveCompatibleRuntimeMode(
     props.runtimeMode,
     props.supportedRuntimeModes,
+    props.providerRuntimeModes,
   );
-  const options = resolveRuntimeModeOptions(modes, useManagedPolicy(props.environmentId), messages);
+  const options = resolveRuntimeModeOptions(
+    modes,
+    useManagedPolicy(props.environmentId),
+    messages,
+    props.providerRuntimeModes,
+  );
   const composerMenuProps = useComposerMenuProps();
-  const { icon: Icon } = runtimeModeConfig[mode];
-  const label = messages(runtimeModeConfig[mode].label);
+  const activeOption =
+    options.find((option) => option.mode === mode) ??
+    resolveRuntimeModeOption(mode, messages, props.providerRuntimeModes);
+  const Icon = activeOption.icon;
+  const label = activeOption.label;
   return (
     <Menu>
       <Tooltip>

@@ -73,6 +73,7 @@ import {
   type ResponseContextRecord,
   type ChatFileAttachment,
   isProviderNativeSubagentThread,
+  defaultRuntimeModeForProvider,
   type EnvironmentId,
   type MessageId,
   type ModelSelection,
@@ -1004,12 +1005,6 @@ export default function ChatView(props: ChatViewProps) {
   const [, setThreadErrorBannerDismissTick] = useState(0);
   const threadErrorIsServerRuntimeError =
     localServerError === null && visibleThreadError === serverRuntime?.lastError;
-  const defaultRuntimeMode = resolveProjectSettings(settings, activeThread?.projectId ?? null)
-    .settings.defaultRuntimeMode;
-  const runtimeMode =
-    composerRuntimeMode ??
-    (isServerThread ? activeThread?.runtimeMode : undefined) ??
-    defaultRuntimeMode;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = canWriteSourceControl && isLocalDraftThread;
   const activeThreadId = activeThread?.id ?? null;
@@ -1277,6 +1272,9 @@ export default function ChatView(props: ChatViewProps) {
       settings,
       projectGroupingSettings,
       activeProject,
+      providers: activeProject
+        ? (providersByEnvironment.get(activeProject.environmentId) ?? EMPTY_PROVIDERS)
+        : EMPTY_PROVIDERS,
       activeThreadKey,
       isServerThread,
       canCheckoutPullRequestIntoThread,
@@ -1307,6 +1305,18 @@ export default function ChatView(props: ChatViewProps) {
     activeThread?.modelSelection.instanceId ??
     activeProjectDefaultModelSelection?.instanceId ??
     null;
+  const activeComposerDriver = providerStatuses.find(
+    (provider) => provider.instanceId === (selectedProviderByThreadId ?? threadProvider),
+  )?.driver;
+  const defaultRuntimeMode = defaultRuntimeModeForProvider({
+    driverKind: activeComposerDriver,
+    defaultRuntimeMode: activeProjectSettings.settings.defaultRuntimeMode,
+    sparrowDefaultRuntimeMode: activeProjectSettings.settings.sparrowDefaultRuntimeMode,
+  });
+  const runtimeMode =
+    composerRuntimeMode ??
+    (isServerThread ? activeThread?.runtimeMode : undefined) ??
+    defaultRuntimeMode;
   const lockedProvider = deriveLockedProvider({
     thread: activeThread,
     selectedProvider: selectedProviderByThreadId,
@@ -3910,6 +3920,9 @@ export default function ChatView(props: ChatViewProps) {
                                             runtimeMode={runtimeMode}
                                             supportedRuntimeModes={
                                               activeProviderStatus?.supportedRuntimeModes
+                                            }
+                                            providerRuntimeModes={
+                                              activeProviderStatus?.runtimeModes
                                             }
                                             onRuntimeModeChange={handleRuntimeModeChangeStable}
                                           />

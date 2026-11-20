@@ -3459,9 +3459,11 @@ function permissionModeForClaudeRuntimePolicy(
   }
 
   switch (runtimePolicy.runtimeMode) {
+    case "read-only":
     case "approval-required":
       return "default";
     case "auto-accept-edits":
+    case "workspace-write":
       return "acceptEdits";
     case "auto":
       return "auto";

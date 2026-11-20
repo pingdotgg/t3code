@@ -6,11 +6,13 @@ const testState = vi.hoisted(() => {
   let projectFileRead = Promise.resolve<null>(null);
   let projectRemoved = false;
   let connectedEnvironmentIds = ["environment-primary", "environment-ssh"];
+  let targetProviders: ReadonlyArray<Record<string, unknown>> = [];
   let targetSettings = {
     defaultThreadEnvMode: "local" as "local" | "worktree" | null,
     newWorktreesStartFromOrigin: false,
     defaultModelSelection: null,
     defaultRuntimeMode: "full-access" as RuntimeMode,
+    sparrowDefaultRuntimeMode: "workspace-write" as "read-only" | "workspace-write" | "full-access",
   };
   let storedDraft: {
     readonly draftId: string;
@@ -33,6 +35,7 @@ const testState = vi.hoisted(() => {
     }),
   };
   const draftStore = {
+    stickyActiveProvider: null as string | null,
     getComposerDraft: vi.fn((draftId: string) => ({ draftId })),
     getDraftSessionByLogicalProjectKey: vi.fn(() => storedDraft),
     getDraftSession: vi.fn(() =>
@@ -90,6 +93,12 @@ const testState = vi.hoisted(() => {
     get targetSettings() {
       return targetSettings;
     },
+    get targetProviders() {
+      return targetProviders;
+    },
+    set targetProviders(next: ReadonlyArray<Record<string, unknown>>) {
+      targetProviders = next;
+    },
     reset(
       nextStoredDraft: typeof storedDraft,
       workspaceDefaults = {
@@ -102,11 +111,14 @@ const testState = vi.hoisted(() => {
       draftsWithUserText = new Set();
       projectRemoved = false;
       connectedEnvironmentIds = ["environment-primary", "environment-ssh"];
+      targetProviders = [];
+      draftStore.stickyActiveProvider = null;
       targetSettings = {
         defaultThreadEnvMode: workspaceDefaults.envMode,
         newWorktreesStartFromOrigin: workspaceDefaults.startFromOrigin,
         defaultModelSelection: null,
         defaultRuntimeMode: "full-access",
+        sparrowDefaultRuntimeMode: "workspace-write",
       };
       router.state.location.href = "/";
       router.navigate.mockClear();
@@ -130,9 +142,13 @@ const testServerConfigs = () =>
           ...testState.targetSettings,
           newWorktreesStartFromOrigin: !testState.targetSettings.newWorktreesStartFromOrigin,
         },
+        providers: testState.targetProviders,
       },
     ],
-    ["environment-ssh", { settings: testState.targetSettings }],
+    [
+      "environment-ssh",
+      { settings: testState.targetSettings, providers: testState.targetProviders },
+    ],
   ]);
 
 vi.mock("../rpc/atomRegistry", () => ({
@@ -159,6 +175,15 @@ vi.mock("@t3tools/client-runtime/environment", () => ({
 vi.mock("@t3tools/contracts", () => ({
   DEFAULT_RUNTIME_MODE: "default",
   DEFAULT_SERVER_SETTINGS: {},
+  defaultRuntimeModeForProvider: ({
+    driverKind,
+    defaultRuntimeMode,
+    sparrowDefaultRuntimeMode,
+  }: {
+    driverKind: string | undefined;
+    defaultRuntimeMode: RuntimeMode;
+    sparrowDefaultRuntimeMode: RuntimeMode;
+  }) => (driverKind === "sparrow" ? sparrowDefaultRuntimeMode : defaultRuntimeMode),
 }));
 vi.mock("@t3tools/shared/projectSettings", () => ({
   resolveProjectSettings: (
@@ -209,7 +234,10 @@ vi.mock("../lib/chatThreadActions", async (importOriginal) => ({
   hasExplicitComposerModelSelection: () => false,
   resolveNewThreadModelSelectionOverride: () => null,
 }));
-vi.mock("../providerInstances", () => ({ resolveDefaultProviderModelSelection: () => null }));
+vi.mock("../providerInstances", () => ({
+  resolveDefaultProviderModelSelection: () => null,
+  resolveProjectDefaultProviderModelSelection: () => null,
+}));
 vi.mock("../lib/t3ProjectFileDefaults", () => ({
   readT3ProjectFile: () => testState.projectFileRead,
 }));
@@ -398,6 +426,26 @@ describe("useNewThreadHandler", () => {
 
     expect(opened).toEqual({ draftId: "draft-delayed", threadId: "thread-delayed" });
     expect(testState.router.navigate).toHaveBeenCalledOnce();
+  });
+
+  it("uses sparrowDefaultRuntimeMode when the draft resolves to a Sparrow provider", async () => {
+    testState.reset(null);
+    testState.targetSettings.defaultRuntimeMode = "full-access";
+    testState.targetSettings.sparrowDefaultRuntimeMode = "read-only";
+    testState.targetProviders = [{ instanceId: "sparrow", driver: "sparrow" }];
+    testState.draftStore.stickyActiveProvider = "sparrow";
+
+    const opened = await useNewThreadHandler()({
+      environmentId: "environment-ssh",
+      projectId: "project-remote",
+    } as never);
+    expect(opened).toEqual({ draftId: "draft-delayed", threadId: "thread-delayed" });
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+      "remote-project",
+      { environmentId: "environment-ssh", projectId: "project-remote" },
+      "draft-delayed",
+      expect.objectContaining({ runtimeMode: "read-only" }),
+    );
   });
 });
 

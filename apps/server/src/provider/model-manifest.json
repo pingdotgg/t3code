@@ -129,6 +129,15 @@
         { "range": ">=0.0.13", "status": "supported" },
         { "range": "<0.0.13", "status": "unsupported" }
       ]
+    },
+    {
+      "driver": "sparrow",
+      "t3CodeRange": ">=0.0.46",
+      "recommendedRange": ">=0.14.0",
+      "ranges": [
+        { "range": ">=0.14.0", "status": "supported" },
+        { "range": "<0.14.0", "status": "unsupported" }
+      ]
     }
   ],
   "currentModels": {
