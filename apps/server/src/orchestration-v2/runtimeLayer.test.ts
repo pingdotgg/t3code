@@ -66,6 +66,7 @@ import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.t
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
+import * as ModelManifest from "../provider/ModelManifest.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -209,9 +210,9 @@ const antigravityProviderInstance = {
   },
 } satisfies ProviderInstance;
 
-const layerTestProviderInstanceRegistry = Layer.succeed(
-  ProviderInstanceRegistry.ProviderInstanceRegistry,
-  {
+const layerTestProviderInstanceRegistry = Layer.merge(
+  ModelManifest.layerTest,
+  Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
     getInstance: (instanceId) =>
       Effect.succeed(
         [
@@ -230,7 +231,7 @@ const layerTestProviderInstanceRegistry = Layer.succeed(
     listUnavailable: Effect.succeed([]),
     streamChanges: Stream.empty,
     subscribeChanges: Effect.never,
-  },
+  }),
 );
 
 const watchedPullRequestDetail = (input: {
@@ -4278,6 +4279,33 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.isUndefined(yield* watchOf);
       const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
       assert.deepEqual(messages, []);
+
+      // A client start sends no CI state, so the link's last sync seeds it.
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request-link.sync",
+        commandId: CommandId.make("pr-watch-ci-running"),
+        threadId,
+        ...key,
+        snapshot: {
+          state: "open",
+          title: "Watched pull request",
+          headBranch: "feature",
+          baseBranch: "main",
+          isDraft: false,
+          updatedAt: null,
+          syncedAt: "2026-10-02T12:30:00.000Z",
+          checksState: "pending",
+        },
+        stack: null,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("pr-watch-client-start"),
+        threadId,
+        ...key,
+        watching: true,
+      });
+      assert.isTrue((yield* watchOf)?.checksPending);
     }),
   );
 
@@ -5217,6 +5245,154 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         ["#8: closed, stopped watching"],
       );
     }),
+  );
+
+  it.effect.each([
+    // Failures from before the watch stay baseline, even with checks still running.
+    {
+      label: "finished failing",
+      atStart: "failing",
+      reads: [
+        { lint: "failure", test: "success" },
+        { lint: "failure", test: "success" },
+      ],
+      told: [[], []],
+    },
+    {
+      label: "failing and still running",
+      atStart: "failing",
+      reads: [
+        { lint: "failure", test: "pending" },
+        { lint: "failure", test: "failure" },
+      ],
+      told: [[], ["test"]],
+    },
+    // Pending CI had no failure, so one the first read finds landed after the start.
+    {
+      label: "pending",
+      atStart: "pending",
+      reads: [
+        { lint: "failure", test: "pending" },
+        { lint: "failure", test: "failure" },
+      ],
+      told: [["lint"], ["test"]],
+    },
+  ] as const)(
+    "reports only failures after a watch that starts on $label CI",
+    ({ label, atStart, reads, told }) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = ThreadId.make(`runtime-pull-request-watch-start-${label}`);
+        const projectId = ProjectId.make("pr-watch-start-project");
+        yield* seedProject({
+          projectId,
+          title: "Watch start",
+          workspaceRoot: "/workspace/watch-start",
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`pr-watch-start-create-${label}`),
+          threadId,
+          projectId,
+          title: "Watch start",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        const key = { host: "github.com", repository: "pingdotgg/t3code", number: 13 };
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.link",
+          commandId: CommandId.make(`pr-watch-start-link-${label}`),
+          threadId,
+          ...key,
+          url: "https://github.com/pingdotgg/t3code/pull/13",
+          source: "manual",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request-link.sync",
+          commandId: CommandId.make(`pr-watch-start-sync-${label}`),
+          threadId,
+          ...key,
+          snapshot: {
+            state: "open",
+            title: "Watched pull request",
+            headBranch: "feature",
+            baseBranch: "main",
+            isDraft: false,
+            updatedAt: null,
+            syncedAt: "2026-10-02T12:00:00.000Z",
+            checksState: atStart,
+          },
+          stack: null,
+        });
+        // A client start, which carries no CI state of its own.
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-start-watch-${label}`),
+          threadId,
+          ...key,
+          watching: true,
+        });
+
+        let read = 0;
+        const host = Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.mock(PullRequestService.PullRequestService)({
+            detail: () =>
+              Effect.sync(() => ({
+                ...watchedPullRequestDetail({
+                  projectId,
+                  number: 13,
+                  at: "2026-10-02T12:00:00.000Z",
+                }),
+                headSha: "ad70160aaa",
+                checks: Object.entries(reads[read]!).map(([name, status]) => ({
+                  name,
+                  status,
+                  description: null,
+                  url: null,
+                })),
+              })),
+            activity: () =>
+              Effect.succeed({
+                comments: [],
+                commentCount: 0,
+                commentsTruncated: false,
+                reviewThreads: [],
+                commits: [],
+              }),
+          }),
+        );
+        const texts = Effect.map(
+          orchestrator.getThreadRecords(threadId, ["messages"]),
+          ({ messages }) => messages.map((message) => message.text),
+        );
+        const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+        for (const [index, names] of told.entries()) {
+          read = index;
+          const before = (yield* texts).length;
+          if (index > 0) yield* TestClock.adjust("10 minutes");
+          yield* reactor.sweep;
+          yield* worker.drain();
+          const wakes = (yield* texts).slice(before);
+          assert.equal(wakes.length, names.length === 0 ? 0 : 1);
+          for (const name of ["lint", "test"]) {
+            assert.equal(
+              wakes.some((text) => text.includes(`  - ${name}`)),
+              names.includes(name as never),
+              `read ${index} told ${name}`,
+            );
+          }
+        }
+      }),
   );
 
   it.effect("baselines a new watch across restarts and reports later changes", () =>

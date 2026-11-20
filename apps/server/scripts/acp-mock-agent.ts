@@ -18,7 +18,6 @@ import { beginAcpMockPrompt } from "./acpMockCancellationState.ts";
 
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
-const harnessFailure = process.env.T3_ACP_ANTIGRAVITY_HARNESS_FAILURE;
 // GitHub Copilot CLI advertises URL-shaped session mode ids.
 const copilotModesProfile = process.env.T3_ACP_COPILOT_MODES === "1";
 const copilotModeId = (name: string) =>
@@ -71,6 +70,11 @@ const failLoadSession = process.env.T3_ACP_FAIL_LOAD_SESSION === "1";
 const failLoadSessionAfterConfigReplay =
   process.env.T3_ACP_FAIL_LOAD_SESSION_AFTER_CONFIG_REPLAY === "1";
 const emitLoadReplay = process.env.T3_ACP_EMIT_LOAD_REPLAY === "1";
+const delayLoadSessionAfterReplay = process.env.T3_ACP_DELAY_LOAD_SESSION_AFTER_REPLAY === "1";
+const loadSessionDelayMs = Number(process.env.T3_ACP_LOAD_SESSION_DELAY_MS ?? "5000");
+const modeNotifiedBeforeDelayedLoadReply = process.env.T3_ACP_NOTIFY_MODE_BEFORE_LOAD_REPLY;
+const holdSetConfigOptionUntilLoadReply =
+  process.env.T3_ACP_HOLD_SET_CONFIG_OPTION_UNTIL_LOAD_REPLY === "1";
 const loadReplyDelayMs = Number(process.env.T3_ACP_LOAD_REPLY_DELAY_MS ?? "0");
 const loadNeverReplies = process.env.T3_ACP_LOAD_NEVER_REPLIES === "1";
 const rejectPromptUntilLoaded = process.env.T3_ACP_REJECT_PROMPT_UNTIL_LOADED === "1";
@@ -504,6 +508,7 @@ const program = Effect.gen(function* () {
   const agent = yield* EffectAcpAgent.AcpAgent;
   const nativeCancelRequested = yield* Deferred.make<void>();
   const nativeCancelRelease = yield* Deferred.make<void>();
+  const delayedLoadReplied = yield* Deferred.make<void>();
   const publishAntigravityCommands = (targetSessionId: string) =>
     agent.client.sessionUpdate({
       sessionId: targetSessionId,
@@ -515,16 +520,6 @@ const program = Effect.gen(function* () {
         ],
       },
     });
-
-  const writeHarnessFailure = Effect.promise(
-    () =>
-      new Promise<void>((resolve) => {
-        process.stderr.write(
-          "I1022 11:04:37.910207 1865358 local_connection.py:551] harness stderr: Agent run failed: failed to handle call hook response: no pending hook for ID hook_request_2\n",
-          () => resolve(),
-        );
-      }),
-  );
 
   const finishPrompt = (
     targetSessionId: string,
@@ -734,6 +729,33 @@ const program = Effect.gen(function* () {
           "Mock load session failure after config replay",
         );
       }
+      if (delayLoadSessionAfterReplay) {
+        emitLoadReplayNotifications(requestedSessionId);
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "user_message_chunk",
+            messageId: "mock-user-message",
+            content: { type: "text", text: "replay-tail" },
+          },
+        });
+        // Answer with the configuration as of the load, like an agent whose
+        // response was built before later selections landed.
+        const loadedConfigOptions = configOptions();
+        if (modeNotifiedBeforeDelayedLoadReply !== undefined) {
+          yield* Effect.sleep(loadSessionDelayMs / 2);
+          currentModeId = modeNotifiedBeforeDelayedLoadReply;
+          yield* agent.client.sessionUpdate({
+            sessionId: requestedSessionId,
+            update: { sessionUpdate: "current_mode_update", currentModeId },
+          });
+        }
+        yield* Effect.sleep(loadSessionDelayMs);
+        yield* Deferred.succeed(delayedLoadReplied, undefined);
+        return {
+          configOptions: loadedConfigOptions,
+        };
+      }
       if (emitLoadReplay) {
         emitLoadReplayNotifications(requestedSessionId);
       }
@@ -838,6 +860,12 @@ const program = Effect.gen(function* () {
 
   yield* agent.handleSetSessionConfigOption((request) =>
     Effect.gen(function* () {
+      if (holdSetConfigOptionUntilLoadReply) {
+        // Like an agent that serves requests in order: the delayed load reply
+        // goes out first, then this one.
+        yield* Deferred.await(delayedLoadReplied);
+        yield* Effect.sleep(100);
+      }
       if (failSetModeConfigOption && request.configId === "mode") {
         return yield* AcpError.AcpRequestError.invalidParams(
           "Mock invalid params for session/set_config_option",
@@ -1016,19 +1044,6 @@ const program = Effect.gen(function* () {
         );
         return {};
       }
-      if (
-        harnessFailure === "1" ||
-        harnessFailure === "pending" ||
-        harnessFailure === "after-end-turn"
-      ) {
-        if (harnessFailure === "after-end-turn") {
-          return yield* finishPrompt(requestedSessionId, "end_turn");
-        }
-        yield* writeHarnessFailure;
-        if (harnessFailure === "pending") return yield* Effect.never;
-        return yield* finishPrompt(requestedSessionId, "end_turn");
-      }
-
       if (clientFsProbePath !== undefined && clientFsProbeLogPath !== undefined) {
         const probes = [
           [
@@ -1282,6 +1297,16 @@ const program = Effect.gen(function* () {
             status: "completed",
             rawInput: { path: "src/env.ts" },
             locations: [{ path: "src/env.ts" }],
+          },
+          // Antigravity reports an image read with only a text result, never the image bytes.
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "structured-image-read",
+            title: "Read `mockup.png`",
+            kind: "read",
+            status: "completed",
+            rawInput: { file_path: "/workspace/mockup.png", start_line: 0, end_line: 799 },
+            rawOutput: "View mockup.png",
           },
           {
             sessionUpdate: "tool_call_update",
@@ -2161,9 +2186,7 @@ const program = Effect.gen(function* () {
             typeof params === "object" && params !== null ? Reflect.get(params, "code") : undefined;
           process.exit(typeof code === "number" ? code : 19);
         })
-      : method === "_test/harness-failure"
-        ? writeHarnessFailure
-        : Effect.void,
+      : Effect.void,
   );
 
   return yield* Effect.never;
