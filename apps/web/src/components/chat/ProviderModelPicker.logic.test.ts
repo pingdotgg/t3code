@@ -28,9 +28,10 @@ describe("groupUpdateRequiredNotices", () => {
     const sol = "Update the Codex CLI to v0.150.0 or newer to use GPT-6.1 Sol.";
     expect(
       groupUpdateRequiredNotices([
-        { notice: fable, instanceName: "Work" },
-        { notice: sol },
-        { notice: fable, instanceName: "Personal" },
+        // An enabled instance beside one the project turned off is not badged; the other is.
+        { notice: fable, instanceName: "Work", named: false },
+        { notice: sol, instanceName: "Codex", named: false },
+        { notice: fable, instanceName: "Personal", named: true },
       ]),
     ).toEqual([
       { notice: fable, instanceNames: ["Work", "Personal"] },

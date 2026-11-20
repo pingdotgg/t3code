@@ -17,15 +17,26 @@ export function retainedModelWhileProviderLocked(
   return entry.models.find((candidate) => candidate.slug === model) ?? { slug: model, name: model };
 }
 
-/** Shows a notice once however many instances raise it, listing the ones the caller named. */
+/**
+ * Shows a notice once however many instances raise it. When any of them is `named`, the notice
+ * lists every instance that raised it, so it never names only some of the ones it covers.
+ */
 export function groupUpdateRequiredNotices(
-  notices: ReadonlyArray<{ readonly notice: string; readonly instanceName?: string | undefined }>,
+  notices: ReadonlyArray<{
+    readonly notice: string;
+    readonly instanceName: string;
+    readonly named: boolean;
+  }>,
 ): ReadonlyArray<{ readonly notice: string; readonly instanceNames: ReadonlyArray<string> }> {
-  const namesByNotice = new Map<string, string[]>();
-  for (const { notice, instanceName } of notices) {
-    const names = namesByNotice.get(notice) ?? [];
-    if (instanceName) names.push(instanceName);
-    namesByNotice.set(notice, names);
+  const groups = new Map<string, { readonly names: string[]; named: boolean }>();
+  for (const { notice, instanceName, named } of notices) {
+    const group = groups.get(notice) ?? { names: [], named: false };
+    group.names.push(instanceName);
+    group.named ||= named;
+    groups.set(notice, group);
   }
-  return Array.from(namesByNotice, ([notice, instanceNames]) => ({ notice, instanceNames }));
+  return Array.from(groups, ([notice, { names, named }]) => ({
+    notice,
+    instanceNames: named ? names : [],
+  }));
 }

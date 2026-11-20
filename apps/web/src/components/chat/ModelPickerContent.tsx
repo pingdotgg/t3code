@@ -830,9 +830,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         ? formatProviderUpdateRequiredNotice(entry.snapshot, searchQuery, messages, locale)
         : null;
       if (!notice) return [];
-      // A search spans instances, so the notice names the ones a model row would badge.
+      // A search spans instances, so the notice names them when a model row would badge one.
       const named = isSearching && shouldShowInstanceBadge(entry, instanceEntries);
-      return [{ notice, instanceName: named ? entry.displayName : undefined }];
+      return [{ notice, instanceName: entry.displayName, named }];
     }),
   );
 
