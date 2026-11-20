@@ -199,16 +199,18 @@ export function T3ConnectProfilePage() {
                   size="small"
                 />
               ) : (
-                <RegisteredServerMenu
-                  actions={environmentMenuActions}
-                  accessibilityLabel={gt("Actions for {environment}", {
-                    environment: environment.label,
-                  })}
-                  disabled={deregisteringEnvironmentId !== null}
-                  onPressAction={() =>
-                    confirmDeregister(environment, () => void handleDeregister(environment))
-                  }
-                />
+                <View pointerEvents={deregisteringEnvironmentId === null ? "auto" : "none"}>
+                  <RegisteredServerMenu
+                    actions={environmentMenuActions}
+                    accessibilityLabel={gt("Actions for {environment}", {
+                      environment: environment.label,
+                    })}
+                    disabled={deregisteringEnvironmentId !== null}
+                    onPressAction={() =>
+                      confirmDeregister(environment, () => void handleDeregister(environment))
+                    }
+                  />
+                </View>
               )
             }
           />
