@@ -85,14 +85,16 @@ export function AddCodexAccountDialog({
   return (
     <Dialog
       open={!connected}
-      onOpenChange={(open) => {
-        if (!open) onClose();
+      onOpenChange={(open, eventDetails) => {
+        if (open) return;
+        if (pending) return eventDetails.cancel();
+        onClose();
       }}
       onOpenChangeComplete={(open) => {
         if (!open && connected) onClose();
       }}
     >
-      <WizardPopup size="wide">
+      <WizardPopup size="wide" showCloseButton={!pending}>
         <WizardHeader
           title={instanceId ? displayName : gt("Add ChatGPT account")}
           description={gt(
