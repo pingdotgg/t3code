@@ -20,6 +20,7 @@ import {
   PeerLink,
   PeerLinkCreateInput,
   PeerLinkError,
+  PeerLinkName,
   PeerLinkRemoveInput,
   PeerLinkRemoveResult,
   PeerLinkRequestAnswerInput,
@@ -549,6 +550,7 @@ export const WS_METHODS = {
   serverGetDatabaseStorage: "server.getDatabaseStorage",
   serverReclaimDatabaseSpace: "server.reclaimDatabaseSpace",
   peerLinksList: "peerLinks.list",
+  peerLinksNames: "peerLinks.names",
   peerLinksLink: "peerLinks.link",
   peerLinksUnlink: "peerLinks.unlink",
   peerLinksAnswerRequest: "peerLinks.answerRequest",
@@ -891,6 +893,13 @@ const WsServerReclaimDatabaseSpaceRpc = Rpc.make(WS_METHODS.serverReclaimDatabas
 const WsPeerLinksListRpc = Rpc.make(WS_METHODS.peerLinksList, {
   payload: Schema.Struct({}),
   success: Schema.Struct({ links: Schema.Array(PeerLinkSummary) }),
+  error: Schema.Union([PeerLinkError, EnvironmentAuthorizationError]),
+});
+
+/** The unexpired links' names, readable with thread read access. */
+const WsPeerLinksNamesRpc = Rpc.make(WS_METHODS.peerLinksNames, {
+  payload: Schema.Struct({}),
+  success: Schema.Struct({ links: Schema.Array(PeerLinkName) }),
   error: Schema.Union([PeerLinkError, EnvironmentAuthorizationError]),
 });
 
@@ -2312,6 +2321,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerReclaimDatabaseSpaceRpc,
   WsServerUpdateSettingsRpc,
   WsPeerLinksListRpc,
+  WsPeerLinksNamesRpc,
   WsPeerLinksLinkRpc,
   WsPeerLinksUnlinkRpc,
   WsPeerLinksAnswerRequestRpc,

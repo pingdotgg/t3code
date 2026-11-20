@@ -66,6 +66,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverGetDatabaseStorage]: "server",
   [WS_METHODS.serverReclaimDatabaseSpace]: "server",
   [WS_METHODS.peerLinksList]: "peerLinks",
+  [WS_METHODS.peerLinksNames]: "peerLinks",
   [WS_METHODS.peerLinksLink]: "peerLinks",
   [WS_METHODS.peerLinksUnlink]: "peerLinks",
   [WS_METHODS.peerLinksAnswerRequest]: "peerLinks",

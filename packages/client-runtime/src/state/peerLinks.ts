@@ -1,8 +1,8 @@
-import { type PeerLinkSummary, WS_METHODS } from "@t3tools/contracts";
+import { type EnvironmentId, type PeerLinkSummary, WS_METHODS } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import { Atom } from "effect/reactivity";
+import { Atom, type AtomRegistry } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { createEnvironmentRpcCommand, createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
@@ -16,13 +16,24 @@ export function createPeerLinkEnvironmentAtoms<R, E>(
     // Listing probes every linked environment, so a list stays fresh briefly.
     staleTimeMs: 10_000,
   });
+  // Names only, for opening linked threads with thread read access; it probes nothing.
+  const names = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:peer-links:names",
+    tag: WS_METHODS.peerLinksNames,
+    staleTimeMs: 10_000,
+  });
+  const refreshLinks = (registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) =>
+    Effect.sync(() => {
+      registry.refresh(list({ environmentId, input: {} }));
+      registry.refresh(names({ environmentId, input: {} }));
+    });
   return {
     list,
+    names,
     link: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:peer-links:link",
       tag: WS_METHODS.peerLinksLink,
-      onSuccess: ({ environmentId }, registry) =>
-        Effect.sync(() => registry.refresh(list({ environmentId, input: {} }))),
+      onSuccess: ({ environmentId }, registry) => refreshLinks(registry, environmentId),
     }),
     // Leaves the list alone: a batch refreshes it once, when it ends (`runLinkBatch`).
     linkInBatch: createEnvironmentRpcCommand(runtime, {
@@ -32,8 +43,7 @@ export function createPeerLinkEnvironmentAtoms<R, E>(
     unlink: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:peer-links:unlink",
       tag: WS_METHODS.peerLinksUnlink,
-      onSuccess: ({ environmentId }, registry) =>
-        Effect.sync(() => registry.refresh(list({ environmentId, input: {} }))),
+      onSuccess: ({ environmentId }, registry) => refreshLinks(registry, environmentId),
     }),
     /** One page of a linked environment's thread. An open view calls it; nothing is cached. */
     readThread: createEnvironmentRpcCommand(runtime, {
@@ -49,8 +59,7 @@ export function createPeerLinkEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) =>
           JSON.stringify([environmentId, input.threadId, input.turnItemId]),
       },
-      onSuccess: ({ environmentId }, registry) =>
-        Effect.sync(() => registry.refresh(list({ environmentId, input: {} }))),
+      onSuccess: ({ environmentId }, registry) => refreshLinks(registry, environmentId),
     }),
   };
 }

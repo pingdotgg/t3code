@@ -42,6 +42,16 @@ export const PeerLinkSummary = Schema.Struct({
 });
 export type PeerLinkSummary = typeof PeerLinkSummary.Type;
 
+/**
+ * A link's name only, for a client that may read threads here but not manage access: enough to
+ * name and open a linked environment's threads, without its addresses, access or health.
+ */
+export const PeerLinkName = Schema.Struct({
+  environmentId: EnvironmentId,
+  label: Schema.String,
+});
+export type PeerLinkName = typeof PeerLinkName.Type;
+
 export const PeerLinkCreateInput = Schema.Struct({
   /** Where the peer answers: an https, Tailscale, LAN or loopback base URL. */
   url: TrimmedNonEmptyString,

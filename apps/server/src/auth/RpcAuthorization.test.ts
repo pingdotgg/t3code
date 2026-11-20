@@ -204,33 +204,36 @@ it.effect("allows issue reads but requires a source-control grant before comment
 
 it.effect("reads a linked environment's thread only for a client that may read threads here", () =>
   Effect.gen(function* () {
+    const linkedThreadTags = [WS_METHODS.peerLinksReadThread, WS_METHODS.peerLinksNames] as const;
     const group = WsRpcGroup.omit(
       ...[...WsRpcGroup.requests.keys()].filter(
         (
           tag,
-        ): tag is Exclude<
-          keyof typeof RPC_REQUIRED_SCOPES,
-          typeof WS_METHODS.peerLinksReadThread
-        > => tag !== WS_METHODS.peerLinksReadThread,
+        ): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof linkedThreadTags)[number]> =>
+          !(linkedThreadTags as ReadonlyArray<string>).includes(tag),
       ),
     );
     const read: string[] = [];
-    const handlers = group.toLayerHandler(WS_METHODS.peerLinksReadThread, ({ threadId }) =>
-      Effect.sync(() => {
-        read.push(threadId);
-        return {
-          label: "Box",
-          thread: { threadId, title: "There", status: "idle" as const, model: "gpt-5" },
-          items: [],
-          earlierPosition: null,
-          hasMore: false,
-        };
-      }),
-    );
     const input = {
       environmentId: EnvironmentId.make("environment-box"),
       threadId: ThreadId.make("thread:box"),
     };
+    const handlers = group.toLayer({
+      [WS_METHODS.peerLinksReadThread]: ({ threadId }) =>
+        Effect.sync(() => {
+          read.push(threadId);
+          return {
+            label: "Box",
+            thread: { threadId, title: "There", status: "idle" as const, model: "gpt-5" },
+            items: [],
+            earlierPosition: null,
+            hasMore: false,
+          };
+        }),
+      // A thread link resolves to the linked environment by its name.
+      [WS_METHODS.peerLinksNames]: () =>
+        Effect.succeed({ links: [{ environmentId: input.environmentId, label: "Box" }] }),
+    });
     // Managing links and writing settings here say nothing about reading threads.
     const outsider = yield* RpcTest.makeClient(group).pipe(
       Effect.provide(
@@ -245,12 +248,18 @@ it.effect("reads a linked environment's thread only for a client that may read t
       requiredPermission: AuthOrchestrationReadScope,
     });
     expect(read).toEqual([]);
+    expect(yield* outsider[WS_METHODS.peerLinksNames]({}).pipe(Effect.flip)).toMatchObject({
+      requiredPermission: AuthOrchestrationReadScope,
+    });
 
     const reader = yield* RpcTest.makeClient(group).pipe(
       Effect.provide(Layer.merge(handlers, RpcAuthorization.layer([AuthOrchestrationReadScope]))),
     );
     expect((yield* reader[WS_METHODS.peerLinksReadThread](input)).label).toBe("Box");
     expect(read).toEqual([input.threadId]);
+    expect((yield* reader[WS_METHODS.peerLinksNames]({})).links).toEqual([
+      { environmentId: input.environmentId, label: "Box" },
+    ]);
   }).pipe(Effect.scoped),
 );
 
