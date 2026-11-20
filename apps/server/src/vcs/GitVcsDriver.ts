@@ -487,6 +487,20 @@ const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 // one, so an unknown subject keeps its commit attributed.
 const REF_MOVE_REFLOG_SUBJECT =
   /^(?:$|(?:checkout|reset|branch|clone|fetch)\b|[^:]*\((?:start|finish|abort|reset)\): |(?:merge|pull|rebase|cherry-pick)\b[^()]*: fast-forward$)/i;
+
+function parseCheckpointReflogEntry(line: string) {
+  const [commit = "", selector = "", ...subject] = line.split(" ");
+  return {
+    commit,
+    fetched: selector.startsWith("refs/remotes/"),
+    subject: subject.join(" "),
+  };
+}
+
+function isLocalReflogCreation(entry: ReturnType<typeof parseCheckpointReflogEntry>) {
+  return !entry.fetched && !REF_MOVE_REFLOG_SUBJECT.test(entry.subject);
+}
+
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
   "-c",
   "core.fsmonitor=false",
@@ -611,6 +625,14 @@ const HEAD_MOVES_SCAN_LIMIT = 512;
 const HEAD_MARK_TRAILER = "T3-Head-Moved-At";
 const HEAD_MARK_TRAILER_PATTERN = new RegExp(`^${HEAD_MARK_TRAILER}: (\\d+) (\\d+)$`, "m");
 
+// Parses "git version 2.34.1" or "git version 2.45.1.windows.1".
+const gitSupportsRemergeDiff = (versionOutput: string): boolean => {
+  const match = /^git version (\d+)\.(\d+)/.exec(versionOutput);
+  if (match === null) return false;
+  const major = Number(match[1]);
+  return major > 2 || (major === 2 && Number(match[2]) >= 36);
+};
+
 export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -675,6 +697,23 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         ? { appendTruncationMarker: input.appendTruncationMarker }
         : {}),
     });
+
+  // --diff-merges=remerge needs Git 2.36.
+  let remergeDiffSupported: boolean | undefined;
+  const supportsRemergeDiff = Effect.fn("GitVcsDriver.supportsRemergeDiff")(function* (
+    cwd: string,
+  ) {
+    if (remergeDiffSupported === undefined) {
+      const version = yield* execute({
+        operation: "GitVcsDriver.version",
+        cwd,
+        args: ["version"],
+      }).pipe(Effect.option);
+      if (Option.isNone(version)) return false;
+      remergeDiffSupported = gitSupportsRemergeDiff(version.value.stdout);
+    }
+    return remergeDiffSupported;
+  });
 
   const detectRepository: VcsDriver.VcsDriver["Service"]["detectRepository"] = Effect.fn(
     "detectRepository",
@@ -1394,7 +1433,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             ? CheckpointUntrackedBlobs.NOTHING
             : yield* untrackedBlobs.reuse({ ...untracked, indexConfig });
 
-        const stageFiles = (exclusions: ReadonlyArray<string>) =>
+        const stageFiles = (exclusions: ReadonlyArray<string>, ignoreErrors = false) =>
           execute({
             operation,
             cwd: input.cwd,
@@ -1406,6 +1445,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               "-c",
               "core.safecrlf=false",
               "add",
+              // Unreadable files keep their indexed version and unreadable new files are left out.
+              ...(ignoreErrors ? ["--ignore-errors"] : []),
               ...(sparseCheckout ? ["--sparse"] : []),
               // add -A rejects ignored directories even when they contain tracked files.
               workspaceIgnored ? "-u" : "-A",
@@ -1414,7 +1455,14 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               ...exclusions,
             ],
             env: commitEnv,
-          });
+          }).pipe(
+            // With --ignore-errors, exit 1 only reports the files it skipped.
+            Effect.catchIf(
+              (error) =>
+                ignoreErrors && error._tag === "VcsProcessExitError" && error.exitCode === 1,
+              () => Effect.void,
+            ),
+          );
         const stagingAt = yield* Clock.currentTimeMillis;
         yield* stageFiles([]).pipe(
           Effect.catchTags({
@@ -1463,8 +1511,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                     exclusions.push(`:(exclude,literal)${entry}`);
                   }
                 }
-                if (exclusions.length === 0) return yield* error;
-                return yield* stageFiles(exclusions);
+                return yield* stageFiles(exclusions, true);
               }).pipe(
                 Effect.timeoutOrElse({
                   duration: CHECKPOINT_RECOVERY_TIMEOUT,
@@ -2117,13 +2164,14 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         return null;
       }
 
-      const listLines = (args: ReadonlyArray<string>, stdin?: string) =>
+      const listLines = (args: ReadonlyArray<string>, stdin?: string, timeoutMs?: number) =>
         execute({
           operation,
           cwd: input.cwd,
           // log.showSignature prints verification text into the output.
           args: ["-c", "log.showSignature=false", ...args],
           ...(stdin === undefined ? {} : { stdin }),
+          ...(timeoutMs === undefined ? {} : { timeoutMs }),
           maxOutputBytes: VcsDriver.CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
           outputMode: "error",
         }).pipe(Effect.map((result) => result.stdout.split("\n").filter((line) => line !== "")));
@@ -2158,14 +2206,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           "--all",
           `--since=@${capturedAt}`,
           "--format=%H %gD %gs",
-        ])).map((line) => {
-          const [commit = "", selector = "", ...subject] = line.split(" ");
-          return {
-            commit,
-            fetched: selector.startsWith("refs/remotes/"),
-            subject: subject.join(" "),
-          };
-        });
+        ])).map(parseCheckpointReflogEntry);
         // A push records commits this repository already had.
         const fetchedTips = new Set(
           entries
@@ -2175,9 +2216,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         if (fetchedTips.size === 0) return fetchedTips;
         // Fetching another branch can deliver a commit that was made here and pushed.
         const createdHere = new Set(
-          entries
-            .filter((entry) => !entry.fetched && !REF_MOVE_REFLOG_SUBJECT.test(entry.subject))
-            .map((entry) => entry.commit),
+          entries.filter(isLocalReflogCreation).map((entry) => entry.commit),
         );
         const fetched = yield* listLines(
           ["rev-list", `--since=@${capturedAt}`, "--stdin"],
@@ -2187,28 +2226,96 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       });
 
       // Remerge diffs retain merge conflict fixes while excluding clean upstream changes.
+      // Older Git gets dense combined diffs, which miss a conflict resolved to one side's
+      // version, so it also keeps every path more than one parent changed since the merge base.
+      const remerge = yield* supportsRemergeDiff(input.cwd);
+      const listMergeSharedPaths = (args: ReadonlyArray<string>, stdin?: string) =>
+        listLines(["rev-list", "--merges", "--parents", ...args], stdin).pipe(
+          Effect.flatMap((merges) =>
+            Effect.forEach(
+              merges,
+              Effect.fnUntraced(function* (merge) {
+                const parents = merge.split(" ").slice(1);
+                const [base] = yield* listLines(["merge-base", "--octopus", ...parents]).pipe(
+                  // Unrelated histories have no merge base; the combined diff still applies.
+                  Effect.orElseSucceed((): ReadonlyArray<string> => []),
+                );
+                if (base === undefined) return [];
+                const changed = yield* Effect.forEach(
+                  parents,
+                  (parent) => listPaths(["diff", base, parent]),
+                  { concurrency: "unbounded" },
+                );
+                const counts = new Map<string, number>();
+                for (const path of changed.flatMap((paths) => [...new Set(paths)])) {
+                  if (path === "") continue;
+                  counts.set(path, (counts.get(path) ?? 0) + 1);
+                }
+                return [...counts].flatMap(([path, count]) => (count > 1 ? [path] : []));
+              }),
+              { concurrency: 4 },
+            ),
+          ),
+          Effect.map((lists) => lists.flat()),
+        );
+      const listCommitPaths = (args: ReadonlyArray<string>, stdin?: string) =>
+        remerge
+          ? listPaths(["log", ...args, "--format=", "--diff-merges=remerge"], stdin)
+          : Effect.all(
+              [
+                listPaths(["log", ...args, "--format=", "--cc"], stdin),
+                listMergeSharedPaths(args, stdin),
+              ],
+              { concurrency: "unbounded" },
+            ).pipe(Effect.map((lists) => lists.flat()));
       const [recentCommits, ...pathLists] = yield* Effect.all(
         [
           listLines(["rev-list", `--since=@${capturedAt}`, `${startHead}..${endHead}`]),
           listPaths(["diff", startHead, `${turnStart}^{commit}`]),
           listPaths(["diff", endHead, `${input.toCheckpointRef}^{commit}`]),
-          listPaths(["log", "--format=", "--diff-merges=remerge", `${endHead}..${startHead}`]),
+          listCommitPaths([`${endHead}..${startHead}`]),
         ],
         { concurrency: "unbounded" },
       );
+      // Local creation evidence already overrides fetched history in the full scan.
+      const unprovenCommits = new Set(recentCommits);
+      if (recentCommits.length > 0 && recentCommits.length <= HEAD_MOVES_SCAN_LIMIT) {
+        yield* listLines(
+          [
+            "log",
+            "--walk-reflogs",
+            `--max-count=${HEAD_MOVES_SCAN_LIMIT}`,
+            "HEAD",
+            `--since=@${capturedAt}`,
+            "--format=%H %gD %gs",
+          ],
+          undefined,
+          1_000,
+        ).pipe(
+          Effect.map((lines) => {
+            for (const line of lines) {
+              const entry = parseCheckpointReflogEntry(line);
+              if (isLocalReflogCreation(entry)) unprovenCommits.delete(entry.commit);
+            }
+          }),
+          Effect.catch((error) =>
+            Effect.logDebug("local authorship probe failed; using full reflogs", {
+              operation,
+              errorTag: error._tag,
+            }),
+          ),
+        );
+      }
       // Without readable reflogs every recent commit stays attributed, as before.
       const importedCommits =
-        recentCommits.length === 0
+        unprovenCommits.size === 0
           ? new Set<string>()
           : yield* listImportedCommits.pipe(Effect.orElseSucceed(() => new Set<string>()));
       const ownCommits = recentCommits.filter((commit) => !importedCommits.has(commit));
       const ownCommitPaths =
         ownCommits.length === 0
           ? []
-          : yield* listPaths(
-              ["log", "--no-walk=unsorted", "--stdin", "--format=", "--diff-merges=remerge"],
-              `${ownCommits.join("\n")}\n`,
-            );
+          : yield* listCommitPaths(["--no-walk=unsorted", "--stdin"], `${ownCommits.join("\n")}\n`);
       return new Set([...pathLists.flat(), ...ownCommitPaths].filter((path) => path.length > 0));
     }),
 
