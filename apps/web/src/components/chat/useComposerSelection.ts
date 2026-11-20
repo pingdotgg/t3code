@@ -1,5 +1,6 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { UnifiedSettings } from "@t3tools/contracts";
+import { useMessages } from "gt-react";
 import type { Dispatch } from "react";
 import type { ComposerThreadTarget, DraftSessionState } from "../../composerDraftStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
@@ -18,8 +19,16 @@ import { type SetStateAction } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { toastManager } from "../ui/toast";
 import { resolveAppModelSelectionForInstance } from "../../modelSelection";
-import { resolveNewDraftStartFromOrigin } from "../../lib/chatThreadActions";
-import { type DraftThreadEnvMode, useComposerDraftStore } from "../../composerDraftStore";
+import {
+  draftModelSelectionApplies,
+  resolveNewDraftStartFromOrigin,
+  threadHasStarted,
+} from "../../lib/chatThreadActions";
+import {
+  type DraftThreadEnvMode,
+  isSameModel,
+  useComposerDraftStore,
+} from "../../composerDraftStore";
 import {
   getStartedThreadModelChangeBlockReason,
   deriveLockedProvider,
@@ -75,6 +84,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     setPendingServerThreadStartFromOriginByThreadId,
     scheduleComposerFocus,
   } = input;
+  const messages = useMessages();
   const navigate = useNavigate();
   const setStickyComposerModelSelection = useComposerDraftStore(
     (store) => store.setStickyModelSelection,
@@ -116,6 +126,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
           currentProviderInstanceId: runtimeProviderInstanceId,
         }
       : null,
+    messages,
   );
 
   const onProviderModelSelect = (
@@ -161,7 +172,10 @@ export function useComposerSelection(input: ComposerSelectionInput) {
       { preserveUnavailableSelection: true },
     );
     const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
-    const draft = useComposerDraftStore.getState().getComposerDraft(threadRef);
+    const storedDraft = useComposerDraftStore.getState().getComposerDraft(threadRef);
+    const draft = draftModelSelectionApplies(storedDraft, threadHasStarted(activeThread))
+      ? storedDraft
+      : null;
     const shownInstanceId =
       draft?.activeProvider ??
       activeRuntime?.providerInstanceId ??
@@ -181,9 +195,23 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     }
     const rememberedOptions =
       useComposerDraftStore.getState().stickyOptionsByModelByProvider[instanceId]?.[resolvedModel];
-    const nextModelSelection: ModelSelection =
+    const threadSelection = activeThread.modelSelection;
+    // This pick replaces the stored options, so the thread's own model carries them over.
+    const pickOptions =
       rememberedOptions !== undefined && rememberedOptions.length > 0
-        ? { instanceId, model: resolvedModel, options: [...rememberedOptions] }
+        ? rememberedOptions
+        : threadSelection.instanceId === instanceId &&
+            entry !== undefined &&
+            isSameModel(
+              { providers: providerStatuses, selectedProvider: entry.driver, settings },
+              threadSelection,
+              { instanceId, model: resolvedModel },
+            )
+          ? threadSelection.options
+          : undefined;
+    const nextModelSelection: ModelSelection =
+      pickOptions !== undefined && pickOptions.length > 0
+        ? { instanceId, model: resolvedModel, options: [...pickOptions] }
         : { instanceId, model: resolvedModel };
     const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
       hasStartedSession: activeRuntime !== null,
