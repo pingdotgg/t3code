@@ -33,6 +33,7 @@
     "check:changed": "node scripts/check-changed.ts",
     "report:renders": "node scripts/render-metrics.ts",
     "lint": "vp lint --report-unused-disable-directives",
+    "i18n:untranslated": "node scripts/i18n-untranslated.ts",
     "knip": "knip --preprocessor ./scripts/knip-schemas.ts",
     "knip:check": "vp run knip:check:all",
     "knip:check:files": "knip --include files,dependencies --no-config-hints",

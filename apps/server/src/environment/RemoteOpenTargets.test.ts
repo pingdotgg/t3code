@@ -34,7 +34,12 @@ const layerSpawner = (input: { readonly status: CommandResult; readonly prefs: C
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) => {
       const args = ChildProcess.isStandardCommand(command) ? command.args : [];
-      const result = args[0] === "debug" ? input.prefs : input.status;
+      const result =
+        args[0] === "debug"
+          ? input.prefs
+          : args[0] === "status"
+            ? input.status
+            : { exitCode: 1, stdout: "" };
       return Effect.succeed(
         ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(1),

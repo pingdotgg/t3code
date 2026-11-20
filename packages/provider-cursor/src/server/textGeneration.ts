@@ -2,7 +2,6 @@ import * as FileSystem from "effect/FileSystem";
 
 import type { AgentOptions, RunResult } from "@cursor/sdk";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import {
@@ -222,55 +221,59 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       }, Effect.scoped);
       // The SDK may reject sandboxing in create or lazily in send. Empty cwd and setting
       // sources isolate the unsandboxed retry from user projects.
-      const request = runPrompt(true).pipe(
-        Effect.catchIf(
-          (cause) => !evaluating && cursorSandboxUnsupported(cause),
-          () => runPrompt(false),
-        ),
+      const request = Effect.gen(function* () {
+        const promptResult = yield* runPrompt(true).pipe(
+          Effect.catchIf(
+            (cause) => !evaluating && cursorSandboxUnsupported(cause),
+            () => runPrompt(false),
+          ),
+        );
+        const rawResult = promptResult.result?.trim() ?? "";
+        if (promptResult.status !== "finished" || !rawResult) {
+          return yield* new TextGenerationError({
+            operation,
+            detail: cursorSdkResultDetail(promptResult),
+            ...(promptResult.status === "finished" ? { kind: "empty" as const } : {}),
+            ...(promptResult.error ? { cause: promptResult.error } : {}),
+          });
+        }
+
+        if (
+          evaluating &&
+          (promptResult.model?.id !== agentOptions.model.id ||
+            agentOptions.model.params?.some(
+              (requested) =>
+                !promptResult.model?.params?.some(
+                  (actual) => actual.id === requested.id && actual.value === requested.value,
+                ),
+            ))
+        ) {
+          return yield* new TextGenerationError({
+            operation,
+            detail: "Cursor did not confirm the selected model and options for evaluation.",
+          });
+        }
+
+        return yield* TextGenerationOperations.decodeJsonReply(input, "Cursor SDK", rawResult);
+      }).pipe(
+        Effect.retry({
+          times: 1,
+          while: (cause) =>
+            !evaluating && isTextGenerationError(cause) && Schema.isSchemaError(cause.cause),
+        }),
       );
-      const promptResult = yield* request.pipe(
-        Effect.timeoutOption(CURSOR_TIMEOUT_MS),
-        Effect.flatMap(
-          Option.match({
-            onNone: () =>
-              Effect.fail(
-                new TextGenerationError({
-                  operation,
-                  detail: "Cursor SDK request timed out.",
-                }),
-              ),
-            onSome: (value) => Effect.succeed(value),
-          }),
-        ),
+      return yield* request.pipe(
+        Effect.timeoutOrElse({
+          duration: CURSOR_TIMEOUT_MS,
+          orElse: () =>
+            Effect.fail(
+              new TextGenerationError({
+                operation,
+                detail: "Cursor SDK request timed out.",
+              }),
+            ),
+        }),
       );
-
-      const rawResult = promptResult.result?.trim() ?? "";
-      if (promptResult.status !== "finished" || !rawResult) {
-        return yield* new TextGenerationError({
-          operation,
-          detail: cursorSdkResultDetail(promptResult),
-          ...(promptResult.status === "finished" ? { kind: "empty" as const } : {}),
-          ...(promptResult.error ? { cause: promptResult.error } : {}),
-        });
-      }
-
-      if (
-        evaluating &&
-        (promptResult.model?.id !== agentOptions.model.id ||
-          agentOptions.model.params?.some(
-            (requested) =>
-              !promptResult.model?.params?.some(
-                (actual) => actual.id === requested.id && actual.value === requested.value,
-              ),
-          ))
-      ) {
-        return yield* new TextGenerationError({
-          operation,
-          detail: "Cursor did not confirm the selected model and options for evaluation.",
-        });
-      }
-
-      return yield* TextGenerationOperations.decodeJsonReply(input, "Cursor SDK", rawResult);
     },
     (effect, input) => {
       const { operation } = input;

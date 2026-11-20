@@ -25,8 +25,7 @@ export const PullRequestReadTarget = Schema.Struct({
 });
 export type PullRequestReadTarget = typeof PullRequestReadTarget.Type;
 
-const DEFAULT_TARGET =
-  "Omit for the PRs linked to this thread or its parent, else the open PR for this branch.";
+const DEFAULT_TARGET = "Default: links on this thread or its parent, else the open branch PR.";
 
 export const PullRequestStatusInput = Schema.Struct({
   pullRequests: Schema.optional(
@@ -44,7 +43,7 @@ export const PullRequestReadInput = Schema.Struct({
       .check(Schema.isMinLength(1), Schema.isMaxLength(1))
       .annotate({
         description:
-          "Exactly one PR per call. For several PRs, make separate calls. Omit to use this thread's, its parent's, or this branch's single PR; otherwise name one by url or repository and number.",
+          "One PR per call: URL or repository + number. Omit for the sole PR on this thread, its parent or this branch.",
       }),
   ),
 });

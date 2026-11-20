@@ -68,6 +68,10 @@ describe("materializeReplayTranscriptRuntimeInstructions", () => {
                   ? {
                       ...part,
                       text: part.text
+                        .replace(
+                          /<runtime_info>If asked: you're running (.+?)\. Embed media[^<]+<\/runtime_info>/u,
+                          "<runtime_info>In case you're asked: you are running $1. No need to mention this otherwise. Legacy file guidance.</runtime_info>",
+                        )
                         .replace(currentGuidancePattern, legacyGuidance)
                         .replace(
                           /\n\n<github_reads>[\s\S]*?<\/github_reads>/u,

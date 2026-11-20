@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import { offersLinkedEnvironments } from "@t3tools/client-runtime/link-request";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import {
@@ -25,6 +26,7 @@ export function LinkedEnvironmentsSection(props: {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
 }) {
+  const gt = useGT();
   const config = useEnvironmentServerConfig(props.environmentId);
   const canRead = useEnvironmentScope(props.environmentId, AuthAccessReadScope);
   const supported = canRead && offersLinkedEnvironments(config);
@@ -69,27 +71,32 @@ export function LinkedEnvironmentsSection(props: {
   const now = DateTime.makeUnsafe(nowMs);
   return (
     <View className="mt-5 gap-3">
-      <SettingsSection title={`Linked from ${props.environmentLabel}`}>
+      <SettingsSection
+        title={gt("Linked from {environment}", { environment: props.environmentLabel })}
+      >
         {links.error ? (
           <View className="gap-3 p-4">
             <Text accessibilityRole="alert" className="text-sm text-danger-foreground">
               {links.error}
             </Text>
-            <Button label="Retry linked environments" tone="text" onPress={links.refresh} />
+            <Button label={gt("Retry linked environments")} tone="text" onPress={links.refresh} />
           </View>
         ) : null}
         {links.data?.links.map((link) => {
           const health = peerLinkHealth(link, now);
           const status =
             health.kind === "expired"
-              ? "Expired. Link it again with a new pairing code."
+              ? gt("Expired. Link it again with a new pairing code.")
               : health.kind === "unreachable"
-                ? (health.detail ?? "Not answering right now.")
+                ? (health.detail ?? gt("Not answering right now."))
                 : health.kind === "failing"
                   ? health.detail
                   : health.expiresInDays !== null
-                    ? `Expires in ${health.expiresInDays} ${health.expiresInDays === 1 ? "day" : "days"}`
-                    : "Reachable";
+                    ? gt(
+                        "{count, plural, one {Expires in {count} day} other {Expires in {count} days}}",
+                        { count: health.expiresInDays },
+                      )
+                    : gt("Reachable");
           return (
             <View key={link.environmentId} className="gap-0.5 p-4">
               <Text className="text-base font-t3-bold text-foreground">{link.label}</Text>
@@ -116,6 +123,7 @@ function ForgetEnvironmentLink(props: {
   readonly environmentId: EnvironmentId;
   readonly link: PeerLinkSummary;
 }) {
+  const gt = useGT();
   const canUnlink = useAtomValue(peerLinkEnvironment.unlink.permissionAtom(props.environmentId));
   const unlink = useAtomCommand(peerLinkEnvironment.unlink, { reportFailure: false });
   const [busy, setBusy] = useState(false);
@@ -130,22 +138,25 @@ function ForgetEnvironmentLink(props: {
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       Dialog.alert(
-        "Could not forget the link",
+        gt("Could not forget the link"),
         error instanceof Error ? error.message : String(error),
       );
     }
   };
   return (
     <Button
-      label={busy ? "Forgetting…" : "Forget link"}
-      accessibilityLabel={`Forget link to ${props.link.label}`}
+      label={busy ? gt("Forgetting…") : gt("Forget link")}
+      accessibilityLabel={gt("Forget link to {environment}", { environment: props.link.label })}
       tone="text"
       disabled={busy}
       onPress={() =>
         Dialog.confirm({
-          title: `Forget ${props.link.label}?`,
-          message: `Agents here stop working there. Revoke "T3 Code · …" in ${props.link.label}'s Connections to end the session there too.`,
-          confirmText: "Forget",
+          title: gt("Forget {environment}?", { environment: props.link.label }),
+          message: gt(
+            'Agents here stop working there. Revoke "T3 Code · …" in {environment}’s Connections to end the session there too.',
+            { environment: props.link.label },
+          ),
+          confirmText: gt("Forget"),
           destructive: true,
           onConfirm: () => void forget(),
         })

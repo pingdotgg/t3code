@@ -1,3 +1,4 @@
+import { msg } from "gt-react-native";
 import {
   defaultInstanceIdForDriver,
   isManagedSettingPath,
@@ -8,6 +9,8 @@ import {
   type ProviderInstanceMutation,
   type ServerSettings,
 } from "@t3tools/contracts";
+
+import { m } from "../../i18n/messages";
 
 export const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
 export const DEFAULT_CLAUDE_INSTANCE_ID = defaultInstanceIdForDriver(CLAUDE_DRIVER);
@@ -37,7 +40,9 @@ export function planClaudeAccountSave(input: {
   const configDir = input.draft.configDir.trim();
   const instanceId = input.instanceId;
   if (input.policy && isManagedSettingPath(input.policy, `providerInstances.${instanceId}`)) {
-    return { error: `Managed by ${input.policy.organization}.` };
+    return {
+      error: m(msg("Managed by {organization}.", { organization: input.policy.organization })),
+    };
   }
   const current: ProviderInstanceConfig = Object.hasOwn(input.providerInstances, instanceId)
     ? input.providerInstances[instanceId]!

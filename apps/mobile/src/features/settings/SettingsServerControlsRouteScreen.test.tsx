@@ -43,7 +43,7 @@ vi.mock("@effect/atom-react", () => ({
 }));
 vi.mock("../../state/preferences", () => ({
   mobilePreferencesAtom: {},
-  updateMobilePreferencesAtom: {},
+  saveMobilePreferences: {},
 }));
 vi.mock("./ModelEvaluationSettings", () => ({ ModelEvaluationSettings: () => null }));
 vi.mock("./SkillsLibrarySettings", () => ({ SkillsLibrarySettings: () => null }));

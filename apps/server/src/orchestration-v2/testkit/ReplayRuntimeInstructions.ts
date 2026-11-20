@@ -2,6 +2,25 @@ import type { ProviderDriverKind, ProviderReplayTranscript } from "@t3tools/cont
 
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 
+function refreshRecordedNotes(text: string, sharedGuidance: string): string {
+  return text.replace(
+    /^(<runtime_info>[\s\S]*?<\/runtime_info>)\n\n<pull_request_linking>[\s\S]*?<\/pull_request_linking>(?:\n\n<github_reads>[\s\S]*?<\/github_reads>)?/u,
+    (_block, header: string) => {
+      const legacy =
+        /^<runtime_info>In case you're asked: you are running in T3 Code through the (.+?) harness(?:, as (.+?))?(?: with (.+?) reasoning effort)?\. No need to mention this otherwise\./u.exec(
+          header,
+        );
+      return legacy?.[1] !== undefined
+        ? buildRuntimeInstructions({
+            harness: legacy[1],
+            model: legacy[2],
+            reasoningEffort: legacy[3],
+          })
+        : `${header}\n\n${sharedGuidance}`;
+    },
+  );
+}
+
 export function materializeReplayTranscriptRuntimeInstructions(
   transcript: ProviderReplayTranscript,
   runtime: { readonly driver: ProviderDriverKind; readonly model: string },
@@ -146,10 +165,7 @@ export function materializeReplayTranscriptRuntimeInstructions(
           return entry;
         }
         // Keep each turn's recorded model, effort, and user input as protocol assertions.
-        const text = firstPart.text.replace(
-          /^(<runtime_info>[\s\S]*?<\/runtime_info>\n\n)<pull_request_linking>[\s\S]*?<\/pull_request_linking>(?:\n\n<github_reads>[\s\S]*?<\/github_reads>)?/u,
-          (_match, header: string) => `${header}${sharedRuntimeInstructions}`,
-        );
+        const text = refreshRecordedNotes(firstPart.text, sharedRuntimeInstructions);
         return text === firstPart.text
           ? entry
           : {
@@ -236,7 +252,8 @@ export function materializeReplayTranscriptRuntimeInstructions(
           };
           return entry;
         }
-        const lastText = promptPartText(prompt.at(-1));
+        const lastPart = prompt.at(-1);
+        const lastText = promptPartText(lastPart);
         const expected = notesFor(promptSessionId);
         // A recording that switched models mid-thread already carries the
         // instructions for the model each prompt ran on.
@@ -253,12 +270,26 @@ export function materializeReplayTranscriptRuntimeInstructions(
           compact: false,
           compactionsAtSend: compactionCounts.get(promptSessionId) ?? 0,
         };
-        if (!resend) return entry;
+        let updatedPrompt;
+        if (resend) {
+          updatedPrompt = [...prompt, { type: "text", text: expected }];
+        } else if (
+          recordedNotes !== undefined &&
+          prompt.length > 1 &&
+          isRecord(lastPart) &&
+          sharedRuntimeInstructions !== undefined
+        ) {
+          const text = refreshRecordedNotes(recordedNotes, sharedRuntimeInstructions);
+          if (text === recordedNotes) return entry;
+          updatedPrompt = [...prompt.slice(0, -1), { ...lastPart, text }];
+        } else {
+          return entry;
+        }
         return {
           ...entry,
           frame: {
             ...frame,
-            params: { ...frame.params, prompt: [...prompt, { type: "text", text: expected }] },
+            params: { ...frame.params, prompt: updatedPrompt },
           },
         };
       }

@@ -15,10 +15,12 @@ import {
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Equal from "effect/Equal";
+import { T, msg, useGT } from "gt-react";
 import { useState } from "react";
 
 import { requestConfirmDialog } from "../../confirmDialog";
 import { mergeEnvironmentSettings } from "../../hooks/useSettings";
+import { m } from "../../i18n/messages";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import { useProjects } from "../../state/entities";
 import { useEnvironmentProviders } from "../../state/environments";
@@ -35,7 +37,7 @@ import { toastManager } from "../ui/toast";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SETTINGS_PICKER_TRIGGER_CLASSNAME, SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import {
   useScopedSettings,
@@ -44,6 +46,8 @@ import {
 } from "./useScopedSettings";
 
 export function ModelEvaluationSettings() {
+  const gt = useGT();
+  const setting = useSearchableSetting();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const { environment, connectedEnvironments, targets } = useSettingsScope();
@@ -119,22 +123,28 @@ export function ModelEvaluationSettings() {
       : [target.label];
   });
   return (
-    <SettingsSection id="model-evaluations" title="Model evaluations">
+    <SettingsSection id="model-evaluations" title={gt("Model evaluations")}>
       <SettingsRow
         serverScoped
         settingKeys={["enableModelEvaluations"]}
-        {...searchableSetting("blind-model-evaluations")}
+        {...setting("blind-model-evaluations")}
         description={
           <>
-            Score completed tasks with an extra model call to build guidance. Labels are removed
-            before judging.
+            <T>
+              Score completed tasks with an extra model call to build guidance. Labels are removed
+              before judging.
+            </T>
             {unavailableEnvironments.length > 0 ? (
               <span className="mt-1 block text-warning">
-                Choose an available judge on {unavailableEnvironments.join(", ")} first.
+                {gt("Choose an available judge on {environments} first.", {
+                  environments: unavailableEnvironments.join(", "),
+                })}
               </span>
             ) : null}
             {!supported ? (
-              <span className="mt-1 block">Connect or update the selected environments.</span>
+              <span className="mt-1 block">
+                <T>Connect or update the selected environments.</T>
+              </span>
             ) : null}
           </>
         }
@@ -152,7 +162,7 @@ export function ModelEvaluationSettings() {
                 if (!checked || unavailableEnvironments.length === 0)
                   updateSettings({ enableModelEvaluations: checked });
               }}
-              aria-label="Blind model evaluations"
+              aria-label={gt("Blind model evaluations")}
             />
             {mixedEnabled && unavailableEnvironments.length > 0 && supported ? (
               <Button
@@ -160,7 +170,7 @@ export function ModelEvaluationSettings() {
                 variant="outline"
                 onClick={() => updateSettings({ enableModelEvaluations: false })}
               >
-                Turn off for all
+                <T>Turn off for all</T>
               </Button>
             ) : null}
           </div>
@@ -170,10 +180,10 @@ export function ModelEvaluationSettings() {
         serverScoped
         settingKeys={["modelEvaluationModelSelection"]}
         mixed={mixedJudge}
-        {...searchableSetting("model-evaluation-judge")}
+        {...setting("model-evaluation-judge")}
         description={
           <>
-            Choose a judge, or use this environment's text generation model.
+            {gt("Choose a judge, or use this environment's text generation model.")}
             {!mixedJudge && selectionIssue ? (
               <span className="mt-1 block text-warning">{selectionIssue}</span>
             ) : null}
@@ -194,9 +204,9 @@ export function ModelEvaluationSettings() {
               }
               getModelDisabledReason={disabledReason}
               triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-              triggerAriaLabel="Judge model"
+              triggerAriaLabel={gt("Judge model")}
               {...(mixedJudge
-                ? { triggerLabel: "Mixed" }
+                ? { triggerLabel: gt("Mixed") }
                 : selectionIssue
                   ? { triggerLabel: selection.model }
                   : {})}
@@ -236,7 +246,7 @@ export function ModelEvaluationSettings() {
                 disabled={!supported}
                 onClick={() => updateSettings({ modelEvaluationModelSelection: null })}
               >
-                Use default
+                <T>Use default</T>
               </Button>
             ) : null}
           </div>
@@ -257,6 +267,7 @@ function ProjectEvaluationBrowser(props: {
   environmentId: EnvironmentId;
   environmentLabel: string;
 }) {
+  const gt = useGT();
   const { targets, scope } = useSettingsScope();
   const projectScoped = scope.kind === "project" || scope.kind === "checkout";
   const scopedIds = new Set(
@@ -277,7 +288,9 @@ function ProjectEvaluationBrowser(props: {
   return (
     <div className="space-y-3 px-4 py-4 sm:px-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-sm font-medium">Learned guidance · {props.environmentLabel}</h3>
+        <h3 className="text-sm font-medium">
+          {gt("Learned guidance · {environment}", { environment: props.environmentLabel })}
+        </h3>
         <Select<ProjectId>
           value={project?.id ?? null}
           onValueChange={setChosenProjectId}
@@ -286,9 +299,11 @@ function ProjectEvaluationBrowser(props: {
           <SelectTrigger
             size="sm"
             className="w-full sm:w-64"
-            aria-label={`Evaluation project on ${props.environmentLabel}`}
+            aria-label={gt("Evaluation project on {environment}", {
+              environment: props.environmentLabel,
+            })}
           >
-            <SelectValue>{project?.title ?? "Choose a project"}</SelectValue>
+            <SelectValue>{project?.title ?? gt("Choose a project")}</SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
             {projects.map((item) => (
@@ -308,7 +323,7 @@ function ProjectEvaluationBrowser(props: {
         />
       ) : (
         <p className="text-xs text-muted-foreground">
-          Choose a project to view its evaluations and guidance.
+          <T>Choose a project to view its evaluations and guidance.</T>
         </p>
       )}
     </div>
@@ -320,6 +335,7 @@ function ProjectEvaluationReport(props: {
   projectId: ProjectId;
   projectTitle: string;
 }) {
+  const gt = useGT();
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
   const query = useEnvironmentQuery(
     modelEvaluations.list({
@@ -331,7 +347,12 @@ function ProjectEvaluationReport(props: {
   const clear = useAtomCommand(modelEvaluations.clear, { reportFailure: false });
   const [clearing, setClearing] = useState(false);
   const clearHistory = async () => {
-    const message = `Clear model evaluations for ${props.projectTitle}?\nThis deletes this project's saved scores and learned guidance.`;
+    const message = m(
+      msg(
+        "Clear model evaluations for {project}?\nThis deletes this project's saved scores and learned guidance.",
+      ),
+      { project: props.projectTitle },
+    );
     const confirmed =
       (await requestConfirmDialog(message, { variant: "destructive" })) ?? window.confirm(message);
     if (!confirmed) return;
@@ -344,7 +365,7 @@ function ProjectEvaluationReport(props: {
     if (result._tag === "Failure")
       toastManager.add({
         type: "error",
-        title: "Could not clear evaluations",
+        title: m(msg("Could not clear evaluations")),
         description: String(squashAtomCommandFailure(result)),
       });
   };
@@ -357,7 +378,7 @@ function ProjectEvaluationReport(props: {
           disabled={query.isPending || clearing}
           onClick={query.refresh}
         >
-          Refresh
+          <T>Refresh</T>
         </Button>
         <Button
           size="sm"
@@ -365,7 +386,7 @@ function ProjectEvaluationReport(props: {
           disabled={!canClear || clearing || query.isPending || !query.data?.records.length}
           onClick={() => void clearHistory()}
         >
-          {clearing ? "Clearing…" : "Clear project history"}
+          {clearing ? gt("Clearing…") : gt("Clear project history")}
         </Button>
       </div>
       {query.error ? (
@@ -374,19 +395,26 @@ function ProjectEvaluationReport(props: {
         </p>
       ) : null}
       {query.isPending || clearing ? (
-        <p className="text-sm text-muted-foreground">Loading evaluations…</p>
+        <p className="text-sm text-muted-foreground">
+          <T>Loading evaluations…</T>
+        </p>
       ) : query.data && !query.error ? (
         <>
           <p className="text-xs text-muted-foreground">
-            Up to {query.data.windowLimit} evaluations from the past 90 days. Scores use 0–4;
-            unknown dimensions stay unscored. Small samples and judge opinions are advisory.
-            {config?.settings.enableModelEvaluations === false
-              ? " Evaluations are off; saved history is still available."
-              : ""}
+            {gt(
+              "Up to {limit} evaluations from the past 90 days. Scores use 0–4; unknown dimensions stay unscored. Small samples and judge opinions are advisory.",
+              { limit: query.data.windowLimit },
+            )}
+            {config?.settings.enableModelEvaluations === false ? (
+              <>
+                {" "}
+                <T>Evaluations are off; saved history is still available.</T>
+              </>
+            ) : null}
           </p>
           {query.data.records.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              No evaluations yet. Complete a task with evaluations enabled to collect scores.
+              <T>No evaluations yet. Complete a task with evaluations enabled to collect scores.</T>
             </p>
           ) : null}
           {query.data.guidance.map((guidance) => (
@@ -395,7 +423,7 @@ function ProjectEvaluationReport(props: {
           {query.data.records.length > 0 ? (
             <details className="rounded-md border p-3 text-sm">
               <summary className="cursor-pointer font-medium">
-                Recent evaluations ({query.data.records.length})
+                {gt("Recent evaluations ({count})", { count: query.data.records.length })}
               </summary>
               <ol className="mt-3 space-y-3">
                 {query.data.records.map((record) => (
@@ -411,8 +439,10 @@ function ProjectEvaluationReport(props: {
                       {new Date(record.at).toLocaleString()}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      Judge: {modelEvaluationSelectionLabel(record.evaluatorSelection)} ·{" "}
-                      {record.rubricVersion}
+                      {gt("Judge: {model} · {rubric}", {
+                        model: modelEvaluationSelectionLabel(record.evaluatorSelection),
+                        rubric: record.rubricVersion,
+                      })}
                     </p>
                     {record.verdict ? (
                       <p className="text-xs">{record.verdict.rationale.text}</p>
@@ -430,19 +460,25 @@ function ProjectEvaluationReport(props: {
 }
 
 function GuidanceCard({ guidance }: { guidance: ModelEvaluationGuidance }) {
+  const gt = useGT();
   return (
     <details className="rounded-md border p-3 text-sm">
       <summary className="cursor-pointer break-words font-medium">
         {modelEvaluationSelectionLabel(guidance.modelSelection)} · {guidance.taskCategory} ·{" "}
         {guidance.scope}
         <span className="ml-2 font-normal text-muted-foreground">
-          {guidance.sampleCount} scored · {guidance.confidence}
+          {gt("{count} scored · {confidence}", {
+            count: guidance.sampleCount,
+            confidence: guidance.confidence,
+          })}
         </span>
       </summary>
       <div className="mt-3 space-y-3">
         <p className="text-xs text-muted-foreground">
-          Judge: {modelEvaluationSelectionLabel(guidance.evaluatorSelection)} ·{" "}
-          {guidance.rubricVersion}
+          {gt("Judge: {model} · {rubric}", {
+            model: modelEvaluationSelectionLabel(guidance.evaluatorSelection),
+            rubric: guidance.rubricVersion,
+          })}
         </p>
         <dl className="grid grid-cols-2 gap-3">
           {modelEvaluationScoreRows(guidance).map((score) => (
@@ -450,25 +486,36 @@ function GuidanceCard({ guidance }: { guidance: ModelEvaluationGuidance }) {
               <dt className="text-xs text-muted-foreground">{score.label}</dt>
               <dd>
                 {score.value}{" "}
-                <span className="text-xs text-muted-foreground">({score.count} scored)</span>
+                <span className="text-xs text-muted-foreground">
+                  {gt("({count} scored)", { count: score.count })}
+                </span>
               </dd>
             </div>
           ))}
         </dl>
         <p className="text-xs text-muted-foreground">
-          {guidance.insufficientEvidenceCount} observations lacked sufficient evidence.
+          {gt(
+            "{count, plural, one {{count} observation lacked sufficient evidence.} other {{count} observations lacked sufficient evidence.}}",
+            {
+              count: guidance.insufficientEvidenceCount,
+            },
+          )}
         </p>
         {guidance.sampleCount > 0 ? (
           <p className="text-xs text-muted-foreground">
-            Observed prompt lengths: {guidance.promptChars.min.toLocaleString()}–
-            {guidance.promptChars.max.toLocaleString()} characters (median{" "}
-            {Math.round(guidance.promptChars.median).toLocaleString()}); this is not a
-            context-window limit.
+            {gt(
+              "Observed prompt lengths: {min}–{max} characters (median {median}); this is not a context-window limit.",
+              {
+                min: guidance.promptChars.min.toLocaleString(),
+                max: guidance.promptChars.max.toLocaleString(),
+                median: Math.round(guidance.promptChars.median).toLocaleString(),
+              },
+            )}
           </p>
         ) : null}
-        <ObservationList title="Observed strengths" items={guidance.strengths} />
-        <ObservationList title="Observed limitations" items={guidance.weaknesses} />
-        <ObservationList title="Prompting guidance" items={guidance.promptAdvice} />
+        <ObservationList title={gt("Observed strengths")} items={guidance.strengths} />
+        <ObservationList title={gt("Observed limitations")} items={guidance.weaknesses} />
+        <ObservationList title={gt("Prompting guidance")} items={guidance.promptAdvice} />
       </div>
     </details>
   );

@@ -37,7 +37,6 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
@@ -164,7 +163,7 @@ function fakeAdapter(
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (sessionInput) =>
       Effect.gen(function* () {
-        const events = yield* PubSub.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const now = yield* DateTime.now;
         const providerSession: OrchestrationV2ProviderSession = {
           id: sessionInput.providerSessionId,
@@ -183,7 +182,7 @@ function fakeAdapter(
           driver,
           providerSessionId: sessionInput.providerSessionId,
           providerSession,
-          events: Stream.fromPubSub(events),
+          events: Stream.fromQueue(events),
           ensureThread: (threadInput) =>
             Effect.gen(function* () {
               const createdAt = yield* DateTime.now;
@@ -293,9 +292,9 @@ function fakeAdapter(
               });
               const reply = replies ?? `Reply ${runOrdinal} from ${threadId}`;
               const body = Effect.gen(function* () {
-                yield* PubSub.publish(events, providerTurn("running", startedAt));
+                yield* Queue.offer(events, providerTurn("running", startedAt));
                 if (hold?.stream !== undefined) {
-                  yield* PubSub.publish(events, item(hold.stream, startedAt, true));
+                  yield* Queue.offer(events, item(hold.stream, startedAt, true));
                 }
                 if (hold !== undefined) {
                   yield* Deferred.succeed(hold.started, undefined);
@@ -304,8 +303,8 @@ function fakeAdapter(
                   hold === undefined ? "completed" : yield* Deferred.await(hold.release);
                 const at = yield* DateTime.now;
                 if (failing) {
-                  yield* PubSub.publish(events, providerTurn("failed", at));
-                  yield* PubSub.publish(events, {
+                  yield* Queue.offer(events, providerTurn("failed", at));
+                  yield* Queue.offer(events, {
                     type: "turn.terminal",
                     driver,
                     providerThreadId: turnInput.providerThread.id,
@@ -324,12 +323,12 @@ function fakeAdapter(
                   return;
                 }
                 if (outcome === "completed") {
-                  yield* PubSub.publish(events, item(reply, at, false));
+                  yield* Queue.offer(events, item(reply, at, false));
                 } else if (hold?.stream !== undefined) {
-                  yield* PubSub.publish(events, item(hold.stream, at, false));
+                  yield* Queue.offer(events, item(hold.stream, at, false));
                 }
-                yield* PubSub.publish(events, providerTurn(outcome, at));
-                yield* PubSub.publish(events, {
+                yield* Queue.offer(events, providerTurn(outcome, at));
+                yield* Queue.offer(events, {
                   type: "turn.terminal",
                   driver,
                   providerThreadId: turnInput.providerThread.id,

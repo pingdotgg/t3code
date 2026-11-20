@@ -242,6 +242,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
     it.effect.each([
       { name: "a renewal for the same key", renewal: {}, closesAtMinute: 119 },
       {
+        name: "a renewal for the same key, on a media ticket",
+        renewal: {},
+        closesAtMinute: 119,
+        ticket: "media",
+      },
+      {
         name: "a renewal for another key",
         renewal: { proofKeyThumbprint: "other-proof-key" },
         closesAtMinute: 60,
@@ -268,8 +274,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         const sessions = yield* SessionStore.SessionStore;
         const client = yield* sessions.issue(relaySessionInput);
         const invalidated = yield* Deferred.make<void>();
+        // Media tickets carry no proof key, so their routes wait without one.
+        const watched =
+          "ticket" in testCase
+            ? yield* sessions.verifyWebSocketToken(
+                (yield* sessions.issueWebSocketToken(client.sessionId, { audience: "media" }))
+                  .token,
+              )
+            : {
+                sessionId: client.sessionId,
+                proofKeyThumbprint: relaySessionInput.proofKeyThumbprint,
+              };
         const watcher = yield* sessions
-          .awaitInvalidation(client.sessionId, relaySessionInput.proofKeyThumbprint)
+          .awaitInvalidation(watched.sessionId, watched.proofKeyThumbprint)
           .pipe(
             Effect.andThen(Deferred.succeed(invalidated, undefined)),
             Effect.forkScoped({ startImmediately: true }),
@@ -307,6 +324,31 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         yield* Fiber.join(watcher);
         const socket = yield* Effect.flip(sessions.verifyWebSocketToken(ticket.token));
         expect(socket._tag).toBe("WebSocketSessionRevokedError");
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
+    );
+
+    it.effect("keeps a socket on a session renewed in place until its moved deadline", () =>
+      Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        const renewable = { ttl: Duration.hours(1), renewalWindow: Duration.hours(2) };
+        const client = yield* sessions.issue({ ...relaySessionInput, ...renewable });
+        const invalidated = yield* Deferred.make<void>();
+        const watcher = yield* sessions
+          .awaitInvalidation(client.sessionId, relaySessionInput.proofKeyThumbprint)
+          .pipe(
+            Effect.andThen(Deferred.succeed(invalidated, undefined)),
+            Effect.forkScoped({ startImmediately: true }),
+          );
+        yield* TestClock.adjust(Duration.minutes(90));
+        yield* sessions.renew(client.token, {
+          proofKeyThumbprint: relaySessionInput.proofKeyThumbprint,
+          consumeProof: Effect.void,
+          ...renewable,
+        });
+        yield* TestClock.adjust(Duration.millis(120 * 60_000 - 1));
+        expect(yield* Deferred.isDone(invalidated)).toBe(false);
+        yield* TestClock.adjust(Duration.millis(1));
+        yield* Fiber.join(watcher);
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
     );
 

@@ -10,7 +10,15 @@ import { isProviderSkillUserInvocable } from "@t3tools/client-runtime/providerSk
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { videoMimeType } from "@t3tools/shared/video";
+import { msg } from "gt-react-native";
+import { m } from "../i18n/messages";
 import {
+  assistantCitationLabel,
+  collectAssistantCitations,
+  expandAssistantCitationsForProvider,
+} from "@t3tools/shared/assistantCitations";
+import {
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   COMPOSER_CONTEXT_MAX_RECORDS,
   COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS,
   ComposerContextId,
@@ -40,15 +48,26 @@ import {
 const isMessageContext = Schema.is(OrchestrationMessageContext);
 const decodeMessageContext = Schema.decodeUnknownOption(OrchestrationMessageContext);
 
+export function assistantCitationDraftWithinLimit(text: string): boolean {
+  return (
+    text.length <= PROVIDER_SEND_TURN_MAX_INPUT_CHARS &&
+    expandAssistantCitationsForProvider(text).length <= PROVIDER_SEND_TURN_MAX_INPUT_CHARS
+  );
+}
+
 export function composerContextSendBlockReason(
   context?: OrchestrationMessageContext,
 ): string | null {
   if (!context) return null;
   if (context.records.length > COMPOSER_CONTEXT_MAX_RECORDS) {
-    return `Remove context items until there are at most ${COMPOSER_CONTEXT_MAX_RECORDS}.`;
+    return m(
+      msg("Remove context items until there are at most {max}.", {
+        max: COMPOSER_CONTEXT_MAX_RECORDS,
+      }),
+    );
   }
   return !isMessageContext(context) || decodeMessageContext(context)._tag === "None"
-    ? "This draft has too much context to send. Remove some context items and try again."
+    ? m(msg("This draft has too much context to send. Remove some context items and try again."))
     : null;
 }
 
@@ -146,6 +165,7 @@ export function pullRequestComposerContext(
       ? sanitizeComposerContextLabel(path.split("/").at(-1) ?? path, "file")
       : `#${metadata.number}`,
     sectionId: `pull-request:${metadata.number}`,
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- context record sent to the agent
     sectionTitle: `PR #${metadata.number}`,
     filePath: path || `PR #${metadata.number}`,
     startIndex: 0,
@@ -199,12 +219,14 @@ export function composerContextEditorTokens(
   group: ThreadGroup | null | undefined = null,
 ) {
   const references = collectComposerContextReferences(text);
+  const citations = collectAssistantCitations(text);
   const math = composerMathRanges(text);
   const overlaps = (start: number, end: number, range: { start: number; end: number }) =>
     start < range.end && end > range.start;
   const groupMentions = groupMentionOccurrences(text, group, { seatedOnly: true }).filter(
     (mention) =>
       !references.some((ref) => overlaps(mention.start, mention.end, ref)) &&
+      !citations.some((ref) => overlaps(mention.start, mention.end, ref)) &&
       !math.some((range) => overlaps(mention.start, mention.end, range)),
   );
   const inlineTokens = tokens.filter(
@@ -212,9 +234,10 @@ export function composerContextEditorTokens(
       // `$HOME` and other `$name` text that is not one of the provider's skills stays prose.
       (token.type !== "skill" || knownSkills.has(token.value)) &&
       !groupMentions.some((mention) => overlaps(token.start, token.end, mention)) &&
-      !references.some((ref) => overlaps(token.start, token.end, ref)),
+      !references.some((ref) => overlaps(token.start, token.end, ref)) &&
+      !citations.some((ref) => overlaps(token.start, token.end, ref)),
   );
-  const taken = [...inlineTokens, ...references, ...math, ...groupMentions];
+  const taken = [...inlineTokens, ...references, ...citations, ...math, ...groupMentions];
   const models = modelTokens.filter(
     (mention) => !taken.some((range) => overlaps(mention.start, mention.end, range)),
   );
@@ -237,6 +260,11 @@ export function composerContextEditorTokens(
       type: "model" as const,
       value: mention.model,
       ...mention,
+    })),
+    ...citations.map((ref) => ({
+      type: "citation" as const,
+      value: assistantCitationLabel(ref.citation),
+      ...ref,
     })),
   ].sort((a, b) => a.start - b.start);
 }

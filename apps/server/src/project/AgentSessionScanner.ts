@@ -3,12 +3,12 @@ import {
   TranscriptRecord,
   conversationItem,
   activePiBranch,
+  claudeVisibleText,
   emptyClaudeFields,
   extractText,
   foldClaudeFields,
   isHiddenClaudeRecord,
   isPiConversationRecord,
-  isTextContentBlock,
   type ClaudeFields,
   type DecodedTranscriptRecord,
 } from "./agentTranscripts.ts";
@@ -385,6 +385,9 @@ function parseAgentSessionRecords(
       : (claudeFields.title ?? null);
   let model = claudeFields.model ?? null;
   let derivedTitle: string | undefined;
+  // Names a session whose only request was a bare command, such as `/review`.
+  let bareCommandTitle: string | undefined;
+  let hasAssistantMessage = false;
   let hasCodexSessionId = false;
   const messages: Array<AgentSessionThreadMessage & { readonly codexResponseUser: boolean }> = [];
   let firstUserMessage:
@@ -446,13 +449,16 @@ function parseAgentSessionRecords(
   let conversationMessageCount = 0;
   const retainMessage = (
     message: AgentSessionThreadMessage & { readonly codexResponseUser: boolean },
+    titleText = message.text,
   ) => {
     if (firstUserMessage === undefined && message.role === "user") {
       firstUserMessage = message;
     }
     if (derivedTitle === undefined && message.role === "user") {
-      derivedTitle = deriveTitle(input.source, message.text);
+      derivedTitle = deriveTitle(input.source, titleText);
+      bareCommandTitle ??= deriveTitle(input.source, message.text);
     }
+    hasAssistantMessage ||= message.role === "assistant";
     conversationMessageCount += 1;
     messages.push(message);
     if (messages.length > MAX_IMPORTED_MESSAGES) messages.shift();
@@ -477,7 +483,7 @@ function parseAgentSessionRecords(
   let recordIndex = -1;
   for (const record of input.source === "pi" ? activePiBranch(records) : records) {
     recordIndex += 1;
-    if (input.source === "pi" || input.source === "claudeAgent") {
+    if (input.source === "pi") {
       const item = conversationItem(record, input.source);
       if (item === null) continue;
       retainMessage({
@@ -486,6 +492,22 @@ function parseAgentSessionRecords(
         createdAt: normalizeTimestamp(record.timestamp, fallbackTimestamp),
         codexResponseUser: false,
       });
+      continue;
+    }
+    if (input.source === "claudeAgent") {
+      if (isHiddenClaudeRecord(record)) continue;
+      if (record.type !== "user" && record.type !== "assistant") continue;
+      const { text, titleText } = claudeVisibleText(record);
+      if (text.length === 0) continue;
+      retainMessage(
+        {
+          role: record.type,
+          text,
+          createdAt: normalizeTimestamp(record.timestamp, fallbackTimestamp),
+          codexResponseUser: false,
+        },
+        titleText,
+      );
       continue;
     }
 
@@ -551,7 +573,14 @@ function parseAgentSessionRecords(
   const visibleMessages = messages.map(
     ({ codexResponseUser: _codexResponseUser, ...message }) => message,
   );
-  if (providerSessionId.trim().length === 0 || firstUserMessage === undefined) return null;
+  if (
+    providerSessionId.trim().length === 0 ||
+    firstUserMessage === undefined ||
+    // A Claude session of bare commands such as `/clear` that no reply followed did nothing.
+    (input.source === "claudeAgent" && derivedTitle === undefined && !hasAssistantMessage)
+  ) {
+    return null;
+  }
   const firstUserMessageRetained = messages.includes(firstUserMessage);
   const { codexResponseUser: _codexResponseUser, ...visibleFirstUserMessage } = firstUserMessage;
   const retainedMessages = firstUserMessageRetained
@@ -562,7 +591,8 @@ function parseAgentSessionRecords(
     source: input.source,
     providerInstanceId: input.providerInstanceId,
     providerSessionId,
-    title: claudeFields.customTitle ?? title ?? derivedTitle ?? "Imported thread",
+    title:
+      claudeFields.customTitle ?? title ?? derivedTitle ?? bareCommandTitle ?? "Imported thread",
     model,
     createdAt: retainedMessages[0]?.createdAt ?? fallbackTimestamp,
     updatedAt: fallbackTimestamp,
@@ -586,12 +616,8 @@ function shouldRetainDecodedRecord(
     if (isHiddenClaudeRecord(record) || (record.type !== "user" && record.type !== "assistant")) {
       return false;
     }
-    const content = record.message?.content;
-    return typeof content === "string"
-      ? content.trim().length > 0
-      : (content?.some(
-          (block) => isTextContentBlock(block) && (block.text?.trim().length ?? 0) > 0,
-        ) ?? false);
+    // Same rule as the parser, so Claude Code's own output never takes a history window slot.
+    return claudeVisibleText(record).text.length > 0;
   }
   if (extractDecodedCwd(record) !== null) return true;
   return (

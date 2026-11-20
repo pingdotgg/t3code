@@ -20,20 +20,22 @@ const state = vi.hoisted(() => ({
   queries: [] as Array<{ kind: string; input: unknown }>,
 }));
 
-vi.mock(
-  import("../state/server"),
-  () =>
-    ({
-      primaryServerKeybindingsAtom: Atom.make([]),
-      serverEnvironment: {
-        configValueAtom: () =>
-          Atom.make({
-            environment: { capabilities: { projectKnowledge: true, projectCode: true } },
-            threadFind: true,
-          }),
-      },
-    }) as never,
-);
+vi.mock(import("../state/server"), async (importOriginal) => {
+  const actual = await importOriginal();
+  const { Atom } = await import("effect/reactivity");
+  return {
+    ...actual,
+    primaryServerKeybindingsAtom: Atom.make([]),
+    serverEnvironment: {
+      ...actual.serverEnvironment,
+      configValueAtom: () =>
+        Atom.make({
+          environment: { capabilities: { projectKnowledge: true, projectCode: true } },
+          threadFind: true,
+        }),
+    },
+  } as never;
+});
 vi.mock(
   import("../state/projectKnowledge"),
   () =>

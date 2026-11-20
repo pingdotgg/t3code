@@ -430,8 +430,42 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.invoke(IpcChannels.PREVIEW_CLEAR_COOKIES_CHANNEL, { environmentId, profileId }),
     clearCache: (environmentId, profileId) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_CLEAR_CACHE_CHANNEL, { environmentId, profileId }),
-    getPreviewConfig: (environmentId, profileId) =>
-      ipcRenderer.invoke(IpcChannels.PREVIEW_GET_CONFIG_CHANNEL, { environmentId, profileId }),
+    getPreviewConfig: (environmentId, profileId, tunnelLoopback) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_GET_CONFIG_CHANNEL, {
+        environmentId,
+        profileId,
+        tunnelLoopback,
+      }),
+    onTunnelAccessRequest: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, request: unknown) => {
+        if (typeof request !== "object" || request === null) return;
+        listener(request as Parameters<typeof listener>[0]);
+      };
+      ipcRenderer.on(IpcChannels.PREVIEW_TUNNEL_ACCESS_REQUEST_CHANNEL, wrappedListener);
+      return () =>
+        ipcRenderer.removeListener(
+          IpcChannels.PREVIEW_TUNNEL_ACCESS_REQUEST_CHANNEL,
+          wrappedListener,
+        );
+    },
+    resolveTunnelAccess: (requestId, url) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_TUNNEL_ACCESS_RESOLVE_CHANNEL, { requestId, url }),
+    forwardPort: (environmentId, remotePort) =>
+      ipcRenderer.invoke(IpcChannels.PORT_FORWARD_START_CHANNEL, { environmentId, remotePort }),
+    stopPortForward: (environmentId, remotePort) =>
+      ipcRenderer.invoke(IpcChannels.PORT_FORWARD_STOP_CHANNEL, { environmentId, remotePort }),
+    listPortForwards: () => ipcRenderer.invoke(IpcChannels.PORT_FORWARD_LIST_CHANNEL),
+    sharesLoopback: (environmentId) =>
+      ipcRenderer.invoke(IpcChannels.PORT_FORWARD_SHARES_LOOPBACK_CHANNEL, { environmentId }),
+    onPortForwards: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, forwards: unknown) => {
+        if (!Array.isArray(forwards)) return;
+        listener(forwards);
+      };
+      ipcRenderer.on(IpcChannels.PORT_FORWARD_CHANGE_CHANNEL, wrappedListener);
+      return () =>
+        ipcRenderer.removeListener(IpcChannels.PORT_FORWARD_CHANGE_CHANNEL, wrappedListener);
+    },
     setAnnotationTheme: (theme) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_ANNOTATION_THEME_CHANNEL, { theme }),
     setAnnotationSendEnabled: (tabId, enabled) =>

@@ -13,6 +13,7 @@ import { ServerConfig } from "../config.ts";
 import { DeviceService } from "../device/DeviceService.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { EnvironmentThemeService } from "../environmentTheme.ts";
+import { GitManager } from "../git/GitManager.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as ModelEvaluations from "../modelEvaluations/ModelEvaluations.ts";
@@ -76,6 +77,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(DeviceService)({}),
   Layer.mock(DocumentText)({}),
   Layer.mock(EnvironmentThemeService)({}),
+  Layer.mock(GitManager)({}),
   Layer.mock(GitVcsDriver)({}),
   Layer.mock(GitWorkflowService)({}),
   Layer.mock(IssueService)({}),

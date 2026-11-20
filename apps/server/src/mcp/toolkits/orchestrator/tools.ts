@@ -88,7 +88,7 @@ const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
 
 const DelegateTaskTool = Tool.make("delegate_task", {
   description:
-    "Start one child agent with only `task`. No parent history. Separate checkout or PR per child: `isolation:'worktree'`. Keep `taskId` for `task_status` and `task_cancel`. Set target.environmentId for a linked environment and target.projectId to choose its project; otherwise match this repository. Reuse clientRequestId and arguments on retries. Completion wakes you. Use advertised model options when requested or inherited; native tools cannot apply them reliably. No secrets in `task`.",
+    "Start a child agent with only task, no parent history. For separate checkout/PR use isolation=worktree. Keep taskId for task_status/task_cancel. Set target.environmentId for a linked machine; target.projectId chooses project, else match this repo. Retry with same clientRequestId and args. Completion wakes you. Use advertised options when requested or inherited; native tools may ignore them. No secrets in task.",
   parameters: OrchestratorMcpDelegateTaskInput,
   success: OrchestratorMcpDelegateTaskResult,
   failure: OrchestratorMcpFailure,
@@ -102,7 +102,7 @@ const DelegateTaskTool = Tool.make("delegate_task", {
 
 const TaskStatusTool = Tool.make("task_status", {
   description:
-    "Read one delegated task you started. Do not call it on a running task before its completion wakes you. `workState`: working, waiting_for_children, result_available. A finished turn with live child work is not done. `summary`: final result. Reading it marks it delivered.",
+    "Read a child task you started only after its completion wakes you. workState: working, waiting_for_children, result_available. A finished turn with live child work is not done. Reading summary marks the final result delivered.",
   parameters: OrchestratorMcpTaskStatusInput,
   success: OrchestratorMcpDelegateTaskResult,
   failure: OrchestratorMcpFailure,
@@ -251,7 +251,7 @@ const ThreadListTool = Tool.make("t3_thread_list", {
 
 const ThreadReadTool = Tool.make("t3_thread_read", {
   description:
-    "Read any thread by id. View `messages` (default) or `activity` (all items). Newest first; older: `beforePosition=earlierPosition`; from the start: `afterPosition=-1`, then `nextPosition`. Cut-off text: `itemId`, `textOffset=nextTextOffset`. Reading a child's final result marks it delivered. In your reply, name it as its `link` verbatim. Pass environmentId for a linked environment; name remote threads by title instead of linking them.",
+    "Read thread messages (default) or activity (all items), newest first. Older: beforePosition=earlierPosition; from start: afterPosition=-1 then nextPosition. Truncated item: itemId and textOffset=nextTextOffset. Reading a child result marks it delivered. Use its link verbatim in replies; for remote threads pass environmentId and use the title instead.",
   parameters: OrchestratorMcpThreadReadInput,
   success: OrchestratorMcpThreadReadResult,
   failure: OrchestratorMcpFailure,
@@ -283,7 +283,7 @@ const ThreadUpdateTool = Tool.make("t3_thread_update", {
 
 const ThreadSendTool = Tool.make("t3_thread_send", {
   description:
-    "Send a message to any thread. The target cannot run with broader modes than yours. `mode:'auto'` starts an idle thread, steers a running turn, or queues. `queue`: new turn. `steer`: mid-turn update. `restart`: interrupt and restart. A send to a finished child thread starts a fresh task and returns its `taskId`. In your reply, name it as its `link` verbatim. Pass environmentId for a linked environment. Reuse clientRequestId on retries; name remote threads by title.",
+    "Message a thread within your modes. auto starts idle, steers running or queues; queue starts a new turn; steer updates mid-turn; restart interrupts and restarts. Finished child: starts a fresh task and returns taskId. Quote returned link verbatim; for remote threads pass environmentId and use the title instead. Retry with same clientRequestId.",
   parameters: OrchestratorMcpThreadSendInput,
   success: OrchestratorMcpThreadSendResult,
   failure: OrchestratorMcpFailure,

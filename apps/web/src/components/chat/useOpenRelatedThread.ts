@@ -2,6 +2,8 @@ import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environ
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import { useRef } from "react";
+import { msg } from "gt-react";
+import { m } from "../../i18n/messages";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { readThreadShell, waitForThreadShell } from "../../state/entities";
 import { environmentShell } from "../../state/shell";
@@ -45,7 +47,7 @@ export function useOpenRelatedThread(input: {
     }
     const shell = readThreadShell(threadRef);
     if (shell === null ? !shellOmitsChildren && isEnvironmentLive() : shell.deletedAt != null) {
-      toastManager.add({ type: "info", title: "This thread is no longer available" });
+      toastManager.add({ type: "info", title: m(msg("This thread is no longer available")) });
       return;
     }
     const routeRef = resolveThreadOpenRoute(threadRef, shell);

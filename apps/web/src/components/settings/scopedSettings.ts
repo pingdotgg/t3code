@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import {
   ClientSettingsSchema,
   type ClientSettingsPatch,
@@ -25,6 +26,9 @@ import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import * as Equal from "effect/Equal";
 import * as Cause from "effect/Cause";
 import { Atom } from "effect/reactivity";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 import type { ResolvedSettingsScope } from "./settingsScope";
 
@@ -212,6 +216,7 @@ export function scopedSettingsAreMixed(
 
 export function scopedAssistedLearningUnavailableReason(
   environments: readonly Pick<ScopedSettingsEnvironment, "label" | "serverConfig">[],
+  resolve: MessageResolver = m,
 ): string | null {
   const unsupported = environments.filter(
     (environment) =>
@@ -220,12 +225,23 @@ export function scopedAssistedLearningUnavailableReason(
   if (unsupported.length === 0) return null;
   const labels = unsupported.map((environment) => environment.label).join(", ");
   return unsupported.length < environments.length
-    ? `Automatic memory is supported on only some selected environments. Update T3 Code on ${labels}, or select a supported environment.`
-    : `Automatic memory is not supported on ${labels}. Update T3 Code on ${unsupported.length === 1 ? "that environment" : "those environments"}.`;
+    ? resolve(
+        msg(
+          "Automatic memory is supported on only some selected environments. Update T3 Code on {labels}, or select a supported environment.",
+        ),
+        { labels },
+      )
+    : resolve(
+        msg(
+          "{count, plural, =1 {Automatic memory is not supported on {labels}. Update T3 Code on that environment.} other {Automatic memory is not supported on {labels}. Update T3 Code on those environments.}}",
+        ),
+        { count: unsupported.length, labels },
+      );
 }
 
 export function scopedMemoryCurationUnavailableReason(
   environments: readonly Pick<ScopedSettingsEnvironment, "label" | "serverConfig">[],
+  resolve: MessageResolver = m,
 ): string | null {
   const unsupported = environments.filter(
     (environment) =>
@@ -233,7 +249,9 @@ export function scopedMemoryCurationUnavailableReason(
   );
   return unsupported.length === 0
     ? null
-    : `Memory curation needs a newer T3 Code server on ${unsupported.map((environment) => environment.label).join(", ")}.`;
+    : resolve(msg("Memory curation needs a newer T3 Code server on {labels}."), {
+        labels: unsupported.map((environment) => environment.label).join(", "),
+      });
 }
 
 /**
@@ -462,10 +480,16 @@ export function planScopedSettingsPatch(
       : scope.kind === "unavailable"
         ? scope.message
         : unscopableKeys.length > 0
-          ? "This setting is environment-wide and cannot be overridden by a project."
+          ? m(msg("This setting is environment-wide and cannot be overridden by a project."))
           : isProjectScope
-            ? "Connect the selected checkouts, or update their environments, to save a project override."
-            : `Connect ${scope.kind === "environment" ? scope.label : "an environment"} to save this setting.`;
+            ? m(
+                msg(
+                  "Connect the selected checkouts, or update their environments, to save a project override.",
+                ),
+              )
+            : scope.kind === "environment"
+              ? m(msg("Connect {environment} to save this setting.", { environment: scope.label }))
+              : m(msg("Connect an environment to save this setting."));
   return { clientPatch, hasClientWrite, serverWrites, unavailableReason };
 }
 
@@ -487,7 +511,11 @@ export function planScopedSettingsClear(
     unavailableReason:
       serverWrites.length > 0
         ? null
-        : "Connect the selected checkouts, or update their environments, to reset this override.",
+        : m(
+            msg(
+              "Connect the selected checkouts, or update their environments, to reset this override.",
+            ),
+          ),
   };
 }
 
@@ -543,7 +571,7 @@ export function planProjectOverridesClear(
     hasClientWrite: false,
     serverWrites,
     unavailableReason:
-      serverWrites.length > 0 ? null : "Connect the environments to reset these overrides.",
+      serverWrites.length > 0 ? null : m(msg("Connect the environments to reset these overrides.")),
   };
 }
 
@@ -721,7 +749,7 @@ async function persistScopedSettingsPlan(
       return [
         {
           ...environment,
-          message: "This environment does not support this setting. Update T3 Code on it.",
+          message: m(msg("This environment does not support this setting. Update T3 Code on it.")),
         },
       ];
     }
@@ -736,8 +764,8 @@ async function persistScopedSettingsPlan(
         ...environment,
         message:
           error instanceof Error
-            ? error.message
-            : "The save failed. Try reconnecting and saving again.",
+            ? (errorDisplayMessage(error, m) ?? error.message)
+            : m(msg("The save failed. Try reconnecting and saving again.")),
       },
     ];
   });

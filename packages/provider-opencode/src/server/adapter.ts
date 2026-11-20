@@ -157,6 +157,7 @@ const OpenCodeProviderCapabilitiesV2 = {
     emitsTurnStarted: true,
     emitsTurnCompleted: true,
     supportsInterrupt: true,
+    supportsNativeResume: true,
     supportsActiveSteering: true,
     supportsSteeringByInterruptRestart: true,
     supportsQueuedMessages: true,
@@ -2700,6 +2701,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               updatedAt: now,
             },
           });
+          // The pre-compaction step would otherwise settle the turn as its newest usage.
+          turn.usage.lastStep = null;
+          if (state.providerThread.contextUsage !== null) {
+            yield* updateProviderThread(state, { contextUsage: null });
+          }
         });
 
         const handleMessageUpdated = Effect.fnUntraced(function* (

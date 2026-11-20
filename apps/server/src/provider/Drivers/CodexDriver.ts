@@ -56,7 +56,11 @@ import {
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "@t3tools/provider-core/server/snapshotSettings";
-import { codexContinuationIdentity, materializeCodexShadowHome } from "./CodexHomeLayout.ts";
+import {
+  codexContinuationIdentity,
+  codexHomeLaunchArgs,
+  materializeCodexShadowHome,
+} from "./CodexHomeLayout.ts";
 import { resolveCodexRuntime } from "./CodexRuntime.ts";
 import { makeManagedCodexProvider } from "./CodexManagedProvider.ts";
 import { codexUsageReader } from "./codexUsage.ts";
@@ -248,6 +252,7 @@ export const CodexDriver: ProviderDriver<
       ...runtime.config,
       enabled,
       binaryPath,
+      launchArgs: codexHomeLaunchArgs(pathService, homeLayout, runtime.config.launchArgs),
     } satisfies CodexSettings;
     const resolveRuntime = Effect.gen(function* () {
       const resolvedBinaryPath =

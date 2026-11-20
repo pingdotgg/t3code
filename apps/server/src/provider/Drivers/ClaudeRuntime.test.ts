@@ -179,7 +179,14 @@ it.effect("runs text generation with private credentials and final account setti
       apiKeyHelper: "",
       env: { CLAUDE_CONFIG_DIR: runtime.configDir, CLAUDE_CODE_USE_MANTLE: "0" },
     });
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      ServerConfig.layerTest(process.cwd(), { prefix: "t3-private-textgen-" }).pipe(
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    ),
+  ),
 );
 
 it.effect("reads each Claude account's usage from its own transcript directory", () =>

@@ -9,6 +9,7 @@ import { migrationManifest, runMigrations } from "./Migrations.ts";
 import PullRequestFilesViewed from "./Migrations/053_PullRequestFilesViewed.ts";
 import RemoveRedundantProjectionIndexes from "./Migrations/056_RemoveRedundantProjectionIndexes.ts";
 import OrchestrationV2 from "./Migrations/055_OrchestrationV2.ts";
+import ShellStopRequestIndex from "./Migrations/078_ShellStopRequestIndex.ts";
 
 const seedPreview = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -101,6 +102,10 @@ describe("V2 preview upgrade", () => {
         [119, "IssueTrackerBindings"],
         [120, "ActiveShellIndexIndexes"],
         [121, "ProjectMemoryCuration"],
+        [122, "BackgroundRecoveryIndexes"],
+        [123, "TurnStartReadIndexes"],
+        [124, "DelegatedTaskReadIndexes"],
+        [125, "ThreadItemCounts"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -245,7 +250,61 @@ describe("V2 preview upgrade", () => {
         [119, "IssueTrackerBindings"],
         [120, "ActiveShellIndexIndexes"],
         [121, "ProjectMemoryCuration"],
+        [122, "BackgroundRecoveryIndexes"],
+        [123, "TurnStartReadIndexes"],
+        [124, "DelegatedTaskReadIndexes"],
+        [125, "ThreadItemCounts"],
       ]);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
+  it.effect.each([false, true])(
+    "reconciles an upstream history only when contiguous (gap: %s)",
+    (gap) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* runMigrations({ toMigrationInclusive: 67 });
+        yield* Migrator.make({})({
+          loader: Migrator.fromRecord({ "68_ShellStopRequestIndex": ShellStopRequestIndex }),
+        });
+        yield* sql`
+        UPDATE effect_sql_migrations SET created_at = '2026-11-19 00:00:00'
+        WHERE migration_id = 68
+      `;
+        if (gap) {
+          yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (70, 'PeerLinks')`;
+          const history = yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
+          assert.ok(Exit.isFailure(yield* Effect.exit(runMigrations())));
+          assert.deepStrictEqual(
+            yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`,
+            history,
+          );
+          return;
+        }
+        yield* runMigrations();
+        assert.deepStrictEqual(yield* runMigrations(), []);
+        assert.deepStrictEqual(
+          yield* sql`SELECT created_at FROM effect_sql_migrations WHERE migration_id = 78`,
+          [{ created_at: "2026-11-19 00:00:00" }],
+        );
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
+  it.effect("appends the new upstream migrations to an existing fork database", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 121 });
+      const history = yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
+      assert.deepStrictEqual(yield* runMigrations(), [
+        [122, "BackgroundRecoveryIndexes"],
+        [123, "TurnStartReadIndexes"],
+        [124, "DelegatedTaskReadIndexes"],
+        [125, "ThreadItemCounts"],
+      ]);
+      assert.deepStrictEqual(
+        yield* sql`SELECT * FROM effect_sql_migrations WHERE migration_id <= 121 ORDER BY migration_id`,
+        history,
+      );
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 

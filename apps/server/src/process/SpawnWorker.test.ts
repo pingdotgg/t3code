@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off processEnvInEffect:off - fixtures need real paths, the process resource list and the live environment.
+import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
@@ -82,7 +82,7 @@ describe("SpawnWorker", () => {
           { concurrency: "unbounded" },
         );
         expect(stdout).toBe(
-          JSON.stringify(["stdin value", NodePath.resolve(cwd), "inherited value", literal]) +
+          JSON.stringify(["stdin value", NodeFS.realpathSync(cwd), "inherited value", literal]) +
             "\n" +
             "a".repeat(1024 * 1024),
         );

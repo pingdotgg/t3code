@@ -1,6 +1,8 @@
 import * as Migrator from "effect/sql/Migrator";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
+import type * as Schema from "effect/Schema";
+import type * as SqlError from "effect/sql/SqlError";
 import {
   DATABASE_MIGRATION_PROGRESS_MESSAGE,
   DATABASE_MIGRATIONS_FINISHED_MESSAGE,
@@ -133,6 +135,10 @@ import Migration0118 from "./Migrations/118_RepairStaleTitleRegeneration.ts";
 import Migration0119 from "./Migrations/119_IssueTrackerBindings.ts";
 import Migration0120 from "./Migrations/120_ActiveShellIndexIndexes.ts";
 import Migration0121 from "./Migrations/121_ProjectMemoryCuration.ts";
+import Migration0122 from "./Migrations/122_BackgroundRecoveryIndexes.ts";
+import Migration0123 from "./Migrations/123_TurnStartReadIndexes.ts";
+import Migration0124 from "./Migrations/124_DelegatedTaskReadIndexes.ts";
+import Migration0125 from "./Migrations/125_ThreadItemCounts.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -257,6 +263,10 @@ const migrationEntries = [
   [119, "IssueTrackerBindings", Migration0119],
   [120, "ActiveShellIndexIndexes", Migration0120],
   [121, "ProjectMemoryCuration", Migration0121],
+  [122, "BackgroundRecoveryIndexes", Migration0122],
+  [123, "TurnStartReadIndexes", Migration0123],
+  [124, "DelegatedTaskReadIndexes", Migration0124],
+  [125, "ThreadItemCounts", Migration0125],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -271,11 +281,146 @@ const makeMigrationLoader = (throughId?: number) =>
   );
 
 const FIRST_V2_MIGRATION_ID = 55;
+const FIRST_DIVERGENT_MIGRATION_ID = 68;
+const migrationNames = new Map<number, string>(migrationManifest);
+
+const upstreamMigrationTargets: ReadonlyArray<number | string> = [
+  78,
+  79,
+  "PeerLinks",
+  "PeerLinkFence",
+  "WaitingLinkRequestIndex",
+  82,
+  83,
+  84,
+  85,
+  86,
+  87,
+  89,
+  90,
+  98,
+  99,
+  100,
+  101,
+  102,
+  103,
+  104,
+  105,
+  106,
+  107,
+  108,
+  109,
+  110,
+  111,
+  112,
+  118,
+  119,
+  120,
+  122,
+  123,
+  124,
+  125,
+];
+
+function upstreamMigrationReceipts<Receipt extends { readonly id: number; readonly name: string }>(
+  recorded: ReadonlyArray<Receipt>,
+) {
+  const v2 = recorded.filter(({ id }) => id >= FIRST_V2_MIGRATION_ID);
+  const byId = new Map(v2.map((row) => [row.id, row]));
+  if (byId.get(FIRST_DIVERGENT_MIGRATION_ID)?.name !== "ShellStopRequestIndex") return null;
+  const receipts = new Map<number, Receipt>();
+  for (let id = FIRST_V2_MIGRATION_ID; id < FIRST_V2_MIGRATION_ID + v2.length; id++) {
+    const row = byId.get(id);
+    if (row === undefined) return null;
+    if (id < FIRST_DIVERGENT_MIGRATION_ID) {
+      if (row.name !== migrationNames.get(id)) return null;
+      continue;
+    }
+    const target = upstreamMigrationTargets[id - FIRST_DIVERGENT_MIGRATION_ID];
+    if (target === undefined) return null;
+    if (typeof target === "string") {
+      if (row.name !== target) return null;
+    } else {
+      if (row.name !== migrationNames.get(target)) return null;
+      receipts.set(target, row);
+    }
+  }
+  return receipts;
+}
+
+const reconcileUpstreamMigrationHistory = Effect.fn("reconcileUpstreamMigrationHistory")(function* (
+  throughId?: number,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const tables = yield* sql`
+    SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'
+  `;
+  if (tables.length === 0) return [];
+  const upstream = yield* sql`
+    SELECT migration_id FROM effect_sql_migrations
+    WHERE migration_id = ${FIRST_DIVERGENT_MIGRATION_ID} AND name = 'ShellStopRequestIndex'
+  `;
+  if (upstream.length === 0) return [];
+
+  return yield* sql.withTransaction(
+    Effect.gen(function* () {
+      const history = yield* sql<{
+        readonly id: number;
+        readonly name: string;
+        readonly createdAt: string;
+      }>`SELECT migration_id AS id, name, created_at AS createdAt FROM effect_sql_migrations`;
+      const receipts = upstreamMigrationReceipts(history);
+      if (receipts === null) return [];
+      const latestMappedId = Math.max(...receipts.keys());
+      if (throughId !== undefined && throughId < latestMappedId) {
+        return yield* new Migrator.MigrationError({
+          kind: "BadState",
+          message: `Reconciling upstream migration history requires running through migration ${latestMappedId}.`,
+        });
+      }
+      yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id >= ${FIRST_DIVERGENT_MIGRATION_ID}`;
+
+      const executed: Array<readonly [number, string]> = [];
+      for (const [id, name, migration] of migrationEntries) {
+        if (id < FIRST_DIVERGENT_MIGRATION_ID || id > latestMappedId) continue;
+        const receipt = receipts.get(id);
+        if (receipt !== undefined && id === 89) {
+          yield* sql`DROP INDEX IF EXISTS orchestration_v2_projection_threads_subagent_result_idx`;
+          yield* sql`DROP INDEX IF EXISTS orchestration_v2_projection_runs_delegated_delivery_idx`;
+        }
+        if (receipt === undefined || id === 89 || id === 98) {
+          const replay: Effect.Effect<
+            void,
+            Schema.SchemaError | SqlError.SqlError,
+            SqlClient.SqlClient
+          > = migration;
+          yield* replay.pipe(
+            Effect.mapError(
+              (cause) =>
+                new Migrator.MigrationError({
+                  kind: "Failed",
+                  message: `Upstream migration reconciliation failed at ${id}_${name}.`,
+                  cause,
+                }),
+            ),
+          );
+          executed.push([id, name]);
+        }
+        yield* sql`
+          INSERT INTO effect_sql_migrations (migration_id, name, created_at)
+          VALUES (${id}, ${name}, COALESCE(${receipt?.createdAt ?? null}, CURRENT_TIMESTAMP))
+        `;
+      }
+      return executed;
+    }),
+  );
+});
 
 export function skippedV2Migrations(
   recorded: ReadonlyArray<{ readonly id: number; readonly name: string }>,
   throughId?: number,
 ): string[] {
+  if (upstreamMigrationReceipts(recorded) !== null) return [];
   const latestRecordedId = Math.max(0, ...recorded.map((row) => row.id));
   const recordedNames = new Map(recorded.map((row) => [row.id, row.name]));
   return migrationManifest.flatMap(([id, name]) => {
@@ -350,6 +495,11 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
     toMigrationInclusive === undefined || toMigrationInclusive >= FIRST_V2_MIGRATION_ID;
   // The reconcile takes the write lock; CLI startup must not contend with the server for a no-op.
   const previewMigrations = includesV2 && hasPending ? yield* reconcileV2PreviewMigration() : [];
+  const upstreamMigrations =
+    hasPending &&
+    (toMigrationInclusive === undefined || toMigrationInclusive >= FIRST_DIVERGENT_MIGRATION_ID)
+      ? yield* reconcileUpstreamMigrationHistory(toMigrationInclusive)
+      : [];
   const knowledgePreviewMigrations =
     hasPending && (toMigrationInclusive === undefined || toMigrationInclusive >= 80)
       ? yield* reconcileProjectKnowledgePreviewMigration(migrationManifest)
@@ -388,6 +538,7 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   // restart then resumes after the last finished migration instead of rolling all of them back.
   const executedMigrations: Array<readonly [id: number, name: string]> = [
     ...previewMigrations,
+    ...upstreamMigrations,
     ...knowledgePreviewMigrations,
     ...savedKnowledgePreviewMigrations,
     ...knowledgeViewsPreviewMigrations,
@@ -413,9 +564,8 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
     readonly migration_id: number;
     readonly name: string;
   }>`SELECT migration_id, name FROM effect_sql_migrations`;
-  const manifestNames = new Map<number, string>(migrationEntries.map(([id, name]) => [id, name]));
   const divergent = recorded.flatMap((row) => {
-    const expected = manifestNames.get(row.migration_id);
+    const expected = migrationNames.get(row.migration_id);
     if (expected === undefined) {
       return [`${row.migration_id}:${row.name} (unknown to this build)`];
     }

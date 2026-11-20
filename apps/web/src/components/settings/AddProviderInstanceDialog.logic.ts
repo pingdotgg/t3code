@@ -4,6 +4,8 @@ import {
   ProviderInstanceId,
   type ServerSettings,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
+import { m, type MessageResolver } from "../../i18n/messages";
 
 export type WizardNavigation =
   | { readonly kind: "navigate"; readonly step: number }
@@ -12,9 +14,20 @@ export type WizardNavigation =
 const IDENTITY_STEP = 1;
 const ACP_REGISTRY_IDENTITY_STEP = 1;
 
-export const ADD_PROVIDER_WIZARD_STEPS = ["Provider", "Identity", "Config"] as const;
-export const ACP_REGISTRY_WIZARD_STEPS = ["Provider", "Identity", "Sign in"] as const;
-export const LOCAL_ACP_WIZARD_STEPS = ["Provider", "Identity"] as const;
+const PROVIDER_STEP = msg("Provider", { $context: "wizard step" });
+const IDENTITY_STEP_LABEL = msg("Identity", { $context: "wizard step" });
+
+export const ADD_PROVIDER_WIZARD_STEPS = [
+  PROVIDER_STEP,
+  IDENTITY_STEP_LABEL,
+  msg("Config", { $context: "wizard step" }),
+] as const;
+export const ACP_REGISTRY_WIZARD_STEPS = [
+  PROVIDER_STEP,
+  IDENTITY_STEP_LABEL,
+  msg("Sign in", { $context: "wizard step" }),
+] as const;
+export const LOCAL_ACP_WIZARD_STEPS = [PROVIDER_STEP, IDENTITY_STEP_LABEL] as const;
 
 export interface ProviderIdentityDraft {
   readonly label: string;
@@ -52,13 +65,19 @@ const INSTANCE_ID_PATTERN = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
  * Validate an instance id against the same slug rules the server applies in
  * `ProviderInstanceId` (see `packages/contracts/src/providerInstance.ts`).
  */
-export function validateInstanceId(id: string, existing: ReadonlySet<string>): string | null {
-  if (id.length === 0) return "Instance ID is required.";
-  if (id.length > 64) return "Instance ID must be 64 characters or fewer.";
+export function validateInstanceId(
+  id: string,
+  existing: ReadonlySet<string>,
+  resolve: MessageResolver = m,
+): string | null {
+  if (id.length === 0) return resolve(msg("Instance ID is required."));
+  if (id.length > 64) return resolve(msg("Instance ID must be 64 characters or fewer."));
   if (!INSTANCE_ID_PATTERN.test(id)) {
-    return "Instance ID must start with a letter and use only letters, digits, '-', or '_'.";
+    return resolve(
+      msg("Instance ID must start with a letter and use only letters, digits, '-', or '_'."),
+    );
   }
-  if (existing.has(id)) return `An instance named '${id}' already exists.`;
+  if (existing.has(id)) return resolve(msg("An instance named ''{id}'' already exists.", { id }));
   return null;
 }
 
