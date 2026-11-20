@@ -329,8 +329,6 @@ function CloudEnvironmentRowShell(props: {
   const errorCanExpand = props.connectionError !== null && errorLineCount > 1;
   const isErrorExpanded = errorCanExpand && props.errorExpanded;
   const StatusContainer = errorCanExpand ? Pressable : View;
-  const ContentContainer = props.onOpen || props.onRemove ? Pressable : View;
-  const ChevronContainer = props.onOpen || props.onRemove ? Pressable : View;
   const onMeasuredErrorTextLayout = (event: TextLayoutEvent) => {
     if (!props.connectionError) {
       return;
@@ -343,23 +341,27 @@ function CloudEnvironmentRowShell(props: {
         : { text: measuredErrorText, lineCount: nextLineCount },
     );
   };
+  const rowActionLabel = props.onOpen
+    ? gt("Manage {environment}", { environment: props.label })
+    : props.onRemove
+      ? gt("Remove {environment} from this device", { environment: props.label })
+      : undefined;
   return (
     <View collapsable={false} className="flex-row items-center gap-3 bg-grouped-card px-4 py-3.5">
-      <ContentContainer
-        className="min-w-0 flex-1 gap-0.5"
-        accessibilityHint={props.onRemove ? gt("Long press to remove from this device") : undefined}
-        accessibilityRole={props.onOpen ? "button" : undefined}
-        accessibilityLabel={
-          props.onOpen
-            ? gt("Manage {environment}", { environment: props.label })
-            : props.onRemove
-              ? gt("Remove {environment} from this device", { environment: props.label })
-              : undefined
-        }
-        onPress={props.onOpen}
-        onLongPress={props.onRemove}
-      >
-        <View className="min-w-0 flex-row items-center gap-2">
+      {props.onOpen || props.onRemove ? (
+        <Pressable
+          accessibilityHint={
+            props.onRemove ? gt("Long press to remove from this device") : undefined
+          }
+          accessibilityRole={props.onOpen ? "button" : undefined}
+          accessibilityLabel={rowActionLabel}
+          onPress={props.onOpen}
+          onLongPress={props.onRemove}
+          className="absolute inset-0 active:opacity-70"
+        />
+      ) : null}
+      <View pointerEvents="box-none" className="min-w-0 flex-1 gap-0.5">
+        <View pointerEvents="none" className="min-w-0 flex-row items-center gap-2">
           <ConnectionStatusDot state={props.connectionState} pulse={shouldPulse} size={7} />
           <EnvironmentMachineSymbol
             kind={props.machine}
@@ -385,7 +387,7 @@ function CloudEnvironmentRowShell(props: {
         <StatusContainer
           {...(errorCanExpand
             ? { accessibilityRole: "button" as const, onPress: props.onToggleError }
-            : {})}
+            : { pointerEvents: errorTraceId ? ("box-none" as const) : ("none" as const) })}
           className="min-w-0 flex-row items-start gap-1"
         >
           <Text
@@ -418,7 +420,7 @@ function CloudEnvironmentRowShell(props: {
             />
           ) : null}
         </StatusContainer>
-      </ContentContainer>
+      </View>
       <ThemedSwitch
         accessibilityLabel={gt("Enable {environment}", { environment: props.label })}
         style={{ alignSelf: "center" }}
@@ -427,20 +429,10 @@ function CloudEnvironmentRowShell(props: {
         value={props.value}
       />
       {props.opensDetails || props.showChevron ? (
-        <ChevronContainer
-          accessibilityRole={props.onOpen ? "button" : undefined}
-          accessibilityLabel={
-            props.onOpen
-              ? gt("Manage {environment}", { environment: props.label })
-              : props.onRemove
-                ? gt("Remove {environment} from this device", { environment: props.label })
-                : undefined
-          }
-          accessibilityHint={
-            props.onRemove ? gt("Long press to remove from this device") : undefined
-          }
-          onPress={props.onOpen}
-          onLongPress={props.onRemove}
+        <View
+          pointerEvents="none"
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
           style={{
             opacity: props.opensDetails ? 1 : 0.4,
             minWidth: 44,
@@ -450,7 +442,7 @@ function CloudEnvironmentRowShell(props: {
           }}
         >
           <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-subtle" />
-        </ChevronContainer>
+        </View>
       ) : null}
     </View>
   );
