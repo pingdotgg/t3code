@@ -1,10 +1,11 @@
+import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
 import {
   BROWSER_PROFILE_MAX_COUNT,
   type BrowserImportSource,
   type EnvironmentId,
-  managedCapabilityDenial,
   resolveBrowserProfiles,
 } from "@t3tools/contracts";
+import { useGT, useMessages } from "gt-react";
 import { useRef, useState } from "react";
 
 import { resolveEnvironmentOptionLabel } from "~/components/BranchToolbar.logic";
@@ -38,9 +39,9 @@ function filterImportableBrowserSources(
   );
 }
 
-export function useBrowserCookieImport(options?: {
-  readonly onImported?: (target: WizardTarget) => void;
-}) {
+export function useBrowserCookieImport() {
+  const gt = useGT();
+  const messages = useMessages();
   const userProfiles = useClientSettings((settings) => settings.browserProfiles);
   const settingsHydrated = useClientSettingsHydrated();
   const primaryEnvironment = usePrimaryEnvironment();
@@ -48,6 +49,7 @@ export function useBrowserCookieImport(options?: {
   const cookieImportDenial = managedCapabilityDenial(
     usePrimaryManagedPolicy(),
     "browserCookieImport",
+    messages,
   );
   const [sources, setSources] = useState<ReadonlyArray<BrowserImportSource> | null>(null);
   const [importSession, setImportSession] = useState<BrowserImportSession | null>(null);
@@ -98,17 +100,12 @@ export function useBrowserCookieImport(options?: {
     if (importInFlightRef.current) return { kind: "blocked", reason: "readFailed" };
     importInFlightRef.current = true;
     setImportInFlight(true);
-    return importBrowserCookiesIntoTarget(previewBridge, source, environmentId, input)
-      .then((outcome) => {
-        if (outcome.kind === "imported" && outcome.imported > 0) {
-          options?.onImported?.(input.target);
-        }
-        return outcome;
-      })
-      .finally(() => {
+    return importBrowserCookiesIntoTarget(previewBridge, source, environmentId, input).finally(
+      () => {
         importInFlightRef.current = false;
         setImportInFlight(false);
-      });
+      },
+    );
   };
 
   const refreshImportSource = async (
@@ -130,8 +127,8 @@ export function useBrowserCookieImport(options?: {
       .catch(() => {
         toastManager.add({
           type: "error",
-          title: "Could not open System Settings",
-          description: "Open Privacy & Security → Full Disk Access manually.",
+          title: gt("Could not open System Settings"),
+          description: gt("Open Privacy & Security → Full Disk Access manually."),
         });
       });
   };

@@ -1,18 +1,16 @@
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { LegendList } from "@legendapp/list/react-native";
+import { useGT } from "gt-react-native";
+import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 import { useMemo } from "react";
-import { Platform, View } from "react-native";
+import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppBar } from "../../components/ui/AppBar";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { SheetHeader } from "../../components/ui/SheetHeader";
-import { Toolbar } from "../../components/ui/Toolbar";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useThreadSelection } from "../../state/use-thread-selection";
-import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import {
   LinkedPullRequestRow,
   linkedPullRequestKey,
@@ -23,8 +21,8 @@ import { useLinkedPullRequestActions } from "./useLinkedPullRequestActions";
 export function ThreadPullRequestsSheet(
   _props: StaticScreenProps<{ readonly environmentId: string; readonly threadId: string }>,
 ) {
-  const { layout } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
+  const gt = useGT();
   const insets = useSafeAreaInsets();
   const { selectedThread, selectedThreadProject, selectedEnvironmentRuntime } =
     useThreadSelection();
@@ -45,11 +43,14 @@ export function ThreadPullRequestsSheet(
     runtime: selectedEnvironmentRuntime,
   });
   const rowInputs = { lines, actions };
-  const { singular } = actions.terminology;
-  const title = `Linked ${actions.terminology.plural}`;
+  const term = changeRequestTermKind(actions.terminology);
+  const title = gt(
+    "{term, select, mr {Linked merge requests} cr {Linked change requests} other {Linked pull requests}}",
+    { term },
+  );
 
   const content = (
-    <View className="flex-1 android:bg-sheet-solid ios:bg-screen">
+    <View className="flex-1 bg-screen">
       {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- Sheet content; sheets sit outside workspace columns and keep their own header handling. */}
       <LegendList
         data={lines}
@@ -59,7 +60,7 @@ export function ThreadPullRequestsSheet(
           <LinkedPullRequestRow
             line={item}
             separator={index < lines.length - 1}
-            surfaceClassName={Platform.OS === "ios" ? "text-screen" : "text-sheet-solid"}
+            surfaceClassName="text-screen"
             openPullRequest={openPullRequest}
             actions={actions}
           />
@@ -68,7 +69,7 @@ export function ThreadPullRequestsSheet(
         recycleItems
         alwaysBounceVertical
         style={{ flex: 1 }}
-        contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
+        contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{
           paddingBottom: Math.max(insets.bottom, 18) + 18,
@@ -77,50 +78,35 @@ export function ThreadPullRequestsSheet(
         ListHeaderComponent={
           lines.length > 0 ? (
             <Text className="px-4 pt-2 pb-1 text-xs text-foreground-muted">
-              {openCount} open · {lines.length} linked
+              {gt("{open} open · {linked} linked", { open: openCount, linked: lines.length })}
             </Text>
           ) : null
         }
         ListEmptyComponent={
           <Text className="pt-6 text-center text-sm text-foreground-muted">
-            No linked {actions.terminology.plural}.
+            {gt(
+              "{term, select, mr {No linked merge requests.} cr {No linked change requests.} other {No linked pull requests.}}",
+              { term },
+            )}
           </Text>
         }
       />
     </View>
   );
 
-  if (Platform.OS === "ios") {
-    return (
-      <View collapsable={false} className="flex-1 bg-sheet">
-        <SheetHeader presentation="native" title={title} onClose={() => navigation.goBack()} />
-        {actions.canLink ? (
-          <Toolbar placement="right">
-            <Toolbar.Button
-              icon="plus"
-              accessibilityLabel={`Link ${singular}`}
-              onPress={actions.promptLink}
-            />
-          </Toolbar>
-        ) : null}
-        {content}
-      </View>
-    );
-  }
-
   return (
-    <View collapsable={false} className="flex-1 bg-header">
-      <NativeStackScreenOptions options={{ sheetCornerRadius: 28 }} />
-      <AppBar
-        sheet
+    <View collapsable={false} className="flex-1 bg-sheet">
+      <SheetHeader
         title={title}
-        hideBottomBorder
-        onBack={() => navigation.goBack()}
+        onClose={() => navigation.goBack()}
         actions={
           actions.canLink
             ? [
                 {
-                  accessibilityLabel: `Link ${singular}`,
+                  accessibilityLabel: gt(
+                    "{term, select, mr {Link merge request} cr {Link change request} other {Link pull request}}",
+                    { term },
+                  ),
                   icon: "plus",
                   onPress: actions.promptLink,
                 },
@@ -128,7 +114,7 @@ export function ThreadPullRequestsSheet(
             : undefined
         }
       />
-      <ScreenContent insetHorizontal={layout.usesSplitView}>{content}</ScreenContent>
+      <ScreenContent>{content}</ScreenContent>
     </View>
   );
 }

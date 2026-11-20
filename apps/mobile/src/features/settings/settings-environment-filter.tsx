@@ -1,5 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { buildProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
+import { useLocale, useMessages } from "gt-react-native";
 import {
   createContext,
   useContext,
@@ -11,6 +12,7 @@ import {
   type SetStateAction,
 } from "react";
 
+import type { MessageResolver } from "../../i18n/messages";
 import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
 import { useProjects } from "../../state/entities";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
@@ -23,7 +25,10 @@ export type SettingsTarget = EnvironmentPresentation & {
 // Several mounted Settings components read the scope at once (the list, its header, a page and
 // its editor), so share the derived lists across them for the same inputs.
 const targetsCache = new WeakMap<readonly EnvironmentPresentation[], readonly SettingsTarget[]>();
-const groupsCache = new WeakMap<object, Map<string, ReturnType<typeof buildProjectGroups>>>();
+const groupsCache = new WeakMap<
+  object,
+  Map<string, Map<string, ReturnType<typeof buildProjectGroups>>>
+>();
 
 function connectedSettingsTargets(environments: readonly EnvironmentPresentation[]) {
   let targets = targetsCache.get(environments);
@@ -40,15 +45,22 @@ function connectedSettingsTargets(environments: readonly EnvironmentPresentation
 function settingsProjectGroups(
   projects: Parameters<typeof buildProjectGroups>[0]["projects"],
   groupingMode: Parameters<typeof buildProjectGroups>[0]["settings"]["sidebarProjectGroupingMode"],
+  resolve: MessageResolver,
+  locale: string,
 ) {
-  let byMode = groupsCache.get(projects);
-  if (!byMode) groupsCache.set(projects, (byMode = new Map()));
+  let byLocale = groupsCache.get(projects);
+  if (!byLocale) groupsCache.set(projects, (byLocale = new Map()));
+  let byMode = byLocale.get(locale);
+  if (!byMode) byLocale.set(locale, (byMode = new Map()));
   let groups = byMode.get(groupingMode);
   if (!groups) {
-    groups = buildProjectGroups({
-      projects,
-      settings: { sidebarProjectGroupingMode: groupingMode, sidebarProjectGroupingOverrides: {} },
-    });
+    groups = buildProjectGroups(
+      {
+        projects,
+        settings: { sidebarProjectGroupingMode: groupingMode, sidebarProjectGroupingOverrides: {} },
+      },
+      resolve,
+    );
     byMode.set(groupingMode, groups);
   }
   return groups;
@@ -115,7 +127,9 @@ export function useSettingsEnvironmentFilter() {
   const projects = useProjects();
   const groupingSettings = useMobileProjectGroupingSettings();
   const groupingMode = groupingSettings.sidebarProjectGroupingMode;
-  const projectGroups = settingsProjectGroups(projects, groupingMode);
+  const messages = useMessages();
+  const locale = useLocale();
+  const projectGroups = settingsProjectGroups(projects, groupingMode, messages, locale);
   const availableTargets = connectedSettingsTargets(environments);
   const selectedTargets = useMemo(
     () =>
@@ -146,10 +160,11 @@ export function useSettingsEnvironmentFilter() {
       selectAll: () => setSelectedIds(null),
       toggleEnvironment: (environmentId: EnvironmentId) =>
         setSelectedIds((current) =>
-          toggleSettingsEnvironment(current, availableTargets, environmentId),
+          toggleSettingsEnvironment(current, availableTargets, environmentId, environments),
         ),
     }),
     [
+      environments,
       availableTargets,
       selectedTargets,
       selectedIds,

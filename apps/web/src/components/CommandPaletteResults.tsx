@@ -1,7 +1,10 @@
+import { startPaletteThreadDrag } from "./CommandPalette.drag";
+import { useLegendListRef } from "~/hooks/useLegendListRef";
 import { type ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { ChevronRightIcon } from "lucide-react";
 import { type ReactNode, type RefObject, useState } from "react";
+import { T } from "gt-react";
 import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { shortcutLabelForCommand } from "../keybindings";
@@ -38,9 +41,11 @@ function CommandPaletteEmptyState(props: { emptyStateMessage?: string; isActions
   return (
     <div className="py-10 text-center text-sm text-muted-foreground">
       {props.emptyStateMessage ??
-        (props.isActionsOnly
-          ? "No matching actions."
-          : "No matching commands, projects, or threads.")}
+        (props.isActionsOnly ? (
+          <T>No matching actions.</T>
+        ) : (
+          <T>No matching commands, projects, or threads.</T>
+        ))}
     </div>
   );
 }
@@ -76,13 +81,20 @@ export function CommandPaletteResults(props: CommandPaletteResultsProps) {
   );
 }
 
-export function scrollCommandPaletteRowIntoView(list: LegendListRef | null, rowIndex: number) {
-  const element = list?.getState?.().elementAtIndex(rowIndex);
-  if (element instanceof HTMLElement) {
-    element.scrollIntoView({ block: "nearest" });
+export function scrollCommandPaletteRowIntoView(
+  list: LegendListRef | null,
+  rowIndex: number,
+  isFirstItem: boolean,
+) {
+  if (isFirstItem) {
+    void list?.scrollToOffset({ offset: 0, animated: false });
     return;
   }
-  void list?.scrollIndexIntoView?.({ index: rowIndex, animated: false });
+  void list?.scrollIndexIntoView({
+    index: rowIndex,
+    animated: false,
+    viewportMargin: { start: 24, end: 24 },
+  });
 }
 
 interface CommandPaletteVirtualizedResultsProps extends Omit<CommandPaletteResultsProps, "groups"> {
@@ -96,15 +108,15 @@ export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualize
   const { listRef } = props;
   const [scrollFade, setScrollFade] = useState({ top: false, bottom: false });
   const updateScrollFade = () => {
-    const scrollElement = listRef.current?.getScrollableNode?.();
-    if (!(scrollElement instanceof HTMLElement)) return;
-    const top = scrollElement.scrollTop > 1;
-    const bottom =
-      scrollElement.scrollHeight - scrollElement.clientHeight - scrollElement.scrollTop > 1;
+    const metrics = listRef.current?.getState();
+    if (!metrics) return;
+    const top = !metrics.isAtStart;
+    const bottom = !metrics.isAtEnd;
     setScrollFade((current) =>
       current.top === top && current.bottom === bottom ? current : { top, bottom },
     );
   };
+  const scrollRef = useLegendListRef(listRef, updateScrollFade);
 
   if (props.rows.length === 0) {
     return <CommandPaletteEmptyState {...props} />;
@@ -113,8 +125,9 @@ export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualize
   return (
     <CommandListVirtualized>
       <LegendList<CommandPaletteRow>
-        ref={listRef}
+        ref={scrollRef}
         data={props.rows}
+        initialScrollOffset={0}
         keyExtractor={(row) => row.key}
         getItemType={(row) => row.kind}
         extraData={props.highlightedItemValue}
@@ -139,9 +152,12 @@ export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualize
         drawDistance={400}
         onLayout={updateScrollFade}
         onScroll={updateScrollFade}
+        onReady={updateScrollFade}
+        // Legend counts style padding (not class padding) in its size, end state and row positions.
+        style={{ paddingTop: 8, paddingBottom: 8 }}
         contentContainerClassName="px-2"
         className={cn(
-          "min-h-0 scroll-py-6 overflow-x-hidden overscroll-y-contain py-2 [&::-webkit-scrollbar-track]:my-2",
+          "min-h-0 scroll-py-6 overflow-x-hidden overscroll-y-contain [&::-webkit-scrollbar-track]:my-2",
           getVirtualizedScrollFadeClassName(scrollFade),
         )}
       />
@@ -237,6 +253,19 @@ function CommandPaletteResultRow(props: {
       {...(props.index === undefined ? {} : { index: props.index })}
       value={props.item.value}
       active={props.isActive}
+      {...(props.item.kind === "action" && props.item.checked !== undefined
+        ? { "aria-checked": props.item.checked }
+        : {})}
+      onPointerDown={(event) => {
+        if (props.item.threadRef) {
+          startPaletteThreadDrag(
+            event.nativeEvent,
+            props.item.threadRef,
+            props.item.searchTitle ??
+              (typeof props.item.title === "string" ? props.item.title : "Thread"),
+          );
+        }
+      }}
       onMouseDown={(event) => {
         event.preventDefault();
       }}

@@ -1,5 +1,6 @@
-import { ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
+import { ProviderInstanceId, settingsSecretLiteral, TextGenerationError } from "@t3tools/contracts";
 import { OpenCodeSettings } from "../settings.ts";
+import type { OpencodeClient } from "@opencode-ai/sdk/v2";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
@@ -14,6 +15,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as NetService from "@t3tools/shared/Net";
 import { beforeEach, expect } from "vite-plus/test";
 
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
@@ -25,6 +27,7 @@ const runtimeMock = {
     startCalls: [] as string[],
     promptUrls: [] as string[],
     promptParts: [] as ReadonlyArray<unknown>[],
+    promptInputs: [] as Array<Parameters<OpencodeClient["session"]["prompt"]>[0]>,
     authHeaders: [] as Array<string | null>,
     closeCalls: [] as string[],
     sessionCreateCalls: 0,
@@ -46,6 +49,7 @@ const runtimeMock = {
     this.state.startCalls.length = 0;
     this.state.promptUrls.length = 0;
     this.state.promptParts.length = 0;
+    this.state.promptInputs.length = 0;
     this.state.authHeaders.length = 0;
     this.state.closeCalls.length = 0;
     this.state.sessionCreateCalls = 0;
@@ -106,6 +110,13 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
   runOpenCodeCommand: () => Effect.succeed({ stdout: "", stderr: "", code: 0 }),
   createOpenCodeSdkClient: ({ baseUrl, serverPassword }) =>
     ({
+      provider: {
+        list: async () => ({
+          data: {
+            all: [{ id: "openai", models: { "gpt-5": { id: "gpt-5" } } }],
+          },
+        }),
+      },
       session: {
         create: async (_input: unknown, options?: { readonly signal?: AbortSignal }) => {
           runtimeMock.state.sessionCreateCalls += 1;
@@ -130,11 +141,12 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
           return { data: true };
         },
         prompt: async (
-          input: { readonly parts: ReadonlyArray<unknown> },
+          input: Parameters<OpencodeClient["session"]["prompt"]>[0],
           options?: { readonly signal?: AbortSignal },
         ) => {
+          runtimeMock.state.promptInputs.push(input);
           runtimeMock.state.promptUrls.push(baseUrl);
-          runtimeMock.state.promptParts.push(input.parts);
+          runtimeMock.state.promptParts.push(input.parts ?? []);
           runtimeMock.state.authHeaders.push(
             serverPassword ? `Basic ${btoa(`opencode:${serverPassword}`)}` : null,
           );
@@ -227,7 +239,9 @@ function withOpenCodeTextGeneration<A, E, R>(
     const serverOwner = yield* OpenCodeServerOwner.make({
       binaryPath: settings.binaryPath,
       directory: process.cwd(),
-      ...(settings.serverPassword ? { serverPassword: settings.serverPassword } : {}),
+      ...(settingsSecretLiteral(settings.serverPassword)
+        ? { serverPassword: settingsSecretLiteral(settings.serverPassword) }
+        : {}),
       ...(environment ? { environment } : {}),
     });
     const textGeneration = yield* OpenCodeTextGeneration.makeOpenCodeTextGeneration(settings).pipe(
@@ -248,6 +262,30 @@ const advanceIdleClock = Effect.gen(function* () {
 });
 
 it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
+  it.effect("omits stale reasoning variants when generating commit messages", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        yield* textGeneration.generateCommitMessage({
+          ...DEFAULT_COMMIT_MESSAGE_INPUT,
+          modelSelection: {
+            ...DEFAULT_TEST_MODEL_SELECTION,
+            options: [
+              { id: "variant", value: "medium" },
+              { id: "agent", value: "plan" },
+            ],
+          },
+        });
+
+        expect(runtimeMock.state.promptInputs).toHaveLength(1);
+        expect(runtimeMock.state.promptInputs[0]).toMatchObject({
+          model: { providerID: "openai", modelID: "gpt-5" },
+          agent: "plan",
+        });
+        expect(runtimeMock.state.promptInputs[0]).not.toHaveProperty("variant");
+      }),
+    ),
+  );
+
   it.effect("cancels or times out an in-flight session creation before prompting", () =>
     withOpenCodeTextGeneration(EXISTING_SERVER_OPENCODE_SETTINGS, (textGeneration) =>
       Effect.gen(function* () {
@@ -578,21 +616,28 @@ it.layer(layerOpenCodeTextGenerationExistingServerTest)(
       ),
     );
 
-    it.effect("does not create a session when the server version is unsupported", () =>
+    it.effect("does not create a session on a server version the policy rates broken", () =>
       withOpenCodeTextGeneration(EXISTING_SERVER_OPENCODE_SETTINGS, (textGeneration) =>
         Effect.gen(function* () {
-          runtimeMock.state.connectionError = new Error(
-            "OpenCode v1.14.18 is too old. Upgrade to v1.14.19 or newer.",
-          );
-
           const error = yield* textGeneration
             .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
             .pipe(Effect.flip);
 
           expect(error).toBeInstanceOf(TextGenerationError);
-          expect(error.message).toContain("v1.14.18 is too old");
+          expect(error.message).toContain("OpenCode 1.14.19 does not work");
           expect(runtimeMock.state.sessionCreateCalls).toBe(0);
         }),
+      ).pipe(
+        Effect.updateService(ProviderHost.ProviderHost, (host) => ({
+          ...host,
+          compatibility: () =>
+            Effect.succeed({
+              status: "broken" as const,
+              message: null,
+              recommendedVersion: null,
+              recommendedRange: ">=2.0.18",
+            }),
+        })),
       ),
     );
 
