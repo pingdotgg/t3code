@@ -12125,28 +12125,28 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     failureHint,
                     usageLimited,
                   );
-            const gatewayResetAt =
-              resultFailure?.class === "usage_limit" ? resultFailure.resetAt : undefined;
-            // An untimed, typeless SDK rejection can describe the same gateway 429.
-            const countsTowardReset = (type: string, resetAt: string | null | undefined) =>
-              resetAt !== undefined &&
-              (gatewayResetAt == null || type !== "unknown" || resetAt !== null);
-            const resetTimes = Array.from(context.rateLimitResetTimes.entries())
-              .filter(([type, resetAt]) => countsTowardReset(type, resetAt))
-              .map(([, resetAt]) => resetAt);
+            const resultResetAt =
+              resultFailure?.class === "usage_limit" ? resultFailure.resetAt : null;
+            // An untyped rejection without a reset is the gateway's own 429; its text names the reset.
+            const isGatewayEcho = (type: string, time: string | null | undefined) =>
+              type === "unknown" && time === null && resultResetAt != null;
+            const resetTimes = Array.from(context.rateLimitResetTimes)
+              .filter(([type, time]) => !isGatewayEcho(type, time))
+              .map(([, time]) => time);
             const assistantLimit = context.latestAssistantRateLimit;
             if (
               assistantLimit?.type != null &&
-              !countsTowardReset(
-                assistantLimit.type,
-                context.rateLimitResetTimes.get(assistantLimit.type),
-              ) &&
-              countsTowardReset(assistantLimit.type, assistantLimit.resetAt)
+              !isGatewayEcho(assistantLimit.type, assistantLimit.resetAt) &&
+              (!context.rateLimitResetTimes.has(assistantLimit.type) ||
+                isGatewayEcho(
+                  assistantLimit.type,
+                  context.rateLimitResetTimes.get(assistantLimit.type),
+                ))
             ) {
               resetTimes.push(assistantLimit.resetAt);
             }
-            if (gatewayResetAt != null) {
-              resetTimes.push(gatewayResetAt);
+            if (resultResetAt != null) {
+              resetTimes.push(resultResetAt);
             }
             const resetAt =
               resetTimes.length > 0 && resetTimes.every((time) => time !== null)
