@@ -451,16 +451,11 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   );
   const onOutput = options.onOutput ?? (() => Effect.void);
   const bootstrapStream = Stream.encodeText(Stream.make(`${bootstrapJson}\n`));
-  const recorded = options.trackProcess === undefined ? undefined : yield* Deferred.make<void>();
   const additionalFds: Record<`fd${number}`, ChildProcess.AdditionalFdConfig> = {};
   if (options.bootstrapDelivery === "fd3") {
     additionalFds.fd3 = {
       type: "input",
-      // Record ownership before the local backend can claim the home and start serving.
-      stream:
-        recorded === undefined
-          ? bootstrapStream
-          : Stream.unwrap(Deferred.await(recorded).pipe(Effect.as(bootstrapStream))),
+      stream: bootstrapStream,
     };
     if (options.bootstrap.desktopTelemetryFd !== undefined) {
       additionalFds[`fd${options.bootstrap.desktopTelemetryFd}`] = {
@@ -511,8 +506,10 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
         }),
     ),
   );
-  const forgetProcess = yield* options.trackProcess?.(handle.pid) ?? Effect.succeed(Effect.void);
-  if (recorded !== undefined) yield* Deferred.succeed(recorded, undefined);
+  // The child has a deadline for reading fd 3. Keep recovery bookkeeping off its startup path.
+  const tracking = options.trackProcess
+    ? yield* options.trackProcess(handle.pid).pipe(Effect.forkScoped)
+    : undefined;
   const outputFibers: Array<Fiber.Fiber<void, never>> = [];
   const serverReady = yield* Deferred.make<void>();
 
@@ -657,7 +654,10 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   );
   yield* options.onExitObserved?.() ?? Effect.void;
   // A cancelled run may leave a survivor. Only forget after observing a real exit.
-  if (Exit.isSuccess(exit)) yield* forgetProcess;
+  if (tracking && Exit.isSuccess(exit)) {
+    const forgetProcess = yield* Fiber.join(tracking);
+    yield* forgetProcess;
+  }
   yield* Effect.forEach(outputFibers, Fiber.await, {
     concurrency: "unbounded",
     discard: true,

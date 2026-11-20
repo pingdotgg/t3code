@@ -358,11 +358,12 @@ describe("DesktopBackendManager", () => {
     }),
   );
 
-  it.effect("delivers the local bootstrap after recording ownership and forgets after exit", () =>
+  it.effect("delivers fd3 bootstrap while ownership recording is pending", () =>
     Effect.gen(function* () {
       const recording = yield* Deferred.make<void>();
       const finishRecording = yield* Deferred.make<void>();
-      const receivedBootstrap = yield* Deferred.make<boolean>();
+      const receivedBootstrap = yield* Deferred.make<Option.Option<string>>();
+      const exitObserved = yield* Deferred.make<void>();
       const childExit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
       const forgotten = yield* Ref.make(false);
       const layerSpawner = Layer.succeed(
@@ -376,11 +377,13 @@ describe("DesktopBackendManager", () => {
             if (fd?.type !== "input" || fd.stream === undefined) {
               return yield* Effect.die("Expected a bootstrap stream on fd 3");
             }
-            yield* Stream.runForEach(fd.stream, () =>
-              Deferred.isDone(finishRecording).pipe(
-                Effect.flatMap((wasRecorded) => Deferred.succeed(receivedBootstrap, wasRecorded)),
-              ),
-            ).pipe(Effect.forkScoped);
+            yield* fd.stream.pipe(
+              Stream.decodeText(),
+              Stream.mkString,
+              Effect.timeoutOption(Duration.seconds(1)),
+              Effect.flatMap((payload) => Deferred.succeed(receivedBootstrap, payload)),
+              Effect.forkScoped,
+            );
             return makeProcess({ exitCode: Deferred.await(childExit) });
           }),
         ),
@@ -388,6 +391,7 @@ describe("DesktopBackendManager", () => {
       const run = yield* DesktopBackendManager.runBackendProcess({
         ...baseConfig,
         desktopTelemetryStream: Stream.empty,
+        onExitObserved: () => Deferred.succeed(exitObserved, undefined).pipe(Effect.asVoid),
         trackProcess: () =>
           Deferred.succeed(recording, undefined).pipe(
             Effect.andThen(Deferred.await(finishRecording)),
@@ -396,11 +400,14 @@ describe("DesktopBackendManager", () => {
       }).pipe(Effect.provide(Layer.merge(layerSpawner, layerHealthyHttpClient)), Effect.forkChild);
 
       yield* Deferred.await(recording);
-      assert.isFalse(yield* Deferred.isDone(receivedBootstrap));
-      yield* Deferred.succeed(finishRecording, undefined);
-      assert.isTrue(yield* Deferred.await(receivedBootstrap));
-      assert.isFalse(yield* Ref.get(forgotten));
+      yield* TestClock.adjust(Duration.seconds(2));
+      const payload = yield* Deferred.await(receivedBootstrap);
+      assert.isTrue(Option.isSome(payload), "desktop bootstrap missed the reader deadline");
+      assert.deepEqual(yield* decodeBootstrap(Option.getOrThrow(payload)), baseConfig.bootstrap);
       yield* Deferred.succeed(childExit, ChildProcessSpawner.ExitCode(0));
+      yield* Deferred.await(exitObserved);
+      assert.isFalse(yield* Ref.get(forgotten));
+      yield* Deferred.succeed(finishRecording, undefined);
       yield* Fiber.join(run);
       assert.isTrue(yield* Ref.get(forgotten));
     }),
