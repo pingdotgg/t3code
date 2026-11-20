@@ -929,6 +929,7 @@ const CONSOLE_FREE_GIT_READS = [
   "rev-parse --git-path index",
   "rev-parse --git-common-dir",
   "rev-parse --show-toplevel",
+  "rev-parse --path-format=absolute --git-path index --git-common-dir --show-toplevel",
   "rev-parse --symbolic-full-name HEAD",
   "rev-parse --abbrev-ref --symbolic-full-name @{upstream}",
   "symbolic-ref --quiet HEAD",

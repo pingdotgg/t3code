@@ -33,7 +33,9 @@ import * as Tracer from "effect/Tracer";
 import { ChildProcess, ChildProcessSpawner, CommandLine } from "effect/process";
 
 import {
+  DEFAULT_SERVER_SETTINGS,
   GitCommandError,
+  ProjectId,
   ReviewDiffPreviewInput,
   VcsRef,
   VcsListRefsResult,
@@ -50,6 +52,7 @@ import {
   splitNullSeparatedGitStdoutPaths,
   windowsLongPathConfigEnv,
 } from "./GitVcsDriverCore.ts";
+import { autoPullProjects } from "../serverRuntimeStartup.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import { VcsAutomaticFetchInterval } from "./VcsAutomaticFetchInterval.ts";
 import { gitConfigEnv } from "./VcsProcess.ts";
@@ -479,6 +482,22 @@ it.effect.each(["origin", "github"] as const)(
 
       assert.equal((yield* driver.statusDetailsLocal(cwd)).hasOriginRemote, true);
       assert.equal((yield* driver.listRefs({ cwd })).hasPrimaryRemote, true);
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "refreshes remote status after external init while refs still cache a non-repository",
+  () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const fs = yield* FileSystem.FileSystem;
+      const cwd = yield* fs.realPath(yield* makeTmpDir());
+      assert.isFalse((yield* driver.listRefs({ cwd })).isRepo);
+      yield* git(cwd, ["init"]);
+
+      assert.isFalse((yield* driver.statusDetailsLocal(cwd)).hasOriginRemote);
+      yield* driver.ensureRemote({ cwd, preferredName: "origin", url: cwd });
+      assert.isTrue((yield* driver.statusDetailsLocal(cwd)).hasOriginRemote);
     }).pipe(Effect.provide(layerTest)),
 );
 
@@ -1219,6 +1238,46 @@ describe("pullCurrentBranch", () => {
     ).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("the startup pull waits for a status fetch that runs past five seconds", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { cwd, remoteHead } = yield* cloneBehindRemote;
+        const targetPath = NodeFS.realpathSync.native(cwd);
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fetchHeld = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let held = false;
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (
+              !held &&
+              ChildProcess.isStandardCommand(command) &&
+              command.args.includes("fetch") &&
+              String(command.options.cwd) === targetPath
+            ) {
+              held = true;
+              yield* Deferred.succeed(fetchHeld, undefined);
+              yield* Deferred.await(release);
+            }
+            return yield* delegate.spawn(command);
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const startup = yield* autoPullProjects(
+          [{ id: ProjectId.make("behind"), workspaceRoot: cwd, autoPull: true }],
+          { ...DEFAULT_SERVER_SETTINGS, defaultAutoPull: true },
+        ).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, driver), Effect.forkChild);
+        yield* Deferred.await(fetchHeld);
+        yield* TestClock.adjust("6 seconds");
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(startup);
+        assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), remoteHead);
+      }),
+    ).pipe(Effect.provide(layerTest)),
+  );
+
   const claimedFetchFallbacks = ["diverged", "interrupted", "upstream-only"] as const;
 
   it.effect.each(claimedFetchFallbacks)(
@@ -1269,7 +1328,8 @@ describe("pullCurrentBranch", () => {
                 }
               }
               const handle = yield* delegate.spawn(command);
-              if (!ChildProcess.isStandardCommand(command) || !command.args.includes("fetch"))
+              // A status fetch downloads once, then fetches again only to move refs.
+              if (!ChildProcess.isStandardCommand(command) || !command.args.includes("--dry-run"))
                 return handle;
               const commandCwd = String(command.options.cwd);
               if (commandCwd === targetPath) {
@@ -1420,7 +1480,8 @@ describe("pullCurrentBranch", () => {
           const result = yield* Fiber.join(pull);
           assert.equal(result.status, "pulled");
           assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), remoteHead);
-          assert.deepEqual(events, ["fetch-exit", "pull-spawn"]);
+          // The status fetch downloads, then fetches again to move the refs it found.
+          assert.deepEqual(events, ["fetch-exit", "fetch-exit", "pull-spawn"]);
         }).pipe(Effect.ensuring(Deferred.succeed(releaseFetch, undefined)));
       }),
     ).pipe(Effect.provide(layerTest)),
@@ -1684,6 +1745,56 @@ it.effect("retries an in-flight ref snapshot invalidated by a mutation", () =>
       const refs = yield* Fiber.join(inFlight);
       assert.isTrue(refs.refs.some((ref) => ref.name === "feature/during-refresh"));
       assert.equal(yield* Ref.get(refScans), 2);
+    }),
+  ).pipe(
+    Effect.provide(
+      layerServerConfig.pipe(
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  ),
+);
+
+it.effect("superseded ref snapshots of one repository do not evict another's", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const quietRepo = yield* makeTmpDir();
+      const quietRepoRealPath = NodeFS.realpathSync.native(quietRepo);
+      const quietRepoScans = yield* Ref.make(0);
+      const countingSpawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (
+            ChildProcess.isStandardCommand(command) &&
+            command.args.includes("for-each-ref") &&
+            command.args.includes("refs/remotes") &&
+            NodeFS.realpathSync.native(String(command.options.cwd)).startsWith(quietRepoRealPath)
+          ) {
+            yield* Ref.update(quietRepoScans, (count) => count + 1);
+          }
+          return yield* delegate.spawn(command);
+        }),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, countingSpawner),
+      );
+      const busyRepo = yield* makeTmpDir();
+      yield* initRepoWithCommit(quietRepo).pipe(
+        Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+      );
+      yield* initRepoWithCommit(busyRepo).pipe(
+        Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+      );
+
+      yield* driver.listRefs({ cwd: quietRepo });
+      // More epochs than the snapshot cache holds.
+      for (let index = 0; index < 70; index++) {
+        yield* driver.invalidateRefs(busyRepo);
+        yield* driver.listRefs({ cwd: busyRepo });
+      }
+      yield* driver.listRefs({ cwd: quietRepo });
+
+      assert.equal(yield* Ref.get(quietRepoScans), 1);
     }),
   ).pipe(
     Effect.provide(
@@ -2000,6 +2111,11 @@ it.effect.each([
     stderr: "error: fetching ref refs/remotes/origin/main failed: reference already exists",
     expected: "could not update a local reference",
     attempts: 2,
+  },
+  {
+    name: "broken local ref",
+    stderr: "fatal: bad object refs/remotes/origin/dev 2",
+    expected: "broken local ref",
   },
   {
     name: "unrelated remote chatter",
@@ -4899,7 +5015,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* writeTextFile(cwd, "nested/untracked.txt", "one\ntwo\n");
         yield* writeTextFile(cwd, "new [1].txt", "literal\n");
 
-        const status = yield* driver.statusDetailsLocal(pathService.join(cwd, "nested"), {
+        const nested = pathService.join(cwd, "nested");
+        const alias = pathService.join(yield* makeTmpDir(), "alias");
+        const platform = yield* HostProcess.Platform;
+        yield* Effect.promise(() =>
+          NodeFS.promises.symlink(nested, alias, platform === "win32" ? "junction" : "dir"),
+        );
+        const status = yield* driver.statusDetailsLocal(alias, {
           includeBranchChanges: true,
         });
         assert.deepStrictEqual(status.branchChanges, {
@@ -4907,6 +5029,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           insertions: 4,
           deletions: 0,
         });
+        yield* driver.ensureRemote({ cwd: alias, preferredName: "origin", url: cwd });
+        assert.isTrue((yield* driver.statusDetailsLocal(alias)).hasOriginRemote);
         assert.isUndefined((yield* driver.statusDetailsLocal(cwd)).branchChanges);
       }),
     );
@@ -5573,6 +5697,79 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           "background status fetch wrote .git/FETCH_HEAD, which an overlapping `git pull` merges from",
         );
       }),
+    );
+
+    // Cutting a transfer short takes a shell `upload-pack` wrapper.
+    describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+      "background upstream fetch objects",
+      () => {
+        it.effect.each([
+          { transfer: "cut short", unpackLimit: "1", behindCount: 0 },
+          { transfer: "complete as a pack", unpackLimit: "1", behindCount: 1 },
+          { transfer: "complete as loose objects", unpackLimit: "100", behindCount: 1 },
+          { transfer: "followed by a push", unpackLimit: "100", behindCount: 0 },
+        ] as const)(
+          "leaves only finished objects after a background upstream fetch that is $transfer",
+          ({ transfer, unpackLimit, behindCount }) =>
+            Effect.gen(function* () {
+              const path = yield* Path.Path;
+              const cwd = yield* makeTmpDir();
+              const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+              const updater = yield* makeTmpDir("git-vcs-driver-updater-");
+              const { initialBranch } = yield* initRepoWithCommit(cwd);
+              yield* git(remote, ["init", "--bare"]);
+              yield* git(cwd, ["remote", "add", "origin", remote]);
+              yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+
+              yield* git(updater, ["clone", remote, "."]);
+              yield* git(updater, ["config", "user.email", "test@test.com"]);
+              yield* git(updater, ["config", "user.name", "Test"]);
+              const incompressible = new Uint8Array(150_000);
+              for (let index = 0, state = 1; index < incompressible.length; index++) {
+                state = (Math.imul(state, 1_103_515_245) + 12_345) >>> 0;
+                incompressible[index] = state >>> 16;
+              }
+              NodeFS.writeFileSync(path.join(updater, "remote.bin"), incompressible);
+              yield* git(updater, ["add", "remote.bin"]);
+              yield* git(updater, ["commit", "-m", "remote commit"]);
+              yield* git(updater, ["push", "origin", initialBranch]);
+              NodeFS.writeFileSync(path.join(updater, "pushed.bin"), incompressible.reverse());
+              yield* git(updater, ["add", "pushed.bin"]);
+              yield* git(updater, ["commit", "-m", "pushed between connections"]);
+              yield* git(updater, ["push", "origin", "HEAD:refs/pending/push"]);
+
+              // The first transfer is whole and the branch may move right after it. The fetch
+              // that moves the refs then meets a remote its download did not see, and must not
+              // point a ref at the push: nothing has put those objects in the repository.
+              const served = path.join(remote, "served");
+              if (transfer === "cut short") NodeFS.writeFileSync(served, "");
+              const push =
+                transfer === "followed by a push"
+                  ? `git --git-dir='${remote}' update-ref refs/heads/${initialBranch} refs/pending/push;`
+                  : "";
+              const later =
+                transfer === "followed by a push" ? "" : "| dd bs=1 count=50000 2>/dev/null";
+              yield* git(cwd, [
+                "config",
+                "remote.origin.uploadpack",
+                `f() { if [ -e '${served}' ]; then git upload-pack "$@" ${later}; else : > '${served}'; git upload-pack "$@"; ${push} fi; }; f`,
+              ]);
+              yield* git(cwd, ["config", "fetch.unpackLimit", unpackLimit]);
+              const objects = path.join(cwd, ".git", "objects");
+              NodeFS.writeFileSync(path.join(objects, "pack", "tmp_pack_other"), "another fetch");
+
+              const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetailsRemote(cwd);
+
+              assert.equal(status.behindCount, behindCount);
+              assert.deepEqual(
+                [...NodeFS.readdirSync(objects), ...NodeFS.readdirSync(path.join(objects, "pack"))]
+                  .filter((name) => name.startsWith("tmp_"))
+                  .toSorted(),
+                ["tmp_pack_other"],
+              );
+            }),
+        );
+      },
     );
 
     it.effect("uses origin HEAD for default-branch detection with a non-origin upstream", () =>
