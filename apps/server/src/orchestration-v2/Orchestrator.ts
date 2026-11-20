@@ -8925,7 +8925,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const portableForkItems =
       !requiresPortableFork || sourceProjection === null || sourceRun === null
         ? []
-        : yield* readForkHistoryItems(projectionStore, sourceProjection, sourceRun).pipe(
+        : yield* readForkHistoryItems(
+            projectionStore,
+            sourceProjection,
+            sourceRun,
+            projection.thread,
+          ).pipe(
             Effect.mapError(
               (cause) =>
                 new OrchestratorProjectionError({ threadId: sourceProjection.thread.id, cause }),
