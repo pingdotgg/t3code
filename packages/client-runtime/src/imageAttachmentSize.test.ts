@@ -40,9 +40,9 @@ describe("fitImageAttachmentSize", () => {
   });
 
   it("clamps the short edge of extreme aspect ratios to at least 1px", () => {
-    const result = fitImageAttachmentSize({ width: 1, height: 10000 });
-    expect(result).not.toBeNull();
-    expect(result!.height).toBe(IMAGE_ATTACHMENT_MAX_EDGE);
-    expect(result!.width).toBeGreaterThanOrEqual(1);
+    expect(fitImageAttachmentSize({ width: 1, height: 10000 })).toEqual({
+      width: 1,
+      height: IMAGE_ATTACHMENT_MAX_EDGE,
+    });
   });
 });
