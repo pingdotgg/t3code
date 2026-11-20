@@ -913,6 +913,7 @@ it.effect(
       assert.deepEqual(committedInput?.cancelUnsettledEffects?.effectTypes, [
         "provider-session.apply-model-selection",
         "provider-session.apply-thread-title",
+        "provider-session.apply-runtime-policy",
         "provider-turn.start",
         "provider-turn.interrupt",
         "provider-turn.steer",

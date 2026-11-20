@@ -760,6 +760,11 @@ export interface ProviderAdapterV2SessionRuntime {
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly modelSelection: ModelSelection;
   }) => Effect.Effect<void, ProviderAdapterV2Error>;
+  /** Applies a thread's new policy to its running turn's client-answered requests; otherwise the next turn does. */
+  readonly applyRuntimePolicy?: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
+  }) => Effect.Effect<void, ProviderAdapterV2Error>;
   /** Renames the provider's native session while its process is running; otherwise the next turn does. */
   readonly applyThreadTitle?: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;

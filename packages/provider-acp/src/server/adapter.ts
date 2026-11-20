@@ -1600,7 +1600,7 @@ interface AcpNativeBuildConfiguration {
 }
 
 interface ActiveAcpTurn {
-  readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
+  input: ProviderAdapter.ProviderAdapterV2TurnInput;
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly nativeThreadId: string;
   readonly nativeTurnId: string;
@@ -9906,6 +9906,22 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 }),
               }
             : {}),
+          // Client-answered requests follow the new policy at once; the native session mode
+          // is reconfigured when the next turn starts.
+          applyRuntimePolicy: Effect.fn("AcpAdapterV2.applyRuntimePolicy")(function* ({
+            providerThread,
+            runtimePolicy,
+          }) {
+            // The session-wide fallback belongs to the native session this thread has loaded.
+            if (providerThread.nativeThreadRef?.nativeId !== (yield* Ref.get(activeSessionId))) {
+              return;
+            }
+            latestRuntimePolicy = runtimePolicy;
+            const context = yield* Ref.get(activeTurn);
+            if (context !== null && context.input.providerThread.id === providerThread.id) {
+              context.input = { ...context.input, runtimePolicy };
+            }
+          }),
           steerTurn: Effect.fn("AcpAdapterV2.steerTurn")(
             function* (turnInput) {
               if (steersWithPrompt) return yield* steerWithPrompt(turnInput);

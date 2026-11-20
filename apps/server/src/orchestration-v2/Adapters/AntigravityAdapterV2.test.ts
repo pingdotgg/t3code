@@ -997,7 +997,11 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
   /** The prompt launches one agy 1.5 subagent instead; its records live below this profile. */
   detachedChildProfile?: string,
   /** agy 1.5.11 answers a steered prompt once the next one arrives, which runs to `releaseSteer`. */
-  steering?: { readonly agentVersion: string; readonly holdsFirstPrompt: boolean },
+  steering?: {
+    readonly agentVersion: string;
+    readonly holdsFirstPrompt: boolean;
+    readonly runtimeMode?: "approval-required";
+  },
 ) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const path = yield* Path.Path;
@@ -1102,7 +1106,7 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
     ...(detachedChildProfile === undefined ? {} : { profileDirectory: detachedChildProfile }),
   });
   const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-    runtimeMode: "full-access",
+    runtimeMode: steering?.runtimeMode ?? "full-access",
     interactionMode: "default",
     cwd: process.cwd(),
   });
@@ -1338,6 +1342,7 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       const opened = yield* openSessionWithRunningCommand({}, undefined, {
         agentVersion: "1.5.11",
         holdsFirstPrompt: true,
+        runtimeMode: "approval-required",
       });
       const { session, providerThread, command, usage, send, startTurn, until } = opened;
       assert.isTrue(session.providerSession.capabilities.turns.supportsActiveSteering);
@@ -1358,6 +1363,30 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
         status: "completed",
         rawInput: { Role: "Artist", Prompt: "Paint the scooter" },
       });
+
+      // Full access chosen while the turn runs answers its next command itself.
+      yield* session.applyRuntimePolicy!({
+        providerThread,
+        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        }),
+      });
+      assert.deepEqual(
+        yield* opened.requestPermission(
+          {
+            sessionId: "mock-session-1",
+            toolCall: { toolCallId: "call_cat", kind: "execute", title: "cat f1.txt" },
+            options: [
+              { optionId: "allow", name: "Allow", kind: "allow_once" },
+              { optionId: "deny", name: "Deny", kind: "reject_once" },
+            ],
+          },
+          { requestId: "permission-mode-switch", method: "session/request_permission" },
+        ),
+        { outcome: { outcome: "selected", optionId: "allow" } },
+      );
 
       yield* session.steerTurn({
         threadId: ThreadId.make("thread-antigravity-wake"),

@@ -23,6 +23,7 @@ import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as RuntimePolicy from "./RuntimePolicy.ts";
 
 const yieldToRuntime = Effect.yieldNow.pipe(
   Effect.andThen(
@@ -86,6 +87,16 @@ export interface ProviderTurnControlServiceV2Shape {
     | ProviderSessionManager.ProviderSessionManagerV2Error
     | ProviderAdapter.ProviderAdapterV2Error
   >;
+  /** Best effort: a provider thread that is no longer live picks the policy up when its next turn starts. */
+  readonly applyRuntimePolicy: (input: {
+    readonly threadId: ThreadId;
+  }) => Effect.Effect<
+    void,
+    | RuntimePolicy.RuntimePolicyResolveError
+    | ProjectionStore.ProjectionStoreV2Error
+    | ProviderSessionManager.ProviderSessionManagerV2Error
+    | ProviderAdapter.ProviderAdapterV2Error
+  >;
   /** Best effort: a provider thread that is no longer live picks the title up when its next turn starts. */
   readonly applyThreadTitle: (input: {
     readonly threadId: ThreadId;
@@ -118,6 +129,7 @@ export const layer: Layer.Layer<
   | McpAppModelContext.McpAppModelContext
   | ProjectionStore.ProjectionStoreV2
   | ProviderSessionManager.ProviderSessionManagerV2
+  | RuntimePolicy.RuntimePolicyV2
 > = Layer.effect(
   ProviderTurnControlServiceV2,
   Effect.gen(function* () {
@@ -125,6 +137,7 @@ export const layer: Layer.Layer<
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const mcpAppModelContext = yield* McpAppModelContext.McpAppModelContext;
+    const runtimePolicies = yield* RuntimePolicy.RuntimePolicyV2;
 
     const load = Effect.fn("ProviderTurnControlService.load")(function* (input: {
       readonly threadId: ThreadId;
@@ -275,6 +288,31 @@ export const layer: Layer.Layer<
         if (Option.isNone(session) || session.value.applyThreadTitle === undefined) return;
         yield* session.value.applyThreadTitle({ providerThread, title: input.title });
       }),
+      applyRuntimePolicy: Effect.fn("ProviderTurnControlService.applyRuntimePolicy")(
+        function* (input) {
+          const { thread, providerThreads } = yield* projections.getThreadRecords(input.threadId, [
+            "providerThreads",
+          ]);
+          const providerThread = providerThreads.find(
+            (candidate) => candidate.id === thread.activeProviderThreadId,
+          );
+          if (!providerThread?.providerSessionId) return;
+          const session = yield* sessions.get(providerThread.providerSessionId);
+          if (Option.isNone(session) || session.value.applyRuntimePolicy === undefined) return;
+          // Above the ceiling the running turn keeps the policy it started with.
+          const runtimePolicy = yield* runtimePolicies
+            .resolve({ thread, modelSelection: thread.modelSelection })
+            .pipe(
+              Effect.asSome,
+              Effect.catchTags({ RuntimePolicyAboveCeilingError: () => Effect.succeedNone }),
+            );
+          if (Option.isNone(runtimePolicy)) return;
+          yield* session.value.applyRuntimePolicy({
+            providerThread,
+            runtimePolicy: runtimePolicy.value,
+          });
+        },
+      ),
       interrupt: Effect.fn("ProviderTurnControlService.interrupt")(
         function* (input) {
           const loaded = yield* load({ ...input, operation: "interrupt" });
