@@ -12,6 +12,7 @@ import type {
 import {
   type ChatAttachment,
   CommandId,
+  isDelegatedAppThread,
   isListedThreadLineage,
   MessageId,
   OrchestrationV2StopWorkflowError,
@@ -67,6 +68,7 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimit.ts";
 import { projectTurnItemForDetail } from "./WireProjection.ts";
+import { cancelledBeforeStart } from "./RestartBackgroundNote.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { ThreadWorktreeRestore } from "../workspace/restoreMissingWorktree.ts";
@@ -404,6 +406,7 @@ export interface ThreadManagementServiceShape {
   readonly getThreadHistoryPage: Orchestrator.OrchestratorV2["Service"]["getThreadHistoryPage"];
   readonly getTimelinePage: Orchestrator.OrchestratorV2["Service"]["getTimelinePage"];
   readonly getMessageCount: Orchestrator.OrchestratorV2["Service"]["getMessageCount"];
+  readonly getRunCount: Orchestrator.OrchestratorV2["Service"]["getRunCount"];
   readonly getMessagesById: Orchestrator.OrchestratorV2["Service"]["getMessagesById"];
   readonly getTurnItem: (input: {
     readonly threadId: ThreadId;
@@ -853,7 +856,7 @@ const make = Effect.gen(function* () {
           .filter((thread) =>
             input.includeSubagents
               ? thread.lineage.sideChat !== true
-              : isListedThreadLineage(thread.lineage),
+              : isListedThreadLineage(thread.lineage) && !isDelegatedAppThread(thread),
           )
           .toSorted(
             (left, right) =>
@@ -878,23 +881,25 @@ const make = Effect.gen(function* () {
       input.freshContext && (input.mode === "steer" || input.mode === "restart")
         ? "queue"
         : input.mode;
+    const explicitSteer = mode === "steer" || mode === "restart";
+    const missingSteeringTarget = explicitSteer && steerableRun === undefined;
+    // A command receipt outlives its target turn. Dispatch validates and replays it.
+    if (missingSteeringTarget && !(yield* hasReceipt(input.commandId))) {
+      return yield* new ThreadManagementNoSteerableRunError({
+        threadId: input.threadId,
+        mode,
+      });
+    }
+
     let dispatchMode: Extract<
       OrchestrationV2Command,
       { readonly type: "message.dispatch" }
     >["dispatchMode"];
-    if (mode === "steer" || mode === "restart") {
-      if (steerableRun === undefined) {
-        return yield* new ThreadManagementNoSteerableRunError({
-          threadId: input.threadId,
-          mode,
-        });
-      }
+    if ((explicitSteer || mode === "auto") && steerableRun !== undefined) {
       dispatchMode = {
-        type: mode === "steer" ? "steer_active" : "restart_active",
+        type: mode === "restart" ? "restart_active" : "steer_active",
         targetRunId: steerableRun.id,
       };
-    } else if (mode === "auto" && steerableRun !== undefined) {
-      dispatchMode = { type: "steer_active", targetRunId: steerableRun.id };
     } else {
       dispatchMode = {
         type: mode === "queue" ? "queue_after_active" : "start_immediately",
@@ -902,8 +907,8 @@ const make = Effect.gen(function* () {
     }
 
     // Turn start would fail on its own after the send reported success; a replay keeps its answer.
-    // A live steer starts no turn, so it needs no workspace.
-    if (dispatchMode.type !== "steer_active") {
+    // A live steer and a receipt replay without a target turn need no workspace.
+    if (!missingSteeringTarget && dispatchMode.type !== "steer_active") {
       yield* worktreeRestore
         .restore(target.thread)
         .pipe(
@@ -1142,7 +1147,25 @@ const make = Effect.gen(function* () {
         )
       )
         return true;
-      const following = records.runs.filter((candidate) => candidate.ordinal > run.ordinal);
+      const later = records.runs.filter((candidate) => candidate.ordinal > run.ordinal);
+      const cancelledMessageIds = later
+        .filter((candidate) => candidate.status === "cancelled")
+        .map((candidate) => candidate.userMessageId);
+      // Send now cancels a queued run and moves its message into the running turn.
+      const steeredMessageIds =
+        cancelledMessageIds.length === 0
+          ? new Set()
+          : new Set(
+              (yield* getProjectThreadRecords(input, ["messages"], {
+                messageIds: cancelledMessageIds,
+              })).messages
+                .filter((message) => message.runId === run.id)
+                .map((message) => message.id),
+            );
+      const following = later.filter(
+        (candidate) =>
+          candidate.status !== "cancelled" || !steeredMessageIds.has(candidate.userMessageId),
+      );
       if (following.length > 0) {
         const { messages } = yield* getProjectThreadRecords(input, ["messages"], {
           messageRunIds: following.map((candidate) => candidate.id),
@@ -1169,9 +1192,13 @@ const make = Effect.gen(function* () {
           )
         )
           return false;
+        // A wake cancelled before it started (its result was already read in-turn) did nothing.
         if (
           following.some(
-            (candidate) => candidate.status !== "queued" && candidate.status !== "completed",
+            (candidate) =>
+              candidate.status !== "queued" &&
+              candidate.status !== "completed" &&
+              !cancelledBeforeStart(candidate),
           )
         )
           return true;
@@ -1699,6 +1726,11 @@ const make = Effect.gen(function* () {
     getMessageCount: Effect.fn("ThreadManagementService.getMessageCount")(function (threadId) {
       return ensureProjectionTranscript(threadId).pipe(
         Effect.andThen(orchestrator.getMessageCount(threadId)),
+      );
+    }),
+    getRunCount: Effect.fn("ThreadManagementService.getRunCount")(function (threadId) {
+      return ensureProjectionTranscript(threadId).pipe(
+        Effect.andThen(orchestrator.getRunCount(threadId)),
       );
     }),
     getMessagesById: Effect.fn("ThreadManagementService.getMessagesById")(

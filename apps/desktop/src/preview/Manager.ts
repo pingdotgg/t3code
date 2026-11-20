@@ -61,8 +61,10 @@ import * as Stream from "effect/Stream";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as SynchronizedRef from "effect/SynchronizedRef";
+import { msg } from "gt-i18n";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import { m } from "../i18n/messages.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import {
   MENU_ACTION_CHANNEL,
@@ -1827,7 +1829,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     });
     if (Option.isNone(tab)) return;
     const closedTab = tab.value;
-    if (closedTab.serverTab) browserHost.setShown(closedTab.serverTab, undefined);
+    if (closedTab.serverTab) {
+      browserHost.setShown(closedTab.serverTab, undefined);
+      browserHost.setCaptureDrawn(closedTab.serverTab, undefined);
+    }
     if (closedTab.webContentsId != null) {
       yield* Effect.all(
         [
@@ -2635,12 +2640,21 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     if (serverTab) browserHost.setShown(serverTab, shown);
   });
 
+  const setCaptureDrawn = Effect.fn("PreviewManager.setCaptureDrawn")(function* (
+    tabId: string,
+    drawn: boolean,
+  ) {
+    const serverTab = (yield* SynchronizedRef.get(tabsRef)).get(tabId)?.serverTab;
+    if (serverTab) browserHost.setCaptureDrawn(serverTab, drawn);
+  });
+
   // A window reload or guest crash destroys the guest without the renderer reporting it hidden.
   // The renderer reports again once a new guest registers.
   const hideDestroyedGuest = Effect.fnUntraced(function* (webContentsId: number) {
     for (const tab of (yield* SynchronizedRef.get(tabsRef)).values()) {
       if (tab.webContentsId === webContentsId && tab.serverTab) {
         browserHost.setShown(tab.serverTab, false);
+        browserHost.setCaptureDrawn(tab.serverTab, false);
       }
     }
   });
@@ -3145,7 +3159,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               height: PICTURE_IN_PICTURE_INITIAL_HEIGHT,
               minWidth: PICTURE_IN_PICTURE_MIN_WIDTH,
               minHeight: PICTURE_IN_PICTURE_MIN_HEIGHT,
-              title: title.length > 0 ? `Preview · ${title}` : "Browser preview",
+              title:
+                title.length > 0
+                  ? m(msg("Preview · {title}"), { title })
+                  : m(msg("Browser preview")),
               show: false,
               alwaysOnTop: true,
               autoHideMenuBar: true,
@@ -3503,7 +3520,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     data: Uint8Array,
   ) {
     const [createdAt, millis] = yield* Effect.all([currentIso, currentMillis]);
-    const id = `browser-recording-${millis.toString(36)}`;
+    const uuid = yield* random.uuidV4();
+    const id = `browser-recording-${millis.toString(36)}-${uuid.slice(0, 8)}`;
     const extension = recordingFileExtension(mimeType);
     const artifactPath = path.join(resolvedArtifactDirectory, `${id}.${extension}`);
     yield* fileSystem.makeDirectory(resolvedArtifactDirectory, { recursive: true }).pipe(
@@ -3517,7 +3535,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           }),
       ),
     );
-    yield* fileSystem.writeFile(artifactPath, data).pipe(
+    yield* fileSystem.writeFile(artifactPath, data, { flag: "wx" }).pipe(
       Effect.mapError(
         (cause) =>
           new PreviewOperationError({
@@ -3715,6 +3733,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     setAnnotationSendEnabled,
     setAudioMuted,
     setShown,
+    setCaptureDrawn,
     setColorScheme,
     setMainWindow,
     setForwardedShortcuts: (shortcuts: ReadonlyArray<PreviewForwardedShortcut>) =>
@@ -3931,6 +3950,7 @@ export class PreviewManager extends Context.Service<
       audioMuted: boolean,
     ) => Effect.Effect<void, PreviewManagerError>;
     readonly setShown: (tabId: string, shown: boolean) => Effect.Effect<void>;
+    readonly setCaptureDrawn: (tabId: string, drawn: boolean) => Effect.Effect<void>;
     readonly openDevTools: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly clearCookies: (
       partitions?: ReadonlyArray<string>,
@@ -4093,6 +4113,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     setZoomFactor: operations.setZoomFactor,
     setAudioMuted: operations.setAudioMuted,
     setShown: operations.setShown,
+    setCaptureDrawn: operations.setCaptureDrawn,
     openDevTools: operations.openDevTools,
     clearCookies: Effect.fn("PreviewManager.clearCookies")(function* (partitions) {
       yield* browserSession
