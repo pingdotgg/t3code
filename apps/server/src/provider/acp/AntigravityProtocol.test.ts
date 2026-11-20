@@ -7,6 +7,7 @@ import {
   extractAntigravityUserInputQuestion,
   antigravityApprovalOptions,
   antigravitySubagentOutput,
+  antigravityToolOutlivesPrompt,
   classifyAntigravitySubagentToolCall,
   isAntigravityUserInputRequest,
   makeAntigravityUserInputResponse,
@@ -489,6 +490,49 @@ describe("Antigravity tool results", () => {
     expect(JSON.stringify(toolCall).length).toBeLessThan(20_000);
     expect(JSON.stringify(event.rawPayload).length).toBeLessThan(10_000);
     expect(JSON.stringify(event.rawPayload)).not.toContain("formatted_output");
+  });
+
+  it.each([
+    { name: "a command", update: commandStarted.update, outlives: true },
+    {
+      name: "a daemon",
+      update: { ...commandStarted.update, rawInput: { CommandLine: "serve", IsDaemon: true } },
+      outlives: false,
+    },
+    // agy 1.5.13 keeps this call in progress until the wake fires.
+    {
+      name: "a scheduled wake",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call_4902666363527503248",
+        status: "in_progress",
+        kind: "other",
+        title: "Run schedule",
+        rawInput: { DurationSeconds: 30, Prompt: "Reply only with the word DONE." },
+      },
+      outlives: true,
+    },
+    {
+      name: "another native tool",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call_other",
+        status: "in_progress",
+        kind: "other",
+        title: "Run list_dir",
+        rawInput: { DirectoryPath: "/workspace" },
+      },
+      outlives: false,
+    },
+  ] satisfies ReadonlyArray<{
+    name: string;
+    update: EffectAcpSchema.SessionNotification["update"];
+    outlives: boolean;
+  }>)("knows whether $name outlives the prompt", ({ update, outlives }) => {
+    const event = parseToolUpdate({ sessionId: "session-1", update });
+    expect(antigravityToolOutlivesPrompt(normalizeAntigravityToolCall(event.toolCall))).toBe(
+      outlives,
+    );
   });
 
   it("keeps 1.5 command input and output valid Unicode when cut", () => {
