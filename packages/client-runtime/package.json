@@ -115,6 +115,10 @@
       "types": "./src/linkedThread.ts",
       "default": "./src/linkedThread.ts"
     },
+    "./side-thread": {
+      "types": "./src/sideThread.ts",
+      "default": "./src/sideThread.ts"
+    },
     "./scheduled-task-webhook": {
       "types": "./src/scheduledTaskWebhook.ts",
       "default": "./src/scheduledTaskWebhook.ts"

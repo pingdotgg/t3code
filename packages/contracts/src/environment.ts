@@ -191,6 +191,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Serves a thread's stream, history pages and item detail to a link's session
       (`PEER_LINK_THREAD_STREAM_ROUTE`), so a client of the linking environment can read it. */
   linkThreadStream: Schema.optionalKey(Schema.Boolean),
+  /** A full-access link can ask this server for a one-time pairing credential for a client
+      of the linking environment. Absent on servers from before it. */
+  linkClientPairing: Schema.optionalKey(Schema.Boolean),
   /** Mints pairing codes that approve one agent sign-in at a set level (`AUTO-…`). */
   mcpApprovalCodes: Schema.optionalKey(Schema.Boolean),
   peerLinkPairingCodes: Schema.optionalKey(Schema.Boolean),

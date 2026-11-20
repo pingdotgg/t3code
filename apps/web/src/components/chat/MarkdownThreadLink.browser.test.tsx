@@ -6,6 +6,7 @@ import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
+import { isMacPlatform } from "../../lib/utils";
 import { linkedThreadSurface } from "../../linkedThreadSurface";
 import { selectThreadRightPanelState, useRightPanelStore } from "../../rightPanelStore";
 import { MarkdownThreadLink } from "./MarkdownThreadLink";
@@ -35,6 +36,9 @@ vi.mock(import("../../state/entities"), () => ({
     ref?.projectId === "essay-project" ? ({ title: "Essays" } as never) : null,
 }));
 vi.mock(import("../../state/environments"), () => ({
+  // The click rule reads the client setting, whose module asks for these.
+  useEnvironments: (() => []) as never,
+  usePrimaryEnvironment: (() => null) as never,
   useEnvironmentIdentities: () => [
     { environmentId: EnvironmentId.make("environment"), label: "Here" },
     { environmentId: EnvironmentId.make("remote"), label: "Remote" },
@@ -211,6 +215,12 @@ it.for([
   await chip.click();
   expect(panel().surfaces).toHaveLength(1);
   expect(screen.router?.state.location.pathname).toBe("/");
+  // The modifier reads it on the main screen instead, through the same environment.
+  await chip.click({ modifiers: [isMacPlatform(navigator.platform) ? "Meta" : "Control"] });
+  await vi.waitFor(() =>
+    expect(screen.router?.state.location.pathname).toBe(`/linked/environment/${linkedId}/there`),
+  );
+  expect(panel().surfaces).toHaveLength(1);
 });
 
 it("reads through the link when a disconnected machine's thread is only cached here", async () => {

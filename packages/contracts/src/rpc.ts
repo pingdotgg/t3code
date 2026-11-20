@@ -18,6 +18,8 @@ import {
 } from "./mcpApps.ts";
 import {
   PeerLink,
+  PeerLinkClientPairingInput,
+  PeerLinkClientPairingResult,
   PeerLinkCreateInput,
   PeerLinkError,
   PeerLinkName,
@@ -559,6 +561,7 @@ export const WS_METHODS = {
   peerLinksSubscribeThread: "peerLinks.subscribeThread",
   peerLinksThreadHistoryPage: "peerLinks.threadHistoryPage",
   peerLinksThreadItem: "peerLinks.threadItem",
+  peerLinksPairClient: "peerLinks.pairClient",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
@@ -937,6 +940,12 @@ const WsPeerLinksThreadItemRpc = Rpc.make(WS_METHODS.peerLinksThreadItem, {
   payload: PeerLinkThreadItemInput,
   success: OrchestrationV2RpcSchemas.getTurnItem.output,
   error: Schema.Union([PeerLinkThreadReadError, EnvironmentAuthorizationError]),
+});
+
+const WsPeerLinksPairClientRpc = Rpc.make(WS_METHODS.peerLinksPairClient, {
+  payload: PeerLinkClientPairingInput,
+  success: PeerLinkClientPairingResult,
+  error: Schema.Union([PeerLinkError, EnvironmentAuthorizationError]),
 });
 
 const WsPeerLinksAnswerRequestRpc = Rpc.make(WS_METHODS.peerLinksAnswerRequest, {
@@ -2346,6 +2355,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPeerLinksSubscribeThreadRpc,
   WsPeerLinksThreadHistoryPageRpc,
   WsPeerLinksThreadItemRpc,
+  WsPeerLinksPairClientRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerCheckSecretSourceRpc,
   WsServerSearchAcpRegistryRpc,

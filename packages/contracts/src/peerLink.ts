@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { AuthMcpClientAccess } from "./auth.ts";
+import { AuthEnvironmentScope, AuthMcpClientAccess } from "./auth.ts";
 import { EnvironmentId, ThreadId, TrimmedNonEmptyString, TurnItemId } from "./baseSchemas.ts";
 
 /**
@@ -155,6 +155,60 @@ export class PeerLinkThreadReadError extends Schema.TaggedError<PeerLinkThreadRe
     cause: Schema.optionalKey(Schema.Defect()),
   },
 ) {}
+
+/** A client of this environment asks to pair with one it links to, without typing a code. */
+export const PeerLinkClientPairingInput = Schema.Struct({ environmentId: EnvironmentId });
+export type PeerLinkClientPairingInput = typeof PeerLinkClientPairingInput.Type;
+
+const peerLinkClientPairingTarget = {
+  environmentId: EnvironmentId,
+  label: Schema.String,
+  /** The addresses this environment reaches the linked one at; the client tries them itself. */
+  urls: Schema.Array(TrimmedNonEmptyString),
+};
+
+/**
+ * A one-time pairing credential from the linked environment, or why this link cannot get one, in
+ * which case the user pairs there with a code of their own.
+ */
+export const PeerLinkClientPairingResult = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("credential"),
+    ...peerLinkClientPairingTarget,
+    credential: TrimmedNonEmptyString,
+    expiresAt: Schema.DateTimeUtc,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("unsupported"),
+    ...peerLinkClientPairingTarget,
+    reason: Schema.Literals([
+      /** The link is below full access, so it may not hand out a client's access. */
+      "link_access",
+      /** The linked environment runs a version from before this. */
+      "version",
+      /** The linked environment refused: the beta is off there, or its policy forbids pairing. */
+      "refused",
+      /** This environment could not reach the linked one; the client still might. */
+      "unreachable",
+    ]),
+  }),
+]);
+export type PeerLinkClientPairingResult = typeof PeerLinkClientPairingResult.Type;
+
+/** What a linking environment asks of the linked one, over the link, for one of its clients. */
+export const PeerLinkClientPairingRequest = Schema.Struct({
+  /** The client's scopes on the linking environment. The credential never carries more. */
+  scopes: Schema.Array(AuthEnvironmentScope),
+  /** The client's name there, shown in Connections here. */
+  clientLabel: TrimmedNonEmptyString,
+});
+export type PeerLinkClientPairingRequest = typeof PeerLinkClientPairingRequest.Type;
+
+export const PeerLinkClientPairingCredential = Schema.Struct({
+  credential: TrimmedNonEmptyString,
+  expiresAt: Schema.DateTimeUtc,
+});
+export type PeerLinkClientPairingCredential = typeof PeerLinkClientPairingCredential.Type;
 
 /**
  * The user's answer to an agent asking to link an environment. The pairing

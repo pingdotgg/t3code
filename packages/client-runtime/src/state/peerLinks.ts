@@ -115,6 +115,15 @@ export function createPeerLinkEnvironmentAtoms<R, E>(
       tag: WS_METHODS.peerLinksThreadItem,
       idleTtlMs: 0,
     }),
+    /** Asks for a one-time pairing with a linked environment. Its answer is a credential: never cached. */
+    pairClient: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:peer-links:pair-client",
+      tag: WS_METHODS.peerLinksPairClient,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.environmentId]),
+      },
+    }),
     // An agent's link card. One answer per card at a time.
     answerRequest: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:peer-links:answer-request",

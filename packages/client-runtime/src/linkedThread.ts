@@ -3,6 +3,7 @@ import type {
   OrchestrationV2ThreadHistoryPage,
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadStreamItem,
+  PeerLinkClientPairingResult,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -54,6 +55,46 @@ export function resolveLinkedThreadOpen(input: {
   if (input.own?.connected === true) return "direct";
   if (input.linked) return "linked";
   return input.own === undefined ? "unavailable" : "direct";
+}
+
+export type LinkedEnvironmentConnection =
+  /** This client paired with the linked environment and saved it. */
+  | { readonly type: "connected" }
+  /** No address the linking environment knows answers from this device. */
+  | { readonly type: "unreachable"; readonly label: string }
+  /** The user pairs with a code of their own, in the add-environment flow, with this filled in. */
+  | { readonly type: "manual"; readonly label: string; readonly host: string | null };
+
+/**
+ * Connects this client to a linked environment. The linking environment asks it for a one-time
+ * pairing over a full-access link, and the client redeems that at an address it can reach itself.
+ * Anything short of that leaves the user to pair by hand.
+ */
+export async function connectLinkedEnvironment(options: {
+  readonly label: string;
+  /** Asks the linking environment for a pairing; null when it could not answer. */
+  readonly requestPairing: () => Promise<PeerLinkClientPairingResult | null>;
+  /** Whether an address answers this device as the linked environment. */
+  readonly reaches: (host: string) => Promise<boolean>;
+  /** Pairs at `host` with the one-time credential and saves the environment. */
+  readonly pair: (input: {
+    readonly host: string;
+    readonly pairingCode: string;
+  }) => Promise<boolean>;
+}): Promise<LinkedEnvironmentConnection> {
+  const pairing = await options.requestPairing();
+  if (pairing === null) return { type: "manual", label: options.label, host: null };
+  const { label, urls } = pairing;
+  // Asked together, taken in the linking environment's order of preference.
+  const answers = await Promise.all(urls.map((url) => options.reaches(url)));
+  const host = urls.find((_, index) => answers[index]) ?? null;
+  if (pairing.type === "unsupported") {
+    return { type: "manual", label, host: host ?? urls[0] ?? null };
+  }
+  if (host === null) return { type: "unreachable", label };
+  return (await options.pair({ host, pairingCode: pairing.credential }))
+    ? { type: "connected" }
+    : { type: "manual", label, host };
 }
 
 const hasStringField = <K extends string>(value: unknown, key: K): value is Record<K, string> =>

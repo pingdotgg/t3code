@@ -288,6 +288,59 @@ it.effect("reads a linked environment's thread only for a client that may read t
   }).pipe(Effect.scoped),
 );
 
+it.effect("pairs a client with a linked environment only for one that may hand out access", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RPC_REQUIRED_SCOPES,
+          typeof WS_METHODS.peerLinksPairClient
+        > => tag !== WS_METHODS.peerLinksPairClient,
+      ),
+    );
+    let asked = 0;
+    const environmentId = EnvironmentId.make("environment-box");
+    const handlers = group.toLayerHandler(WS_METHODS.peerLinksPairClient, () =>
+      Effect.sync(() => {
+        asked++;
+        return {
+          type: "unsupported" as const,
+          reason: "link_access" as const,
+          environmentId,
+          label: "Box",
+          urls: [],
+        };
+      }),
+    );
+    // Running agents and reading the access list do not include handing access out.
+    const operator = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.merge(
+          handlers,
+          RpcAuthorization.layer([AuthOrchestrationReadScope, AuthOrchestrationOperateScope]),
+        ),
+      ),
+    );
+    expect(
+      yield* operator[WS_METHODS.peerLinksPairClient]({ environmentId }).pipe(Effect.flip),
+    ).toMatchObject({
+      _tag: "EnvironmentAuthorizationError",
+      requiredPermission: AuthAccessWriteScope,
+    });
+    expect(asked).toBe(0);
+
+    const manager = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(Layer.merge(handlers, RpcAuthorization.layer([AuthAccessWriteScope]))),
+    );
+    expect((yield* manager[WS_METHODS.peerLinksPairClient]({ environmentId })).type).toBe(
+      "unsupported",
+    );
+    expect(asked).toBe(1);
+  }).pipe(Effect.scoped),
+);
+
 it.effect.each([WS_METHODS.subscribeVcsBranch, WS_METHODS.subscribeVcsStatus] as const)(
   "enforces read permission on stream %s",
   (method) =>
