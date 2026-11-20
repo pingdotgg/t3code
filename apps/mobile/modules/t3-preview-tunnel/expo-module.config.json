@@ -1,0 +1,5 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": { "modules": ["T3PreviewTunnelModule"] },
+  "android": { "modules": ["expo.modules.t3previewtunnel.T3PreviewTunnelModule"] }
+}
