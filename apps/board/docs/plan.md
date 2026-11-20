@@ -1609,15 +1609,15 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 
 - [ ] Create the private repo `13kparkin/pstack-t3` with an `upstream` branch and a `main` branch, laid out like `13kparkin/pstack-omp`.
 - [ ] In that repo, create `skills/pstack-t3/SKILL.md` and `scripts/sync-upstream`.
-- [ ] Create `apps/board/scripts/install-skills.mjs` and `apps/board/scripts/install-skills.test.mjs`.
-- [ ] Edit `apps/board/src/orchestrator/orchestratorInstance.ts` and `apps/board/src/orchestrator/brief.md`.
+- [ ] Create `apps/board/electron/pstack.ts` and `apps/board/electron/pstack.test.ts`, and `apps/board/scripts/vendor-pstack.mjs` with its test and the vendored copies in `apps/board/pstack/`.
+- [ ] Edit `apps/board/src/orchestrator/orchestratorInstance.ts`, `apps/board/src/orchestrator/brief.md`, `apps/board/src/state/orchestrator.ts`, `apps/board/roles/poteto-agent.md`, and the IPC, preload, and bridge files that carry the checkout path.
 
 **Build.**
 
 - [ ] Seed `upstream` from the `cursor/plugins` pstack commit that `pstack-omp`'s `upstream` branch last records, keeping its `Upstream-Commit:` trailers. Copy `scripts/sync-upstream` from `pstack-omp`. `git diff upstream main -- skills agents` is the whole T3 adaptation.
 - [ ] Write `skills/pstack-t3/SKILL.md` with the same sections as `pstack-omp`'s adapter. Children start with `delegate_task` and a role, isolation, target, and title. The role map points at the board's 18-role registry. Results come from T3 thread reads and the thread family. Waiting relies on T3 waking the parent when a child finishes or asks. The human is reached through `foryou.jsonl` and `request_secret`. Claude Code's built-in subagent tool is never used.
-- [ ] Change other skills only where they name OMP mechanics, the same way `pstack-omp` changed them. Mention a skill as `$name` at the start of a word, never inside backticks, because T3 only expands that form.
-- [ ] In `install-skills.mjs`, install `pstack-t3` as a Claude Code plugin at user scope, the way K1 installs `omp-kit`, link its skills into the Codex skills folder, and skip anything that already points there. Also turn on Codex memories in `~/.codex/config.toml`, with `[features] memories = true` and `memories.disable_on_external_context = false`, leaving every other key as it is.
+- [ ] Change other skills only where they name OMP mechanics, the same way `pstack-omp` changed them. Mention a skill as `$pstack-t3:<name>` at the start of a word, never inside backticks, because Claude Code and Codex prefix plugin skills and T3 only expands that form. Most pstack skills refuse the Skill tool, so the adapter reads their `SKILL.md` from the checkout.
+- [ ] Load `pstack-t3` only on the board's Claude instances, never as a user-scope plugin. `ensurePstack` in `electron/pstack.ts` clones the repo into `~/.agent-board/pstack-t3` in WSL and refreshes it on later starts, keeping the old checkout when a fetch fails. The orchestrator instance and a `board-agents-<instance>` instance for children set `CLAUDE_CODE_PLUGIN_DIRS` to that folder, and every role targets the agents instance. Codex does not load the skills.
 - [ ] Make the orchestrator instance's appended system prompt the T3 edition of poteto-mode, the `pstack-t3` adapter, and R1's standing rules. Every other skill loads on demand.
 
 **You see.**
@@ -1626,7 +1626,7 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] `install-skills.test.mjs` runs the script against a temporary home. The first run installs the plugin and links the Codex skills, the second run changes nothing and reports each skip, and a link that points elsewhere is reported and left alone, each checked against a literal expected file list. Run `node --test apps/board/scripts/install-skills.test.mjs`.
+- [ ] `electron/pstack.test.ts` covers a first start that clones, a later start that fetches, and a failed fetch that keeps the old checkout, and `orchestratorInstance.test.ts` checks that the orchestrator and agents instances carry `CLAUDE_CODE_PLUGIN_DIRS`, each with literal expected values. Run `vp test run electron/pstack.test.ts src/orchestrator/orchestratorInstance.test.ts` from `apps/board`.
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe.
 
@@ -1636,7 +1636,7 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Lane 4. Run a long session, `/compact`, then ask which principle governs a test assertion. Save `b12-compact.txt`. Pass when it answers from poteto-mode without reading old session files.
 - [ ] Lane 5. Run `scripts/sync-upstream` in `pstack-t3`. Save `b12-sync.txt`. Pass when it lists the upstream changes since the seed commit.
 - [ ] Lane 6. Read the Codex instance's skills from the server config. Save `b12-codex-skills.txt`. Pass when the ported skills are listed.
-- [ ] Lane 7. Run the install script twice on a scratch home. Save `b12-install.txt`. Pass when the second run changes nothing.
+- [ ] Lane 7. In a T3 Claude orchestrator thread, send `$pstack-t3:how` with a repo question, and have it delegate one child. Save `b12-skill-load.txt`. Pass when the skill expands from the checkout with no disk-wide search, no `~/.claude` lookup, and no refused Skill call, and the child's `CLAUDE_CODE_PLUGIN_DIRS` is the checkout.
 - [ ] Lane 8. Rerun the end-to-end goal from the orchestrator end-to-end run with the port and with R1's rules only, on the same ten checks. Save `b12-eval.md`. Pass when both scores are recorded with evidence and the port scores no lower on any check.
 - [ ] Lane 9. Run two T3 Codex threads in the same project, where the first states a project fact. Save `b12-codex-memory.txt`. Pass when `~/.codex/memories_v2/` holds that fact after the first thread goes idle, or record the gap if Codex never writes it.
 - [ ] Lane 10. Run the boundary check and the standards check at head. Save `b12-checks.txt`. Pass when both exit 0.
