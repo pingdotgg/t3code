@@ -13,7 +13,13 @@ export function App() {
     <div className="grid h-full grid-rows-[var(--topbar-height)_minmax(0,1fr)_auto]">
       <header className="drag-region border-b border-line bg-bg" />
       {/* Hidden, not unmounted, so the viewport keeps its pan and zoom while settings are open. */}
-      <div className={settingsOpen ? "hidden" : "grid min-h-0 grid-cols-[240px_minmax(0,1fr)]"}>
+      <div
+        className={
+          settingsOpen
+            ? "hidden"
+            : "grid min-h-0 grid-cols-[240px_minmax(0,1fr)] grid-rows-[minmax(0,1fr)]"
+        }
+      >
         <Sidebar
           footer={
             <>
@@ -26,7 +32,7 @@ export function App() {
             setSettingsOpen(true);
           }}
         />
-        <main className="min-w-0">
+        <main className="min-h-0 min-w-0">
           <OpenBoard />
         </main>
       </div>
