@@ -99,6 +99,16 @@ const layerMockProjectService = Layer.mock(ProjectService.ProjectService)({
         model: "gpt-5.1-codex",
       },
     } as never),
+  workspaceScanDirectory: Effect.succeed,
+});
+const layerMockProjectServiceWithoutDefaults = Layer.mock(ProjectService.ProjectService)({
+  getById: (projectId) =>
+    Effect.succeedSome({
+      id: projectId,
+      title: "Test project",
+      workspaceRoot: process.cwd(),
+    } as never),
+  workspaceScanDirectory: Effect.succeed,
 });
 
 describe("OrchestratorMcpService", () => {
@@ -1587,6 +1597,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     Layer.mock(ProviderRegistry.ProviderRegistry)({
       getProviders: Effect.succeed(providers),
       refreshInstance: () => Effect.succeed(providers),
+      refreshWorkspaceSnapshot: () => Effect.succeed(providers),
     });
 
   const adapterRegistryLayer = (instanceIds: ReadonlyArray<ProviderInstanceId>) =>
@@ -2060,7 +2071,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           }),
         ]),
         adapterRegistryLayer([codexInstanceId]),
-        Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
+        layerMockProjectServiceWithoutDefaults,
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
@@ -2296,6 +2307,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           }),
           Layer.mock(ProviderRegistry.ProviderRegistry)({
             getProviders: Effect.sync(() => providers),
+            refreshWorkspaceSnapshot: () => Effect.sync(() => providers),
           }),
           adapterRegistryLayer([
             codexInstanceId,
@@ -2641,6 +2653,16 @@ describe("OrchestratorMcpService provider resolution", () => {
             getProviders: Effect.succeed([
               provider(availability === "already advertised" ? model : "muse-spark-1.3"),
             ]),
+            refreshWorkspaceSnapshot: () =>
+              Effect.sync(() => [
+                provider(
+                  availability === "already advertised" || refreshedInstances.length > 0
+                    ? availability === "still unavailable"
+                      ? "muse-spark-1.3"
+                      : model
+                    : "muse-spark-1.3",
+                ),
+              ]),
             refreshInstance: (instanceId) =>
               Effect.sync(() => {
                 refreshedInstances.push(instanceId);
@@ -2648,7 +2670,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               }),
           }),
           adapterRegistryLayer([museInstanceId]),
-          layerMockProjectService,
+          layerMockProjectServiceWithoutDefaults,
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
@@ -3203,7 +3225,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             }),
           ]),
           adapterRegistryLayer([codexInstanceId]),
-          Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
+          layerMockProjectServiceWithoutDefaults,
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
