@@ -3648,11 +3648,11 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         yield* send("ask", "Write the next packet.");
 
         const runs = (yield* orchestrator.getThreadProjection(child.childThreadId)).runs;
-        const taskOf = (name: string) =>
-          runs.find((run) => run.userMessageId === `message:followup-compact-${name}`)
-            ?.delegatedTaskId;
-        assert.isUndefined(taskOf("compact"));
-        assert.isDefined(taskOf("ask"));
+        const runOf = (name: string) =>
+          runs.find((run) => run.userMessageId === `message:followup-compact-${name}`);
+        assert.isDefined(runOf("compact"));
+        assert.isUndefined(runOf("compact")?.delegatedTaskId);
+        assert.isDefined(runOf("ask")?.delegatedTaskId);
         assert.equal(
           (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.length,
           tasksBefore + 1,
