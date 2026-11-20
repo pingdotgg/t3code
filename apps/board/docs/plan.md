@@ -2,7 +2,7 @@
 
 Agent Board is a desktop app for running projects through an orchestrator on the T3 Code engine. The sidebar lists T3 projects, each project lists its boards, and each board shows one orchestrator, its tickets in lanes, the agents working each ticket, artifact cards, and For-you cards. The workflow it shows is the XEO-3330 run from November 2026.
 The rule the program enforces is that the engine stays upstream. No PR edits a file that exists upstream, except `pnpm-lock.yaml`. Every PR passes `apps/board/scripts/check-engine-untouched.mjs`. The repo's lint and dependency standards apply to every file in the repo, and fail only on lines we add or change.
-The PRs, in stack order, are B0, B1, S1, K1, B2, U1, B3, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, C2, F1, D1, L1, B12, and O1.
+The PRs, in stack order, are B0, B1, S1, K1, B2, U1, B3, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, C2, F1, D1, L1, B12, and O1.
 
 ## How to read this
 
@@ -38,9 +38,9 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
 - [ ] Follow this dependency graph. Base each PR on its parent's branch, because the execution playbook stacks.
   - [ ] B0 is first. It branches from `main` of `13kparkin/t3code`.
   - [ ] B1 after B0. S1 after B1. K1 after S1. B2 after K1. U1 after B2. B3 after U1. W1 after B3. B4 after W1. B5 after B4. B6 after B5.
-  - [ ] B7 after B6. C1 after B7. B8 after C1. B9 after B8. B10 after B9. B11 after B10. W2 after B11. C2 after W2. F1 after C2. D1 after F1. L1 after D1. B12 after L1. O1 after B12.
-- [ ] Hold the file boundaries. Every PR touches only `apps/board/**`, `.github/workflows/agent-board.yml`, and `pnpm-lock.yaml`. S1 also adds `standards/**`, `.vite-hooks/pre-push`, and `.claude/settings.json`, which upstream does not have. K1 and B12 write outside the repo only through their install scripts.
-- [ ] Hold the review gate. B1, B2, U1, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, C2, F1, D1, and L1 change an interaction. They post their screenshots and video in chat at merge, so the operator can ask for a follow-up PR.
+  - [ ] B7 after B6. C1 after B7. B8 after C1. B9 after B8. B10 after B9. B11 after B10. W2 after B11. R1 after W2. C2 after R1. F1 after C2. D1 after F1. L1 after D1. B12 after L1. O1 after B12.
+- [ ] Hold the file boundaries. Every PR touches only `apps/board/**`, `.github/workflows/agent-board.yml`, and `pnpm-lock.yaml`. S1 also adds `standards/**`, `.vite-hooks/pre-push`, and `.claude/settings.json`, which upstream does not have. K1 and B12 write outside the repo only through their install scripts, and B12 also owns the separate `13kparkin/pstack-t3` repo.
+- [ ] Hold the review gate. B1, B2, U1, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, C2, F1, D1, and L1 change an interaction. They post their screenshots and video in chat at merge, so the operator can ask for a follow-up PR.
 - [ ] Cap building agents at 2 at once, and run a push as the only heavy job, because this machine has 15 GB of RAM and 4 cores.
 
 ### PR mechanics, for every PR
@@ -1177,9 +1177,69 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends W2 to the base-branch stack and the operator lands it bottom-up.
 
-## Format the orchestrator chat the way T3 does (C2)
+## Keep the orchestrator's rules after compaction (R1)
 
 **Depends on.** W2.
+
+**Files.**
+
+- [ ] Create `apps/board/src/orchestrator/orchestratorInstance.ts` and `apps/board/src/orchestrator/orchestratorInstance.test.ts`.
+- [ ] Create `apps/board/docs/skill-feed-probe.md`.
+- [ ] Edit `apps/board/src/orchestrator/brief.md`, `apps/board/src/orchestrator/brief.ts`, `apps/board/src/orchestrator/launch.ts`, `apps/board/src/state/orchestrator.ts`, `apps/board/src/state/boardModel.ts`, and `apps/board/src/board/AgentCard.tsx`.
+
+**Build.**
+
+- [ ] Record the skill feed probe's measured results in `docs/skill-feed-probe.md`, from `/tmp/skill-probe/evidence/`. An appended system prompt file survived `/compact` 10 of 10 times. A rule only in the first message survived short chats but was lost from the summary in 2 of 2 long orchestrator sessions. A `$skill` survived 4 of 4 short chats. `--disallowedTools` removed Claude Code's built-in subagent tool, and a built-in subagent call otherwise becomes a T3 child thread the board shows as an unassigned card.
+- [ ] Split `brief.md` into standing rules and board facts. The standing rules hold the store contract, the role registry, how to reach the user, the builder-cap rule, and how to work. The board facts hold the board folder, the builder cap's number, and the project. The standing rules tell the orchestrator that after a compaction it finds its board folder by matching its own thread ID to `orchestratorThreadId` in `.agentboard/*/board.json` under its working folder.
+- [ ] In `orchestratorInstance.ts`, create or reuse one orchestrator Claude instance per engine through T3's own instance settings. Give it the standing rules as an appended system prompt, through `--append-system-prompt` or `--append-system-prompt-file` in its launch arguments, and `--disallowedTools "Task,Agent"`. Use the form that the live lanes show reaches the session. Children keep running on their roles' targets, so they never get the orchestrator's rules.
+- [ ] Start every new orchestrator on that instance, keep C1's model and effort choice within it, and move an existing board's orchestrator to it on its next turn.
+- [ ] For a Codex orchestrator, find whether T3 can give Codex standing instructions that survive compaction. If it can't, keep the brief in the first message and say so in the new-board dialog.
+- [ ] In `boardModel.ts` and `AgentCard.tsx`, flag a child thread that T3 created from a provider subagent call, not from `delegate_task`, with an "Outside the role registry" badge.
+
+**You see.**
+
+- [ ] An orchestrator still follows its rules and knows its board after a compaction, can't start Claude's built-in subagents, and any agent started outside the registry shows a badge.
+
+**Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] `orchestratorInstance.test.ts` builds the instance settings from fixed standing rules and checks the literal launch arguments, reuses an existing orchestrator instance instead of adding a second one, and leaves every other instance unchanged. Run `vp test run src/orchestrator/orchestratorInstance.test.ts` from `apps/board`.
+
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe.
+
+- [ ] Lane 1. Regression lane against trunk. Run a long orchestrator session with a goal and a scout on trunk and at head, then `/compact` and ask for the builder cap and where tickets go. Save `r1-compact.png`. Pass when head answers from its rules with no read of old session files, and record trunk's answer.
+- [ ] Lane 2. After `/compact` at head, ask for the board folder. Save `r1-board-folder.txt`. Pass when it names the right folder.
+- [ ] Lane 3. Create two boards. Save `r1-instance.txt`. Pass when both orchestrators run on one orchestrator instance and the engine gained exactly one instance.
+- [ ] Lane 4. Ask a child for a phrase that only the standing rules hold. Save `r1-child.txt`. Pass when the child doesn't know it.
+- [ ] Lane 5. Ask the orchestrator to use Claude's built-in subagent tool. Save `r1-builtin.txt`. Pass when no extra child thread appears.
+- [ ] Lane 6. Open a board created on trunk and send a message. Save `r1-migrate.txt`. Pass when that turn runs on the orchestrator instance.
+- [ ] Lane 7. Switch the model in C1's picker. Save `r1-switch.txt`. Pass when the turn stays on the orchestrator instance with the new model.
+- [ ] Lane 8. On a trunk-style instance, force a built-in subagent call. Save `r1-badge.png`. Pass when its card shows the badge.
+- [ ] Lane 9. Create a Codex orchestrator and run the lane 1 check. Save `r1-codex.txt`. Pass when the result and the dialog's note match.
+- [ ] Lane 10. Run the boundary check and the standards check at head. Save `r1-checks.txt`. Pass when both exit 0.
+
+**Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] Metric. Time from sending a message to the orchestrator's first streamed token.
+- [ ] Probe. Send the same short message ten times on trunk and ten at head.
+- [ ] Baseline. Record trunk's times.
+- [ ] Rule. The head median stays within 500 ms of trunk's, recorded for O1.
+
+**Review gate.** The operator reviews at merge.
+
+- [ ] Copy lane 1, 5, and 8 screenshots or captures into `apps/board/docs/media/r1-review-<slug>.png`.
+- [ ] Record a 30 to 60 second video of the change from a lane. Save it as `apps/board/docs/media/r1-review.mp4`.
+- [ ] Post the screenshots and the video in chat for the operator at merge.
+
+**Merge.**
+
+- [ ] Root's clean verdict at the exact head SHA.
+- [ ] Bugbot triage done.
+- [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
+- [ ] The root appends R1 to the base-branch stack and the operator lands it bottom-up.
+
+## Format the orchestrator chat the way T3 does (C2)
+
+**Depends on.** R1.
 
 **Files.**
 
@@ -1426,52 +1486,52 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends L1 to the base-branch stack and the operator lands it bottom-up.
 
-## Port the omp skills for T3 agents (B12)
+## Port pstack to T3 and run the orchestrator in poteto-mode (B12)
 
 **Depends on.** L1.
 
 **Files.**
 
-- [ ] Create `apps/board/skills/ponytail/SKILL.md`, `apps/board/skills/pre-pr-reviewer/SKILL.md`, and `apps/board/skills/simplify/SKILL.md`.
-- [ ] Create `apps/board/skills/orchestrate/SKILL.md`.
+- [ ] Create the private repo `13kparkin/pstack-t3` with an `upstream` branch and a `main` branch, laid out like `13kparkin/pstack-omp`.
+- [ ] In that repo, create `skills/pstack-t3/SKILL.md` and `scripts/sync-upstream`.
 - [ ] Create `apps/board/scripts/install-skills.mjs` and `apps/board/scripts/install-skills.test.mjs`.
-- [ ] Edit `apps/board/src/orchestrator/brief.md` to point at the `orchestrate` skill.
+- [ ] Edit `apps/board/src/orchestrator/orchestratorInstance.ts` and `apps/board/src/orchestrator/brief.md`.
 
 **Build.**
 
-- [ ] Port `ponytail`, `pre-pr-reviewer`, and `simplify` from omp as Claude Code and Codex skills, per `skill://poteto-mode/playbooks/authoring-a-skill.md`.
-- [ ] Write the `orchestrate` skill from the omp orchestrate and autopilot-stack playbooks, rewritten for T3's `delegate_task`, `t3_thread_*`, and `request_secret` tools, the board store contract, and the B6 role registry.
-- [ ] In the `orchestrate` skill, map each lifecycle step to a registry role. The ticket owner is `task` or `poteto-agent` with `worktree` isolation. The owner spawns its reviewers (`reviewer`, `security-reviewer`, `comment-sicko`, and `thermo-nuclear-review-subagent`) with `shared` isolation, so they read the ticket's worktree. Research is `scout`, mechanical edits are `sonic`, and document reviews are the `egm-*` roles. A fix round goes to the owner thread with `t3_thread_send`, not to a new agent.
-- [ ] In `install-skills.mjs`, link each skill folder into `~/.claude/skills/` and the Codex skills folder, and skip links that already point there.
-- [ ] Also turn on Codex memories in `~/.codex/config.toml`, with `[features] memories = true` and `memories.disable_on_external_context = false`, because every T3 thread uses the T3 MCP server. Leave every other key as it is.
+- [ ] Seed `upstream` from the `cursor/plugins` pstack commit that `pstack-omp`'s `upstream` branch last records, keeping its `Upstream-Commit:` trailers. Copy `scripts/sync-upstream` from `pstack-omp`. `git diff upstream main -- skills agents` is the whole T3 adaptation.
+- [ ] Write `skills/pstack-t3/SKILL.md` with the same sections as `pstack-omp`'s adapter. Children start with `delegate_task` and a role, isolation, target, and title. The role map points at the board's 18-role registry. Results come from T3 thread reads and the thread family. Waiting relies on T3 waking the parent when a child finishes or asks. The human is reached through `foryou.jsonl` and `request_secret`. Claude Code's built-in subagent tool is never used.
+- [ ] Change other skills only where they name OMP mechanics, the same way `pstack-omp` changed them. Mention a skill as `$name` at the start of a word, never inside backticks, because T3 only expands that form.
+- [ ] In `install-skills.mjs`, install `pstack-t3` as a Claude Code plugin at user scope, the way K1 installs `omp-kit`, link its skills into the Codex skills folder, and skip anything that already points there. Also turn on Codex memories in `~/.codex/config.toml`, with `[features] memories = true` and `memories.disable_on_external_context = false`, leaving every other key as it is.
+- [ ] Make the orchestrator instance's appended system prompt the T3 edition of poteto-mode, the `pstack-t3` adapter, and R1's standing rules. Every other skill loads on demand.
 
 **You see.**
 
-- [ ] `node apps/board/scripts/install-skills.mjs` links four skills, and a T3 Claude thread lists them in its provider skills.
+- [ ] The orchestrator runs poteto-mode on T3, starts every child through the registry, loads pstack skills on demand, and keeps its rules after a compaction, and `pstack-t3` can take new pstack releases with `sync-upstream`.
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] `install-skills.test.mjs` runs the script against a temporary home. The first run creates four links, the second run reports four skipped links, and a link that points elsewhere is reported and left alone. Run `node --test apps/board/scripts/install-skills.test.mjs`.
+- [ ] `install-skills.test.mjs` runs the script against a temporary home. The first run installs the plugin and links the Codex skills, the second run changes nothing and reports each skip, and a link that points elsewhere is reported and left alone, each checked against a literal expected file list. Run `node --test apps/board/scripts/install-skills.test.mjs`.
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe.
 
-- [ ] Lane 1. Regression lane against trunk. Trunk does not have the skills, so record that fact. Run the install script at head. Save `b12-install.txt`. Pass when four links exist in `~/.claude/skills/`.
-- [ ] Lane 2. Run the install script again. Save `b12-reinstall.txt`. Pass when it reports four skipped links and changes nothing.
-- [ ] Lane 3. Read the provider skills for the Claude instance from the server config. Save `b12-claude-skills.txt`. Pass when all four skills are listed.
-- [ ] Lane 4. Read the provider skills for the Codex instance. Save `b12-codex-skills.txt`. Pass when all four skills are listed.
-- [ ] Lane 5. Start a board orchestrator and ask it to plan two tickets. Save `b12-plan.txt`. Pass when `tickets.json` follows the board schema.
-- [ ] Lane 6. Let the orchestrator start one ticket. Save `b12-owner.txt`. Pass when the owner's title is `[<key>] task`, its role is `implementation`, and it runs in a new worktree.
-- [ ] Lane 7. Let the owner reach code-ready. Save `b12-review.txt`. Pass when a child titled `[<key>] reviewer` runs with role `review` in the owner's checkout and its thread shows no file edit.
-- [ ] Lane 8. Ask an agent to apply ponytail on a small change. Save `b12-ponytail.txt`. Pass when the agent's reply ends with the skipped and risk lines.
+- [ ] Lane 1. Regression lane against trunk. Trunk's orchestrator has R1's rules only. Ask it at head which poteto-mode playbook fits a new feature. Save `b12-playbook.txt`. Pass when it names the Feature playbook and copies its steps.
+- [ ] Lane 2. Give a goal that needs a review. Save `b12-review.txt`. Pass when the reviewer starts through `delegate_task` with its registry role and the orchestrator calls no OMP tool such as `task`, `hub`, or `agent://`.
+- [ ] Lane 3. Ask for `$how` on a repo question. Save `b12-skill.txt`. Pass when the ported skill loads and its sections shape the answer.
+- [ ] Lane 4. Run a long session, `/compact`, then ask which principle governs a test assertion. Save `b12-compact.txt`. Pass when it answers from poteto-mode without reading old session files.
+- [ ] Lane 5. Run `scripts/sync-upstream` in `pstack-t3`. Save `b12-sync.txt`. Pass when it lists the upstream changes since the seed commit.
+- [ ] Lane 6. Read the Codex instance's skills from the server config. Save `b12-codex-skills.txt`. Pass when the ported skills are listed.
+- [ ] Lane 7. Run the install script twice on a scratch home. Save `b12-install.txt`. Pass when the second run changes nothing.
+- [ ] Lane 8. Rerun the end-to-end goal from the orchestrator end-to-end run with the port and with R1's rules only, on the same ten checks. Save `b12-eval.md`. Pass when both scores are recorded with evidence and the port scores no lower on any check.
 - [ ] Lane 9. Run two T3 Codex threads in the same project, where the first states a project fact. Save `b12-codex-memory.txt`. Pass when `~/.codex/memories_v2/` holds that fact after the first thread goes idle, or record the gap if Codex never writes it.
-- [ ] Lane 10. Run the boundary check at head. Save `b12-boundary.txt`. Pass when it exits 0.
+- [ ] Lane 10. Run the boundary check and the standards check at head. Save `b12-checks.txt`. Pass when both exit 0.
 
 **Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Metric. Wall time of the install script. Trunk does not have it, so the budget is absolute.
-- [ ] Probe. Run `time node apps/board/scripts/install-skills.mjs` five times.
-- [ ] Baseline. Record that trunk has no script, then record the head times.
-- [ ] Rule. The median stays under 1 s.
+- [ ] Metric. Time from sending a message to the orchestrator's first streamed token with the larger system prompt.
+- [ ] Probe. Send the same short message ten times with R1's rules and ten with the port.
+- [ ] Baseline. Record the R1 times.
+- [ ] Rule. The port's median stays within 1 s of R1's, recorded for O1.
 
 **Review gate.** None. B12 is not review-gated.
 
