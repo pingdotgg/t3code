@@ -41,6 +41,12 @@ environment server for local devices, or turn device support off and on for SSH
 devices, so the running tools inherit the new environment. Physical Android
 devices and iOS do not need ffmpeg.
 
+On macOS and Windows hosts, T3 Code starts Android emulators with `-gpu host`
+so headless rendering uses the host GPU instead of falling back to software
+rendering. Set `EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS` on the host (for example
+`-gpu swiftshader_indirect` or `-gpu auto`) and restart the environment server
+to override the GPU mode.
+
 The screen is interactive: click and drag to touch, type while the screen is
 focused, and use the toolbar for Home, Back, and Recents on Android, rotate on
 iOS, and power off. Close the tab to stop watching; the device keeps running
