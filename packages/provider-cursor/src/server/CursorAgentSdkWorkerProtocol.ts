@@ -140,6 +140,23 @@ export type CursorWorkerMessage =
 
 const MAX_ERROR_CAUSE_DEPTH = 8;
 
+function safeGetProperty(target: object, key: string): unknown {
+  try {
+    return Reflect.get(target, key);
+  } catch {
+    return undefined;
+  }
+}
+
+function safeErrorString(value: unknown): string {
+  if (typeof value === "string") return value;
+  try {
+    return String(value);
+  } catch {
+    return "[Unserializable error]";
+  }
+}
+
 export function serializeWorkerError(
   cause: unknown,
   depth = 0,
@@ -150,16 +167,21 @@ export function serializeWorkerError(
       return { name: "Error", message: "[Circular error cause]" };
     }
     seen.add(cause);
-    const rawName = Reflect.get(cause, "name");
-    const rawMessage = Reflect.get(cause, "message");
-    const rawStack = Reflect.get(cause, "stack");
-    const rawCode = Reflect.get(cause, "code");
-    const rawStatus = Reflect.get(cause, "status");
-    const rawCause = depth < MAX_ERROR_CAUSE_DEPTH ? Reflect.get(cause, "cause") : undefined;
-    const sdkErrorKind = getCursorSdkErrorKind(cause);
+    const rawName = safeGetProperty(cause, "name");
+    const rawMessage = safeGetProperty(cause, "message");
+    const rawStack = safeGetProperty(cause, "stack");
+    const rawCode = safeGetProperty(cause, "code");
+    const rawStatus = safeGetProperty(cause, "status");
+    const rawCause = depth < MAX_ERROR_CAUSE_DEPTH ? safeGetProperty(cause, "cause") : undefined;
+    let sdkErrorKind: CursorSdkErrorKind | undefined;
+    try {
+      sdkErrorKind = getCursorSdkErrorKind(cause);
+    } catch {
+      sdkErrorKind = undefined;
+    }
     return {
       name: typeof rawName === "string" && rawName.length > 0 ? rawName : "Error",
-      message: typeof rawMessage === "string" ? rawMessage : String(cause),
+      message: typeof rawMessage === "string" ? rawMessage : safeErrorString(cause),
       ...(typeof rawStack === "string" ? { stack: rawStack } : {}),
       ...(typeof rawCode === "string" ? { code: rawCode } : {}),
       ...(typeof rawStatus === "number" ? { status: rawStatus } : {}),
@@ -169,7 +191,7 @@ export function serializeWorkerError(
   }
   return {
     name: "Error",
-    message: typeof cause === "string" ? cause : String(cause),
+    message: safeErrorString(cause),
   };
 }
 

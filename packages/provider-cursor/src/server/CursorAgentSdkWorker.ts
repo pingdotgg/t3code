@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off globalTimers:off -- Worker entrypoint owns process stdio, signals, and final exit.
 import * as NodeReadline from "node:readline";
-import type { AgentOptions } from "@cursor/sdk";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -20,21 +19,9 @@ import {
   serializeWorkerError,
 } from "./CursorAgentSdkWorkerProtocol.ts";
 import * as CursorSdk from "./CursorSdk.ts";
+import { runCursorTextGenerationInProcess } from "./textGeneration.ts";
 
 const CLOSE_GRACE_MS = 3_000;
-
-function cursorSandboxUnsupported(cause: unknown): boolean {
-  const seen = new Set<object>();
-  let current = cause;
-  while (typeof current === "object" && current !== null && !seen.has(current)) {
-    seen.add(current);
-    if (current instanceof Error && current.message.includes("sandboxing is not supported")) {
-      return true;
-    }
-    current = Reflect.get(current, "cause");
-  }
-  return false;
-}
 
 function toRunnerFailure(method: string, cause: unknown): SerializedRunnerFailure {
   if (CursorAgentSdk.isCursorAgentSdkRunnerError(cause)) {
@@ -109,115 +96,6 @@ export async function runCursorSdkWorker(
         }),
     ),
   );
-
-  const runTextGenerate = Effect.fn("CursorSdkWorker.textGenerate")(function* (
-    req: Extract<CursorWorkerRequest, { readonly type: "textGenerate" }>,
-  ) {
-    const sdk = yield* CursorSdk.CursorSdk;
-    const { Agent } = yield* Effect.try({
-      try: sdk.load,
-      catch: (cause) =>
-        new CursorAgentSdk.CursorAgentSdkRunnerError({ method: "textGenerate.load", cause }),
-    });
-    const store = yield* Effect.acquireRelease(
-      Effect.tryPromise({
-        try: () =>
-          sdk.loadSqlite().SqliteLocalAgentStore.open({
-            workspaceRef: req.cwd,
-            stateRoot: req.stateRoot,
-          }),
-        catch: (cause) =>
-          new CursorAgentSdk.CursorAgentSdkRunnerError({ method: "textGenerate.store", cause }),
-      }),
-      (opened) =>
-        Effect.tryPromise({
-          try: () => opened.dispose(),
-          catch: () => undefined,
-        }).pipe(Effect.ignore),
-    );
-    const baseOptions: AgentOptions = {
-      apiKey: req.apiKey,
-      mode: "plan",
-      model: req.model,
-      local: {
-        cwd: req.cwd,
-        store,
-        autoReview: false,
-        sandboxOptions: { enabled: true },
-        settingSources: [],
-        enableAgentRetries: true,
-      },
-    };
-    const runPrompt = (sandboxEnabled: boolean) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const agent = yield* Effect.acquireRelease(
-            Effect.tryPromise({
-              try: (signal) =>
-                Agent.create(
-                  sandboxEnabled
-                    ? baseOptions
-                    : {
-                        ...baseOptions,
-                        local: {
-                          ...baseOptions.local,
-                          sandboxOptions: { enabled: false },
-                        },
-                      },
-                ).then((created) => {
-                  if (signal.aborted) created.close();
-                  return created;
-                }),
-              catch: (cause) =>
-                new CursorAgentSdk.CursorAgentSdkRunnerError({
-                  method: "textGenerate.create",
-                  cause,
-                }),
-            }),
-            (created) =>
-              Effect.tryPromise({
-                try: () => created[Symbol.asyncDispose](),
-                catch: () => undefined,
-              }).pipe(Effect.timeout("5 seconds"), Effect.ignore),
-            { interruptible: true },
-          );
-          const run = yield* Effect.tryPromise({
-            try: (signal) =>
-              agent.send(req.prompt).then((started) => {
-                if (signal.aborted) void started.cancel().catch(() => undefined);
-                return started;
-              }),
-            catch: (cause) =>
-              new CursorAgentSdk.CursorAgentSdkRunnerError({
-                method: "textGenerate.send",
-                cause,
-              }),
-          });
-          yield* Effect.addFinalizer(() =>
-            run.status === "running"
-              ? Effect.tryPromise({
-                  try: () => run.cancel(),
-                  catch: () => undefined,
-                }).pipe(Effect.timeout("5 seconds"), Effect.ignore)
-              : Effect.void,
-          );
-          return yield* Effect.tryPromise({
-            try: () => run.wait(),
-            catch: (cause) =>
-              new CursorAgentSdk.CursorAgentSdkRunnerError({
-                method: "textGenerate.wait",
-                cause,
-              }),
-          });
-        }),
-      );
-    return yield* runPrompt(true).pipe(
-      Effect.catchIf(
-        (error) => cursorSandboxUnsupported(error.cause),
-        () => runPrompt(false),
-      ),
-    );
-  }, Effect.scoped);
 
   const closeActiveSession = async (): Promise<
     Exit.Exit<void, CursorAgentSdk.CursorAgentSdkRunnerError>
@@ -498,7 +376,7 @@ export async function runCursorSdkWorker(
       }
 
       case "textGenerate": {
-        const exit = await runtime.runPromiseExit(runTextGenerate(req));
+        const exit = await runtime.runPromiseExit(runCursorTextGenerationInProcess(req));
         if (Exit.isFailure(exit)) {
           writeMessage({
             type: "response",

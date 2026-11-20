@@ -5,7 +5,6 @@ import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
@@ -78,6 +77,9 @@ rl.on("line", (line) => {
         durationMs: 5,
       },
     });
+    if (mode === "exit-after-done") {
+      rawWrite("", () => process.exit(0));
+    }
     return;
   }
   if (req.type === "steer") {
@@ -202,6 +204,10 @@ describe("CursorAgentSdkWorkerProtocol", () => {
     const wrappedAbort = new Error("outer", { cause: abortInner });
     const restoredAbort = deserializeWorkerError(serializeWorkerError(wrappedAbort));
     assert.isTrue(CursorAgentSdk.isCursorCancellationError(restoredAbort));
+
+    const nullProto = Object.create(null) as Record<string, unknown>;
+    const restoredNullProto = deserializeWorkerError(serializeWorkerError(nullProto));
+    assert.equal(restoredNullProto.message, "[Unserializable error]");
   });
 });
 
@@ -282,8 +288,12 @@ describe("CursorAgentSdkProcessRunner", () => {
           assert.equal(result.result, "early-late");
           assert.deepEqual(receivedDeltas, ["early-", "late"]);
 
-          const messages = yield* session.listMessages;
-          assert.lengthOf(messages, 1);
+          const [messagesA, messagesB] = yield* Effect.all(
+            [session.listMessages, session.listMessages],
+            { concurrency: "unbounded" },
+          );
+          assert.lengthOf(messagesA, 1);
+          assert.lengthOf(messagesB, 1);
           const usage = yield* session.readContextUsage!;
           assert.deepEqual(usage, { usedTokens: 120, maxTokens: 1000 });
           assert.isTrue(yield* session.runCheckpointed!("run-worker-1"));
@@ -324,19 +334,12 @@ describe("CursorAgentSdkProcessRunner", () => {
             protocolLoggerFor: () => undefined,
           });
 
-          const exit = yield* Effect.exit(runner.open(openInput));
-          assert.isTrue(Exit.isFailure(exit));
-          if (Exit.isFailure(exit)) {
-            const error = exit.cause.reasons[0];
-            assert.isDefined(error);
-            if (error?._tag === "Fail") {
-              assert.isTrue(isCursorSdkError(error.error.cause, "ConfigurationError"));
-              assert.isTrue(
-                error.error.cause instanceof Error &&
-                  error.error.cause.message.startsWith("Cannot use this model:"),
-              );
-            }
-          }
+          const error = yield* Effect.flip(runner.open(openInput));
+          assert.isTrue(isCursorSdkError(error.cause, "ConfigurationError"));
+          assert.isTrue(
+            error.cause instanceof Error &&
+              error.cause.message.startsWith("Cannot use this model:"),
+          );
           assert.isTrue(unregistered);
         }),
       ).pipe(Effect.provide(NodeServices.layer)),
@@ -359,20 +362,55 @@ describe("CursorAgentSdkProcessRunner", () => {
 
         const session = yield* runner.open(openInput);
         const run = yield* session.send({ message: "hi" });
-        const exit = yield* Effect.exit(run.wait);
-        assert.isTrue(Exit.isFailure(exit));
-        if (Exit.isFailure(exit)) {
-          const reason = exit.cause.reasons[0];
-          assert.isDefined(reason);
-          if (reason?._tag === "Fail") {
-            const msg = CursorAgentSdk.cursorSdkFailureMessage(reason.error);
-            assert.include(msg, "code 17");
-            assert.include(msg, "fatal worker boom");
-          }
-        }
+        const error = yield* Effect.flip(run.wait);
+        const msg = CursorAgentSdk.cursorSdkFailureMessage(error);
+        assert.include(msg, "code 17");
+        assert.include(msg, "fatal worker boom");
         yield* session.close;
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live(
+    "preserves an already-received runDone when the worker exits while onDelta is running",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const scriptPath = yield* writeFakeWorker;
+          const executable = yield* HostProcess.ExecutablePath;
+
+          const runner = yield* CursorAgentSdkProcessRunner.makeCursorAgentSdkProcessRunner({
+            resolveLaunch: Effect.succeed({
+              command: executable,
+              args: [scriptPath],
+              env: { FAKE_WORKER_MODE: "exit-after-done" },
+            }),
+            protocolLoggerFor: () => undefined,
+          });
+
+          const session = yield* runner.open(openInput);
+          const deltaStarted = yield* Deferred.make<void>();
+          const releaseDelta = yield* Deferred.make<void>();
+          const run = yield* session.send({
+            message: "hi",
+            onDelta: (update) =>
+              Effect.gen(function* () {
+                if ((update as { readonly text?: string }).text === "early-") {
+                  yield* Deferred.succeed(deltaStarted, undefined);
+                  yield* Deferred.await(releaseDelta);
+                }
+              }),
+          });
+          yield* Deferred.await(deltaStarted);
+          // Deterministic barrier: listMessages fails only after exit handling runs failAllPending.
+          yield* Effect.flip(session.listMessages);
+          yield* Deferred.succeed(releaseDelta, undefined);
+          const result = yield* run.wait;
+          assert.equal(result.status, "finished");
+          assert.equal(result.result, "early-late");
+          yield* session.close;
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("forwards cancel and runs textGenerate in a disposable child process", () =>

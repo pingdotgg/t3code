@@ -49,6 +49,133 @@ function cursorSandboxUnsupported(cause: unknown): boolean {
   return false;
 }
 
+const runCursorTextGenerationWithStore = <E>(input: {
+  readonly Agent: ReturnType<CursorSdk.CursorSdk["Service"]["load"]>["Agent"];
+  readonly store: NonNullable<NonNullable<AgentOptions["local"]>["store"]>;
+  readonly prompt: string;
+  readonly apiKey: string;
+  readonly model: NonNullable<AgentOptions["model"]>;
+  readonly cwd: string;
+  readonly mapError: (step: "create" | "dispose" | "send" | "cancel" | "wait", cause: unknown) => E;
+  readonly logDisposeErrors?: boolean;
+}): Effect.Effect<RunResult, E> => {
+  const agentOptions = {
+    apiKey: input.apiKey,
+    mode: "plan",
+    model: input.model,
+    local: {
+      cwd: input.cwd,
+      store: input.store,
+      autoReview: false,
+      sandboxOptions: { enabled: true },
+      settingSources: [],
+      enableAgentRetries: true,
+    },
+  } satisfies AgentOptions;
+
+  const createCursorAgent = (sandboxEnabled: boolean) =>
+    Effect.tryPromise({
+      try: (signal) =>
+        input.Agent.create(
+          sandboxEnabled
+            ? agentOptions
+            : {
+                ...agentOptions,
+                local: {
+                  ...agentOptions.local,
+                  sandboxOptions: { enabled: false },
+                },
+              },
+        ).then((agent) => {
+          if (signal.aborted) agent.close();
+          return agent;
+        }),
+      catch: (cause) => input.mapError("create", cause),
+    });
+
+  const runPrompt = Effect.fn("CursorTextGeneration.runPrompt")(function* (
+    sandboxEnabled: boolean,
+  ) {
+    const agent = yield* Effect.acquireRelease(
+      createCursorAgent(sandboxEnabled),
+      (agent) =>
+        Effect.tryPromise({
+          try: () => agent[Symbol.asyncDispose](),
+          catch: (cause) => input.mapError("dispose", cause),
+        }).pipe(
+          Effect.timeout("5 seconds"),
+          Effect.ignore(input.logDisposeErrors ? { log: true } : undefined),
+        ),
+      { interruptible: true },
+    );
+    const run = yield* Effect.tryPromise({
+      try: (signal) =>
+        agent.send(input.prompt).then((started) => {
+          if (signal.aborted) void started.cancel().catch(() => undefined);
+          return started;
+        }),
+      catch: (cause) => input.mapError("send", cause),
+    });
+    yield* Effect.addFinalizer(() =>
+      run.status === "running"
+        ? Effect.tryPromise({
+            try: () => run.cancel(),
+            catch: (cause) => input.mapError("cancel", cause),
+          }).pipe(
+            Effect.timeout("5 seconds"),
+            Effect.ignore(input.logDisposeErrors ? { log: true } : undefined),
+          )
+        : Effect.void,
+    );
+    return yield* Effect.tryPromise({
+      try: () => run.wait(),
+      catch: (cause) => input.mapError("wait", cause),
+    });
+  }, Effect.scoped);
+
+  // The SDK may reject sandboxing in create or lazily in send. Empty cwd and setting
+  // sources isolate the unsandboxed retry from user projects.
+  return runPrompt(true).pipe(Effect.catchIf(cursorSandboxUnsupported, () => runPrompt(false)));
+};
+
+export const runCursorTextGenerationInProcess = Effect.fn("CursorTextGeneration.runInProcess")(
+  function* (input: CursorAgentSdk.CursorAgentSdkTextGenerateInput) {
+    const sdk = yield* CursorSdk.CursorSdk;
+    const { Agent } = yield* Effect.try({
+      try: sdk.load,
+      catch: (cause) =>
+        new CursorAgentSdk.CursorAgentSdkRunnerError({ method: "textGenerate.load", cause }),
+    });
+    const store = yield* Effect.acquireRelease(
+      Effect.tryPromise({
+        try: () =>
+          sdk.loadSqlite().SqliteLocalAgentStore.open({
+            workspaceRef: input.cwd,
+            stateRoot: input.stateRoot,
+          }),
+        catch: (cause) =>
+          new CursorAgentSdk.CursorAgentSdkRunnerError({ method: "textGenerate.store", cause }),
+      }),
+      (opened) =>
+        Effect.tryPromise({
+          try: () => opened.dispose(),
+          catch: () => undefined,
+        }).pipe(Effect.ignore),
+    );
+    return yield* runCursorTextGenerationWithStore({
+      Agent,
+      store,
+      prompt: input.prompt,
+      apiKey: input.apiKey,
+      model: input.model,
+      cwd: input.cwd,
+      mapError: (step, cause) =>
+        new CursorAgentSdk.CursorAgentSdkRunnerError({ method: `textGenerate.${step}`, cause }),
+    });
+  },
+  Effect.scoped,
+);
+
 export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(function* (
   cursorSettings: CursorSettings,
   environment?: NodeJS.ProcessEnv,
@@ -137,77 +264,23 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
                     catch: sdkFailure("Cursor SDK agent store could not be disposed."),
                   }).pipe(Effect.ignore({ log: true })),
               );
-              const agentOptions = {
+              const textGenerationErrorDetail = {
+                create: "Cursor SDK agent could not be created.",
+                dispose: "Cursor SDK agent could not be disposed.",
+                send: "Cursor SDK request could not be sent.",
+                cancel: "Cursor SDK run could not be cancelled.",
+                wait: "Cursor SDK run failed.",
+              } as const;
+              return runCursorTextGenerationWithStore({
+                Agent,
+                store,
+                prompt,
                 apiKey,
-                mode: "plan",
                 model: resolvedModel,
-                local: {
-                  cwd,
-                  store,
-                  autoReview: false,
-                  sandboxOptions: { enabled: true },
-                  settingSources: [],
-                  enableAgentRetries: true,
-                },
-              } satisfies AgentOptions;
-              const createCursorAgent = (sandboxEnabled: boolean) =>
-                Effect.tryPromise({
-                  try: (signal) =>
-                    Agent.create(
-                      sandboxEnabled
-                        ? agentOptions
-                        : {
-                            ...agentOptions,
-                            local: {
-                              ...agentOptions.local,
-                              sandboxOptions: { enabled: false },
-                            },
-                          },
-                    ).then((agent) => {
-                      if (signal.aborted) agent.close();
-                      return agent;
-                    }),
-                  catch: sdkFailure("Cursor SDK agent could not be created."),
-                });
-
-              const runPrompt = Effect.fn("CursorTextGeneration.runPrompt")(function* (
-                sandboxEnabled: boolean,
-              ) {
-                const agent = yield* Effect.acquireRelease(
-                  createCursorAgent(sandboxEnabled),
-                  (agent) =>
-                    Effect.tryPromise({
-                      try: () => agent[Symbol.asyncDispose](),
-                      catch: sdkFailure("Cursor SDK agent could not be disposed."),
-                    }).pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: true })),
-                  { interruptible: true },
-                );
-                const run = yield* Effect.tryPromise({
-                  try: (signal) =>
-                    agent.send(prompt).then((run) => {
-                      if (signal.aborted) void run.cancel().catch(() => undefined);
-                      return run;
-                    }),
-                  catch: sdkFailure("Cursor SDK request could not be sent."),
-                });
-                yield* Effect.addFinalizer(() =>
-                  run.status === "running"
-                    ? Effect.tryPromise({
-                        try: () => run.cancel(),
-                        catch: sdkFailure("Cursor SDK run could not be cancelled."),
-                      }).pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: true }))
-                    : Effect.void,
-                );
-                return yield* Effect.tryPromise({
-                  try: () => run.wait(),
-                  catch: sdkFailure("Cursor SDK run failed."),
-                });
-              }, Effect.scoped);
-              // The SDK may reject sandboxing in create or lazily in send. Empty cwd and setting
-              // sources isolate the unsandboxed retry from user projects.
-              return runPrompt(true).pipe(
-                Effect.catchIf(cursorSandboxUnsupported, () => runPrompt(false)),
-              );
+                cwd,
+                mapError: (step, cause) => sdkFailure(textGenerationErrorDetail[step])(cause),
+                logDisposeErrors: true,
+              });
             });
       const request = Effect.gen(function* () {
         const promptResult = yield* executePrompt;
