@@ -4,6 +4,8 @@ import {
   type ServerSettingsError,
   type SpeechSynthesisProvider,
   type SpeechSynthesisRequest,
+  type SpeechSynthesisTimings,
+  type SpeechSynthesisWord,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -20,6 +22,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import * as CloudSpeech from "./CloudSpeech.ts";
 import * as LocalSpeechSynthesis from "./LocalSpeechSynthesis.ts";
+import { mp3Duration } from "./synthesisTimings.ts";
 
 // A started stream nobody opens is abandoned.
 const UNREAD_GRACE: Duration.Input = "30 seconds";
@@ -27,11 +30,16 @@ const UNREAD_GRACE: Duration.Input = "30 seconds";
 const RECONNECT_GRACE: Duration.Input = "5 seconds";
 // Finished audio stays for players that re-request it after playing.
 const FINISHED_RETENTION: Duration.Input = "2 minutes";
+// A timings read answers by then even when nothing changed, so a lost client is not held.
+const TIMINGS_WAIT: Duration.Input = "10 seconds";
 
 type Job = {
   readonly chunks: Uint8Array[];
+  readonly words: SpeechSynthesisWord[];
+  readonly duration: ReturnType<typeof mp3Duration>;
   readonly progress: SubscriptionRef.SubscriptionRef<{
     readonly count: number;
+    readonly words: number;
     readonly done: boolean;
   }>;
   fiber?: Fiber.Fiber<void>;
@@ -51,6 +59,8 @@ export class SpeechSynthesisStreams extends Context.Service<
     ) => Effect.Effect<string, SpeechSynthesisError | ServerSettingsError>;
     /** The audio from its start, then live as it is produced; `undefined` once expired. */
     readonly read: (token: string) => Effect.Effect<Stream.Stream<Uint8Array> | undefined>;
+    /** Words after the first `after`, once there are any or synthesis ends. */
+    readonly timings: (token: string, after: number) => Effect.Effect<SpeechSynthesisTimings>;
   }
 >()("t3/speech/synthesisStreams/SpeechSynthesisStreams") {}
 
@@ -75,26 +85,44 @@ const make = Effect.gen(function* () {
     provider: SpeechSynthesisProvider,
     request: SpeechSynthesisRequest,
   ) {
-    const source = provider === "local" ? local.stream(request) : cloud.stream(provider, request);
+    const source: Stream.Stream<
+      CloudSpeech.SpeechSynthesisPart,
+      SpeechSynthesisError | ServerSettingsError
+    > = provider === "local" ? local.stream(request) : cloud.stream(provider, request);
     const first = yield* Deferred.make<void, SpeechSynthesisError | ServerSettingsError>();
     const job: Job = {
       chunks: [],
-      progress: yield* SubscriptionRef.make({ count: 0, done: false }),
+      words: [],
+      duration: mp3Duration(),
+      progress: yield* SubscriptionRef.make({ count: 0, words: 0, done: false }),
       failed: false,
       readers: 0,
       everRead: false,
       idle: 0,
     };
     job.fiber = yield* source.pipe(
-      Stream.runForEach((chunk) => {
-        job.chunks.push(chunk);
-        return SubscriptionRef.set(job.progress, { count: job.chunks.length, done: false }).pipe(
-          Effect.andThen(Deferred.succeed(first, undefined)),
-        );
+      Stream.runForEach((part) => {
+        if (!(part instanceof Uint8Array)) {
+          job.words.push(...part.words);
+          return SubscriptionRef.update(job.progress, (progress) => ({
+            ...progress,
+            words: job.words.length,
+          }));
+        }
+        job.chunks.push(part);
+        job.duration.push(part);
+        return SubscriptionRef.update(job.progress, (progress) => ({
+          ...progress,
+          count: job.chunks.length,
+        })).pipe(Effect.andThen(Deferred.succeed(first, undefined)));
       }),
       Effect.onExit((exit) => {
         job.failed = Exit.isFailure(exit);
-        return SubscriptionRef.set(job.progress, { count: job.chunks.length, done: true }).pipe(
+        return SubscriptionRef.set(job.progress, {
+          count: job.chunks.length,
+          words: job.words.length,
+          done: true,
+        }).pipe(
           Effect.andThen(
             Exit.isFailure(exit)
               ? Deferred.failCause(first, exit.cause)
@@ -160,7 +188,26 @@ const make = Effect.gen(function* () {
       );
     });
 
-  return SpeechSynthesisStreams.of({ start, read });
+  const timings = Effect.fn("SpeechSynthesisStreams.timings")(function* (
+    token: string,
+    after: number,
+  ) {
+    const job = jobs.get(token);
+    if (!job) return { words: [], done: true };
+    yield* SubscriptionRef.changes(job.progress).pipe(
+      Stream.filter((progress) => progress.done || progress.words > after),
+      Stream.runHead,
+      Effect.timeoutOption(TIMINGS_WAIT),
+    );
+    const { done } = yield* SubscriptionRef.get(job.progress);
+    return {
+      words: job.words.slice(after),
+      done,
+      ...(done && !job.failed ? { durationSeconds: job.duration.seconds } : {}),
+    };
+  });
+
+  return SpeechSynthesisStreams.of({ start, read, timings });
 });
 
 export const layer = Layer.effect(SpeechSynthesisStreams, make);

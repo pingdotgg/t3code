@@ -23,7 +23,7 @@ const request: SpeechSynthesisRequest = {
   language: "en",
 };
 
-const withSource = (source: Stream.Stream<Uint8Array, SpeechSynthesisError>) =>
+const withSource = (source: Stream.Stream<CloudSpeech.SpeechSynthesisPart, SpeechSynthesisError>) =>
   SpeechSynthesisStreams.layer.pipe(
     Layer.provide(Layer.mock(CloudSpeech.CloudSpeech)({ stream: () => source })),
     Layer.provide(Layer.mock(LocalSpeechSynthesis.LocalSpeechSynthesis)({})),
@@ -48,6 +48,36 @@ it.effect("hands every reader the audio from its start while synthesis continues
       expect(yield* Fiber.join(live)).toEqual([1, 2]);
       expect(yield* audio(yield* streams.read(token))).toEqual([1, 2]);
       expect(yield* streams.read("unknown")).toBeUndefined();
+    }).pipe(Effect.provide(withSource(Stream.fromQueue(source))));
+  }),
+);
+
+it.effect("answers word timings as they arrive and the audio length once synthesis ends", () =>
+  Effect.gen(function* () {
+    const source = yield* Queue.unbounded<
+      CloudSpeech.SpeechSynthesisPart,
+      SpeechSynthesisError | Cause.Done
+    >();
+    // One MPEG-1 Layer III frame at 64 kbps and 44.1 kHz.
+    const frame = Uint8Array.from({ length: 208 }, (_, index) =>
+      index === 0 ? 0xff : index === 1 ? 0xfb : index === 2 ? 0x50 : 0,
+    );
+    const word = (start: number) => ({ start, end: start + 4, startSeconds: start, endSeconds: 1 });
+    yield* Effect.gen(function* () {
+      const streams = yield* SpeechSynthesisStreams.SpeechSynthesisStreams;
+      yield* Queue.offerAll(source, [{ words: [word(0)] }, frame]);
+      const token = yield* streams.start("elevenlabs", request);
+      expect(yield* streams.timings(token, 0)).toEqual({ words: [word(0)], done: false });
+      const waiting = yield* Effect.forkChild(streams.timings(token, 1));
+      yield* Queue.offer(source, { words: [word(5)] });
+      expect(yield* Fiber.join(waiting)).toEqual({ words: [word(5)], done: false });
+      yield* Queue.end(source);
+      expect(yield* streams.timings(token, 2)).toEqual({
+        words: [],
+        done: true,
+        durationSeconds: 1152 / 44100,
+      });
+      expect(yield* streams.timings("unknown", 0)).toEqual({ words: [], done: true });
     }).pipe(Effect.provide(withSource(Stream.fromQueue(source))));
   }),
 );

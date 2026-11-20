@@ -124,16 +124,22 @@ it.effect("lists ElevenLabs voices by name and sends its key only in its own hea
                 can_do_text_to_speech: false,
               },
             ])
-          : new Response(new Uint8Array([73, 68, 51, 1]), {
-              headers: { "content-type": "audio/mpeg" },
-            }),
+          : new Response(
+              `${JSON.stringify({
+                audio_base64: Buffer.from([73, 68, 51, 1]).toString("base64"),
+                alignment: null,
+              })}\n`,
+              { headers: { "content-type": "application/json" } },
+            ),
     );
     yield* Effect.gen(function* () {
       const service = yield* CloudSpeech.CloudSpeech;
       const synthesize = (request: Parameters<typeof service.stream>[1]) =>
         service.stream("elevenlabs", request).pipe(
           Stream.runCollect,
-          Effect.map((chunks) => Uint8Array.from(chunks.flatMap((chunk) => [...chunk]))),
+          Effect.map((parts) =>
+            Uint8Array.from(parts.flatMap((part) => (part instanceof Uint8Array ? [...part] : []))),
+          ),
         );
       const request = {
         text: "Read this reply.",
@@ -149,6 +155,7 @@ it.effect("lists ElevenLabs voices by name and sends its key only in its own hea
         apiKeyProvider: "elevenlabs",
         defaultModel: "eleven_multilingual_v2",
         speedAppliedByProvider: false,
+        wordTimings: "provider",
         models: [
           {
             id: "eleven_multilingual_v2",
@@ -169,14 +176,14 @@ it.effect("lists ElevenLabs voices by name and sends its key only in its own hea
       }
       const [defaultUrl, defaultInit] = upstream.mock.calls.at(-2)!;
       expect(String(defaultUrl)).toBe(
-        "https://api.elevenlabs.io/v1/text-to-speech/JBFqnCBsd6RMkjVDRZzb/stream?output_format=mp3_44100_64",
+        "https://api.elevenlabs.io/v1/text-to-speech/JBFqnCBsd6RMkjVDRZzb/stream/with-timestamps?output_format=mp3_44100_64",
       );
       expect(JSON.parse(String(defaultInit?.body))).toEqual({
         text: "Read this reply.",
         model_id: "eleven_multilingual_v2",
       });
       const [chosenUrl, chosenInit] = upstream.mock.calls.at(-1)!;
-      expect(String(chosenUrl)).toContain("/v1/text-to-speech/voice-123/stream");
+      expect(String(chosenUrl)).toContain("/v1/text-to-speech/voice-123/stream/with-timestamps");
       expect(JSON.parse(String(chosenInit?.body)).model_id).toBe("eleven_v3");
     }).pipe(
       Effect.provide(
@@ -188,6 +195,65 @@ it.effect("lists ElevenLabs voices by name and sends its key only in its own hea
         ),
       ),
       Effect.provideService(FetchHttpClient.Fetch, upstream),
+    );
+  }),
+);
+
+it.effect("places ElevenLabs word timings of later pieces after the earlier pieces' audio", () =>
+  Effect.gen(function* () {
+    // Two MPEG-1 Layer III frames at 64 kbps and 44.1 kHz.
+    const frame = Uint8Array.from({ length: 208 }, (_, index) =>
+      index === 0 ? 0xff : index === 1 ? 0xfb : index === 2 ? 0x50 : 0,
+    );
+    const pieceSeconds = (2 * 1152) / 44100;
+    const upstream = vi.fn<typeof fetch>(async (_url, init) => {
+      const { text } = JSON.parse(String(init?.body)) as { text: string };
+      const characters = Array.from(text);
+      return new Response(
+        [
+          {
+            audio_base64: null,
+            alignment: {
+              characters,
+              character_start_times_seconds: characters.map((_, index) => index / 100),
+              character_end_times_seconds: characters.map((_, index) => (index + 1) / 100),
+            },
+          },
+          { audio_base64: Buffer.from([...frame, ...frame]).toString("base64"), alignment: null },
+        ]
+          .map((chunk) => JSON.stringify(chunk))
+          .join("\n"),
+      );
+    });
+    const text = Array.from({ length: 250 }, (_, index) => `w${index}.`).join(" ");
+    const words = yield* Effect.gen(function* () {
+      const service = yield* CloudSpeech.CloudSpeech;
+      yield* service.setKey("elevenlabs", Redacted.make("speech-key"));
+      return yield* service
+        .stream("elevenlabs", { text, model: "", voice: "", speed: 1, language: "en" })
+        .pipe(
+          Stream.runCollect,
+          Effect.map((parts) => parts.flatMap((part) => ("words" in part ? part.words : []))),
+        );
+    }).pipe(
+      Effect.provide(
+        CloudSpeech.layer.pipe(
+          Layer.provide(NodeServices.layer),
+          Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+          Layer.provide(FetchHttpClient.layer),
+          Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
+        ),
+      ),
+      Effect.provideService(FetchHttpClient.Fetch, upstream),
+    );
+    expect(upstream).toHaveBeenCalledTimes(2);
+    expect(words.map((word) => text.slice(word.start, word.end))).toEqual(text.split(" "));
+    const second = (JSON.parse(String(upstream.mock.calls[1]?.[1]?.body)) as { text: string }).text;
+    const first = words.find((word) => word.start === text.indexOf(second));
+    expect(first?.startSeconds).toBeCloseTo(pieceSeconds, 6);
+    expect(words.at(-1)?.startSeconds).toBeCloseTo(
+      pieceSeconds + (second.length - second.split(" ").at(-1)!.length) / 100,
+      6,
     );
   }),
 );
@@ -219,7 +285,11 @@ it.effect.each(["openai", "xai", "openrouter"] as const)(
         const synthesize = (...args: Parameters<typeof service.stream>) =>
           service.stream(...args).pipe(
             Stream.runCollect,
-            Effect.map((chunks) => Uint8Array.from(chunks.flatMap((chunk) => [...chunk]))),
+            Effect.map((parts) =>
+              Uint8Array.from(
+                parts.flatMap((part) => (part instanceof Uint8Array ? [...part] : [])),
+              ),
+            ),
           );
         yield* service.setKey(
           provider === "openai" ? "xai" : "openai",
