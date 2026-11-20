@@ -77,16 +77,10 @@ export function VoiceInputSetup(props: {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to native microphone changes while the device setup step is visible
   useEffect(() => {
     if (!props.open || props.step !== 1) return;
-    const requestId = microphoneRefreshId.current;
-    queueMicrotask(() => {
-      if (requestId === microphoneRefreshId.current) void refreshMicrophones();
-    });
+    queueMicrotask(() => void refreshMicrophones());
     const mediaDevices = navigator.mediaDevices;
     mediaDevices?.addEventListener?.("devicechange", refreshMicrophones);
-    return () => {
-      mediaDevices?.removeEventListener?.("devicechange", refreshMicrophones);
-      microphoneRefreshId.current++;
-    };
+    return () => mediaDevices?.removeEventListener?.("devicechange", refreshMicrophones);
   }, [props.open, props.step, refreshMicrophones]);
   const selectedIsUnavailable = Boolean(
     selectedMicrophone && !microphones.some((device) => device.deviceId === selectedMicrophone),
