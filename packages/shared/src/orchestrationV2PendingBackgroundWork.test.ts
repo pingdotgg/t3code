@@ -285,6 +285,34 @@ describe("derivePendingBackgroundWork", () => {
     expect(tasks).toEqual([]);
   });
 
+  it("shows only commands that hold the active run open", () => {
+    const command = {
+      id: "command",
+      runId: "active-run",
+      type: "command_execution",
+      status: "running",
+      title: "Running command",
+      input: "./fixture capture",
+      nativeItemRef: { nativeId: "call_capture" },
+      awaitingCompletion: true,
+    } as const;
+    expect(
+      derivePendingBackgroundWork({
+        latestRun: { id: "active-run" as never, ordinal: 2, status: "running" },
+        activeRunId: "active-run",
+        providerThreads: [],
+        turnItems: [
+          command,
+          { ...command, id: "foreground", nativeItemRef: null, awaitingCompletion: undefined },
+          { ...command, id: "completed", nativeItemRef: null, status: "completed" },
+          { ...command, id: "stale", nativeItemRef: null, runId: "previous-run" },
+        ],
+      }),
+    ).toEqual([
+      { taskId: "call_capture", kind: "command", description: "./fixture capture", awaited: true },
+    ]);
+  });
+
   it("includes items with a null run id even when runs list has rolled_back rows", () => {
     const tasks = derivePendingBackgroundWork({
       latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },

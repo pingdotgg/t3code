@@ -8,7 +8,10 @@ import {
 } from "@t3tools/client-runtime/state/thread-execution";
 import { checkpointFileTotals } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { COMPACT_COMMAND_PATTERN } from "@t3tools/client-runtime/state/context-window";
-import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  deriveActiveCommandWaits,
+  derivePendingBackgroundWork,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
   latestUnheldRun,
   usageLimitRunPresentedAsLatest,
@@ -1579,7 +1582,7 @@ const LIVE_RUN_STATUSES = new Set(["queued", "preparing", "starting", "running"]
 /**
  * Background work the provider still runs after an earlier run ended. It
  * stays listed while a later run is live; that live run's own items are its
- * foreground work, so they never count as background. The provider roster is
+ * foreground work unless the adapter reports a command wait. The provider roster is
  * not run-tied, so it drops entries naming a live run's item by native id.
  */
 export function deriveThreadPendingBackgroundTasks(projection: ThreadStructure | null) {
@@ -1600,6 +1603,10 @@ export function deriveThreadPendingBackgroundTasks(projection: ThreadStructure |
     usageLimitRunPresentedAsLatest(projection.runs, projection.turnItems, sessionError) ??
     latestUnheldRun(projection.runs.filter((run) => !liveRunIds.has(run.id)));
   return [
+    ...deriveActiveCommandWaits(
+      projection.turnItems,
+      projection.runs.findLast((run) => run.status === "running")?.id,
+    ),
     ...derivePendingBackgroundWork({
       latestRun,
       providerThreads: projection.providerThreads.map((thread) => ({
@@ -1612,7 +1619,7 @@ export function deriveThreadPendingBackgroundTasks(projection: ThreadStructure |
         (item) => item.runId === null || !liveRunIds.has(item.runId),
       ),
       activeProviderThreadId: projection.thread.activeProviderThreadId,
-      hasActiveRun: false,
+      activeRunId: null,
       runs: projection.runs,
       pullRequests: projection.thread.pullRequests,
     }),

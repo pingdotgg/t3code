@@ -4805,6 +4805,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   ...base,
                   type: "command_execution",
                   input: toolCall.command ?? monitorCommand ?? toolCall.title ?? "Command",
+                  ...(context.promptSettled &&
+                  status === "running" &&
+                  flavor.toolOutlivesPrompt?.(toolCall) === true
+                    ? { awaitingCompletion: true as const }
+                    : {}),
                   ...(textFromUnknown(rawOutput) === undefined
                     ? {}
                     : { output: textFromUnknown(rawOutput) }),
@@ -9084,6 +9089,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     !context.interrupted &&
                     hasDeferredBackgroundWork(context)
                   ) {
+                    if (flavor.toolOutlivesPrompt !== undefined) {
+                      for (const tool of context.tools.values()) {
+                        if (
+                          toolStatus(tool.status) === "running" &&
+                          flavor.toolOutlivesPrompt(tool)
+                        ) {
+                          yield* emitTool(context, tool, "running");
+                        }
+                      }
+                    }
                     yield* closeTextStreams(context);
                     yield* (
                       options.testHooks?.afterPromptSettledWithBackgroundWork?.() ?? Effect.void
