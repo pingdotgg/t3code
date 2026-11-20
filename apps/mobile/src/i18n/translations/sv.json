@@ -139,6 +139,7 @@
   "1fa38fb049c6b56e": "Filter {number} behöver en sökväg under body, headers eller query och minst ett värde.",
   "31ec02bdcb3920d1": "Filter {number} behöver en sökväg under body, headers eller query och ett värde.",
   "81f613bb68d85bb7": "Hålls utanför chatten, i en privat fil som den här agentens kommandon kan läsa i 24 timmar",
+  "07b56c0c12bd2de1": "Hålls utanför chatten, i privata filer som den här agentens kommandon kan läsa i 24 timmar",
   "62ae4688ece05590": "Lagras säkert, visas aldrig för agenten",
   "8c2d901183b4e219": "Klistra in hemligheten",
   "610aea624f895a78": "Sparad säkert och hålls privat",
@@ -1712,7 +1713,9 @@
   "0efe7ba6d7f681f1": "Återanslut till miljön och försök igen. Filen kan ha flyttats eller tagits bort.",
   "2b29584d2bcea749": "Filen hittades inte på {path}.",
   "61026d122846876c": "Bifoga filen igen och försök på nytt.",
+  "d0872cb98b34eae8": "Slå av {label} för valda miljöer",
   "a9129aaa7c955e46": "Slå på {label} för valda miljöer",
+  "53207498f814efe0": "Blandat · Slå av",
   "fd569def3acc6750": "Blandat · Slå på",
   "8eebcd051255ba20": "Stäng meddelandet",
   "8711a1de99862971": "Minska {label}",
@@ -4234,6 +4237,15 @@
   "f6f962de62b3e462": "Fråga vad som helst",
   "64338d507e708bef": "Det delade innehållet finns inte längre i inkorgen. Du kan fortsätta redigera utkastet till uppgiften.",
   "c5b11890aa7f406f": "Vad ska vi jobba med?",
+  "39a92e68dd2bf6cc": [
+    "Ditt utkast är sparat på den här enheten. ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " har ingen tillgänglig modell. Installera eller logga in hos en leverantör där för att välja en."
+  ],
   "3a3930717d8d73b4": "Ditt utkast är sparat på den här enheten. Anslut till en miljö för att välja dess första modell.",
   "8b53cd9e9e107f7c": "Lägg till en miljö innan du skapar en uppgift.",
   "b369a312b533f975": "Läser in projekt från den sparade miljön.",

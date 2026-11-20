@@ -139,6 +139,7 @@
   "1fa38fb049c6b56e": "Filter {number} needs a path under body, headers or query, and at least one value.",
   "31ec02bdcb3920d1": "Filter {number} needs a path under body, headers or query, and a value.",
   "81f613bb68d85bb7": "Kept out of chat, in a private file this agent's commands can read for 24 hours",
+  "07b56c0c12bd2de1": "Kept out of chat, in private files this agent's commands can read for 24 hours",
   "62ae4688ece05590": "Stored securely, never shown to the agent",
   "8c2d901183b4e219": "Paste the secret",
   "610aea624f895a78": "Saved securely and kept private",
@@ -1712,7 +1713,9 @@
   "0efe7ba6d7f681f1": "Reconnect to this environment and try again. The file may have been moved or deleted.",
   "2b29584d2bcea749": "The file was not found at {path}.",
   "61026d122846876c": "Attach the file again and retry.",
+  "d0872cb98b34eae8": "Set {label} off for selected environments",
   "a9129aaa7c955e46": "Set {label} on for selected environments",
+  "53207498f814efe0": "Mixed · Set off",
   "fd569def3acc6750": "Mixed · Set on",
   "8eebcd051255ba20": "Dismiss message",
   "8711a1de99862971": "Decrease {label}",
@@ -4235,6 +4238,15 @@
   "f6f962de62b3e462": "Ask anything",
   "64338d507e708bef": "The shared content is no longer in the inbox. You can continue editing this task draft.",
   "c5b11890aa7f406f": "What should we work on?",
+  "39a92e68dd2bf6cc": [
+    "Your draft is saved on this device. ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " has no model available. Install or sign in to a provider there to choose one."
+  ],
   "3a3930717d8d73b4": "Your draft is saved on this device. Connect to an environment to choose its first model.",
   "8b53cd9e9e107f7c": "Add an environment before creating a task.",
   "b369a312b533f975": "Loading projects from the saved environment.",

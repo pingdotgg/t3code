@@ -139,6 +139,8 @@
   "1fa38fb049c6b56e": "Filter {number} behöver en sökväg under body, headers eller query och minst ett värde.",
   "31ec02bdcb3920d1": "Filter {number} behöver en sökväg under body, headers eller query och ett värde.",
   "81f613bb68d85bb7": "Hålls utanför chatten, i en privat fil som den här agentens kommandon kan läsa i 24 timmar",
+  "07b56c0c12bd2de1": "Hålls utanför chatten, i privata filer som den här agentens kommandon kan läsa i 24 timmar",
+  "6435447ce7656f13": "Visa {label}",
   "62ae4688ece05590": "Lagras säkert, visas aldrig för agenten",
   "8c2d901183b4e219": "Klistra in hemligheten",
   "610aea624f895a78": "Sparad säkert och hålls privat",

@@ -139,6 +139,7 @@
   "1fa38fb049c6b56e": "El filtro {number} necesita una ruta dentro de body, headers o query, y al menos un valor.",
   "31ec02bdcb3920d1": "El filtro {number} necesita una ruta dentro de body, headers o query, y un valor.",
   "81f613bb68d85bb7": "Fuera del chat, en un archivo privado que los comandos de este agente pueden leer durante 24 horas",
+  "07b56c0c12bd2de1": "Fuera del chat, en archivos privados que los comandos de este agente pueden leer durante 24 horas",
   "62ae4688ece05590": "Guardado de forma segura, nunca se muestra al agente",
   "8c2d901183b4e219": "Pega el secreto",
   "610aea624f895a78": "Guardado de forma segura y privada",
@@ -1712,7 +1713,9 @@
   "0efe7ba6d7f681f1": "Vuelve a conectarte a este entorno e inténtalo de nuevo. Puede que el archivo se haya movido o eliminado.",
   "2b29584d2bcea749": "No se encontró el archivo en {path}.",
   "61026d122846876c": "Vuelve a adjuntar el archivo y reinténtalo.",
+  "d0872cb98b34eae8": "Desactivar {label} en los entornos seleccionados",
   "a9129aaa7c955e46": "Activar {label} en los entornos seleccionados",
+  "53207498f814efe0": "Mixto · Desactivar",
   "fd569def3acc6750": "Mixto · Activar",
   "8eebcd051255ba20": "Descartar mensaje",
   "8711a1de99862971": "Reducir {label}",
@@ -4227,6 +4230,15 @@
   "f6f962de62b3e462": "Pregunta lo que quieras",
   "64338d507e708bef": "El contenido compartido ya no está en la bandeja de entrada. Puedes seguir editando este borrador de tarea.",
   "c5b11890aa7f406f": "¿En qué trabajamos?",
+  "39a92e68dd2bf6cc": [
+    "Tu borrador está guardado en este dispositivo. ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " no tiene ningún modelo disponible. Instala un proveedor o inicia sesión en uno allí para elegir uno."
+  ],
   "3a3930717d8d73b4": "Tu borrador está guardado en este dispositivo. Conéctate a un entorno para elegir su primer modelo.",
   "8b53cd9e9e107f7c": "Añade un entorno antes de crear una tarea.",
   "b369a312b533f975": "Cargando proyectos del entorno guardado.",
