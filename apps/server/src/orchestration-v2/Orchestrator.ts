@@ -540,6 +540,12 @@ export interface OrchestratorV2Shape {
   readonly getThreadLinkMetadata: (
     threadIds: ReadonlyArray<ThreadId>,
   ) => Effect.Effect<Record<ThreadId, OrchestrationV2ThreadLinkMetadata>, OrchestratorV2Error>;
+  readonly listPreviousAgents: (
+    input: Parameters<ProjectionStoreV2["Service"]["listPreviousAgents"]>[0],
+  ) => Effect.Effect<
+    Effect.Success<ReturnType<ProjectionStoreV2["Service"]["listPreviousAgents"]>>,
+    OrchestratorV2Error
+  >;
   readonly getThreadTitles: (
     threadIds: ReadonlyArray<ThreadId>,
   ) => Effect.Effect<Record<ThreadId, string>, OrchestratorV2Error>;
@@ -16965,6 +16971,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return projectionStore
         .getThreadLinkMetadata(threadIds)
         .pipe(Effect.mapError(shellProjectionError));
+    }),
+    listPreviousAgents: Effect.fn("OrchestratorV2.listPreviousAgents")(function (input) {
+      return projectionStore.listPreviousAgents(input).pipe(Effect.mapError(shellProjectionError));
     }),
     getThreadTitles: Effect.fn("OrchestratorV2.getThreadTitles")(function (threadIds) {
       return projectionStore.getThreadTitles(threadIds).pipe(Effect.mapError(shellProjectionError));
