@@ -60,7 +60,7 @@ function capture() {
   );
   resources.use(
     vi.spyOn(navigator.mediaDevices, "getUserMedia").mockResolvedValue({
-      getTracks: () => [{ stop: stopTrack, addEventListener() {} }],
+      getTracks: () => [{ readyState: "live", stop: stopTrack, addEventListener() {} }],
     } as unknown as MediaStream),
   );
   return {
