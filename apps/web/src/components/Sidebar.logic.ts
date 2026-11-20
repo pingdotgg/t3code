@@ -19,6 +19,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-search";
 import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/shared/paletteSearch";
 import {
+  isSidebarHiddenThread,
   type ContextMenuItem,
   type EnvironmentId,
   type ResolvedKeybindingsConfig,
@@ -59,16 +60,20 @@ import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 export function shouldNavigateAfterThreadPark(input: {
   readonly threadKey: string;
   readonly currentThreadKey: string | null;
-  readonly action: "settle" | "snooze";
+  readonly action: "settle" | "snooze" | "hide";
   readonly now: string;
-  readonly thread: (ThreadSnoozeShell & Pick<SidebarThreadSummary, "settledOverride">) | null;
+  readonly thread:
+    | (ThreadSnoozeShell & Pick<SidebarThreadSummary, "settledOverride" | "tags">)
+    | null;
 }): boolean {
   return (
     input.threadKey === input.currentThreadKey &&
     input.thread !== null &&
     (input.action === "settle"
       ? input.thread.settledOverride === "settled"
-      : effectiveSnoozed(input.thread, { now: input.now }))
+      : input.action === "hide"
+        ? isSidebarHiddenThread(input.thread)
+        : effectiveSnoozed(input.thread, { now: input.now }))
   );
 }
 
@@ -191,13 +196,15 @@ export const animateSidebarLayoutChanges: AnimateLayoutChanges = (args) =>
 
 // Snoozed rows cannot accept drops without a wake time. Working rows only drag out as chat context.
 
-export type SidebarSection = "pinned" | "active" | "working" | "snoozed" | "settled";
+export type SidebarSection = "pinned" | "active" | "working" | "snoozed" | "settled" | "hidden";
 
 export function resolveSidebarThreadSection(input: {
+  readonly hidden?: boolean;
   readonly snoozed: boolean;
   readonly settled: boolean;
   readonly pinned: boolean;
 }): SidebarSection {
+  if (input.hidden) return "hidden";
   if (input.snoozed) return "snoozed";
   if (input.settled) return "settled";
   if (input.pinned) return "pinned";
@@ -210,10 +217,12 @@ export type SidebarListMarker =
   | "pinned-header"
   | "active-placeholder"
   | "settled-placeholder"
+  | "settled-more"
   | "pinned-divider"
   | "working-header"
   | "snoozed-header"
-  | "settled-header";
+  | "settled-header"
+  | "hidden-header";
 
 export function sidebarMarkerId(marker: SidebarListMarker): string {
   return `${SIDEBAR_MARKER_PREFIX}${marker}`;
@@ -236,6 +245,7 @@ function sectionAtSidebarSlot(items: readonly SidebarListItem[], index: number):
     else if (item.marker === "working-header") section = "working";
     else if (item.marker === "snoozed-header") section = "snoozed";
     else if (item.marker === "settled-header") section = "settled";
+    else if (item.marker === "hidden-header") section = "hidden";
   }
   return section;
 }
@@ -257,7 +267,7 @@ export function resolveSidebarDropTarget(
   const moved = items.filter((_, index) => index !== activeIndex);
   moved.splice(overIndex, 0, items[activeIndex]!);
   const section = sectionAtSidebarSlot(moved, overIndex);
-  if (section === "working" || section === "snoozed") return null;
+  if (section === "working" || section === "snoozed" || section === "hidden") return null;
   const pinnedOrder: string[] = [];
   const activeOrder: string[] = [];
   let currentSection: SidebarSection = "pinned";
@@ -267,7 +277,8 @@ export function resolveSidebarDropTarget(
       else if (
         item.marker === "working-header" ||
         item.marker === "snoozed-header" ||
-        item.marker === "settled-header"
+        item.marker === "settled-header" ||
+        item.marker === "hidden-header"
       )
         break;
     } else if (currentSection === "pinned") pinnedOrder.push(item.key);
@@ -288,6 +299,7 @@ type SidebarThreadDropPlan =
       readonly order: readonly string[];
       readonly orderKey: string | undefined;
       readonly extraAssignments: ReadonlyArray<{ readonly id: string; readonly orderKey: string }>;
+      readonly unhide?: boolean;
     }
   | {
       readonly kind: "move-active";
@@ -296,20 +308,23 @@ type SidebarThreadDropPlan =
       readonly unpin: boolean;
       readonly unsettle: boolean;
       readonly unsnooze: boolean;
+      readonly unhide?: boolean;
     }
-  | { readonly kind: "settle" };
+  | { readonly kind: "settle"; readonly unhide?: boolean };
 
-export type SidebarDropVerb = "pin" | "unpin" | "settle" | "unsettle" | "wake";
+export type SidebarDropVerb = "pin" | "unpin" | "settle" | "unsettle" | "wake" | "unhide";
 
 export function resolveSidebarDropVerb(
   from: SidebarSection,
   to: SidebarSection | null,
 ): SidebarDropVerb | null {
-  if (to === null || to === from || to === "working" || to === "snoozed") return null;
+  if (to === null || to === from || to === "working" || to === "snoozed" || to === "hidden")
+    return null;
   if (to === "pinned") return "pin";
   if (to === "settled") return "settle";
   if (from === "pinned") return "unpin";
   if (from === "settled") return "unsettle";
+  if (from === "hidden") return "unhide";
   return "wake";
 }
 
@@ -367,6 +382,7 @@ export function planSidebarThreadDrop(input: {
   readonly activeSection: SidebarSection;
   readonly activePinned?: boolean;
   readonly activeSettled?: boolean;
+  readonly activeSnoozed?: boolean;
   readonly supportsSettlement?: boolean;
   readonly target: SidebarDropTarget;
   readonly pinnedOrder: readonly string[];
@@ -382,6 +398,7 @@ export function planSidebarThreadDrop(input: {
     activeSection,
     activePinned = activeSection === "pinned",
     activeSettled = activeSection === "settled",
+    activeSnoozed = activeSection === "snoozed",
     target,
     pinnedOrder,
     pinnedKeysById,
@@ -440,7 +457,8 @@ export function planSidebarThreadDrop(input: {
               assignments: [],
               unpin: activePinned,
               unsettle: activeSettled,
-              unsnooze: activeSection === "snoozed",
+              unsnooze: activeSnoozed,
+              ...(activeSection === "hidden" ? { unhide: true } : {}),
             };
       }
       const order = target.activeOrder;
@@ -459,11 +477,14 @@ export function planSidebarThreadDrop(input: {
         assignments,
         unpin: activePinned,
         unsettle: activeSettled,
-        unsnooze: activeSection === "snoozed",
+        unsnooze: activeSnoozed,
+        ...(activeSection === "hidden" ? { unhide: true } : {}),
       };
     }
     case "settled":
-      return activeSection === "settled" ? { kind: "none" } : { kind: "settle" };
+      return activeSection === "settled"
+        ? { kind: "none" }
+        : { kind: "settle", ...(activeSection === "hidden" ? { unhide: true } : {}) };
     case "pinned": {
       const order = target.pinnedOrder;
       if (
@@ -487,6 +508,7 @@ export function planSidebarThreadDrop(input: {
         extraAssignments: activePinned
           ? assignments
           : assignments.filter((assignment) => assignment.id !== activeKey),
+        ...(activeSection === "hidden" ? { unhide: true } : {}),
       };
     }
   }

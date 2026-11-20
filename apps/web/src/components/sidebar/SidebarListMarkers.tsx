@@ -111,7 +111,7 @@ export function SidebarDragBoundary(props: {
 }
 
 export function SidebarSectionHeader(props: {
-  marker: "working-header" | "snoozed-header" | "settled-header";
+  marker: "working-header" | "snoozed-header" | "settled-header" | "hidden-header";
   label: string;
   /** A muted trailing count. */
   count: number;
@@ -125,7 +125,9 @@ export function SidebarSectionHeader(props: {
       ? "working"
       : props.marker === "snoozed-header"
         ? "snoozed"
-        : "settled";
+        : props.marker === "hidden-header"
+          ? "hidden"
+          : "settled";
   return (
     <SortableSidebarMarker
       marker={props.marker}
@@ -144,4 +146,8 @@ export function SidebarSectionHeader(props: {
       </CollapsibleSectionHeader>
     </SortableSidebarMarker>
   );
+}
+
+export function SidebarSettledMoreItem(props: { children: ReactNode }) {
+  return <SortableSidebarMarker marker="settled-more">{props.children}</SortableSidebarMarker>;
 }

@@ -20,6 +20,8 @@ export type ThreadActionMenuId =
   | "snooze"
   | `snooze:${string}`
   | "unsnooze"
+  | "hide"
+  | "unhide"
   | "rename"
   | "regenerate-title"
   | "mark-unread"
@@ -107,6 +109,7 @@ export interface ThreadActionMenuState {
   readonly isSettled: boolean;
   readonly autoSettleEnabled: boolean;
   readonly isSnoozed: boolean;
+  readonly isHidden?: boolean;
   readonly canSnoozeNow: boolean;
   readonly isRegeneratingTitle: boolean;
   /** Archive rejects attached providers, so disable it while running. */
@@ -197,6 +200,21 @@ export function buildThreadActionMenuItems(
                     separatorBefore: state.snoozePresets.length > 0,
                   },
                 ],
+              },
+        ]
+      : []),
+    ...(state.supports.settlement
+      ? [
+          state.isHidden === true
+            ? {
+                id: "unhide" as const,
+                label: resolve(msg("Show in sidebar")),
+                icon: "eye",
+              }
+            : {
+                id: "hide" as const,
+                label: resolve(msg("Hide from sidebar")),
+                icon: "eye-off",
               },
         ]
       : []),

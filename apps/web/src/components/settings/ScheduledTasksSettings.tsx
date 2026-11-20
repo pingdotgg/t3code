@@ -23,6 +23,7 @@ import type {
   ProjectId,
   ScheduledTask,
   ScheduledTaskId,
+  ScheduledTaskSidebarVisibility,
   ScheduledTaskThreadMode,
   ScheduledTaskUpsertInput,
   ScheduledTaskWebhookDeliverySummary,
@@ -44,6 +45,8 @@ import {
   MIN_SCHEDULED_TASK_INTERVAL_MS,
   ProviderInstanceId,
   resolveEnvironmentMachineKind,
+  scheduledTaskSidebarVisibility,
+  scheduledTaskSupportsSnoozeBetweenRuns,
   scheduledTaskThreadMode,
 } from "@t3tools/contracts";
 import {
@@ -97,6 +100,8 @@ import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from ".
 import {
   WEBHOOK_SIGNATURE_DEFAULTS,
   changeDraftProject,
+  clampDraftSidebarVisibility,
+  draftScheduleType,
   moveDraftToThread,
   scheduleDraftErrors,
   scheduledTaskDestinationThreads,
@@ -174,6 +179,12 @@ const WORKSPACE_MODE_LABELS: Record<WorkspaceMode, string> = {
   existing_worktree: msg("Use a specific checkout"),
 };
 
+const SIDEBAR_VISIBILITY_LABELS: Record<ScheduledTaskSidebarVisibility, string> = {
+  default: msg("Show in main list"),
+  snooze_between_runs: msg("Snooze between runs"),
+  hidden: msg("Hide in Hidden section"),
+};
+
 const SCOPE_SUMMARY_TEMPLATES: Record<string, string> = {
   "Not connected:": msg("Not connected: {environments}"),
   "Loading scheduled tasks on": msg("Loading scheduled tasks on {environments}"),
@@ -196,6 +207,7 @@ const EMPTY_DRAFT: DraftState = {
   threadId: "",
   savedThreadId: "",
   threadMode: "new_thread",
+  sidebarVisibility: "default",
   workspaceMode: "worktree",
   baseRef: "",
   startFromOrigin: true,
@@ -859,6 +871,15 @@ function ScheduledTaskRow({
           {task.lastRunStatus !== "never" ? (
             <Badge variant={statusVariant(task.lastRunStatus)}>
               {messages(RUN_STATUS_LABELS[task.lastRunStatus])}
+            </Badge>
+          ) : null}
+          {scheduledTaskSidebarVisibility(task) === "hidden" ? (
+            <Badge variant="outline">
+              <T context="scheduled task sidebar visibility">Hidden</T>
+            </Badge>
+          ) : scheduledTaskSidebarVisibility(task) === "snooze_between_runs" ? (
+            <Badge variant="outline">
+              <T context="scheduled task sidebar visibility">Snoozed between runs</T>
             </Badge>
           ) : null}
           {task.threadId !== null && scheduledTaskThreadMode(task) !== "new_thread" ? (
@@ -1682,6 +1703,9 @@ function ScheduledTaskEditorForm({
       threadId: draft.threadId ? (draft.threadId as ThreadId) : null,
       ...(draft.threadId === "" && draft.savedThreadId !== "" ? { unbindThread: true } : {}),
       ...(offersThreadModes ? { threadMode: draft.threadMode } : {}),
+      ...(tasksQuery.data?.supportsSidebarVisibility === true
+        ? { sidebarVisibility: clampDraftSidebarVisibility(draft) }
+        : {}),
       workspaceStrategy,
       modelSelection,
       // Tasks have no mode picker; a mode above the administrator's ceiling would fail every run.
@@ -1816,19 +1840,24 @@ function ScheduledTaskEditorForm({
             threadMode={draft.threadMode}
             disabled={saving || !connected}
             onSelect={(thread) =>
-              setDraft((current) =>
-                thread === null
-                  ? { ...unbindDraftFromThread(current), threadMode: "new_thread" }
-                  : moveDraftToThread(current, thread),
-              )
+              setDraft((current) => {
+                const next =
+                  thread === null
+                    ? { ...unbindDraftFromThread(current), threadMode: "new_thread" as const }
+                    : moveDraftToThread(current, thread);
+                return { ...next, sidebarVisibility: clampDraftSidebarVisibility(next) };
+              })
             }
             onThreadModeChange={
               offersThreadModes
                 ? (threadMode) =>
-                    setDraft((current) => ({
-                      ...(threadMode === "new_thread" ? unbindDraftFromThread(current) : current),
-                      threadMode,
-                    }))
+                    setDraft((current) => {
+                      const next = {
+                        ...(threadMode === "new_thread" ? unbindDraftFromThread(current) : current),
+                        threadMode,
+                      };
+                      return { ...next, sidebarVisibility: clampDraftSidebarVisibility(next) };
+                    })
                 : undefined
             }
           />
@@ -1990,7 +2019,7 @@ function ScheduledTaskEditorForm({
                         mode === "once" && !current.runAt
                           ? new Date(Math.ceil(Date.now() / 3_600_000) * 3_600_000)
                           : null;
-                      return {
+                      const next = {
                         ...current,
                         scheduleMode: mode,
                         // Keep the instant too, so an hour that repeats when clocks go back stays exact.
@@ -2005,6 +2034,7 @@ function ScheduledTaskEditorForm({
                             ? DEFAULT_WEBHOOK_PROMPT
                             : current.prompt,
                       };
+                      return { ...next, sidebarVisibility: clampDraftSidebarVisibility(next) };
                     });
                 }}
               >
@@ -2316,6 +2346,72 @@ function ScheduledTaskEditorForm({
               </div>
             )}
           </div>
+
+          {tasksQuery.data?.supportsSidebarVisibility === true &&
+            (() => {
+              const canSnoozeBetweenRuns = scheduledTaskSupportsSnoozeBetweenRuns({
+                scheduleType: draftScheduleType(draft.scheduleMode),
+                threadMode: draft.threadMode,
+              });
+              const effectiveVisibility = clampDraftSidebarVisibility(draft);
+              return (
+                <div className="space-y-1.5">
+                  <Field label={gt("Sidebar")} htmlFor="scheduled-task-sidebar-visibility">
+                    <Select
+                      value={effectiveVisibility}
+                      onValueChange={(value) => {
+                        if (
+                          value === "default" ||
+                          value === "snooze_between_runs" ||
+                          value === "hidden"
+                        ) {
+                          setDraft((current) => ({ ...current, sidebarVisibility: value }));
+                        }
+                      }}
+                    >
+                      <SelectTrigger size="sm" id="scheduled-task-sidebar-visibility">
+                        <SelectValue>
+                          {messages(SIDEBAR_VISIBILITY_LABELS[effectiveVisibility])}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectPopup>
+                        <SelectItem value="default">
+                          <T>Show in main list</T>
+                        </SelectItem>
+                        <SelectItem value="snooze_between_runs" disabled={!canSnoozeBetweenRuns}>
+                          <T>Snooze between runs</T>
+                        </SelectItem>
+                        <SelectItem value="hidden">
+                          <T>Hide in Hidden section</T>
+                        </SelectItem>
+                      </SelectPopup>
+                    </Select>
+                  </Field>
+                  <p className="text-xs text-muted-foreground">
+                    {effectiveVisibility === "hidden" ? (
+                      <T>
+                        Keeps task threads out of the main sidebar, in the Hidden section below
+                        Settled.
+                      </T>
+                    ) : effectiveVisibility === "snooze_between_runs" ? (
+                      <T>
+                        Snoozes the thread until the next scheduled run after each completed run.
+                      </T>
+                    ) : canSnoozeBetweenRuns ? (
+                      <T>
+                        Choose whether runs stay in the main list, snooze between runs, or stay in
+                        Hidden.
+                      </T>
+                    ) : (
+                      <T>
+                        Snooze between runs is available for recurring schedules that reuse one
+                        thread.
+                      </T>
+                    )}
+                  </p>
+                </div>
+              );
+            })()}
 
           <div className="flex items-center justify-between gap-4">
             <div className="min-w-0 space-y-1">

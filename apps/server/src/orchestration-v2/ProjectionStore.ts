@@ -1,5 +1,10 @@
 import type { ProjectThreadAwarenessV2Input } from "@t3tools/shared/agentAwareness";
-import { applyOrchestrationV2ThreadVisit, pendingGuestMessageCount } from "@t3tools/contracts";
+import {
+  applyOrchestrationV2ThreadVisit,
+  pendingGuestMessageCount,
+  SCHEDULED_TASK_HIDDEN_THREAD_TAG,
+  SIDEBAR_HIDDEN_THREAD_TAG,
+} from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
@@ -503,6 +508,7 @@ export interface ActiveShellIndexEntry extends Pick<
   | "pinnedAt"
   | "pinOrderKey"
   | "snoozedUntil"
+  | "tags"
 > {
   /** False only when no run, request, work item, or watch can make the shell live. */
   readonly mayBeLive: boolean;
@@ -1985,6 +1991,9 @@ export function threadShellFromProjection(
     unsettledAt: projection.thread.unsettledAt ?? null,
     snoozedUntil: projection.thread.snoozedUntil ?? null,
     snoozedAt: projection.thread.snoozedAt ?? null,
+    ...(projection.thread.snoozedUntil != null && projection.thread.snoozedByTaskId != null
+      ? { snoozedByTaskId: projection.thread.snoozedByTaskId }
+      : {}),
     pinnedAt: projection.thread.pinnedAt ?? null,
 
     autoSettleDisabledAt: projection.thread.autoSettleDisabledAt ?? null,
@@ -2283,6 +2292,9 @@ function shellFromState(input: {
     unsettledAt: input.state.thread.unsettledAt ?? null,
     snoozedUntil: input.state.thread.snoozedUntil ?? null,
     snoozedAt: input.state.thread.snoozedAt ?? null,
+    ...(input.state.thread.snoozedUntil != null && input.state.thread.snoozedByTaskId != null
+      ? { snoozedByTaskId: input.state.thread.snoozedByTaskId }
+      : {}),
     pinnedAt: input.state.thread.pinnedAt ?? null,
 
     autoSettleDisabledAt: input.state.thread.autoSettleDisabledAt ?? null,
@@ -9329,6 +9341,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               id: state.thread.id,
               projectId: state.thread.projectId,
               creationSource: state.thread.creationSource,
+              ...(state.thread.tags === undefined ? {} : { tags: state.thread.tags }),
               archivedAt: state.thread.archivedAt,
               snoozedUntil: state.thread.snoozedUntil ?? null,
               snoozedAt: state.thread.snoozedAt ?? null,
@@ -9392,6 +9405,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const PENDING_ITEMS_INDEX = sql.literal(
       "INDEXED BY orchestration_v2_projection_turn_items_shell_pending_idx",
     );
+    const isSidebarHidden = sql`EXISTS (
+      SELECT 1 FROM json_each(t.payload_json, '$.tags') tag
+      WHERE tag.value IN (${SIDEBAR_HIDDEN_THREAD_TAG}, ${SCHEDULED_TASK_HIDDEN_THREAD_TAG})
+    )`;
     const listActiveShellIndex = Effect.fn("ProjectionStore.listActiveShellIndex")(function* () {
       const rows = yield* sql<{
         readonly thread_id: string;
@@ -9407,6 +9424,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         readonly snoozed_until: string | null;
         readonly may_be_live: number;
         readonly has_remote_tasks: number;
+        readonly sidebar_hidden: number;
       }>`
         SELECT
           t.thread_id,
@@ -9420,6 +9438,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ${indexedField("$.pinnedAt")} AS pinned_at,
           ${indexedField("$.pinOrderKey")} AS pin_order_key,
           ${indexedField("$.snoozedUntil")} AS snoozed_until,
+          CASE WHEN ${indexedField("$.settledOverride")} = 'settled'
+            THEN ${isSidebarHidden} ELSE 0 END AS sidebar_hidden,
           -- A superset of isLiveSubagentShell: the sources of its run status, pending request,
           -- and pending background work. Each source is one list for the whole read, found
           -- through its partial index, so finished threads cost no lookups.
@@ -9486,6 +9506,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         snoozedUntil: row.snoozed_until === null ? null : DateTime.makeUnsafe(row.snoozed_until),
         mayBeLive: row.may_be_live === 1,
         hasRemoteTasks: row.has_remote_tasks === 1,
+        ...(row.sidebar_hidden === 1 ? { tags: [SIDEBAR_HIDDEN_THREAD_TAG] } : {}),
       }));
     }, Effect.mapError(shellSnapshotReadError));
 
@@ -9606,6 +9627,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           AND json_extract(t.payload_json, '$.lineage.relationshipToParent') IS NOT 'subagent'
           AND json_extract(t.payload_json, '$.lineage.sideChat') IS NOT 1
           AND json_extract(t.payload_json, '$.settledOverride') = 'settled'
+          AND NOT ${isSidebarHidden}
           AND json_extract(t.payload_json, '$.settledAt') IS NOT NULL${
             projectIds === undefined ? sql`` : sql` AND t.project_id IN ${sql.in(projectIds)}`
           }

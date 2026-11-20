@@ -13,7 +13,11 @@ import {
   runRanAfter,
   usageLimitBlockedRun,
 } from "@t3tools/shared/orchestrationV2ThreadError";
-import { threadIssueKeysEqual } from "@t3tools/contracts";
+import {
+  SCHEDULED_TASK_HIDDEN_THREAD_TAG,
+  SIDEBAR_HIDDEN_THREAD_TAG,
+  threadIssueKeysEqual,
+} from "@t3tools/contracts";
 import { canonicalizeGitCafePullRequestUrl } from "@t3tools/source-control-definitions/registry";
 import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
 import {
@@ -4008,6 +4012,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       interactionMode: command.interactionMode,
       branch: command.branch,
       worktreePath: command.worktreePath,
+      ...(command.tags?.length ? { tags: [...new Set(command.tags)] } : {}),
       activeProviderThreadId: null,
       pullRequests: [],
       ...(command.linkOrigin === undefined ? {} : { linkOrigin: command.linkOrigin }),
@@ -4813,10 +4818,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       restoredUnsettledAt = parsed.value;
     }
     let snoozedUntil: DateTime.Utc | null = null;
+    if (
+      command.type === "thread.unsnooze" &&
+      command.scheduledTaskId !== undefined &&
+      (thread.snoozedUntil == null || thread.snoozedByTaskId !== command.scheduledTaskId)
+    )
+      return;
     if (command.type === "thread.snooze") {
       const projection = yield* loadProjectionForCommand(command, ["runs", "runtimeRequests"], {
         turnItemTypes: [],
       });
+      if (
+        command.scheduledTaskId !== undefined &&
+        ((thread.snoozedUntil != null && thread.snoozedByTaskId !== command.scheduledTaskId) ||
+          projection.runs.some((run) => run.status === "queued" || isActiveRun(run)))
+      )
+        return;
       const parsedSnoozedUntil = DateTime.make(command.snoozedUntil);
       if (
         Option.isNone(parsedSnoozedUntil) ||
@@ -4956,6 +4973,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             snoozedUntil,
             limitRecovery: thread.limitRecovery ? { ...thread.limitRecovery, snooze: false } : null,
             snoozedAt: now,
+            snoozedByTaskId: command.scheduledTaskId ?? null,
             updatedAt: now,
           };
         }
@@ -4965,6 +4983,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...thread,
             snoozedUntil: null,
             snoozedAt: null,
+            snoozedByTaskId: null,
             lastSnoozeWakeAt: alreadyAwake ? thread.lastSnoozeWakeAt : now,
             updatedAt: alreadyAwake ? thread.updatedAt : now,
           };
@@ -5028,7 +5047,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               ? current.includes(command.tag)
                 ? current
                 : [...current, command.tag]
-              : current.filter((tag) => tag !== command.tag),
+              : current.filter(
+                  (tag) =>
+                    tag !== command.tag &&
+                    !(
+                      command.tag === SIDEBAR_HIDDEN_THREAD_TAG &&
+                      tag === SCHEDULED_TASK_HIDDEN_THREAD_TAG
+                    ),
+                ),
           };
         }
         case "thread.mark-unread": {
@@ -5073,6 +5099,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   snoozedUntil: DateTime.makeUnsafe(limitRecovery.resetAt),
                   // Recovery updates acknowledge the same stopped run; their timestamps must not trigger fresh failure wakes.
                   snoozedAt: now,
+                  snoozedByTaskId: null,
                 }
               : command.limitRecovery !== undefined &&
                   thread.limitRecovery?.snooze &&

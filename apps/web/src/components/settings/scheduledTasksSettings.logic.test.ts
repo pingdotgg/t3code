@@ -18,6 +18,7 @@ import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope"
 
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
+  clampDraftSidebarVisibility,
   scheduledTaskDefaultModel,
   defaultScheduledTaskProjectId,
   matchesScheduledTaskScope,
@@ -431,4 +432,35 @@ it("appends the server zone only to fixed-time schedule labels", () => {
   expect(scheduleLabel({ type: "fixed_time", timeOfDay: "09:00" })).toBe("Daily at 09:00");
   expect(scheduleLabel({ type: "interval", everyMs: 60_000 }, "Etc/UTC")).toBe("Every 1 min");
   expect(scheduleLabel({ type: "webhook", signature: null }, "Etc/UTC")).toBe("On webhook");
+});
+
+it("clamps snooze_between_runs to recurring single-thread tasks while keeping hidden everywhere", () => {
+  const hiddenWebhook = taskToDraft({
+    ...legacyTask,
+    schedule: { type: "webhook", signature: null },
+    sidebarVisibility: "hidden",
+  });
+  expect(hiddenWebhook.sidebarVisibility).toBe("hidden");
+  expect(clampDraftSidebarVisibility(hiddenWebhook)).toBe("hidden");
+  expect(
+    clampDraftSidebarVisibility({
+      scheduleMode: "interval",
+      threadMode: "continue",
+      sidebarVisibility: "snooze_between_runs",
+    }),
+  ).toBe("snooze_between_runs");
+  expect(
+    clampDraftSidebarVisibility({
+      scheduleMode: "webhook",
+      threadMode: "continue",
+      sidebarVisibility: "snooze_between_runs",
+    }),
+  ).toBe("default");
+  expect(
+    clampDraftSidebarVisibility({
+      scheduleMode: "interval",
+      threadMode: "new_thread",
+      sidebarVisibility: "snooze_between_runs",
+    }),
+  ).toBe("default");
 });

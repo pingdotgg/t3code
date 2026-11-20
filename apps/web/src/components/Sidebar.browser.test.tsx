@@ -396,4 +396,78 @@ describe("sidebar settled pagination", () => {
     await act(() => moreButton.click());
     expect(screen.container.querySelectorAll("[data-thread-item]")).toHaveLength(loadedRows);
   });
+
+  it("renders hidden-tagged threads in a collapsible Hidden shelf below Settled", async () => {
+    localStorage.removeItem("t3code:sidebar:hidden-expanded");
+    const activeProject = project("active");
+    const activeThread = threadShell(activeProject.id, 1);
+    const settledThread = makeThreadFixture({
+      environmentId: activeProject.environmentId,
+      projectId: activeProject.id,
+      id: ThreadId.make("settled-row"),
+      title: "Settled thread",
+      settledOverride: "settled",
+      settledAt: "2026-01-01T00:00:00.000Z",
+    });
+    const hiddenThread = makeThreadFixture({
+      environmentId: activeProject.environmentId,
+      projectId: activeProject.id,
+      id: ThreadId.make("hidden-webhook"),
+      title: "Webhook worker",
+      tags: ["hidden"],
+    });
+    vi.mocked(useProjects).mockReturnValue([activeProject]);
+    vi.mocked(useQuietThreadShells).mockReturnValue([activeThread, settledThread, hiddenThread]);
+    vi.mocked(useThreadRouteTarget).mockReturnValue({
+      kind: "server",
+      threadRef: { environmentId: activeProject.environmentId, threadId: activeThread.id },
+    });
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: {
+        environmentId: activeProject.environmentId,
+        projectId: activeProject.id,
+      },
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef: { environmentId: activeProject.environmentId, threadId: activeThread.id },
+    });
+    vi.mocked(useServerConfigs).mockReturnValue(
+      new Map([
+        [
+          activeProject.environmentId,
+          {
+            scratchWorkspaceRoot: null,
+            shellThreadFamilies: false,
+          } as unknown as EnvironmentServerConfig,
+        ],
+      ]),
+    );
+    await using screen = await render(
+      <SidebarProvider style={{ height: 400, minHeight: 400 }}>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+    const settledHeader = screen.container.querySelector<HTMLElement>(
+      '[data-testid="sidebar-settled-header"]',
+    )!;
+    const hiddenHeader = screen.container.querySelector<HTMLElement>(
+      '[data-testid="sidebar-hidden-header"]',
+    )!;
+    expect(settledHeader).not.toBeNull();
+    expect(hiddenHeader).not.toBeNull();
+    // Hidden shelf appears below Settled in DOM order.
+    expect(
+      settledHeader.compareDocumentPosition(hiddenHeader) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
+    // Collapsed by default: hidden row is not shown until toggled.
+    expect(screen.container.textContent).not.toContain("Webhook worker");
+    const toggle = screen.container.querySelector<HTMLElement>(
+      '[data-testid="sidebar-hidden-shelf-toggle"]',
+    )!;
+    await act(() => toggle.click());
+    await expect.element(screen.getByText("Webhook worker")).toBeInTheDocument();
+  });
 });

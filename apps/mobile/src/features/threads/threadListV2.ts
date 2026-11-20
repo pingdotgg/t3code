@@ -33,7 +33,12 @@ import {
   sortPinnedThreadsByOrderKey,
   sortSettledThreads,
 } from "@t3tools/client-runtime/state/thread-sort";
-import { isListedThreadLineage, type EnvironmentId, type ProjectId } from "@t3tools/contracts";
+import {
+  isListedThreadLineage,
+  isSidebarHiddenThread,
+  type EnvironmentId,
+  type ProjectId,
+} from "@t3tools/contracts";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 import type { MenuAction } from "@react-native-menu/menu";
 
@@ -381,7 +386,12 @@ export function getThreadListV2OrderedSection(input: {
 }): EnvironmentThreadShell[] {
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
   const threads = input.threads.filter((thread) => {
-    if (thread.archivedAt !== null || !isListedThreadLineage(thread.lineage)) return false;
+    if (
+      thread.archivedAt !== null ||
+      !isListedThreadLineage(thread.lineage) ||
+      isSidebarHiddenThread(thread)
+    )
+      return false;
     if (
       (input.settlementEnvironmentIds?.has(thread.environmentId) ?? true) &&
       thread.settledOverride === "settled" &&
@@ -412,6 +422,7 @@ export interface ThreadListV2Item {
   readonly thread: EnvironmentThreadShell;
   readonly variant: "card" | "slim";
   readonly snoozed: boolean;
+  readonly hidden?: boolean;
   readonly pinned: boolean;
   readonly wokeAt: string | null;
   readonly isLast: boolean;
@@ -428,6 +439,8 @@ export interface ThreadListV2Layout {
   readonly snoozedShelfHeaderIndex: number | null;
   readonly settledCount: number;
   readonly settledShelfHeaderIndex: number | null;
+  readonly hiddenCount: number;
+  readonly hiddenShelfHeaderIndex: number | null;
   /** Arm a timeout here to repartition at snooze expiry rather than the next minute tick. */
   readonly nextSnoozeWakeAt: string | null;
   /** Threads listed only because their messages match the search. */
@@ -481,12 +494,21 @@ export interface ThreadListV2SettledShelfListItem {
   readonly disabled: boolean;
 }
 
+export interface ThreadListV2HiddenShelfListItem {
+  readonly type: "v2-hidden-shelf";
+  readonly key: "v2-hidden-shelf";
+  readonly count: number;
+  readonly expanded: boolean;
+  readonly disabled: boolean;
+}
+
 export type ThreadListV2ListItem =
   | ThreadListV2ThreadListItem
   | ThreadListV2PendingListItem
   | ThreadListV2WorkingShelfListItem
   | ThreadListV2SnoozedShelfListItem
-  | ThreadListV2SettledShelfListItem;
+  | ThreadListV2SettledShelfListItem
+  | ThreadListV2HiddenShelfListItem;
 
 export function isThreadListV2ListItem(value: {
   readonly type: string;
@@ -496,7 +518,8 @@ export function isThreadListV2ListItem(value: {
     value.type === "v2-pending" ||
     value.type === "v2-working-shelf" ||
     value.type === "v2-snoozed-shelf" ||
-    value.type === "v2-settled-shelf"
+    value.type === "v2-settled-shelf" ||
+    value.type === "v2-hidden-shelf"
   );
 }
 
@@ -513,6 +536,7 @@ export function threadListV2ListItemsAreEqual(
         previous.item.thread === item.item.thread &&
         previous.item.variant === item.item.variant &&
         previous.item.snoozed === item.item.snoozed &&
+        previous.item.hidden === item.item.hidden &&
         previous.item.pinned === item.item.pinned &&
         previous.item.wokeAt === item.item.wokeAt &&
         previous.snoozeWakeLabelText === item.snoozeWakeLabelText &&
@@ -552,6 +576,13 @@ export function threadListV2ListItemsAreEqual(
         previous.expanded === item.expanded &&
         previous.disabled === item.disabled
       );
+    case "v2-hidden-shelf":
+      return (
+        previous.type === "v2-hidden-shelf" &&
+        previous.count === item.count &&
+        previous.expanded === item.expanded &&
+        previous.disabled === item.disabled
+      );
   }
 }
 
@@ -570,7 +601,7 @@ function resolveThreadListV2ItemTimeLabel(
   )
     return "";
   const settledTimestamp =
-    variant === "slim" && !snoozed ? resolveSettledThreadTimestamp(thread) : null;
+    variant === "slim" && !snoozed && !item.hidden ? resolveSettledThreadTimestamp(thread) : null;
   return relativeTime(
     settledTimestamp ?? resolveThreadActivityTimestamp(thread) ?? thread.createdAt,
     undefined,
@@ -590,6 +621,9 @@ export function buildThreadListV2ListItems(input: {
   readonly settledCount?: number;
   readonly settledShelfExpanded?: boolean;
   readonly settledShelfHeaderIndex?: number | null;
+  readonly hiddenCount?: number;
+  readonly hiddenShelfExpanded?: boolean;
+  readonly hiddenShelfHeaderIndex?: number | null;
   readonly snoozeLabelNow?: string;
   readonly snoozeEnvironmentIds?: ReadonlySet<EnvironmentId>;
   readonly queuedThreadKeys?: ReadonlySet<string>;
@@ -643,7 +677,10 @@ export function buildThreadListV2ListItems(input: {
   const snoozedShelfHeaderIndex = input.snoozedShelfHeaderIndex ?? null;
   const settledCount = input.settledCount ?? 0;
   const settledShelfHeaderIndex = input.settledShelfHeaderIndex ?? null;
-  const snoozedEnd = settledShelfHeaderIndex ?? threadItems.length;
+  const hiddenCount = input.hiddenCount ?? 0;
+  const hiddenShelfHeaderIndex = input.hiddenShelfHeaderIndex ?? null;
+  const settledEnd = hiddenShelfHeaderIndex ?? threadItems.length;
+  const snoozedEnd = settledShelfHeaderIndex ?? settledEnd;
   const workingEnd = snoozedShelfHeaderIndex ?? snoozedEnd;
   const activeEnd = workingShelfHeaderIndex ?? workingEnd;
   const result: ThreadListV2ListItem[] = [...pendingItems, ...threadItems.slice(0, activeEnd)];
@@ -676,7 +713,17 @@ export function buildThreadListV2ListItems(input: {
       expanded: input.settledShelfExpanded !== false,
       disabled: shelfDisabled,
     });
-    result.push(...threadItems.slice(settledShelfHeaderIndex));
+    result.push(...threadItems.slice(settledShelfHeaderIndex, settledEnd));
+  }
+  if (hiddenShelfHeaderIndex !== null && hiddenCount > 0) {
+    result.push({
+      type: "v2-hidden-shelf",
+      key: "v2-hidden-shelf",
+      count: hiddenCount,
+      expanded: input.hiddenShelfExpanded === true,
+      disabled: shelfDisabled,
+    });
+    result.push(...threadItems.slice(hiddenShelfHeaderIndex));
   }
   return result.map((entry, index) => {
     if (entry.type !== "v2-thread" && entry.type !== "v2-pending") return entry;
@@ -731,6 +778,7 @@ export function buildThreadListV2Items(input: {
   readonly inboxReturnAt?: (thread: EnvironmentThreadShell) => number | undefined;
   readonly snoozedShelfExpanded?: boolean;
   readonly settledShelfExpanded?: boolean;
+  readonly hiddenShelfExpanded?: boolean;
   readonly selectedThreadKey?: string | null;
   readonly queuedThreadKeys?: ReadonlySet<string>;
   /** Whether the shelf may list a settled row yet; older settled rows load in pages. */
@@ -762,6 +810,7 @@ export function buildThreadListV2Items(input: {
   const working: EnvironmentThreadShell[] = [];
   const settled: EnvironmentThreadShell[] = [];
   const snoozed: EnvironmentThreadShell[] = [];
+  const hidden: EnvironmentThreadShell[] = [];
   let nextSnoozeWakeAt: string | null = null;
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
   const listedThreads = input.threads.filter(
@@ -797,6 +846,10 @@ export function buildThreadListV2Items(input: {
     }
     const supportsSettlement = input.settlementEnvironmentIds?.has(thread.environmentId) ?? true;
     const supportsSnooze = input.snoozeEnvironmentIds?.has(thread.environmentId) ?? true;
+    if (isSidebarHiddenThread(thread)) {
+      hidden.push(thread);
+      continue;
+    }
     if (supportsSnooze && effectiveSnoozed(thread, { now })) {
       snoozed.push(thread);
       if (
@@ -825,8 +878,9 @@ export function buildThreadListV2Items(input: {
     // Searching lists every match by rank across shelves, as the palette and
     // the web sidebar do, then threads listed for their messages in the
     // server's order. Each row keeps its shelf's look.
-    const slim = new Set([...snoozed, ...settled]);
+    const slim = new Set([...snoozed, ...settled, ...hidden]);
     const snoozedThreads = new Set(snoozed);
+    const hiddenThreads = new Set(hidden);
     const pinnedThreads = new Set(pinned);
     const threadByKey = new Map(
       listedThreads.map((thread) => [
@@ -844,6 +898,7 @@ export function buildThreadListV2Items(input: {
         thread,
         variant: slim.has(thread) ? "slim" : "card",
         snoozed: snoozedThreads.has(thread),
+        hidden: hiddenThreads.has(thread),
         pinned: pinnedThreads.has(thread),
         wokeAt: slim.has(thread) ? null : resolveThreadListV2WokeAt(thread, { now }),
         isLast: index === results.length - 1,
@@ -856,6 +911,8 @@ export function buildThreadListV2Items(input: {
       snoozedShelfHeaderIndex: null,
       settledCount: 0,
       settledShelfHeaderIndex: null,
+      hiddenCount: 0,
+      hiddenShelfHeaderIndex: null,
       nextSnoozeWakeAt,
       contentOnlyThreadKeys,
     };
@@ -904,6 +961,13 @@ export function buildThreadListV2Items(input: {
     input.settledShelfExpanded !== false
       ? pagedSettled
       : pagedSettled.filter(
+          (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
+        );
+  const orderedHidden = sortThreadsForListV2(hidden);
+  const visibleHidden =
+    input.hiddenShelfExpanded === true
+      ? orderedHidden
+      : orderedHidden.filter(
           (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
         );
 
@@ -965,6 +1029,18 @@ export function buildThreadListV2Items(input: {
       isLast: false,
     });
   }
+  const hiddenShelfHeaderIndex = orderedHidden.length > 0 ? items.length : null;
+  for (const thread of visibleHidden) {
+    items.push({
+      thread,
+      variant: "slim",
+      snoozed: false,
+      hidden: true,
+      pinned: false,
+      wokeAt: null,
+      isLast: false,
+    });
+  }
   const last = items.at(-1);
   if (last) {
     items[items.length - 1] = { ...last, isLast: true };
@@ -979,6 +1055,8 @@ export function buildThreadListV2Items(input: {
     snoozedShelfHeaderIndex,
     settledCount: settledTotal,
     settledShelfHeaderIndex,
+    hiddenCount: orderedHidden.length,
+    hiddenShelfHeaderIndex,
     nextSnoozeWakeAt,
     contentOnlyThreadKeys,
   };

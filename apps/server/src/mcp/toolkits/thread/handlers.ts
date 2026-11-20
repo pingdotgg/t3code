@@ -1,6 +1,7 @@
 import {
   type CommandId,
   type RuntimeRequestId,
+  SIDEBAR_HIDDEN_THREAD_TAG,
   ThreadId,
   type OrchestrationV2ThreadProjection,
   type RunId,
@@ -400,6 +401,15 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           break;
         case "mark_unread":
           command = { ...common, type: "thread.mark-unread" };
+          break;
+        case "hide":
+        case "unhide":
+          command = {
+            ...common,
+            type: "thread.tag.set",
+            tag: SIDEBAR_HIDDEN_THREAD_TAG,
+            tagged: input.action === "hide",
+          };
           break;
         case "pin": {
           // Always send a key, as the client does: the reducer ignores it for a

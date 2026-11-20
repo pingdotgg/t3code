@@ -294,7 +294,13 @@ export function ScheduledTaskThreadPickerRouteScreen() {
                         ...current,
                         draft: item.thread
                           ? moveDraftToThread(current.draft, item.thread)
-                          : { ...unbindDraftFromThread(current.draft), threadMode: "new_thread" },
+                          : {
+                              ...unbindDraftFromThread(current.draft),
+                              threadMode: "new_thread",
+                              ...(current.draft.sidebarVisibility === "snooze_between_runs"
+                                ? { sidebarVisibility: "default" as const }
+                                : {}),
+                            },
                       }
                     : current,
                 );

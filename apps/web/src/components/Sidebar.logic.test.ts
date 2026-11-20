@@ -23,6 +23,7 @@ import {
   shouldRecedeSidebarThread,
   sortInboxThreadsByReturn,
   resolveSidebarDropTarget,
+  resolveSidebarThreadSection,
   planSidebarThreadDrop,
   resolveSidebarReorderableThreadKeys,
   sortPinnedThreadsForSidebar,
@@ -1702,5 +1703,46 @@ describe("shouldCreateNewThreadInCurrentProject", () => {
     expect(shouldCreateNewThreadInCurrentProject(false, 1, 3)).toBe(true);
     expect(shouldCreateNewThreadInCurrentProject(false, 0, 0)).toBe(true);
     expect(shouldCreateNewThreadInCurrentProject(true, 2, 2)).toBe(true);
+  });
+});
+
+describe("hidden sidebar section", () => {
+  it("prioritizes hidden over pinned, snoozed, and settled", () => {
+    expect(
+      resolveSidebarThreadSection({ hidden: true, pinned: true, snoozed: true, settled: true }),
+    ).toBe("hidden");
+    expect(
+      resolveSidebarThreadSection({ hidden: false, pinned: false, snoozed: false, settled: true }),
+    ).toBe("settled");
+  });
+
+  it("refuses drops into hidden and unhides when dragged out to active, pinned, or settled", () => {
+    const items: SidebarListItem[] = [
+      { kind: "marker", marker: "pinned-header" },
+      { kind: "marker", marker: "pinned-divider" },
+      { kind: "marker", marker: "active-placeholder" },
+      { kind: "thread", key: "env:a", section: "active" },
+      { kind: "marker", marker: "settled-header" },
+      { kind: "marker", marker: "settled-placeholder" },
+      { kind: "marker", marker: "hidden-header" },
+      { kind: "thread", key: "env:h", section: "hidden" },
+    ];
+    expect(resolveSidebarDropTarget(items, "env:a", "sidebar-marker-hidden-header")).toBeNull();
+    expect(resolveSidebarDropVerb("hidden", "active")).toBe("unhide");
+    expect(resolveSidebarDropVerb("active", "hidden")).toBeNull();
+    const toActive = resolveSidebarDropTarget(items, "env:h", "env:a");
+    expect(toActive?.section).toBe("active");
+    expect(
+      planSidebarThreadDrop({
+        activeKey: "env:h",
+        activeSection: "hidden",
+        target: toActive!,
+        pinnedOrder: [],
+        pinnedKeysById: new Map(),
+        activeOrder: ["env:a"],
+        activeKeysById: new Map([["env:a", null]]),
+        activeTimeOrdered: true,
+      }),
+    ).toMatchObject({ kind: "move-active", unhide: true });
   });
 });

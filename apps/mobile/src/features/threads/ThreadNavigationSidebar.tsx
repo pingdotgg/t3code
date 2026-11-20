@@ -65,6 +65,7 @@ import {
   ThreadListV2PendingRow,
   ThreadListV2Row,
   ThreadListV2SettledShelfHeader,
+  ThreadListV2HiddenShelfHeader,
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
   ThreadListV2WorkingShelfHeader,
@@ -251,9 +252,11 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     snoozedShelfExpanded,
     workingShelfEnabled,
     workingShelfExpanded,
+    hiddenShelfExpanded,
     toggleSettledShelf,
     toggleSnoozedShelf,
     toggleWorkingShelf,
+    toggleHiddenShelf,
   } = useThreadListV2ShelfPreferences();
   const now = useThreadListNow(threads);
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
@@ -296,24 +299,31 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     workingShelfExpanded,
     snoozedShelfExpanded,
     settledShelfExpanded,
+    hiddenShelfExpanded,
     selectedThreadKey,
   });
-  const listItems: readonly SidebarListItem[] =
-    settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0
-      ? [
-          ...threadListV2Items,
-          {
-            type: "v2-show-more",
-            key: "v2-show-more",
-            hiddenCount: threadListV2Layout.hiddenSettledCount,
-            ...(olderSettledShelf.loading
-              ? { state: "loading" as const }
-              : olderSettledShelf.failed
-                ? { state: "failed" as const }
-                : {}),
-          },
-        ]
-      : threadListV2Items;
+  const listItems: readonly SidebarListItem[] = (() => {
+    if (!(settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0)) {
+      return threadListV2Items;
+    }
+    const showMoreItem: SidebarListItem = {
+      type: "v2-show-more",
+      key: "v2-show-more",
+      hiddenCount: threadListV2Layout.hiddenSettledCount,
+      ...(olderSettledShelf.loading
+        ? { state: "loading" as const }
+        : olderSettledShelf.failed
+          ? { state: "failed" as const }
+          : {}),
+    };
+    const hiddenIndex = threadListV2Items.findIndex((item) => item.type === "v2-hidden-shelf");
+    if (hiddenIndex === -1) return [...threadListV2Items, showMoreItem];
+    return [
+      ...threadListV2Items.slice(0, hiddenIndex),
+      showMoreItem,
+      ...threadListV2Items.slice(hiddenIndex),
+    ];
+  })();
 
   const handleSwipeableWillOpen = (methods: SwipeableMethods) => {
     if (openSwipeableRef.current !== methods) {
@@ -471,9 +481,11 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
             autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}
             reorderSupported={
-              item.item.pinned
-                ? pinReorderEnvironmentIds.has(thread.environmentId)
-                : !workingShelfEnabled && activeReorderEnvironmentIds.has(thread.environmentId)
+              item.item.hidden
+                ? false
+                : item.item.pinned
+                  ? pinReorderEnvironmentIds.has(thread.environmentId)
+                  : !workingShelfEnabled && activeReorderEnvironmentIds.has(thread.environmentId)
             }
             canMoveUp={item.canMoveUp}
             canMoveDown={item.canMoveDown}
@@ -517,6 +529,16 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             disabled={item.disabled}
             expanded={item.expanded}
             onToggle={toggleSettledShelf}
+            pane="sidebar"
+          />
+        );
+      case "v2-hidden-shelf":
+        return (
+          <ThreadListV2HiddenShelfHeader
+            count={item.count}
+            disabled={item.disabled}
+            expanded={item.expanded}
+            onToggle={toggleHiddenShelf}
             pane="sidebar"
           />
         );

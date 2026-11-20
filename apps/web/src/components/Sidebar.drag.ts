@@ -17,7 +17,8 @@ const isShelfHeader = (item: SidebarListItem | undefined) =>
   item?.kind === "marker" &&
   (item.marker === "working-header" ||
     item.marker === "snoozed-header" ||
-    item.marker === "settled-header");
+    item.marker === "settled-header" ||
+    item.marker === "hidden-header");
 
 export function restrictBelowSidebarLabel(
   { transform, containerNodeRect, draggingNodeRect }: Parameters<Modifier>[0],
@@ -98,6 +99,7 @@ export function createSidebarSortingStrategy(input: {
   settledVisibleCount?: number;
   routeThreadKey?: string | null;
   snoozedThreadCount?: number;
+  hiddenThreadCount?: number;
   cardHeight?: number;
   slimHeight?: number;
   boundaryLabelHeight?: number;
@@ -120,6 +122,7 @@ export function createSidebarSortingStrategy(input: {
       working: [],
       snoozed: [],
       settled: [],
+      hidden: [],
     };
     let cardHeight = input.cardHeight;
     let slimHeight = input.slimHeight;
@@ -190,6 +193,17 @@ export function createSidebarSortingStrategy(input: {
     }
     marker("settled-header");
     section("settled");
+    if (items.some((item) => item.kind === "marker" && item.marker === "settled-more")) {
+      marker("settled-more");
+    }
+    if (
+      groups.hidden.length > 0 ||
+      ((active.section !== "hidden" || (input.hiddenThreadCount ?? 0) > 1) &&
+        items.some((item) => item.kind === "marker" && item.marker === "hidden-header"))
+    ) {
+      marker("hidden-header");
+      projected.push(...groups.hidden);
+    }
     const heights = projected.map((item) => {
       const index = indices.get(sidebarListItemId(item));
       const rect = index === undefined ? undefined : rects[index];

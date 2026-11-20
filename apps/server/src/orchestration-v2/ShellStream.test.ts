@@ -260,11 +260,13 @@ describe("omitOlderSettledShells", () => {
       sideChat,
       row("old", 30),
       row("b-old", 40),
+      row("hidden-old", 60, { tags: ["hidden"] }),
       row("unsettled", null),
     ]);
     expect(result.threads.map((thread) => thread.id)).toEqual([
       ...newest.map((thread) => thread.id),
       "side-chat",
+      "hidden-old",
       "unsettled",
     ]);
     expect(result.olderSettled).toEqual({

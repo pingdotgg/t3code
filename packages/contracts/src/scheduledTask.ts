@@ -238,6 +238,37 @@ export function scheduledTaskThreadMode(
   return task.threadMode ?? (task.threadId === null ? "new_thread" : "continue");
 }
 
+/**
+ * Where the task's threads appear in the sidebar.
+ * - `default`: normal main sidebar section.
+ * - `snooze_between_runs`: snooze the bound thread until the next scheduled run after each completed run.
+ * - `hidden`: tag the task's threads hidden so they stay in the Hidden section below Settled.
+ */
+export const ScheduledTaskSidebarVisibility = Schema.Literals([
+  "default",
+  "snooze_between_runs",
+  "hidden",
+]);
+export type ScheduledTaskSidebarVisibility = typeof ScheduledTaskSidebarVisibility.Type;
+
+/** Servers before sidebar visibility omit it; their tasks show in the main section. */
+export function scheduledTaskSidebarVisibility(
+  task: Pick<ScheduledTask, "sidebarVisibility">,
+): ScheduledTaskSidebarVisibility {
+  return task.sidebarVisibility ?? "default";
+}
+
+/** Only recurring single-thread tasks have a future next run on the same thread to snooze until. */
+export function scheduledTaskSupportsSnoozeBetweenRuns(input: {
+  readonly scheduleType: ScheduledTaskSchedule["type"];
+  readonly threadMode: ScheduledTaskThreadMode;
+}): boolean {
+  return (
+    (input.scheduleType === "interval" || input.scheduleType === "fixed_time") &&
+    input.threadMode !== "new_thread"
+  );
+}
+
 export const ScheduledTask = Schema.Struct({
   id: ScheduledTaskId,
   title: TrimmedNonEmptyString,
@@ -247,6 +278,7 @@ export const ScheduledTask = Schema.Struct({
   projectId: ProjectId,
   threadId: Schema.NullOr(ThreadId),
   threadMode: Schema.optional(ScheduledTaskThreadMode),
+  sidebarVisibility: Schema.optional(ScheduledTaskSidebarVisibility),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
@@ -271,6 +303,7 @@ export type ScheduledTaskListInput = typeof ScheduledTaskListInput.Type;
 
 export const ScheduledTaskListResult = Schema.Struct({
   tasks: ForwardCompatibleArray(ScheduledTask),
+  supportsSidebarVisibility: Schema.optional(Schema.Boolean),
   /** The server's IANA zone for fixed-time schedules. Absent from older servers. */
   timeZone: Schema.optional(TrimmedNonEmptyString),
 });
@@ -293,6 +326,8 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
   unbindThread: Schema.optional(Schema.Boolean),
   /** Omitted: keep the stored mode, or derive it from `threadId` for a new or rebound task. */
   threadMode: Schema.optional(ScheduledTaskThreadMode),
+  /** Omitted: keep the stored sidebar visibility, or default to `default` for a new task. */
+  sidebarVisibility: Schema.optional(ScheduledTaskSidebarVisibility),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,

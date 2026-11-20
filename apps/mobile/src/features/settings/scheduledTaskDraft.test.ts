@@ -9,8 +9,10 @@ import {
   type ScheduledTask,
 } from "@t3tools/contracts";
 import {
+  clampDraftSidebarVisibility,
   createDraft,
   editDraft,
+  hasScheduledTaskDraftChanges,
   scheduledTaskDefaultModel,
   DEFAULT_SCHEDULE,
   scheduleDraftForTask,
@@ -243,5 +245,34 @@ describe("scheduled task worktree base", () => {
       editDraft({ ...rootTask, workspaceStrategy: { type: "worktree", baseRef: "release" } })
         .baseRef,
     ).toBe("release");
+  });
+
+  it("clamps snooze_between_runs for incompatible schedule or thread mode and tracks draft changes", () => {
+    const initial = editDraft({ ...rootTask, threadMode: "continue", sidebarVisibility: "hidden" });
+    expect(initial.sidebarVisibility).toBe("hidden");
+    expect(
+      hasScheduledTaskDraftChanges(initial, { ...initial, sidebarVisibility: "default" }),
+    ).toBe(true);
+    expect(
+      clampDraftSidebarVisibility({
+        schedule: { ...DEFAULT_SCHEDULE, mode: "interval" },
+        threadMode: "continue",
+        sidebarVisibility: "snooze_between_runs",
+      }),
+    ).toBe("snooze_between_runs");
+    expect(
+      clampDraftSidebarVisibility({
+        schedule: { ...DEFAULT_SCHEDULE, mode: "webhook" },
+        threadMode: "continue",
+        sidebarVisibility: "snooze_between_runs",
+      }),
+    ).toBe("default");
+    expect(
+      clampDraftSidebarVisibility({
+        schedule: { ...DEFAULT_SCHEDULE, mode: "interval" },
+        threadMode: "new_thread",
+        sidebarVisibility: "snooze_between_runs",
+      }),
+    ).toBe("default");
   });
 });

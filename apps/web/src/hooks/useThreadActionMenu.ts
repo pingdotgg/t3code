@@ -11,6 +11,7 @@ import {
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import {
   AuthOrchestrationOperateScope,
+  isSidebarHiddenThread,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -84,6 +85,7 @@ export function useThreadActionMenu(input: {
     unsettleThread,
     snoozeThread,
     unsnoozeThread,
+    setThreadHidden,
     pinThread,
     confirmAndUnpinThread,
     setThreadAutoSettle,
@@ -147,6 +149,7 @@ export function useThreadActionMenu(input: {
         isSettled: supports.settlement && thread.settledOverride === "settled",
         autoSettleEnabled: thread.autoSettleDisabledAt == null,
         isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
+        isHidden: isSidebarHiddenThread(thread),
         canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
         isRegeneratingTitle,
         isRunning: !threadRuntimeCanArchive(thread.runtime),
@@ -237,6 +240,16 @@ export function useThreadActionMenu(input: {
           return;
         case "unsnooze":
           await reportFailure(m(msg("Failed to wake thread")), () => unsnoozeThread(threadRef));
+          return;
+        case "hide":
+          await reportFailure(m(msg("Failed to hide thread")), () =>
+            setThreadHidden(threadRef, true),
+          );
+          return;
+        case "unhide":
+          await reportFailure(m(msg("Failed to show thread")), () =>
+            setThreadHidden(threadRef, false),
+          );
           return;
         case "pin":
           await reportFailure(m(msg("Failed to pin thread")), () => pinThread(threadRef));

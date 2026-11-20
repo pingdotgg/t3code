@@ -3253,6 +3253,7 @@ it.effect("SQL list older settled threads below a cursor", () =>
       readonly subagent?: boolean;
       readonly archived?: boolean;
       readonly snoozedUntilDay?: number;
+      readonly hidden?: boolean;
     }) =>
       store.apply({
         id: EventId.make(`event:older:${input.name}`),
@@ -3284,6 +3285,7 @@ it.effect("SQL list older settled threads below a cursor", () =>
           settledOverride: input.settledDay === null ? null : "settled",
           settledAt: input.settledDay === null ? null : at(input.settledDay),
           snoozedUntil: input.snoozedUntilDay === undefined ? null : at(input.snoozedUntilDay),
+          ...(input.hidden ? { tags: ["scheduled-task-hidden"] } : {}),
           lastVisitedAt: null,
           deletedAt: null,
         },
@@ -3297,6 +3299,7 @@ it.effect("SQL list older settled threads below a cursor", () =>
     yield* createThread({ name: "unsettled", settledDay: null });
     yield* createThread({ name: "child", settledDay: 1, subagent: true });
     yield* createThread({ name: "archived", settledDay: 1, archived: true });
+    yield* createThread({ name: "hidden", settledDay: 1, hidden: true });
 
     const list = (
       before: { readonly settledAt: string; readonly threadId?: ThreadId },
@@ -3324,6 +3327,13 @@ it.effect("SQL list older settled threads below a cursor", () =>
     // The cursor is the last row: the tie on day 4 continues by id.
     const next = yield* list({ settledAt: DateTime.formatIso(at(4)), threadId: id("b") }, 10);
     assert.deepEqual(next.threadIds, [id("c"), id("d"), id("snoozed")]);
+    assert.deepEqual(
+      (yield* store.listActiveShellIndex()).find((row) => row.id === id("hidden"))?.tags,
+      ["hidden"],
+    );
+    assert.deepEqual((yield* store.getAgentAwarenessSnapshot(id("hidden"))).threads[0]?.tags, [
+      "scheduled-task-hidden",
+    ]);
     assert.deepEqual(yield* list(before, 25, []), { threadIds: [], counts: [] });
     yield* assertShellIndexCoversShells();
     const scoped = yield* list(before, 0, [ProjectId.make("project:b")]);
