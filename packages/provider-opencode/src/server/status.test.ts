@@ -1123,18 +1123,16 @@ it.layer(layerTest)("checkOpenCodeProviderStatus with configured server URL", (i
     }),
   );
 
-  it.effect("rejects an unsupported server before loading inventory", () =>
+  it.effect("reports a failed server connection before loading inventory", () =>
     Effect.gen(function* () {
-      runtimeMock.state.connectionError = new Error(
-        "OpenCode v1.14.18 is too old. Upgrade to v1.14.19 or newer.",
-      );
+      runtimeMock.state.connectionError = new Error("OpenCode server refused the connection.");
       const snapshot = yield* checkProvider(
         makeOpenCodeSettings({ serverUrl: "http://127.0.0.1:9999" }),
       );
 
       NodeAssert.equal(snapshot.status, "error");
       NodeAssert.equal(snapshot.models.length, 0);
-      NodeAssert.match(snapshot.message ?? "", /v1\.14\.18 is too old/);
+      NodeAssert.match(snapshot.message ?? "", /refused the connection/);
       NodeAssert.equal(runtimeMock.state.sdkClientInputs.length, 0);
     }),
   );

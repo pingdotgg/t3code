@@ -66,7 +66,6 @@ const PI_PRESENTATION = {
 const VERSION_PROBE_TIMEOUT_MS = 10_000;
 const PI_RPC_DISCOVERY_TIMEOUT_MS = 30_000;
 const PI_TEXT_GENERATION_DISCOVERY_TIMEOUT_MS = 5_000;
-// Earlier releases persist background set_thinking_level requests as the user's global default.
 
 const decodePiAuthCheck = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Struct({ reason: Schema.optional(Schema.String) })),
@@ -536,6 +535,8 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
     });
   }
 
+  // Stop before discovery: releases the policy rates broken persist background
+  // set_thinking_level requests as the user's global default.
   const broken = brokenVersionDetail({
     name: "Pi",
     version,
