@@ -9,6 +9,7 @@ import {
   type IssueLabel,
   type IssueListSort,
 } from "@t3tools/contracts";
+import { normalizeHost } from "@t3tools/source-control-core/server/pullRequestUtils";
 import {
   IssueTrackerError,
   type IssueInvolvementFilter,
@@ -30,6 +31,7 @@ import {
   toIssueComments,
   toIssueDetail,
   toIssueSearch,
+  toRepositoryIssues,
 } from "./gitHubIssueJson.ts";
 
 const KIND = IssueTrackerKind.make("github");
@@ -59,6 +61,22 @@ function searchTerms(query: string): ReadonlyArray<string> {
     .split(/\s+/)
     .filter((word) => word.length > 0)
     .map(quotedTerm);
+}
+
+const REPOSITORY_ISSUES_CURSOR = "repository-issues:";
+
+function isMissingRepository(error: unknown): boolean {
+  if (!GraphQLClientError.isGraphQLClientError(error) || error.reason._tag !== "ResponseError") {
+    return false;
+  }
+  const { status, errors } = error.reason;
+  return (
+    status === 200 &&
+    errors.length > 0 &&
+    errors.every(
+      ({ type, path }) => type === "NOT_FOUND" && path?.length === 1 && path[0] === "repository",
+    )
+  );
 }
 
 const INVOLVEMENT_QUALIFIER: Record<Exclude<IssueInvolvement, "all">, string> = {
@@ -211,18 +229,64 @@ export const make = Effect.gen(function* () {
         Effect.map(({ viewer }) => viewer.login),
       ),
 
-    listIssues: (input) =>
-      repository(input.scope, "listIssues").pipe(
-        Effect.flatMap(() =>
-          client
-            .IssueSearch({
-              q: searchQuery(input),
-              cursor: input.cursor,
-              rows: Math.min(Math.max(Math.trunc(input.limit), 1), 100),
+    listIssues: Effect.fn("GitHubIssueTracker.listIssues")(function* (input) {
+      const { owner, name } = yield* repository(input.scope, "listIssues");
+      const rows = Math.min(Math.max(Math.trunc(input.limit), 1), 100);
+      const host = normalizeHost(input.host);
+      // A cursor is valid only for the GraphQL connection that issued it.
+      const directPage = input.cursor?.startsWith(REPOSITORY_ISSUES_CURSOR) === true;
+      const cursor = directPage ? input.cursor?.slice(REPOSITORY_ISSUES_CURSOR.length) : undefined;
+      const unfiltered =
+        host === "github.com" &&
+        input.involvement === "all" &&
+        (input.query?.trim() ?? "") === "" &&
+        (input.labels?.length ?? 0) === 0 &&
+        input.assignee === undefined;
+      if (unfiltered && (input.cursor === undefined || (directPage && cursor !== ""))) {
+        const held = yield* api.credential(host).pipe(Effect.mapError(fail("listIssues")));
+        if (held.source !== undefined && held.source !== "app") {
+          return yield* client
+            .RepositoryIssues({
+              owner,
+              name,
+              states:
+                input.state === "all" ? undefined : [input.state === "open" ? "OPEN" : "CLOSED"],
+              sort: input.sort === "created" ? "CREATED_AT" : "UPDATED_AT",
+              cursor,
+              rows,
             })
-            .pipe(graphql(input.host, "listIssues"), Effect.map(toIssueSearch)),
-        ),
-      ),
+            .pipe(
+              // Search answers an empty page when the repository does not exist or is private.
+              Effect.catchIf(isMissingRepository, () => Effect.succeed({ repository: null })),
+              graphql(host, "listIssues"),
+              Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {
+                host,
+                source: held.source,
+                token: held.token,
+                credentialFingerprint: held.fingerprint,
+              }),
+              Effect.map(({ repository }) => {
+                const page = toRepositoryIssues(repository);
+                return {
+                  items: page.items,
+                  nextCursor:
+                    page.nextCursor === null ? null : REPOSITORY_ISSUES_CURSOR + page.nextCursor,
+                };
+              }),
+            );
+        }
+      }
+      if (directPage) {
+        return yield* invalid(
+          "listIssues",
+          "This issue page is no longer available. Refresh the issues list.",
+        );
+      }
+
+      return yield* client
+        .IssueSearch({ q: searchQuery(input), cursor: input.cursor, rows })
+        .pipe(graphql(input.host, "listIssues"), Effect.map(toIssueSearch));
+    }),
 
     getIssue: Effect.fn("GitHubIssueTracker.getIssue")(function* (input) {
       const { owner, name, number } = yield* issue(input, "getIssue");

@@ -88,7 +88,7 @@ function toIssueState(
   return reason === "DUPLICATE" ? DUPLICATE : { category: "closed", name: "Closed" };
 }
 
-function toSummary(raw: Omit<Issues.NodesIssue, "__typename">): TrackerIssueSummary {
+function toSummary(raw: Omit<Issues.IssueSearchRow, "__typename">): TrackerIssueSummary {
   return {
     key: String(raw.number),
     displayKey: `#${raw.number}`,
@@ -297,6 +297,14 @@ export function toIssueSearch({ search }: Issues.IssueSearch.Result) {
       node !== null && node.__typename === "Issue" ? [toSummary(node)] : [],
     ),
     nextCursor: search.pageInfo.hasNextPage ? search.pageInfo.endCursor : null,
+  };
+}
+
+export function toRepositoryIssues(repository: Issues.RepositoryIssues.Result["repository"]) {
+  const page = repository?.issues;
+  return {
+    items: (page?.nodes ?? []).flatMap((node) => (node === null ? [] : [toSummary(node)])),
+    nextCursor: page?.pageInfo.hasNextPage === true ? page.pageInfo.endCursor : null,
   };
 }
 
