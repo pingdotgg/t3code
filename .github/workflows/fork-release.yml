@@ -219,9 +219,9 @@ jobs:
             arch: arm64
             rust_target: aarch64-apple-darwin
             resource_key: darwin-arm64
-          # Built on Apple silicon; release-desktop.yml installs Rosetta for x64 bytecode.
+          # Native Intel: under Rosetta the 3-core hosted runner times out generating x64 bytecode.
           - label: macOS x64
-            runner: macos-15
+            runner: macos-15-intel
             platform: mac
             target: dmg
             arch: x64
