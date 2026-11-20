@@ -51,6 +51,7 @@ import {
   checkoutFailureDescription,
   readPullRequestDetailSnapshot,
   fillUnavailablePullRequestDetail,
+  isPullRequestDetailPartMissing,
   resolveDisplayedPullRequestDetail,
   resolvePullRequestReferenceHost,
   resolvePullRequestPrimaryControl,
@@ -1995,6 +1996,12 @@ describe("cached pull request detail", () => {
       changedFiles: 2,
       unavailable: ["diffStat"],
     });
+    // Only a part still on its placeholder is shown as unavailable; a filled one shows its values.
+    expect(isPullRequestDetailPartMissing(partial, "diffStat")).toBe(true);
+    expect(isPullRequestDetailPartMissing(partial, "checks")).toBe(false);
+    expect(
+      isPullRequestDetailPartMissing({ ...complete, unavailable: ["diffStat"] }, "diffStat"),
+    ).toBe(false);
     // Another head's stats, or another pull request's, are not this reading's.
     for (const other of [detail({ headSha: "def" }), detail({ headSha: "abc", number: 8 })]) {
       expect(fillUnavailablePullRequestDetail({ answer: partial, cached: other, reference })).toBe(

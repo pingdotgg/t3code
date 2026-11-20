@@ -25,6 +25,21 @@ describe("resolvePullRequestDetailChecks", () => {
       original,
     );
     expect(resolvePullRequestDetailChecks(original, null, true)).toBe(original);
+    // Checks the detail could not read stop being unavailable once the checks read answers.
+    expect(
+      resolvePullRequestDetailChecks(
+        { ...original, unavailable: ["diffStat", "checks"] },
+        { state: "open", checks },
+        true,
+      )?.unavailable,
+    ).toEqual(["diffStat"]);
+    expect(
+      resolvePullRequestDetailChecks(
+        { ...original, unavailable: ["checks"] },
+        { state: "open", checks },
+        true,
+      ),
+    ).not.toHaveProperty("unavailable");
     expect(resolvePullRequestDetailChecks(null, { state: "closed", checks }, true)).toBeNull();
   });
 

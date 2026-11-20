@@ -145,6 +145,7 @@ import {
   allowsSinglePullRequestMerge,
   canDeletePullRequestBranch,
   isPullRequestConflicting,
+  isPullRequestDetailPartMissing,
   resolveBaseFreshness,
   resolvePullRequestMergeMethod,
   type PullRequestChatSubject,
@@ -1487,8 +1488,11 @@ export function PullRequestDetailPanel({
       ? gt("No checks reported")
       : pullRequestChecksStatePresentation(checksState, resolve).label
     : detail
-      ? summarizePullRequestChecks(detail.checks, resolve)
+      ? isPullRequestDetailPartMissing(detail, "checks")
+        ? gt("Checks unavailable")
+        : summarizePullRequestChecks(detail.checks, resolve)
       : null;
+  const diffStatMissing = detail !== null && isPullRequestDetailPartMissing(detail, "diffStat");
   const approvalCount =
     detail && !detail.commentsTruncated
       ? latestPullRequestReviewOutcomes(detail.comments, detail.commits).filter(
@@ -1751,16 +1755,20 @@ export function PullRequestDetailPanel({
                   <span className="ml-auto inline-flex shrink-0 items-baseline justify-end gap-2 text-2xs">
                     <span
                       className="inline-flex items-baseline gap-1 tabular-nums"
-                      aria-label={gt(
-                        "{count, plural, one {{formatted} changed file} other {{formatted} changed files}}",
-                        {
-                          count: detail.changedFiles,
-                          formatted: detail.changedFiles.toLocaleString(),
-                        },
-                      )}
+                      aria-label={
+                        diffStatMissing
+                          ? gt("Changed files unavailable")
+                          : gt(
+                              "{count, plural, one {{formatted} changed file} other {{formatted} changed files}}",
+                              {
+                                count: detail.changedFiles,
+                                formatted: detail.changedFiles.toLocaleString(),
+                              },
+                            )
+                      }
                     >
                       <FileDiffIcon aria-hidden className="size-3 self-center" />
-                      {detail.changedFiles.toLocaleString()}
+                      {diffStatMissing ? "-" : detail.changedFiles.toLocaleString()}
                     </span>
                     <PullRequestChangeBreakdownStat
                       environmentId={environmentId}
@@ -1870,10 +1878,14 @@ export function PullRequestDetailPanel({
                     copiedLabel={gt("Branch name copied")}
                   />
                 }
-                files={gt("{count, plural, one {{formatted} file} other {{formatted} files}}", {
-                  count: detail.changedFiles,
-                  formatted: detail.changedFiles.toLocaleString(),
-                })}
+                files={
+                  diffStatMissing
+                    ? gt("Changed files unavailable")
+                    : gt("{count, plural, one {{formatted} file} other {{formatted} files}}", {
+                        count: detail.changedFiles,
+                        formatted: detail.changedFiles.toLocaleString(),
+                      })
+                }
                 diffStat={
                   <PullRequestChangeBreakdownStat
                     environmentId={environmentId}

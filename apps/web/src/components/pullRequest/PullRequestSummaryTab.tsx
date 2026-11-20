@@ -24,7 +24,7 @@ import {
   UsersIcon,
 } from "lucide-react";
 import * as Schema from "effect/Schema";
-import { msg, T, useGT, useMessages, Var } from "gt-react";
+import { msg, T, useGT, useLocale, useMessages, Var } from "gt-react";
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 
 import { m, type MessageResolver } from "~/i18n/messages";
@@ -78,6 +78,7 @@ import {
   type PullRequestChatSubject,
   type PullRequestConversationItem,
   type PullRequestFinding,
+  isPullRequestDetailPartMissing,
 } from "./pullRequestDetail.logic";
 import {
   canEditPullRequestChangeRequest,
@@ -505,6 +506,7 @@ export function PullRequestSummaryTab({
   onRefreshChecks?: () => void;
 }) {
   const gt = useGT();
+  const locale = useLocale();
   const resolve = useMessages();
   const fixFindingLabel = requestedFixFindingLabel ?? gt("Fix in a thread");
   const fixCheckLabel =
@@ -875,6 +877,23 @@ export function PullRequestSummaryTab({
       data-pull-request-summary-scroll
     >
       <section className="px-4 pt-2.5 pb-1">
+        {detail.unavailable === undefined || detail.unavailable.length === 0 ? null : (
+          <p className="mb-2 rounded-md border border-warning/30 bg-warning-surface px-2 py-1.5 text-xs">
+            {gt("The host is limiting requests, so these may be missing or out of date: {parts}.", {
+              parts: new Intl.ListFormat(locale, { type: "conjunction" }).format(
+                detail.unavailable.map((part) =>
+                  part === "diffStat"
+                    ? gt("changed files")
+                    : part === "mergeability"
+                      ? gt("merge conflicts")
+                      : part === "checks"
+                        ? gt("checks", { $context: "CI checks, in a list" })
+                        : gt("merge permission"),
+                ),
+              ),
+            })}
+          </p>
+        )}
         <div className="space-y-2">
           <PullRequestMetaRow icon={<UsersIcon className="size-3.5" />} label={gt("Reviewers")}>
             <span className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -1051,7 +1070,11 @@ export function PullRequestSummaryTab({
           </div>
         ) : detail.checks.length === 0 ? (
           <p className="text-xs text-muted-foreground">
-            <T>No checks reported.</T>
+            {isPullRequestDetailPartMissing(detail, "checks") ? (
+              gt("Checks unavailable")
+            ) : (
+              <T>No checks reported.</T>
+            )}
           </p>
         ) : (
           detail.checks.map(
