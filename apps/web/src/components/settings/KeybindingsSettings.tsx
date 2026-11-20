@@ -1244,6 +1244,17 @@ function NewKeybindingCommandSelect({
 }) {
   const gt = useGT();
   const m = useMessages();
+  const shortcutsByCommand = new Map<
+    KeybindingCommand,
+    Array<{ id: string; label: string; when: string }>
+  >();
+  for (const row of allRows) {
+    for (const label of row.previewLabels) {
+      const shortcuts = shortcutsByCommand.get(row.command) ?? [];
+      shortcuts.push({ id: `${row.id}:${label}`, label, when: row.when });
+      shortcutsByCommand.set(row.command, shortcuts);
+    }
+  }
   return (
     <Combobox
       items={commandOptions}
@@ -1272,22 +1283,18 @@ function NewKeybindingCommandSelect({
         <ComboboxEmpty>{gt("No results found.")}</ComboboxEmpty>
         <ComboboxList>
           {(command: KeybindingCommandOption) => {
-            const bindings = allRows.filter(
-              (row) => row.command === command && row.previewLabels.length > 0,
-            );
+            const shortcuts = shortcutsByCommand.get(command);
             return (
               <ComboboxItem key={command} value={command}>
                 <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
                   <span>{commandLabel(command, m)}</span>
-                  {bindings.length > 0 && (
+                  {shortcuts && (
                     <span className="flex shrink-0 flex-col items-end gap-1">
-                      {bindings.flatMap((row) =>
-                        row.previewLabels.map((label) => (
-                          <Kbd key={`${row.id}:${label}`} title={row.when || undefined}>
-                            {label}
-                          </Kbd>
-                        )),
-                      )}
+                      {shortcuts.map((shortcut) => (
+                        <Kbd key={shortcut.id} title={shortcut.when || undefined}>
+                          {shortcut.label}
+                        </Kbd>
+                      ))}
                     </span>
                   )}
                 </div>
