@@ -1358,6 +1358,7 @@ export function LayoutSurfaceHost({
       ref={rootRef}
       data-strip-under-controls={active && split && !staged ? "" : undefined}
       data-split-panes={active && split ? "" : undefined}
+      data-pane-cuts=""
     >
       <div
         ref={scrollerRef}
@@ -1585,7 +1586,24 @@ export function LayoutSurfaceHost({
           ) : null}
         </>
       ) : null}
+      {active && !split && !staged ? <LonePaneCorners /> : null}
     </SidebarInset>
+  );
+}
+
+/**
+ * A lone pane's corners, painted over the inset's square clip (index.css,
+ * [data-pane-cut]). On the inset rather than in the pane, so they stay out
+ * of the pane's layout.
+ */
+function LonePaneCorners() {
+  return (
+    <>
+      <span aria-hidden data-pane-cut="start-top" />
+      <span aria-hidden data-pane-cut="start-bottom" />
+      <span aria-hidden data-pane-cut="end-top" />
+      <span aria-hidden data-pane-cut="end-bottom" />
+    </>
   );
 }
 
