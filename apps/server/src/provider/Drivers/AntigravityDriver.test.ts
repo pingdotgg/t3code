@@ -10,6 +10,7 @@ import {
   type AntigravitySettings,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -463,15 +464,22 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
     "gives a thread session its own T3 thread and MCP fallback environment",
     () =>
       Effect.gen(function* () {
+        // Standalone builds hide the display only from sign-in launches.
         const h = yield* makeHarness({
           environment: [
+            { name: "DISPLAY", value: ":7" },
             { name: "T3CODE_THREAD_ID", value: "thread-antigravity-ambient" },
             { name: "T3_ACP_MCP_ENDPOINT", value: "http://127.0.0.1:9/ambient" },
             { name: "T3_ACP_MCP_AUTHORIZATION", value: "Bearer ambient-token" },
             { name: "T3_ACP_MCP_NODE", value: "/ambient/node" },
             { name: "T3_ACP_MCP_ENTRYPOINT", value: "/ambient/entrypoint.mjs" },
           ],
-        });
+        }).pipe(
+          Effect.provideService(
+            ConfigProvider.ConfigProvider,
+            ConfigProvider.fromUnknown({ T3CODE_STANDALONE: true }),
+          ),
+        );
         yield* h.refresh();
         const endpoint = "http://127.0.0.1:43126/mcp";
         const threadId = ThreadId.make("thread-antigravity-process-environment");
@@ -514,6 +522,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         );
         expect(agentLaunches).toHaveLength(2);
         expect(agentLaunches[1]?.environment).toMatchObject({
+          DISPLAY: ":7",
           T3CODE_THREAD_ID: threadId,
           T3_ACP_MCP_ENDPOINT: endpoint,
           T3_ACP_MCP_AUTHORIZATION: "Bearer antigravity-thread-token",
@@ -522,6 +531,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         });
         // Model refresh and sign-in launches are not part of a thread.
         expect(agentLaunches[0]?.environment).toMatchObject({
+          DISPLAY: ":7",
           T3CODE_THREAD_ID: "thread-antigravity-ambient",
           T3_ACP_MCP_ENDPOINT: "http://127.0.0.1:9/ambient",
           T3_ACP_MCP_AUTHORIZATION: "Bearer ambient-token",

@@ -203,7 +203,9 @@ export const AntigravityDriver: ProviderDriver<
         Effect.map((catalog) => stampIdentity(ModelCatalog.applyModelCatalog(draft, catalog))),
       );
 
-    const prepareLaunch = Effect.fn("AntigravityDriver.prepareLaunch")(function* () {
+    const prepareLaunch = Effect.fn("AntigravityDriver.prepareLaunch")(function* (
+      headless: boolean,
+    ) {
       if (authConfigIssue !== null) {
         return yield* new ProviderSetupError({
           instanceId,
@@ -228,7 +230,7 @@ export const AntigravityDriver: ProviderDriver<
         auth,
         userHome,
         tempDirectory: directories.runtimeTemp,
-        headless: standalone,
+        headless,
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
@@ -254,7 +256,10 @@ export const AntigravityDriver: ProviderDriver<
       AcpErrors.AcpError | ProviderSetupError,
       Scope.Scope
     > {
-      const { executable, profile } = yield* prepareLaunch();
+      // Only sign-in launches hide the display; sessions keep it for the tools the agent runs.
+      const { executable, profile } = yield* prepareLaunch(
+        standalone && input.onAuthorizationUrl !== undefined,
+      );
       // Use one directory per process; shared cleanup could delete files another session still reads.
       // Remove after the child dies, best-effort on Windows where handles may outlive the kill;
       // the next driver start sweeps leftovers.
@@ -407,7 +412,7 @@ export const AntigravityDriver: ProviderDriver<
       ...(standalone && auth.authMethod === "oauth-personal"
         ? {
             cliLogin: Effect.fn("AntigravityDriver.cliLogin")(function* (onAuthorizationUrl) {
-              const { executable, profile } = yield* prepareLaunch();
+              const { executable, profile } = yield* prepareLaunch(true);
               if (executable.harnessPath !== null) return undefined;
               return yield* startAntigravityCliLogin({
                 spawn: buildAntigravityAcpSpawnInput({
