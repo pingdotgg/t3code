@@ -29,7 +29,10 @@ import { resolveTarget, type ResolvedTarget } from "../../../pullRequest/pullReq
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
 import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 import { reviewPositionInPatch } from "../../../pullRequest/pullRequestReviewPosition.ts";
-import { pullRequestSyncKey } from "../../../pullRequest/pullRequestSyncKey.ts";
+import {
+  ownPullRequestRepositories,
+  pullRequestSyncKey,
+} from "../../../pullRequest/pullRequestSyncKey.ts";
 import { sourceControlDefinitions } from "../../../sourceControl/sourceControlDefinitions.ts";
 import {
   normalizeThreadPullRequestKey,
@@ -233,23 +236,11 @@ function projectForPullRequest(
       { projectId: project.id, host: target.host, repository: target.repository, number: 1 },
       project.repositoryIdentity ?? undefined,
     );
-    const projectKey =
-      project.repositoryIdentity == null
-        ? null
-        : pullRequestSyncKey(
-            {
-              projectId: project.id,
-              repository:
-                sourceControlDefinitions.repositorySelector(project.repositoryIdentity) ?? "",
-              number: 1,
-            },
-            project.repositoryIdentity,
-          );
     return (
       own !== null &&
-      projectKey !== null &&
-      own.host === projectKey.host &&
-      own.repository === projectKey.repository
+      ownPullRequestRepositories(project.repositoryIdentity).some(
+        ({ key }) => own.host === key.host && own.repository === key.repository,
+      )
     );
   };
   if (preferred !== undefined && matches(preferred)) return preferred;
