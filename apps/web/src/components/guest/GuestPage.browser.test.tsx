@@ -17,7 +17,7 @@ import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { formatHex } from "culori/fn";
 import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { cdp, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 
@@ -221,6 +221,16 @@ function visit(path: string): Disposable {
 describe("GuestPage", () => {
   it("shows the shared thread in the real timeline without opening an environment connection", async () => {
     using _page = visit(`/guest?share=${SHARE_ID}`);
+    const devtools = cdp();
+    await devtools.send("Network.enable");
+    onTestFinished(async () => {
+      await devtools.send("Network.setBlockedURLs", { urls: [] });
+      await devtools.send("Network.disable");
+    });
+    // The browser test has no guest render server. Keep Vite from serving the app in the chart frame.
+    await devtools.send("Network.setBlockedURLs", {
+      urls: [`${window.location.origin}${GUEST_RENDER_ROUTE}?*`],
+    });
     using _session = vi
       .spyOn(window, "fetch")
       .mockImplementation(async () => new Response(null, { status: 204 }));
