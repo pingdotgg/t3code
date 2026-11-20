@@ -1,3 +1,5 @@
+import { m } from "../i18n/messages";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { useAtomValue } from "@effect/atom-react";
 import {
   scopeProjectRef,
@@ -6,6 +8,7 @@ import {
 } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate, useParams } from "@tanstack/react-router";
+import { useGT } from "gt-react";
 import { useEffect, useEffectEvent, useRef } from "react";
 
 import { isCommandPaletteOpen } from "../commandPaletteBus";
@@ -30,6 +33,7 @@ import {
   selectThreadRightPanelState,
   useRightPanelStore,
 } from "../rightPanelStore";
+import { serverEnvironment } from "../state/server";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { readProject, readThreadShell } from "../state/entities";
 import { previewEnvironment } from "../state/preview";
@@ -51,6 +55,8 @@ const PREVIEW_FORWARDED_COMMANDS = [
   "sidebar.toggle",
   "rightPanel.toggle",
   "rightPanel.toggleMaximized",
+  "rightPanel.new",
+  "rightPanel.close",
   "preview.focusUrl",
   "preview.zoomIn",
   "preview.zoomOut",
@@ -64,6 +70,7 @@ const isGlobalIssues = (ref: ScopedThreadRef) =>
   scopedThreadKey(ref) === scopedThreadKey(ISSUES_PANEL_REF);
 
 export function ReopenClosedViewShortcut() {
+  const gt = useGT();
   const navigate = useNavigate();
   const params = useParams({ strict: false });
   const target = resolveThreadRouteTarget(params);
@@ -111,8 +118,11 @@ export function ReopenClosedViewShortcut() {
         ownerExists: readThreadShell(ref) !== null || drafts.getDraftThreadByRef(ref) !== null,
         sideChatExists:
           entry.kind !== "panel-tab" ||
-          entry.surface.kind !== "side-chat" ||
-          readThreadShell(scopeThreadRef(ref.environmentId, entry.surface.threadId)) !== null,
+          entry.surface.kind !== "thread" ||
+          readThreadShell(scopeThreadRef(ref.environmentId, entry.surface.threadId)) !== null ||
+          // The shell leaves idle subagents out, so one it does not list may still exist.
+          appAtomRegistry.get(serverEnvironment.configValueAtom(ref.environmentId))
+            ?.shellThreadFamilies === true,
         shellLive:
           appAtomRegistry.get(environmentShell.stateValueAtom(ref.environmentId)).status === "live",
         panel,
@@ -157,8 +167,8 @@ export function ReopenClosedViewShortcut() {
       .catch((error: unknown) => {
         toastManager.add({
           type: "error",
-          title: "Could not reopen view",
-          description: error instanceof Error ? error.message : String(error),
+          title: gt("Could not reopen view"),
+          description: thrownErrorMessage(error, m) ?? String(error),
         });
       });
   });
@@ -206,6 +216,7 @@ export function ReopenClosedViewShortcut() {
       context: {
         previewFocus: true,
         previewOpen: true,
+        rightPanelOpen: true,
         terminalFocus: false,
         terminalOpen,
         editableFocus: false,
