@@ -55,14 +55,14 @@ import {
   UnlinkIcon,
   XIcon,
 } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { msg, T, useGT, useLocale, useMessages, Var } from "gt-react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { cn } from "~/lib/utils";
 import {
+  listAudioInputs,
   updateMicrophoneOrder,
-  useMicrophoneRefresh,
   type BrowserMicrophone,
 } from "../../speech/browserMicrophones";
 import {
@@ -1331,13 +1331,29 @@ export function VoiceSettingsPanel() {
   const prepared = destination.cloudProvider ? null : destination.prepared;
   const catalog = useVoiceModels(prepared);
 
-  const refreshMicrophones = useMicrophoneRefresh({
-    enabled: true,
-    onResult: (devices) => {
-      setMicrophones(devices ?? []);
-      if (devices) updateMicrophoneOrder((order) => rememberMicrophones(order, devices));
-    },
+  const microphoneRefreshId = useRef(0);
+  const refreshMicrophones = useStableCallback(async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    const requestId = ++microphoneRefreshId.current;
+    const devices = await listAudioInputs().catch(() => null);
+    if (requestId !== microphoneRefreshId.current) return;
+
+    setMicrophones(devices ?? []);
+    if (devices) updateMicrophoneOrder((order) => rememberMicrophones(order, devices));
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes microphone changes and invalidates pending scans when settings closes
+  useLayoutEffect(() => {
+    const initialRefreshId = microphoneRefreshId.current;
+    queueMicrotask(() => {
+      if (initialRefreshId === microphoneRefreshId.current) void refreshMicrophones();
+    });
+    const mediaDevices = navigator.mediaDevices;
+    mediaDevices?.addEventListener?.("devicechange", refreshMicrophones);
+    return () => {
+      ++microphoneRefreshId.current;
+      mediaDevices?.removeEventListener?.("devicechange", refreshMicrophones);
+    };
+  }, [refreshMicrophones]);
   const modelStatus = catalog.status;
   const target = settingsScope?.target;
   const members = settingsScope?.scope.members;
