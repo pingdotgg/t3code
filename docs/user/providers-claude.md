@@ -118,6 +118,20 @@ To show Claude task lists in the web and desktop apps, add
 **Environment** section in **Settings > Providers**. Each update shows as a Tasks
 row in the thread; open it to see every step.
 
+## Artifacts
+
+Claude can publish pages to claude.ai with Claude Code's Artifact tool. To
+choose whether Claude threads get it, add `CLAUDE_CODE_ARTIFACT=1` (on) or
+`CLAUDE_CODE_ARTIFACT=0` (off) under **Variables** in the Claude instance's
+**Environment** section in **Settings > Providers**, then start a new thread.
+
+Your account and organization must also qualify. If Claude says it can't
+publish, check Claude Code's
+[artifact requirements](https://code.claude.com/docs/en/artifacts#availability).
+
+Claude Code opens each new artifact in a browser on the machine running the
+session. On a remote environment, also add `CLAUDE_CODE_ARTIFACT_AUTO_OPEN=0`.
+
 ## Claude in Chrome
 
 Claude threads can use the Claude in Chrome extension, which works in your own
