@@ -20,11 +20,11 @@ import ProjectScriptsControl, {
   type ProjectScriptActionResult,
 } from "../ProjectScriptsControl";
 import { T, useGT } from "gt-react";
-import { useState, type ComponentProps } from "react";
+import { lazy, Suspense, useState, type ComponentProps } from "react";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
-import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
+import { RenderErrorBoundary } from "../RenderErrorBoundary";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 import { ThreadServersPanel } from "./ThreadServersPanel";
 import {
@@ -45,6 +45,10 @@ import {
   THREAD_DETAILS_PANEL_LABEL_CLASS,
 } from "./threadDetailsPanelStyles";
 import { Menu, MenuPopup } from "../ui/menu";
+
+const ThreadAutomationsPanel = lazy(() =>
+  import("./ThreadAutomationsPanel").then((module) => ({ default: module.ThreadAutomationsPanel })),
+);
 
 interface ThreadDetailsPanelProps extends Pick<
   ComponentProps<typeof ThreadDetailsCard>,
@@ -269,10 +273,35 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
               ) : null}
 
               {density === "full" && !props.draftId && visible.automations ? (
-                <ThreadAutomationsPanel
-                  environmentId={props.environmentId}
-                  threadId={props.threadId}
-                />
+                <RenderErrorBoundary
+                  fallback={
+                    <ThreadDetailsSection
+                      headingId="thread-details-automations-heading"
+                      title={gt("Automations")}
+                      data-thread-automations-panel
+                    >
+                      <p role="alert" className="px-2.5 py-1.5 text-2xs text-destructive">
+                        <T>Could not load automations.</T>
+                      </p>
+                      <ThreadDetailsControl
+                        size="xs"
+                        variant="ghost"
+                        part="row"
+                        panel
+                        onClick={() => window.location.reload()}
+                      >
+                        <T>Reload</T>
+                      </ThreadDetailsControl>
+                    </ThreadDetailsSection>
+                  }
+                >
+                  <Suspense fallback={null}>
+                    <ThreadAutomationsPanel
+                      environmentId={props.environmentId}
+                      threadId={props.threadId}
+                    />
+                  </Suspense>
+                </RenderErrorBoundary>
               ) : null}
 
               {density === "full" && !props.draftId && (visible.lineage || visible.sideChats) ? (
