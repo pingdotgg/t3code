@@ -138,7 +138,7 @@ export function threadHasQueuedTurnStart(
 function pullRequestSettles(
   thread: Pick<
     ProjectionStore.ProjectionSettlementCandidate,
-    "createdAt" | "latestUserAuthoredMessageAt" | "lastSnoozeWakeAt"
+    "createdAt" | "latestUserAuthoredMessageAt" | "snoozedUntil" | "snoozeWakesOnPullRequest"
   >,
   pullRequest: SettlementPullRequest,
   autoSettleOnMerge: boolean,
@@ -149,10 +149,14 @@ function pullRequestSettles(
   const terminalAt = pullRequest.state === "merged" ? pullRequest.mergedAt : pullRequest.closedAt;
   if (terminalAt == null) return false;
   // A close that woke a pull request snooze is news, so it leaves the thread active for the user.
+  const pullRequestWakeAtMs =
+    pullRequest.state === "closed" && thread.snoozeWakesOnPullRequest === true
+      ? toMillis(thread.snoozedUntil)
+      : null;
   const userAnchorMs = latestMillis([
     toMillis(thread.createdAt),
     toMillis(thread.latestUserAuthoredMessageAt),
-    pullRequest.state === "closed" ? toMillis(thread.lastSnoozeWakeAt) : null,
+    pullRequestWakeAtMs,
   ]);
   if (userAnchorMs === null) return false;
   const pullRequestAtMs = Date.parse(terminalAt);

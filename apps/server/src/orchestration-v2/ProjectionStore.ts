@@ -232,6 +232,7 @@ export type ProjectionSettlementCandidate = Pick<
   | "autoSettleDisabledAt"
   | "snoozedUntil"
   | "snoozedAt"
+  | "snoozeWakesOnPullRequest"
   | "latestRunId"
   | "latestRunRequestedAt"
   | "latestRunStartedAt"

@@ -391,14 +391,22 @@ describe("resolveAutoSettlementAt", () => {
         autoSettleOnMerge: false,
       }),
     ).toEqual(shell().createdAt);
-    // A close that woke a pull request snooze stays active for the user to see.
+    // A close that woke a pull request snooze stays active for the user to see; a plain wake does not.
+    const closed = { state: "closed" as const, closedAt: DateTime.formatIso(at(-1)) };
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        ...input,
+        thread: shell({ snoozedUntil: at(0), snoozeWakesOnPullRequest: true }),
+        pullRequest: closed,
+      }),
+    ).toBeNull();
     expect(
       ThreadSettlementService.resolveAutoSettlementAt({
         ...input,
         thread: { ...shell(), lastSnoozeWakeAt: at(0) },
-        pullRequest: { state: "closed", closedAt: DateTime.formatIso(at(-1)) },
+        pullRequest: closed,
       }),
-    ).toBeNull();
+    ).toEqual(shell().createdAt);
   });
 
   it("settles on merge after agent-started runs, but not after the user writes again", () => {

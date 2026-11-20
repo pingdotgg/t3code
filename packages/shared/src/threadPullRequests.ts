@@ -19,7 +19,7 @@ export function hasOpenThreadPullRequest(links: ReadonlyArray<ThreadPullRequestL
 /**
  * Whether a pull request sync wakes a snooze that waits on pull request activity: the host
  * updated it after the snooze (a comment, review, push, merge, or close), or it started to
- * conflict, which moves no update time.
+ * conflict, which moves no update time. A state change alone is not news: it may predate the snooze.
  */
 export function pullRequestSyncWakesSnooze(input: {
   readonly previous: ThreadPullRequestSnapshot | null;
@@ -29,11 +29,11 @@ export function pullRequestSyncWakesSnooze(input: {
   const { previous, next } = input;
   const updatedAtMs = next.updatedAt === null ? Number.NaN : Date.parse(next.updatedAt);
   if (updatedAtMs > input.snoozedAtMs) return true;
-  // A first read cannot tell old state from new; a later update time already covers new news.
-  if (previous === null) return false;
+  // A first read cannot tell an old conflict from a new one.
   return (
-    previous.state !== next.state ||
-    (next.mergeability === "conflicting" && previous.mergeability !== "conflicting")
+    previous !== null &&
+    next.mergeability === "conflicting" &&
+    previous.mergeability !== "conflicting"
   );
 }
 

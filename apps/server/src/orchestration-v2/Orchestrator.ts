@@ -882,6 +882,21 @@ function hasLiveRun(projection: Pick<OrchestrationV2ThreadProjection, "runs">): 
   return projection.runs.some(isLiveRun);
 }
 
+/** A PR snooze that lost its last open pull request has nothing to wake it early, so it wakes now. */
+function wakeOrphanedPullRequestSnooze(
+  before: OrchestrationV2AppThread,
+  after: OrchestrationV2AppThread,
+  now: DateTime.Utc,
+): OrchestrationV2AppThread {
+  return after.snoozeWakesOnPullRequest === true &&
+    after.snoozedUntil != null &&
+    DateTime.isGreaterThan(after.snoozedUntil, now) &&
+    hasOpenThreadPullRequest(threadPullRequestsOf(before)) &&
+    !hasOpenThreadPullRequest(threadPullRequestsOf(after))
+    ? { ...after, snoozedUntil: now }
+    : after;
+}
+
 function withPullRequestWatch(
   link: ThreadPullRequestLink,
   watch: ThreadPullRequestWatch | undefined,
@@ -4913,549 +4928,557 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       markUnreadVisitedAt = DateTime.subtract(latestRunCompletedAt, { milliseconds: 1 });
     }
-    const updatedThread: OrchestrationV2AppThread = (() => {
-      switch (command.type) {
-        case "thread.archive":
-          return {
-            ...thread,
-            archivedAt: now,
-            titleRegeneration: null,
-            guestShare: null,
-            pullRequests: thread.pullRequests?.map((link) => withPullRequestWatch(link, undefined)),
-            updatedAt: now,
-          };
-        case "thread.unarchive":
-          return { ...thread, archivedAt: null, updatedAt: now };
-        case "thread.settle": {
-          const wasPinned = thread.pinnedAt != null;
-          const alreadySettled =
-            thread.settledOverride === "settled" && thread.settledAt !== null && !wasPinned;
-          return {
-            ...thread,
-            settledOverride: "settled",
-            settledAt: alreadySettled ? thread.settledAt : (command.settledAt ?? now),
-            // Settled threads refuse recovery, so an armed resume would stay hidden until un-settled.
-            limitRecovery: thread.limitRecovery
-              ? { ...thread.limitRecovery, autoResume: false, snooze: false }
-              : thread.limitRecovery,
-            pullRequests: thread.pullRequests?.map((link) => withPullRequestWatch(link, undefined)),
-            unsettledAt: null,
-            pinnedAt: null,
-            pinOrderKey: null,
-            activeOrderKey: null,
-            snoozedUntil: null,
-            snoozedAt: null,
-            updatedAt:
-              alreadySettled && thread.snoozedUntil == null && thread.snoozedAt == null
-                ? thread.updatedAt
-                : now,
-          };
-        }
-        case "thread.unsettle": {
-          const alreadyPinnedActive = thread.settledOverride === "active";
-          return {
-            ...thread,
-            settledOverride: "active",
-            settledAt: null,
-            unsettledAt: alreadyPinnedActive
-              ? (thread.unsettledAt ?? null)
-              : restoredUnsettledAt === undefined
-                ? now
-                : restoredUnsettledAt,
-            updatedAt: alreadyPinnedActive ? thread.updatedAt : now,
-          };
-        }
-        case "thread.snooze": {
-          // Re-snoozing acknowledges the latest wake even at the same time; commandId deduplicates retries.
-          return {
-            ...thread,
-            snoozedUntil,
-            limitRecovery: thread.limitRecovery ? { ...thread.limitRecovery, snooze: false } : null,
-            snoozedAt: now,
-            snoozeWakesOnPullRequest: command.wakesOnPullRequest === true,
-            updatedAt: now,
-          };
-        }
-        case "thread.unsnooze": {
-          const alreadyAwake = thread.snoozedUntil == null;
-          return {
-            ...thread,
-            snoozedUntil: null,
-            snoozedAt: null,
-            lastSnoozeWakeAt: alreadyAwake ? thread.lastSnoozeWakeAt : now,
-            updatedAt: alreadyAwake ? thread.updatedAt : now,
-          };
-        }
-        case "thread.auto-settle.set": {
-          const unchanged = command.enabled === (thread.autoSettleDisabledAt == null);
-          return {
-            ...thread,
-            autoSettleDisabledAt: command.enabled ? null : (thread.autoSettleDisabledAt ?? now),
-            updatedAt: unchanged ? thread.updatedAt : now,
-          };
-        }
-        case "thread.pin": {
-          const alreadyPinned = thread.pinnedAt != null;
-          const promotes = thread.settledOverride === "settled" || thread.snoozedUntil != null;
-          return {
-            ...thread,
-            pinnedAt: alreadyPinned ? thread.pinnedAt : now,
-            ...(alreadyPinned || command.orderKey === undefined
-              ? {}
-              : { pinOrderKey: command.orderKey }),
-            settledOverride:
-              thread.settledOverride === "settled" ? "active" : thread.settledOverride,
-            settledAt: thread.settledOverride === "settled" ? null : thread.settledAt,
-            ...(thread.settledOverride === "settled" ? { unsettledAt: now } : {}),
-            snoozedUntil: null,
-            snoozedAt: null,
-            lastSnoozeWakeAt: thread.snoozedUntil == null ? thread.lastSnoozeWakeAt : now,
-            updatedAt: alreadyPinned && !promotes ? thread.updatedAt : now,
-          };
-        }
-        case "thread.unpin": {
-          const alreadyUnpinned = thread.pinnedAt == null;
-          return {
-            ...thread,
-            pinnedAt: null,
-            pinOrderKey: null,
-            updatedAt: alreadyUnpinned ? thread.updatedAt : now,
-          };
-        }
-        case "thread.pin.reorder": {
-          const keyUnchanged = thread.pinOrderKey === command.orderKey;
-          return {
-            ...thread,
-            pinOrderKey: command.orderKey,
-            updatedAt: keyUnchanged ? thread.updatedAt : now,
-          };
-        }
-        case "thread.active.reorder": {
-          return {
-            ...thread,
-            activeOrderKey: command.orderKey,
-            updatedAt: thread.updatedAt,
-          };
-        }
-        case "thread.tag.set": {
-          const current = thread.tags ?? [];
-          return {
-            ...thread,
-            tags: command.tagged
-              ? current.includes(command.tag)
-                ? current
-                : [...current, command.tag]
-              : current.filter((tag) => tag !== command.tag),
-          };
-        }
-        case "thread.mark-unread": {
-          // Retire the wake before rewinding the visit, preserving its settlement timer.
-          const snoozeExpired =
-            thread.snoozedUntil != null &&
-            DateTime.toEpochMillis(thread.snoozedUntil) <= DateTime.toEpochMillis(now);
-          return {
-            ...thread,
-            lastVisitedAt: markUnreadVisitedAt,
-            ...(snoozeExpired
-              ? { snoozedUntil: null, snoozedAt: null, lastSnoozeWakeAt: thread.snoozedUntil }
-              : {}),
-          };
-        }
-        case "thread.metadata.update": {
-          const previousRecovery =
-            thread.limitRecovery?.runId === command.limitRecovery?.runId &&
-            thread.limitRecovery?.resetAt === command.limitRecovery?.resetAt
-              ? thread.limitRecovery
-              : null;
-          const limitRecovery =
-            command.limitRecovery === undefined
-              ? thread.limitRecovery
-              : command.limitRecovery === null
-                ? null
-                : {
-                    ...command.limitRecovery,
-                    autoResume:
-                      command.limitRecovery.autoResume ?? previousRecovery?.autoResume ?? false,
-                    snooze: command.limitRecovery.snooze ?? previousRecovery?.snooze ?? false,
-                    requestId: command.commandId,
-                  };
-          return {
-            ...thread,
-            ...(command.title === undefined ? {} : { title: command.title, titleRenamed: true }),
-            ...(command.limitRecovery === undefined ? {} : { limitRecovery }),
-            ...(command.limitRecovery !== undefined &&
-            limitRecovery?.snooze === true &&
-            Date.parse(limitRecovery.resetAt) > DateTime.toEpochMillis(now)
-              ? {
-                  snoozedUntil: DateTime.makeUnsafe(limitRecovery.resetAt),
-                  // Recovery updates acknowledge the same stopped run; their timestamps must not trigger fresh failure wakes.
-                  snoozedAt: now,
-                  snoozeWakesOnPullRequest: false,
-                }
-              : command.limitRecovery !== undefined &&
-                  thread.limitRecovery?.snooze &&
-                  thread.snoozedUntil != null &&
-                  DateTime.toEpochMillis(thread.snoozedUntil) ===
-                    Date.parse(thread.limitRecovery.resetAt)
-                ? { snoozedUntil: null, snoozedAt: null, lastSnoozeWakeAt: now }
-                : {}),
-            ...(command.branch === undefined ? {} : { branch: command.branch }),
-            ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
-            ...(command.linkedPullRequest === undefined
-              ? {}
-              : {
-                  linkedPullRequest: command.linkedPullRequest,
-                  pullRequests: [
-                    ...threadPullRequestsOf(thread).filter(
-                      (link) =>
-                        !(
-                          thread.linkedPullRequest &&
-                          threadPullRequestKeysEqual(
-                            link,
-                            legacyThreadPullRequestKey(thread.linkedPullRequest),
-                          )
-                        ) &&
-                        !(
-                          command.linkedPullRequest &&
-                          threadPullRequestKeysEqual(
-                            link,
-                            legacyThreadPullRequestKey(command.linkedPullRequest),
-                          )
-                        ),
-                    ),
-                    ...(command.linkedPullRequest
-                      ? [legacyPullRequestLink(thread, command.linkedPullRequest, now)]
-                      : []),
-                  ],
-                }),
-            ...(command.regenerateTitle === true
-              ? { titleRegeneration: { requestId: command.commandId, startedAt: now } }
-              : command.regenerateTitle === false || command.title !== undefined
-                ? { titleRegeneration: null }
-                : {}),
-            updatedAt: now,
-          };
-        }
-        case "thread.pull-request.link":
-        case "thread.pull-request.unlink":
-        case "thread.pull-request-link.sync": {
-          const key = normalizeThreadPullRequestKey(command);
-          const links = threadPullRequestsOf(thread);
-          const existing = links.find((link) => threadPullRequestKeysEqual(link, key));
-          let pullRequests = links;
-          if (command.type === "thread.pull-request.link") {
-            const undismisses =
-              existing?.source === "stack-dismissed" &&
-              command.source !== "stack" &&
-              command.source !== "stack-dismissed";
-            if (existing && !undismisses) return thread;
-            const link = existing
-              ? {
-                  ...existing,
-                  source: command.source,
-                  url: canonicalizeGitCafePullRequestUrl(command.url),
-                  ...(command.repositoryWebUrl !== undefined && {
-                    repositoryWebUrl: command.repositoryWebUrl,
-                  }),
-                }
-              : {
-                  ...key,
-                  url: canonicalizeGitCafePullRequestUrl(command.url),
-                  ...(command.repositoryWebUrl !== undefined && {
-                    repositoryWebUrl: command.repositoryWebUrl,
-                  }),
-                  source: command.source,
-                  linkedAt: DateTime.formatIso(now),
-                  snapshot: null,
-                  stack: null,
-                };
-            const branch = thread.branchPullRequest;
-            const branchKey = branch ? legacyThreadPullRequestKey(branch) : null;
-            pullRequests = [
-              ...(command.source === "manual" &&
-              branch &&
-              branchKey &&
-              visibleThreadPullRequests(links).length === 0 &&
-              !threadPullRequestKeysEqual(branchKey, key) &&
-              !links.some((entry) => threadPullRequestKeysEqual(entry, branchKey))
-                ? [
-                    {
-                      ...branchKey,
-                      url: canonicalizeGitCafePullRequestUrl(branch.url),
-                      source: "manual" as const,
-                      linkedAt: DateTime.formatIso(now),
-                      snapshot: null,
-                      stack: null,
-                    },
-                  ]
-                : []),
-              ...links.filter((entry) => !threadPullRequestKeysEqual(entry, key)),
-              link,
-            ];
-          } else if (command.type === "thread.pull-request.unlink") {
-            if (!existing) return thread;
-            const belongsToStack =
-              existing.source === "stack" ||
-              existing.stack !== null ||
-              links.some(
-                (link) =>
-                  link.host.toLowerCase() === key.host &&
-                  link.repository.toLowerCase() === key.repository &&
-                  link.stack?.layers.some((layer) => layer.number === key.number),
-              );
-            pullRequests = belongsToStack
-              ? links.map((link) =>
-                  link === existing
-                    ? {
-                        ...withPullRequestWatch(link, undefined),
-                        source: "stack-dismissed" as const,
-                      }
-                    : link,
-                )
-              : links.filter((link) => link !== existing);
-          } else {
-            if (!existing) return thread;
-            pullRequests = links.map((link) =>
-              link === existing
-                ? { ...link, snapshot: command.snapshot, stack: command.stack }
-                : link,
-            );
+    const updatedThread = wakeOrphanedPullRequestSnooze(
+      thread,
+      (() => {
+        switch (command.type) {
+          case "thread.archive":
+            return {
+              ...thread,
+              archivedAt: now,
+              titleRegeneration: null,
+              guestShare: null,
+              pullRequests: thread.pullRequests?.map((link) =>
+                withPullRequestWatch(link, undefined),
+              ),
+              updatedAt: now,
+            };
+          case "thread.unarchive":
+            return { ...thread, archivedAt: null, updatedAt: now };
+          case "thread.settle": {
+            const wasPinned = thread.pinnedAt != null;
+            const alreadySettled =
+              thread.settledOverride === "settled" && thread.settledAt !== null && !wasPinned;
+            return {
+              ...thread,
+              settledOverride: "settled",
+              settledAt: alreadySettled ? thread.settledAt : (command.settledAt ?? now),
+              // Settled threads refuse recovery, so an armed resume would stay hidden until un-settled.
+              limitRecovery: thread.limitRecovery
+                ? { ...thread.limitRecovery, autoResume: false, snooze: false }
+                : thread.limitRecovery,
+              pullRequests: thread.pullRequests?.map((link) =>
+                withPullRequestWatch(link, undefined),
+              ),
+              unsettledAt: null,
+              pinnedAt: null,
+              pinOrderKey: null,
+              activeOrderKey: null,
+              snoozedUntil: null,
+              snoozedAt: null,
+              updatedAt:
+                alreadySettled && thread.snoozedUntil == null && thread.snoozedAt == null
+                  ? thread.updatedAt
+                  : now,
+            };
           }
-          // Unlinking the last open pull request leaves nothing to wake a PR snooze, so it wakes now.
-          const pullRequestSnoozeOrphaned =
-            command.type === "thread.pull-request.unlink" &&
-            thread.snoozeWakesOnPullRequest === true &&
-            thread.snoozedUntil != null &&
-            DateTime.isGreaterThan(thread.snoozedUntil, now) &&
-            !hasOpenThreadPullRequest(pullRequests);
-          return {
-            ...thread,
-            pullRequests,
-            ...(pullRequestSnoozeOrphaned && { snoozedUntil: now, lastSnoozeWakeAt: now }),
-            linkedPullRequest:
-              thread.linkedPullRequest &&
-              pullRequests.some(
-                (link) =>
-                  link.source !== "stack-dismissed" &&
-                  threadPullRequestKeysEqual(
-                    link,
-                    legacyThreadPullRequestKey(thread.linkedPullRequest!),
-                  ),
-              )
-                ? thread.linkedPullRequest
+          case "thread.unsettle": {
+            const alreadyPinnedActive = thread.settledOverride === "active";
+            return {
+              ...thread,
+              settledOverride: "active",
+              settledAt: null,
+              unsettledAt: alreadyPinnedActive
+                ? (thread.unsettledAt ?? null)
+                : restoredUnsettledAt === undefined
+                  ? now
+                  : restoredUnsettledAt,
+              updatedAt: alreadyPinnedActive ? thread.updatedAt : now,
+            };
+          }
+          case "thread.snooze": {
+            // Re-snoozing acknowledges the latest wake even at the same time; commandId deduplicates retries.
+            return {
+              ...thread,
+              snoozedUntil,
+              limitRecovery: thread.limitRecovery
+                ? { ...thread.limitRecovery, snooze: false }
                 : null,
-            updatedAt: command.type === "thread.pull-request-link.sync" ? thread.updatedAt : now,
-          };
-        }
-        case "thread.issue.link":
-        case "thread.issue.unlink": {
-          const links = thread.issues ?? [];
-          const existing = links.find((link) => threadIssueKeysEqual(link, command));
-          if (command.type === "thread.issue.unlink") {
-            if (!existing) return thread;
-            return { ...thread, issues: links.filter((link) => link !== existing), updatedAt: now };
+              snoozedAt: now,
+              snoozeWakesOnPullRequest: command.wakesOnPullRequest === true,
+              updatedAt: now,
+            };
           }
-          if (existing) return thread;
-          return {
-            ...thread,
-            issues: [
-              ...links,
-              {
-                tracker: command.tracker,
-                host: command.host.trim().toLowerCase(),
-                scope: command.scope.trim(),
-                key: command.key.trim(),
-                projectId: command.projectId,
-                url: command.url,
-                displayKey: command.displayKey,
-                title: command.title,
-                source: command.source,
-                linkedAt: DateTime.formatIso(now),
-              },
-            ],
-            updatedAt: now,
-          };
-        }
-        case "thread.pull-request-watch.checks-reopen": {
-          const linked = threadPullRequestsOf(thread);
-          if (!linked.some((link) => link.watch?.checksPending !== undefined)) return thread;
-          return {
-            ...thread,
-            pullRequests: linked.map((link) =>
-              link.watch?.checksPending === undefined
-                ? link
-                : { ...link, watch: withoutChecksAnswer(link.watch) },
-            ),
-          };
-        }
-        case "thread.pull-request.watch":
-        case "thread.pull-request-watch.sync": {
-          const key = normalizeThreadPullRequestKey(command);
-          const startedAt = DateTime.formatIso(now);
-          const linked = threadPullRequestsOf(thread);
-          const visible = (link: ThreadPullRequestLink) =>
-            link.source !== "stack-dismissed" && threadPullRequestKeysEqual(link, key);
-          const dismissed = linked.find((link) => threadPullRequestKeysEqual(link, key));
-          const links =
-            command.type === "thread.pull-request.watch" &&
-            command.watching &&
-            command.link !== undefined &&
-            !linked.some(visible)
-              ? [
-                  ...linked.filter((link) => !threadPullRequestKeysEqual(link, key)),
-                  {
-                    ...key,
-                    url: canonicalizeGitCafePullRequestUrl(command.link.url),
-                    ...((command.link.repositoryWebUrl ?? dismissed?.repositoryWebUrl) !==
-                      undefined && {
-                      repositoryWebUrl:
-                        command.link.repositoryWebUrl ?? dismissed?.repositoryWebUrl,
+          case "thread.unsnooze": {
+            const alreadyAwake = thread.snoozedUntil == null;
+            return {
+              ...thread,
+              snoozedUntil: null,
+              snoozedAt: null,
+              lastSnoozeWakeAt: alreadyAwake ? thread.lastSnoozeWakeAt : now,
+              updatedAt: alreadyAwake ? thread.updatedAt : now,
+            };
+          }
+          case "thread.auto-settle.set": {
+            const unchanged = command.enabled === (thread.autoSettleDisabledAt == null);
+            return {
+              ...thread,
+              autoSettleDisabledAt: command.enabled ? null : (thread.autoSettleDisabledAt ?? now),
+              updatedAt: unchanged ? thread.updatedAt : now,
+            };
+          }
+          case "thread.pin": {
+            const alreadyPinned = thread.pinnedAt != null;
+            const promotes = thread.settledOverride === "settled" || thread.snoozedUntil != null;
+            return {
+              ...thread,
+              pinnedAt: alreadyPinned ? thread.pinnedAt : now,
+              ...(alreadyPinned || command.orderKey === undefined
+                ? {}
+                : { pinOrderKey: command.orderKey }),
+              settledOverride:
+                thread.settledOverride === "settled" ? "active" : thread.settledOverride,
+              settledAt: thread.settledOverride === "settled" ? null : thread.settledAt,
+              ...(thread.settledOverride === "settled" ? { unsettledAt: now } : {}),
+              snoozedUntil: null,
+              snoozedAt: null,
+              lastSnoozeWakeAt: thread.snoozedUntil == null ? thread.lastSnoozeWakeAt : now,
+              updatedAt: alreadyPinned && !promotes ? thread.updatedAt : now,
+            };
+          }
+          case "thread.unpin": {
+            const alreadyUnpinned = thread.pinnedAt == null;
+            return {
+              ...thread,
+              pinnedAt: null,
+              pinOrderKey: null,
+              updatedAt: alreadyUnpinned ? thread.updatedAt : now,
+            };
+          }
+          case "thread.pin.reorder": {
+            const keyUnchanged = thread.pinOrderKey === command.orderKey;
+            return {
+              ...thread,
+              pinOrderKey: command.orderKey,
+              updatedAt: keyUnchanged ? thread.updatedAt : now,
+            };
+          }
+          case "thread.active.reorder": {
+            return {
+              ...thread,
+              activeOrderKey: command.orderKey,
+              updatedAt: thread.updatedAt,
+            };
+          }
+          case "thread.tag.set": {
+            const current = thread.tags ?? [];
+            return {
+              ...thread,
+              tags: command.tagged
+                ? current.includes(command.tag)
+                  ? current
+                  : [...current, command.tag]
+                : current.filter((tag) => tag !== command.tag),
+            };
+          }
+          case "thread.mark-unread": {
+            // Retire the wake before rewinding the visit, preserving its settlement timer.
+            const snoozeExpired =
+              thread.snoozedUntil != null &&
+              DateTime.toEpochMillis(thread.snoozedUntil) <= DateTime.toEpochMillis(now);
+            return {
+              ...thread,
+              lastVisitedAt: markUnreadVisitedAt,
+              ...(snoozeExpired
+                ? { snoozedUntil: null, snoozedAt: null, lastSnoozeWakeAt: thread.snoozedUntil }
+                : {}),
+            };
+          }
+          case "thread.metadata.update": {
+            const previousRecovery =
+              thread.limitRecovery?.runId === command.limitRecovery?.runId &&
+              thread.limitRecovery?.resetAt === command.limitRecovery?.resetAt
+                ? thread.limitRecovery
+                : null;
+            const limitRecovery =
+              command.limitRecovery === undefined
+                ? thread.limitRecovery
+                : command.limitRecovery === null
+                  ? null
+                  : {
+                      ...command.limitRecovery,
+                      autoResume:
+                        command.limitRecovery.autoResume ?? previousRecovery?.autoResume ?? false,
+                      snooze: command.limitRecovery.snooze ?? previousRecovery?.snooze ?? false,
+                      requestId: command.commandId,
+                    };
+            return {
+              ...thread,
+              ...(command.title === undefined ? {} : { title: command.title, titleRenamed: true }),
+              ...(command.limitRecovery === undefined ? {} : { limitRecovery }),
+              ...(command.limitRecovery !== undefined &&
+              limitRecovery?.snooze === true &&
+              Date.parse(limitRecovery.resetAt) > DateTime.toEpochMillis(now)
+                ? {
+                    snoozedUntil: DateTime.makeUnsafe(limitRecovery.resetAt),
+                    // Recovery updates acknowledge the same stopped run; their timestamps must not trigger fresh failure wakes.
+                    snoozedAt: now,
+                    snoozeWakesOnPullRequest: false,
+                  }
+                : command.limitRecovery !== undefined &&
+                    thread.limitRecovery?.snooze &&
+                    thread.snoozedUntil != null &&
+                    DateTime.toEpochMillis(thread.snoozedUntil) ===
+                      Date.parse(thread.limitRecovery.resetAt)
+                  ? { snoozedUntil: null, snoozedAt: null, lastSnoozeWakeAt: now }
+                  : {}),
+              ...(command.branch === undefined ? {} : { branch: command.branch }),
+              ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
+              ...(command.linkedPullRequest === undefined
+                ? {}
+                : {
+                    linkedPullRequest: command.linkedPullRequest,
+                    pullRequests: [
+                      ...threadPullRequestsOf(thread).filter(
+                        (link) =>
+                          !(
+                            thread.linkedPullRequest &&
+                            threadPullRequestKeysEqual(
+                              link,
+                              legacyThreadPullRequestKey(thread.linkedPullRequest),
+                            )
+                          ) &&
+                          !(
+                            command.linkedPullRequest &&
+                            threadPullRequestKeysEqual(
+                              link,
+                              legacyThreadPullRequestKey(command.linkedPullRequest),
+                            )
+                          ),
+                      ),
+                      ...(command.linkedPullRequest
+                        ? [legacyPullRequestLink(thread, command.linkedPullRequest, now)]
+                        : []),
+                    ],
+                  }),
+              ...(command.regenerateTitle === true
+                ? { titleRegeneration: { requestId: command.commandId, startedAt: now } }
+                : command.regenerateTitle === false || command.title !== undefined
+                  ? { titleRegeneration: null }
+                  : {}),
+              updatedAt: now,
+            };
+          }
+          case "thread.pull-request.link":
+          case "thread.pull-request.unlink":
+          case "thread.pull-request-link.sync": {
+            const key = normalizeThreadPullRequestKey(command);
+            const links = threadPullRequestsOf(thread);
+            const existing = links.find((link) => threadPullRequestKeysEqual(link, key));
+            let pullRequests = links;
+            if (command.type === "thread.pull-request.link") {
+              const undismisses =
+                existing?.source === "stack-dismissed" &&
+                command.source !== "stack" &&
+                command.source !== "stack-dismissed";
+              if (existing && !undismisses) return thread;
+              const link = existing
+                ? {
+                    ...existing,
+                    source: command.source,
+                    url: canonicalizeGitCafePullRequestUrl(command.url),
+                    ...(command.repositoryWebUrl !== undefined && {
+                      repositoryWebUrl: command.repositoryWebUrl,
                     }),
-                    source: command.link.source,
-                    linkedAt: startedAt,
+                  }
+                : {
+                    ...key,
+                    url: canonicalizeGitCafePullRequestUrl(command.url),
+                    ...(command.repositoryWebUrl !== undefined && {
+                      repositoryWebUrl: command.repositoryWebUrl,
+                    }),
+                    source: command.source,
+                    linkedAt: DateTime.formatIso(now),
                     snapshot: null,
                     stack: null,
-                    ...(dismissed?.endedWatch && { endedWatch: dismissed.endedWatch }),
-                  },
-                ]
-              : linked;
-          const existing = links.find(visible);
-          if (existing === undefined) return thread;
-          const watch =
-            command.type === "thread.pull-request-watch.sync"
-              ? existing.watch?.startedAt === command.startedAt
-                ? syncedPullRequestWatch(existing.watch, command)
-                : existing.watch
-              : !command.watching
-                ? undefined
-                : withUntil(
-                    existing.watch ?? {
-                      startedAt,
-                      headSha: null,
-                      failedChecks: [],
-                      passed: false,
-                      passedChecks: [],
-                      conflicting: false,
-                      // Watching again must not repeat check or conflict news the last watch told.
-                      ...(existing.endedWatch && {
-                        headSha: existing.endedWatch.headSha,
-                        failedChecks: existing.endedWatch.failedChecks,
-                        passed: existing.endedWatch.passed,
-                        passedChecks: existing.endedWatch.passedChecks,
-                        conflicting: existing.endedWatch.conflicting,
-                        rebaseRequired: existing.endedWatch.rebaseRequired,
-                      }),
-                      awaitingBaseline: existing.endedWatch
-                        ? existing.endedWatch.awaitingBaseline
-                        : "all",
-                      ...(existing.endedWatch?.owedChecks !== undefined && {
-                        owedChecks: existing.endedWatch.owedChecks,
-                      }),
-                      ...(existing.endedWatch?.awaitingApproval !== undefined && {
-                        awaitingApproval: existing.endedWatch.awaitingApproval,
-                      }),
-                      ...(existing.endedWatch?.approvalAnnounced !== undefined && {
-                        approvalAnnounced: existing.endedWatch.approvalAnnounced,
-                      }),
-                      // CI pending with no failure yet at the start may fail before the first
-                      // read. A caller's fresh read beats the link's last sync; a finished-checks
-                      // answer kept from the last watch may be an older head's.
-                      ...((command.type === "thread.pull-request.watch" &&
-                      command.checksPending !== undefined
-                        ? command.checksPending
-                        : existing.snapshot?.checksState === "pending" ||
-                          existing.endedWatch?.checksPending === true) && { checksPending: true }),
-                      ...(existing.endedWatch?.checksAwaitedSince !== undefined && {
-                        checksAwaitedSince: existing.endedWatch.checksAwaitedSince,
-                      }),
-                      remarksThrough: startedAt,
-                      remarkIds: [],
-                      wakes: 0,
-                    },
-                    command.until,
-                  );
-          if (watch === existing.watch && links === linked) return thread;
-          const final =
-            command.type === "thread.pull-request-watch.sync" && watch === undefined
-              ? command.endedWatch
-              : undefined;
-          return {
-            ...thread,
-            pullRequests: links.map((link) =>
-              link === existing
-                ? withPullRequestWatch(final ? { ...link, watch: final } : link, watch)
-                : link,
-            ),
-            updatedAt: command.type === "thread.pull-request.watch" ? now : thread.updatedAt,
-          };
-        }
-        case "thread.pull-request.sync":
-          return {
-            ...thread,
-            branchPullRequest: command.branchPullRequest,
-            ...(command.linkedPullRequest === undefined
-              ? {}
-              : {
-                  linkedPullRequest: command.linkedPullRequest,
-                  pullRequests: [
-                    ...threadPullRequestsOf(thread).filter(
-                      (link) =>
-                        !(
-                          thread.linkedPullRequest &&
-                          threadPullRequestKeysEqual(
-                            link,
-                            legacyThreadPullRequestKey(thread.linkedPullRequest),
-                          )
-                        ) &&
-                        !(
-                          command.linkedPullRequest &&
-                          threadPullRequestKeysEqual(
-                            link,
-                            legacyThreadPullRequestKey(command.linkedPullRequest),
-                          )
-                        ),
-                    ),
-                    ...(command.linkedPullRequest
-                      ? [legacyPullRequestLink(thread, command.linkedPullRequest, now)]
-                      : []),
-                  ],
-                }),
-            updatedAt: thread.updatedAt,
-          };
-        case "thread.title.regeneration.complete":
-          return thread.titleRegeneration?.requestId === command.requestId
-            ? {
-                ...thread,
-                ...(command.title === undefined
-                  ? {}
-                  : { title: command.title, titleRenamed: false }),
-                ...(command.outcome === undefined
-                  ? {}
-                  : {
-                      lastTitleRegeneration: {
-                        ...command.outcome,
-                        requestId: command.requestId,
-                        completedAt: now,
+                  };
+              const branch = thread.branchPullRequest;
+              const branchKey = branch ? legacyThreadPullRequestKey(branch) : null;
+              pullRequests = [
+                ...(command.source === "manual" &&
+                branch &&
+                branchKey &&
+                visibleThreadPullRequests(links).length === 0 &&
+                !threadPullRequestKeysEqual(branchKey, key) &&
+                !links.some((entry) => threadPullRequestKeysEqual(entry, branchKey))
+                  ? [
+                      {
+                        ...branchKey,
+                        url: canonicalizeGitCafePullRequestUrl(branch.url),
+                        source: "manual" as const,
+                        linkedAt: DateTime.formatIso(now),
+                        snapshot: null,
+                        stack: null,
                       },
-                    }),
-                titleRegeneration: null,
+                    ]
+                  : []),
+                ...links.filter((entry) => !threadPullRequestKeysEqual(entry, key)),
+                link,
+              ];
+            } else if (command.type === "thread.pull-request.unlink") {
+              if (!existing) return thread;
+              const belongsToStack =
+                existing.source === "stack" ||
+                existing.stack !== null ||
+                links.some(
+                  (link) =>
+                    link.host.toLowerCase() === key.host &&
+                    link.repository.toLowerCase() === key.repository &&
+                    link.stack?.layers.some((layer) => layer.number === key.number),
+                );
+              pullRequests = belongsToStack
+                ? links.map((link) =>
+                    link === existing
+                      ? {
+                          ...withPullRequestWatch(link, undefined),
+                          source: "stack-dismissed" as const,
+                        }
+                      : link,
+                  )
+                : links.filter((link) => link !== existing);
+            } else {
+              if (!existing) return thread;
+              pullRequests = links.map((link) =>
+                link === existing
+                  ? { ...link, snapshot: command.snapshot, stack: command.stack }
+                  : link,
+              );
+            }
+            return {
+              ...thread,
+              pullRequests,
+              linkedPullRequest:
+                thread.linkedPullRequest &&
+                pullRequests.some(
+                  (link) =>
+                    link.source !== "stack-dismissed" &&
+                    threadPullRequestKeysEqual(
+                      link,
+                      legacyThreadPullRequestKey(thread.linkedPullRequest!),
+                    ),
+                )
+                  ? thread.linkedPullRequest
+                  : null,
+              updatedAt: command.type === "thread.pull-request-link.sync" ? thread.updatedAt : now,
+            };
+          }
+          case "thread.issue.link":
+          case "thread.issue.unlink": {
+            const links = thread.issues ?? [];
+            const existing = links.find((link) => threadIssueKeysEqual(link, command));
+            if (command.type === "thread.issue.unlink") {
+              if (!existing) return thread;
+              return {
+                ...thread,
+                issues: links.filter((link) => link !== existing),
                 updatedAt: now,
-              }
-            : thread;
-        case "thread.runtime-mode.set":
-          return { ...thread, runtimeMode: command.runtimeMode, updatedAt: now };
-        case "thread.interaction-mode.set":
-          return { ...thread, interactionMode: command.interactionMode, updatedAt: now };
-        case "thread.model-selection.set":
-        case "provider.switch":
-          return {
-            ...thread,
-            providerInstanceId: command.modelSelection.instanceId,
-            modelSelection: command.modelSelection,
-            updatedAt: now,
-          };
-      }
-    })();
+              };
+            }
+            if (existing) return thread;
+            return {
+              ...thread,
+              issues: [
+                ...links,
+                {
+                  tracker: command.tracker,
+                  host: command.host.trim().toLowerCase(),
+                  scope: command.scope.trim(),
+                  key: command.key.trim(),
+                  projectId: command.projectId,
+                  url: command.url,
+                  displayKey: command.displayKey,
+                  title: command.title,
+                  source: command.source,
+                  linkedAt: DateTime.formatIso(now),
+                },
+              ],
+              updatedAt: now,
+            };
+          }
+          case "thread.pull-request-watch.checks-reopen": {
+            const linked = threadPullRequestsOf(thread);
+            if (!linked.some((link) => link.watch?.checksPending !== undefined)) return thread;
+            return {
+              ...thread,
+              pullRequests: linked.map((link) =>
+                link.watch?.checksPending === undefined
+                  ? link
+                  : { ...link, watch: withoutChecksAnswer(link.watch) },
+              ),
+            };
+          }
+          case "thread.pull-request.watch":
+          case "thread.pull-request-watch.sync": {
+            const key = normalizeThreadPullRequestKey(command);
+            const startedAt = DateTime.formatIso(now);
+            const linked = threadPullRequestsOf(thread);
+            const visible = (link: ThreadPullRequestLink) =>
+              link.source !== "stack-dismissed" && threadPullRequestKeysEqual(link, key);
+            const dismissed = linked.find((link) => threadPullRequestKeysEqual(link, key));
+            const links =
+              command.type === "thread.pull-request.watch" &&
+              command.watching &&
+              command.link !== undefined &&
+              !linked.some(visible)
+                ? [
+                    ...linked.filter((link) => !threadPullRequestKeysEqual(link, key)),
+                    {
+                      ...key,
+                      url: canonicalizeGitCafePullRequestUrl(command.link.url),
+                      ...((command.link.repositoryWebUrl ?? dismissed?.repositoryWebUrl) !==
+                        undefined && {
+                        repositoryWebUrl:
+                          command.link.repositoryWebUrl ?? dismissed?.repositoryWebUrl,
+                      }),
+                      source: command.link.source,
+                      linkedAt: startedAt,
+                      snapshot: null,
+                      stack: null,
+                      ...(dismissed?.endedWatch && { endedWatch: dismissed.endedWatch }),
+                    },
+                  ]
+                : linked;
+            const existing = links.find(visible);
+            if (existing === undefined) return thread;
+            const watch =
+              command.type === "thread.pull-request-watch.sync"
+                ? existing.watch?.startedAt === command.startedAt
+                  ? syncedPullRequestWatch(existing.watch, command)
+                  : existing.watch
+                : !command.watching
+                  ? undefined
+                  : withUntil(
+                      existing.watch ?? {
+                        startedAt,
+                        headSha: null,
+                        failedChecks: [],
+                        passed: false,
+                        passedChecks: [],
+                        conflicting: false,
+                        // Watching again must not repeat check or conflict news the last watch told.
+                        ...(existing.endedWatch && {
+                          headSha: existing.endedWatch.headSha,
+                          failedChecks: existing.endedWatch.failedChecks,
+                          passed: existing.endedWatch.passed,
+                          passedChecks: existing.endedWatch.passedChecks,
+                          conflicting: existing.endedWatch.conflicting,
+                          rebaseRequired: existing.endedWatch.rebaseRequired,
+                        }),
+                        awaitingBaseline: existing.endedWatch
+                          ? existing.endedWatch.awaitingBaseline
+                          : "all",
+                        ...(existing.endedWatch?.owedChecks !== undefined && {
+                          owedChecks: existing.endedWatch.owedChecks,
+                        }),
+                        ...(existing.endedWatch?.awaitingApproval !== undefined && {
+                          awaitingApproval: existing.endedWatch.awaitingApproval,
+                        }),
+                        ...(existing.endedWatch?.approvalAnnounced !== undefined && {
+                          approvalAnnounced: existing.endedWatch.approvalAnnounced,
+                        }),
+                        // CI pending with no failure yet at the start may fail before the first
+                        // read. A caller's fresh read beats the link's last sync; a finished-checks
+                        // answer kept from the last watch may be an older head's.
+                        ...((command.type === "thread.pull-request.watch" &&
+                        command.checksPending !== undefined
+                          ? command.checksPending
+                          : existing.snapshot?.checksState === "pending" ||
+                            existing.endedWatch?.checksPending === true) && {
+                          checksPending: true,
+                        }),
+                        ...(existing.endedWatch?.checksAwaitedSince !== undefined && {
+                          checksAwaitedSince: existing.endedWatch.checksAwaitedSince,
+                        }),
+                        remarksThrough: startedAt,
+                        remarkIds: [],
+                        wakes: 0,
+                      },
+                      command.until,
+                    );
+            if (watch === existing.watch && links === linked) return thread;
+            const final =
+              command.type === "thread.pull-request-watch.sync" && watch === undefined
+                ? command.endedWatch
+                : undefined;
+            return {
+              ...thread,
+              pullRequests: links.map((link) =>
+                link === existing
+                  ? withPullRequestWatch(final ? { ...link, watch: final } : link, watch)
+                  : link,
+              ),
+              updatedAt: command.type === "thread.pull-request.watch" ? now : thread.updatedAt,
+            };
+          }
+          case "thread.pull-request.sync":
+            return {
+              ...thread,
+              branchPullRequest: command.branchPullRequest,
+              ...(command.linkedPullRequest === undefined
+                ? {}
+                : {
+                    linkedPullRequest: command.linkedPullRequest,
+                    pullRequests: [
+                      ...threadPullRequestsOf(thread).filter(
+                        (link) =>
+                          !(
+                            thread.linkedPullRequest &&
+                            threadPullRequestKeysEqual(
+                              link,
+                              legacyThreadPullRequestKey(thread.linkedPullRequest),
+                            )
+                          ) &&
+                          !(
+                            command.linkedPullRequest &&
+                            threadPullRequestKeysEqual(
+                              link,
+                              legacyThreadPullRequestKey(command.linkedPullRequest),
+                            )
+                          ),
+                      ),
+                      ...(command.linkedPullRequest
+                        ? [legacyPullRequestLink(thread, command.linkedPullRequest, now)]
+                        : []),
+                    ],
+                  }),
+              updatedAt: thread.updatedAt,
+            };
+          case "thread.title.regeneration.complete":
+            return thread.titleRegeneration?.requestId === command.requestId
+              ? {
+                  ...thread,
+                  ...(command.title === undefined
+                    ? {}
+                    : { title: command.title, titleRenamed: false }),
+                  ...(command.outcome === undefined
+                    ? {}
+                    : {
+                        lastTitleRegeneration: {
+                          ...command.outcome,
+                          requestId: command.requestId,
+                          completedAt: now,
+                        },
+                      }),
+                  titleRegeneration: null,
+                  updatedAt: now,
+                }
+              : thread;
+          case "thread.runtime-mode.set":
+            return { ...thread, runtimeMode: command.runtimeMode, updatedAt: now };
+          case "thread.interaction-mode.set":
+            return { ...thread, interactionMode: command.interactionMode, updatedAt: now };
+          case "thread.model-selection.set":
+          case "provider.switch":
+            return {
+              ...thread,
+              providerInstanceId: command.modelSelection.instanceId,
+              modelSelection: command.modelSelection,
+              updatedAt: now,
+            };
+        }
+      })(),
+      now,
+    );
     if (command.type === "thread.pull-request-watch.checks-reopen") {
       if (updatedThread === thread) return;
       yield* emit(
@@ -5501,11 +5524,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         thread.snoozedAt != null &&
         thread.snoozedUntil != null &&
         DateTime.isGreaterThan(thread.snoozedUntil, now) &&
-        pullRequestSyncWakesSnooze({
-          previous: previous?.snapshot ?? null,
-          next: command.snapshot,
-          snoozedAtMs: DateTime.toEpochMillis(thread.snoozedAt),
-        })
+        (!hasOpenThreadPullRequest(threadPullRequestsOf(updatedThread)) ||
+          pullRequestSyncWakesSnooze({
+            previous: previous?.snapshot ?? null,
+            next: command.snapshot,
+            snoozedAtMs: DateTime.toEpochMillis(thread.snoozedAt),
+          }))
       ) {
         yield* emit(
           events,
@@ -5515,7 +5539,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadId: command.threadId,
           providerInstanceId: updatedThread.providerInstanceId,
           occurredAt: now,
-          payload: { ...updatedThread, snoozedUntil: now, lastSnoozeWakeAt: now, updatedAt: now },
+          payload: { ...updatedThread, snoozedUntil: now, updatedAt: now },
         });
       }
       return;
