@@ -580,7 +580,7 @@ function detachedLaunchCall(message: ChildMessage, rootSessionId: string) {
   const call = tool?.toolCall;
   return message.sender === rootSessionId &&
     (tool?.conversationId === undefined || tool.conversationId === rootSessionId) &&
-    call?.name === "invoke_subagent"
+    (call?.name === "invoke_subagent" || call?.name === "swarm")
     ? call
     : undefined;
 }
@@ -610,7 +610,7 @@ async function readDetachedSubagent(profileRoot: string, rootSessionId: string, 
 
 /**
  * agy 1.5 records detached children under `subagents/` instead of a SQLite `INVOKE_SUBAGENT` step;
- * the child's own inbox carries the parent's launching `invoke_subagent` tool call id.
+ * the child's own inbox carries the parent's launching `invoke_subagent` or `swarm` tool call id.
  */
 async function findDetachedInvokeRecord(
   profileRoot: string,

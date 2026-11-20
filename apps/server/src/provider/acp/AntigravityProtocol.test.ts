@@ -46,6 +46,8 @@ describe("native Antigravity subagent tools", () => {
       "start_subagent",
       "Run command",
       "Running manage_task",
+      // Only a `swarm` add starts a worker.
+      "Run swarm",
     ]) {
       expect(classifyAntigravitySubagentToolCall({ ...toolCall, title }, {})).toBeUndefined();
     }
