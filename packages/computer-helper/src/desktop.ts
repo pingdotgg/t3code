@@ -596,9 +596,8 @@ function run(argv) {
     var app = front(TARGET_APP);
     if (dryrun) return JSON.stringify({ mode: 'background' });
     var keyPid = app.name ? pidOf(app.name) : 0;
-    if (!payload.command) keyToPid(keyPid, payload.code);
-    else if (menuCommand(app.app, payload.command, 0)) return JSON.stringify({ mode: 'background', how: 'the app menu item' });
-    else keyToPid(keyPid, payload.code, $.kCGEventFlagMaskCommand);
+    if (payload.command && menuCommand(app.app, payload.command, payload.menu || 0)) return JSON.stringify({ mode: 'background', how: 'the app menu item' });
+    keyToPid(keyPid, payload.code, payload.flags || 0);
     return JSON.stringify({ mode: 'background' });
   }
   if (op === 'scroll') {
@@ -787,8 +786,8 @@ export function visualControls(lines: OcrLine[], window: Window): ScreenControl[
     .map(({ label, x, y }) => ({ ref: `v:${x},${y}`, role: "text" as const, label }));
 }
 
-/** macOS virtual key codes for the keys a step may press (ANSI positions for the shortcut letters). */
-const KEY_CODES = {
+/** macOS virtual key codes by key name, ANSI positions for characters (a menu item is tried first for a ⌘ chord). */
+const KEY_CODES: Readonly<Record<string, number>> = {
   enter: 36,
   escape: 53,
   tab: 48,
@@ -797,17 +796,108 @@ const KEY_CODES = {
   down: 125,
   left: 123,
   right: 124,
-  "cmd+l": 37,
-  "cmd+t": 17,
-  "cmd+w": 13,
-} as const;
+  delete: 51,
+  forwarddelete: 117,
+  home: 115,
+  end: 119,
+  pageup: 116,
+  pagedown: 121,
+  f1: 122,
+  f2: 120,
+  f3: 99,
+  f4: 118,
+  f5: 96,
+  f6: 97,
+  f7: 98,
+  f8: 100,
+  f9: 101,
+  f10: 109,
+  f11: 103,
+  f12: 111,
+  a: 0,
+  s: 1,
+  d: 2,
+  f: 3,
+  h: 4,
+  g: 5,
+  z: 6,
+  x: 7,
+  c: 8,
+  v: 9,
+  b: 11,
+  q: 12,
+  w: 13,
+  e: 14,
+  r: 15,
+  y: 16,
+  t: 17,
+  "1": 18,
+  "2": 19,
+  "3": 20,
+  "4": 21,
+  "6": 22,
+  "5": 23,
+  "=": 24,
+  "9": 25,
+  "7": 26,
+  "-": 27,
+  "8": 28,
+  "0": 29,
+  "]": 30,
+  o: 31,
+  u: 32,
+  "[": 33,
+  i: 34,
+  p: 35,
+  l: 37,
+  j: 38,
+  "'": 39,
+  k: 40,
+  ";": 41,
+  "\\": 42,
+  ",": 43,
+  "/": 44,
+  n: 45,
+  m: 46,
+  ".": 47,
+  "`": 50,
+};
+
+/** CGEventFlags for each modifier, and the AXMenuItemCmdModifiers bit a menu item shows it with (⌘ itself is 0). */
+const MODIFIERS: Readonly<Record<string, { flag: number; menu: number }>> = {
+  cmd: { flag: 0x100000, menu: 0 },
+  shift: { flag: 0x20000, menu: 1 },
+  alt: { flag: 0x80000, menu: 2 },
+  ctrl: { flag: 0x40000, menu: 4 },
+};
+
+/** A chord (`cmd+shift+g`) as the act script presses it: the key code and flags, and the menu item to try first. */
+function chordPayload(chord: string): object {
+  const parts = chord.split("+");
+  const key = parts.pop() ?? "";
+  const code = KEY_CODES[key];
+  if (code === undefined) throw new Error(`There is no key “${key}” to press.`);
+  let flags = 0;
+  let menu = 0;
+  for (const part of parts) {
+    const modifier = MODIFIERS[part];
+    if (!modifier) throw new Error(`There is no modifier “${part}”.`);
+    flags |= modifier.flag;
+    menu |= modifier.menu;
+  }
+  // Only a ⌘ chord on one character has a menu item to press; its character does not depend on the keyboard layout.
+  const command = parts.includes("cmd") && key.length === 1 ? key.toUpperCase() : null;
+  return {
+    code,
+    ...(flags ? { flags } : {}),
+    ...(command ? { command } : {}),
+    ...(command && menu ? { menu } : {}),
+  };
+}
 
 /** The JSON handed to the act script as argv: key codes for presses, otherwise the action's own fields. */
 function actionPayload(action: ScreenAction): object {
-  if (action.kind === "press")
-    return action.key.startsWith("cmd+")
-      ? { code: KEY_CODES[action.key], command: action.key.slice(4).toUpperCase() }
-      : { code: KEY_CODES[action.key] };
+  if (action.kind === "press") return chordPayload(action.key);
   if (action.kind === "scroll")
     return {
       direction: action.direction,

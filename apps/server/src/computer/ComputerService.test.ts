@@ -724,6 +724,22 @@ it.effect("an act is a one-step task: typed text stays out of its view and audit
   }).pipe(Effect.provide(layerTest())),
 );
 
+it.effect("a key act reaches the host in the chord's one spelling", () =>
+  Effect.gen(function* () {
+    const service = yield* ComputerService.ComputerService;
+    const host = yield* startHost();
+    const task = yield* service.act({
+      act: { action: "key", key: "Option+Command+I" },
+      requester: "agent: test",
+    });
+    assert.deepStrictEqual((yield* Queue.take(host.starts)).act, {
+      action: "key",
+      key: "cmd+alt+i",
+    });
+    assert.strictEqual(task.goal, "press cmd+alt+i");
+  }).pipe(Effect.provide(layerTest())),
+);
+
 it.effect("with approvals off a tap is granted at once and audited as skipped", () =>
   Effect.gen(function* () {
     const audit = yield* ComputerAudit.ComputerAudit;
