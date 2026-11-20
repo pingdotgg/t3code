@@ -69,9 +69,11 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
         releaseLookups.push(request.url);
         return HttpClientResponse.fromWeb(
           request,
-          options.latestStableTag === undefined
-            ? new Response(null, { status: 404 })
-            : Response.json({ tag_name: options.latestStableTag }),
+          request.headers["user-agent"] === undefined
+            ? new Response(null, { status: 403 })
+            : options.latestStableTag === undefined
+              ? new Response(null, { status: 404 })
+              : Response.json({ tag_name: options.latestStableTag }),
         );
       }),
     ),

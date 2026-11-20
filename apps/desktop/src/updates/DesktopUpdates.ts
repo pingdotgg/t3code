@@ -1127,7 +1127,12 @@ export const make = Effect.gen(function* () {
   }).pipe(Effect.withSpan("desktop.updates.startPollers"));
 
   const reportNewerStableRelease = httpClient
-    .get(LATEST_STABLE_RELEASE_URL, { headers: { accept: "application/vnd.github+json" } })
+    .get(LATEST_STABLE_RELEASE_URL, {
+      headers: {
+        accept: "application/vnd.github+json",
+        "user-agent": `T3-Code/${environment.appVersion}`,
+      },
+    })
     .pipe(
       Effect.flatMap(HttpClientResponse.filterStatusOk),
       Effect.flatMap(HttpClientResponse.schemaBodyJson(LatestStableRelease)),
@@ -1142,7 +1147,7 @@ export const make = Effect.gen(function* () {
           : Effect.void;
       }),
       Effect.catch((error) =>
-        logUpdaterWarning("could not look up the latest stable release", {
+        logUpdaterWarning(`could not look up the latest stable release: ${error.message}`, {
           errorTag: errorTag(error),
         }),
       ),
