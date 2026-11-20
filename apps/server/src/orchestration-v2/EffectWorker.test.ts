@@ -102,6 +102,7 @@ function layerExecutorFor(input: {
         interrupt: input.interrupt ?? (() => Effect.void),
         steer: () => Effect.void,
         applyModelSelection: () => Effect.void,
+        applyThreadTitle: () => Effect.void,
         interruptAndAwaitTerminal: (request) =>
           record(
             request.replacementProviderSessionId === undefined
@@ -123,6 +124,7 @@ function layerExecutorFor(input: {
         detach: () => record("detach"),
         otherWorkingThreads: () => Effect.succeed([]),
         releaseUnlessBusy: () => Effect.succeed(true),
+        forgetLoadedProviderThread: () => Effect.void,
         subscribePromptSuggestion: () => Stream.empty,
       }),
     ),

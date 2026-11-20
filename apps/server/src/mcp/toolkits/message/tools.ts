@@ -1,7 +1,7 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import { SEND_TO_USER_MAX_LENGTH, SEND_TO_USER_TOOL_NAME } from "@t3tools/shared/toolOutput";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -33,6 +33,7 @@ const SendToUserTool = Tool.make(SEND_TO_USER_TOOL_NAME, {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
   .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients)
   // Claude Code defers MCP tools behind ToolSearch; Anthropic says to declare this from the first request.
   .annotate(Tool.Meta, { "anthropic/alwaysLoad": true });
 
