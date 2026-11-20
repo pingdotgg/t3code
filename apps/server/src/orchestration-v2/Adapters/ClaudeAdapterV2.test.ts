@@ -21047,8 +21047,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           modelSelection: { ...CLAUDE_TEST_MODEL_SELECTION, model: parentModel },
         }),
       );
-      // CLAUDE_CODE_SUBAGENT_MODEL or an agent definition picks the model, and a reply
-      // with no tool call streams no frame that names it.
+      // CLAUDE_CODE_SUBAGENT_MODEL or an agent definition picks the model, and a foreground
+      // reply with no tool call streams no frame that names it.
       for (const frame of [
         claudeSdkFrame({
           type: "assistant",

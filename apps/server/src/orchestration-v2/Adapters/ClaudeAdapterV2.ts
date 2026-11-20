@@ -7956,7 +7956,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : new Map(current).set(nativeThreadId, { ...entry, messages });
           });
 
-        // Only the transcript records a subagent's effort, and its model when its reply called no tool.
+        // Only the transcript records a subagent's effort, and its model when no frame of its reply streamed.
         const readSubagentTranscriptMetadata = Effect.fnUntraced(function* (
           context: ActiveClaudeTurnContext,
           taskId: string,
