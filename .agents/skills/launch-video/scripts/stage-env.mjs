@@ -31,25 +31,30 @@ export const freePort = () =>
     });
   });
 
-// The server labels its environment from `hostnamectl --pretty` (Linux) or `scutil` (macOS),
-// and puts the login shell's PATH before its own. The fake login shell keeps this PATH, so
-// these shims win and the video shows `label`, not the real machine's name.
-const shims = (label) => ({
-  hostnamectl: `#!/bin/sh\n[ "$*" = "--pretty" ] && { echo "${label}"; exit 0; }\nfor d in /usr/bin /bin; do [ -x "$d/hostnamectl" ] && exec "$d/hostnamectl" "$@"; done\nexit 127\n`,
-  scutil: `#!/bin/sh\n[ "$*" = "--get ComputerName" ] && { echo "${label}"; exit 0; }\nexec /usr/sbin/scutil "$@"\n`,
-  "login-shell": `#!/bin/sh\n[ "$1" = "-ilc" ] && exec /bin/sh -c "$2"\nexec /bin/bash "$@"\n`,
-  "no-model": `#!/bin/sh\necho 'staging runs no model' >&2\nexit 1\n`,
-});
+const NO_MODEL = `#!/bin/sh\necho 'staging runs no model' >&2\nexit 1\n`;
 
-/** A fresh T3 home whose server calls itself `label`. `settings` merge into settings.json. */
-export function prepareHome(home, { label, settings = {}, model = "showcase" }) {
+// What the server and its CLI call this machine, instead of the real host's name and kind.
+const identityEnv = (home) => {
+  const { label, machine } = JSON.parse(
+    NodeFS.readFileSync(NodePath.join(home, "identity.json"), "utf8"),
+  );
+  return { T3CODE_ENVIRONMENT_LABEL: label, T3CODE_ENVIRONMENT_MACHINE_KIND: machine };
+};
+
+/**
+ * A fresh T3 home whose server calls itself `label` on a `machine` (laptop, desktop, cloud,
+ * linux, mac-mini, mac-studio). `settings` merge into settings.json.
+ */
+export function prepareHome(
+  home,
+  { label, machine = "laptop", settings = {}, model = "showcase" },
+) {
   NodeFS.rmSync(home, { recursive: true, force: true });
   NodeFS.mkdirSync(NodePath.join(home, "userdata"), { recursive: true });
   NodeFS.mkdirSync(NodePath.join(home, "bin"));
   NodeFS.mkdirSync(NodePath.join(home, "workspaces"));
-  for (const [name, body] of Object.entries(shims(label))) {
-    NodeFS.writeFileSync(NodePath.join(home, "bin", name), body, { mode: 0o755 });
-  }
+  NodeFS.writeFileSync(NodePath.join(home, "bin/no-model"), NO_MODEL, { mode: 0o755 });
+  NodeFS.writeFileSync(NodePath.join(home, "identity.json"), JSON.stringify({ label, machine }));
   NodeFS.writeFileSync(
     NodePath.join(home, "userdata/settings.json"),
     JSON.stringify({
@@ -109,10 +114,10 @@ export async function startEnvironment(
   const webOrigin = `http://127.0.0.1:${webPort}`;
   const token = NodeCrypto.randomUUID().replaceAll("-", "").repeat(2);
   const baseEnv = {
-    PATH: `${NodePath.join(home, "bin")}:${process.env.PATH}`,
+    PATH: process.env.PATH,
     HOME: process.env.HOME,
-    SHELL: NodePath.join(home, "bin/login-shell"),
     TMPDIR: process.env.TMPDIR ?? "/tmp",
+    ...identityEnv(home),
     T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "0",
     T3CODE_PORT_OFFSET: String(webPort - BASE_WEB_PORT),
     ...env,
@@ -184,12 +189,8 @@ export function cli(home, args) {
     ["apps/server/src/bin.ts", ...args, "--base-dir", home],
     {
       cwd: REPO,
-      // The CLI names this environment itself (a link introduces it by label), so it needs the shims.
-      env: {
-        PATH: `${NodePath.join(home, "bin")}:${process.env.PATH}`,
-        HOME: process.env.HOME,
-        SHELL: NodePath.join(home, "bin/login-shell"),
-      },
+      // The CLI names this environment itself (a link introduces it by label).
+      env: { PATH: process.env.PATH, HOME: process.env.HOME, ...identityEnv(home) },
       encoding: "utf8",
     },
   );

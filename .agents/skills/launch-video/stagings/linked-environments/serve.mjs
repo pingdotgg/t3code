@@ -33,6 +33,7 @@ prepareHome(NodePath.join(root, "macbook"), {
 });
 prepareHome(NodePath.join(root, "devbox"), {
   label: "devbox",
+  machine: "cloud",
   settings: linked,
   model: "remote-child",
 });

@@ -58,11 +58,10 @@ harness's task stop; it ends its servers' process groups.
 
 ### Staging traps
 
-- **Labels.** The server names its machine from `hostnamectl --pretty` / `scutil`, and it
-  puts the login shell's PATH ahead of its own. `stage-env.mjs` sets a fake `SHELL` that
-  keeps the home's PATH, so its label shims win. A process you start yourself against a
-  staging home needs `cli()` from `stage-env.mjs` for the same reason; the CLI names the
-  machine too, e.g. when it links two environments.
+- **Machine names and icons.** `T3CODE_ENVIRONMENT_LABEL` and `T3CODE_ENVIRONMENT_MACHINE_KIND`
+  (laptop, desktop, cloud, linux, mac-mini, mac-studio) override what the server detects.
+  `prepareHome({ label, machine })` records them and `startEnvironment` and `cli()` pass them
+  on; the CLI needs them too, because a link introduces the machine by its label.
 - **Linked environments** refuse loopback addresses ("this machine"), and plain http works
   only on tailnet names. `serve.mjs` links to this machine's tailnet DNS name.
 - **Leaks.** Grep the beats for the real hostname, username and tailnet name before
