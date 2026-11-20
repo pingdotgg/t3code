@@ -2,7 +2,7 @@
 
 Agent Board is a desktop app for running projects through an orchestrator on the T3 Code engine. The sidebar lists T3 projects, each project lists its boards, and each board shows one orchestrator, its tickets in lanes, the agents working each ticket, artifact cards, and For-you cards. The workflow it shows is the XEO-3330 run from November 2026.
 The rule the program enforces is that the engine stays upstream. No PR edits a file that exists upstream, except `pnpm-lock.yaml`. Every PR passes `apps/board/scripts/check-engine-untouched.mjs`. The repo's lint and dependency standards apply to every file in the repo, and fail only on lines we add or change.
-The PRs, in stack order, are B0, B1, S1, K1, B2, U1, B3, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, C2, F1, D1, L1, B12, and O1.
+The PRs, in stack order, are B0, B1, S1, K1, B2, U1, B3, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, K2, C2, F1, D1, M1, L1, B12, and O1.
 
 ## How to read this
 
@@ -38,9 +38,9 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
 - [ ] Follow this dependency graph. Base each PR on its parent's branch, because the execution playbook stacks.
   - [ ] B0 is first. It branches from `main` of `13kparkin/t3code`.
   - [ ] B1 after B0. S1 after B1. K1 after S1. B2 after K1. U1 after B2. B3 after U1. W1 after B3. B4 after W1. B5 after B4. B6 after B5.
-  - [ ] B7 after B6. C1 after B7. B8 after C1. B9 after B8. B10 after B9. B11 after B10. W2 after B11. R1 after W2. C2 after R1. F1 after C2. D1 after F1. L1 after D1. B12 after L1. O1 after B12.
+  - [ ] B7 after B6. C1 after B7. B8 after C1. B9 after B8. B10 after B9. B11 after B10. W2 after B11. R1 after W2. K2 after R1. C2 after K2. F1 after C2. D1 after F1. M1 after D1. L1 after M1. B12 after L1. O1 after B12.
 - [ ] Hold the file boundaries. Every PR touches only `apps/board/**`, `.github/workflows/agent-board.yml`, and `pnpm-lock.yaml`. S1 also adds `standards/**`, `.vite-hooks/pre-push`, and `.claude/settings.json`, which upstream does not have. K1 and B12 write outside the repo only through their install scripts, and B12 also owns the separate `13kparkin/pstack-t3` repo.
-- [ ] Hold the review gate. B1, B2, U1, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, C2, F1, D1, and L1 change an interaction. They post their screenshots and video in chat at merge, so the operator can ask for a follow-up PR.
+- [ ] Hold the review gate. B1, B2, U1, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, C2, F1, D1, M1, and L1 change an interaction. They post their screenshots and video in chat at merge, so the operator can ask for a follow-up PR.
 - [ ] Cap building agents at 2 at once, and run a push as the only heavy job, because this machine has 15 GB of RAM and 4 cores.
 
 ### PR mechanics, for every PR
@@ -72,6 +72,7 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
   - [ ] For Electron lanes, run `AGENT_BOARD_CDP_PORT=<9300 + n> vp run --filter @agent-board/app dev:windows`, which launches the Windows build of Electron on the Windows PC, and attach the `browser` API inside `eval` to `http://127.0.0.1:<9300 + n>`. WSL's mirrored networking shares 127.0.0.1 with Windows. Capture the full window, frame included, with a PowerShell `CopyFromScreen` of the window bounds.
 - [ ] Deliver input only through `orca-ide click`, `fill`, `keypress`, and `drag`, or the `browser` API actions. Read state only through `orca-ide eval` and `orca-ide snapshot`.
 - [ ] Save every screenshot to `/tmp/swarm-<pr-id>/worker-<n>/<slug>.png` and return the paths with the report.
+- [ ] Never create a GitHub repo for a lane. A lane that needs a real PR, issue, or CI run uses the one private repo `13kparkin/agent-board-lanes`, on branches named `lane/<pr-id>/<n>/...`. Close the lane's PRs and issues and delete its branches when the lane ends. Run its CI on a local self-hosted runner. Copy only `bin/`, `config.sh`, `env.sh`, `run.sh`, `externals/`, and the `run-helper*` templates from `~/.local/share/shortyard-runner/linux-1`, never its credential files, register the copy to `agent-board-lanes` with the label `board-lane`, which the repo's `RUNNER_LINUX` variable already names, and unregister it when the lane ends.
 
 ## Guard the engine boundary (B0)
 
@@ -1238,9 +1239,62 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends R1 to the base-branch stack and the operator lands it bottom-up.
 
-## Format the orchestrator chat the way T3 does (C2)
+## Make the Linear approval rule cover MCP write tools (K2)
 
 **Depends on.** R1.
+
+**Files.**
+
+- [ ] Edit `apps/board/plugins/omp-kit/engine/rules.mjs`, `apps/board/plugins/omp-kit/engine/hook.mjs`, and `apps/board/plugins/omp-kit/engine/rules.test.mjs`.
+- [ ] Edit the operator's `~/.omp/agent/rules/linear-writes-require-approval.md` only after the operator approves the exact diff.
+
+**Build.**
+
+- [ ] Start from the measured gap in `apps/board/docs/issue-tools-probe.md`. The rule's scope, `tool:write, tool:bash`, never covers an MCP tool, so in Claude Code neither `mcp__linear__save_issue` nor T3's `mcp__t3-code__create_issue`, `comment_on_issue`, and `set_issue_state` trigger it.
+- [ ] Find the scope syntax omp's own rule engine accepts for MCP tool names, from omp's rule docs, and use only that, so one rule file still drives both omp and Claude Code.
+- [ ] Let `omp-kit` answer a matching tool call with Claude Code's `ask` decision, not `deny`, when the rule asks for approval, so the operator approves in place. Use a rule field omp itself accepts or ignores, and say which.
+- [ ] Show the operator the rule file's diff in chat, and edit the file only after the operator approves it.
+
+**You see.**
+
+- [ ] In Claude Code, a Linear or T3 issue write waits for the operator's approval with the rule's text, a read runs freely, and every other tool behaves as before.
+
+**Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] `rules.test.mjs` feeds a fixed rule with the new scope and payloads for `mcp__linear__save_issue`, `mcp__t3-code__set_issue_state`, `mcp__t3-code__read_issue`, a `Bash` call that mentions Linear, and a `Write` call, and checks each literal decision. Run `node --test apps/board/plugins/omp-kit/engine/rules.test.mjs`.
+
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe.
+
+- [ ] Lane 1. Regression lane against trunk. Replay the hook on an `mcp__linear__save_issue` payload at trunk and at head. Save `k2-replay.txt`. Pass when trunk prints nothing and head asks.
+- [ ] Lane 2. In a T3 Claude thread with the plugin loaded, call `set_issue_state`. Save `k2-t3-ask.txt`. Pass when the call waits as an engine approval with the rule's text.
+- [ ] Lane 3. Call `read_issue`. Save `k2-read.txt`. Pass when it runs with no prompt.
+- [ ] Lane 4. Decline the approval from lane 2. Save `k2-decline.txt`. Pass when the call never reaches T3's handler.
+- [ ] Lane 5. Approve it. Save `k2-approve.txt`. Pass when the call reaches the handler.
+- [ ] Lane 6. Replay a `Bash` call that mentions Linear. Save `k2-bash.txt`. Pass when the decision matches trunk's.
+- [ ] Lane 7. Replay every other rule's fixtures at trunk and at head. Save `k2-others.txt`. Pass when every decision is identical.
+- [ ] Lane 8. Start an omp session with the edited rule file. Save `k2-omp.txt`. Pass when omp loads the rule with no error and applies it to an MCP Linear write.
+- [ ] Lane 9. Run a plain Claude Code session outside T3 with the plugin loaded and call `mcp__linear__save_issue` against a scratch Linear workspace or a stub server. Save `k2-cli.txt`. Pass when Claude Code asks before the call.
+- [ ] Lane 10. Run the boundary check and the standards check at head. Save `k2-checks.txt`. Pass when both exit 0.
+
+**Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] Metric. Hook time per tool call.
+- [ ] Probe. Replay 200 mixed payloads at trunk and at head.
+- [ ] Baseline. Record trunk's times.
+- [ ] Rule. The head median stays under 50 ms, recorded for O1.
+
+**Review gate.** None. K2 changes no screen.
+
+**Merge.**
+
+- [ ] Root's clean verdict at the exact head SHA.
+- [ ] Bugbot triage done.
+- [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
+- [ ] The root appends K2 to the base-branch stack and the operator lands it bottom-up.
+
+## Format the orchestrator chat the way T3 does (C2)
+
+**Depends on.** K2.
 
 **Files.**
 
@@ -1368,16 +1422,17 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 
 **Files.**
 
-- [ ] Create `apps/board/src/changes/ChangesPanel.tsx`, `apps/board/src/changes/DiffView.tsx`, and `apps/board/src/changes/CommitList.tsx`.
+- [ ] Create `apps/board/src/changes/ChangesPanel.tsx`, `apps/board/src/changes/DiffView.tsx`, `apps/board/src/changes/CommitList.tsx`, and `apps/board/src/changes/CommitBox.tsx`.
 - [ ] Create `apps/board/src/changes/changeSet.ts` and `apps/board/src/changes/changeSet.test.ts`.
 - [ ] Edit the right panel host, `apps/board/src/board/TicketFrame.tsx`, `apps/board/src/board/AgentCard.tsx`, and `apps/board/src/board/PrChip.tsx`.
 
 **Build.**
 
-- [ ] Add a Changes tab next to Files, the way Orca's source control view sits beside its explorer. It works on the same roots as Files, the project and each ticket worktree.
+- [ ] Add a Changes tab next to Files, laid out like Orca's source control view in `/home/kyle/personalDev/main/artifacts/agent-board-prototype/refs/orca-right-source-control.png`. It shows the PR number with search and more, the branch and its base with an open-on-host link, a commit message box, a Commit button with a dropdown, the changed files, and a collapsible Commits section. It works on the same roots as Files, the project and each ticket worktree.
 - [ ] Copy behavior from T3 web's diff panel, read only, and never import from `apps/web`. The sources are `apps/web/src/components/DiffPanel.tsx`, `DiffPanelShell.tsx`, `DiffWorkerPoolProvider.tsx`, `DiffFilePathCopyButton.tsx`, and `apps/web/src/components/diffs/`. Use the same diff package T3 web uses.
 - [ ] Offer two sources, as T3 does. **Uncommitted** reads `review.getDiffPreview` with `sourceKind: "working-tree"`. **Branch** reads it with `sourceKind: "branch-range"` against the ticket's base from `tickets.json`, or the default branch for the project.
 - [ ] In `CommitList.tsx`, list the branch's commits from `review.getBranchCommits`, and show one commit's diff with `commitSha`.
+- [ ] In `CommitBox.tsx`, commit through T3's `git.runStackedAction` with `commit`, `commit_push`, or `commit_push_pr` from the dropdown, using the typed message, or T3's own message when the box is empty. Copy the flow from T3 web's `apps/web/src/components/GitActionsControl.tsx`, read only. After a commit in a ticket worktree, offer **Tell the orchestrator**, as F1 does after a save.
 - [ ] In `DiffView.tsx`, show a changed-file tree with added and removed counts, unified and split views, an ignore-whitespace switch, and the full file through `review.getDiffFileContents` on expand.
 - [ ] In `changeSet.ts`, turn a diff preview into the file tree and totals as a pure function.
 - [ ] Open a ticket's branch diff from its frame, its agent cards, and its PR chip. Clicking a file opens it in F1's Files panel at that line.
@@ -1396,11 +1451,11 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Lane 2. Open **Branch** on a ticket worktree with three commits over its base. Save `d1-branch.png`. Pass when the files and counts match `git diff --stat <base>...HEAD`.
 - [ ] Lane 3. Pick one commit. Save `d1-commit.png`. Pass when the diff matches `git show --stat <sha>`.
 - [ ] Lane 4. Switch between unified and split, and turn on ignore whitespace on a whitespace-only change. Save `d1-views.png`. Pass when both views render and the whitespace change hides.
-- [ ] Lane 5. Expand a file to its full contents. Save `d1-full.png`. Pass when the unchanged lines show around the hunks.
-- [ ] Lane 6. Diff a renamed and a deleted file. Save `d1-rename.png`. Pass when both show with their change type.
+- [ ] Lane 5. Expand a file to its full contents, then diff a renamed and a deleted file. Save `d1-full.png`. Pass when the unchanged lines show around the hunks and both files show with their change type.
+- [ ] Lane 6. Type a message and pick **Commit and push** in a ticket worktree. Save `d1-commit-box.png`. Pass when `git log` shows the commit with that message and the remote branch has it.
 - [ ] Lane 7. Open the diff from a ticket frame, an agent card, and a PR chip. Save `d1-entry.png`. Pass when each opens that ticket's branch diff.
 - [ ] Lane 8. Click a changed file. Save `d1-open-file.png`. Pass when F1's Files panel opens it at the changed line.
-- [ ] Lane 9. Run the Windows app with a 50-file diff open. Save `d1-windows.png` from a full-window capture. Pass when the tree and diff fit beside the board.
+- [ ] Lane 9. Run the Windows app with a 50-file diff open. Save `d1-windows.png` from a full-window capture. Pass when the tree and diff fit beside the board and the layout matches Orca's reference.
 - [ ] Lane 10. Run the boundary check, the standards check, and the dependency rules at head. Save `d1-checks.txt`. Pass when all three exit 0.
 
 **Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
@@ -1423,9 +1478,70 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends D1 to the base-branch stack and the operator lands it bottom-up.
 
-## Start work from Linear and GitHub issues (L1)
+## Show the PR, its checks, and its comments in a Checks tab (M1)
 
 **Depends on.** D1.
+
+**Files.**
+
+- [ ] Create `apps/board/src/checks/ChecksPanel.tsx`, `apps/board/src/checks/CheckRow.tsx`, and `apps/board/src/checks/PrComments.tsx`.
+- [ ] Create `apps/board/src/checks/checkList.ts` and `apps/board/src/checks/checkList.test.ts`.
+- [ ] Edit the right panel host, `apps/board/src/board/PrChecks.tsx`, and `apps/board/src/board/ReadinessChecklist.tsx`.
+
+**Build.**
+
+- [ ] Add a Checks tab after Changes, laid out like Orca's in `/home/kyle/personalDev/main/artifacts/agent-board-prototype/refs/orca-right-checks.png`. It has a PR header with the number, a draft badge, the title, the update time, refresh, and a more menu, then the primary PR action with a dropdown, a collapsible checks group headed by its rollup, one row per check, and a comments section with All, Humans, and Bots filters.
+- [ ] Copy behavior from T3 web's `apps/web/src/components/pullRequest/PullRequestChecksPopover.tsx`, `pullRequestPresentation.tsx`, and `pullRequestDetail.logic.ts`, read only.
+- [ ] Read the header from `pullRequests.detail`. The action button runs `pullRequests.runAction` with `ready`, `draft`, or `update-branch` as the PR's state allows. A merge still goes through the For-you merge approval card.
+- [ ] In `CheckRow.tsx`, show the status icon for each of the seven statuses, the name, a **Required** badge from `required`, GitHub's `description` when present, "Running for" a duration from B10's clock on a pending check, and a link that opens `url` in B11's panel. T3's `PullRequestCheck` has no start time, duration, age, or steps, so a row shows those only when `description` carries them, and its expander shows the description and the link.
+- [ ] In `PrComments.tsx`, list comments and review threads from `pullRequests.activity` with author, time, a bot badge, the body through C2's markdown, and reactions, filtered by All, Humans, and Bots.
+- [ ] Use the same rows in B10's peek drawer and on merge approval cards.
+- [ ] In `checkList.ts`, keep sorting and the rollup pure. Failing checks come first, then running, then the rest, and the rollup reads like "1 failing, 2 running, 8 passing".
+
+**You see.**
+
+- [ ] A Checks tab shows the ticket's PR like Orca does, with each check's status, its required flag, its link, and the PR's comments, and the drawer and merge cards use the same rows.
+
+**Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] `checkList.test.ts` sorts a fixed list with all seven statuses, a required check, and a placeholder into a literal expected order and rollup text. Run `vp test run src/checks/checkList.test.ts` from `apps/board`.
+
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe. A lane that needs a real PR uses the shared lane repo from the boot recipe.
+
+- [ ] Lane 1. Regression lane against trunk. Trunk's drawer lists check names only. Open the Checks tab at head on a PR with passing, failing, running, and skipped checks. Save `m1-checks.png`. Pass when the rows match `gh pr checks`.
+- [ ] Lane 2. Watch a running check finish. Save `m1-running.png`. Pass when its row moves from running to passed with no reload.
+- [ ] Lane 3. Mark one check required by branch protection. Save `m1-required.png`. Pass when only that row shows **Required**.
+- [ ] Lane 4. Open a check's link. Save `m1-link.png`. Pass when the run page opens in the panel.
+- [ ] Lane 5. Add a human comment and a bot comment. Save `m1-comments.png`. Pass when each filter shows the right count.
+- [ ] Lane 6. Use **Mark ready for review** on a draft PR. Save `m1-ready.txt`. Pass when `gh pr view` shows it ready.
+- [ ] Lane 7. Record which checks carry a duration in `description`. Save `m1-description.txt`. Pass when every row that has one shows it.
+- [ ] Lane 8. Open the drawer and the merge approval card for the same ticket. Save `m1-same-rows.png`. Pass when both show the same rows.
+- [ ] Lane 9. Run the Windows app with the Checks tab open. Save `m1-windows.png` from a full-window capture. Pass when the layout matches Orca's reference.
+- [ ] Lane 10. Run the boundary check, the standards check, and the dependency rules at head. Save `m1-checks.txt`. Pass when all three exit 0.
+
+**Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] Metric. Time from opening the Checks tab on a PR with 50 checks and 100 comments to its first paint.
+- [ ] Probe. Log `board:checks-open` and `board:checks-painted` ten times.
+- [ ] Baseline. Trunk has no tab. Record the head times.
+- [ ] Rule. The median stays under 200 ms, recorded for O1.
+
+**Review gate.** The operator reviews at merge.
+
+- [ ] Copy lane 1, 5, and 9 screenshots into `apps/board/docs/media/m1-review-<slug>.png`.
+- [ ] Record a 30 to 60 second video of the change from a lane. Save it as `apps/board/docs/media/m1-review.mp4`.
+- [ ] Post the screenshots and the video in chat for the operator at merge.
+
+**Merge.**
+
+- [ ] Root's clean verdict at the exact head SHA.
+- [ ] Bugbot triage done.
+- [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
+- [ ] The root appends M1 to the base-branch stack and the operator lands it bottom-up.
+
+## Start work from Linear and GitHub issues (L1)
+
+**Depends on.** M1.
 
 **Files.**
 
@@ -1454,14 +1570,14 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 
 - [ ] `issueLinks.test.ts` finds the keys in a fixed text, joins a fixed `tickets.json` to fixed issues, and turns approved create, state, and comment items into literal expected `issues.create`, `issues.setState`, and `issues.comment` inputs. Run `vp test run src/issues/issueLinks.test.ts` from `apps/board`.
 
-**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe. Linear lanes read the operator's workspace with a key the operator enters at lane time, and never write to it. Write lanes use a scratch Linear workspace key the operator provides, or a throwaway GitHub repo.
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe. Linear lanes read the operator's workspace with a key the operator enters at lane time, and never write to it. Write lanes use a scratch Linear workspace key the operator provides, or the shared lane repo from the boot recipe.
 
 - [ ] Lane 1. Regression lane against trunk. Trunk's dialog has no Create From row, so record that fact. Connect Linear at head. Save `l1-connect.png`. Pass when `issueTrackers.list` shows Linear connected and the key appears in no board file or log.
 - [ ] Lane 2. Bind the project to a team. Save `l1-bind.png`. Pass when `issues.list` returns that team's issues.
 - [ ] Lane 3. Search the Linear tab. Save `l1-search.png`. Pass when the results match Linear's own search for the same text.
 - [ ] Lane 4. Create a board from an issue. Save `l1-from-issue.png`. Pass when the orchestrator's first message holds the issue's description and comments.
 - [ ] Lane 5. Load a `tickets.json` whose tickets link child issues. Save `l1-ticket-chip.png`. Pass when each frame shows the key, state, and assignee Linear reports.
-- [ ] Lane 6. Search the GitHub tab on a throwaway repo with three issues. Save `l1-github.png`. Pass when all three are listed and one starts a board.
+- [ ] Lane 6. Search the GitHub tab on the shared lane repo after opening three lane issues there. Save `l1-github.png`. Pass when all three are listed and one starts a board.
 - [ ] Lane 7. Have a real Claude orchestrator change an issue's state in the scratch tracker twice, once through a `tracker_write` item and once by calling `set_issue_state` itself, then have a Codex orchestrator call it once. Save `l1-write.png`. Pass when every call waits for the operator with the exact change shown, **Hold** leaves the issue unchanged, and **Approve** changes it.
 - [ ] Lane 8. Use **Add from Linear** on an existing board. Save `l1-add.png`. Pass when the orchestrator adds a ticket linked to that issue.
 - [ ] Lane 9. Run the Windows app and open the new-board dialog on the Linear tab. Save `l1-windows.png` from a full-window capture. Pass when it matches the layout of Orca's dialog in the reference screenshot.
