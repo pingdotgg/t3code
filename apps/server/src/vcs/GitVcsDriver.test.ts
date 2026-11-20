@@ -1504,6 +1504,60 @@ it.effect.each(["local", "mixed", "exit"] as const)(
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+it.effect("checkpoint authorship works with git that rejects --diff-merges=remerge", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const liveProcess = yield* VcsProcess.VcsProcess;
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-old-git-" });
+    const { git } = yield* makeCheckpointFixture(driver, cwd);
+    yield* git(["commit", "-am", "baseline"]);
+    const fromCheckpointRef = CheckpointRef.make("refs/t3/checkpoints/old-git/from");
+    const toCheckpointRef = CheckpointRef.make("refs/t3/checkpoints/old-git/to");
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef: fromCheckpointRef });
+    yield* fs.writeFileString(path.join(cwd, "local.txt"), "local\n");
+    yield* git(["add", "."]);
+    yield* git(["commit", "-m", "local"]);
+    yield* driver.checkpoints.captureCheckpoint({
+      cwd,
+      checkpointRef: toCheckpointRef,
+      previousCheckpointRef: fromCheckpointRef,
+    });
+
+    // Git before 2.36 (Ubuntu 22.04 ships 2.34.1) has no remerge diff mode.
+    const oldGitDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(VcsProcess.VcsProcess, {
+        run: (input) => {
+          if (input.args.at(-1) === "version" && input.args.length <= 3) {
+            return liveProcess
+              .run(input)
+              .pipe(Effect.map((result) => ({ ...result, stdout: "git version 2.34.1\n" })));
+          }
+          if (!input.args.includes("--diff-merges=remerge")) return liveProcess.run(input);
+          return Effect.fail(
+            new VcsProcessExitError({
+              operation: input.operation,
+              command: input.command,
+              cwd: input.cwd,
+              exitCode: 128,
+              detail: "fatal: unknown value for --diff-merges: remerge",
+            }),
+          );
+        },
+      }),
+    );
+    assert.deepEqual(
+      yield* oldGitDriver.checkpoints.listAuthoredPaths({
+        cwd,
+        fromCheckpointRef,
+        toCheckpointRef,
+      }),
+      new Set(["local.txt"]),
+    );
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 it.effect("a branch switch landing after the snapshot belongs to the next checkpoint", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
