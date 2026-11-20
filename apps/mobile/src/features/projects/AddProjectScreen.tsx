@@ -1836,12 +1836,13 @@ export function AddProjectMultiRepoScreen(props: {
       });
       if (AsyncResult.isFailure(inspected)) throw Cause.squash(inspected.cause);
       const folder = inspected.value;
-      if (folder.kind === "unavailable") throw new Error(folder.reason ?? "Choose another folder.");
+      if (folder.kind === "unavailable")
+        throw new Error(folder.reason ?? gt("Choose another folder."));
       if (folder.kind === "empty" || folder.kind === "missing") {
         const parsed = parseMultiRepoCloneInput(repositories);
         const members = selected?.members ?? parsed.members;
         if (members.length === 0 || (selected === null && parsed.invalid.length > 0))
-          throw new Error("Enter Git URLs or owner/repo names to clone.");
+          throw new Error(gt("Enter Git URLs or owner/repo names to clone."));
         const title = selected?.source.title ?? inferProjectTitleFromPath(folder.path);
         const result = await clone({
           environmentId: environment.environmentId,
@@ -1859,7 +1860,9 @@ export function AddProjectMultiRepoScreen(props: {
           !(await waitForProject({ environmentId: environment.environmentId, projectId }, 15_000))
         )
           throw new Error(
-            "Project creation started, but this client has not received it yet. Check the project list before trying again.",
+            gt(
+              "Project creation started, but this client has not received it yet. Check the project list before trying again.",
+            ),
           );
         openDraft(
           { environmentId: environment.environmentId, projectId, title, cloning: "1" },

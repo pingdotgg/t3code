@@ -395,7 +395,10 @@ export function syncStatusText(
       };
     case "failed":
       return {
-        text: resolve(msg("Failed: {message}", { message: status.message })),
+        text:
+          status.message === ""
+            ? resolve(msg("The sync failed."))
+            : resolve(msg("Failed: {message}", { message: status.message })),
         tone: "error",
       };
     case "off":

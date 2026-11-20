@@ -613,7 +613,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       ? [gt("New worktrees start from remote")]
       : []),
     ...(settings.useWorklerForNewWorkspaces !== DEFAULT_WORKLER_WORKSPACES_ENABLED
-      ? ["Create new workspaces with Workler"]
+      ? [gt("Create new workspaces with Workler")]
       : []),
     ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
       ? [gt("Add project base directory")]

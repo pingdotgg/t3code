@@ -1,4 +1,3 @@
-import { msg } from "gt-i18n";
 import {
   type EnvironmentId,
   ProfilesError,
@@ -240,7 +239,8 @@ function errorText(error: unknown): string {
   if (typeof error === "object" && error !== null && "message" in error) {
     return String(error.message);
   }
-  return msg("The sync failed.");
+  // Empty: syncStatusText says the sync failed in the UI language.
+  return "";
 }
 
 /** Older servers answer an unknown RPC with a defect naming the request tag. */

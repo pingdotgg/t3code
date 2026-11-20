@@ -1,4 +1,6 @@
 import { useGT, useMessages } from "gt-react-native";
+import { resolveMobileBrandName } from "../../lib/mobileBranding";
+import Constants from "expo-constants";
 import { useActiveNewTask } from "../../state/active-new-task";
 import { ThreadUndoNotice } from "../home/ThreadUndoNotice";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
@@ -536,7 +538,9 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   };
   const header = (
     <WorkspaceListHeader
-      accessibilityLabel={gt("{appName}, Threads", { appName: "T3 Code" })}
+      accessibilityLabel={gt("{appName}, Threads", {
+        appName: resolveMobileBrandName(Constants.expoConfig?.extra?.appBrand),
+      })}
       onOpenEnvironments={props.onOpenEnvironmentSettings}
       onOpenSettings={props.onOpenSettings}
       search={{

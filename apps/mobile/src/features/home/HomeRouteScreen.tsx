@@ -1,4 +1,6 @@
 import { uuidv4 } from "../../lib/uuid";
+import { resolveMobileBrandName } from "../../lib/mobileBranding";
+import Constants from "expo-constants";
 import { ThreadUndoNotice } from "./ThreadUndoNotice";
 import { use } from "react";
 import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
@@ -164,7 +166,9 @@ export function HomeRouteScreen() {
     <AndroidHomeFabLayout onStartNewTask={startNewTask}>
       <>
         <WorkspaceListHeader
-          accessibilityLabel={gt("T3 Code, Threads")}
+          accessibilityLabel={gt("{appName}, Threads", {
+            appName: resolveMobileBrandName(Constants.expoConfig?.extra?.appBrand),
+          })}
           onOpenEnvironments={() => openSettings(navigation, "SettingsEnvironments")}
           search={{
             value: searchQuery,

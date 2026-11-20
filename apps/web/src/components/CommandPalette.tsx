@@ -1241,10 +1241,16 @@ function OpenCommandPaletteDialog(props: {
               value: `action:add-project:${environmentId}:multi-repo:${setup.key}`,
               searchTerms: ["multi-repo", "set up", "another machine", sourceLabel ?? ""],
               title: setup.source.title,
-              description: gt(
-                "{count, plural, one {{count} repository, from {source}} other {{count} repositories, from {source}}}",
-                { count: setup.members.length, source: sourceLabel ?? gt("another machine") },
-              ),
+              description:
+                sourceLabel === undefined
+                  ? gt(
+                      "{count, plural, one {{count} repository, from another machine} other {{count} repositories, from another machine}}",
+                      { count: setup.members.length },
+                    )
+                  : gt(
+                      "{count, plural, one {{count} repository, from {source}} other {{count} repositories, from {source}}}",
+                      { count: setup.members.length, source: sourceLabel },
+                    ),
               icon: <FolderGit2Icon className={ITEM_ICON_CLASS} />,
               keepOpen: true,
               run: async () => {
