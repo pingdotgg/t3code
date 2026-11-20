@@ -1223,6 +1223,9 @@ importers:
       katex:
         specifier: ^0.18.2
         version: 0.18.10
+      linkifyjs:
+        specifier: ^4.3.3
+        version: 4.3.3
       lucide-react:
         specifier: ^0.564.0
         version: 0.564.0(react@19.3.0)

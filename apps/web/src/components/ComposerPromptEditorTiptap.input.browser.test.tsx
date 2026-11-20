@@ -1128,3 +1128,18 @@ it.each(["other field", "document body"])(
     );
   },
 );
+
+it("opens a draft URL only on a modified primary click", async () => {
+  await using screen = await mountEditor("Visit www.example.com.");
+  using open = vi.spyOn(window, "open").mockReturnValue(null);
+  const link = screen.container.querySelector("[data-composer-url]");
+  expect(link?.textContent).toBe("www.example.com");
+  for (const options of [{}, { button: 1, ctrlKey: true }, { ctrlKey: true }, { metaKey: true }]) {
+    link?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...options }));
+  }
+  expect(open.mock.calls).toEqual([
+    ["https://www.example.com", "_blank", "noopener,noreferrer"],
+    ["https://www.example.com", "_blank", "noopener,noreferrer"],
+  ]);
+  expect(screen.editor.getText()).toBe("Visit www.example.com.");
+});

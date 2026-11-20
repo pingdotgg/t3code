@@ -14,8 +14,10 @@ import {
   type TiptapEditorHTMLElement,
 } from "@tiptap/core";
 import { ReactNodeViewRenderer, NodeViewWrapper, type NodeViewProps } from "@tiptap/react";
+import { find as findLinks } from "linkifyjs";
 import StarterKit from "@tiptap/starter-kit";
-import { useGT } from "gt-react";
+import { m } from "~/i18n/messages";
+import { msg, useGT } from "gt-react";
 import { newlineInCode, splitBlockKeepMarks } from "@tiptap/pm/commands";
 import { isHistoryTransaction } from "@tiptap/pm/history";
 import {
@@ -117,6 +119,7 @@ import {
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { isRichTextFormattingShortcut } from "~/keybindings";
+import { readLocalApi } from "~/localApi";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { isThreadNavigationShortcut } from "~/keybindings";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -727,6 +730,61 @@ function isInCodeBlock(view: EditorView): boolean {
   return view.state.selection.$from.parent.type.spec.code === true;
 }
 
+const ComposerUrlExtension = Extension.create({
+  name: "composer-url",
+  addProseMirrorPlugins() {
+    const key = new PluginKey<DecorationSet>("composer-url");
+    return [
+      new Plugin<DecorationSet>({
+        key,
+        state: {
+          init: (_, state) => composerUrlDecorations(state),
+          apply: (tr, old, _, state) => (tr.docChanged ? composerUrlDecorations(state) : old),
+        },
+        props: {
+          decorations: (state) => key.getState(state),
+          handleDOMEvents: {
+            click: (_, event) => {
+              if (event.button !== 0 || !(event.metaKey || event.ctrlKey)) return false;
+              const link =
+                event.target instanceof Element
+                  ? event.target.closest("[data-composer-url]")
+                  : null;
+              const text = link?.textContent;
+              if (!text || !/^(?:https?:\/\/|www\.)/i.test(text)) return false;
+              event.preventDefault();
+              const url = /^www\./i.test(text) ? `https://${text}` : text;
+              void readLocalApi()?.shell.openExternal(url).catch(console.error);
+              return true;
+            },
+          },
+        },
+      }),
+    ];
+  },
+});
+
+function composerUrlDecorations({ doc }: EditorState): DecorationSet {
+  const decorations: Decoration[] = [];
+  doc.descendants((node, pos) => {
+    if (node.type.spec.code) return false;
+    if (!node.text || node.marks.some((mark) => mark.type.spec.code)) return;
+    if (!/https?:\/\/|www\./i.test(node.text)) return;
+    for (const { start, end, value } of findLinks(node.text, "url")) {
+      if (/^(?:https?:\/\/|www\.)/i.test(value)) {
+        decorations.push(
+          Decoration.inline(pos + start, pos + end, {
+            class: "text-info-foreground",
+            "data-composer-url": "",
+            title: `${m(msg("Open link"))} (${isMacPlatform(navigator.platform) ? "⌘-click" : "Ctrl-click"})`,
+          }),
+        );
+      }
+    }
+  });
+  return DecorationSet.create(doc, decorations);
+}
+
 const ChipSelectionPluginKey = new PluginKey<DecorationSet>("composer-chip-range-selection");
 
 /** Highlights chips inside a text selection; their node views draw no native highlight. */
@@ -855,6 +913,7 @@ function createComposerExtensions(richText: boolean) {
     ComposerCitationExtension,
     ComposerContextReferenceExtension,
     ComposerChipSelectionExtension,
+    ComposerUrlExtension,
     ...(richText
       ? [
           ComposerMarkdownSourceExtension,
