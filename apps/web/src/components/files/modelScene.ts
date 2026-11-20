@@ -26,6 +26,7 @@ import {
 } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
+import { readDataUrlBlob } from "~/components/media/mediaContent";
 import { observeResize } from "~/lib/observeResize";
 
 import { PreviewError } from "./previewFailure";
@@ -113,32 +114,41 @@ async function parseModel(
     }
     case "glb": {
       const { GLTFLoader } = await import("three/examples/jsm/loaders/GLTFLoader.js");
+      const inlineResources = new Map<string, string>();
       const manager = new LoadingManager().setURLModifier((url) => {
-        if (/^(?:data|blob):/i.test(url)) return url;
+        if (/^blob:/i.test(url)) return url;
+        const objectUrl = inlineResources.get(url);
+        if (objectUrl) return objectUrl;
         throw new PreviewError({ code: "model-invalid" });
       });
-      const gltf = await new GLTFLoader(manager)
-        .register((parser) => ({
-          name: "self-contained-preview",
-          beforeRoot: () => {
-            const manifest: {
-              buffers?: ReadonlyArray<{ uri?: unknown }>;
-              images?: ReadonlyArray<{ uri?: unknown }>;
-            } = parser.json;
-            // Blob URLs must come from the loader's embedded image handling.
-            for (const part of [...(manifest.buffers ?? []), ...(manifest.images ?? [])]) {
-              if (
-                part.uri !== undefined &&
-                (typeof part.uri !== "string" || !/^data:/i.test(part.uri))
-              ) {
-                throw new PreviewError({ code: "model-invalid" });
+      try {
+        const gltf = await new GLTFLoader(manager)
+          .register((parser) => ({
+            name: "self-contained-preview",
+            beforeRoot: () => {
+              const manifest: {
+                buffers?: ReadonlyArray<{ uri?: unknown }>;
+                images?: ReadonlyArray<{ uri?: unknown }>;
+              } = parser.json;
+              // Desktop allows blob fetches but blocks data URLs in connect-src.
+              for (const part of [...(manifest.buffers ?? []), ...(manifest.images ?? [])]) {
+                const { uri } = part;
+                if (uri === undefined) continue;
+                if (typeof uri !== "string" || !/^data:/i.test(uri)) {
+                  throw new PreviewError({ code: "model-invalid" });
+                }
+                if (!inlineResources.has(uri)) {
+                  inlineResources.set(uri, URL.createObjectURL(readDataUrlBlob(uri)));
+                }
               }
-            }
-            return Promise.resolve();
-          },
-        }))
-        .parseAsync(bytes, "");
-      return gltf.scene;
+              return Promise.resolve();
+            },
+          }))
+          .parseAsync(bytes, "");
+        return gltf.scene;
+      } finally {
+        for (const url of inlineResources.values()) URL.revokeObjectURL(url);
+      }
     }
   }
 }
@@ -387,8 +397,7 @@ export class ModelScene {
 
   /** Where each note sits on the canvas, in CSS pixels from its top left corner. */
   project(notes: ReadonlyArray<ModelNote>): ProjectedPin[] {
-    const width = this.renderer.domElement.clientWidth;
-    const height = this.renderer.domElement.clientHeight;
+    const { width, height } = this.renderer.getSize(new Vector2());
     return notes.map((note) => {
       const world = new Vector3(...note.point).applyMatrix4(this.content.matrixWorld);
       const normal = new Vector3(...note.normal).transformDirection(this.content.matrixWorld);
@@ -412,10 +421,12 @@ export class ModelScene {
     const context = canvas.getContext("2d");
     if (!context) throw new PreviewError({ code: "model-invalid" });
     // The canvas is transparent over the themed background, so the capture paints that first.
-    context.fillStyle = getComputedStyle(this.container).backgroundColor;
+    context.fillStyle =
+      getComputedStyle(this.container).backgroundColor ||
+      getComputedStyle(document.documentElement).getPropertyValue("--background");
     context.fillRect(0, 0, canvas.width, canvas.height);
     context.drawImage(source, 0, 0);
-    const scale = source.width / Math.max(1, source.clientWidth);
+    const scale = this.renderer.getPixelRatio();
     const pins = this.project(notes);
     context.font = `600 ${11 * scale}px Inter, system-ui, sans-serif`;
     context.textAlign = "center";

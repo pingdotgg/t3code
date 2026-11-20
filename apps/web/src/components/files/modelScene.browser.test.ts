@@ -1,5 +1,6 @@
 import { expect, it } from "vite-plus/test";
 
+import { stubGlobal } from "../../../test/render";
 import { reconcileModelNotes } from "./modelAnnotations";
 import { ModelScene } from "./modelScene";
 
@@ -135,6 +136,17 @@ it("previews embedded GLB data and refuses a reference to a separate file", asyn
   const scene = await load();
   resources.defer(() => scene.dispose());
   expect(scene.summary.triangles).toBe(1);
+  const fetchResource = globalThis.fetch;
+  using _fetch = stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input instanceof Request ? input.url : String(input);
+    // Match desktop's connect-src policy, which permits blob: but not data:.
+    if (url.startsWith("data:")) return Promise.reject(new TypeError("Failed to fetch"));
+    return fetchResource(input, init);
+  });
+  const payload = btoa(String.fromCharCode(...new Uint8Array(vertices.buffer)));
+  const inline = await load(`data:application/octet-stream;base64,${payload}`);
+  resources.defer(() => inline.dispose());
+  expect(inline.summary.triangles).toBe(1);
   await expect(load("separate-buffer.bin")).rejects.toMatchObject({
     code: "model-invalid",
   });

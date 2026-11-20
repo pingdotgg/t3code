@@ -48,7 +48,14 @@ it("keeps a draft attachment pin isolated and sends its earlier screenshot after
   await userEvent.click(viewer, {
     position: { x: viewer.element().clientWidth / 2 + 12, y: viewer.element().clientHeight / 2 },
   });
-  await userEvent.fill(page.getByRole("textbox", { name: "Note", exact: true }), "Round this edge");
+  const note = page.getByRole("textbox", { name: "Note", exact: true });
+  await userEvent.fill(note, "Round this edge");
+  note
+    .element()
+    .dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true }),
+    );
+  await expect.element(note).toHaveValue("Round this edge");
   await userEvent.click(page.getByRole("button", { name: "Pin", exact: true }));
   await expect.element(page.getByRole("button", { name: "Note 1: Round this edge" })).toBeVisible();
   await screen.rerender(dialog("other-panel", file));

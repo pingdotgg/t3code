@@ -195,12 +195,23 @@ export default function ModelViewer(props: {
     return () => {
       controller.abort();
       if (!mounted) return;
+      const currentNotes = notesRef.current;
+      const view = mounted.view;
+      let capture = rememberedCapture.current;
+      // Save the previous view before disposal in case the next model revision makes the pins stale.
+      if (currentNotes.some((note) => !note.stale)) {
+        try {
+          capture = { screenshot: mounted.capture(currentNotes), view };
+        } catch {
+          capture = null;
+        }
+      }
       useModelPreviewStore.getState().remember(props.memoryKey, {
         fingerprint: mounted.summary.fingerprint,
-        notes: notesRef.current,
-        view: mounted.view,
+        notes: currentNotes,
+        view,
         wireframe: readWireframe(),
-        capture: rememberedCapture.current,
+        capture,
       });
       mounted.dispose();
       setScene(null);
@@ -244,24 +255,13 @@ export default function ModelViewer(props: {
     if (hit) setDraft({ id: null, hit, text: "" });
   };
 
-  const rememberPins = (next: ReadonlyArray<ModelNote>) => {
-    if (!scene || !next.some((note) => !note.stale)) return;
-    try {
-      rememberedCapture.current = { screenshot: scene.capture(next), view: scene.view };
-    } catch {
-      rememberedCapture.current = null;
-    }
-  };
-
   const saveDraft = () => {
     if (!draft) return;
     const text = draft.text.trim();
     if (!text) return;
     if (draft.id === null && draft.hit) {
       const { point, normal } = draft.hit;
-      const next = [...notes, { id: randomUUID(), text, point, normal, stale: false }];
-      setNotes(next);
-      rememberPins(next);
+      setNotes([...notes, { id: randomUUID(), text, point, normal, stale: false }]);
     } else {
       setNotes(notes.map((note) => (note.id === draft.id ? { ...note, text } : note)));
     }
@@ -271,7 +271,6 @@ export default function ModelViewer(props: {
     // Removing a note invalidates the numbering in its saved screenshot.
     const next = notes.filter((note) => note.id !== id);
     rememberedCapture.current = null;
-    rememberPins(next);
     setNotes(next);
     setDraft(null);
   };
@@ -316,7 +315,6 @@ export default function ModelViewer(props: {
       if (staged) {
         const next = notesRef.current.filter((note) => !notes.includes(note));
         rememberedCapture.current = null;
-        rememberPins(next);
         setNotes(next);
         if (next.length === 0) setAnnotating(false);
       } else {
@@ -476,7 +474,7 @@ export default function ModelViewer(props: {
               aria-label={gt("Note")}
               onChange={(event) => setDraft({ ...draft, text: event.target.value })}
               onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
+                if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                   event.preventDefault();
                   saveDraft();
                 }
