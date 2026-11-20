@@ -13,7 +13,6 @@ test(
     await browser.route(pairingToken, async (route) => {
       if (route.request.method !== "POST") return route.fallback();
       requested.resolve();
-      // Simulate a delayed request without replacing the server's response.
       await release.promise;
       await route.continue();
     });
@@ -22,33 +21,25 @@ test(
     const authorizedClients = browser.locator("#authorized-clients");
     const open = authorizedClients.getByRole("button", "Create link", { exact: true });
     const dialog = screen.getByRole("dialog", "Create pairing link", { exact: true });
+    // A closing popup keeps its role until its exit animation ends; only an open one has data-open.
+    const openDialog = browser
+      .locator('[data-slot="dialog-popup"][data-open]')
+      .getByRole("heading", "Create pairing link", { exact: true });
     const label = "Waiting tablet";
     try {
       await open.tap();
       await dialog.getByPlaceholder("e.g. Living room iPad").fill(label);
       await dialog.getByRole("button", "Create link", { exact: true }).tap();
       await requested.promise;
-      await dialog.getByRole("button", "Creating…", { exact: true }).waitFor();
       await browser.keyboard.press("Escape");
-
-      const openPopup = browser
-        .locator('[data-slot="dialog-popup"][data-open]')
-        .getByRole("heading", "Create pairing link", { exact: true });
-      await openPopup.waitFor({ state: "hidden" });
-      const dismissed = !(await openPopup.isVisible());
-      if (dismissed) {
-        await dialog.waitFor({ state: "hidden" });
-        await open.tap();
-        await dialog.waitFor();
-      }
+      await dialog.waitFor({ state: "hidden" });
+      await open.tap();
+      await openDialog.waitFor();
 
       release.resolve();
       await authorizedClients.getByText(label, { exact: true }).waitFor();
       await app.screenshot("after-first-link-finishes");
-      expect(
-        !dismissed || (await openPopup.isVisible()),
-        "The reopened Create link dialog remains open",
-      ).toBe(true);
+      await expect(openDialog).toBeVisible();
     } finally {
       release.resolve();
       await browser.unroute(pairingToken);
