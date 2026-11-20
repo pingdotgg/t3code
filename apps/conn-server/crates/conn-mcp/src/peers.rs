@@ -255,6 +255,7 @@ impl Cx<'_> {
         let reads = match tool {
             "t3_pending_request" => action != Some("respond"),
             "t3_queue" => matches!(action, Some("list" | "read")),
+            "t3_thread_transfer" => action == Some("status"),
             "t3_thread_configure" => !args.contains_key("modelSelection"),
             "orchestrator_capabilities"
             | "t3_thread_list"

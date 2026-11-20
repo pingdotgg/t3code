@@ -21,6 +21,20 @@ the run stays open. Waiting for terminal confirmation is deliberate. `idle-diff`
 split in `KNOWN` as `intermittent`; a gate either side misses still fails it. Whether to
 match T3 is open.
 
+## `t3_thread_transfer` (2026-11-20)
+
+`t3_thread_transfer` is served (`conn-mcp/src/tools/manage.rs`, T3's `thread/handlers.ts`):
+`status` lists the thread's context transfers; `fork` dispatches `thread.fork` into
+`<commandId>:fork` from `sourcePoint` (default `latest_stable`), with `title`; `merge_back`
+reads both threads and dispatches `thread.merge_back`. Access as T3: `status` reads,
+the others write both threads.
+
+- **Known difference:** the engine still refuses `thread.merge_back` ("Conn Server cannot
+  merge a fork back yet."; it needs T3's `ContextHandoffService`), so `merge_back` fails after
+  T3's own checks.
+- **Proof:** `parity.mjs`: 8 calls on both servers (status, a fork with no stable run,
+  merge-back refusals, missing threads, bad input). `cargo test -p conn-mcp thread_transfer`:
+  a fork of a finished run, its transfer in the fork's `status`, the merge-back refusal.
 ## PR forge tools and CI (2026-11-20)
 
 Agents can read, list, update, answer, review and merge a thread's PR, and read and re-run its

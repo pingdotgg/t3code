@@ -25,7 +25,7 @@
         "t3_thread_interrupt",
         "t3_thread_search",
         "t3_thread_configure",
-        "t3_thread_organize"
+        "t3_thread_transfer"
       ]
     },
     {
@@ -39,8 +39,8 @@
         "create_threads",
         "t3_thread_list",
         "t3_thread_search",
-        "t3_thread_launch",
-        "t3_worktree_status"
+        "t3_thread_transfer",
+        "t3_thread_launch"
       ]
     },
     {
@@ -55,7 +55,7 @@
         "t3_thread_interrupt",
         "t3_thread_search",
         "t3_thread_configure",
-        "t3_thread_organize"
+        "t3_thread_transfer"
       ]
     },
     {

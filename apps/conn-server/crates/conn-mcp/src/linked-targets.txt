@@ -12,6 +12,7 @@ t3_project_list
 t3_project_read
 t3_environment_read
 t3_thread_organize
+t3_thread_transfer
 t3_queue
 t3_thread_configure
 schedule_task

@@ -422,6 +422,16 @@ const steps = [
   ],
   ["t3_thread_organize", () => ({ action: "pin" })],
   ["t3_thread_organize", () => ({ threadId: "thread:none", action: "pin" })],
+  // Context transfers: status, a fork of the idle thread, and merge-back refusals before the
+  // engine (Conn cannot merge a fork back yet).
+  ["t3_thread_transfer", (c) => ({ threadId: c.idleThreadId, action: "status" }), undefined, { same: (v) => v.transfers.length }],
+  ["t3_thread_transfer", () => ({ threadId: "thread:none", action: "status" })],
+  ["t3_thread_transfer", (c) => ({ threadId: c.idleThreadId, action: "fork", title: "Parity fork" }), (c, v) => (c.forkThreadId = v.targetThreadId)],
+  ["t3_thread_transfer", (c) => ({ threadId: c.forkThreadId, action: "status" }), undefined, { same: (v) => v.transfers.map((t) => t.status) }],
+  ["t3_thread_transfer", (c) => ({ threadId: c.forkThreadId, action: "merge_back" })],
+  ["t3_thread_transfer", (c) => ({ threadId: c.forkThreadId, action: "merge_back", targetThreadId: "thread:none" })],
+  ["t3_thread_transfer", () => ({ threadId: "thread:none", action: "fork" })],
+  ["t3_thread_transfer", () => ({ action: "bogus" })],
   ["t3_thread_organize", (c) => ({ threadId: c.idleThreadId, action: "bogus" })],
   // t3_queue on the idle thread: an empty queue, then each write on a run that is not queued.
   ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "list" })],
