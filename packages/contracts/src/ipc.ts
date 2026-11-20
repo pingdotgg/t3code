@@ -292,6 +292,8 @@ export interface DesktopUpdateState {
   notAppliedVersion?: string;
   /** Off only because a managed policy rules out this channel; switching channels turns it on. */
   channelBlockedByPolicy?: true;
+  /** The check failed only because this build's track differs from the saved `channel`. */
+  trackMismatch?: { readonly buildChannel: DesktopUpdateChannel };
 }
 
 export interface DesktopUpdateReleaseNote {
@@ -336,6 +338,7 @@ export const DesktopUpdateStateSchema = Schema.Struct({
   canRetry: Schema.Boolean,
   notAppliedVersion: Schema.optionalKey(Schema.String),
   channelBlockedByPolicy: Schema.optionalKey(Schema.Literal(true)),
+  trackMismatch: Schema.optionalKey(Schema.Struct({ buildChannel: DesktopUpdateChannelSchema })),
 });
 
 export const DesktopCliCommandStateSchema = Schema.Struct({

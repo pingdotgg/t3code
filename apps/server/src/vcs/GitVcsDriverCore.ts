@@ -1971,6 +1971,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       statusRemoteRefreshCache,
       new StatusRemoteRefreshCacheKey({ gitCommonDir, remoteName }),
     ).pipe(Effect.ignore);
+    if (!(yield* GitVcsDriver.AwaitStatusFetch)) return;
+    // The cache returns after five seconds while the fetch keeps running.
+    const pending = statusFetches.get(`${gitCommonDir}\0${remoteName}`);
+    if (pending) yield* Fiber.await(pending.fiber);
   });
 
   const resolveDefaultBranchName = (
