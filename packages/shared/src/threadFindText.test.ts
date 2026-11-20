@@ -117,3 +117,9 @@ it("indexes the citation chip label instead of its link text", () => {
     "my note",
   ]);
 });
+
+it("indexes web citation markers as typed in user messages only", () => {
+  const text = "Explain citeturn0search0 please";
+  expect(searchableMessageSegments({ role: "user", text, streaming: false })).toEqual([text]);
+  expect(assistantSegments(text)).toEqual(["Explain please"]);
+});

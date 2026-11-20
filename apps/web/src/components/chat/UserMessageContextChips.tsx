@@ -45,6 +45,7 @@ import {
   reviewCommentContextLabel,
 } from "~/lib/composerContextRecords";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
+import { CHAT_USER_MARKDOWN_REMARK_PLUGINS } from "@t3tools/shared/markdownPipeline";
 import { ContextChip, ContextChipLabel, type ContextChipKind } from "../ContextChip";
 import { createContextPresentationRegistry } from "../contextPresentationRegistry";
 import type { ChatMarkdownContextReference } from "../ChatMarkdown";
@@ -564,6 +565,7 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
             skills={ctx.skills}
             parseRawHtml={false}
             lineBreaks
+            extraRemarkPlugins={CHAT_USER_MARKDOWN_REMARK_PLUGINS}
           />
         </div>
       )}
