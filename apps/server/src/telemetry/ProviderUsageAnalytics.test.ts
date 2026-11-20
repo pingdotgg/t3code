@@ -30,6 +30,14 @@ const providers = [
   { driver: "codex", models: [{ slug: "gpt-6-sol" }, { slug: "acme-azure-deployment" }] },
   { driver: "claudeAgent", models: [{ slug: "claude-opus-5-5" }, { slug: "claude-haiku-4-5" }] },
   { driver: "opencode", models: [{ slug: "ollama/acme-internal" }] },
+  // Antigravity ships models before the bundled manifest lists them.
+  {
+    driver: "antigravity",
+    models: [
+      { slug: "gemini-4-neon", aliases: ["antigravity-default"] },
+      { slug: "gemini-4-hydrogen" },
+    ],
+  },
 ].map(
   ({ driver, models }) =>
     ({
@@ -77,7 +85,10 @@ const context = (
   modelSelection: {
     instanceId: ProviderInstanceId.make("codex"),
     model,
-    options: [{ id: "reasoningEffort", value: "xhigh" }],
+    options: [
+      { id: "reasoningEffort", value: "xhigh" },
+      { id: "serviceTier", value: "priority" },
+    ],
   },
   runtimeMode: "full-access",
   interactionMode: "default",
@@ -154,6 +165,7 @@ describe("provider usage reporting", () => {
           lifecycleObserved: true,
           model: "gpt-6-sol",
           effort: "xhigh",
+          serviceTier: "fast",
           runtimeMode: "full-access",
           interactionMode: "default",
           createdBy: "user",
@@ -319,5 +331,34 @@ describe("provider usage reporting", () => {
       expect(local).not.toHaveProperty("observedModel");
     }
     expect(routed("ollama/acme-internal", "secret-variant")).not.toHaveProperty("effort");
+  });
+
+  it("reports Antigravity catalog models the bundled manifest does not list", () => {
+    expect(label("gemini-4-hydrogen")).toBe("gemini-4-hydrogen");
+    expect(label("antigravity-default")).toBe("gemini-4-neon");
+    expect(label("gemini-4-unlisted")).toBeUndefined();
+  });
+
+  it("reports closed service tiers from a tier option or a fast mode toggle", () => {
+    const tier = (option: { id: string; value: string | boolean }) =>
+      providerTurnProperties(
+        {
+          driver: "codex",
+          context: {
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-6-sol",
+              options: [option],
+            },
+          },
+          providerTurn: turn("t", complete(1, 1)),
+        },
+        label,
+      ).serviceTier;
+    expect(tier({ id: "serviceTier", value: "ultrafast" })).toBe("ultrafast");
+    expect(tier({ id: "serviceTier", value: "default" })).toBe("standard");
+    expect(tier({ id: "serviceTier", value: "/home/me/secret" })).toBeUndefined();
+    expect(tier({ id: "fastMode", value: true })).toBe("fast");
+    expect(tier({ id: "fastMode", value: false })).toBe("standard");
   });
 });

@@ -1,0 +1,43 @@
+import type * as ce from "@distilled.cloud/aws/cost-explorer";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Request for {@link GetCostCategories}.
+ */
+export interface GetCostCategoriesRequest extends ce.GetCostCategoriesRequest {}
+
+/**
+ * Runtime binding for `ce:GetCostCategories`.
+ *
+ * Retrieve the cost category names (or the values of one category)
+ * present in your cost data — usable in query filter expressions. Provide the implementation with
+ * `Effect.provide(AWS.CostExplorer.GetCostCategoriesHttp)`.
+ * ### Exploring Dimensions and Tags
+ * **Example:** List Cost Category Names and Values
+ * ```typescript
+ * // init — account-level binding takes no resource
+ * const getCostCategories = yield* AWS.CostExplorer.GetCostCategories();
+ *
+ * // runtime
+ * const result = yield* getCostCategories({
+ *   TimePeriod: { Start: "2026-06-01", End: "2026-07-01" },
+ * });
+ * const names = result.CostCategoryNames;
+ * ```
+ *
+ * @binding
+ */
+export interface GetCostCategories extends Binding.Service<
+  GetCostCategories,
+  "AWS.CostExplorer.GetCostCategories",
+  () => Effect.Effect<
+    (
+      request: GetCostCategoriesRequest,
+    ) => Effect.Effect<ce.GetCostCategoriesResponse, ce.GetCostCategoriesError>
+  >
+> {}
+
+export const GetCostCategories = Binding.Service<GetCostCategories>(
+  "AWS.CostExplorer.GetCostCategories",
+);

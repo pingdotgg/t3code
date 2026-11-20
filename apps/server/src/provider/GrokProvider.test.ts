@@ -2,7 +2,9 @@
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -196,7 +198,7 @@ describe("buildGrokModelCapabilities", () => {
   });
 });
 
-it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("checkGrokProviderStatus", (it) => {
   it.effect("reports an installed CLI as unhealthy when --version exits non-zero", () =>
     Effect.gen(function* () {
       const secretStderr = "broken grok install: secret-token-value";
@@ -476,8 +478,8 @@ describe("Grok usage limits", () => {
   };
 
   it("shows zero usage for complete weekly and monthly periods with no percentage", () => {
-    for (const [currentPeriod, kind, label, resetsAt] of [
-      [weeklyPeriod, "weekly", "Weekly", "2026-09-18T03:10:30.159Z"],
+    for (const [currentPeriod, kind, label, resetsAt, windowDurationMins] of [
+      [weeklyPeriod, "weekly", "Weekly", "2026-09-18T03:10:30.159Z", 7 * 24 * 60],
       [
         {
           type: "USAGE_PERIOD_TYPE_MONTHLY",
@@ -487,12 +489,15 @@ describe("Grok usage limits", () => {
         "monthly",
         "Monthly",
         "2026-10-01T00:00:00.000Z",
+        30 * 24 * 60,
       ],
     ] as const) {
       const response = { config: { currentPeriod } };
       expect
         .soft(grokUsageResponseToLimits(response, checkedAt).windows)
-        .toEqual([{ id: "subscription", kind, label, usedPercent: 0, resetsAt }]);
+        .toEqual([
+          { id: "subscription", kind, label, usedPercent: 0, resetsAt, windowDurationMins },
+        ]);
     }
   });
 
@@ -549,9 +554,63 @@ describe("Grok usage limits", () => {
       ).windows,
     ).toEqual([{ id: "subscription", kind: "monthly", label: "Monthly", usedPercent: 100 }]);
   });
+
+  it("measures the window from the reported period bounds", () => {
+    const window = (type: string, start: string, end: string) =>
+      grokUsageResponseToLimits(
+        { config: { creditUsagePercent: 4, currentPeriod: { type, start, end } } },
+        checkedAt,
+      ).windows[0];
+    expect(
+      window(
+        "USAGE_PERIOD_TYPE_WEEKLY",
+        "2026-10-14T20:51:37.352+00:00",
+        "2026-10-21T20:51:37.352+00:00",
+      ),
+    ).toEqual({
+      id: "subscription",
+      kind: "weekly",
+      label: "Weekly",
+      usedPercent: 4,
+      resetsAt: "2026-10-21T20:51:37.352Z",
+      windowDurationMins: 7 * 24 * 60,
+    });
+    expect(
+      window(
+        "USAGE_PERIOD_TYPE_MONTHLY",
+        "2026-02-01T00:00:00.000+00:00",
+        "2026-03-01T00:00:00.000+00:00",
+      )?.windowDurationMins,
+    ).toBe(28 * 24 * 60);
+  });
+
+  it("leaves the window length unknown when the period start is unusable", () => {
+    const end = "2026-10-21T20:51:37.352+00:00";
+    for (const start of [
+      undefined,
+      null,
+      42,
+      "invalid",
+      "2026-02-30T00:00:00.000Z",
+      end,
+      "2026-10-28T20:51:37.352+00:00",
+    ]) {
+      const [window] = grokUsageResponseToLimits(
+        {
+          config: {
+            creditUsagePercent: 4,
+            currentPeriod: { type: "USAGE_PERIOD_TYPE_WEEKLY", start, end },
+          },
+        },
+        checkedAt,
+      ).windows;
+      expect(window?.resetsAt).toBe("2026-10-21T20:51:37.352Z");
+      expect(window).not.toHaveProperty("windowDurationMins");
+    }
+  });
 });
 
-it.layer(NodeServices.layer)("readGrokAccount", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("readGrokAccount", (it) => {
   it.effect("reads the configured Grok home and prefers the current login scope to legacy", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -580,7 +639,7 @@ it.layer(NodeServices.layer)("readGrokAccount", (it) => {
         ),
       );
       expect(limits.windows[0]?.usedPercent).toBe(37);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect(
@@ -690,7 +749,7 @@ it.layer(NodeServices.layer)("readGrokAccount", (it) => {
             message: "Grok could not read usage limits.",
           });
         }
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("sanitizes HTTP failures and malformed billing responses, keeping the account", () =>
@@ -720,9 +779,39 @@ it.layer(NodeServices.layer)("readGrokAccount", (it) => {
       }
     }),
   );
+
+  it.effect("tells accounts in Legacy (no storage) to switch to Privacy Mode", () =>
+    Effect.gen(function* () {
+      const { usageLimits: limits } = yield* readGrokAccount({
+        HOME: "/definitely/not/a/grok-home",
+        GROK_AUTH: '{"https://accounts.x.ai/sign-in":{"key":"private-token"}}',
+      }).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json(
+                  {
+                    error:
+                      "Grok Build is not supported in Legacy (no storage). Switch to Privacy Mode to use Grok Build. [WKE=privacy-mode:legacy]",
+                  },
+                  { status: 403 },
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(limits.unavailable?.reason).toBe("probeFailed");
+      expect(limits.unavailable?.message).toMatch(/Privacy Mode/);
+      expect(limits.unavailable?.message).not.toMatch(/WKE=|Grok Build is not supported/);
+    }),
+  );
 });
 
-it.layer(NodeServices.layer)("readGrokAccount email", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("readGrokAccount email", (it) => {
   it.effect("names the account whose limits were read, and nothing for other auth", () =>
     Effect.gen(function* () {
       const current = '"https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828"';

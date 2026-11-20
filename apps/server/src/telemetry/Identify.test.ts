@@ -1,6 +1,7 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
@@ -21,9 +22,9 @@ interface CapturedLog {
 }
 
 const sha256 = Effect.fn("test.sha256")(function* (value: string) {
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   return Hex.encode(
-    yield* crypto.digest("SHA-256", new TextEncoder().encode(value)).pipe(Effect.orDie),
+    yield* digest.digest(Digest.sha256, new TextEncoder().encode(value)).pipe(Effect.orDie),
   );
 });
 
@@ -69,7 +70,7 @@ const writeHomeFile = Effect.fn("test.writeHomeFile")(function* (
   return filePath;
 });
 
-it.layer(NodeServices.layer)("telemetry identity", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("telemetry identity", (it) => {
   it.effect("keeps the old distinct_id rule and a fixed install id as logins change", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
@@ -104,21 +105,26 @@ it.layer(NodeServices.layer)("telemetry identity", (it) => {
       const path = yield* Path.Path;
       const tornWrites = FileSystem.FileSystem.of({
         ...fileSystem,
-        writeFileString: (filePath, data, options) =>
-          fileSystem
-            .writeFileString(filePath, data.slice(0, Math.floor(data.length / 2)), options)
-            .pipe(
-              Effect.andThen(
-                Effect.fail(
-                  PlatformError.systemError({
-                    _tag: "WriteZero",
-                    module: "FileSystem",
-                    method: "writeFileString",
-                    pathOrDescriptor: filePath,
-                  }),
-                ),
-              ),
+        open: (filePath, options) =>
+          fileSystem.open(filePath, options).pipe(
+            Effect.map((file): FileSystem.File =>
+              Object.assign(Object.create(file), {
+                writeAll: (buffer: Uint8Array) =>
+                  file.writeAll(buffer.subarray(0, Math.floor(buffer.length / 2))).pipe(
+                    Effect.andThen(
+                      Effect.fail(
+                        PlatformError.systemError({
+                          _tag: "WriteZero",
+                          module: "FileSystem",
+                          method: "writeAll",
+                          pathOrDescriptor: filePath,
+                        }),
+                      ),
+                    ),
+                  ),
+              }),
             ),
+          ),
       });
 
       const identity = yield* Identify.getTelemetryIdentityForHome(

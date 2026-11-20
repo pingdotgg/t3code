@@ -7,6 +7,7 @@ import {
 import { Discovery } from "@t3tools/client-runtime/relay";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
+import { useState } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -61,6 +62,12 @@ export function useEnvironmentProviders() {
   return useAtomValue(environmentPresentations.providersByEnvironmentAtom);
 }
 
+export function readEnvironmentProviders(environmentId: EnvironmentId) {
+  return appAtomRegistry
+    .get(environmentPresentations.providersByEnvironmentAtom)
+    .get(environmentId);
+}
+
 export function usePrimaryEnvironmentId(): EnvironmentId | null {
   return useAtomValue(primaryEnvironmentIdAtom);
 }
@@ -99,6 +106,18 @@ export function useRelayEnvironmentDiscovery(): Discovery.RelayEnvironmentDiscov
   return useAtomValue(relayEnvironmentDiscovery.stateValueAtom);
 }
 
+/**
+ * The account's T3 Connect machines for a view that keeps one in front of the user. A refresh
+ * empties the list until it answers; the machines last seen stay meanwhile.
+ */
+export function useRetainedRelayEnvironments() {
+  const discovery = useRelayEnvironmentDiscovery();
+  const [seen, setSeen] = useState(discovery.environments);
+  const emptied = discovery.refreshing && discovery.environments.size === 0;
+  if (!emptied && seen !== discovery.environments) setSeen(discovery.environments);
+  return emptied ? seen : discovery.environments;
+}
+
 export function useEnvironmentIdentities() {
   return useAtomValue(environmentSummaries.identitiesAtom);
 }
@@ -107,14 +126,14 @@ export function usePullRequestsSupported() {
   return useAtomValue(environmentSummaries.pullRequestsSupportedAtom);
 }
 
+export function useIssuesSupported() {
+  return useAtomValue(environmentSummaries.issuesSupportedAtom);
+}
+
 export function useEnvironmentMachines() {
   return useAtomValue(environmentSummaries.machineByIdAtom);
 }
 
 export function useConnectedEnvironmentIds() {
   return useAtomValue(environmentSummaries.connectedEnvironmentIdsAtom);
-}
-
-export function useEnvironmentConnectionSummaries() {
-  return useAtomValue(environmentSummaries.environmentsAtom);
 }

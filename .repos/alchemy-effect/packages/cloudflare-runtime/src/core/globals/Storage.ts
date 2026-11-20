@@ -34,19 +34,17 @@ export const layerTemp = (options?: {
     Storage,
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const path = yield* Effect.acquireRelease(
-        fs.makeTempDirectory(options),
-        (dir) =>
-          fs.remove(dir, { recursive: true }).pipe(
-            // Windows: workerd may still hold file locks for a moment after
-            // shutdown, failing the removal with EBUSY. Retry briefly, then
-            // prefer leaking a temp directory over failing the dispose.
-            Effect.retry({
-              schedule: Schedule.spaced("100 millis"),
-              times: 20,
-            }),
-            Effect.ignore,
-          ),
+      const path = yield* Effect.acquireRelease(fs.makeTempDirectory(options), (dir) =>
+        fs.remove(dir, { recursive: true }).pipe(
+          // Windows: workerd may still hold file locks for a moment after
+          // shutdown, failing the removal with EBUSY. Retry briefly, then
+          // prefer leaking a temp directory over failing the dispose.
+          Effect.retry({
+            schedule: Schedule.spaced("100 millis"),
+            times: 20,
+          }),
+          Effect.ignore,
+        ),
       );
       return make(path);
     }),

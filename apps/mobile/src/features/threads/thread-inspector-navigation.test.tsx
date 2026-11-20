@@ -3,17 +3,19 @@ import * as NodeModule from "node:module";
 import * as React from "react";
 import { act, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 
 const harness = vi.hoisted(() => ({
   dispatch: (_action: unknown) => {},
   getState: (): unknown => undefined,
   getRoute: (): unknown => undefined,
+  inspectorSupported: true,
 }));
 
 vi.mock("react-native", () => ({ Platform: { OS: "ios" } }));
 vi.mock("../layout/AdaptiveWorkspaceLayout", () => ({
-  useAdaptiveWorkspaceLayout: () => ({ fileInspector: { supported: true } }),
+  useWorkspacePaneState: () => ({ fileInspector: { supported: harness.inspectorSupported } }),
 }));
 vi.mock("@react-navigation/native", async () => {
   const { createRequire } = await import("node:module");
@@ -28,7 +30,7 @@ vi.mock("@react-navigation/native", async () => {
 });
 
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
-import { useOpenLinkedThread } from "./useOpenLinkedThread";
+import { useOpenLinkedThread, useOpenLinkedThreadRead } from "./useOpenLinkedThread";
 
 const requireNavigation = NodeModule.createRequire(
   NodeModule.createRequire(import.meta.url).resolve("@react-navigation/native/package.json"),
@@ -38,11 +40,12 @@ const { StackRouter, StackActions } = requireNavigation("@react-navigation/route
   StackActions: typeof import("@react-navigation/native").StackActions;
 };
 
-function setup(fromAgents: boolean, fullscreen = false) {
+function setup(fromAgents: boolean, fullscreen = false, inspectorSupported = true) {
+  harness.inspectorSupported = inspectorSupported;
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const router = StackRouter({});
   const options = {
-    routeNames: ["Home", "Thread", "ThreadAgents", "ThreadInspectorFullscreen"],
+    routeNames: ["Home", "Thread", "ThreadAgents", "ThreadInspectorFullscreen", "LinkedThread"],
     routeParamList: {},
     routeGetIdList: {},
   };
@@ -66,12 +69,15 @@ function setup(fromAgents: boolean, fullscreen = false) {
     );
   let openInspector: ReturnType<typeof useOpenThreadInspector>;
   let openLinkedThread: ReturnType<typeof useOpenLinkedThread>;
+  let openLinkedThreadRead: ReturnType<typeof useOpenLinkedThreadRead>;
   function Probe() {
     const open = useOpenThreadInspector();
     const openLinked = useOpenLinkedThread();
+    const openLinkedRead = useOpenLinkedThreadRead();
     useLayoutEffect(() => {
       openInspector = open;
       openLinkedThread = openLinked;
+      openLinkedThreadRead = openLinkedRead;
     });
     return null;
   }
@@ -93,6 +99,9 @@ function setup(fromAgents: boolean, fullscreen = false) {
     },
     openLinked(threadId: string) {
       act(() => openLinkedThread({ environmentId: source.environmentId, threadId }));
+    },
+    openLinkedRead(...input: Parameters<typeof openLinkedThreadRead>) {
+      act(() => openLinkedThreadRead(...input));
     },
     [Symbol.dispose]() {
       act(() => root.unmount());
@@ -133,6 +142,53 @@ it("opens a completion link in the parent inspector", () => {
     },
   });
 });
+
+it.each([
+  { inspectorSupported: true, fromAgents: false },
+  { inspectorSupported: true, fromAgents: true },
+  { inspectorSupported: false, fromAgents: false },
+  { inspectorSupported: false, fromAgents: true },
+])(
+  "opens a linked environment's thread in the inspector where there is one ($inspectorSupported, from Agents $fromAgents)",
+  ({ inspectorSupported, fromAgents }) => {
+    using screen = setup(fromAgents, false, inspectorSupported);
+    const thread = {
+      environmentId: EnvironmentId.make("linked-vm"),
+      threadId: ThreadId.make("there"),
+    };
+    const linked = { viaEnvironmentId: EnvironmentId.make("remote-environment"), label: "fs-17" };
+    screen.openLinkedRead(thread, linked, "Fix the build", {
+      source: screen.source,
+      replace: fromAgents,
+    });
+    if (inspectorSupported) {
+      // Beside the parent, like a subagent or a side chat; the Agents sheet gives way.
+      expect(screen.state.routes.map((route) => route.name)).toEqual(["Home", "Thread"]);
+      expect(screen.state.routes.at(-1)).toMatchObject({
+        key: screen.parentKey,
+        params: {
+          inspector: {
+            type: "linkedThread",
+            ...thread,
+            linked: { ...linked, title: "Fix the build" },
+          },
+        },
+      });
+      return;
+    }
+    // A phone has no inspector: the read-only thread takes the screen, replacing the sheet.
+    expect(screen.state.routes.map((route) => route.name)).toEqual([
+      "Home",
+      "Thread",
+      "LinkedThread",
+    ]);
+    expect(screen.state.routes.at(-1)?.params).toEqual({
+      ...thread,
+      ...linked,
+      title: "Fix the build",
+    });
+  },
+);
 
 it("switches between subagents and devices in the same parent route", () => {
   using screen = setup(false);
@@ -179,10 +235,12 @@ it("keeps a focused inspector registered across renders and updates its content"
   const deactivate = vi.fn(() => {
     activeRender = undefined;
   });
-  const registerWorkspaceInspector = vi.fn((render: () => React.ReactNode) => {
-    activeRender = render;
-    return deactivate;
-  });
+  const registerWorkspaceInspector = vi.fn(
+    (content: { readonly panes: ReadonlyArray<{ readonly render: () => React.ReactNode }> }) => {
+      activeRender = content.panes[0]?.render;
+      return deactivate;
+    },
+  );
   const navigation = {
     isFocused: () => focused,
     addListener(event: "focus" | "blur", listener: () => void) {
@@ -221,7 +279,12 @@ it("keeps a focused inspector registered across renders and updates its content"
     },
   );
   const exports: {
-    useRegisterWorkspaceInspector?: (render: (() => React.ReactNode) | undefined) => void;
+    Inspector?: (props: {
+      readonly content: {
+        readonly active: string;
+        readonly panes: ReadonlyArray<{ readonly key: string; readonly render: () => string }>;
+      };
+    }) => null;
   } = {};
   const load = (name: string) => {
     if (name === "react" || name.startsWith("react/")) return requireMobile(name);
@@ -233,22 +296,26 @@ it("keeps a focused inspector registered across renders and updates its content"
       return {
         NavigationContext: navigationContext,
         NavigationRouteContext: routeContext,
-        useFocusEffect: (callback: () => (() => void) | undefined) =>
-          React.useEffect(callback, [callback]),
       };
     return {};
   };
   new Function("require", "exports", compiled.code)(load, exports);
-  const useRegisterWorkspaceInspector = exports.useRegisterWorkspaceInspector!;
-  function Screen({ render }: { render: (() => React.ReactNode) | undefined }) {
-    useRegisterWorkspaceInspector(render);
-    return null;
+  const Inspector = exports.Inspector!;
+  const contents = new Map<string, Parameters<typeof Inspector>[0]["content"]>();
+  function Screen({ content }: { content: string | undefined }) {
+    if (content === undefined) return null;
+    let panes = contents.get(content);
+    if (!panes) {
+      panes = { active: "main", panes: [{ key: "main", render: () => content }] };
+      contents.set(content, panes);
+    }
+    return <Inspector content={panes} />;
   }
   const root = createRoot(document.createElement("div"));
   using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
-  const render = (content: (() => React.ReactNode) | undefined) =>
-    act(() => root.render(<Screen render={content} />));
-  const first = () => "first";
+  const render = (content: string | undefined) =>
+    act(() => root.render(<Screen content={content} />));
+  const first = "first";
   render(first);
   registerWorkspaceInspector.mockClear();
   deactivate.mockClear();
@@ -256,7 +323,7 @@ it("keeps a focused inspector registered across renders and updates its content"
   render(first);
   expect(registerWorkspaceInspector).not.toHaveBeenCalled();
   expect(deactivate).not.toHaveBeenCalled();
-  const second = () => "second";
+  const second = "second";
   render(second);
   expect(registerWorkspaceInspector).toHaveBeenCalledTimes(1);
   const paneContainer = document.createElement("div");

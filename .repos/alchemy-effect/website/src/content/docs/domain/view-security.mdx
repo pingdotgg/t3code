@@ -1,0 +1,229 @@
+---
+title: Views as security boundaries
+description: Decide who may read each view, keep watches honest as data changes hands, and give each audience a view of its own.
+---
+
+A view is a security boundary, like a command. Its `validate` decides whether the person asking may read the key they asked for, on every read and on every change while they watch.
+
+## Write the rule once
+
+Write who may read an account's data as one function, and use it in every view of an account.
+
+```typescript
+// packages/domain/src/Account/mustOwn.ts
+import * as Effect from "effect/Effect";
+import { CurrentActor } from "../CurrentActor.context.ts";
+import type { CustomerId } from "../Customer/Customer.id.ts";
+import { NotOwner } from "./NotOwner.rejection.ts";
+
+/**
+ * Who may read an account's data: any agent, or the customer who owns the
+ * account right now. An account that doesn't exist yet reads as empty, so a
+ * client can watch for it to appear; someone else's is rejected.
+ */
+export const mustOwn = Effect.fn(function* (owner: CustomerId | null) {
+  const actor = yield* CurrentActor;
+  if (actor._tag === "Agent" || owner === null) return;
+  if (actor._tag !== "Customer" || owner !== actor.customerId) return yield* new NotOwner();
+});
+```
+
+`validate` gets the request and the key's state. It succeeds to allow the read, or fails with a rejection the view declares.
+
+```typescript
+// packages/domain/src/Account/AccountSummary.view.ts
+import * as Domain from "@alchemy.run/domain";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import { CustomerId } from "../Customer/Customer.id.ts";
+import { Cents } from "../Money.ts";
+import { Session } from "../Session.middleware.ts";
+import { Account } from "./Account.aggregate.ts";
+import { mustOwn } from "./mustOwn.ts";
+import { NotOwner } from "./NotOwner.rejection.ts";
+
+const setBalance = <V extends { balance: number }>(
+  v: V,
+  e: { readonly balanceAfter: number },
+): V => ({
+  ...v,
+  balance: e.balanceAfter,
+});
+
+/**
+ * The current balance and status of one account. It declares no events, so
+ * it emits every event it applies, each with the summary after it.
+ */
+export class AccountSummary extends Domain.View("AccountSummary", {
+  from: [Account],
+  key: Account,
+  middleware: [Session],
+  rejects: [NotOwner],
+  state: Schema.Struct({
+    customerId: Schema.NullOr(CustomerId),
+    owner: Schema.NullOr(Schema.String),
+    balance: Cents,
+    frozen: Schema.Boolean,
+    closed: Schema.Boolean,
+  }),
+  initial: { customerId: null, owner: null, balance: 0, frozen: false, closed: false },
+  evolve: {
+    AccountOpened: (v, e) => ({ ...v, customerId: e.customerId, owner: e.owner }),
+    OwnerChanged: (v, e) => ({ ...v, customerId: e.customerId }),
+    MoneyDeposited: setBalance,
+    MoneyWithdrawn: setBalance,
+    TransferDebited: setBalance,
+    TransferCredited: setBalance,
+    TransferRefunded: setBalance,
+    SettlementReceived: setBalance,
+    AccountFrozen: (v) => ({ ...v, frozen: true }),
+    AccountClosed: (v) => ({ ...v, closed: true }),
+  },
+  // Re-run on every change while watched: a reassigned account ends the watch with NotOwner.
+  validate: Effect.fn(function* (_request, summary) {
+    yield* mustOwn(summary?.customerId ?? null);
+  }),
+}) {}
+```
+
+The `Account` aggregate's `read` contract and the `Statement` view use the same rule, so the account reads the same everywhere.
+
+## Rule by key
+
+When the key itself says whose data it is, judge the key. A dashboard is keyed by customer, so only that customer, or an agent, may read it.
+
+```typescript
+// packages/domain/src/Customer/CustomerDashboard.view.ts
+import * as Domain from "@alchemy.run/domain";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import { AccountId } from "../Account/Account.id.ts";
+import { AccountSummary } from "../Account/AccountSummary.view.ts";
+import { CurrentActor } from "../CurrentActor.context.ts";
+import { Forbidden } from "../Forbidden.rejection.ts";
+import { Cents } from "../Money.ts";
+import { Session } from "../Session.middleware.ts";
+import { Customer } from "./Customer.aggregate.ts";
+
+type Balances = Readonly<Record<AccountId, number>>;
+
+const without = (balances: Balances, id: AccountId): Balances => {
+  const { [id]: _removed, ...rest } = balances;
+  return rest;
+};
+
+/**
+ * A customer's accounts and balances, built from AccountSummary's events and
+ * the summary after each. An ownership change moves the account between
+ * dashboards.
+ */
+export class CustomerDashboard extends Domain.View("CustomerDashboard", {
+  from: [Customer, AccountSummary],
+  key: Customer,
+  middleware: [Session],
+  rejects: [Forbidden],
+  keyOf: {
+    AccountSummary: ({ state }) => (state?.customerId ? Customer.ref(state.customerId) : undefined),
+    OwnerChanged: {
+      previous: ({ event }) => Customer.ref(event.previous),
+      current: ({ event }) => Customer.ref(event.customerId),
+    },
+  },
+  state: Schema.Struct({
+    name: Schema.NullOr(Schema.String),
+    balances: Schema.Record(AccountId, Cents),
+  }),
+  initial: { name: null, balances: {} },
+  evolve: {
+    CustomerRegistered: (d, e) => ({ ...d, name: e.name }),
+    OwnerChanged: {
+      previous: (d, _, { source }) => ({ ...d, balances: without(d.balances, source.id) }),
+      current: (d, _, { source, state }) => ({
+        ...d,
+        balances: { ...d.balances, [source.id]: state?.balance ?? 0 },
+      }),
+    },
+    AccountSummary: (d, _, { source, state }) => ({
+      ...d,
+      balances:
+        state && !state.closed
+          ? { ...d.balances, [source.id]: state.balance }
+          : without(d.balances, source.id),
+    }),
+  },
+  // Keyed by customer, so the key alone decides who may read it.
+  validate: Effect.fn(function* (request) {
+    const actor = yield* CurrentActor;
+    if (actor._tag === "Agent") return;
+    if (actor._tag !== "Customer" || request.key.id !== actor.customerId) {
+      return yield* new Forbidden({ reason: "that is not your dashboard" });
+    }
+  }),
+  computed: {
+    totalBalance: (d) => Object.values<number>(d.balances).reduce((a, b) => a + b, 0),
+  },
+}) {}
+```
+
+## Give each audience its own view
+
+A view decides who may read it, not which parts they may see. To show an audience different data, make another view. Support agents see an account's operational events; customers can't read them at all.
+
+```typescript
+// packages/domain/src/Account/AccountActivity.view.ts
+import * as Domain from "@alchemy.run/domain";
+import * as Effect from "effect/Effect";
+import { CurrentActor } from "../CurrentActor.context.ts";
+import { Forbidden } from "../Forbidden.rejection.ts";
+import { Session } from "../Session.middleware.ts";
+import { Account } from "./Account.aggregate.ts";
+import { OwnerChanged } from "./ChangeOwner.command.ts";
+import { AccountClosed } from "./CloseAccount.command.ts";
+import { AccountFrozen } from "./FreezeAccount.command.ts";
+import { SettlementOnClosedAccount } from "./RecordSettlement.command.ts";
+import { RefundStranded } from "./RefundTransfer.command.ts";
+
+/** Operational events for support tooling, passed through unchanged. Agents only. */
+export class AccountActivity extends Domain.View("AccountActivity", {
+  from: [Account],
+  key: Account,
+  middleware: [Session],
+  rejects: [Forbidden],
+  validate: Effect.fn(function* (request) {
+    const actor = yield* CurrentActor;
+    if (actor._tag !== "Agent") {
+      return yield* new Forbidden({ reason: `${request.mode} of account activity is for agents` });
+    }
+  }),
+  events: [AccountFrozen, AccountClosed, OwnerChanged, RefundStranded, SettlementOnClosedAccount],
+}) {}
+```
+
+Expose it in the agents' Api only.
+
+```typescript
+// packages/domain/src/SupportApi.api.ts
+import * as Domain from "@alchemy.run/domain";
+import { Bank } from "./Bank.model.ts";
+
+/** What the support console reaches, over the same Bank. */
+export class SupportApi extends Domain.Api("SupportApi", {
+  model: Bank,
+  commands: ["FreezeAccount", "ChangeOwner", "ApproveTransfer"],
+  views: ["AccountSummary", "AccountActivity"],
+  streams: [],
+  aggregates: [],
+}) {}
+```
+
+## Re-check every change
+
+`validate` runs again on every change while a client watches. When support moves an account to another customer, the old owner's watch ends with `NotOwner` at that change. See the test in [Testing an Api](/domain/testing-apis#test-in-process).
+
+## Filter only what's allowed
+
+A client's `where` filter narrows a read it's already allowed to make, and never grants one. `validate` doesn't look at filters, so a filter can't widen what someone sees.
+
+:::note
+Authenticate the person asking with [Sessions and middleware](/domain/sessions).
+:::

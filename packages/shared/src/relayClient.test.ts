@@ -1,4 +1,5 @@
 import { sha256 } from "@noble/hashes/sha2";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
@@ -88,7 +89,9 @@ const writeExecutable = (filePath: string, contents = "cloudflared") =>
   });
 
 type RelayClientTestServices =
-  | Layer.Success<ReturnType<typeof layerHostRuntime> | typeof NodeServices.layer>
+  | Layer.Success<
+      ReturnType<typeof layerHostRuntime> | typeof NodeServices.layer | typeof NodeCrypto.layer
+    >
   | HttpClient.HttpClient
   | ChildProcessSpawner.ChildProcessSpawner;
 
@@ -141,6 +144,7 @@ const testReleaseAsset = {
 const layerInstallRuntime = (platform: NodeJS.Platform) =>
   Layer.mergeAll(
     NodeServices.layer,
+    NodeCrypto.layer,
     layerHttpClient(testBinary),
     layerSpawner([]),
     layerHostRuntime({ PATH: "" }, platform),
@@ -178,6 +182,7 @@ describe("RelayClient", () => {
       Effect.provide(
         Layer.mergeAll(
           NodeServices.layer,
+          NodeCrypto.layer,
           layerHttpClient(new Uint8Array()),
           layerSpawner([]),
           layerHostRuntime({ PATH: "" }),
@@ -338,6 +343,7 @@ describe("RelayClient", () => {
       Effect.provide(
         Layer.mergeAll(
           NodeServices.layer,
+          NodeCrypto.layer,
           layerHttpClient(new Uint8Array()),
           layerSpawner([]),
           layerHostRuntime({ PATH: "" }),
@@ -396,6 +402,7 @@ describe("RelayClient", () => {
       Effect.provide(
         Layer.mergeAll(
           NodeServices.layer,
+          NodeCrypto.layer,
           layerHttpClient(new TextEncoder().encode("test-binary")),
           layerSpawner([]),
           layerHostRuntime({ PATH: "" }),
@@ -455,12 +462,54 @@ describe("RelayClient", () => {
         Effect.provide(
           Layer.mergeAll(
             NodeServices.layer,
+            NodeCrypto.layer,
             layerHttpClient(new TextEncoder().encode("test-cloudflared-binary")),
             layerSpawner([]),
             layerHostRuntime(),
           ),
         ),
       ),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "installs when the downloaded binary's first launch is held by an antivirus scan",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-cloudflared-test-",
+        });
+        const scanning = yield* Deferred.make<void>();
+        const manager = yield* RelayClient.makeCloudflaredRelayClient({
+          baseDir,
+          releaseAsset: testReleaseAsset,
+        }).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Deferred.succeed(scanning, undefined).pipe(
+                Effect.andThen(Effect.sleep("25 seconds")),
+                Effect.as(
+                  makeHandle(
+                    0,
+                    `cloudflared version ${RelayClient.CLOUDFLARED_VERSION} (built 2026-01-01-00:00 UTC)\n`,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+
+        const installing = yield* manager.install.pipe(Effect.forkChild);
+        yield* Deferred.await(scanning);
+        yield* TestClock.adjust("25 seconds");
+
+        expect(yield* Fiber.join(installing)).toMatchObject({
+          status: "available",
+          source: "managed",
+          version: RelayClient.CLOUDFLARED_VERSION,
+        });
+      }).pipe(Effect.scoped, Effect.provide(layerInstallRuntime("linux"))),
   );
 
   it.effect("rejects downloads whose checksum does not match the pinned manifest", () =>
@@ -491,6 +540,7 @@ describe("RelayClient", () => {
       Effect.provide(
         Layer.mergeAll(
           NodeServices.layer,
+          NodeCrypto.layer,
           layerHttpClient(new TextEncoder().encode("tampered")),
           layerSpawner([]),
           layerHostRuntime(),
@@ -526,6 +576,7 @@ describe("RelayClient", () => {
       Effect.provide(
         Layer.mergeAll(
           NodeServices.layer,
+          NodeCrypto.layer,
           layerHttpClient(bytes),
           layerSpawner(commands),
           layerHostRuntime(),
@@ -598,6 +649,7 @@ describe("RelayClient", () => {
       Effect.provide(
         Layer.mergeAll(
           NodeServices.layer,
+          NodeCrypto.layer,
           layerHttpClient(new Uint8Array()),
           layerSpawner([]),
           layerHostRuntime(configEnv, platform),
@@ -622,6 +674,7 @@ describe("RelayClient", () => {
         Effect.provide(
           Layer.mergeAll(
             NodeServices.layer,
+            NodeCrypto.layer,
             layerHttpClient(new Uint8Array()),
             layerSpawner([], options.versions),
             layerHostRuntime({ PATH: "" }),
@@ -629,7 +682,7 @@ describe("RelayClient", () => {
         ),
       );
 
-    it.effect.skipIf(windowsHost)("skips a PATH binary older than the minimum version", () => {
+    it.effect.skipIf(windowsHost)("skips binaries older than the minimum version", () => {
       const versions: Record<string, string> = {};
       return run(
         (baseDir) =>
@@ -638,8 +691,11 @@ describe("RelayClient", () => {
             const newPath = `${baseDir}/new/cloudflared`;
             yield* writeExecutable(oldPath);
             yield* writeExecutable(newPath);
-            versions[oldPath] = "2023.8.2";
-            versions[newPath] = RelayClient.CLOUDFLARED_MIN_VERSION;
+            const managed = managedPathFor(baseDir, "2026.10.0");
+            yield* writeExecutable(managed);
+            versions[managed] = "2026.10.0";
+            versions[oldPath] = "2026.10.2";
+            versions[newPath] = "2026.10.3";
             const manager = yield* RelayClient.makeCloudflaredRelayClient({ baseDir });
             const env = { PATH: `${baseDir}/old:${baseDir}/new` };
             expect(
@@ -668,7 +724,7 @@ describe("RelayClient", () => {
           Effect.gen(function* () {
             const overridePath = `${baseDir}/override/cloudflared`;
             yield* writeExecutable(overridePath);
-            versions[overridePath] = "2025.6.0";
+            versions[overridePath] = "2026.10.2";
             const manager = yield* RelayClient.makeCloudflaredRelayClient({ baseDir });
             const env = { PATH: "", T3CODE_CLOUDFLARED_PATH: overridePath };
             const withEnv = Effect.provideService(
@@ -701,9 +757,9 @@ describe("RelayClient", () => {
               const newerServer = managedPathFor(baseDir, "2099.1.0");
               versions[newerServer] = "2099.1.0";
               yield* writeExecutable(newerServer);
-              versions[pathBinary] = "2026.9.3";
+              versions[pathBinary] = "2026.10.3";
               versions[older] = "2025.9.0";
-              versions[newer] = "2026.1.0";
+              versions[newer] = "2026.10.3";
               yield* writeExecutable(pathBinary);
               yield* writeExecutable(older);
               yield* writeExecutable(newer);
@@ -716,7 +772,7 @@ describe("RelayClient", () => {
                 Effect.provideService(HostProcess.Environment, { PATH: `${baseDir}/bin` }),
               );
 
-              expect(yield* resolveWith).toMatchObject({ source: "managed", version: "2026.1.0" });
+              expect(yield* resolveWith).toMatchObject({ source: "managed", version: "2026.10.3" });
 
               yield* writeExecutable(pinned);
               expect(yield* resolveWith).toMatchObject({
@@ -731,11 +787,11 @@ describe("RelayClient", () => {
               ).toEqual(["2026.1.0", RelayClient.CLOUDFLARED_VERSION, "2099.1.0"]);
 
               yield* fileSystem.remove(pinned);
-              expect(yield* resolveWith).toMatchObject({ source: "managed", version: "2026.1.0" });
+              expect(yield* resolveWith).toMatchObject({ source: "managed", version: "2026.10.3" });
               yield* fileSystem.remove(`${baseDir}/tools/cloudflared/2026.1.0`, {
                 recursive: true,
               });
-              expect(yield* resolveWith).toMatchObject({ source: "path", version: "2026.9.3" });
+              expect(yield* resolveWith).toMatchObject({ source: "path", version: "2026.10.3" });
             }),
           { versions },
         );
@@ -750,7 +806,7 @@ describe("RelayClient", () => {
           (baseDir) =>
             Effect.gen(function* () {
               const pinned = managedPathFor(baseDir, RelayClient.CLOUDFLARED_VERSION);
-              versions[pinned] = "2026.9.3";
+              versions[pinned] = "2026.10.3";
               yield* writeExecutable(pinned);
               const manager = yield* RelayClient.makeCloudflaredRelayClient({ baseDir });
               const resolved = yield* manager.resolve;
@@ -758,7 +814,7 @@ describe("RelayClient", () => {
                 status: "available",
                 executablePath: pinned,
                 source: "managed",
-                version: "2026.9.3",
+                version: "2026.10.3",
               });
               expect(
                 resolved.status === "available" && RelayClient.isPinnedManagedRelayClient(resolved),

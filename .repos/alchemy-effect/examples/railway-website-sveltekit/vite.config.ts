@@ -6,5 +6,5 @@ import { defineConfig } from "vite";
 // Railway Service adapter into the `sveltekit()` instance below — do NOT
 // declare an adapter here.
 export default defineConfig({
-  plugins: [tailwindcss(), sveltekit({ alias: { $lib: "src/lib" } })],
+  plugins: [tailwindcss(), sveltekit()],
 });

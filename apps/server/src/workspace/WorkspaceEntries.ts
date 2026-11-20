@@ -1,7 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
 
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -64,6 +66,10 @@ export class WorkspaceEntriesReadDirectoryError extends Schema.TaggedError<Works
     cause: Schema.Defect(),
   },
 ) {
+  get pathMissing(): boolean {
+    return (this.cause as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
+  }
+
   override get message(): string {
     const cwd = this.cwd ? ` from '${this.cwd}'` : "";
     return `Failed to read workspace directory '${this.parentPath}' while browsing '${this.partialPath}'${cwd}.`;
@@ -161,6 +167,18 @@ export const make = Effect.gen(function* () {
     return yield* workspacePaths.normalizeWorkspaceRoot(cwd);
   });
 
+  // Refreshing goes through `get`, which restarts the map's idle timer, so idleness is measured
+  // from the last search, not the last refresh.
+  const lastSearchedAt = new Map<string, number>();
+  const indexIdleMillis = Duration.toMillis(WorkspaceSearchIndex.WORKSPACE_INDEX_IDLE_TTL);
+  const markSearched = (indexKey: string, now: number) => {
+    // A record older than the timeout counts the same as none, so it can go.
+    for (const [key, searchedAt] of lastSearchedAt) {
+      if (now - searchedAt >= indexIdleMillis) lastSearchedAt.delete(key);
+    }
+    lastSearchedAt.set(indexKey, now);
+  };
+
   const refresh: WorkspaceEntries["Service"]["refresh"] = Effect.fn("WorkspaceEntries.refresh")(
     function* (cwd) {
       const normalizedCwd = yield* normalizeWorkspaceRoot(cwd).pipe(
@@ -171,11 +189,16 @@ export const make = Effect.gen(function* () {
         if (!(yield* RcMap.has(workspaceSearchIndexes.rcMap, indexKey))) {
           continue;
         }
+        const searchedAt = lastSearchedAt.get(indexKey) ?? 0;
+        if ((yield* Clock.currentTimeMillis) - searchedAt >= indexIdleMillis) {
+          lastSearchedAt.delete(indexKey);
+          yield* workspaceSearchIndexes.invalidate(indexKey);
+          continue;
+        }
         const recoverRefreshFailure = Effect.fn("WorkspaceEntries.recoverRefreshFailure")(
           function* (
             cause:
               | WorkspaceSearchIndex.WorkspaceSearchIndexCreateFailed
-              | WorkspaceSearchIndex.WorkspaceSearchIndexScanTimedOut
               | WorkspaceSearchIndex.WorkspaceSearchIndexRefreshFailed,
           ) {
             yield* Effect.logWarning("Failed to refresh workspace search index", {
@@ -193,7 +216,6 @@ export const make = Effect.gen(function* () {
           Effect.provide(workspaceSearchIndexes.get(indexKey)),
           Effect.catchTags({
             WorkspaceSearchIndexCreateFailed: recoverRefreshFailure,
-            WorkspaceSearchIndexScanTimedOut: recoverRefreshFailure,
             WorkspaceSearchIndexRefreshFailed: recoverRefreshFailure,
           }),
         );
@@ -256,33 +278,106 @@ export const make = Effect.gen(function* () {
       const normalizedQuery = normalizeSearchQuery(input.query, {
         trimLeadingPattern: /^[@./]+/,
       });
-      return yield* Effect.gen(function* () {
+      const indexKey = WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, "paths");
+      markSearched(indexKey, yield* Clock.currentTimeMillis);
+      const result = yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
         return yield* searchIndex.search(normalizedQuery, input.limit, input.kind, input.imageOnly);
-      }).pipe(
-        Effect.provide(
-          workspaceSearchIndexes.get(
-            WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, "paths"),
-          ),
-        ),
+      }).pipe(Effect.provide(workspaceSearchIndexes.get(indexKey)));
+      if (input.kind === "directory" || input.imageOnly) return result;
+      const worktreeFiles = yield* findNestedWorktreeFiles(
+        normalizedCwd,
+        input.query,
+        result.entries,
       );
+      if (worktreeFiles.length === 0) return result;
+      const entries = [...worktreeFiles, ...result.entries];
+      return {
+        entries: entries.slice(0, input.limit),
+        truncated: result.truncated || entries.length > input.limit,
+      };
     },
   );
+
+  // The index skips gitignored folders, where agents often put worktrees (`.worktrees/x`).
+  // A path relative to such a worktree is found only when it names an existing file exactly.
+  const findNestedWorktreeFiles = Effect.fn("WorkspaceEntries.findNestedWorktreeFiles")(function* (
+    cwd: string,
+    query: string,
+    indexed: ReadonlyArray<ProjectEntry>,
+  ) {
+    const relativePath = query.trim().replaceAll("\\", "/");
+    if (
+      !relativePath.includes("/") ||
+      relativePath.endsWith("/") ||
+      path.isAbsolute(relativePath) ||
+      isWindowsAbsolutePath(relativePath) ||
+      relativePath.split("/").some((segment) => segment === "..") ||
+      indexed.some(
+        (entry) =>
+          entry.kind === "file" &&
+          (entry.path === relativePath || entry.path.endsWith(`/${relativePath}`)),
+      )
+    ) {
+      return [];
+    }
+    const listWorktrees = (args: ReadonlyArray<string>) =>
+      vcsProcess
+        .run({
+          operation: "WorkspaceEntries.listWorktrees",
+          command: "git",
+          args: ["worktree", "list", "--porcelain", ...args],
+          cwd,
+          allowNonZeroExit: true,
+          timeoutMs: 5_000,
+        })
+        .pipe(
+          Effect.map((result) => (result.exitCode === 0 ? result.stdout : undefined)),
+          Effect.orElseSucceed(() => undefined),
+        );
+    // Only NUL framing keeps a newline in a worktree path. Pre-2.36 Git rejects `-z`.
+    const listed =
+      (yield* listWorktrees(["-z"])) ?? (yield* listWorktrees([]))?.replaceAll("\n", "\0");
+    if (listed === undefined) return [];
+    const realCwd = yield* Effect.promise(() => NodeFSP.realpath(cwd).catch(() => cwd));
+    const worktreeRoots = listed.split("\0\0").flatMap((record) => {
+      const fields = record.split("\0");
+      const worktree = fields.find((field) => field.startsWith("worktree "));
+      // A `prunable` record's directory is gone; another checkout may now sit there.
+      if (worktree === undefined || fields.some((field) => field.startsWith("prunable"))) return [];
+      const root = worktree.slice("worktree ".length);
+      const relativeRoot = path.relative(realCwd, root);
+      return relativeRoot === "" ||
+        relativeRoot === ".." ||
+        relativeRoot.startsWith(`..${path.sep}`) ||
+        path.isAbsolute(relativeRoot)
+        ? []
+        : [relativeRoot.split(path.sep).join("/")];
+    });
+    const matches = yield* Effect.promise(() =>
+      Promise.all(
+        worktreeRoots.map(async (relativeRoot) => {
+          const candidate = `${relativeRoot}/${relativePath}`;
+          const stat = await NodeFSP.stat(path.join(realCwd, candidate)).catch(() => null);
+          return stat?.isFile() ? candidate : null;
+        }),
+      ),
+    );
+    return matches
+      .filter((candidate) => candidate !== null)
+      .map((candidate): ProjectEntry => ({ path: candidate, kind: "file" }));
+  });
 
   const searchContents: WorkspaceEntries["Service"]["searchContents"] = Effect.fn(
     "WorkspaceEntries.searchContents",
   )(function* (input) {
     const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
+    const indexKey = WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, "content");
+    markSearched(indexKey, yield* Clock.currentTimeMillis);
     return yield* Effect.gen(function* () {
       const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
       return yield* searchIndex.searchContents(input);
-    }).pipe(
-      Effect.provide(
-        workspaceSearchIndexes.get(
-          WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, "content"),
-        ),
-      ),
-    );
+    }).pipe(Effect.provide(workspaceSearchIndexes.get(indexKey)));
   });
 
   const list: WorkspaceEntries["Service"]["list"] = Effect.fn("WorkspaceEntries.list")(
@@ -306,7 +401,7 @@ export const make = Effect.gen(function* () {
                   relativePath: directoryPath,
                 })
                 .pipe(Effect.mapError(toError));
-        const { entries, throughSymlink } = yield* Effect.tryPromise({
+        const { entries, throughSymlink, nestedGitRoots } = yield* Effect.tryPromise({
           try: async () => {
             const root = await NodeFSP.realpath(normalizedCwd);
             const directory = await NodeFSP.realpath(target.absolutePath);
@@ -378,7 +473,17 @@ export const make = Effect.gen(function* () {
                 )),
               );
             }
+            const nestedGitRoots: Array<string> = [];
+            const segments = target.relativePath.split("/").filter(Boolean);
+            for (let index = 1; index <= segments.length; index += 1) {
+              const candidate = segments.slice(0, index).join("/");
+              const dotGit = await NodeFSP.lstat(path.join(normalizedCwd, candidate, ".git")).catch(
+                () => null,
+              );
+              if (dotGit) nestedGitRoots.push(candidate);
+            }
             return {
+              nestedGitRoots,
               entries: children.flatMap((child, index): ProjectEntry[] => {
                 const kind = kinds[index];
                 if (kind === undefined) return [];
@@ -395,6 +500,8 @@ export const make = Effect.gen(function* () {
           },
           catch: toError,
         });
+        let gitRoot = "";
+        let gitPrefix = "";
         // stdin avoids argument limits; ignore classification is optional without git/repositories.
         const checkIgnore = (paths: ReadonlyArray<string>) =>
           vcsProcess
@@ -402,20 +509,27 @@ export const make = Effect.gen(function* () {
               operation: "WorkspaceEntries.list",
               command: "git",
               args: ["-c", "core.fsmonitor=false", "check-ignore", "-z", "--stdin"],
-              cwd: normalizedCwd,
-              stdin: `${paths.join("\0")}\0`,
+              cwd: path.join(normalizedCwd, gitRoot),
+              stdin: `${paths.map((entryPath) => entryPath.slice(gitPrefix.length)).join("\0")}\0`,
               allowNonZeroExit: true,
               timeoutMs: 10_000,
               maxOutputBytes: 16 * 1024 * 1024,
             })
             .pipe(Effect.orElseSucceed(() => undefined));
+        // Git refuses paths inside a submodule (128) but still answers for nested clones.
+        for (const nestedGitRoot of nestedGitRoots) {
+          if ((yield* checkIgnore([`${nestedGitRoot}/.git`]))?.exitCode !== 128) continue;
+          gitRoot = nestedGitRoot;
+          gitPrefix = `${gitRoot}/`;
+        }
+        const directoryGitPath = target.relativePath.slice(gitPrefix.length);
         // Check ignored folders once to avoid child index lookups; exit 0 guarantees no tracked descendants.
         // Symlinks and pathspec magic still need per-child checks.
         if (
           entries.length > IGNORE_CHECK_CHUNK_SIZE &&
-          target.relativePath !== "" &&
+          directoryGitPath !== "" &&
           !throughSymlink &&
-          !/^:|[*?[\\]/.test(target.relativePath) &&
+          !/^:|[*?[\\]/.test(directoryGitPath) &&
           (yield* checkIgnore([target.relativePath]))?.exitCode === 0
         ) {
           return {
@@ -429,7 +543,7 @@ export const make = Effect.gen(function* () {
             entries.slice(offset, offset + IGNORE_CHECK_CHUNK_SIZE).map((entry) => entry.path),
           );
           if (!result || (result.exitCode !== 0 && result.exitCode !== 1)) break;
-          for (const ignoredPath of result.stdout.split("\0")) ignored.add(ignoredPath);
+          for (const ignoredPath of result.stdout.split("\0")) ignored.add(gitPrefix + ignoredPath);
         }
         return {
           entries: entries.map((entry) =>
@@ -438,16 +552,12 @@ export const make = Effect.gen(function* () {
           truncated: false,
         };
       }
+      const indexKey = WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, "paths");
+      markSearched(indexKey, yield* Clock.currentTimeMillis);
       return yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
         return yield* searchIndex.list();
-      }).pipe(
-        Effect.provide(
-          workspaceSearchIndexes.get(
-            WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, "paths"),
-          ),
-        ),
-      );
+      }).pipe(Effect.provide(workspaceSearchIndexes.get(indexKey)));
     },
   );
 
@@ -479,9 +589,13 @@ export const make = Effect.gen(function* () {
       })
       .pipe(Effect.orElseSucceed(() => undefined));
     if (!result || result.exitCode !== 0) return { files: [], truncated: false };
+    // Filter before the cap so files sorting past it stay reachable by search.
+    const query = input.query?.toLowerCase() ?? "";
     const paths = result.stdout
       .split("\0")
-      .filter((entry) => entry.length > 0 && !entry.endsWith("/"))
+      .filter(
+        (entry) => entry.length > 0 && !entry.endsWith("/") && entry.toLowerCase().includes(query),
+      )
       .toSorted();
     const files = yield* Effect.promise(() =>
       Promise.all(

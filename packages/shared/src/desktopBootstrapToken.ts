@@ -1,32 +1,36 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no createHmac or timingSafeEqual.
-import * as NodeCrypto from "node:crypto";
+import * as Mac from "effect/crypto/Mac";
+import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 
 /** Accept previous/current windows for token lifetime and the next window for WSL clock lag. */
 export const DESKTOP_BOOTSTRAP_TOKEN_WINDOW_MS = 12 * 60 * 60 * 1000;
+
+const utf8 = (value: string) => new TextEncoder().encode(value);
 
 function windowIndex(nowMs: number): number {
   return Math.floor(nowMs / DESKTOP_BOOTSTRAP_TOKEN_WINDOW_MS);
 }
 
-function deriveToken(secret: string, window: number): string {
-  return NodeCrypto.createHmac("sha256", secret)
-    .update(`t3-desktop-bootstrap:${window}`)
-    .digest("hex");
-}
+// Untraced: an inner step of the named callers below, run up to three times per check.
+const deriveToken = Effect.fnUntraced(function* (secret: string, window: number) {
+  const mac = yield* Mac.Mac;
+  const key = yield* Mac.key(Mac.hmacSha256, utf8(secret));
+  return Hex.encode(yield* mac.sign(key, utf8(`t3-desktop-bootstrap:${window}`)));
+}, Effect.orDie);
 
-export function currentDesktopBootstrapToken(secret: string, nowMs: number): string {
-  return deriveToken(secret, windowIndex(nowMs));
-}
+export const currentDesktopBootstrapToken = Effect.fn("desktopBootstrapToken.current")(
+  (secret: string, nowMs: number) => deriveToken(secret, windowIndex(nowMs)),
+);
 
-export function isValidDesktopBootstrapToken(
+export const isValidDesktopBootstrapToken = Effect.fn("desktopBootstrapToken.isValid")(function* (
   secret: string,
   token: string,
   nowMs: number,
-): boolean {
-  const presented = Buffer.from(token);
+) {
+  const presented = utf8(token);
   const current = windowIndex(nowMs);
-  return [current - 1, current, current + 1].some((window) => {
-    const expected = Buffer.from(deriveToken(secret, window));
-    return expected.length === presented.length && NodeCrypto.timingSafeEqual(expected, presented);
-  });
-}
+  for (const window of [current - 1, current, current + 1]) {
+    if (Mac.timingSafeEqual(utf8(yield* deriveToken(secret, window)), presented)) return true;
+  }
+  return false;
+});
