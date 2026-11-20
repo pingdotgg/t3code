@@ -9,14 +9,19 @@ import {
   ProviderSessionId,
   ThreadId,
   type AntigravitySettings,
+  type ProviderInstallState,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient } from "effect/http";
 
@@ -32,6 +37,7 @@ import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEve
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ModelManifest from "../ModelManifest.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { knownProviderFailureMessage } from "@t3tools/provider-core/server/failure";
 import { resolveProviderCompatibility } from "../providerCompatibility.ts";
@@ -56,6 +62,18 @@ const blockedCredentialKeys = new Set([
   "GOOGLE_GENAI_USE_VERTEXAI",
 ]);
 
+const idleInstallState: ProviderInstallState = {
+  driver: ProviderDriverKind.make("antigravity"),
+  operationId: null,
+  phase: "idle",
+  downloadedBytes: 0,
+  totalBytes: null,
+  version: null,
+  installedVersion: null,
+  canRemove: false,
+  message: null,
+};
+
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
@@ -66,8 +84,12 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     readonly enabled?: boolean;
     /** Extra instance variables, such as ones a parent T3 turn already exported. */
     readonly environment?: ReadonlyArray<{ readonly name: string; readonly value: string }>;
+    readonly updateChecks?: boolean;
   } = {},
 ) {
+  const host = yield* ProviderHost.ProviderHost;
+  const installState = yield* SubscriptionRef.make(idleInstallState);
+  const checkedForUpdate = yield* Deferred.make<void>();
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const config = yield* ServerConfig.ServerConfig;
@@ -156,6 +178,9 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
 
   const layerInstallation = Layer.mock(AntigravityInstallation.AntigravityInstallation)({
     managedDirectory: root,
+    state: SubscriptionRef.get(installState),
+    changes: SubscriptionRef.changes(installState),
+    checkForUpdate: Deferred.succeed(checkedForUpdate, undefined).pipe(Effect.asVoid),
     compatibility: (version) =>
       Effect.succeed(
         resolveProviderCompatibility(
@@ -241,6 +266,18 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   }).pipe(
     Effect.provide(layerInstallation),
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, observedSpawner),
+    Effect.provideService(ProviderHost.ProviderHost, {
+      ...host,
+      settings: {
+        ...host.settings,
+        get: host.settings.get.pipe(
+          Effect.map((settings) => ({
+            ...settings,
+            enableProviderUpdateChecks: options.updateChecks ?? true,
+          })),
+        ),
+      },
+    }),
   );
   const refresh = instance.refreshModels;
   if (!refresh) return yield* Effect.die("Antigravity does not expose model refresh.");
@@ -272,6 +309,8 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     second,
     signedOut,
     controls,
+    installState,
+    checkedForUpdate,
     acquisitions,
     releases,
     launches,
@@ -312,6 +351,68 @@ const layerTest = ProviderHostLive.layer.pipe(
 );
 
 it.layer(layerTest)("AntigravityDriver", (it) => {
+  it.effect.each([
+    {
+      name: "a managed runtime behind the found release",
+      source: "managed",
+      latest: "1.5.13",
+      updateChecks: true,
+      expected: { status: "behind_latest", latestVersion: "1.5.13", canUpdate: true },
+    },
+    {
+      name: "a managed runtime on the found release",
+      source: "managed",
+      latest: "runtime 'one",
+      updateChecks: true,
+      expected: { status: "current", latestVersion: "runtime 'one", canUpdate: true },
+    },
+    {
+      name: "a custom executable",
+      source: "override",
+      latest: "1.5.13",
+      updateChecks: true,
+      expected: { status: "unknown", latestVersion: null, canUpdate: false },
+    },
+    {
+      name: "a managed runtime with update checks off",
+      source: "managed",
+      latest: "1.5.13",
+      updateChecks: false,
+      expected: { status: "unknown", latestVersion: null, canUpdate: true },
+    },
+  ] as const)("reports an update for $name", ({ source, latest, updateChecks, expected }) =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({ updateChecks });
+      h.controls.selected = { ...h.first, source };
+      yield* SubscriptionRef.update(h.installState, (state) => ({ ...state, version: latest }));
+      const snapshot = yield* h.instance.snapshot.refresh;
+      expect(snapshot.versionAdvisory).toMatchObject({
+        ...expected,
+        currentVersion: "runtime 'one",
+        updateCommand: null,
+      });
+      // Only the runtime T3 Code installed is checked against Google's releases.
+      if (source === "managed") yield* Deferred.await(h.checkedForUpdate);
+      else expect(yield* Deferred.isDone(h.checkedForUpdate)).toBe(false);
+    }),
+  );
+
+  it.effect("publishes the update when the installation finds a newer release", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.instance.snapshot.refresh;
+      const published = yield* h.instance.snapshot.streamChanges.pipe(
+        Stream.filter((snapshot) => snapshot.versionAdvisory?.status === "behind_latest"),
+        Stream.runHead,
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* SubscriptionRef.update(h.installState, (state) => ({ ...state, version: "1.5.13" }));
+      expect(yield* Fiber.join(published)).toMatchObject({
+        value: { versionAdvisory: { latestVersion: "1.5.13", canUpdate: true } },
+      });
+    }),
+  );
+
   it.effect.skipIf(windowsHost)(
     "refreshes the selected executable and limits form capabilities to chat",
     () =>
@@ -694,6 +795,8 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           Effect.provide(
             Layer.mock(AntigravityInstallation.AntigravityInstallation)({
               managedDirectory: config.stateDir,
+              state: Effect.succeed(idleInstallState),
+              changes: Stream.never,
               resolve: () => Effect.die("unused"),
               acquire: () => Effect.die("unused"),
             }),
