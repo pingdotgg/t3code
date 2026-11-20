@@ -239,3 +239,99 @@ export function readAloudPosition(
     word: { start: Math.min(...wordSources), end: Math.max(...wordSources) + 1, cue: wordCue },
   };
 }
+
+/** A UTF-16 range of the text a renderer shows. */
+export interface ReadAloudTextRange {
+  readonly start: number;
+  readonly end: number;
+}
+
+type ComparedWord = ReadAloudTextRange & { readonly key: string };
+
+/** How far ahead a word may be found before the match is resynchronized on a run of words. */
+const ALIGN_WINDOW = 8;
+const RESYNC_RUN = 3;
+
+/** Words of `text` compared by letters and digits only, so markup and punctuation do not count. */
+function comparedWords(text: string): ComparedWord[] {
+  const words: ComparedWord[] = [];
+  for (const match of text.matchAll(/\S+/g)) {
+    const key = match[0].toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+    if (key) words.push({ key, start: match.index, end: match.index + match[0].length });
+  }
+  return words;
+}
+
+/**
+ * The shown word each spoken word appears as, or -1. Matches move forward; a skip needs the next
+ * words to agree, and a lost match resyncs on the next run of equal words anywhere ahead.
+ */
+function alignWords(spoken: ReadonlyArray<ComparedWord>, shown: ReadonlyArray<ComparedWord>) {
+  const anchors = Array.from(spoken, () => -1);
+  const agrees = (from: number, to: number, length: number) => {
+    for (let offset = 0; offset < length; offset++) {
+      const a = spoken[from + offset];
+      const b = shown[to + offset];
+      if (!a || !b) return offset > 0;
+      if (a.key !== b.key) return false;
+    }
+    return true;
+  };
+  let i = 0;
+  let j = 0;
+  // A lone equal word is trusted only right after a match; elsewhere "the" would match anywhere.
+  let synced = false;
+  while (i < spoken.length && j < shown.length) {
+    let next: { i: number; j: number } | null = null;
+    for (let distance = 0; distance <= ALIGN_WINDOW && !next; distance++)
+      for (let skip = 0; skip <= distance && !next; skip++)
+        if (agrees(i + skip, j + distance - skip, distance === 0 && synced ? 1 : 2))
+          next = { i: i + skip, j: j + distance - skip };
+    if (!next)
+      for (let at = j + 1; at < shown.length && !next; at++)
+        if (agrees(i, at, RESYNC_RUN)) next = { i, j: at };
+    synced = next !== null;
+    if (!next) {
+      i++;
+      continue;
+    }
+    anchors[next.i] = next.j;
+    i = next.i + 1;
+    j = next.j + 1;
+  }
+  return anchors;
+}
+
+/**
+ * Finds what read aloud is reading in a renderer's own text, such as a native view that reports
+ * the text it shows but not where it came from in the markdown. The reply's words are matched to
+ * the shown words in order; a word without a safe match is left unhighlighted.
+ */
+export function readAloudShownText(markdown: string, shown: string) {
+  const speech = readAloudSpeech(markdown, false);
+  const spoken = comparedWords(speech.text).map((word) => {
+    const sources = speech.sources.slice(word.start, word.end).filter((at) => at !== ADDED);
+    return { ...word, sourceStart: Math.min(...sources), sourceEnd: Math.max(...sources) + 1 };
+  });
+  const shownWords = comparedWords(shown);
+  const anchors = alignWords(spoken, shownWords);
+  const span = (inside: (word: (typeof spoken)[number]) => boolean): ReadAloudTextRange | null => {
+    let start = Infinity;
+    let end = -Infinity;
+    spoken.forEach((word, index) => {
+      const match = shownWords[anchors[index] ?? -1];
+      if (!match || !inside(word)) return;
+      start = Math.min(start, match.start);
+      end = Math.max(end, match.end);
+    });
+    return start < end ? { start, end } : null;
+  };
+  return (position: ReadAloudPosition) => ({
+    block: span(
+      (word) => word.sourceStart >= position.block.start && word.sourceEnd <= position.block.end,
+    ),
+    word: span(
+      (word) => word.sourceStart < position.word.end && word.sourceEnd > position.word.start,
+    ),
+  });
+}

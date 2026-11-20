@@ -1,6 +1,7 @@
 import { expect, it } from "vite-plus/test";
 import {
   readAloudPosition,
+  readAloudShownText,
   readAloudSpeech,
   readAloudText,
   splitReadAloudSpans,
@@ -94,6 +95,47 @@ it("locates a spoken word by markdown range and by its repeats in the block", ()
     start: speech.text.indexOf("saw"),
     end: speech.text.indexOf("saw") + 3,
   });
+});
+
+it("finds the block and word being read in text a renderer shows", () => {
+  const markdown = [
+    "# Plan",
+    "Use **readAloud** and see [the docs](https://example.com).",
+    "- First item\n- Second item",
+    "| File | Change |\n| --- | --- |\n| a.ts | Adds `x` |",
+    "```ts\ncode();\n```",
+    "The cat saw the **cat**.",
+  ].join("\n\n");
+  const shown =
+    "Plan\nUse readAloud and see the docs.\n• First item\n• Second item\nFile\tChange\na.ts\tAdds x\ncode();\nThe cat saw the cat.";
+  const speech = readAloudSpeech(markdown, true);
+  const locate = readAloudShownText(markdown, shown);
+  const at = (spoken: string, from = 0) => {
+    const start = speech.text.indexOf(spoken, from);
+    const position = readAloudPosition(speech, start, start + spoken.length);
+    if (!position) throw new Error(`no position for ${spoken}`);
+    const found = locate(position);
+    const slice = (range: { start: number; end: number } | null) =>
+      range && shown.slice(range.start, range.end);
+    return { block: slice(found.block), word: slice(found.word) };
+  };
+  expect(at("readAloud")).toEqual({ block: "Use readAloud and see the docs.", word: "readAloud" });
+  expect(at("docs.")).toEqual({ block: "Use readAloud and see the docs.", word: "docs." });
+  expect(at("Second")).toEqual({ block: "Second item", word: "Second" });
+  expect(at("Adds")).toEqual({ block: "a.ts\tAdds x", word: "Adds" });
+  expect(at("cat.")).toEqual({ block: "The cat saw the cat.", word: "cat." });
+
+  // A renderer that shows only part of the reply still finds the words it shows.
+  const tail = readAloudShownText(markdown, "The cat saw the cat.");
+  const cat = speech.text.lastIndexOf("cat");
+  const position = readAloudPosition(speech, cat, cat + 3);
+  expect(position && tail(position)).toEqual({
+    block: { start: 0, end: 20 },
+    word: { start: 16, end: 20 },
+  });
+  const first = speech.text.indexOf("First");
+  const elsewhere = readAloudPosition(speech, first, first + 5);
+  expect(elsewhere && tail(elsewhere)).toEqual({ block: null, word: null });
 });
 
 it("splits long replies without losing content or cutting surrogate pairs", () => {
