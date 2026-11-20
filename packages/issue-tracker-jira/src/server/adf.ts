@@ -157,6 +157,23 @@ export function adfToMarkdown(document: unknown): string {
   return isNode(document) ? blocks(children(document)) : "";
 }
 
+/** The words of a rich-text field without markup, each block on a line, for showing as text. */
+export function adfToText(document: unknown): string {
+  const text = (node: AdfNode): string => {
+    const nodes = children(node);
+    if (nodes.length === 0) {
+      if (node.type === "hardBreak") return "\n";
+      return node.text ?? attr(node, "text") ?? attr(node, "url") ?? "";
+    }
+    // A node holds either inline content, which runs together, or blocks, a line each.
+    const parts = nodes.map(text);
+    return nodes.some((child) => child.content !== undefined)
+      ? parts.filter((part) => part.length > 0).join("\n")
+      : parts.join("");
+  };
+  return isNode(document) ? text(document).trim() : "";
+}
+
 /** What `markdownToAdf` cannot write back, so rewriting the text would drop it from Jira. */
 const UNWRITABLE = new Set([
   "media",

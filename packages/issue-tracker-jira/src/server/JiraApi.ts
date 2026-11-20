@@ -59,18 +59,36 @@ export type JiraHistory = typeof History.Type;
 const Issue = Schema.Struct({
   id: Schema.String,
   key: Schema.String,
-  fields: Schema.Struct({
-    summary: Schema.String,
-    status: Status,
-    project: Schema.optional(Schema.Struct({ key: Schema.String })),
-    reporter: Schema.optional(Schema.NullOr(User)),
-    assignee: Schema.optional(Schema.NullOr(User)),
-    labels: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
-    created: Schema.String,
-    updated: Schema.String,
-    resolutiondate: Schema.optional(Schema.NullOr(Schema.String)),
-    description: Schema.optional(Schema.Unknown),
-  }),
+  // Whatever else the read asked for rides along, custom fields included.
+  fields: Schema.StructWithRest(
+    Schema.Struct({
+      summary: Schema.String,
+      status: Status,
+      project: Schema.optional(
+        Schema.Struct({ key: Schema.String, name: Schema.optional(Schema.String) }),
+      ),
+      reporter: Schema.optional(Schema.NullOr(User)),
+      assignee: Schema.optional(Schema.NullOr(User)),
+      labels: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
+      created: Schema.String,
+      updated: Schema.String,
+      resolutiondate: Schema.optional(Schema.NullOr(Schema.String)),
+      description: Schema.optional(Schema.Json),
+    }),
+    [Schema.Record(Schema.String, Schema.Json)],
+  ),
+  /** The site's own name for each field. */
+  names: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  /** Each field's type; a custom field's `custom` names the kind it is, the same on every site. */
+  schema: Schema.optional(
+    Schema.Record(
+      Schema.String,
+      Schema.Struct({
+        type: Schema.optional(Schema.String),
+        custom: Schema.optional(Schema.String),
+      }),
+    ),
+  ),
   transitions: Schema.optional(Schema.Array(Transition)),
   changelog: Schema.optional(Schema.Struct({ histories: Schema.Array(History) })),
 });
@@ -183,7 +201,10 @@ export class JiraApi extends Context.Service<
       { readonly issues: ReadonlyArray<JiraIssue>; readonly nextPageToken: string | null },
       IssueTrackerError
     >;
-    /** With the description, the transitions the account may make, and the change history. */
+    /**
+     * With every field but the comments and work log, the site's names and types for them, the
+     * transitions the account may make, and the change history.
+     */
     readonly getIssue: (key: string) => Effect.Effect<JiraIssue, IssueTrackerError>;
     /** Newest first, `startAt` counting from the newest. */
     readonly getComments: (input: {
@@ -383,8 +404,8 @@ export const make = Effect.gen(function* () {
       method: "GET",
       path: `/rest/api/3/issue/${encodeURIComponent(key)}`,
       query: {
-        fields: [...ISSUE_FIELDS, "description"].join(","),
-        expand: "transitions,changelog",
+        fields: "*all,-comment,-worklog",
+        expand: "transitions,changelog,names,schema",
       },
     });
 

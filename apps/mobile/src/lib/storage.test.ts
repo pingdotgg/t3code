@@ -183,6 +183,7 @@ describe("mobile connection storage", () => {
           },
         ],
         issueSavedViews: [validIssueView, { ...validIssueView, id: "invalid", involvement: "x" }],
+        issuePropertyPins: { '["linear","linear.app","eng","eng-7"]': ["estimate"] },
       }),
       10,
     );
@@ -190,6 +191,7 @@ describe("mobile connection storage", () => {
       baseFontSize: 17,
       pullRequestSavedViews: [validView],
       issueSavedViews: [validIssueView],
+      issuePropertyPins: { '["linear","linear.app","eng","eng-7"]': ["estimate"] },
     });
   });
 

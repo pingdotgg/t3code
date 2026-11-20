@@ -26,7 +26,17 @@ const ISSUE = {
 /** Every endpoint the detail read touches, answered by the path `glab api` is given. */
 function answer(path: string): string {
   if (path === "user") return encode({ username: "julius" });
-  if (path === "projects/acme%2Fweb/issues/42") return encode(ISSUE);
+  if (path === "projects/acme%2Fweb/issues/42") {
+    return encode({
+      ...ISSUE,
+      issue_type: "incident",
+      milestone: { id: 4, title: "17.6" },
+      due_date: null,
+      weight: 0,
+      confidential: false,
+      time_stats: { human_time_estimate: "3h", human_total_time_spent: null },
+    });
+  }
   if (path.startsWith("projects/acme%2Fweb/issues/42/notes")) {
     return encode([
       {
@@ -172,6 +182,18 @@ describe("GitLabIssueTracker", () => {
         commentsCursor: null,
         reactions: [{ content: "eyes", count: 1, actors: ["theo"], viewerHasReacted: false }],
       });
+      // Zero and false are values; a paid-tier field this host does not send is left out.
+      expect(issue.properties).toEqual(
+        expect.arrayContaining([
+          { id: "issue_type", label: "Type", value: "Incident" },
+          { id: "milestone", label: "Milestone", value: "17.6" },
+          { id: "due_date", label: "Due date", value: null },
+          { id: "weight", label: "Weight", value: 0 },
+          { id: "time_estimate", label: "Time estimate", value: "3h" },
+          { id: "confidential", label: "Confidential", value: false },
+        ]),
+      );
+      expect(issue.properties?.some((property) => property.id === "epic")).toBe(false);
       expect(issue.comments).toEqual([
         {
           id: "7",

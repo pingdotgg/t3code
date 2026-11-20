@@ -69,6 +69,7 @@ export function PullRequestDetailTabBar<Tab extends string>({
   onTabIntent,
   inert,
   children,
+  "aria-label": ariaLabel,
 }: {
   tabs: ReadonlyArray<{ readonly value: Tab; readonly label: string }>;
   value: Tab;
@@ -76,6 +77,8 @@ export function PullRequestDetailTabBar<Tab extends string>({
   onTabIntent?: (tab: Tab) => void;
   inert?: boolean;
   children?: ReactNode;
+  /** Defaults to naming a pull request's tabs. */
+  "aria-label"?: string;
 }) {
   // A pointer passing over a tab is not intent; it must rest like a list row does.
   const pointerIntent = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -84,7 +87,7 @@ export function PullRequestDetailTabBar<Tab extends string>({
   return (
     <nav
       className="col-span-2 flex min-w-0 flex-wrap items-center gap-2 border-t border-border/60 px-4 py-2"
-      aria-label="Pull request tabs"
+      aria-label={ariaLabel ?? "Pull request tabs"}
       inert={inert}
     >
       <ToggleGroup
