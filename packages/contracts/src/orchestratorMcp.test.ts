@@ -78,6 +78,11 @@ describe("orchestrator MCP contracts", () => {
     const task = { task: "Report.", mode: "wait" };
     expect(decodeDelegateTaskInput({ ...task, timeoutMs: 45_000 }).timeoutMs).toBe(45_000);
     expect(() => decodeDelegateTaskInput({ ...task, timeoutMs: 600_000 })).toThrow();
+    for (const input of [OrchestratorMcpThreadWaitInput, OrchestratorMcpDelegateTaskInput]) {
+      expect(JSON.stringify(Schema.toJsonSchemaDocument(input).schema)).toContain(
+        '"timeoutMs":{"anyOf":[{"type":"number","maximum":45000}',
+      );
+    }
   });
 
   it("decodes a running-task next written by another version", () => {
