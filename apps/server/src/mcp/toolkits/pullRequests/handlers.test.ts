@@ -1024,6 +1024,7 @@ describe("source control tools", () => {
     Effect.gen(function* () {
       const actions: Array<PullRequestActionInput> = [];
       let lowerHead: string | undefined = "bbb";
+      let targetHead = "stale";
       const layer = (number: number, state: "open" | "merged", headSha: string | undefined) => ({
         number,
         state,
@@ -1044,7 +1045,7 @@ describe("source control tools", () => {
                   layers: [
                     layer(40, "merged", "aaa"),
                     layer(41, "open", lowerHead),
-                    layer(42, "open", "stale"),
+                    layer(42, "open", targetHead),
                     layer(43, "open", "ddd"),
                   ],
                 }),
@@ -1064,12 +1065,19 @@ describe("source control tools", () => {
           ],
         },
       ]);
+      const fullHead = "c0ffee1234567890abcdef1234567890abcdef12";
+      targetHead = fullHead;
+      yield* harness.call("pull_request_merge", { expectedHeadSha: "c0ffee1", stack: true });
+      expect(actions[1]?.expectedStackHeads).toEqual([
+        { number: 41, headSha: "bbb" },
+        { number: 42, headSha: fullHead },
+      ]);
       lowerHead = undefined;
       const unpinned = yield* harness
         .call("pull_request_merge", { expectedHeadSha: "ccc", stack: true })
         .pipe(Effect.flip);
       expect(unpinned._tag).toBe("PullRequestForgeError");
-      expect(actions).toHaveLength(1);
+      expect(actions).toHaveLength(2);
     }),
   );
 
