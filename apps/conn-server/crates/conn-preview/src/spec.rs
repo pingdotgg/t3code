@@ -32,6 +32,13 @@ pub(crate) struct Spec {
 pub(crate) struct Scripts {
     pub snapshot: String,
     pub sensitive: String,
+    #[serde(rename = "credentialPrepare")]
+    pub credential_prepare: String,
+    #[serde(rename = "credentialInsert")]
+    pub credential_insert: String,
+    /// `credentialFieldExpression` with `"__T3_FIELD__"` and `"__T3_SELECTOR__"` to fill in.
+    #[serde(rename = "credentialField")]
+    pub credential_field: String,
     pub dotted: String,
     pub mask: String,
     pub recorders: std::collections::HashMap<String, String>,

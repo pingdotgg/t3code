@@ -12,6 +12,7 @@ html_render
 request_secret
 save_test_login
 request_credentials
+fill_credential
 database_query
 panel_open
 html_preview

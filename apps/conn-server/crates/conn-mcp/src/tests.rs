@@ -1733,7 +1733,7 @@ async fn search_puts_titles_first_and_keeps_slots_for_messages() {
 /// Tools that a text we send to an agent names and that this server does not serve. An agent
 /// told to call one finds no such tool. Serve one, and this test makes you strike it here.
 /// `preview_*` in the orchestration text also names all 13 preview tools.
-const NAMED_NOT_SERVED: &[&str] = &["fill_credential", "link_issue", "pull_request_create"];
+const NAMED_NOT_SERVED: &[&str] = &["link_issue", "pull_request_create"];
 
 /// Every text we send to an agent that can name a tool: the orchestration text and Claude's
 /// texts (`conn-mcp`), the `next` text of a running task, the Codex additional context
@@ -3688,4 +3688,57 @@ async fn thread_transfer_forks_and_reports_status() {
         .await;
     assert_eq!(code, "orchestration_error");
     assert!(message.contains("merge a fork back"), "{message}");
+}
+
+/// `fill_credential` for an agent: an unknown login, then a saved one with no tab open. Only a
+/// status and T3's message come back.
+#[tokio::test(flavor = "current_thread")]
+async fn fill_credential_answers_with_a_status_only() {
+    let f = fixture("fill-credential");
+    let mut outside = Client::open(&f.service, client(true)).await;
+    let launched = outside
+        .ok(
+            "t3_thread_launch",
+            json!({
+                "projectId": project_id(), "title": "Fill", "message": "hang",
+                "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-5-5"},
+                "runtimeMode": "full-access", "interactionMode": "default",
+                "workspaceStrategy": {"type": "root"},
+            }),
+        )
+        .await;
+    let entry = f.service.issue_thread_credential(ThreadCredentialRequest {
+        thread_id: launched["threadId"].as_str().unwrap().to_owned(),
+        provider_instance_id: "claudeAgent".into(),
+        subagent: false,
+        preview: true,
+        device: false,
+    });
+    let token = entry.authorization.strip_prefix("Bearer ").unwrap();
+    let agent = Caller::Thread(f.service.resolve_thread_token(token).unwrap());
+    let mut c = Client::open(&f.service, agent).await;
+    let missing = c
+        .ok(
+            "fill_credential",
+            json!({"itemId": "login:none", "field": "password"}),
+        )
+        .await;
+    assert_eq!(
+        missing,
+        json!({"status": "item_not_found", "message": "No login with this id. Call request_credentials first."})
+    );
+    let saved = c
+        .ok(
+            "save_test_login",
+            json!({"url": "http://app.test", "username": "tester", "password": "fixture-only"}),
+        )
+        .await;
+    let result = c
+        .ok(
+            "fill_credential",
+            json!({"itemId": saved["id"], "field": "password"}),
+        )
+        .await;
+    assert_eq!(result["status"], "tab_unavailable");
+    assert!(!result.to_string().contains("fixture-only"));
 }

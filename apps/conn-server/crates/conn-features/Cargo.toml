@@ -23,6 +23,12 @@ jiff.workspace = true
 rusqlite.workspace = true
 # The webhook URL token and the prompt frame id, from the OS random source (in the tree).
 getrandom.workspace = true
+# One-time codes for saved test logins (`totp.ts`): HMAC with SHA-1, SHA-256 or SHA-512.
+# Both already in the binary (sha1 through tungstenite, sha2 through conn-support).
+sha1 = { version = "0.10", default-features = false }
+sha2.workspace = true
+# Saved login URLs against the tab's URL, as `credentialOrigin.ts` parses them (in the tree).
+url = { version = "2.5", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros", "time", "test-util"] }

@@ -21,6 +21,29 @@ the run stays open. Waiting for terminal confirmation is deliberate. `idle-diff`
 split in `KNOWN` as `intermittent`; a gate either side misses still fails it. Whether to
 match T3 is open.
 
+## `fill_credential` (2026-11-20)
+
+Agents can fill a saved test login into a sign-in form in their browser tab:
+`fill_credential` (`conn-mcp/src/tools/test_logins.rs`, T3's `CredentialAutofill.fill`).
+
+- **The rules:** the login must exist; the tab must have a page; the tab's origin must match
+  the login's saved URL (`test_logins/origin.rs`, `matchingOrigin`: same host without `www.`,
+  same port, https unless the saved URL says http or names a development host); the value is
+  the username, the password, or a one-time code (`test_logins/totp.rs`, `totpCode`: base32 or
+  `otpauth://totp`, SHA-1/256/512). Only a status and T3's message come back.
+- **The fill** (`conn-preview` `credentialFill`, `fillCredential`): the field expression,
+  T3's prepare and insert functions (generated into `spec.json` by `gen-spec.mjs`, which
+  fails if `credentialFieldExpression` stops taking its inputs as JSON), the origin checked
+  before and after the field is found. The value goes only to CDP; inserted inputs are
+  redacted from later snapshots by the existing sensitive-value read.
+- **Proof:** `gen-credential-cases.mjs` (new check): 223 cases of T3's `matchingOrigin`,
+  `parseSavedUrl`, `parseTotpSetup` and `totpCode`, equal in `cargo test -p conn-features`.
+  `parity.mjs`: the refusals outside a thread and bad input. `cargo test -p conn-mcp
+  fill_credential`: an unknown login, a saved login with no tab (status only, no value).
+- **Known differences:** `credentialAutofill.allowSubdomains` is not honoured (T3 uses the
+  public-suffix list; subdomains never match here); `credentials.listForSite` and
+  `fillForSite` (the browser's key menu) are not served; no live fill was run against a page.
+
 ## `t3_thread_transfer` (2026-11-20)
 
 `t3_thread_transfer` is served (`conn-mcp/src/tools/manage.rs`, T3's `thread/handlers.ts`):

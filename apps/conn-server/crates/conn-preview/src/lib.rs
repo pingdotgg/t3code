@@ -4,6 +4,7 @@ use std::{collections::HashMap, path::PathBuf, process::Stdio, sync::Arc, time::
 pub mod html;
 pub mod install;
 mod page;
+pub use page::credential_field_expression;
 mod proxy;
 mod recording;
 mod screencast;

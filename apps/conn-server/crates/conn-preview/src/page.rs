@@ -504,6 +504,125 @@ async fn cursor(browser: &Browser, encoder: Option<&str>, point: &Value, click: 
     }
 }
 
+/// `fillCredential` (`packages/shared/src/previewPage.ts`): inserts a test-login value into the
+/// input `fieldExpression` finds. The value goes only to CDP: never into an expression, a
+/// result, an error or the action timeline.
+pub(crate) async fn fill_credential(
+    browser: &Browser,
+    session: &str,
+    input: &Value,
+    remember: impl Fn(&str),
+) -> Result<Value, Error> {
+    const GROUP: &str = "t3code-credential-fill";
+    let status = |status: &str| Ok(json!({ "status": status }));
+    let send = |method: &'static str, params: Value| browser.send(method, params, Some(session));
+    let expected = input
+        .get("expectedOrigin")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let field = input.get("field").cloned().unwrap_or(Value::Null);
+    let origin_now = || async {
+        send(
+            "Runtime.evaluate",
+            json!({"expression": "location.origin", "returnByValue": true}),
+        )
+        .await
+        .ok()
+        .and_then(|r| {
+            r.pointer("/result/value")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+    };
+    if origin_now().await.as_deref() != Some(expected) {
+        return status("origin_mismatch");
+    }
+    let scripts = &spec()?.scripts;
+    let call = |object: String, declaration: &'static str, arguments: Vec<Value>| async move {
+        let response = send(
+            "Runtime.callFunctionOn",
+            json!({
+                "objectId": object, "functionDeclaration": declaration,
+                "arguments": arguments.into_iter().map(|value| json!({"value": value})).collect::<Vec<_>>(),
+                "returnByValue": true, "userGesture": true,
+            }),
+        )
+        .await
+        .ok()?;
+        if response.get("exceptionDetails").is_some() {
+            return None;
+        }
+        response
+            .pointer("/result/value")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
+    let outcome = async {
+        let found = send(
+            "Runtime.evaluate",
+            json!({"expression": input.get("fieldExpression"), "returnByValue": false,
+                "objectGroup": GROUP}),
+        )
+        .await
+        .ok();
+        let object = found
+            .as_ref()
+            .filter(|f| f.get("exceptionDetails").is_none())
+            .filter(|f| f.pointer("/result/subtype").and_then(Value::as_str) == Some("node"))
+            .and_then(|f| f.pointer("/result/objectId").and_then(Value::as_str))
+            .map(str::to_owned);
+        let Some(object) = object else {
+            return "field_not_found";
+        };
+        match call(
+            object.clone(),
+            &scripts.credential_prepare,
+            vec![field.clone()],
+        )
+        .await
+        .as_deref()
+        {
+            Some("ready") => {}
+            Some("not_editable") => return "not_editable",
+            _ => return "insert_failed",
+        }
+        // The page may have navigated while the field was found.
+        if origin_now().await.as_deref() != Some(expected) {
+            return "origin_mismatch";
+        }
+        let value = input.get("value").cloned().unwrap_or(Value::Null);
+        // Remembered before it goes in, so redaction covers it from then on.
+        if field != "username"
+            && let Some(secret) = value.as_str()
+        {
+            remember(secret);
+        }
+        match call(
+            object,
+            &scripts.credential_insert,
+            vec![field, value, json!(expected), json!(false)],
+        )
+        .await
+        .as_deref()
+        {
+            Some("filled") => "filled",
+            Some("origin_mismatch") => "origin_mismatch",
+            _ => "insert_failed",
+        }
+    }
+    .await;
+    let _ = send("Runtime.releaseObjectGroup", json!({"objectGroup": GROUP})).await;
+    status(outcome)
+}
+
+/// `credentialFieldExpression(field, selector)`: the page expression that finds the input.
+pub fn credential_field_expression(field: &str, selector: Option<&str>) -> Result<String, Error> {
+    let template = &spec()?.scripts.credential_field;
+    Ok(template
+        .replacen("\"__T3_FIELD__\"", &json!(field).to_string(), 1)
+        .replacen("\"__T3_SELECTOR__\"", &json!(selector).to_string(), 1))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

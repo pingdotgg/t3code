@@ -188,6 +188,20 @@ const htmlArgs = (noSandbox) => Function("input", "proxy", `return ${htmlArgsSou
   { noSandbox, profileDirectory: "__PROFILE__" }, { port: "__PROXY_PORT__" },
 );
 const renderSource = read("apps/server/src/htmlRender/HtmlRender.ts");
+// `credentialFieldExpression(field, selector)` with both values as placeholders; the server
+// puts their JSON in. Fails when the placeholders stop standing for the values.
+function credentialFieldTemplate() {
+  const template = credential.credentialFieldExpression("__T3_FIELD__", "__T3_SELECTOR__");
+  for (const [field, selector] of [["password", undefined], ["otp", "#code"], ["username", 'a[b="c"]']]) {
+    const filled = template
+      .replace(JSON.stringify("__T3_FIELD__"), JSON.stringify(field))
+      .replace(JSON.stringify("__T3_SELECTOR__"), JSON.stringify(selector ?? null));
+    if (filled !== credential.credentialFieldExpression(field, selector)) {
+      throw Error("credentialFieldExpression no longer takes its field and selector as JSON");
+    }
+  }
+  return template;
+}
 const spec = {
   agentTabLimit: constant(serverSource, "AGENT_TAB_LIMIT"),
   serverTabLimit: constant(serverSource, "SERVER_TAB_LIMIT"),
@@ -206,6 +220,9 @@ const spec = {
   scripts: {
     snapshot: Function(`return ${snapshotLiteral}`)(),
     sensitive: credential.SENSITIVE_INPUT_VALUES_EXPRESSION,
+    credentialPrepare: credential.CREDENTIAL_PREPARE_FUNCTION,
+    credentialInsert: credential.CREDENTIAL_INSERT_FUNCTION,
+    credentialField: credentialFieldTemplate(),
     dotted: Function(`return ${dotted}`)(),
     mask,
     recorders: Object.fromEntries(

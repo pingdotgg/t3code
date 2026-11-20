@@ -180,3 +180,34 @@ async fn refuses_full_or_oversized_stores_without_changing_them() {
     drop(file);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+/// T3's `matchingOrigin`, `parseSavedUrl`, `parseTotpSetup` and `totpCode`
+/// (`tools/gen-credential-cases.mjs`).
+#[test]
+fn fill_rules_match_t3s_functions() {
+    let cases: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("credential-cases.json")).expect("T3 cases");
+    for case in cases {
+        let actual = match case["kind"].as_str().expect("kind") {
+            "origin" => {
+                let saved: Vec<String> =
+                    serde_json::from_value(case["saved"].clone()).expect("saved");
+                serde_json::json!(super::origin::matching_origin(
+                    &saved,
+                    case["tab"].as_str().expect("tab")
+                ))
+            }
+            "savedHost" => serde_json::json!(
+                super::origin::parse_saved_url(case["saved"].as_str().expect("saved"))
+                    .map(|t| t.host)
+            ),
+            "totp" => serde_json::json!(
+                super::totp::parse_totp_setup(case["setup"].as_str().expect("setup")).map(
+                    |setup| super::totp::totp_code(&setup, case["now"].as_u64().expect("now"))
+                )
+            ),
+            other => panic!("unknown case {other}"),
+        };
+        assert_eq!(actual, case["expected"], "{case}");
+    }
+}

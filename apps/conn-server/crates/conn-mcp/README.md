@@ -218,7 +218,7 @@ Codex). `preview_*` in **O** names all 13 preview tools.
 | `annotations_complete` | served | actsAsCaller | | |
 | `annotations_release` | served | actsAsCaller | | |
 | `request_credentials` | served | readsAsCaller | server: credentials | |
-| `fill_credential` | not served | actsAsCaller | server: credentials | |
+| `fill_credential` | served (test logins; no subdomain matching) | actsAsCaller | server: credentials | |
 | `save_test_login` | served | actsAsCaller | server: credentials (test logins) | |
 | `request_secret` | served | actsAsCaller | server: secret requests | O |
 | `t3_environment_links` | served (peer links) | reads |  | O |
