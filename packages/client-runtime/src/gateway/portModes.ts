@@ -227,6 +227,7 @@ export const PORT_MODE_POLICIES = {
   },
   settleThread: writesThreads((environmentId, threadId) => [thread(environmentId, threadId)]),
   unsettleThread: writesThreads((environmentId, threadId) => [thread(environmentId, threadId)]),
+  followParentSettlement: writesEnvironment("Following a parent's settlement"),
   setThreadParent: writesThreads((environmentId, threadId, parentThreadId, parentEnvironmentId) => [
     thread(environmentId, threadId),
     thread(parentEnvironmentId ?? environmentId, parentThreadId ?? undefined),

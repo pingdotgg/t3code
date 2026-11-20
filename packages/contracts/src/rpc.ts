@@ -3,6 +3,8 @@ import {
   OrchestrationGetCommandReceiptsResult,
 } from "./commandReceipts.ts";
 import {
+  OrchestrationV2ParentSettlement,
+  OrchestrationV2ParentSettlementResult,
   OrchestrationV2SearchThreadError,
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -2468,6 +2470,16 @@ const WsOrchestrationV2ForceStopThreadRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS
   error: Schema.Union([OrchestrationV2ForceStopThreadError, EnvironmentAuthorizationError]),
 });
 
+// A parent's settlement on another environment, relayed by a connected app for its server.
+const WsOrchestrationV2FollowParentSettlementRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.followParentSettlement,
+  {
+    payload: OrchestrationV2ParentSettlement,
+    success: OrchestrationV2ParentSettlementResult,
+    error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsOrchestrationV2GetWorkflowScriptRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.getWorkflowScript,
   {
@@ -3030,6 +3042,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2GetNativeChildWorkRpc,
   WsOrchestrationV2StopWorkflowRpc,
   WsOrchestrationV2ForceStopThreadRpc,
+  WsOrchestrationV2FollowParentSettlementRpc,
   WsOrchestrationV2GetTurnItemRpc,
   WsOrchestrationV2GetTurnDiffRpc,
   WsOrchestrationV2GetFullThreadDiffRpc,

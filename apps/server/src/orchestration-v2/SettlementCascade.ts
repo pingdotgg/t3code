@@ -46,7 +46,7 @@ export const RemoteSettlementRelay = Context.Reference<{
   defaultValue: () => ({ run: () => Effect.void }),
 });
 
-/** Manual settlement follows the sub-run tree; unsettle restores only matching settledBy rows.
+/** Manual settlement follows the sub-run tree; unsettle restores only rows of that settlement.
  * The resumable outbox walk starts after commit; each child uses thread.settlement.follow
  * so working children defer until completion. Age-based settlement never cascades. */
 export class SettlementCascade extends Context.Service<
@@ -95,11 +95,11 @@ export const layer = Layer.effect(
               action === "unsettle"
                 ? settled &&
                   child.settlementSource !== "inactivity" &&
-                  // Records from before provenance was kept match on the settle time.
-                  (child.settledBy === undefined
-                    ? child.settledAt != null &&
-                      DateTime.toEpochMillis(child.settledAt) === settledAtMs
-                    : child.settledBy === settledBy)
+                  // A settlement is its root and its time: a later one of the same root stays.
+                  // Records from before provenance was kept match on the time alone.
+                  child.settledAt != null &&
+                  DateTime.toEpochMillis(child.settledAt) === settledAtMs &&
+                  (child.settledBy === undefined || child.settledBy === settledBy)
                 : !settled;
             if (!follows) {
               // A card settled on its own keeps its clock, but its sub-runs still follow.

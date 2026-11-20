@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
@@ -34,6 +35,7 @@ import { ProjectionStoreV2, layer as projectionLayer } from "./ProjectionStore.t
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import { makeSubagentChildThread } from "@t3tools/provider-core/server/subagentProjection";
+import * as ParentSettlementFollow from "./ParentSettlementFollow.ts";
 import * as RemoteParentSettlement from "./RemoteParentSettlement.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
@@ -1836,38 +1838,54 @@ it.effect("a busy sub-run follows a repeat settle once it finishes, with its sub
 );
 
 it.effect(
-  "a linked parent's settle waits for a busy child and its un-settle reopens only what it settled",
+  "children follow a linked parent's settlement by its identity, after busy work, once each",
   () =>
     Effect.gen(function* () {
-      const orchestrator = yield* OrchestratorV2;
       const projections = yield* ProjectionStoreV2;
       const sink = yield* EventSinkV2;
+      const orchestrator = yield* OrchestratorV2;
+      const settlements = yield* ParentSettlementFollow.ParentSettlementFollow;
       const devBox = EnvironmentId.make("environment-dev-box");
-      const cardSettledAt = DateTime.makeUnsafe("2026-10-22T10:00:00.000Z");
-      const ownSettledAt = DateTime.subtract(cardSettledAt, { seconds: 30 });
+      const generationA = DateTime.makeUnsafe("2026-10-22T10:00:00.000Z");
+      const generationB = DateTime.add(generationA, { hours: 1 });
+      const ownSettledAt = DateTime.subtract(generationA, { seconds: 30 });
       const thread = (id: string) => projections.getThread(ThreadId.make(id));
-      // What t3_thread_organize dispatches for the card's cascade over the link.
-      const follow = (id: string, action: "settle" | "unsettle", attempt: string) =>
-        orchestrator
-          .dispatch({
-            type: "thread.settlement.follow",
-            commandId: CommandId.make(`follow:${action}:${id}:${attempt}`),
-            threadId: ThreadId.make(id),
+      const settledOverride = (id: string) =>
+        thread(id).pipe(Effect.map((child) => child.settledOverride));
+      // What a linked server's settlement call or an app's relay of it runs here.
+      const follow = (action: "settle" | "unsettle", at: DateTime.Utc) =>
+        settlements
+          .follow({
+            parentEnvironmentId: devBox,
+            parentThreadIds: [ThreadId.make("card")],
             action,
             settledBy: ThreadId.make("card"),
-            settledAt: cardSettledAt,
+            settledAt: DateTime.formatIso(at),
           })
-          .pipe(Effect.andThen(drainEffects));
+          .pipe(Effect.tap(() => drainEffects));
 
       for (const id of ["with-card", "own", "busy"]) {
         yield* createUnder(id, { threadId: "card", environmentId: devBox });
       }
       yield* createUnder("with-card-helper", { threadId: "with-card" });
+      yield* createUnder("own-helper", { threadId: "own" });
+      yield* createUnder("elsewhere", {
+        threadId: "card",
+        environmentId: EnvironmentId.make("environment-elsewhere"),
+      });
       yield* orchestrator.dispatch({
         type: "thread.settle",
         commandId: CommandId.make("settle:own"),
         threadId: ThreadId.make("own"),
         settledAt: ownSettledAt,
+      });
+      // Its own cascade settles its helper first, then the helper is brought back by hand.
+      yield* drainEffects;
+      yield* orchestrator.dispatch({
+        type: "thread.unsettle",
+        commandId: CommandId.make("unsettle:own-helper"),
+        threadId: ThreadId.make("own-helper"),
+        reason: "user",
       });
       yield* drainEffects;
 
@@ -1918,32 +1936,87 @@ it.effect(
           },
         ],
       });
-      assert.equal((yield* projections.getThreadShell(busy))?.pendingBackgroundTasks?.length, 1);
 
-      yield* follow("with-card", "settle", "1");
-      yield* follow("own", "settle", "1");
-      const refused = yield* Effect.exit(follow("busy", "settle", "1"));
-      assert.isTrue(refused._tag === "Failure");
-      assert.isNull((yield* thread("busy")).settledOverride);
-      for (const id of ["with-card", "with-card-helper"]) {
+      assert.deepEqual(yield* follow("settle", generationA), { waiting: [busy] });
+      assert.isNull(yield* settledOverride("busy"));
+      for (const id of ["with-card", "with-card-helper", "own-helper"]) {
         const settled = yield* thread(id);
         assert.equal(settled.settledBy, "card");
-        assert.deepEqual(settled.settledAt, cardSettledAt);
+        assert.deepEqual(settled.settledAt, generationA);
       }
-      // Settled on its own, it keeps its own settle.
+      // Settled on its own, it keeps its settle; a child of another machine's card is untouched.
       assert.isNull((yield* thread("own")).settledBy);
       assert.deepEqual((yield* thread("own")).settledAt, ownSettledAt);
+      assert.isNull(yield* settledOverride("elsewhere"));
+
+      // Delivered again, the settlement changes nothing and queues nothing.
+      const before = yield* sink.latestSequence();
+      assert.deepEqual(yield* follow("settle", generationA), { waiting: [busy] });
+      assert.equal(yield* sink.latestSequence(), before);
 
       // The sender retries once the background work ended.
       yield* sink.write({ events: [sleep("completed")] });
-      yield* follow("busy", "settle", "2");
+      assert.deepEqual(yield* follow("settle", generationA), { waiting: [] });
       assert.equal((yield* thread("busy")).settledBy, "card");
 
-      for (const id of ["with-card", "own", "busy"]) yield* follow(id, "unsettle", "1");
-      for (const id of ["with-card", "with-card-helper", "busy"]) {
-        assert.equal((yield* thread(id)).settledOverride, "active");
+      yield* follow("unsettle", generationA);
+      for (const id of ["with-card", "with-card-helper", "own-helper", "busy"]) {
+        assert.equal(yield* settledOverride(id), "active");
       }
-      assert.equal((yield* thread("own")).settledOverride, "settled");
       assert.deepEqual((yield* thread("own")).settledAt, ownSettledAt);
-    }).pipe(Effect.provide(testLayer)),
+
+      // A later settlement of the same card; a late un-settle of the first one leaves it.
+      yield* follow("settle", generationB);
+      yield* follow("unsettle", generationA);
+      assert.deepEqual((yield* thread("with-card")).settledAt, generationB);
+      assert.equal(yield* settledOverride("with-card-helper"), "settled");
+      yield* follow("unsettle", generationB);
+      assert.equal(yield* settledOverride("with-card"), "active");
+      assert.equal(yield* settledOverride("with-card-helper"), "active");
+    }).pipe(
+      Effect.provide(
+        ParentSettlementFollow.layer.pipe(
+          Layer.provide(NodeCrypto.layer),
+          Layer.provideMerge(testLayer),
+        ),
+      ),
+    ),
+);
+
+it.effect("a late first delivery of an old un-settle leaves what a newer settlement settled", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStoreV2;
+    const settlements = yield* ParentSettlementFollow.ParentSettlementFollow;
+    const devBox = EnvironmentId.make("environment-dev-box");
+    const generationA = DateTime.makeUnsafe("2026-10-22T10:00:00.000Z");
+    const generationB = DateTime.add(generationA, { hours: 1 });
+    const follow = (action: "settle" | "unsettle", at: DateTime.Utc) =>
+      settlements
+        .follow({
+          parentEnvironmentId: devBox,
+          parentThreadIds: [ThreadId.make("card")],
+          action,
+          settledBy: ThreadId.make("card"),
+          settledAt: DateTime.formatIso(at),
+        })
+        .pipe(Effect.tap(() => drainEffects));
+
+    yield* createUnder("child", { threadId: "card", environmentId: devBox });
+    yield* createUnder("grandchild", { threadId: "child" });
+    // The card was settled at A, un-settled, and settled again at B; only B reached here so far.
+    yield* follow("settle", generationB);
+    yield* follow("unsettle", generationA);
+    for (const id of ["child", "grandchild"]) {
+      const thread = yield* projections.getThread(ThreadId.make(id));
+      assert.equal(thread.settledOverride, "settled");
+      assert.deepEqual(thread.settledAt, generationB);
+    }
+  }).pipe(
+    Effect.provide(
+      ParentSettlementFollow.layer.pipe(
+        Layer.provide(NodeCrypto.layer),
+        Layer.provideMerge(testLayer),
+      ),
+    ),
+  ),
 );
