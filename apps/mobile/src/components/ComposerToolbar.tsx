@@ -368,9 +368,9 @@ export function ComposerToolbarButton(props: {
       disabled={props.disabled}
       onPress={props.onPress}
       className={cn(
-        "h-11 max-w-[172px] flex-row items-center justify-center rounded-full border active:opacity-70",
+        "h-[44px] max-w-[172px] flex-row items-center justify-center rounded-full border active:opacity-70 android:h-[48px]",
         variant === "primary" && "shadow-lg shadow-adaptive-black-a10-a25 disabled:shadow-none",
-        isCircle ? "w-11" : "gap-2 px-3.5",
+        isCircle ? "w-[44px] android:w-[48px]" : "gap-2 px-3.5",
         variant === "primary"
           ? props.disabled
             ? "bg-subtle-strong"

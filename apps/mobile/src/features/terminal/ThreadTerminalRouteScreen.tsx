@@ -1002,7 +1002,7 @@ function ThreadTerminal(props: {
                     KeyboardController.dismiss();
                     requestCapture();
                   }}
-                  className="px-4 pt-2"
+                  className="min-h-[44px] justify-center px-4 pt-2"
                   style={{
                     paddingBottom:
                       8 +
