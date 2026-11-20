@@ -455,6 +455,13 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             )?.supportedRuntimeModes,
           });
         }
+        // A link's launch may name its parent there; a thread here is always its own launch's parent.
+        const delegatedFrom =
+          linkOrigin !== undefined
+            ? input.delegatedFrom
+            : caller === undefined
+              ? undefined
+              : { environmentId: scope.environmentId, threadId: caller.id, title: caller.title };
         const result = yield* ThreadMessageIntake.launchThread({
           commandId,
           threadId,
@@ -480,8 +487,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           createdBy: "agent",
           creationSource: "mcp",
           ...(linkOrigin === undefined ? {} : { linkOrigin }),
-          // Kept only alongside linkOrigin: thread.create drops it otherwise.
-          ...(input.delegatedFrom === undefined ? {} : { delegatedFrom: input.delegatedFrom }),
+          ...(delegatedFrom === undefined ? {} : { delegatedFrom }),
           // A link's word for it, like `delegatedFrom`: nothing else may name a run.
           ...(linkOrigin === undefined || input.workflowRun === undefined
             ? {}
