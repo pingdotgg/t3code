@@ -1,20 +1,20 @@
 import { describe, expect, it } from "vite-plus/test";
-import { nextThreadFindAnnouncement, type ThreadFindAnnouncement } from "./threadFind";
+import { nextFindAnnouncement, type FindAnnouncement } from "./FindBar.logic";
 
-type Step = Omit<ThreadFindAnnouncement, "provisional"> & { readonly provisional?: boolean };
+type Step = Omit<FindAnnouncement, "provisional"> & { readonly provisional?: boolean };
 
 function replay(steps: readonly Step[]) {
-  let current: ThreadFindAnnouncement | null = null;
+  let current: FindAnnouncement | null = null;
   const spoken: string[] = [];
   for (const step of steps) {
-    const next = nextThreadFindAnnouncement(current, { provisional: false, ...step });
+    const next = nextFindAnnouncement(current, { provisional: false, ...step });
     if (next.text !== (current?.text ?? "")) spoken.push(next.text);
     current = next;
   }
   return spoken;
 }
 
-describe("nextThreadFindAnnouncement", () => {
+describe("nextFindAnnouncement", () => {
   it("speaks each settled search or step once and stays silent through streamed refreshes", () => {
     expect(
       replay([

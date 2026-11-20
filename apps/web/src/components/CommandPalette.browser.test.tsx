@@ -11,6 +11,7 @@ import { removeLocalStorageItem } from "../hooks/useLocalStorage";
 import { makeThreadFixture } from "../test-fixtures";
 import type { Project, Thread } from "../types";
 import { CommandPalette } from "./CommandPalette";
+import { SearchableMarkdownPreview } from "./files/SearchableMarkdownPreview";
 
 const entities = vi.hoisted(() => ({
   projects: [] as ReadonlyArray<Project>,
@@ -128,6 +129,29 @@ describe("CommandPalette open intents", () => {
       { environmentId, threadId, title: "Drag this thread" },
     ]);
     expect(screen.router?.state.location.pathname).toBe(pathname);
+  });
+
+  it("keeps focus in file find after closing the command palette", async () => {
+    setup();
+    await using screen = await render(
+      <CommandPalette>
+        <textarea aria-label="Composer" />
+        <SearchableMarkdownPreview>
+          <p>needle</p>
+        </SearchableMarkdownPreview>
+      </CommandPalette>,
+    );
+    await userEvent.click(screen.getByRole("textbox", { name: "Composer" }));
+    openCommandPalette({ query: "Find in rendered file" });
+    await page.getByRole("option", { name: /Find in rendered file/ }).click();
+    await expect
+      .element(page.getByRole("dialog", { name: "Command palette" }))
+      .not.toBeInTheDocument();
+    const input = screen.getByRole("searchbox", { name: "Find in file" });
+    await expect.element(input).toHaveFocus();
+    await userEvent.keyboard("needle");
+    await expect.element(input).toHaveValue("needle");
+    await expect.element(screen.getByRole("textbox", { name: "Composer" })).toHaveValue("");
   });
 
   it("opens New thread in... with focus in the search input, not the Back button", async () => {

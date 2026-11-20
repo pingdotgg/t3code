@@ -499,7 +499,20 @@ const make = Effect.gen(function* () {
         yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
         return;
       }
-      const customConfig = runtimeConfig.keybindings;
+      const customConfig = runtimeConfig.keybindings.map((rule) =>
+        isSameKeybindingRule(rule, {
+          key: "mod+f",
+          command: "chat.find",
+          when: "!terminalFocus && !previewFocus",
+        }) ||
+        isSameKeybindingRule(rule, {
+          key: "mod+f",
+          command: "preview.find",
+          when: "previewFocus",
+        })
+          ? { ...rule, when: `${rule.when} && !fileFindFocus` }
+          : rule,
+      );
       const existingCommands = new Set(customConfig.map((entry) => entry.command));
       const missingDefaults: KeybindingRule[] = [];
       const shortcutConflictWarnings: Array<{
@@ -573,7 +586,10 @@ const make = Effect.gen(function* () {
           commands: skippedDefaults.map((rule) => rule.command),
         });
       }
-      if (defaultsToAppend.length > 0) {
+      if (
+        defaultsToAppend.length > 0 ||
+        customConfig.some((rule, index) => rule !== runtimeConfig.keybindings[index])
+      ) {
         yield* writeConfigAtomically([...defaultsToAppend, ...customConfig]);
       }
       const settledLateDefaults = pendingLateDefaults.filter(

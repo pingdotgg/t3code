@@ -4,6 +4,7 @@ import { AsyncResult } from "effect/reactivity";
 import { StrictMode, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
+import { requestMarkdownFindOpen } from "./markdownFindActionBus";
 import { act, fakeTimers, render } from "../../../test/render";
 import appCss from "~/index.css?inline";
 import { isMacPlatform } from "~/lib/utils";
@@ -504,6 +505,19 @@ describe("rendered Markdown select all", () => {
     };
 
     await userEvent.click(screen.getByText("Rendered file body."));
+    await expectFileOnlySelection();
+    await act(() => {
+      requestMarkdownFindOpen(screen.container.querySelector("[data-markdown-preview]"));
+    });
+    await userEvent.fill(screen.getByRole("searchbox", { name: "Find in file" }), "Rendered");
+    await userEvent.keyboard(
+      isMacPlatform(navigator.platform) ? "{Meta>}a{/Meta}" : "{Control>}a{/Control}",
+    );
+    await userEvent.keyboard("file");
+    await expect
+      .element(screen.getByRole("searchbox", { name: "Find in file" }))
+      .toHaveValue("file");
+    await userEvent.keyboard("{Escape}");
     await expectFileOnlySelection();
     // A toggled checkbox keeps focus on an input inside the preview.
     await userEvent.click(screen.getByRole("checkbox"));
