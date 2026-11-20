@@ -20,6 +20,60 @@ import {
   type ThemeDefinition,
 } from "./themePalette";
 
+const WORKBENCH_COLOR_KEYS = [
+  "activityBar.background",
+  "activityBarBadge.background",
+  "badge.background",
+  "button.background",
+  "button.foreground",
+  "chat.requestBubbleBackground",
+  "contrastBorder",
+  "descriptionForeground",
+  "disabledForeground",
+  "dropdown.background",
+  "editor.background",
+  "editor.foreground",
+  "editor.findMatchBackground",
+  "editor.findMatchForeground",
+  "editor.findMatchHighlightBackground",
+  "editor.findMatchHighlightForeground",
+  "editor.selectionBackground",
+  "editorCursor.foreground",
+  "editorError.foreground",
+  "editorGroup.border",
+  "editorPane.background",
+  "editorWarning.foreground",
+  "editorWidget.background",
+  "errorForeground",
+  "focusBorder",
+  "foreground",
+  "input.background",
+  "input.border",
+  "input.placeholderForeground",
+  "list.activeSelectionBackground",
+  "list.hoverBackground",
+  "list.inactiveSelectionBackground",
+  "menu.background",
+  "panel.background",
+  "panel.border",
+  "progressBar.background",
+  "quickInput.background",
+  "scrollbarSlider.background",
+  "sideBar.background",
+  "sideBar.border",
+  "sideBar.foreground",
+  "terminal.background",
+  "terminal.foreground",
+  "terminal.selectionBackground",
+  "terminalCursor.foreground",
+  "textCodeBlock.background",
+  "textLink.foreground",
+] as const;
+
+type WorkbenchColorKey = (typeof WORKBENCH_COLOR_KEYS)[number];
+
+export const VSCODE_WORKBENCH_COLOR_KEYS: ReadonlySet<string> = new Set(WORKBENCH_COLOR_KEYS);
+
 // The standard dark bubble stands about 1.26 off its canvas, the light one about 1.19.
 const MESSAGE_SURFACE_CONTRAST = 1.2;
 
@@ -193,14 +247,14 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
   if (!isRecord(value)) throw new Error(m(msg("Theme files must contain a JSON object.")));
   const colors = isRecord(value.colors) ? value.colors : {};
 
-  const pick = (...keys: ReadonlyArray<string>): VsCodeRgba | null => {
+  const pick = (...keys: ReadonlyArray<WorkbenchColorKey>): VsCodeRgba | null => {
     for (const key of keys) {
       const parsed = parseVsCodeColor(colors[key]);
       if (parsed) return parsed;
     }
     return null;
   };
-  const solidOver = (base: VsCodeRgb, ...keys: ReadonlyArray<string>): string | null => {
+  const solidOver = (base: VsCodeRgb, ...keys: ReadonlyArray<WorkbenchColorKey>): string | null => {
     const parsed = pick(...keys);
     return parsed ? flattenOver(parsed, base) : null;
   };
@@ -237,8 +291,8 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
     "activityBarBadge.background",
     "progressBar.background",
     "badge.background",
-  ]) {
-    const candidate = parseVsCodeColor(colors[key]);
+  ] as const) {
+    const candidate = pick(key);
     if (!candidate) continue;
     const candidateHex = flattenOver(candidate, canvas);
     if (
@@ -276,7 +330,7 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
   const readableOn = (
     surface: string,
     fallback: string,
-    ...keys: ReadonlyArray<string>
+    ...keys: ReadonlyArray<WorkbenchColorKey>
   ): string => {
     const surfaceRgb = hexToRgb(surface);
     const isReadable = (candidate: string) => contrastRatio(hexToRgb(candidate), surfaceRgb) >= 4.5;
@@ -289,7 +343,10 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
   // white text, so a dim one is lightened along its hue rather than replaced
   // by readableOn's black or white. One hidden in the canvas has no hue to
   // keep, so the derived color stands in.
-  const readableStatusColor = (fallback: string, ...keys: ReadonlyArray<string>): string => {
+  const readableStatusColor = (
+    fallback: string,
+    ...keys: ReadonlyArray<WorkbenchColorKey>
+  ): string => {
     const specified = solidOver(canvas, ...keys);
     const base = specified && standsApart(specified, canvasHex) ? specified : fallback;
     return readableThemeColorOn(base, canvasHex, 4.5);
@@ -314,7 +371,7 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
     inputCandidates.find(
       (candidate) => standsApart(candidate, canvasHex) && standsApart(candidate, actionHex),
     ) ?? "#808080";
-  for (const key of ["input.background", "input.border"]) {
+  for (const key of ["input.background", "input.border"] as const) {
     const candidate = solidOver(canvas, key);
     if (candidate && standsApart(candidate, canvasHex) && standsApart(candidate, actionHex)) {
       inputHex = candidate;

@@ -10,6 +10,7 @@ import {
   pairVsCodeThemes,
   parseVsCodeThemeFile,
   resolveThemeLabelCollisions,
+  VSCODE_WORKBENCH_COLOR_KEYS,
 } from "./vscodeThemeImport";
 
 const OPEN_VSX_SEARCH_URL = "https://open-vsx.org/api/-/search";
@@ -37,55 +38,6 @@ const SUPPORTED_LICENSES = new Set([
   "MIT",
   "MPL-2.0",
   "Unlicense",
-]);
-const USED_WORKBENCH_COLORS = new Set([
-  "activityBar.background",
-  "activityBarBadge.background",
-  "badge.background",
-  "button.background",
-  "button.foreground",
-  "chat.requestBubbleBackground",
-  "contrastBorder",
-  "descriptionForeground",
-  "disabledForeground",
-  "dropdown.background",
-  "dropdown.border",
-  "editor.background",
-  "editor.foreground",
-  "editor.findMatchBackground",
-  "editor.findMatchForeground",
-  "editor.findMatchHighlightBackground",
-  "editor.findMatchHighlightForeground",
-  "editor.selectionBackground",
-  "editorCursor.foreground",
-  "editorError.foreground",
-  "editorGroup.border",
-  "editorPane.background",
-  "editorWarning.foreground",
-  "editorWidget.background",
-  "errorForeground",
-  "focusBorder",
-  "foreground",
-  "input.border",
-  "input.placeholderForeground",
-  "list.activeSelectionBackground",
-  "list.hoverBackground",
-  "list.inactiveSelectionBackground",
-  "menu.background",
-  "panel.background",
-  "panel.border",
-  "progressBar.background",
-  "quickInput.background",
-  "scrollbarSlider.background",
-  "sideBar.background",
-  "sideBar.border",
-  "sideBar.foreground",
-  "terminal.background",
-  "terminal.foreground",
-  "terminal.selectionBackground",
-  "terminalCursor.foreground",
-  "textCodeBlock.background",
-  "textLink.foreground",
 ]);
 
 export type OpenVsxThemeSort = "downloadCount" | "rating" | "timestamp" | "relevance";
@@ -339,7 +291,7 @@ function sanitizeThemeObject(value: Record<string, unknown>): Record<string, unk
   if (isRecord(value.colors)) {
     for (const [key, color] of Object.entries(value.colors)) {
       if (
-        USED_WORKBENCH_COLORS.has(key) &&
+        VSCODE_WORKBENCH_COLOR_KEYS.has(key) &&
         typeof color === "string" &&
         color.length <= MAX_COLOR_VALUE_LENGTH
       ) {

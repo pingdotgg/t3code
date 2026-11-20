@@ -211,6 +211,7 @@ describe("Open VSX themes", () => {
         // inherited workbench colors
         "colors": {
           "chat.requestBubbleBackground": "#1f3b2a",
+          "input.background": "#445566",
           "editor.foreground": "#eeeeee",
           "focusBorder": "#8b5cf6",
           "editor.findMatchBackground": "#663399",
@@ -330,6 +331,7 @@ describe("Open VSX themes", () => {
     expect(themeColorToHex(getThemeColorsForMode(paired, "dark")!.text)).toBe("#eeeeee");
     const darkColors = getThemeColorsForMode(paired, "dark")!;
     expect(themeColorToHex(darkColors.messageSurface)).toBe("#1f3b2a");
+    expect(themeColorToHex(darkColors.input)).toBe("#445566");
     expect(themeColorToHex(darkColors.searchMatchActiveBackground)).toBe("#663399");
     expect(themeColorToHex(darkColors.searchMatchActiveForeground)).toBe("#ffffff");
     expect(themeColorToHex(darkColors.searchMatchBackground)).toBe("#2f2f2f");
