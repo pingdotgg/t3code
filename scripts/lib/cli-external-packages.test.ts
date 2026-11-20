@@ -42,6 +42,9 @@ describe("shouldBundleCliDependency", () => {
       "koffi",
       "@clerk/electron-passkeys",
       "node-addon-api",
+      "@trycua/cua-driver/embedded",
+      "@trycua/cua-driver-darwin-arm64",
+      "@ubjs/node",
     ]) {
       assert.strictEqual(shouldBundleCliDependency(id), false, id);
     }
