@@ -73,6 +73,22 @@ describe("provider compatibility", () => {
       assert.strictEqual(advisory?.status, expected, `OpenCode ${version} on 0.0.45`);
       assert.strictEqual(advisory?.recommendedVersion, "1.14.19");
     }
+    // The current policy rates a prerelease or build by its base version.
+    for (const [version, expected] of [
+      ["1.13.0-beta.1", "broken"],
+      ["1.13.0+abc123", "broken"],
+      ["2.1.0-rc.1", "supported"],
+    ] as const) {
+      assert.strictEqual(
+        resolveProviderCompatibility(
+          ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
+          opencode,
+          version,
+        )?.status,
+        expected,
+        `OpenCode ${version}`,
+      );
+    }
     assert.isUndefined(
       resolveProviderCompatibility(
         ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
