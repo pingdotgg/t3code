@@ -228,7 +228,9 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
   const isDroid =
     registryAgentId === "factory-droid" ||
     (options.settings.source === "local" &&
-      /^droid(\.exe|\.cmd)?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? ""));
+      /^(?:factory-)?droid(\.exe|\.cmd)?$/i.test(
+        options.settings.commandPath.split(/[\\/]/).pop() ?? "",
+      ));
   const isGlm =
     registryAgentId === "glm-acp-agent" ||
     (options.settings.source === "local" &&
@@ -238,7 +240,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
   const isVibe =
     registryAgentId === "mistral-vibe" ||
     (options.settings.source === "local" &&
-      /^vibe(?:-acp)?(\.exe|\.cmd)?$/i.test(
+      /^(?:mistral-)?vibe(?:-acp)?(\.exe|\.cmd)?$/i.test(
         options.settings.commandPath.split(/[\\/]/).pop() ?? "",
       ));
   const runtimeOptions = isClaude
