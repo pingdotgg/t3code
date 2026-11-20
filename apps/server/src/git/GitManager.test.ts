@@ -84,6 +84,8 @@ interface FakeProviderScenario {
   };
   /** The kind the fake host reports itself as. */
   kind?: string;
+  /** False for a host that opens every change request ready for review. */
+  createsDraftChangeRequests?: boolean;
   /** Answers to successive change request listings, whatever their head selector. */
   prListSequence?: ReadonlyArray<ReadonlyArray<FakeChangeRequest>>;
   prListByHeadSelector?: Record<string, ReadonlyArray<FakeChangeRequest>>;
@@ -478,6 +480,7 @@ function createFakeSourceControlProvider(scenario: FakeProviderScenario = {}): {
   return {
     service: {
       kind,
+      createsDraftChangeRequests: scenario.createsDraftChangeRequests ?? true,
       ...headBranchProbe,
       listChangeRequests: (input) =>
         record(input.cwd, {
@@ -4490,7 +4493,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       // A draft of a PR the host does not list yet fails, so a retry drafts it.
       yield* runGit(repoDir, ["push"]);
-      const unlisted = yield* makeManager({ providerScenario: { prListSequence: [[], []] } });
+      const unlisted = yield* makeManager({
+        providerScenario: { prListSequence: [[], []], createsDraftChangeRequests: false },
+      });
       const notListed = yield* Effect.flip(
         unlisted.manager.createPullRequest({
           cwd: repoDir,
