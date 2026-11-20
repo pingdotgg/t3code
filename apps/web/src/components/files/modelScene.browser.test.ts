@@ -1,8 +1,24 @@
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 
 import { stubGlobal } from "../../../test/render";
-import { reconcileModelNotes } from "@t3tools/client-runtime/model-preview/annotations";
+import {
+  reconcileModelNotes,
+  type ModelCapture,
+} from "@t3tools/client-runtime/model-preview/annotations";
 import { loadModelScene } from "./modelScene";
+
+async function capturePixels({ dataUrl, width, height }: ModelCapture) {
+  const context = new OffscreenCanvas(width, height).getContext("2d");
+  if (!context) throw new Error("The capture could not be decoded");
+  const image = await createImageBitmap(await (await fetch(dataUrl)).blob());
+  try {
+    context.drawImage(image, 0, 0);
+  } finally {
+    image.close();
+  }
+  return (x: number, y: number) =>
+    Array.from(context.getImageData(Math.floor(x * width), Math.floor(y * height), 1, 1).data);
+}
 
 it("marks a note stale when a triangle changes shape within the same bounds", async () => {
   using resources = new DisposableStack();
@@ -45,7 +61,7 @@ it("marks a note stale when a triangle changes shape within the same bounds", as
   ).toEqual([{ ...notes[0], stale: true }]);
 });
 
-it("loads a compressed 3MF through the bounded archive reader", async () => {
+async function compressedTriangle3mf(textured: boolean) {
   const { default: JSZip } = await import("jszip");
   const archive = new JSZip();
   archive.file(
@@ -57,18 +73,45 @@ it("loads a compressed 3MF through the bounded archive reader", async () => {
   );
   archive.file(
     "3D/model.model",
-    `<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
-      <resources><object id="1" type="model"><mesh>
-        <vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices>
-        <triangles><triangle v1="0" v2="1" v3="2"/></triangles>
+    `<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
+      xmlns:m="http://schemas.microsoft.com/3dmanufacturing/material/2015/02">
+      <resources>
+        ${
+          textured
+            ? `<m:texture2d id="2" path="/3D/Textures/face.png" contenttype="image/png"/>
+        <m:texture2dgroup id="3" texid="2">
+          <m:tex2coord u="0" v="0"/><m:tex2coord u="1" v="0"/><m:tex2coord u="0.5" v="1"/>
+        </m:texture2dgroup>`
+            : ""
+        }
+        <object id="1" type="model"><mesh>
+        <vertices><vertex x="-1" y="-1" z="0"/><vertex x="1" y="-1" z="0"/><vertex x="0" y="1" z="0"/></vertices>
+        <triangles><triangle v1="0" v2="1" v3="2" ${textured ? 'pid="3" p1="0" p2="1" p3="2"' : ""}/></triangles>
       </mesh></object></resources>
       <build><item objectid="1"/></build>
     </model>`,
   );
+  if (textured) {
+    archive.file(
+      "3D/_rels/model.model.rels",
+      `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+        <Relationship Target="/3D/Textures/face.png"
+          Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dtexture" Id="face"/>
+      </Relationships>`,
+    );
+    const face = new OffscreenCanvas(1, 1);
+    const context = face.getContext("2d");
+    if (!context) throw new Error("The test texture could not be drawn");
+    context.fillStyle = "#ff0000";
+    context.fillRect(0, 0, 1, 1);
+    archive.file("3D/Textures/face.png", await (await face.convertToBlob()).arrayBuffer());
+  }
+  return archive.generateAsync({ type: "blob", compression: "DEFLATE" });
+}
+
+it("loads a compressed 3MF through the bounded archive reader", async () => {
   using resources = new DisposableStack();
-  const src = URL.createObjectURL(
-    await archive.generateAsync({ type: "blob", compression: "DEFLATE" }),
-  );
+  const src = URL.createObjectURL(await compressedTriangle3mf(false));
   resources.defer(() => URL.revokeObjectURL(src));
   const container = document.createElement("div");
   document.body.append(container);
@@ -81,6 +124,56 @@ it("loads a compressed 3MF through the bounded archive reader", async () => {
   });
   resources.defer(() => scene.dispose());
   expect(scene.summary.triangles).toBe(1);
+});
+
+it.each([
+  { name: "captures a 3MF's embedded texture as soon as the scene is ready", cancel: false },
+  { name: "cancels a 3MF preview while its embedded texture is loading", cancel: true },
+])("$name", async ({ cancel }) => {
+  using resources = new DisposableStack();
+  const src = URL.createObjectURL(await compressedTriangle3mf(true));
+  resources.defer(() => URL.revokeObjectURL(src));
+  const container = document.createElement("div");
+  container.style.cssText = "width: 200px; height: 200px";
+  document.body.append(container);
+  resources.defer(() => container.remove());
+  const setImageSrc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "src")?.set;
+  const textureRequested = Promise.withResolvers<{ url: string; resume: () => void }>();
+  using _image = vi.spyOn(HTMLImageElement.prototype, "src", "set").mockImplementation(function (
+    this: HTMLImageElement,
+    url,
+  ) {
+    if (url.startsWith("blob:")) {
+      textureRequested.resolve({ url, resume: () => setImageSrc?.call(this, url) });
+    } else {
+      setImageSrc?.call(this, url);
+    }
+  });
+  const controller = new AbortController();
+  const captured = loadModelScene({
+    src,
+    format: "3mf",
+    container,
+    signal: controller.signal,
+  }).then((scene) => {
+    resources.defer(() => scene.dispose());
+    return scene.capture([]);
+  });
+  const texture = await Promise.race([textureRequested.promise, captured.then(() => undefined)]);
+  if (cancel) {
+    if (!texture) throw new Error("The preview did not request its embedded texture");
+    controller.abort();
+    await expect(captured).rejects.toBe(controller.signal.reason);
+    expect(container.childElementCount).toBe(0);
+    await expect(fetch(texture.url)).rejects.toThrow();
+    return;
+  }
+  texture?.resume();
+
+  const pixel = await capturePixels(await captured);
+  const [red = 0, green = 0, blue = 0, alpha = 0] = pixel(0.5, 0.5);
+  expect(alpha).toBe(255);
+  expect(red - Math.max(green, blue)).toBeGreaterThan(100);
 });
 
 it("previews embedded GLB data and refuses a reference to a separate file", async () => {
@@ -183,15 +276,7 @@ it("captures colours the file supplies over a transparent background", async () 
     });
     resources.defer(() => scene.dispose());
     scene.setPreset("top");
-    const { dataUrl, width, height } = scene.capture([]);
-    const image = await createImageBitmap(await (await fetch(dataUrl)).blob());
-    const canvas = new OffscreenCanvas(width, height);
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("The capture could not be decoded");
-    context.drawImage(image, 0, 0);
-    image.close();
-    const pixel = (x: number, y: number) =>
-      Array.from(context.getImageData(Math.floor(x * width), Math.floor(y * height), 1, 1).data);
+    const pixel = await capturePixels(scene.capture([]));
     return { center: pixel(0.5, 0.55), corner: pixel(0, 0) };
   };
 

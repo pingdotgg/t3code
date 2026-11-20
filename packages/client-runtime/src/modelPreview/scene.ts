@@ -92,7 +92,34 @@ async function parseModel(
       const { ThreeMFLoader } = await import("three/examples/jsm/loaders/3MFLoader.js");
       const archive = await unpackArchive(bytes, signal);
       signal.throwIfAborted();
-      return new ThreeMFLoader().parse(archive);
+      const textureUrls = new Set<string>();
+      const manager = new LoadingManager().setURLModifier((url) => {
+        textureUrls.add(url);
+        return url;
+      });
+      let onAbort: (() => void) | undefined;
+      let content: Object3D | undefined;
+      try {
+        content = new ThreeMFLoader(manager).parse(archive);
+        // Parsing starts image loads synchronously, but their textures become usable asynchronously.
+        if (textureUrls.size > 0) {
+          signal.throwIfAborted();
+          await new Promise<void>((resolve, reject) => {
+            manager.onLoad = resolve;
+            manager.onError = () => reject(new ModelPreviewError({ code: "model-invalid" }));
+            onAbort = () => reject(signal.reason);
+            signal.addEventListener("abort", onAbort, { once: true });
+          });
+        }
+        return content;
+      } catch (error) {
+        if (content) disposeThreeObject(content);
+        throw error;
+      } finally {
+        if (onAbort) signal.removeEventListener("abort", onAbort);
+        // ThreeMFLoader revokes these on image load. Failed or cancelled loads also need cleanup.
+        for (const url of textureUrls) URL.revokeObjectURL(url);
+      }
     }
     case "glb": {
       const { GLTFLoader } = await import("three/examples/jsm/loaders/GLTFLoader.js");
