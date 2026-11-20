@@ -3,6 +3,7 @@ import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/stat
 import { CircleAlertIcon, GitBranchIcon } from "lucide-react";
 import { useGT } from "gt-react";
 
+import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import type { useProject } from "~/state/entities";
 import { useEnvironmentProviders } from "~/state/environments";
 import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
@@ -23,6 +24,9 @@ export function ThreadChipHoverCard(props: {
   const gt = useGT();
   const { shell } = props;
   const providers = useEnvironmentProviders();
+  const supportsMultiplePullRequests = useSupportsMultiplePullRequests(
+    shell?.environmentId ?? null,
+  );
   const instanceId = shell
     ? (shell.runtime?.providerInstanceId ?? shell.modelSelection.instanceId)
     : null;
@@ -41,7 +45,7 @@ export function ThreadChipHoverCard(props: {
     <ThreadHoverCard
       title={props.title}
       footer={
-        shell && shell.pullRequests.length > 0 ? (
+        supportsMultiplePullRequests && shell && shell.pullRequests.length > 0 ? (
           <div className="border-t border-border/60 pt-2 pl-0.5 text-xs text-muted-foreground">
             <ThreadPullRequestsMiniList pullRequests={shell.pullRequests} />
           </div>
@@ -65,6 +69,7 @@ export function ThreadChipHoverCard(props: {
           <ProviderInstanceIcon
             driverKind={provider.driver}
             displayName={resolveProviderInstanceDisplayName(provider)}
+            acpRegistryIconUrl={provider.iconUrl}
             iconClassName="size-3 shrink-0 opacity-60"
           />
           <div className="min-w-0 truncate text-foreground/75">{modelLabel}</div>
