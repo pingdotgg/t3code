@@ -175,6 +175,7 @@ function ThreadLineageGroup<Row extends LineageRow>(props: {
   readonly previousRows?: ReadonlyArray<Row>;
   readonly children: (rows: ReadonlyArray<Row>) => ReactNode;
 }) {
+  const gt = useGT();
   const [expanded, setExpanded] = useState(false);
   const [visibleCount, setVisibleCount] = useState(THREAD_LINEAGE_INITIAL_COUNT);
   const [previousVisibleCount, setPreviousVisibleCount] = useState(THREAD_LINEAGE_INITIAL_COUNT);
@@ -211,7 +212,7 @@ function ThreadLineageGroup<Row extends LineageRow>(props: {
         <ThreadDetailsControl aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
           <BotIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
           <span className={cn(THREAD_DETAILS_PANEL_LABEL_CLASS, "min-w-0 flex-1 truncate")}>
-            <T>Previous agents</T>
+            {gt("Previous agents")}
           </span>
           {failedCount > 0 ? (
             <SectionHeaderStatus>
