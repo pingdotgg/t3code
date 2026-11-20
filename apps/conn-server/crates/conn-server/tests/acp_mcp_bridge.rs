@@ -113,17 +113,40 @@ fn relays_lines_with_t3s_headers_and_stays_small() {
             .any(|l| l["id"] == 2 && l["result"]["tools"].is_array())
     );
 
-    // Idle with a session open: the bridge's resident memory.
-    let rss = Command::new("ps")
-        .args(["-o", "rss=", "-p", &child.id().to_string()])
-        .output()
-        .unwrap();
-    let rss_kib: u64 = String::from_utf8_lossy(&rss.stdout)
-        .trim()
-        .parse()
-        .unwrap_or(0);
-    eprintln!("acp-mcp-bridge resident memory while idle: {rss_kib} KiB");
-    assert!(rss_kib > 0 && rss_kib < 32 * 1024, "{rss_kib} KiB");
+    // Idle with a session open: the bridge's own resident memory. On Linux that is `RssAnon`
+    // (heap, stacks, runtime): about 4 MiB. Total RSS also counts the pages of this 260 MiB
+    // debug binary that the kernel happens to map, which swings from 17 to 41 MiB with the file
+    // system and page cache (beast, 2026-11-20) and says nothing about the bridge. Other systems
+    // have no such split: total RSS, under the old cap.
+    let status = std::fs::read_to_string(format!("/proc/{}/status", child.id())).ok();
+    let anon_kib = status.as_deref().and_then(|status| {
+        status
+            .lines()
+            .find_map(|line| line.strip_prefix("RssAnon:"))
+            .and_then(|value| {
+                value
+                    .trim()
+                    .trim_end_matches("kB")
+                    .trim()
+                    .parse::<u64>()
+                    .ok()
+            })
+    });
+    if let Some(anon_kib) = anon_kib {
+        eprintln!("acp-mcp-bridge anonymous resident memory while idle: {anon_kib} KiB");
+        assert!(anon_kib > 0 && anon_kib < 6 * 1024, "{anon_kib} KiB");
+    } else {
+        let rss = Command::new("ps")
+            .args(["-o", "rss=", "-p", &child.id().to_string()])
+            .output()
+            .unwrap();
+        let rss_kib: u64 = String::from_utf8_lossy(&rss.stdout)
+            .trim()
+            .parse()
+            .unwrap_or(0);
+        eprintln!("acp-mcp-bridge resident memory while idle: {rss_kib} KiB");
+        assert!(rss_kib > 0 && rss_kib < 32 * 1024, "{rss_kib} KiB");
+    }
 
     drop(stdin);
     assert!(child.wait().unwrap().success());
