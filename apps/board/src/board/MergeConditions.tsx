@@ -1,15 +1,11 @@
 import { Check, Circle } from "lucide-react";
 
 import { MERGE_CONDITIONS, type ForYouItem } from "../domain/forYou";
+import { ClaimEvidence } from "./ClaimEvidence";
 
 type MergeItem = Extract<ForYouItem, { readonly kind: "merge_approval" }>;
 
-const isLink = (evidence: string) => /^https?:\/\//.test(evidence);
-
-const chip =
-  "block max-w-full break-all rounded border border-line px-1.5 font-mono text-[10px] leading-4 text-muted";
-
-/** The six merge-ready conditions, each with whether it holds and the files that show it. */
+/** The six merge-ready conditions as the orchestrator wrote them, each with whether it holds and the files that show it. */
 export function MergeConditions({ conditions }: { conditions: MergeItem["conditions"] }) {
   return (
     <ul aria-label="Merge conditions" className="flex flex-col gap-2">
@@ -30,31 +26,7 @@ export function MergeConditions({ conditions }: { conditions: MergeItem["conditi
             )}
             <div className="min-w-0 flex-1">
               <p className="text-[12px] leading-4 text-fg">{label}</p>
-              {condition.note != null && (
-                <p className="text-[11px] break-words text-muted">{condition.note}</p>
-              )}
-              <div className="mt-0.5 flex flex-col items-start gap-0.5">
-                {(condition.evidence ?? []).map((evidence) =>
-                  isLink(evidence) ? (
-                    <a
-                      key={evidence}
-                      data-testid="evidence"
-                      href={evidence}
-                      target="_blank"
-                      rel="noreferrer"
-                      // A press on a link is a click, not the start of a pan.
-                      onPointerDown={(event) => event.stopPropagation()}
-                      className={`${chip} text-sky-300 hover:underline`}
-                    >
-                      {evidence}
-                    </a>
-                  ) : (
-                    <span key={evidence} data-testid="evidence" className={chip}>
-                      {evidence}
-                    </span>
-                  ),
-                )}
-              </div>
+              <ClaimEvidence condition={condition} />
             </div>
           </li>
         );

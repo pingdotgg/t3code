@@ -15,6 +15,7 @@ export type FamilyRow = Pick<
   | "activityRunStatus"
   | "pendingBackgroundTasks"
   | "pendingRuntimeRequest"
+  | "pullRequests"
 >;
 
 export type RunState = "working" | "waiting" | "idle" | "failed" | "stopped";

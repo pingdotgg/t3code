@@ -19,6 +19,7 @@ export const FRAME_WIDTH = LANE_WIDTH - LANE_PAD * 2;
 export const FRAME_GAP = 12;
 const FRAME_HEAD = 100;
 const CHIPS_HEIGHT = 48;
+export const PR_ROW = 26;
 export const UNASSIGNED_HEAD = 34;
 export const FRAME_PAD = 8;
 export const CARD_HEIGHT = 62;
@@ -65,15 +66,23 @@ export interface Layout {
 
 /** Whether a ticket has anything to show in the row of chips under its branch. */
 export const hasChips = (ticket: Ticket): boolean =>
-  ticket.pr != null ||
   ticket.headSha != null ||
   (ticket.fixRounds ?? 0) > 0 ||
   (ticket.dependsOn ?? []).length > 0 ||
   (ticket.verdicts ?? []).length > 0 ||
   (ticket.flags ?? []).length > 0;
 
+const PR_STAGES: ReadonlySet<TicketStage> = new Set(["pr", "awaiting_approval", "merged"]);
+
+/**
+ * Whether a frame holds the row for its pull request. A ticket past review has one, even when
+ * only its agents' threads name it, so the row is there before the orchestrator writes `pr`.
+ */
+export const hasPrRow = (ticket: Ticket): boolean =>
+  ticket.pr != null || PR_STAGES.has(ticket.stage);
+
 export const headHeight = (ticket: Ticket): number =>
-  FRAME_HEAD + (hasChips(ticket) ? CHIPS_HEIGHT : 0);
+  FRAME_HEAD + (hasPrRow(ticket) ? PR_ROW : 0) + (hasChips(ticket) ? CHIPS_HEIGHT : 0);
 
 /** The height of a frame's expanded artifact cards: a rule above, and the cards in the frame's padding. */
 export const artifactsHeight = (cards: number): number =>

@@ -60,6 +60,8 @@ const base = {
 const MergeApproval = Schema.Struct({
   ...base,
   kind: Schema.Literal("merge_approval"),
+  /** The key of the ticket that is ready to merge. */
+  ticket: optional(Schema.String),
   conditions: Conditions,
 });
 const Question = Schema.Struct({

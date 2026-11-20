@@ -1,13 +1,12 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
-import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
 import { useContext, useState } from "react";
 
-import { failureText } from "../failureText";
 import { SettingsRow } from "../SettingsRow";
 import { projectWorktreesAtom } from "../../state/projects";
-import { vcsEnvironment } from "../../state/vcs";
+import { deleteWorktree, vcsEnvironment } from "../../state/vcs";
+import { DeleteWorktreeConfirm } from "./DeleteWorktreeConfirm";
 
 export function ProjectWorktrees({
   project,
@@ -37,17 +36,13 @@ export function ProjectWorktrees({
 
   const remove = async (path: string) => {
     setFailure(null);
-    const result = await runAtomCommand(
+    const text = await deleteWorktree(
       registry,
-      vcsEnvironment.removeWorktree,
-      {
-        environmentId: project.environmentId,
-        input: { cwd: project.workspaceRoot, path, force: true },
-      },
-      { reportFailure: false },
+      { environmentId: project.environmentId, cwd: project.workspaceRoot },
+      path,
     );
     setConfirming(null);
-    if (result._tag === "Failure") setFailure(failureText(result));
+    setFailure(text);
   };
 
   const onDisk = new Set(
@@ -87,29 +82,10 @@ export function ProjectWorktrees({
           }
         >
           {confirming === worktree.path && (
-            <div
-              role="alertdialog"
-              aria-label="Delete the worktree?"
-              className="flex flex-col gap-2 rounded-md border border-red-400/40 p-2.5"
-            >
-              <p>Delete the worktree? Its branch stays, and uncommitted changes in it are lost.</p>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => void remove(worktree.path)}
-                  className="rounded-md bg-red-500 px-2.5 py-1 font-medium text-white hover:bg-red-400"
-                >
-                  Delete worktree
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setConfirming(null)}
-                  className="rounded-md border border-line px-2.5 py-1 text-fg hover:bg-hover"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
+            <DeleteWorktreeConfirm
+              onConfirm={() => void remove(worktree.path)}
+              onCancel={() => setConfirming(null)}
+            />
           )}
         </SettingsRow>
       ))}
