@@ -160,7 +160,10 @@ const linkedEnvironmentConnectAtom = Atom.family((key: string) =>
  * environment can get a pairing for this client: the thread then opens there and the tab closes.
  * Otherwise the add-environment dialog opens for that machine.
  */
-export function useConnectLinkedEnvironment(panelRef: ScopedThreadRef, surface: LinkedThreadSurface) {
+export function useConnectLinkedEnvironment(
+  panelRef: ScopedThreadRef,
+  surface: LinkedThreadSurface,
+) {
   const navigate = useNavigate();
   const setPrefill = useAtomSet(addEnvironmentPrefillAtom);
   const mayPair = useAtomValue(
