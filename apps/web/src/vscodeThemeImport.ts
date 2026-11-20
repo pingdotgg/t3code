@@ -137,7 +137,7 @@ function hexToRgb(value: string): VsCodeRgb {
 
 function resolveMessageSurface(tint: VsCodeRgba, canvas: VsCodeRgb, canvasHex: string): string {
   const blended = flattenOver(tint, canvas);
-  if (contrastRatio(hexToRgb(blended), hexToRgb(canvasHex)) >= MESSAGE_SURFACE_CONTRAST) {
+  if (contrastRatio(hexToRgb(blended), canvas) >= MESSAGE_SURFACE_CONTRAST) {
     return blended;
   }
 
