@@ -16832,8 +16832,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       yield* detachChildren(command);
       return result;
     }
+    if (command.type === "thread.stop") {
+      const result = yield* dispatchLocked(command);
+      yield* settleStoppedDelegatedChild(command.threadId);
+      return result;
+    }
     return yield* dispatchLocked(command);
   });
+
+  // Stop can end the native work that held a finished child's task open. Settle the parent's row
+  // before Stop returns instead of leaving it to the work-settled reaction. Parent lock after the
+  // child's is released, never nested.
+  const settleStoppedDelegatedChild = (childThreadId: ThreadId) =>
+    appOwnedSubagentParentThreadId(childThreadId).pipe(
+      Effect.flatMap((parentThreadId) =>
+        parentThreadId === undefined
+          ? Effect.void
+          : threadDispatch.withLock(parentThreadId, finalizeAppOwnedSubagent(childThreadId)),
+      ),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Failed to settle a stopped delegated child", {
+          threadId: childThreadId,
+          cause,
+        }),
+      ),
+    );
 
   /**
    * Finishes a manual parent cascade after a child chat or subagent completes,
