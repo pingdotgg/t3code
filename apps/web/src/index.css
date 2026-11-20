@@ -6687,7 +6687,7 @@ body {
       transition: opacity var(--panel-animation-duration, 150ms) ease-out;
     }
     & [data-pane-join-start] [data-pane-bar-corner="start"],
-    & [data-layout-pane-id]:has([data-pane-join-start]) > [data-pane-cut="start-notch"] {
+    & [data-layout-pane-id][data-pane-joined-start] > [data-pane-cut="start-notch"] {
       opacity: 0;
     }
     & [data-pane-join-start] [data-pane-notch=""] [data-layout-tab-strip] {

@@ -313,6 +313,20 @@ function markJoinAtStart(entry: PaneStrip): void {
     stripAtPaneEdge(strip, row);
   if (row.hasAttribute("data-pane-join-start") !== atStart) {
     row.toggleAttribute("data-pane-join-start", atStart);
+    markPaneJoinedAtStart(row.closest<HTMLElement>("[data-layout-tab-id]"));
+  }
+}
+
+/**
+ * Mirrors "a header in this pane is joined at its start" onto the pane, for
+ * its start cut (index.css). A `:has()` there restyled the whole pane on
+ * every DOM change inside it, such as each streamed chunk.
+ */
+function markPaneJoinedAtStart(pane: HTMLElement | null): void {
+  if (!pane) return;
+  const joined = pane.querySelector("[data-pane-join-start]") !== null;
+  if (pane.hasAttribute("data-pane-joined-start") !== joined) {
+    pane.toggleAttribute("data-pane-joined-start", joined);
   }
 }
 
@@ -711,6 +725,7 @@ export function LayoutPaneTabStrip({
     };
     holdPaneStrip(entry, place, motionMs);
     const row = strip.closest<HTMLElement>("[data-pane-header]");
+    const pane = row?.closest<HTMLElement>("[data-layout-tab-id]") ?? null;
     const wheel = (event: WheelEvent) => scrollTabStripFromRow(event, strip);
     row?.addEventListener("wheel", wheel, { passive: false });
     markStripOverflow(strip);
@@ -729,7 +744,10 @@ export function LayoutPaneTabStrip({
       inset.disconnect();
       row?.removeEventListener("wheel", wheel);
       row?.removeAttribute("data-tab-row-overflow");
-      row?.removeAttribute("data-pane-join-start");
+      if (row?.hasAttribute("data-pane-join-start")) {
+        row.removeAttribute("data-pane-join-start");
+        markPaneJoinedAtStart(pane);
+      }
     };
   }, [entry, holds, layer, motionMs, tabId]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Take this header's tabs out of the pane's strip, and drop the strip once its last header lets go of it.
