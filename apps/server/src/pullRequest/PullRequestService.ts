@@ -27,6 +27,8 @@ import {
   type PullRequestCommentInput,
   type PullRequestCommentUpdateInput,
   type PullRequestDetail,
+  pullRequestDetailReadings,
+  pullRequestDetailWithKnownParts,
   type PullRequestPreview,
   type PullRequestChecks,
   type PullRequestDiffFileContentsInput,
@@ -1806,51 +1808,55 @@ export const make = Effect.gen(function* () {
     changeRequest: ProviderChangeRequestSummary | ProviderChangeRequestDetail,
     observedAt: number,
     reply = false,
-  ): PullRequestSummary => ({
-    provider: project.api.kind,
-    projectId: project.project.id,
-    repository: project.repository,
-    number: changeRequest.number,
-    title: changeRequest.title,
-    url: changeRequest.url,
-    state: changeRequest.state,
-    headBranch: changeRequest.headBranch,
-    baseBranch: changeRequest.baseBranch,
-    // An action reply may not carry these, and null would erase a time a client already holds.
-    ...(changeRequest.closedAt === undefined && reply
-      ? {}
-      : { closedAt: changeRequest.closedAt ?? null }),
-    ...(changeRequest.mergedAt === undefined && reply
-      ? {}
-      : { mergedAt: changeRequest.mergedAt ?? null }),
-    updatedAt: changeRequest.updatedAt,
-    observedAt,
-    ...(changeRequest.isDraft === undefined ? {} : { isDraft: changeRequest.isDraft }),
-    ...(changeRequest.author === undefined ? {} : { author: changeRequest.author }),
-    ...(changeRequest.additions === undefined ? {} : { additions: changeRequest.additions }),
-    ...(changeRequest.deletions === undefined ? {} : { deletions: changeRequest.deletions }),
-    ...(changeRequest.changedFiles === undefined
-      ? {}
-      : { changedFiles: changeRequest.changedFiles }),
-    ...(changeRequest.reviewDecision === undefined
-      ? {}
-      : { reviewDecision: changeRequest.reviewDecision }),
-    ...(changeRequest.checksState === undefined ? {} : { checksState: changeRequest.checksState }),
-    ...(changeRequest.mergeability === undefined
-      ? {}
-      : { mergeability: changeRequest.mergeability }),
-    ...(changeRequest.rebaseRequired === undefined
-      ? {}
-      : { rebaseRequired: changeRequest.rebaseRequired }),
-    ...(changeRequest.stack === undefined ? {} : { stack: changeRequest.stack }),
-    ...(changeRequest.headSha?.trim() ? { headSha: changeRequest.headSha.trim() } : {}),
-    ...(changeRequest.autoMergeEnabled === undefined
-      ? {}
-      : { autoMergeEnabled: changeRequest.autoMergeEnabled }),
-    ...(changeRequest.autoMergeMethod === undefined
-      ? {}
-      : { autoMergeMethod: changeRequest.autoMergeMethod }),
-  });
+  ): PullRequestSummary => {
+    const readings: Pick<
+      ProviderChangeRequestSummary,
+      "additions" | "deletions" | "changedFiles" | "mergeability"
+    > = "unavailable" in changeRequest ? pullRequestDetailReadings(changeRequest) : changeRequest;
+    return {
+      provider: project.api.kind,
+      projectId: project.project.id,
+      repository: project.repository,
+      number: changeRequest.number,
+      title: changeRequest.title,
+      url: changeRequest.url,
+      state: changeRequest.state,
+      headBranch: changeRequest.headBranch,
+      baseBranch: changeRequest.baseBranch,
+      // An action reply may not carry these, and null would erase a time a client already holds.
+      ...(changeRequest.closedAt === undefined && reply
+        ? {}
+        : { closedAt: changeRequest.closedAt ?? null }),
+      ...(changeRequest.mergedAt === undefined && reply
+        ? {}
+        : { mergedAt: changeRequest.mergedAt ?? null }),
+      updatedAt: changeRequest.updatedAt,
+      observedAt,
+      ...(changeRequest.isDraft === undefined ? {} : { isDraft: changeRequest.isDraft }),
+      ...(changeRequest.author === undefined ? {} : { author: changeRequest.author }),
+      ...(readings.additions === undefined ? {} : { additions: readings.additions }),
+      ...(readings.deletions === undefined ? {} : { deletions: readings.deletions }),
+      ...(readings.changedFiles === undefined ? {} : { changedFiles: readings.changedFiles }),
+      ...(changeRequest.reviewDecision === undefined
+        ? {}
+        : { reviewDecision: changeRequest.reviewDecision }),
+      ...(changeRequest.checksState === undefined
+        ? {}
+        : { checksState: changeRequest.checksState }),
+      ...(readings.mergeability === undefined ? {} : { mergeability: readings.mergeability }),
+      ...(changeRequest.rebaseRequired === undefined
+        ? {}
+        : { rebaseRequired: changeRequest.rebaseRequired }),
+      ...(changeRequest.stack === undefined ? {} : { stack: changeRequest.stack }),
+      ...(changeRequest.headSha?.trim() ? { headSha: changeRequest.headSha.trim() } : {}),
+      ...(changeRequest.autoMergeEnabled === undefined
+        ? {}
+        : { autoMergeEnabled: changeRequest.autoMergeEnabled }),
+      ...(changeRequest.autoMergeMethod === undefined
+        ? {}
+        : { autoMergeMethod: changeRequest.autoMergeMethod }),
+    };
+  };
 
   const summaryUncached: PullRequestService["Service"]["summary"] = (input) =>
     requireProject(input).pipe(
@@ -1967,6 +1973,9 @@ export const make = Effect.gen(function* () {
             checks: changeRequest.checks,
             mergeCapabilities: changeRequest.mergeCapabilities,
             viewerPermissions: changeRequest.viewerPermissions,
+            ...(changeRequest.unavailable === undefined
+              ? {}
+              : { unavailable: changeRequest.unavailable }),
             ...(viewer === null || viewer.trim().length === 0 ? {} : { viewer }),
             ...(changeRequest.baseComparison === undefined
               ? {}
@@ -3369,6 +3378,7 @@ export const make = Effect.gen(function* () {
     (key: string) => {
       const statsKey = statsCacheKey(key);
       return detailUncached(refOfCacheKey(key)).pipe(
+        Effect.map((value) => pullRequestDetailWithKnownParts(value, lastGoodDetail.peek(key))),
         Effect.tap(
           Effect.fn("PullRequestService.recordDetailStats")(function* (value: PullRequestDetail) {
             // GitHub and Azure detail include the same checks; the checks TTL counts from their observation.
@@ -3385,6 +3395,7 @@ export const make = Effect.gen(function* () {
                 observedAt: value.observedAt,
               });
             }
+            if (value.unavailable?.includes("diffStat")) return;
             recordStats(
               statsKey,
               {
@@ -3402,8 +3413,11 @@ export const make = Effect.gen(function* () {
     },
     {
       capacity: DETAIL_CACHE_CAPACITY,
+      // A reading with unavailable parts is asked for again, as a failed one is.
       timeToLive: (exit) =>
-        Exit.isSuccess(exit) ? detailTimeToLive(exit.value.state) : Duration.zero,
+        Exit.isSuccess(exit) && exit.value.unavailable === undefined
+          ? detailTimeToLive(exit.value.state)
+          : Duration.zero,
     },
   );
   const summaryFromDetail = (
@@ -3421,10 +3435,7 @@ export const make = Effect.gen(function* () {
     state: detail.state,
     isDraft: detail.isDraft,
     author: detail.author,
-    additions: detail.additions,
-    deletions: detail.deletions,
-    changedFiles: detail.changedFiles,
-    mergeability: detail.mergeability,
+    ...pullRequestDetailReadings(detail),
     ...(detail.rebaseRequired === undefined ? {} : { rebaseRequired: detail.rebaseRequired }),
     headBranch: detail.headBranch,
     baseBranch: detail.baseBranch,

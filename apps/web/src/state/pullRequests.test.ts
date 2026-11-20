@@ -2,6 +2,7 @@ import { SourceControlProviderKind } from "@t3tools/contracts";
 import {
   EnvironmentId,
   ProjectId,
+  type PullRequestDetail,
   type PullRequestListEntry,
   type PullRequestListInput,
   PullRequestUnavailableError,
@@ -43,6 +44,7 @@ import {
   observedPullRequestSummary,
   observePullRequestChecks,
   observePullRequestMetadata,
+  pullRequestDetailAnswerSummary,
   newestPullRequestSummary,
   newestDisplayedPullRequestSummary,
   rememberPullRequestListAnswer,
@@ -249,6 +251,36 @@ describe("pull request observations", () => {
       observed(summary({ checksState: "failing", observedAt: 400 }), 3),
     );
     expect(observedPullRequestSummary(state)?.checksState).toBe("failing");
+  });
+
+  it("publishes no placeholder for a part a rate-limited detail left out", () => {
+    const answer = (overrides: Partial<PullRequestDetail>) =>
+      ({
+        ...summary({ additions: 120, deletions: 4, changedFiles: 2, mergeability: "mergeable" }),
+        checks: [],
+        ...overrides,
+      }) as PullRequestDetail;
+    let state = fromSummary(pullRequestDetailAnswerSummary(answer({ observedAt: 100 })), 1);
+    state = observePullRequestMetadata(
+      state,
+      observed(
+        pullRequestDetailAnswerSummary(
+          answer({
+            observedAt: 200,
+            additions: 0,
+            deletions: 0,
+            changedFiles: 0,
+            mergeability: "unknown",
+            unavailable: ["diffStat", "mergeability", "checks"],
+          }),
+        ),
+        2,
+      ),
+    );
+    const published = observedPullRequestSummary(state);
+    expect(published).toMatchObject({ observedAt: 200, mergeability: "mergeable" });
+    expect(published).not.toHaveProperty("additions");
+    expect(published).not.toHaveProperty("changedFiles");
   });
 
   it("orders checks by arrival when the server reports no read time", () => {

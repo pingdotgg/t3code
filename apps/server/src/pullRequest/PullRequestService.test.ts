@@ -3768,6 +3768,49 @@ it.effect("notifies linked threads when detail changes draft status in either di
   }),
 );
 
+it.effect(
+  "a detail with unavailable parts keeps the last reading's values and is asked again",
+  () =>
+    Effect.gen(function* () {
+      let reads = 0;
+      let rateLimited = false;
+      const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            getChangeRequest: () =>
+              Effect.sync(() => {
+                reads += 1;
+                return rateLimited
+                  ? {
+                      ...hostedChangeRequest("body", 0),
+                      changedFiles: 0,
+                      unavailable: ["diffStat" as const],
+                    }
+                  : hostedChangeRequest("body", 120);
+              }),
+          }),
+        ],
+      });
+      const read = () => service.detail({ ...reference, allowStale: false });
+      yield* read();
+      rateLimited = true;
+      yield* TestClock.adjust("61 seconds");
+      for (const expectedReads of [2, 3]) {
+        assert.deepInclude(yield* read(), {
+          additions: 120,
+          changedFiles: 2,
+          unavailable: ["diffStat"],
+        });
+        assert.strictEqual(reads, expectedReads);
+      }
+      assert.deepInclude(yield* service.summary(reference), { additions: 120, changedFiles: 2 });
+    }),
+);
+
 it.effect("deduplicates routed PR reports without dropping draft changes", () =>
   Effect.gen(function* () {
     const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };

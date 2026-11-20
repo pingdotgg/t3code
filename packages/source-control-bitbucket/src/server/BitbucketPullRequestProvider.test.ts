@@ -127,6 +127,18 @@ for (const operation of [
           if (!activity) {
             // A rate-limited secondary read must not fail the detail the PR read already answered.
             expect(result).toMatchObject({ _tag: "Success", success: { title: "Check polling" } });
+            // The unanswered part is named, so its placeholder is never taken for a reading.
+            const part = {
+              getDiffStat: "diffStat",
+              getMergeability: "mergeability",
+              listChecks: "checks",
+              getRepositoryPermission: "viewerPermissions",
+            }[operation];
+            if (status === 429 || operation === "getDiffStat") {
+              expect(result).toMatchObject({ success: { unavailable: [part] } });
+            } else {
+              expect(result).not.toHaveProperty("success.unavailable");
+            }
           } else if (status === 429) {
             expect(result).toMatchObject({
               _tag: "Failure",

@@ -1,6 +1,10 @@
 import { resolvePullRequestAuthorFilter, SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
+import type {
+  PullRequestCapabilities,
+  PullRequestDetailPart,
+  PullRequestViewerPermissions,
+} from "@t3tools/contracts";
 
 import * as BitbucketApi from "./BitbucketApi.ts";
 import * as BitbucketPullRequestApi from "./BitbucketPullRequestApi.ts";
@@ -170,6 +174,21 @@ export const make = Effect.gen(function* () {
     });
   };
 
+  const rateLimited = (error: BitbucketPullRequestApi.BitbucketPullRequestApiError) =>
+    bitbucketProviderFailure(error).reason === "rate-limited";
+
+  // BitbucketApi already paused the host on the 429, so the detail need not fail to back off.
+  const readPart = <A>(
+    part: PullRequestDetailPart,
+    read: Effect.Effect<A, BitbucketPullRequestApi.BitbucketPullRequestApiError>,
+    fallback: A,
+    unanswered = rateLimited,
+  ) =>
+    read.pipe(
+      Effect.map((value) => ({ value, unavailable: [] as ReadonlyArray<PullRequestDetailPart> })),
+      Effect.catchIf(unanswered, () => Effect.succeed({ value: fallback, unavailable: [part] })),
+    );
+
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("bitbucket"),
     capabilities: CAPABILITIES,
@@ -227,10 +246,24 @@ export const make = Effect.gen(function* () {
       return Effect.all(
         [
           api.getPullRequest(target),
-          api.getDiffStat(target),
-          recoverRead(api.getMergeability(target), "unknown" as const),
-          recoverRead(api.listChecks(target), []),
-          recoverRead(api.getRepositoryPermission(target), true),
+          // No count stands in for a diff stat, so any failure leaves it unavailable.
+          readPart(
+            "diffStat",
+            api.getDiffStat(target),
+            { additions: 0, deletions: 0, changedFiles: 0 },
+            () => true,
+          ),
+          readPart(
+            "mergeability",
+            recoverRead(api.getMergeability(target), "unknown" as const),
+            "unknown" as const,
+          ),
+          readPart("checks", recoverRead(api.listChecks(target), []), []),
+          readPart(
+            "viewerPermissions",
+            recoverRead(api.getRepositoryPermission(target), true),
+            true,
+          ),
         ],
         { concurrency: 5 },
       ).pipe(
@@ -242,21 +275,27 @@ export const make = Effect.gen(function* () {
             mergeability,
             checks,
             canWrite,
-          ]): ProviderChangeRequestDetail => ({
-            ...toChangeRequest(pullRequest),
-            mergeability,
-            additions: diffStat.additions,
-            deletions: diffStat.deletions,
-            changedFiles: diffStat.changedFiles,
-            body: pullRequest.body,
-            mergedAt: pullRequest.state === "merged" ? pullRequest.closedAt : null,
-            closedAt: pullRequest.state === "closed" ? pullRequest.closedAt : null,
-            reviewers: pullRequest.reviewers,
-            checks,
-            // Bitbucket exposes no strategy permissions; unsupported strategies fail at merge.
-            mergeCapabilities: { merge: true, squash: true, rebase: true },
-            viewerPermissions: bitbucketViewerPermissions({ canWrite }),
-          }),
+          ]): ProviderChangeRequestDetail => {
+            const unavailable = [diffStat, mergeability, checks, canWrite].flatMap(
+              (part) => part.unavailable,
+            );
+            return {
+              ...toChangeRequest(pullRequest),
+              mergeability: mergeability.value,
+              additions: diffStat.value.additions,
+              deletions: diffStat.value.deletions,
+              changedFiles: diffStat.value.changedFiles,
+              body: pullRequest.body,
+              mergedAt: pullRequest.state === "merged" ? pullRequest.closedAt : null,
+              closedAt: pullRequest.state === "closed" ? pullRequest.closedAt : null,
+              reviewers: pullRequest.reviewers,
+              checks: checks.value,
+              // Bitbucket exposes no strategy permissions; unsupported strategies fail at merge.
+              mergeCapabilities: { merge: true, squash: true, rebase: true },
+              viewerPermissions: bitbucketViewerPermissions({ canWrite: canWrite.value }),
+              ...(unavailable.length === 0 ? {} : { unavailable }),
+            };
+          },
         ),
       );
     },

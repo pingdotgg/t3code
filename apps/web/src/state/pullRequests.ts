@@ -13,9 +13,11 @@ import {
   PullRequestListResult,
   PullRequestOperationError,
   PullRequestUnavailableError,
+  pullRequestDetailReadings,
   type EnvironmentId,
   type ProjectId,
   type PullRequestChecksState,
+  type PullRequestDetail,
   type PullRequestFilesViewedResult,
   type PullRequestListInput,
   type PullRequestFilterOptionsInput,
@@ -231,6 +233,24 @@ function recordObservation(
     const next = observe(previous);
     return next === previous ? [false, previous] : [true, next];
   });
+}
+
+/** A detail answer as shared summary data, without the parts its host did not answer. */
+export function pullRequestDetailAnswerSummary(detail: PullRequestDetail): PullRequestSummary {
+  const {
+    additions: _additions,
+    deletions: _deletions,
+    changedFiles: _changedFiles,
+    mergeability: _mergeability,
+    ...answered
+  } = detail;
+  return {
+    ...answered,
+    ...pullRequestDetailReadings(detail),
+    ...(detail.unavailable?.includes("checks")
+      ? {}
+      : { checksState: pullRequestChecksState(detail.checks) }),
+  };
 }
 
 function observePullRequestSummary(
@@ -465,7 +485,7 @@ export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connecti
       observePullRequestSummary(
         registry,
         pullRequestSummaryKey(environmentId, input),
-        { ...detail, checksState: pullRequestChecksState(detail.checks) },
+        pullRequestDetailAnswerSummary(detail),
         at,
       );
     }),

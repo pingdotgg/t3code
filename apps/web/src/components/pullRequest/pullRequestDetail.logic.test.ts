@@ -50,6 +50,7 @@ import {
   pullRequestCheckoutCommand,
   checkoutFailureDescription,
   readPullRequestDetailSnapshot,
+  fillUnavailablePullRequestDetail,
   resolveDisplayedPullRequestDetail,
   resolvePullRequestReferenceHost,
   resolvePullRequestPrimaryControl,
@@ -1971,6 +1972,36 @@ describe("cached pull request detail", () => {
       expect(readPullRequestDetailSnapshot(storage, "env-1", hosted)?.title).toBe(cached.title);
     },
   );
+
+  it("keeps a complete reading when a rate-limited answer leaves parts out", () => {
+    const storage = makeStorage();
+    const complete = detail({ headSha: "abc" });
+    writePullRequestDetailSnapshot(storage, "env-1", reference, complete);
+    const partial = detail({
+      headSha: "abc",
+      title: "Renamed",
+      additions: 0,
+      deletions: 0,
+      changedFiles: 0,
+      unavailable: ["diffStat"],
+    });
+    writePullRequestDetailSnapshot(storage, "env-1", reference, partial);
+    const cached = readPullRequestDetailSnapshot(storage, "env-1", reference);
+    expect(cached).toEqual(complete);
+    expect(fillUnavailablePullRequestDetail({ answer: partial, cached, reference })).toMatchObject({
+      title: "Renamed",
+      additions: 12,
+      deletions: 3,
+      changedFiles: 2,
+      unavailable: ["diffStat"],
+    });
+    // Another head's stats, or another pull request's, are not this reading's.
+    for (const other of [detail({ headSha: "def" }), detail({ headSha: "abc", number: 8 })]) {
+      expect(fillUnavailablePullRequestDetail({ answer: partial, cached: other, reference })).toBe(
+        partial,
+      );
+    }
+  });
 
   it("does not paint another change request's snapshot", () => {
     expect(

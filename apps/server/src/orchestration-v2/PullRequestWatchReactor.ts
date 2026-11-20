@@ -694,6 +694,11 @@ export const make = Effect.gen(function* () {
       lastReads.delete(group.key);
       return yield* eachTarget(group, (target) => finished(group.key, target, detail));
     }
+    // Unanswered checks or conflicts are not readings; wait as for a rate-limited read.
+    if (detail.unavailable?.some((part) => part === "checks" || part === "mergeability")) {
+      lastReads.delete(group.key);
+      return;
+    }
 
     // A failed comments read leaves remarks incomplete, so the next pass reads them again;
     // checks, head and conflicts from the detail still reach the evaluator.

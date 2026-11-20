@@ -639,6 +639,14 @@ export const PullRequestMergeQueueRemoval = Schema.Struct({
 });
 export type PullRequestMergeQueueRemoval = typeof PullRequestMergeQueueRemoval.Type;
 
+export const PullRequestDetailPart = Schema.Literals([
+  "diffStat",
+  "mergeability",
+  "checks",
+  "viewerPermissions",
+]);
+export type PullRequestDetailPart = typeof PullRequestDetailPart.Type;
+
 export const PullRequestDetail = Schema.Struct({
   provider: SourceControlProviderKind,
   capabilities: PullRequestCapabilities,
@@ -684,8 +692,57 @@ export const PullRequestDetail = Schema.Struct({
   /** Absent where the host has no merge queue or does not report one. */
   mergeQueueRemoval: Schema.optional(PullRequestMergeQueueRemoval),
   maintainerCanModify: Schema.optional(Schema.Boolean),
+  /**
+   * Parts a rate-limited host did not answer. Their fields hold the last known values, or
+   * placeholders when none are known, so they must not replace a reading a client already holds.
+   */
+  unavailable: Schema.optional(Schema.Array(PullRequestDetailPart)),
 });
 export type PullRequestDetail = typeof PullRequestDetail.Type;
+
+/** The diff stats and conflict state a detail read from the host, without its unavailable parts. */
+export const pullRequestDetailReadings = (
+  detail: Pick<PullRequestDetail, "additions" | "deletions" | "changedFiles" | "mergeability"> & {
+    readonly unavailable?: ReadonlyArray<PullRequestDetailPart> | undefined;
+  },
+) => ({
+  ...(detail.unavailable?.includes("diffStat")
+    ? {}
+    : {
+        additions: detail.additions,
+        deletions: detail.deletions,
+        changedFiles: detail.changedFiles,
+      }),
+  ...(detail.unavailable?.includes("mergeability") ? {} : { mergeability: detail.mergeability }),
+});
+
+/**
+ * Fills the parts the host did not answer from an earlier reading of the same head. The parts stay
+ * listed as unavailable: the values are the last known ones, not this reading's.
+ */
+export function pullRequestDetailWithKnownParts(
+  detail: PullRequestDetail,
+  known: PullRequestDetail | null | undefined,
+): PullRequestDetail {
+  if (detail.unavailable === undefined || known == null || known.headSha !== detail.headSha) {
+    return detail;
+  }
+  // The earlier reading may itself carry values from one before it, so its own gaps do not matter.
+  const fills = (part: PullRequestDetailPart) => detail.unavailable?.includes(part) === true;
+  return {
+    ...detail,
+    ...(fills("diffStat")
+      ? {
+          additions: known.additions,
+          deletions: known.deletions,
+          changedFiles: known.changedFiles,
+        }
+      : {}),
+    ...(fills("mergeability") ? { mergeability: known.mergeability } : {}),
+    ...(fills("checks") ? { checks: known.checks } : {}),
+    ...(fills("viewerPermissions") ? { viewerPermissions: known.viewerPermissions } : {}),
+  };
+}
 
 export const PullRequestChecks = Schema.Struct({
   observedAt: Schema.optional(Schema.Finite),
