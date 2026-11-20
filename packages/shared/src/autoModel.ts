@@ -279,6 +279,8 @@ function usable(provider: ServerProvider, model: string, now: number): boolean {
     provider.installed &&
     provider.auth.status !== "unauthenticated" &&
     isProviderAvailable(provider) &&
+    // The server refuses every session on a runtime the manifest rates broken.
+    provider.compatibilityAdvisory?.status !== "broken" &&
     provider.models.some((entry) => entry.slug === model) &&
     exhaustedUsageWindow(provider, now, model) === undefined
   );
