@@ -772,9 +772,10 @@ function layerTest(input: {
       Effect.flatMap((adapter) =>
         input.secondInstanceId === undefined
           ? Effect.succeed([adapter])
-          : makeProviderAdapter(input.state, { instanceId: input.secondInstanceId }).pipe(
-              Effect.map((second) => [adapter, second]),
-            ),
+          : makeProviderAdapter(input.state, {
+              instanceId: input.secondInstanceId,
+              ...(input.mcpAppConfigs === undefined ? {} : { mcpAppConfigs: input.mcpAppConfigs }),
+            }).pipe(Effect.map((second) => [adapter, second])),
       ),
       Effect.map(ProviderAdapterRegistry.layerFromAdapters),
     ),
@@ -3468,7 +3469,11 @@ it.effect(
       const mcpAppConfigs = yield* Ref.make<
         ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
       >([]);
-      const currentInstanceId = ProviderInstanceId.make("codex-current");
+      const mcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      const duringCurrentOpen = yield* Ref.make<Effect.Effect<void> | undefined>(undefined);
+      const historicalInstanceId = ProviderInstanceId.make("codex-historical");
       yield* Effect.gen(function* () {
         const eventSink = yield* EventSink.EventSinkV2;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -3484,28 +3489,17 @@ it.effect(
             yield* makeThreadCreatedEvent({ idAllocator, threadId: appThread, now }),
           ],
         });
-        yield* manager.open({
-          threadId: appThread,
-          providerSessionId: idAllocator.derive.providerSession({
-            providerInstanceId: currentInstanceId,
-          }),
-          modelSelection: { ...modelSelection, instanceId: currentInstanceId },
-          runtimePolicy,
-        });
-        const liveConfig = yield* mcpSessions.read(appThread);
-        assert.isDefined(liveConfig);
-
         const historicalSessionId = idAllocator.derive.providerSession({
-          providerInstanceId: modelSelection.instanceId,
+          providerInstanceId: historicalInstanceId,
         });
         yield* manager.open({
           threadId: owner,
           providerSessionId: historicalSessionId,
-          modelSelection,
+          modelSelection: { ...modelSelection, instanceId: historicalInstanceId },
           runtimePolicy,
         });
         const historicalRuntime = Option.getOrUndefined(yield* manager.get(historicalSessionId));
-        yield* historicalRuntime!.mcpApps!.listTools({
+        const openHistoricalApp = historicalRuntime!.mcpApps!.listTools({
           providerThread: makeProviderThread({
             idAllocator,
             threadId: appThread,
@@ -3516,11 +3510,24 @@ it.effect(
           server: "datadog",
         });
 
+        // First while the thread's current open is in flight, then once it is live.
+        yield* Ref.set(duringCurrentOpen, openHistoricalApp.pipe(Effect.asVoid, Effect.orDie));
+        yield* manager.open({
+          threadId: appThread,
+          providerSessionId: idAllocator.derive.providerSession({
+            providerInstanceId: modelSelection.instanceId,
+          }),
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* openHistoricalApp;
+
+        const liveConfig = (yield* Ref.get(mcpConfigs)).at(-1);
         assert.deepEqual(yield* mcpSessions.read(appThread), liveConfig);
         const token = liveConfig!.authorizationHeader.replace(/^Bearer\s+/, "");
         assert.equal(
           (yield* registry.resolve(token))?.thread.providerInstanceId,
-          currentInstanceId,
+          modelSelection.instanceId,
         );
       }).pipe(
         Effect.provide(
@@ -3528,7 +3535,12 @@ it.effect(
             state,
             idleTimeoutMs: 1_000,
             mcpAppConfigs,
-            secondInstanceId: currentInstanceId,
+            mcpConfigs,
+            secondInstanceId: historicalInstanceId,
+            beforeOpen: () =>
+              Ref.getAndSet(duringCurrentOpen, undefined).pipe(
+                Effect.flatMap((effect) => effect ?? Effect.void),
+              ),
           }),
         ),
       );

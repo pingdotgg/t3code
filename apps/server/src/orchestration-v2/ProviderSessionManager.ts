@@ -566,6 +566,7 @@ export const layerWithOptions = (
       const prepareMcpSession = (
         threadId: ThreadId,
         providerInstanceId: ProviderInstanceId,
+        yieldToOtherInstance = false,
       ): Effect.Effect<PreparedMcpCredential> =>
         options.configureMcp === false
           ? mcpSessions
@@ -574,6 +575,20 @@ export const layerWithOptions = (
           : mcpPrepareLock.withLock(
               threadId,
               Effect.gen(function* () {
+                // Checked under the per-thread lock, which every instance shares, so another
+                // instance's attach or in-flight open cannot land between this and the rotation.
+                if (yieldToOtherInstance) {
+                  const current = yield* mcpSessions.read(threadId);
+                  const heldElsewhere =
+                    (current !== undefined &&
+                      isMcpCredentialReserved(threadId, current.providerSessionId)) ||
+                    Array.from((yield* Ref.get(sessions)).values()).some(
+                      (entry) =>
+                        entry.runtime.instanceId !== providerInstanceId &&
+                        entry.attachedThreadIds.has(threadId),
+                    );
+                  if (heldElsewhere) return { mcpCredentialId: undefined, issued: false };
+                }
                 // Live providers build MCP clients once; reuse credentials across workspace handoffs.
                 const { browser: browserToolsAvailable, device: deviceToolsAvailable } =
                   yield* agentAccessSettings(threadId);
@@ -1780,6 +1795,8 @@ export const layerWithOptions = (
         readonly providerSessionId: ProviderSessionId;
         readonly threadId: ThreadId;
         readonly providerInstanceId: ProviderInstanceId;
+        /** Leave a credential alone that a live session on another instance holds. */
+        readonly yieldToOtherInstance?: boolean;
       }) =>
         Effect.suspend(() => {
           let attachedTo: ProviderAdapter.ProviderAdapterV2SessionRuntime | undefined;
@@ -1799,7 +1816,11 @@ export const layerWithOptions = (
               Effect.uninterruptible,
             );
             if (attached !== undefined) {
-              const prepared = yield* prepareMcpSession(input.threadId, input.providerInstanceId);
+              const prepared = yield* prepareMcpSession(
+                input.threadId,
+                input.providerInstanceId,
+                input.yieldToOtherInstance,
+              );
               preparedForCleanup = prepared;
               if (prepared.mcpCredentialId !== undefined) {
                 const mcpCredentialId = prepared.mcpCredentialId;
@@ -2370,7 +2391,8 @@ export const layerWithOptions = (
             touchActivity(providerSessionId),
           ).pipe(Effect.andThen(effect));
           if (threadId === null) return passThrough;
-          // A historical app on another instance must not rotate the credential the thread's live provider holds.
+          // A historical app must not rotate the credential the thread's live provider on another
+          // instance holds; this skips the attach, and prepareMcpSession re-checks under its lock.
           const attachedToOtherInstance = Ref.get(sessions).pipe(
             Effect.map((current) =>
               Array.from(current.values()).some(
@@ -2386,6 +2408,7 @@ export const layerWithOptions = (
               providerSessionId,
               threadId,
               providerInstanceId: runtime.instanceId,
+              yieldToOtherInstance: true,
             }),
           ).pipe(
             Effect.andThen(observeActivity(providerSessionId, touchActivity(providerSessionId))),
