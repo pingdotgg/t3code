@@ -33,7 +33,11 @@ import {
   useEnvironmentSettings,
 } from "../hooks/useSettings";
 import { useEnvironment } from "../state/environments";
-import { useEnvironmentScope, usePreparedConnection } from "../state/session";
+import {
+  useEnvironmentScope,
+  useEnvironmentScopeDenied,
+  usePreparedConnection,
+} from "../state/session";
 import { preferredSpeechLanguages } from "./preferredSpeechLanguages";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 import { useAudioChoice } from "./voiceConsent";
@@ -114,8 +118,9 @@ type HookInput = {
 
 /**
  * Microphone audio leaves this device only for the environment the person chose in
- * Voice settings. Nothing is inferred from the primary or the draft's environment, and
- * the recording is abandoned the moment that choice changes or its connection drops.
+ * Voice settings. Nothing is inferred from the primary or the draft's environment. A transient
+ * connection loss keeps the local recording recoverable, but a destination, authorization, or
+ * capability change abandons it.
  */
 export function useVoiceTranscriptionDestination() {
   const gt = useGT();
@@ -126,6 +131,7 @@ export function useVoiceTranscriptionDestination() {
   const environment = useEnvironment(environmentId);
   const connection = Option.getOrNull(usePreparedConnection(environmentId));
   const canDictate = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const scopeDenied = useEnvironmentScopeDenied(environmentId, AuthOrchestrationOperateScope);
   const cloud = grant?.destination.kind === "cloud" ? grant.destination : undefined;
   const provider = cloud?.provider;
   const model = cloud?.provider === "openrouter" ? cloud.model : undefined;
@@ -147,6 +153,9 @@ export function useVoiceTranscriptionDestination() {
           })
         : (environment?.label ?? null),
     prepared: supported && canDictate ? connection : null,
+    retainOnDisconnect: Boolean(
+      environmentId && grant && (connection ? supported && canDictate : !scopeDenied),
+    ),
   };
 }
 
@@ -157,6 +166,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const grantId = destination.grantId;
   const cloudProvider = destination.cloudProvider;
   const cloudModel = destination.cloudModel;
+  const retainOnDisconnect = destination.retainOnDisconnect;
   const draftCapabilities = useEnvironment(input.environmentId)?.serverConfig?.environment
     .capabilities;
   const originatingConnection = Option.getOrNull(usePreparedConnection(input.environmentId));
@@ -194,7 +204,14 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     setSetup(INITIAL_SETUP);
   }
 
-  const session = useRetainedVoiceInputSession({ prepared, grantId, cloudProvider, cloudModel });
+  const session = useRetainedVoiceInputSession({
+    environmentId: destination.environmentId,
+    prepared,
+    grantId,
+    retainOnDisconnect,
+    cloudProvider,
+    cloudModel,
+  });
   const snapshot = useVoiceInputSessionSnapshot(session);
   const owns = snapshot.target?.ownerKey === input.ownerKey;
   const activity = useVoiceInputSessionActivity(session, input.ownerKey);

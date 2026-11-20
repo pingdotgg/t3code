@@ -35,6 +35,18 @@ export function useEnvironmentScope(
   );
 }
 
+export function useEnvironmentScopeDenied(
+  environmentId: EnvironmentId | null,
+  scope: AuthEnvironmentScope,
+): boolean {
+  return useAtomValue(
+    environmentId === null
+      ? EMPTY_SESSION_STATE_ATOM
+      : environmentSession.sessionStateAtom(environmentId),
+    (result) => sessionDeniesScope(result, scope),
+  );
+}
+
 export function useEnvironmentCanConfigureRelay(environmentId: EnvironmentId | null): boolean {
   return useAtomValue(
     environmentId === null
@@ -55,6 +67,14 @@ export function sessionHasScope(
 ): boolean {
   const session = AsyncResult.getOrElse(result, () => null);
   return result._tag !== "Failure" && session !== null && sessionGrantsScope(session, scope);
+}
+
+function sessionDeniesScope(
+  result: AsyncResult.AsyncResult<AuthSessionState, unknown>,
+  scope: AuthEnvironmentScope,
+): boolean {
+  const session = AsyncResult.getOrElse(result, () => null);
+  return result._tag !== "Failure" && session !== null && !sessionGrantsScope(session, scope);
 }
 
 const environmentsWithScopeAtom = Atom.family((key: string) => {

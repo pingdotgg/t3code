@@ -25,6 +25,7 @@ const isVoiceTranscriptionError = Schema.is(VoiceTranscriptionError);
 
 export function createBrowserVoiceInputPlatform(input: {
   readonly prepared: PreparedConnection;
+  readonly getPrepared?: (() => PreparedConnection | null) | undefined;
   readonly cloudProvider?: CloudSpeechProvider | undefined;
   /** The exact OpenRouter model the grant names; required with that provider. */
   readonly cloudModel?: CloudSpeechModelId | undefined;
@@ -37,6 +38,15 @@ export function createBrowserVoiceInputPlatform(input: {
   readonly onText: (text: SpeechStreamText) => void;
   readonly onError: (message: string, code?: VoiceInputErrorCode) => void;
 }) {
+  const getPrepared = input.getPrepared ?? (() => input.prepared);
+  const requirePrepared = () => {
+    const prepared = getPrepared();
+    if (prepared) return prepared;
+    throw new VoiceTranscriptionError({
+      code: "unavailable",
+      message: m(msg("Voice transcription failed. Check the destination in Settings → Voice.")),
+    });
+  };
   return createBrowserPcmCapture(input, async (options) => {
     const recordingOptions = input.getTranscriptionOptions();
     const streamingEnabled = input.getStreamingEnabled();
@@ -47,22 +57,18 @@ export function createBrowserVoiceInputPlatform(input: {
       try {
         const response = await fetch(uri, { signal: transcriptionSignal });
         const pcm = new Uint8Array(await response.arrayBuffer());
+        const prepared = requirePrepared();
         const result = await runEnvironmentSpeech(
           input.cloudProvider
             ? transcribeCloudPcm(
-                input.prepared,
+                prepared,
                 input.cloudProvider,
                 pcm,
                 recordingOptions,
                 input.hasAudioConsent,
                 input.cloudModel,
               )
-            : transcribeEnvironmentPcm(
-                input.prepared,
-                pcm,
-                recordingOptions,
-                input.hasAudioConsent,
-              ),
+            : transcribeEnvironmentPcm(prepared, pcm, recordingOptions, input.hasAudioConsent),
           { signal: transcriptionSignal },
         );
         throwIfVoiceTranscriptionAborted(transcriptionSignal);
@@ -84,7 +90,7 @@ export function createBrowserVoiceInputPlatform(input: {
           message: m(msg("Choose an OpenRouter model in Settings → Voice.")),
         });
       await runEnvironmentSpeech(
-        requireCloudSpeechKey(input.prepared, input.cloudProvider),
+        requireCloudSpeechKey(requirePrepared(), input.cloudProvider),
         options,
       );
       throwIfVoiceTranscriptionAborted(options.signal);
@@ -93,7 +99,8 @@ export function createBrowserVoiceInputPlatform(input: {
         transcribe: transcribeRecording,
       };
     }
-    const status = await runEnvironmentSpeech(getEnvironmentSpeechStatus(input.prepared), options);
+    const prepared = requirePrepared();
+    const status = await runEnvironmentSpeech(getEnvironmentSpeechStatus(prepared), options);
     throwIfVoiceTranscriptionAborted(options.signal);
     if (!status.supported)
       throw new VoiceTranscriptionError({ code: "unavailable", message: status.reason });
@@ -114,7 +121,18 @@ export function createBrowserVoiceInputPlatform(input: {
     if (status.supportsStreaming ? !nativeStreaming : !status.supportsBufferedStreaming) {
       return { locale, transcribe: transcribeRecording };
     }
-    const url = await runEnvironmentSpeech(getEnvironmentSpeechStreamUrl(input.prepared), options);
+    let streamPrepared = requirePrepared();
+    let url = await runEnvironmentSpeech(getEnvironmentSpeechStreamUrl(streamPrepared), options);
+    const currentPrepared = requirePrepared();
+    if (currentPrepared !== streamPrepared) {
+      streamPrepared = currentPrepared;
+      url = await runEnvironmentSpeech(getEnvironmentSpeechStreamUrl(streamPrepared), options);
+      if (requirePrepared() !== streamPrepared)
+        throw new VoiceTranscriptionError({
+          code: "unavailable",
+          message: m(msg("Voice transcription failed. Check the destination in Settings → Voice.")),
+        });
+    }
     return {
       locale,
       transcribe: transcribeRecording,

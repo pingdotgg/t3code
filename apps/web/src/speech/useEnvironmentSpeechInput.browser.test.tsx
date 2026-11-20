@@ -69,6 +69,7 @@ vi.mock("../components/sidebar/mainAppLocation", () => ({
 }));
 vi.mock("../state/session", () => ({
   useEnvironmentScope: (id: string) => mocks.canDictate.has(id),
+  useEnvironmentScopeDenied: () => false,
   usePreparedConnection: (environmentId: string | null) => {
     if (!environmentId || !mocks.connected.has(environmentId)) return Option.none();
     let prepared = mocks.prepared.get(environmentId);
@@ -180,6 +181,7 @@ vi.mock("./browserVoiceInput", () => ({
     input: Parameters<typeof createBrowserVoiceInputPlatform>[0],
   ) => {
     const environmentId = input.prepared.environmentId;
+    const getPrepared = input.getPrepared ?? (() => input.prepared);
     mocks.platforms.push(environmentId);
     return {
       recorder: {
@@ -196,6 +198,7 @@ vi.mock("./browserVoiceInput", () => ({
           return {
             locale: "en",
             transcribe: async () => {
+              if (!getPrepared()) throw new Error("destination disconnected");
               mocks.transcribeCalls.push(
                 input.cloudProvider
                   ? `${[input.cloudProvider, (input as { cloudModel?: string }).cloudModel].filter(Boolean).join(":")} via ${environmentId}`
@@ -399,6 +402,73 @@ it("retries a failed transcription on the same chosen environment", async () => 
   expect(mocks.transcribeCalls).toEqual(["env-a", "env-a"]);
   expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("second try", expect.anything());
 });
+
+it("retains a recording through a transient destination disconnect and reconnect", async () => {
+  setup({ destination: "env-a" });
+  await using screen = await render(<Probe />);
+  await act(() => mocks.voice.start());
+  expect(mocks.voice.state.phase).toBe("recording");
+
+  mocks.connected.delete("env-a");
+  mocks.prepared.delete("env-a");
+  await screen.rerender(<Probe />);
+  expect(mocks.voice.state.phase).toBe("recording");
+
+  mocks.connected.add("env-a");
+  await screen.rerender(<Probe />);
+  await act(() => mocks.voice.stop());
+  expect(mocks.transcribeCalls).toEqual(["env-a"]);
+  expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("dictated", expect.anything());
+});
+
+it("retains an offline-first destination holder until the same destination reconnects", async () => {
+  setup({ destination: "env-a" });
+  mocks.connected.delete("env-a");
+  mocks.prepared.delete("env-a");
+  await using screen = await render(<Probe />);
+  expect(mocks.voice.state.phase).toBe("idle");
+  expectNoAudioSent();
+
+  mocks.connected.add("env-a");
+  await screen.rerender(<Probe />);
+  await act(() => mocks.voice.start());
+  expect(mocks.voice.state.phase).toBe("recording");
+  await act(() => mocks.voice.stop());
+  expect(mocks.transcribeCalls).toEqual(["env-a"]);
+});
+
+it("keeps a stopped recording local while disconnected and retries it on reconnect", async () => {
+  setup({ destination: "env-a" });
+  await using screen = await render(<Probe />);
+  await act(() => mocks.voice.start());
+  mocks.connected.delete("env-a");
+  mocks.prepared.delete("env-a");
+  await screen.rerender(<Probe />);
+  await act(() => mocks.voice.stop());
+  expect(mocks.transcribeCalls).toEqual([]);
+  expect(mocks.voice.state).toMatchObject({ phase: "error", errorAction: "retry" });
+
+  mocks.connected.add("env-a");
+  await screen.rerender(<Probe />);
+  await act(() => mocks.voice.start());
+  expect(mocks.transcribeCalls).toEqual(["env-a"]);
+  expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("dictated", expect.anything());
+});
+
+it.each(["authorization", "capability"] as const)(
+  "abandons a recording when connected destination %s is lost",
+  async (loss) => {
+    setup({ destination: "env-a" });
+    await using screen = await render(<Probe />);
+    await act(() => mocks.voice.start());
+    if (loss === "authorization") mocks.canDictate.delete("env-a");
+    else mocks.voiceCapable.delete("env-a");
+    await screen.rerender(<Probe />);
+    expect(mocks.voice.state.phase).toBe("idle");
+    await act(() => mocks.voice.stop());
+    expect(mocks.transcribeCalls).toEqual([]);
+  },
+);
 
 it.each([
   ["a stored thread draft keeps recording into it", true],
