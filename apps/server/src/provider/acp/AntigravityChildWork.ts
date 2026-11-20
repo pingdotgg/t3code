@@ -80,7 +80,7 @@ export function describeAntigravitySubagentLaunches(
 }
 
 /** Length-delimited fields only; varints and fixed values are skipped. */
-function protoFields(bytes: Uint8Array): ReadonlyArray<readonly [number, Uint8Array]> {
+export function protoFields(bytes: Uint8Array): ReadonlyArray<readonly [number, Uint8Array]> {
   const fields: Array<readonly [number, Uint8Array]> = [];
   let offset = 0;
   const varint = () => {
@@ -520,6 +520,7 @@ const decodeDetachedSubagent = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
       conversationId: Schema.optional(Schema.String),
+      state: Schema.optional(Schema.String),
       subagentDescriptor: Schema.optional(
         Schema.Struct({
           role: Schema.optional(Schema.String),
@@ -646,8 +647,9 @@ async function findDetachedInvokeRecord(
 
 /**
  * agy 1.5 children outlive their `invoke_subagent` call and the agent reports no end for them:
- * a child is done, or waits for guidance, once its message is in the parent's inbox. Returns the
- * launching tool call ids of children with no message yet; none when the records prove nothing.
+ * a child is done, or waits for guidance, once its message is in the parent's inbox or its record
+ * says it was killed. Returns the launching tool call ids of children with neither; none when the
+ * records prove nothing.
  */
 export const readAntigravityChildrenAtWork = Effect.fn("readAntigravityChildrenAtWork")(
   function* (input: {
@@ -669,6 +671,9 @@ export const readAntigravityChildrenAtWork = Effect.fn("readAntigravityChildrenA
       const atWork: Array<string> = [];
       for (const childId of childIds) {
         if (reported.has(childId)) continue;
+        // `manage_subagents` kill only marks the record; a killed child never reports.
+        const subagent = await readDetachedSubagent(profileRoot, input.rootSessionId, childId);
+        if (subagent?.state === "SUBAGENT_STATE_KILLED") continue;
         for (const message of await readInbox(profileRoot, childId)) {
           const launch = detachedLaunchCall(message, input.rootSessionId);
           if (launch !== undefined && input.toolCallIds.includes(launch.id)) {
