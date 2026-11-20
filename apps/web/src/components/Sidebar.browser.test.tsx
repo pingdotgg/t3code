@@ -52,6 +52,7 @@ vi.mock(import("../state/server"), async (original) => {
   const keybindings = compileResolvedKeybindingsConfig([
     { key: "mod+1", command: "thread.jump.1" },
     { key: "mod+2", command: "thread.jump.2" },
+    { key: "shift+f2", command: "thread.next" },
   ]);
   return { ...(await original()), primaryServerKeybindingsAtom: Atom.make(keybindings) };
 });
@@ -269,12 +270,19 @@ describe("sidebar thread rename", () => {
     { focus: "another text field", area: "details", renames: false },
     { focus: "a side chat composer", sideChat: true, renames: false },
     { focus: "the composer with the sidebar collapsed", sidebarCollapsed: true, renames: false },
-  ])("F2 from $focus renames the open thread: $renames", async ({ renames, ...scenario }) => {
+    { focus: "the composer as a bound shortcut", keys: "{Shift>}{F2}{/Shift}", renames: false },
+    { focus: "the composer during IME composition", composing: true, renames: false },
+  ])("F2 from $focus renames the open thread: $renames", async (row) => {
+    const { renames, keys = "{F2}", composing = false, ...scenario } = row;
     const { tree } = createTestContext(scenario);
     await using screen = await render(tree);
-    await userEvent.click(screen.getByRole("textbox", { name: "Outside the sidebar" }));
+    const field = screen.getByRole("textbox", { name: "Outside the sidebar" });
+    await userEvent.click(field);
 
-    await userEvent.keyboard("{F2}");
+    if (composing) {
+      const key = new KeyboardEvent("keydown", { key: "F2", bubbles: true, isComposing: true });
+      await act(() => void field.element().dispatchEvent(key));
+    } else await userEvent.keyboard(keys);
 
     const input = screen.getByRole("textbox", { name: "Thread title" });
     if (renames) {
