@@ -18,6 +18,7 @@ import { Command } from "effect/cli";
 
 import { makeCli } from "../binCli.ts";
 import { CLOUD_CLI_DESIRED_LINK_SECRET } from "../cloud/CliState.ts";
+import { CLOUD_LINKED_USER_ID } from "../cloud/config.ts";
 import {
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
@@ -104,6 +105,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
         readonly portFreed?: boolean;
         readonly command?: "unlink" | "status";
         readonly linkMode?: "managed" | "publish_only";
+        /** Linked from desktop, web, or mobile: no CLI-desired link is stored. */
+        readonly linkedByApp?: boolean;
       },
     ) =>
       Effect.gen(function* () {
@@ -143,10 +146,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
         if (options?.command === "status") {
           // Status asks the server for reachability only for a managed link.
           yield* fs.makeDirectory(`${baseDir}/userdata/secrets`, { recursive: true });
-          yield* fs.writeFileString(
-            `${baseDir}/userdata/secrets/${CLOUD_CLI_DESIRED_LINK_SECRET}.bin`,
-            options.linkMode ?? "managed",
-          );
+          yield* options.linkedByApp
+            ? fs.writeFileString(
+                `${baseDir}/userdata/secrets/${CLOUD_LINKED_USER_ID}.bin`,
+                "user_app_linked",
+              )
+            : fs.writeFileString(
+                `${baseDir}/userdata/secrets/${CLOUD_CLI_DESIRED_LINK_SECRET}.bin`,
+                options.linkMode ?? "managed",
+              );
         }
 
         yield* Command.runWith(makeCli({ cloudEnabled: true }), { version: "0.0.0" })([
@@ -216,6 +224,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
         const { requests } = yield* runConnect(process.pid, { command: "status" });
 
         assert.deepEqual(requests, ["POST /api/connect/reachability"]);
+      }),
+    );
+
+    it.effect("status checks reachability for an environment linked from the app", () =>
+      Effect.gen(function* () {
+        const { requests, printed } = yield* runConnect(process.pid, {
+          command: "status",
+          linkedByApp: true,
+        });
+
+        assert.deepEqual(requests, ["POST /api/connect/reachability"]);
+        assert.notInclude(printed, "Exposure: disabled");
+        assert.notInclude(printed, "Next:");
       }),
     );
 
