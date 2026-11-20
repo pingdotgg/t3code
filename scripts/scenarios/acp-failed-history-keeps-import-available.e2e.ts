@@ -23,7 +23,7 @@ for await (const line of createInterface({ input: process.stdin })) {
     reply({ id, result: {
       protocolVersion: 1,
       agentInfo: { name: "history-scenario", version: "1.0.0" },
-      agentCapabilities: { loadSession: true, sessionCapabilities: { list: {} } },
+      agentCapabilities: { loadSession: true, sessionCapabilities: { list: {}, delete: {} } },
       authMethods: [],
     } });
   } else if (method === "session/new") {
@@ -87,6 +87,8 @@ test(
     await screen.getByRole("button", "List sessions", { exact: true }).tap({ timeout: 60_000 });
     await screen.getByText(SESSION_TITLE, { exact: true }).waitFor();
     const importButton = screen.getByRole("button", "Import", { exact: true });
+    const deleteButton = screen.getByRole("button", "Delete", { exact: true });
+    await expect(deleteButton).toBeEnabled();
     await importButton.tap();
     await screen.getByRole("button", "Importing", { exact: true }).waitFor({
       state: "hidden",
@@ -98,5 +100,12 @@ test(
       (await importButton.isVisible()) && (await importButton.isEnabled()),
       "Import can be retried after the history read failed",
     ).toBe(true);
+    await expect(deleteButton).toBeDisabled();
+
+    await importButton.tap();
+    const importedButton = screen.getByRole("button", "Imported", { exact: true });
+    await importedButton.waitFor({ timeout: 60_000 });
+    await expect(importedButton).toBeDisabled();
+    await expect(screen.getByText("ACP session imported", { exact: true })).toBeVisible();
   },
 );
