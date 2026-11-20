@@ -19,6 +19,7 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
+import * as Schema from "effect/Schema";
 import { useLayoutEffect, useRef, useState } from "react";
 import { msg, T, useGT } from "gt-react";
 import { m } from "../../i18n/messages";
@@ -39,6 +40,8 @@ interface AcpSessionProject {
 }
 
 type SessionImportState = Pick<AcpRegistrySession, "importedThreadId" | "nativeHistoryPending">;
+
+const isAcpRegistryOperationError = Schema.is(AcpRegistryOperationError);
 
 function needsImport(session: AcpRegistrySession) {
   return session.importedThreadId === null || session.nativeHistoryPending === true;
@@ -265,7 +268,7 @@ function InstanceSessionManagement(
       return;
     }
     const error = squashAtomCommandFailure(result);
-    if (error instanceof AcpRegistryOperationError && error.pendingHistoryThreadId !== undefined) {
+    if (isAcpRegistryOperationError(error) && error.pendingHistoryThreadId !== undefined) {
       updateImportState({
         importedThreadId: error.pendingHistoryThreadId,
         nativeHistoryPending: true,
