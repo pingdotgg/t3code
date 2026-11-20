@@ -93,6 +93,7 @@ const make = Effect.gen(function* () {
         account: probe.account,
         detail: null,
         scopes: probe.scopes,
+        authentication: credential.authentication ?? "token",
         fields: credential.fields,
       })),
       Effect.catch((error) =>
@@ -102,6 +103,7 @@ const make = Effect.gen(function* () {
           account: null,
           detail: IssueService.trackerDetail(error),
           scopes: [],
+          authentication: credential.authentication ?? "token",
           fields: credential.fields,
         }),
       ),
@@ -144,7 +146,24 @@ const make = Effect.gen(function* () {
   )(function* (input) {
     const api = yield* requireTracker(input.tracker);
     if (input.token === null) return yield* disconnect(api);
-    const wanted = api.standalone.credential.fields ?? [];
+    const authentication = input.authentication ?? "token";
+    const environmentLogin = api.standalone.environmentLogin;
+    // A token goes with token authentication only, so an environment login never stores one.
+    if (
+      authentication === "token"
+        ? input.token === undefined
+        : environmentLogin === undefined || input.token !== undefined
+    ) {
+      return yield* new IssueTrackerConnectionError({
+        tracker: input.tracker,
+        reason: "rejected",
+        detail: `${api.standalone.displayName} cannot sign in that way.`,
+      });
+    }
+    const wanted =
+      authentication === "environment"
+        ? (environmentLogin?.fields ?? [])
+        : (api.standalone.credential.fields ?? []);
     const missing = wanted.find((field) => input.fields?.[field.key] === undefined);
     if (missing !== undefined) {
       return yield* new IssueTrackerConnectionError({
@@ -154,7 +173,8 @@ const make = Effect.gen(function* () {
       });
     }
     const credential: IssueTrackerCredential = {
-      token: input.token,
+      ...(authentication === "environment" ? { authentication } : {}),
+      token: input.token ?? "",
       fields: Object.fromEntries(wanted.map((field) => [field.key, input.fields![field.key]!])),
     };
     const probe = yield* api.probeCredential(credential).pipe(
@@ -177,6 +197,7 @@ const make = Effect.gen(function* () {
       account: probe.account,
       detail: null,
       scopes: probe.scopes,
+      authentication,
       fields: credential.fields,
     };
   });

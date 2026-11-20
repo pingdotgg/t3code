@@ -2,6 +2,7 @@ import { issueTrackerSummary } from "@t3tools/client-runtime/state/issue-tracker
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
+  IssueTrackerAuthentication,
   IssueTrackerConnection,
   IssueTrackerConnectionList,
   ProjectId,
@@ -18,6 +19,7 @@ import { AppText as Text } from "../../../components/ui/AppText";
 import { Button } from "../../../components/ui/Button";
 import { Menu } from "../../../components/ui/Menu";
 import { SecretTextInput } from "../../../components/ui/SecretTextInput";
+import { SegmentedControl } from "../../../components/ui/SegmentedControl";
 import { useProjects } from "../../../state/entities";
 import { issueTrackerEnvironment } from "../../../state/issueTrackers";
 import { useEnvironmentQuery } from "../../../state/query";
@@ -125,7 +127,10 @@ export function IssueTrackerMark(props: { readonly tracker: string }) {
   );
 }
 
-/** The credential field for one tracker, with what replaces, removes or creates it. */
+/**
+ * The credential field for one tracker, or its environment login where it offers one, with what
+ * replaces, removes or creates it.
+ */
 export function IssueTrackerCredentialForm(props: {
   readonly environmentId: EnvironmentId;
   readonly tracker: IssueTrackerConnection;
@@ -134,12 +139,18 @@ export function IssueTrackerCredentialForm(props: {
   const { environmentId, tracker } = props;
   const connect = useAtomCommand(issueTrackerEnvironment.connect, { reportFailure: false });
   const [draft, setDraft] = useState("");
-  const fields = tracker.credential.fields ?? [];
+  const login = tracker.environmentLogin;
+  const [authentication, setAuthentication] = useState<IssueTrackerAuthentication>(
+    tracker.authentication ?? "token",
+  );
+  const environment = authentication === "environment" && login !== undefined;
+  const fields = environment ? login.fields : (tracker.credential.fields ?? []);
   const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>(tracker.fields ?? {});
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const complete = fields.every((field) => drafts[field.key]?.trim());
-  const submit = async (token: string | null) => {
+  /** A null token disconnects; none connects with the environment's login. */
+  const submit = async (token: string | null | undefined) => {
     if (token !== null && !complete) return;
     setBusy(true);
     setFailure(null);
@@ -147,7 +158,7 @@ export function IssueTrackerCredentialForm(props: {
       environmentId,
       input: {
         tracker: tracker.tracker,
-        token,
+        ...(token === undefined ? { authentication: "environment" as const } : { token }),
         ...(token === null || fields.length === 0
           ? {}
           : {
@@ -169,6 +180,22 @@ export function IssueTrackerCredentialForm(props: {
   const locked = props.disabled || busy;
   return (
     <View className="gap-3 p-4">
+      {login ? (
+        <View pointerEvents={locked ? "none" : "auto"}>
+          <SegmentedControl
+            size="compact"
+            options={[
+              { value: "token", label: tracker.credential.label },
+              { value: "environment", label: login.label },
+            ]}
+            selected={authentication}
+            onSelect={(value) => {
+              setAuthentication(value);
+              setFailure(null);
+            }}
+          />
+        </View>
+      ) : null}
       {fields.map((field) => (
         <ConnectionFormField
           key={field.key}
@@ -181,25 +208,29 @@ export function IssueTrackerCredentialForm(props: {
           onChangeText={(value) => setDrafts({ ...drafts, [field.key]: value })}
         />
       ))}
-      <SecretTextInput
-        accessibilityLabel={tracker.credential.label}
-        placeholder={
-          tracker.connected ? "Saved. Enter a new value to replace it" : tracker.credential.label
-        }
-        value={draft}
-        onChangeText={setDraft}
-        onSubmitEditing={(value) => {
-          if (value.trim()) void submit(value.trim());
-        }}
-        editable={!locked}
-      />
+      {environment ? (
+        <Text className="text-xs text-foreground-muted">{login.description}</Text>
+      ) : (
+        <SecretTextInput
+          accessibilityLabel={tracker.credential.label}
+          placeholder={
+            tracker.connected ? "Saved. Enter a new value to replace it" : tracker.credential.label
+          }
+          value={draft}
+          onChangeText={setDraft}
+          onSubmitEditing={(value) => {
+            if (value.trim()) void submit(value.trim());
+          }}
+          editable={!locked}
+        />
+      )}
       {failure ? (
         <Text selectable className="text-xs text-danger-foreground">
           {failure}
         </Text>
       ) : null}
       <View className="flex-row flex-wrap justify-end gap-2">
-        {helpUrl ? (
+        {!environment && helpUrl ? (
           <Button
             label="Create one"
             tone="text"
@@ -217,12 +248,12 @@ export function IssueTrackerCredentialForm(props: {
           />
         ) : null}
         <Button
-          label={tracker.connected ? "Replace" : "Connect"}
+          label={tracker.connected && !environment ? "Replace" : "Connect"}
           tone="primary"
           size="compact"
           loading={busy}
-          disabled={locked || !draft.trim() || !complete}
-          onPress={() => void submit(draft.trim())}
+          disabled={locked || (!environment && !draft.trim()) || !complete}
+          onPress={() => void submit(environment ? undefined : draft.trim())}
         />
       </View>
     </View>

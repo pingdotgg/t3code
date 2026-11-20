@@ -71,7 +71,8 @@ export function issueTrackerSummary(
       .split(" ")
       .map((word) => (word === word.toUpperCase() ? word : word.toLowerCase()))
       .join(" ");
-    return `Not connected. Add your ${credential} to list its issues.`;
+    const login = tracker.environmentLogin ? ` or use ${tracker.environmentLogin.label}` : "";
+    return `Not connected. Add your ${credential}${login} to list its issues.`;
   }
   if (tracker.account === null) return tracker.detail ?? "The saved credential was rejected.";
   const linked = Object.values(bindings).filter(

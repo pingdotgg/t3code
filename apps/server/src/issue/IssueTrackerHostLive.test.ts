@@ -14,6 +14,15 @@ describe("issue tracker credential storage", () => {
     expect(decodeIssueTrackerCredential(bytes("lin_api_123"))).toEqual(credential);
   });
 
+  it("keeps an environment login, which has no key, as one even without fields", () => {
+    for (const fields of [{}, { site: "acme.atlassian.net" }]) {
+      const credential = { authentication: "environment" as const, token: "", fields };
+      expect(decodeIssueTrackerCredential(encodeIssueTrackerCredential(credential))).toEqual(
+        credential,
+      );
+    }
+  });
+
   it("stores a key with its fields and reads both back", () => {
     const credential = {
       token: "tok",
