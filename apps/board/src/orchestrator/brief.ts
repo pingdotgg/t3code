@@ -1,7 +1,6 @@
-import * as Option from "effect/Option";
 import * as Result from "effect/Result";
-import * as Schema from "effect/Schema";
 
+import { mergeForYou, openCards } from "../domain/forYou";
 import { parseTickets, type TicketStage } from "../domain/ticket";
 import template from "./brief.md?raw";
 import { DEFAULT_ROLES, type ResolvedRole } from "./roles";
@@ -60,13 +59,9 @@ export interface OrchestratorStats {
   readonly builderCap: number;
   /** The newest line of `decisions.tsv`: its time and its decision. */
   readonly latestDecision: { readonly time: string; readonly decision: string } | null;
-  /** One line for each store file the orchestrator wrote that could not be read in full. */
+  /** Why `tickets.json` could not be read in full. A bad `foryou.jsonl` line shows in the board's banner. */
   readonly problems: ReadonlyArray<string>;
 }
-
-const ForYouLine = Schema.Struct({ id: Schema.String, status: Schema.String });
-
-const decodeForYouLine = Schema.decodeUnknownOption(Schema.fromJsonString(ForYouLine));
 
 /**
  * What the orchestrator card shows. A building agent is one ticket in `building`, and an item is
@@ -91,13 +86,7 @@ export function orchestratorStats(files: StoreFiles, builderCap: number): Orches
     else for (const ticket of tickets.success) stages[ticket.stage] += 1;
   }
 
-  const latestStatus = new Map<string, string>();
-  (files.forYou ?? "").split("\n").forEach((line, index) => {
-    if (line.trim() === "") return;
-    const item = decodeForYouLine(line);
-    if (Option.isNone(item)) problems.push(`foryou.jsonl line ${index + 1} is not an item`);
-    else latestStatus.set(item.value.id, item.value.status);
-  });
+  const forYou = mergeForYou(files.forYou, []);
 
   const decisionRows = (files.decisions ?? "")
     .split("\n")
@@ -108,7 +97,7 @@ export function orchestratorStats(files: StoreFiles, builderCap: number): Orches
   return {
     stages,
     ticketTotal: Object.values(stages).reduce((sum, count) => sum + count, 0),
-    forYouOpen: [...latestStatus.values()].filter((status) => status === "open").length,
+    forYouOpen: openCards(forYou.cards).length,
     buildersInUse: stages.building,
     builderCap,
     latestDecision: time === undefined || decision === undefined ? null : { time, decision },

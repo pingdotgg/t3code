@@ -51,13 +51,38 @@ Tab separated. The first line is the header `time`, `decision`, `alternatives`, 
 
 ### `foryou.jsonl`
 
-One JSON object per line. Every line has `id`, `kind`, `title`, `body`, `status`, and `createdAt`. `kind` is one of `merge_approval`, `question`, `ticket_draft`, `gate`, `read`, and `resume`. A `question` also has `options`, a list of short answers. `status` is `open`, `held`, or `resolved`. To change an item, append a line with the same `id` and the new `status`. The latest line for an `id` wins. The board counts items whose latest status is `open`.
+One JSON object per line. Every line has `id`, `kind`, `title`, `body`, `status`, and `createdAt`, an ISO time. `kind` is one of:
+
+- `merge_approval`: a ticket is ready to merge. It also has `conditions`, with the six merge-ready conditions below, each `{ "met": true, "evidence": ["<absolute path or link>"], "note": "<one line>" }`. `met` is required. `evidence` and `note` are optional. Name every file that shows a condition holds.
+- `question`: you need an answer. It also has `options`, a list of short answers. The user can press one or type their own.
+- `ticket_draft`: tickets you propose, written out in `body`, for the user to approve before you add them to `tickets.json`.
+- `gate`: a decision that waits on the user, the same one you write to `gates.md`.
+- `read`: something to tell the user that needs no decision. They mark it read.
+- `resume`: work you paused that waits on the user's go.
+
+The six conditions, with these exact keys in `conditions`:
+
+- `ci_green`: CI is green on the head.
+- `reviews_fixed`: independent reviews are in, and the findings they introduced are fixed.
+- `delta_rereviewed`: the fix-round delta was reviewed again.
+- `readmes_pass`: the READMEs the change touched pass their check.
+- `parent_ready`: the parent ticket is merged or ready, and `note` says the merge order.
+- `smoke_named`: the smoke evidence is named.
+
+`status` is `open`, `held`, or `resolved`. To change an item, append a line with the same `id`, the new `status`, and a `resolution` of a few words. That line needs no other field. The latest line for an `id` wins. The board counts items whose latest status is `open`. A line the board cannot read is skipped, and the board names its line number to the user, so keep every line valid JSON with these fields.
 
 ## Reaching the user
 
 You reach the user only through a line in `foryou.jsonl`, or through `request_secret` for a secret such as a token. Anything that needs their decision, approval, answer, or secret goes there. Do not end a turn with a question in the chat. Say in one sentence that you posted an item, and go on with other work.
 
-When the user answers in the panel, treat it as the answer to the item it names, and append the line that resolves it.
+When the user answers an item, the board sends you a message that starts `For you item <id>:` and then the choice: `approve`, `hold`, `resume`, `read`, or `answer: <text>` for a question, where the text is the option they pressed or what they typed. Treat it as the answer to that item. Act on it, then append the line that records it, as the table below says. The board shows the card as sent until it reads your line.
+
+| Message                                          | What you append                                               |
+| ------------------------------------------------ | ------------------------------------------------------------- |
+| `approve`, `resume`, `read`, or `answer: <text>` | `status` `resolved`, and a `resolution` of a few words.       |
+| `hold`                                           | `status` `held`, and a `resolution` saying what you wait for. |
+
+A secret you ask for with `request_secret`, and an agent's request to approve a command, reach the user as cards the board takes from the engine and answers there. You never write a line for them, and the answer never comes to you in a message.
 
 Agents you start must not ask the user either. Tell each one to put a blocker in its final reply, and you decide what to do with it.
 

@@ -1,3 +1,4 @@
+import type { CardView } from "../domain/forYou";
 import { TICKET_STAGES, type Ticket, type TicketStage } from "../domain/ticket";
 import type { BoardModel } from "../state/boardModel";
 import type { FrameOrder } from "../state/boardUi";
@@ -23,6 +24,12 @@ export const FRAME_PAD = 8;
 export const CARD_HEIGHT = 62;
 export const CARD_GAP = 6;
 export const EMPTY_HEIGHT = 30;
+const FOR_YOU_NOTE = 20;
+const MERGE_CARD = 660;
+const QUESTION_CARD = 260;
+const ENGINE_CARD = 240;
+const PLAIN_CARD = 150;
+const RESOLVED_CARD = 34;
 const LEFT = 40;
 /** The orchestrator card's place on the canvas. */
 export const ORCHESTRATOR_BOX: Rect = { x: LEFT, y: LEFT, width: 340, height: 220 };
@@ -79,8 +86,22 @@ export function orderedKeys(keys: ReadonlyArray<string>, saved: ReadonlyArray<st
   return [...kept, ...keys.filter((key) => !placed.has(key))];
 }
 
+/**
+ * The For-you lane's height under its header. Card heights follow their text, so these are
+ * estimates that keep fit-to-content and the lane's rule roughly right.
+ */
+export function forYouHeight(views: ReadonlyArray<CardView>): number {
+  const height = (view: CardView): number => {
+    if (view.state === "resolved") return RESOLVED_CARD;
+    if (view.card.origin === "engine") return ENGINE_CARD;
+    if (view.card.item.kind === "merge_approval") return MERGE_CARD;
+    return view.card.item.kind === "question" ? QUESTION_CARD : PLAIN_CARD;
+  };
+  return views.reduce((sum, view) => sum + height(view) + CARD_GAP, FOR_YOU_NOTE);
+}
+
 /** Stacks each lane's frames in its column, and adds one edge for each `dependsOn` between two tickets. */
-export function layoutBoard(model: BoardModel, order: FrameOrder): Layout {
+export function layoutBoard(model: BoardModel, order: FrameOrder, forYouRows = 0): Layout {
   const lanes: LaneBox[] = [];
   const edges: Edge[] = [];
   const known = new Set(
@@ -117,7 +138,8 @@ export function layoutBoard(model: BoardModel, order: FrameOrder): Layout {
       y += height + FRAME_GAP;
       return box;
     });
-    const bottom = frames.length === 0 ? LANES_TOP + LANE_MIN_HEIGHT : y - FRAME_GAP + LANE_PAD;
+    const empty = id === "for_you" ? LANE_HEAD + forYouRows + LANE_PAD : LANE_MIN_HEIGHT;
+    const bottom = frames.length === 0 ? LANES_TOP + empty : y - FRAME_GAP + LANE_PAD;
     lanes.push({
       id,
       x,

@@ -48,11 +48,13 @@ describe("orchestrator stats", () => {
     { key: "T-4", title: "d", stage: "reviewing" },
     { key: "T-5", title: "e", stage: "merged" },
   ]);
+  const item = (id: string, kind: string, status: string) =>
+    JSON.stringify({ id, kind, title: id, body: "", status, createdAt: "2026-11-20T10:00:00Z" });
   const forYou = [
-    '{"id":"a","kind":"question","status":"open"}',
-    '{"id":"b","kind":"gate","status":"open"}',
-    '{"id":"a","kind":"question","status":"resolved"}',
-    '{"id":"c","kind":"read","status":"held"}',
+    item("a", "question", "open"),
+    item("b", "gate", "open"),
+    '{"id":"a","status":"resolved"}',
+    item("c", "read", "held"),
   ].join("\n");
   const decisions =
     "time\tdecision\talternatives\treason\tevidence\n2026-11-20\tSplit into five tickets\t-\tindependent\ttickets.json\n2026-11-21\tResearch T-1 first\t-\tunknown area\t-\n";
@@ -94,19 +96,16 @@ describe("orchestrator stats", () => {
     ).toBeNull();
   });
 
-  it("Given a bad stage and a bad line, when the stats are counted, then both are reported and the good lines count", () => {
+  it("Given a bad stage and a bad for-you line, when the stats are counted, then the stage is reported and the good lines count", () => {
     const stats = orchestratorStats(
       {
         tickets: '[{"key":"T-1","title":"a","stage":"done"}]',
-        forYou: '{"id":"a","status":"open"}\n\nnot json\n',
+        forYou: `${item("a", "question", "open")}\n\nnot json\n`,
         decisions: null,
       },
       2,
     );
-    expect(stats.problems).toEqual([
-      expect.stringContaining("tickets.json is invalid: "),
-      "foryou.jsonl line 3 is not an item",
-    ]);
+    expect(stats.problems).toEqual([expect.stringContaining("tickets.json is invalid: ")]);
     expect(stats.forYouOpen).toBe(1);
     expect(stats.ticketTotal).toBe(0);
   });

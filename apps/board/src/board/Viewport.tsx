@@ -9,24 +9,51 @@ import {
   type ReactNode,
 } from "react";
 
-import { INITIAL_VIEW, fitToContent, panBy, zoomAt, type Rect, type View } from "./viewport";
+import {
+  INITIAL_VIEW,
+  fitToContent,
+  panBy,
+  revealDelta,
+  zoomAt,
+  type Rect,
+  type View,
+} from "./viewport";
 
 const GRID_SPACING = 22;
 const BUTTON_ZOOM_STEP = 1.2;
 const WHEEL_ZOOM_RATE = 0.01;
+const REVEAL_MARGIN = 24;
 
 const ViewScaleContext = createContext(1);
+const RevealContext = createContext<(card: HTMLElement | null) => void>(() => undefined);
 
 /** The canvas zoom, so a child that drags converts screen pixels to canvas pixels. */
 export const useViewScale = () => useContext(ViewScaleContext);
 
 const zoomButton = "grid h-[30px] w-8 place-items-center text-muted hover:bg-hover hover:text-fg";
 
+/**
+ * A ref callback that pans the card it is given into view. A card passes it as its ref while it
+ * is the one to show, so it runs once when the card takes the mark and again if the card remounts.
+ */
+export const useRevealRef = () => useContext(RevealContext);
+
 export function Viewport({ content, children }: { content?: Rect; children?: ReactNode }) {
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const drag = useRef<{ startX: number; startY: number; origin: View } | null>(null);
   const [view, setView] = useState<View>(INITIAL_VIEW);
   const [panning, setPanning] = useState(false);
+
+  const reveal = useCallback((card: HTMLElement | null) => {
+    const surface = surfaceRef.current;
+    if (card === null || surface === null) return;
+    const { dx, dy } = revealDelta(
+      card.getBoundingClientRect(),
+      surface.getBoundingClientRect(),
+      REVEAL_MARGIN,
+    );
+    setView((current) => panBy(current, dx, dy));
+  }, []);
 
   // React registers wheel listeners as passive, which forbids preventDefault.
   const attachSurface = useCallback((surface: HTMLDivElement) => {
@@ -102,7 +129,9 @@ export function Viewport({ content, children }: { content?: Rect; children?: Rea
           className="absolute top-0 left-0 origin-top-left"
           style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})` }}
         >
-          <ViewScaleContext.Provider value={view.k}>{children}</ViewScaleContext.Provider>
+          <ViewScaleContext.Provider value={view.k}>
+            <RevealContext.Provider value={reveal}>{children}</RevealContext.Provider>
+          </ViewScaleContext.Provider>
         </div>
       </div>
       <div className="absolute top-3.5 right-3.5 flex flex-col overflow-hidden rounded-lg border border-line bg-panel shadow-panel">

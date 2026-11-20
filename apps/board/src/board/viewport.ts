@@ -51,3 +51,25 @@ export function fitToContent(content: Rect | null, size: Size): View {
     y: (fitsH ? (size.height - content.height * k) / 2 : FIT_PADDING) - content.y * k,
   };
 }
+
+const revealAxis = (
+  start: number,
+  size: number,
+  frameStart: number,
+  frameSize: number,
+  margin: number,
+) => {
+  if (start < frameStart + margin || size > frameSize - margin * 2)
+    return frameStart + margin - start;
+  const overflow = start + size - (frameStart + frameSize - margin);
+  return overflow > 0 ? -overflow : 0;
+};
+
+/**
+ * How far to pan so `target` sits inside `frame` with `margin` to spare, both in screen px. A
+ * target too big for the frame lines up with its top left corner instead.
+ */
+export const revealDelta = (target: Rect, frame: Rect, margin: number) => ({
+  dx: revealAxis(target.x, target.width, frame.x, frame.width, margin),
+  dy: revealAxis(target.y, target.height, frame.y, frame.height, margin),
+});
