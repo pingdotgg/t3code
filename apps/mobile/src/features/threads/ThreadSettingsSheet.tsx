@@ -119,6 +119,7 @@ import {
 import {
   canCommitPendingModel,
   favoritesFirst,
+  mergePendingOptionSelections,
   modelFavoriteKey,
   modelMatchesCatalogQuery,
   overlayPendingOptionDescriptors,
@@ -127,7 +128,10 @@ import {
   providerSectionIsCollapsed,
   resolveDefaultProviderFilter,
   resolveEffectiveProviderFilter,
+  resolvePendingPrompt,
   resolvePendingRuntimeMode,
+  selectedProviderRuntimeModes,
+  type PendingPromptEdit,
 } from "./thread-settings-sheet-state";
 import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
 import type { MessageResolver } from "../../i18n/messages";
@@ -303,6 +307,7 @@ type ThreadSettingsSessionProps = {
   readonly lockedProviderInstanceId?: ProviderInstanceId;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly selectedModel: ModelSelection | null;
+  readonly promptDraftKey?: string;
   readonly prompt: string;
   readonly onPromptChange: (prompt: string) => void;
   readonly reportedModelSelection?: ModelSelection | null;
@@ -531,10 +536,8 @@ function ThreadSettingsSessionProvider(
     readonly options: ReadonlyArray<ProviderOptionSelection>;
   } | null>(null);
   const [pendingRuntimeMode, setPendingRuntimeMode] = useState<RuntimeMode | null>(null);
-  const [pendingPrompt, setPendingPrompt] = useState<{
-    readonly basePrompt: string;
-    readonly value: string;
-  } | null>(null);
+  const [pendingPrompt, setPendingPrompt] = useState<PendingPromptEdit | null>(null);
+  const promptDraftKey = props.promptDraftKey ?? null;
   const selectedModelKey = props.selectedModel
     ? modelFavoriteKey(props.selectedModel.instanceId, props.selectedModel.model)
     : null;
@@ -542,10 +545,15 @@ function ThreadSettingsSessionProvider(
     pendingOptions !== null && pendingOptions.modelKey === selectedModelKey
       ? pendingOptions.options
       : null;
-  const activePendingPrompt =
-    pendingPrompt !== null && pendingPrompt.basePrompt === props.prompt
-      ? pendingPrompt.value
-      : null;
+  const activePendingPrompt = resolvePendingPrompt(pendingPrompt, promptDraftKey, props.prompt);
+  const mergedOptions =
+    activePendingOptions === null
+      ? null
+      : mergePendingOptionSelections(
+          props.selectedModel?.options,
+          activePendingOptions,
+          props.optionDescriptors,
+        );
   const displayedPrompt = activePendingPrompt ?? props.prompt;
   const defaultProviderFilter = resolveDefaultProviderFilter({
     providerGroups,
@@ -576,9 +584,14 @@ function ThreadSettingsSessionProvider(
       })
     : overlayPendingOptionDescriptors(props.optionDescriptors, activePendingOptions);
   const promptTraits = getPromptControlledTraits(displayedDescriptors, displayedPrompt);
-  const displayedModel = props.providerGroups.flatMap((group) => group.models).find(isDisplayed);
+  const displayedInstanceId = pendingModel?.selection.instanceId ?? props.selectedModel?.instanceId;
   const runtimeModeChoices = withManagedRuntimeModeLimits(
-    runtimeModeChoicesForSupportedModes(displayedModel?.supportedRuntimeModes),
+    runtimeModeChoicesForSupportedModes(
+      selectedProviderRuntimeModes(
+        displayedInstanceId,
+        serverConfigForCwd(config, props.cwd)?.providers ?? [],
+      ) ?? pendingModel?.supportedRuntimeModes,
+    ),
     [config?.managedPolicy],
     messages,
   );
@@ -614,8 +627,8 @@ function ThreadSettingsSessionProvider(
         );
       }
       props.onSelectModel(pendingModel);
-    } else if (activePendingOptions !== null) {
-      props.onUpdateOptionSelections(activePendingOptions);
+    } else if (mergedOptions !== null) {
+      props.onUpdateOptionSelections(mergedOptions);
     }
     if (activePendingPrompt !== null && activePendingPrompt !== props.prompt)
       props.onPromptChange(activePendingPrompt);
@@ -638,7 +651,11 @@ function ThreadSettingsSessionProvider(
     if (descriptor?.type === "select") {
       if (!change) return;
       if (change.prompt !== displayedPrompt) {
-        setPendingPrompt({ basePrompt: props.prompt, value: change.prompt });
+        setPendingPrompt({
+          draftKey: promptDraftKey,
+          basePrompt: props.prompt,
+          value: change.prompt,
+        });
       }
     }
     const next = change
@@ -653,7 +670,15 @@ function ThreadSettingsSessionProvider(
         selection: { ...pendingModel.selection, options: next },
       });
     } else if (selectedModelKey !== null) {
-      setPendingOptions({ modelKey: selectedModelKey, options: next });
+      const edit = next.find((option) => option.id === id);
+      if (!edit) return;
+      setPendingOptions((current) => ({
+        modelKey: selectedModelKey,
+        options: mergePendingOptionSelections(
+          current?.modelKey === selectedModelKey ? current.options : undefined,
+          [edit],
+        ),
+      }));
     }
   };
 
@@ -708,11 +733,10 @@ function ThreadSettingsSessionProvider(
     promptTraits,
     displayedModelSelection:
       pendingModel?.selection ??
-      (activePendingOptions !== null && props.selectedModel
-        ? { ...props.selectedModel, options: activePendingOptions }
+      (mergedOptions !== null && props.selectedModel
+        ? { ...props.selectedModel, options: mergedOptions }
         : props.selectedModel),
-    reportedModelSelection:
-      pendingModel || activePendingOptions !== null ? null : (props.reportedModelSelection ?? null),
+    reportedModelSelection: pendingModel ? null : (props.reportedModelSelection ?? null),
     favoriteKeys,
     favoritesLoaded,
     providerExpansionOverrides,
@@ -1428,13 +1452,13 @@ function ThreadSettingsMainContent(props: {
       {!searching ? (
         <ScrollView
           bounces={false}
-          className="max-h-[45%] grow-0"
+          className="max-h-[45%] shrink"
           showsVerticalScrollIndicator={false}
         >
           <ThreadSettingsOptionsItem onOpenSubmenu={props.onOpenSubmenu} />
         </ScrollView>
       ) : null}
-      <View className="min-h-0 flex-1 flex-row">
+      <View className={cn("min-h-0 flex-1 flex-row", !searching && "min-h-24")}>
         <ScrollView
           className="w-14 grow-0 border-r border-border-subtle"
           contentContainerClassName="items-center gap-1 p-1"
@@ -1952,6 +1976,7 @@ export function ExistingThreadSettingsRouteScreen({
       {...(lockedProviderInstanceId ? { lockedProviderInstanceId } : {})}
       providerGroups={groupByProvider(modelOptions)}
       selectedModel={modelSelection}
+      promptDraftKey={draftKey}
       prompt={prompt}
       onPromptChange={(text) => setComposerDraftText(draftKey, text)}
       reportedModelSelection={reportedModelSelection}

@@ -13,12 +13,15 @@ import {
 } from "../../state/use-model-option-memory";
 import {
   canCommitPendingModel,
+  mergePendingOptionSelections,
   overlayPendingOptionDescriptors,
   partitionThreadSettingsDescriptors,
   pendingModelAfterPress,
   resolveDefaultProviderFilter,
   resolveEffectiveProviderFilter,
+  resolvePendingPrompt,
   resolvePendingRuntimeMode,
+  selectedProviderRuntimeModes,
 } from "./thread-settings-sheet-state";
 
 function modelOption(
@@ -77,6 +80,67 @@ afterEach(() => {
 });
 
 describe("thread settings sheet state", () => {
+  it("applies only staged option edits to the latest model settings", () => {
+    const previousEdits = [{ id: "serviceTier", value: "priority" }];
+    const latest = [
+      { id: "serviceTier", value: "default" },
+      { id: "effort", value: "high" },
+    ];
+    expect(mergePendingOptionSelections(latest, previousEdits)).toEqual([
+      { id: "effort", value: "high" },
+      { id: "serviceTier", value: "priority" },
+    ]);
+    expect(
+      mergePendingOptionSelections(previousEdits, [{ id: "serviceTier", value: "default" }]),
+    ).toEqual([{ id: "serviceTier", value: "default" }]);
+  });
+
+  it("does not apply a staged prompt edit to a replacement draft with identical text", () => {
+    const pending = { draftKey: "queue", basePrompt: "Ultrathink: hello", value: "hello" };
+    expect(resolvePendingPrompt(pending, "queue", "Ultrathink: hello")).toBe("hello");
+    expect(resolvePendingPrompt(pending, "thread", "Ultrathink: hello")).toBeNull();
+    expect(resolvePendingPrompt(pending, "queue", "Ultrathink: new text")).toBeNull();
+  });
+
+  it("preserves the legacy Ultracode toggle when staging a reasoning edit", () => {
+    expect(
+      mergePendingOptionSelections(
+        [{ id: "effort", value: "ultracode" }],
+        [{ id: "effort", value: "high" }],
+        [{ id: "ultracode", label: "Ultracode", type: "boolean" }],
+      ),
+    ).toEqual([
+      { id: "ultracode", value: true },
+      { id: "effort", value: "high" },
+    ]);
+  });
+
+  it("reads permissions from the selected provider without needing a visible model row", () => {
+    const instanceId = ProviderInstanceId.make("restricted");
+    const modes = selectedProviderRuntimeModes(instanceId, [
+      { instanceId: ProviderInstanceId.make("other") },
+      { instanceId, supportedRuntimeModes: ["approval-required"] },
+    ]);
+    expect(modes).toEqual(["approval-required"]);
+  });
+
+  it.each([
+    ["haiku", false],
+    ["", true],
+  ] as const)(
+    "keeps explicit Favorites selected with query %j and manage hidden %j",
+    (searchQuery, manageHidden) => {
+      expect(
+        resolveEffectiveProviderFilter({
+          userFilter: "@favorites",
+          defaultFilter: null,
+          searchQuery,
+          manageHidden,
+          favoritesFilter: "@favorites",
+        }),
+      ).toBe("@favorites");
+    },
+  );
   it("revalidates a staged permission against the current model and workspace policy", () => {
     expect(resolvePendingRuntimeMode(null, [])).toBeNull();
     expect(resolvePendingRuntimeMode("full-access", [{ mode: "full-access" }])).toBe("full-access");

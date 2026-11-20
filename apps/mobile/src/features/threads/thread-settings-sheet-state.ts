@@ -1,4 +1,5 @@
 import { isReasoningSelect } from "@t3tools/client-runtime/model-traits";
+import { withLegacyUltracodeEffort } from "@t3tools/shared/model";
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 import type {
   ModelSelection,
@@ -8,6 +9,41 @@ import type {
   RuntimeMode,
 } from "@t3tools/contracts";
 
+export function mergePendingOptionSelections(
+  latest: ReadonlyArray<ProviderOptionSelection> | undefined,
+  pending: ReadonlyArray<ProviderOptionSelection>,
+  descriptors?: ReadonlyArray<ProviderOptionDescriptor>,
+): ReadonlyArray<ProviderOptionSelection> {
+  const normalized = withLegacyUltracodeEffort(descriptors, latest);
+  return [
+    ...(normalized ?? []).filter((option) => !pending.some((edit) => edit.id === option.id)),
+    ...pending,
+  ];
+}
+
+export function selectedProviderRuntimeModes(
+  instanceId: ProviderInstanceId | undefined,
+  providers: ReadonlyArray<{
+    readonly instanceId: ProviderInstanceId;
+    readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode>;
+  }>,
+): ReadonlyArray<RuntimeMode> | undefined {
+  return providers.find((provider) => provider.instanceId === instanceId)?.supportedRuntimeModes;
+}
+
+export type PendingPromptEdit = {
+  readonly draftKey: string | null;
+  readonly basePrompt: string;
+  readonly value: string;
+};
+
+export function resolvePendingPrompt(
+  pending: PendingPromptEdit | null,
+  draftKey: string | null,
+  prompt: string,
+): string | null {
+  return pending?.draftKey === draftKey && pending.basePrompt === prompt ? pending.value : null;
+}
 export function resolvePendingRuntimeMode(
   pendingMode: RuntimeMode | null,
   choices: ReadonlyArray<{ readonly mode: RuntimeMode; readonly disabledReason?: string }>,
@@ -77,14 +113,14 @@ export function resolveEffectiveProviderFilter(input: {
   readonly manageHidden: boolean;
   readonly favoritesFilter: string;
 }): string | null {
-  const activeFilter = input.userFilter === undefined ? input.defaultFilter : input.userFilter;
+  if (input.userFilter !== undefined) return input.userFilter;
   if (
-    activeFilter === input.favoritesFilter &&
+    input.defaultFilter === input.favoritesFilter &&
     (input.searchQuery.trim().length > 0 || input.manageHidden)
   ) {
     return null;
   }
-  return activeFilter;
+  return input.defaultFilter;
 }
 
 export function modelFavoriteKey(provider: ProviderInstanceId, model: string): string {
