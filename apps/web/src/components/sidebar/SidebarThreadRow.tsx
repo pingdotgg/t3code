@@ -1490,7 +1490,6 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
               />
             }
           >
-            {accessibleTitle}
             <div className="relative flex h-4 min-w-0 items-center gap-1.5">
               {props.project ? (
                 <ProjectFavicon project={props.project} className="size-4 shrink-0" />
@@ -1549,7 +1548,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
             </div>
             {isRegeneratingTitle ? (
               <span role="status" className="sr-only">
-                Regenerating title
+                <T>Regenerating title</T>
               </span>
             ) : null}
           </TooltipTrigger>
@@ -1571,7 +1570,10 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
           sortable?.isDragging && "relative z-20",
         )}
       >
-        <Tooltip disabled={isRenaming || sortable?.isDragging} onOpenChange={holdDetailsWhileSorting}>
+        <Tooltip
+          disabled={isRenaming || sortable?.isDragging}
+          onOpenChange={holdDetailsWhileSorting}
+        >
           <TooltipTrigger
             render={
               <div
