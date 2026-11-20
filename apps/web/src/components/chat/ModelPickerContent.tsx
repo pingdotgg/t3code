@@ -952,6 +952,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const modelListExtraData = {
     badgedInstanceIds,
     favoritesSet,
+    legacySection,
+    subProviderSectionByKey,
     modelJumpLabelByKey,
     activeModelKey,
     selectedModelKeySet,

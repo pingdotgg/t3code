@@ -251,6 +251,9 @@ it("folds OpenCode vendors into sections that open on click and stay searchable"
   await expect.element(oldModel).not.toBeInTheDocument();
   await page.getByRole("option", { name: "Show more" }).click();
   await expect.element(oldModel).toBeVisible();
+  await expect
+    .element(page.getByRole("option", { name: "Show less" }))
+    .toHaveAttribute("aria-expanded", "true");
 });
 
 it("lists a model reported twice by one provider once, with contiguous jump shortcuts", async () => {
