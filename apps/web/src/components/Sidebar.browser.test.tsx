@@ -18,11 +18,13 @@ import { userEvent } from "vite-plus/test/browser";
 import { act, fakeTimers, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
 import { makeThreadFixture } from "../test-fixtures";
+import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { useProjects, useServerConfigs, useQuietThreadShells } from "../state/entities";
+import { useConnectedEnvironmentIds } from "../state/environments";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -38,7 +40,12 @@ vi.mock(import("../state/olderSettledShelf"), async (original) => {
   return { ...actual, useOlderSettledShelf: vi.fn(actual.useOlderSettledShelf) };
 });
 vi.mock("../state/entities", { spy: true });
+vi.mock("../state/environments", { spy: true });
 vi.mock("../hooks/useHandleNewThread", { spy: true });
+vi.mock(import("../hooks/useThreadActions"), async (original) => {
+  const actual = await original();
+  return { ...actual, useThreadActions: vi.fn(actual.useThreadActions) };
+});
 vi.mock("../hooks/useNowMinute", { spy: true });
 vi.mock("../hooks/useThreadRouteTarget", { spy: true });
 vi.mock("./sidebar/SidebarThreadRow", { spy: true });
@@ -64,10 +71,12 @@ vi.mock("./sidebar/SidebarChrome", () => ({
   SidebarChromeFooter: () => null,
 }));
 
+const environmentId = EnvironmentId.make("local");
+
 function project(id: string): Project {
   return {
     id: ProjectId.make(id),
-    environmentId: EnvironmentId.make("local"),
+    environmentId,
     title: id,
     workspaceRoot: `/projects/${id}`,
     repositoryIdentity: null,
@@ -78,6 +87,42 @@ function project(id: string): Project {
   };
 }
 
+function clientSettings(mode: "normal" | "boring"): Disposable {
+  const previous = getClientSettings();
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    boringSidebarEnabled: mode === "boring",
+  });
+  return { [Symbol.dispose]: () => __setClientSettingsForTests(previous) };
+}
+
+function mockNewThread(projects: readonly Project[]) {
+  const defaultProjectRef = {
+    environmentId: projects[0]!.environmentId,
+    projectId: projects[0]!.id,
+  };
+  const startThread = vi.fn().mockResolvedValue(null);
+  vi.mocked(useProjects).mockReturnValue(projects);
+  vi.mocked(useHandleNewThread).mockReturnValue({
+    activeDraftThread: null,
+    activeThread: null,
+    defaultProjectRef,
+    defaultProjectFallbackReady: true,
+    handleNewThread: startThread,
+    routeDraftId: null,
+    routeThreadRef: null,
+  });
+  return { defaultProjectRef, startThread };
+}
+
+function renderSidebar() {
+  return render(
+    <SidebarProvider>
+      <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+    </SidebarProvider>,
+  );
+}
+
 describe("sidebar header new thread", () => {
   it.each([
     { mode: "normal", count: 2, shift: false, picker: true },
@@ -85,35 +130,11 @@ describe("sidebar header new thread", () => {
     { mode: "boring", count: 2, shift: true, picker: false },
     { mode: "boring", count: 1, shift: false, picker: false },
   ] as const)("$mode sidebar, $count projects, shift=$shift: picker=$picker", async (scenario) => {
-    using stack = new DisposableStack();
-    const previousSettings = getClientSettings();
-    stack.defer(() => __setClientSettingsForTests(previousSettings));
-    __setClientSettingsForTests({
-      ...DEFAULT_CLIENT_SETTINGS,
-      boringSidebarEnabled: scenario.mode === "boring",
-    });
+    using _settings = clientSettings(scenario.mode);
     const projects = [project("active"), project("idle")].slice(0, scenario.count);
-    const currentProjectRef = {
-      environmentId: projects[0]!.environmentId,
-      projectId: projects[0]!.id,
-    };
-    const startThread = vi.fn().mockResolvedValue(null);
-    vi.mocked(useProjects).mockReturnValue(projects);
-    vi.mocked(useHandleNewThread).mockReturnValue({
-      activeDraftThread: null,
-      activeThread: null,
-      defaultProjectRef: currentProjectRef,
-      defaultProjectFallbackReady: true,
-      handleNewThread: startThread,
-      routeDraftId: null,
-      routeThreadRef: null,
-    });
+    const { defaultProjectRef, startThread } = mockNewThread(projects);
     vi.mocked(openCommandPalette).mockClear();
-    await using screen = await render(
-      <SidebarProvider>
-        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
-      </SidebarProvider>,
-    );
+    await using screen = await renderSidebar();
 
     await userEvent.click(screen.getByRole("button", { name: "New thread", exact: true }), {
       modifiers: scenario.shift ? ["Shift"] : [],
@@ -124,9 +145,96 @@ describe("sidebar header new thread", () => {
       expect(startThread).not.toHaveBeenCalled();
     } else {
       expect(openCommandPalette).not.toHaveBeenCalled();
-      expect(startThread).toHaveBeenCalledExactlyOnceWith(currentProjectRef);
+      expect(startThread).toHaveBeenCalledExactlyOnceWith(defaultProjectRef);
     }
   });
+});
+
+describe("sidebar drag reorder", () => {
+  // Folders own the active order, so rows reorder unless one renders; then they only drag out.
+  it.each([
+    { mode: "normal", folders: false, reorders: true },
+    { mode: "boring", folders: false, reorders: true },
+    { mode: "boring", folders: true, reorders: false },
+  ] as const)(
+    "$mode sidebar, folders=$folders: pinned rows reorder=$reorders",
+    async (scenario) => {
+      using _settings = clientSettings(scenario.mode);
+      using stack = new DisposableStack();
+      const originalActions = vi.mocked(useThreadActions).getMockImplementation()!;
+      stack.defer(() => vi.mocked(useThreadActions).mockImplementation(originalActions));
+      const reorderPinnedThread = vi.fn().mockResolvedValue({ _tag: "Success" });
+
+      vi.mocked(useThreadActions).mockImplementation(() => ({
+        ...originalActions(),
+        reorderPinnedThread,
+      }));
+      vi.mocked(readEnvironmentScope).mockReturnValue(true);
+      const alpha = project("alpha");
+      const thread = (id: string, pinnedAt: string | null) =>
+        makeThreadFixture({
+          id: ThreadId.make(id),
+          environmentId,
+          projectId: alpha.id,
+          title: id,
+          pinnedAt,
+          pinOrderKey: pinnedAt === null ? null : id === "first" ? "a0" : "a1",
+        });
+      mockNewThread([alpha]);
+      vi.mocked(useQuietThreadShells).mockReturnValue([
+        thread("first", "2026-01-01T00:00:00.000Z"),
+        thread("second", "2026-01-01T00:01:00.000Z"),
+        ...(scenario.folders ? [thread("open", null)] : []),
+      ]);
+      vi.mocked(useServerConfigs).mockReturnValue(new Map([[environmentId, {} as never]]));
+      vi.mocked(useConnectedEnvironmentIds).mockReturnValue([environmentId]);
+      vi.mocked(useEnvironmentScope).mockReturnValue(true);
+      await using screen = await renderSidebar();
+
+      const row = screen.container.querySelector<HTMLElement>(
+        `[data-thread-item="${environmentId}:first"]`,
+      );
+      expect(row).not.toBeNull();
+      const second = screen.container.querySelector<HTMLElement>(
+        `[data-thread-item="${environmentId}:second"]`,
+      )!;
+      const firstRect = row!.getBoundingClientRect();
+      const secondRect = second.getBoundingClientRect();
+      const startY = firstRect.top + firstRect.height / 2;
+      const endY = secondRect.top + secondRect.height / 2;
+      const pointer = (type: string, clientY: number) =>
+        new PointerEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          pointerId: 1,
+          isPrimary: true,
+          button: 0,
+          buttons: 1,
+          clientX: firstRect.left + firstRect.width / 2,
+          clientY,
+        });
+      await act(() => row!.dispatchEvent(pointer("pointerdown", startY)));
+      await act(() => document.dispatchEvent(pointer("pointermove", startY + 10)));
+
+      expect(row!.classList.contains("z-20")).toBe(scenario.reorders);
+      expect(
+        screen.container.querySelector('[data-testid="sidebar-active-placeholder"]') !== null,
+      ).toBe(!scenario.folders);
+      await act(() => document.dispatchEvent(pointer("pointermove", endY)));
+      await act(() => document.dispatchEvent(pointer("pointerup", endY)));
+      if (scenario.reorders) {
+        await vi.waitFor(() =>
+          expect(reorderPinnedThread).toHaveBeenCalledWith(
+            { environmentId, threadId: ThreadId.make("first") },
+            expect.any(String),
+          ),
+        );
+        expect(reorderPinnedThread.mock.calls[0]![1] > "a1").toBe(true);
+      } else {
+        expect(reorderPinnedThread).not.toHaveBeenCalled();
+      }
+    },
+  );
 });
 
 function threadShell(projectId: ProjectId, index: number): EnvironmentThreadShell {
