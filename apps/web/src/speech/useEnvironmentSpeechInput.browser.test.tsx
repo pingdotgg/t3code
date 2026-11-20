@@ -270,6 +270,8 @@ function Probe(props: {
   readonly showWizard?: boolean;
   readonly ownerKey?: string;
   readonly persistent?: boolean;
+  readonly disabled?: boolean;
+  readonly discardsRecording?: boolean;
 }) {
   const value = useEnvironmentSpeechInput({
     environmentId: THREAD_ENV as EnvironmentId,
@@ -277,6 +279,8 @@ function Probe(props: {
     projectName: props.projectName,
     cleanup: props.cleanup,
     ownerKey: props.ownerKey ?? "draft",
+    disabled: props.disabled,
+    discardsRecording: props.discardsRecording,
     persistentDraft: props.persistent
       ? {
           readStoredText: () => mocks.storedDraft,
@@ -420,6 +424,22 @@ it("retains an offline-first destination holder until the same destination recon
   expect(mocks.voice.state.phase).toBe("recording");
   await act(() => mocks.voice.stop());
   expect(mocks.transcribeCalls).toEqual(["env-a"]);
+});
+
+it.each([
+  ["a disconnect keeps it", false, "recording"],
+  ["a displaced composer discards it", true, "idle"],
+] as const)("when the editor is disabled mid-recording, %s", async (_name, discards, phase) => {
+  setup({ destination: "env-a" });
+  await using screen = await render(<Probe />);
+  await act(() => mocks.voice.start());
+  if (!discards) {
+    mocks.connected.delete("env-a");
+    mocks.prepared.delete("env-a");
+  }
+  // The composer's props when its environment drops, or when an approval takes it over.
+  await screen.rerender(<Probe disabled discardsRecording={discards} />);
+  expect(mocks.voice.state.phase).toBe(phase);
 });
 
 it("keeps a stopped recording local while disconnected and retries it on reconnect", async () => {

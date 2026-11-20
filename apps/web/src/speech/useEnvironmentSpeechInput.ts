@@ -88,6 +88,11 @@ type HookInput = {
   readonly ownerKey: string;
   readonly disabled?: boolean | undefined;
   /**
+   * Whether `disabled` also abandons this editor's live recording; defaults to `disabled`. False
+   * keeps it through a temporary block such as a disconnected environment.
+   */
+  readonly discardsRecording?: boolean | undefined;
+  /**
    * Until a destination is chosen, voice input is offered and its first gesture opens Voice
    * settings. False hides it instead, for editors whose draft would not survive the navigation.
    */
@@ -297,6 +302,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   }, [prepared, setup.downloading, setup.open, setupModelId]);
 
   const previousOwnerRef = useRef(input.ownerKey);
+  const discardsRecording = input.discardsRecording ?? input.disabled;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- abandons any queued submission, and a recording that cannot outlive its editor, when the draft's owner changes
   useEffect(() => {
     const previous = previousOwnerRef.current;
@@ -305,8 +311,8 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     pendingSubmissionRef.current = null;
     startRequestRef.current += 1;
     if (previous !== input.ownerKey) session?.ownerChanged(previous);
-    else if (session?.ownerKey === input.ownerKey) session.cancel();
-  }, [input.ownerKey, input.disabled, session]);
+    else if (discardsRecording && session?.ownerKey === input.ownerKey) session.cancel();
+  }, [input.ownerKey, input.disabled, discardsRecording, session]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- delivers a queued submission only after the transcript has committed to the draft
   useEffect(() => {
