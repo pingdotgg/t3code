@@ -31,11 +31,26 @@ const hasBinaryPath = Schema.is(Schema.Struct({ binaryPath: Schema.String }));
 const decodeCodexSettings = Schema.decodeUnknownEffect(CodexSettings);
 const decodeAntigravitySettings = Schema.decodeUnknownEffect(AntigravitySettings);
 
+/** True once the operation ended or another state replaced it. */
+const hasSettled = (operationId: string | null) => (state: ProviderInstallState) =>
+  state.operationId !== operationId ||
+  state.phase === "succeeded" ||
+  state.phase === "failed" ||
+  state.phase === "cancelled";
+
 export class ProviderInstallation extends Context.Service<
   ProviderInstallation,
   {
     readonly start: (
       input: ProviderSetupInput,
+    ) => Effect.Effect<ProviderInstallState, ProviderSetupError>;
+    /**
+     * Starts an install, or joins the one running, and waits for it. Fails with the install's
+     * own message unless it succeeds, and cancels an install it started when interrupted.
+     */
+    readonly run: (
+      input: ProviderSetupInput,
+      onProgress: (message: string) => Effect.Effect<void>,
     ) => Effect.Effect<ProviderInstallState, ProviderSetupError>;
     readonly cancel: (
       input: ProviderInstallCancelInput,
@@ -164,13 +179,7 @@ const make = Effect.fn("makeProviderInstallation")(function* () {
       accountCheckOperation = started.operationId;
       // Installation outlives the request and may finish while every client is disconnected.
       yield* installation.changes.pipe(
-        Stream.filter(
-          (state) =>
-            state.operationId !== started.operationId ||
-            state.phase === "succeeded" ||
-            state.phase === "failed" ||
-            state.phase === "cancelled",
-        ),
+        Stream.filter(hasSettled(started.operationId)),
         Stream.runHead,
         Effect.flatMap((result) =>
           Option.isSome(result) &&
@@ -184,6 +193,45 @@ const make = Effect.fn("makeProviderInstallation")(function* () {
       );
     }
     return started;
+  });
+
+  const run = Effect.fn("ProviderInstallation.run")(function* (
+    input: ProviderSetupInput,
+    onProgress: (message: string) => Effect.Effect<void>,
+  ) {
+    const { installation } = yield* requireInstance(input.instanceId, "install", true);
+    const before = yield* installation.state;
+    const started = yield* start(input);
+    const { operationId } = started;
+    const settled = yield* installation.changes.pipe(
+      // Download progress changes the state several times a second; report each message once.
+      Stream.changesWith(
+        (a, b) => a.operationId === b.operationId && a.phase === b.phase && a.message === b.message,
+      ),
+      Stream.tap((state) =>
+        state.message !== null && !hasSettled(operationId)(state)
+          ? onProgress(state.message)
+          : Effect.void,
+      ),
+      Stream.filter(hasSettled(operationId)),
+      Stream.runHead,
+      Effect.onInterrupt(() =>
+        operationId !== null && operationId !== before.operationId
+          ? installation.cancel(operationId).pipe(Effect.ignore)
+          : Effect.void,
+      ),
+    );
+    const final = Option.getOrElse(settled, () => started);
+    if (final.operationId !== operationId || final.phase !== "succeeded") {
+      return yield* new ProviderSetupError({
+        instanceId: input.instanceId,
+        operation: "install",
+        detail:
+          (final.operationId === operationId ? final.message : null) ??
+          "The installation did not finish.",
+      });
+    }
+    return final;
   });
 
   const cancel = Effect.fn("ProviderInstallation.cancel")(function* (
@@ -249,7 +297,7 @@ const make = Effect.fn("makeProviderInstallation")(function* () {
     return yield* installation.state;
   });
 
-  return { start, cancel, subscribe, remove };
+  return { start, run, cancel, subscribe, remove };
 });
 
 export const layer = Layer.effect(ProviderInstallation, make());

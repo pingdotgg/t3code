@@ -5,6 +5,11 @@ export interface ProviderMaintenanceCapabilities {
   readonly provider: ProviderDriverKind;
   readonly packageName: string | null;
   readonly update: ProviderMaintenanceCommandAction | null;
+  /**
+   * Set, with `update` null, when T3 Code installs the provider's runtime itself: updating is a
+   * reinstall by the server, with no command to run or show.
+   */
+  readonly managedInstall?: { readonly lockKey: string };
   /** undefined defers to npm; null means the installer could not determine the latest version. */
   readonly latestVersion?: string | null;
   /**

@@ -19,6 +19,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -55,6 +56,11 @@ import {
 } from "../acp/AntigravityAcpSupport.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
+import {
+  createProviderVersionAdvisory,
+  makeManualOnlyProviderMaintenanceCapabilities,
+  type ProviderMaintenanceCapabilities,
+} from "@t3tools/provider-core/server/maintenanceResolver";
 import {
   removeAntigravitySessionFiles,
   retireAntigravityRuntimeTempDirs,
@@ -199,9 +205,51 @@ export const AntigravityDriver: ProviderDriver<
       accentColor,
       continuationGroupKey: continuationIdentity.continuationKey,
     });
+    const manualMaintenance = makeManualOnlyProviderMaintenanceCapabilities({
+      provider: DRIVER,
+      packageName: null,
+    });
+    // Set by the health check, which resolves the executable. Only the runtime T3 Code
+    // installed updates from here; a custom or PATH executable stays as its owner left it.
+    const usesManagedRuntime = yield* Ref.make(false);
+    const resolveMaintenance = () =>
+      Effect.zipWith(
+        Ref.get(usesManagedRuntime),
+        installation.state,
+        (managed, install): ProviderMaintenanceCapabilities =>
+          managed
+            ? {
+                provider: DRIVER,
+                packageName: null,
+                update: null,
+                managedInstall: { lockKey: "antigravity-managed" },
+                latestVersion: install.version,
+                // The installation has picked the release to run, so any other one is behind it.
+                compareVersions: (current, latest) => (current === latest ? 0 : -1),
+              }
+            : manualMaintenance,
+      );
+    const updateChecksEnabled = host.settings.get.pipe(
+      Effect.map((current) => current.enableProviderUpdateChecks),
+      Effect.orElseSucceed(() => false),
+    );
     const classifyModels = (draft: ServerProviderDraft) =>
-      currentCatalog.pipe(
-        Effect.map((catalog) => stampIdentity(ModelCatalog.applyModelCatalog(draft, catalog))),
+      Effect.all([currentCatalog, resolveMaintenance(), updateChecksEnabled]).pipe(
+        Effect.map(([catalog, maintenance, checksEnabled]) =>
+          stampIdentity({
+            ...ModelCatalog.applyModelCatalog(draft, catalog),
+            versionAdvisory: createProviderVersionAdvisory({
+              driver: DRIVER,
+              currentVersion: draft.version,
+              latestVersion:
+                checksEnabled && draft.enabled && draft.installed
+                  ? (maintenance.latestVersion ?? null)
+                  : null,
+              checkedAt: draft.checkedAt,
+              maintenanceCapabilities: maintenance,
+            }),
+          }),
+        ),
       );
 
     const prepareSpawn = Effect.fn("AntigravityDriver.prepareSpawn")(function* (
@@ -530,6 +578,7 @@ export const AntigravityDriver: ProviderDriver<
         });
       }
       const executable = yield* installation.resolve(settings.binaryPath, processEnvironment).pipe(
+        Effect.tapError(() => Ref.set(usesManagedRuntime, false)),
         Effect.mapError(
           (cause) =>
             new ProviderSetupError({
@@ -540,6 +589,9 @@ export const AntigravityDriver: ProviderDriver<
             }),
         ),
       );
+      yield* Ref.set(usesManagedRuntime, executable.source === "managed");
+      // Throttled by the installation; the release it finds is republished below.
+      if (executable.source === "managed") yield* Effect.forkDetach(installation.checkForUpdate);
       return {
         protocolVersion: 1,
         agentCapabilities: {
@@ -568,6 +620,7 @@ export const AntigravityDriver: ProviderDriver<
     const provider = yield* makeAntigravityProvider(settings, {
       environment: processEnvironment,
       stampIdentity: classifyModels,
+      resolveMaintenance,
       probe,
       probeUsage: usage.probe,
       clearUsage: usage.clear,
@@ -587,6 +640,14 @@ export const AntigravityDriver: ProviderDriver<
             cause,
           }),
       ),
+    );
+    // The registry keeps the last published snapshot, so a newly found release needs a new one.
+    yield* installation.changes.pipe(
+      Stream.map((state) => state.version),
+      Stream.changes,
+      Stream.drop(1),
+      Stream.runForEach(() => provider.snapshot.refresh.pipe(Effect.ignoreCause({ log: true }))),
+      Effect.forkScoped,
     );
     const defaultModel = currentCatalog.pipe(Effect.map((catalog) => catalog?.defaultChatModel));
     const orchestrationAdapter = yield* makeAntigravityAdapterV2({
