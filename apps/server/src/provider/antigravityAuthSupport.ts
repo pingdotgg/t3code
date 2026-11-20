@@ -243,23 +243,31 @@ class AntigravitySkillLinkError extends Schema.TaggedError<AntigravitySkillLinkE
   { link: Schema.String, cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return `Could not link Antigravity user skills at ${this.link}.`;
+    return `Could not link Antigravity user configuration at ${this.link}.`;
   }
 }
 
-/** Private GEMINI_HOME isolates credentials/hooks/MCP; link global skills from the real ~/.gemini. */
-const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(function* (input: {
+const antigravityUserRuleFiles = ["AGENTS.md", "GEMINI.md"] as const;
+
+/** Private GEMINI_HOME isolates credentials/hooks/MCP; link global skills and rules from the real ~/.gemini. */
+const linkAntigravityUserConfig = Effect.fn("linkAntigravityUserConfig")(function* (input: {
   readonly profileDirectory: string;
   readonly userHome: string;
   readonly platform: NodeJS.Platform;
 }): Effect.fn.Return<void, never, FileSystem.FileSystem | Path.Path> {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const userGemini = path.join(input.userHome, ".gemini");
   const links = antigravityUserSkillDirectories(path, input.profileDirectory);
-  const targets = antigravityUserSkillDirectories(path, path.join(input.userHome, ".gemini"));
-  for (const [link, target] of [
-    [links[0], targets[0]],
-    [links[1], targets[1]],
+  const targets = antigravityUserSkillDirectories(path, userGemini);
+  const directoryType = input.platform === "win32" ? "junction" : "dir";
+  for (const [link, target, type] of [
+    [links[0], targets[0], directoryType],
+    [links[1], targets[1], directoryType],
+    ...antigravityUserRuleFiles.map(
+      (name) =>
+        [path.join(input.profileDirectory, name), path.join(userGemini, name), "file"] as const,
+    ),
   ] as const) {
     yield* Effect.gen(function* () {
       // The harness creates these folders itself, and mkdir fails on a dangling link.
@@ -292,12 +300,12 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
       }
       yield* fs.makeDirectory(path.dirname(link), { recursive: true });
       yield* Effect.tryPromise({
-        try: () => NodeFSP.symlink(target, link, input.platform === "win32" ? "junction" : "dir"),
+        try: () => NodeFSP.symlink(target, link, type),
         catch: (cause) => new AntigravitySkillLinkError({ link, cause }),
       });
     }).pipe(
       Effect.catch((error) =>
-        Effect.logWarning("Antigravity user skills are not linked into the profile.", {
+        Effect.logWarning("Antigravity user configuration is not linked into the profile.", {
           link,
           target,
           error,
@@ -453,7 +461,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
         authSupportError("The Antigravity profile settings could not be written."),
       ),
     );
-  yield* linkAntigravityUserSkills({ profileDirectory: geminiHome, userHome, platform });
+  yield* linkAntigravityUserConfig({ profileDirectory: geminiHome, userHome, platform });
   return profile;
 });
 
