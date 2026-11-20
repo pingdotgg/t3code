@@ -12,6 +12,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
@@ -1047,6 +1048,7 @@ describe("makeManagedServerProvider", () => {
         const limits = yield* SubscriptionRef.make<ServerProvider["usageLimits"]>(older);
         const holdCheck = yield* Ref.make<Effect.Effect<void>>(Effect.void);
         const checks = yield* Ref.make(0);
+        const enrichmentStarted = yield* Deferred.make<void>();
         const provider = yield* makeManagedServerProvider<TestSettings>({
           resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
           getSettings: Effect.succeed({ enabled: true }),
@@ -1064,14 +1066,19 @@ describe("makeManagedServerProvider", () => {
           }),
           retainUsageLimits: false,
           enrichSnapshot: ({ publishSnapshot }) =>
-            SubscriptionRef.changes(limits).pipe(
-              Stream.runForEach((usageLimits) =>
-                publishSnapshot({ ...refreshedSnapshot, usageLimits }),
+            Deferred.succeed(enrichmentStarted, undefined).pipe(
+              Effect.andThen(
+                SubscriptionRef.changes(limits).pipe(
+                  Stream.runForEach((usageLimits) =>
+                    publishSnapshot({ ...refreshedSnapshot, usageLimits }),
+                  ),
+                ),
               ),
             ),
           refreshOnInterval: false,
         });
-        yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
+        // The first check has published once its enrichment runs; a subscription could miss it.
+        yield* Deferred.await(enrichmentStarted);
 
         const checkRead = yield* Deferred.make<void>();
         const releaseCheck = yield* Deferred.make<void>();
@@ -1079,7 +1086,9 @@ describe("makeManagedServerProvider", () => {
           holdCheck,
           Deferred.succeed(checkRead, undefined).pipe(Effect.andThen(Deferred.await(releaseCheck))),
         );
+        // Starts at the newer read, so the first check's enrichment republishing the older one is out.
         const published = yield* provider.streamChanges.pipe(
+          Stream.dropWhile((snapshot) => snapshot.usageLimits?.checkedAt !== newer.checkedAt),
           Stream.takeUntil((snapshot) => snapshot.message === refreshedSnapshotSecond.message),
           Stream.runCollect,
           Effect.forkChild({ startImmediately: true }),
@@ -1100,6 +1109,78 @@ describe("makeManagedServerProvider", () => {
           [newer, newer],
         );
         assert.deepStrictEqual((yield* Fiber.join(refresh)).usageLimits, newer);
+      }),
+    ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
+
+  it.effect("keeps an enrichment publishing when a refresh is interrupted while replacing it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const older = {
+          checkedAt: "2026-04-10T00:00:01.000Z",
+          windows: [{ id: "weekly", kind: "weekly", label: "Weekly", usedPercent: 75 }],
+        } as const;
+        const newer = {
+          checkedAt: "2026-04-10T00:00:02.000Z",
+          windows: [{ id: "weekly", kind: "weekly", label: "Weekly", usedPercent: 18 }],
+        } as const;
+        const limits = yield* SubscriptionRef.make<ServerProvider["usageLimits"]>(older);
+        let enrichments = 0;
+        const firstStarted = yield* Deferred.make<void>();
+        const firstStopping = yield* Deferred.make<void>();
+        const releaseFirst = yield* Deferred.make<void>();
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: SubscriptionRef.get(limits).pipe(
+            Effect.map((usageLimits) => ({ ...refreshedSnapshot, usageLimits })),
+          ),
+          retainUsageLimits: false,
+          enrichSnapshot: ({ publishSnapshot }) => {
+            const first = ++enrichments === 1;
+            return Effect.gen(function* () {
+              // The first enrichment stops slowly, holding the refresh that replaces it.
+              if (first) {
+                yield* Effect.addFinalizer(() =>
+                  Deferred.succeed(firstStopping, undefined).pipe(
+                    Effect.andThen(Deferred.await(releaseFirst)),
+                  ),
+                );
+                yield* Deferred.succeed(firstStarted, undefined);
+              }
+              yield* SubscriptionRef.changes(limits).pipe(
+                Stream.runForEach((usageLimits) =>
+                  publishSnapshot({ ...refreshedSnapshot, usageLimits }),
+                ),
+              );
+            }).pipe(Effect.scoped);
+          },
+          refreshOnInterval: false,
+        });
+        yield* Deferred.await(firstStarted);
+
+        const refresh = yield* provider.refresh.pipe(Effect.forkChild);
+        yield* Deferred.await(firstStopping);
+        const interrupting = yield* Fiber.interrupt(refresh).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Deferred.succeed(releaseFirst, undefined);
+        yield* Fiber.join(interrupting);
+
+        const newerPublished = yield* provider.streamChanges.pipe(
+          Stream.filter((snapshot) => snapshot.usageLimits?.checkedAt === newer.checkedAt),
+          Stream.runHead,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* SubscriptionRef.set(limits, newer);
+        assert.strictEqual(enrichments, 2);
+        assert.deepStrictEqual(
+          Option.getOrUndefined(yield* Fiber.join(newerPublished))?.usageLimits,
+          newer,
+        );
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );

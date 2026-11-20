@@ -158,6 +158,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     yield* Ref.set(enrichmentFiberRef, fiber);
   });
 
+  // Only the check is interruptible, so a new enrichment generation always gets its fiber.
   const applySnapshotBase = Effect.fn("applySnapshot")(function* (
     nextSettings: Settings,
     options?: { readonly forceRefresh?: boolean; readonly deferFailure?: boolean },
@@ -194,6 +195,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     const usageBeforeProbe = (yield* Ref.get(snapshotStateRef)).snapshot.usageLimits;
     const probedSnapshot = yield* input.checkProvider.pipe(
       Effect.provideService(DeferringFailedCheck, options?.deferFailure === true),
+      Effect.interruptible,
     );
     // One failed periodic check over a ready provider is often transient; recheck before showing it.
     if (
@@ -263,7 +265,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     yield* PubSub.publish(changesPubSub, nextSnapshot);
     yield* restartSnapshotEnrichment(nextSettings, nextSnapshot, nextGeneration);
     return nextSnapshot;
-  });
+  }, Effect.uninterruptible);
   const applySnapshot = (nextSettings: Settings, options?: { readonly forceRefresh?: boolean }) =>
     refreshSemaphore.withPermits(1)(applySnapshotBase(nextSettings, options));
 
