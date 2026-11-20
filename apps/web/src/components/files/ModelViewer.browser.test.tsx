@@ -6,6 +6,7 @@ import { render, stubGlobal } from "../../../test/render";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { ComposerFilePreviewDialog } from "../chat/ComposerAttachmentStrip";
 import ModelViewer from "./ModelViewer";
+import { useModelPreviewStore } from "./modelAnnotations";
 import "~/index.css";
 
 const triangle = [
@@ -19,6 +20,38 @@ const triangle = [
   "endfacet",
   "endsolid panel",
 ].join("\n");
+
+it("applies a saved camera to the replacement scene when its request target changes", async () => {
+  const previous = useModelPreviewStore.getState();
+  using _restoreStore = {
+    [Symbol.dispose]: () => useModelPreviewStore.setState(previous, true),
+  };
+  const src = URL.createObjectURL(new Blob([triangle]));
+  using _revokeSource = { [Symbol.dispose]: () => URL.revokeObjectURL(src) };
+  const view = (key: string) => (
+    <div className="flex h-96 w-80">
+      <ModelViewer
+        src={src}
+        name="panel.stl"
+        format="stl"
+        memoryKey="saved-camera-replacement"
+        viewRequestKey={key}
+        onRefreshUrl={undefined}
+        linkPath="panel.stl"
+        composerDraftTarget={undefined}
+        toolbarSlots={{ stats: null, actions: null }}
+      />
+    </div>
+  );
+  await using screen = await render(view("first-camera-target"));
+  await expect.element(screen.getByRole("button", { name: "Fit" })).toBeEnabled();
+  useModelPreviewStore.getState().requestView("second-camera-target", {
+    position: [100, 0, 0],
+    target: [0, 0, 0],
+  });
+  await screen.rerender(view("second-camera-target"));
+  await expect.element(screen.getByText("az 90° el 0°")).toBeVisible();
+});
 
 it("keeps earlier screenshot labels after deleting a stale pin and adding a live pin", async () => {
   const target = {
