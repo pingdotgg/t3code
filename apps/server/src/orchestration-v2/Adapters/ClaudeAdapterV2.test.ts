@@ -5795,19 +5795,29 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     {
       readBy: "none",
       echoes: true,
+      endedBy: "stop",
       title: "warns that a steer Claude never read before Stop was not delivered",
     },
     {
       readBy: "none",
       echoes: false,
+      endedBy: "stop",
       title: "does not warn about a steer on a CLI that never echoes prompt uuids",
     },
     {
       readBy: "assistant",
       echoes: true,
+      endedBy: "stop",
       title: "does not warn about a steer Claude read before Stop",
     },
-  ] as const)("$title", ({ readBy, echoes }) =>
+    // regression: #39433 an API error ended the turn and the unread steer was cancelled silently
+    {
+      readBy: "none",
+      echoes: true,
+      endedBy: "api_error",
+      title: "warns that a steer Claude never read before an API error was not delivered",
+    },
+  ] as const)("$title", ({ readBy, echoes, endedBy }) =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarnessWithOptions({
         close: (sdkMessages) => Queue.shutdown(sdkMessages),
@@ -5899,11 +5909,25 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
       }
       const noticesBefore = harness.events.length;
-      yield* harness.runtime.interruptTurn({
-        providerThread: harness.providerThread,
-        providerTurnId,
-      });
-      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
+      if (endedBy === "stop") {
+        yield* harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId,
+        });
+      } else {
+        yield* harness.offerAndWait(
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000015704",
+            result: "API Error: 500",
+            terminalReason: "api_error",
+            isError: true,
+          }),
+        );
+      }
+      assert.equal(
+        (yield* Queue.take(harness.terminalReceipts)).status,
+        endedBy === "stop" ? "interrupted" : "failed",
+      );
 
       const notices = harness.events
         .slice(noticesBefore)

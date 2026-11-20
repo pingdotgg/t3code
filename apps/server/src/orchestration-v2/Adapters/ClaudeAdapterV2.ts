@@ -9588,8 +9588,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             });
           }
 
-          if (input.status === "interrupted") {
+          // A failed turn's live Claude may still hold the steer, so it is not resent; warn instead.
+          if (input.status === "interrupted" || input.status === "failed") {
             for (const [uuid, { text, liveQuery }] of droppedSteers) {
+              if (input.status === "failed" && liveQuery !== currentQuery) continue;
               // Only a CLI proven to echo prompt uuids can leave a steer unconfirmed.
               if (
                 liveQuery.promptEchoMode !== "early" &&
@@ -9598,7 +9600,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 continue;
               }
               const nativeItemId = `unread-steer:${uuid}`;
-              const notice = `Claude did not confirm reading your steer before Stop. It may not have been delivered. Resend it if needed: "${text}"`;
+              const notice = `Claude did not confirm reading your steer before ${input.status === "failed" ? "the turn failed" : "Stop"}. It may not have been delivered. Resend it if needed: "${text}"`;
               yield* emitProviderEvent({
                 type: "turn_item.updated",
                 driver: CLAUDE_PROVIDER,
