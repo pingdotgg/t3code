@@ -162,6 +162,7 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
   const shortcutLabel = shortcutLabelForCommand(
     useAtomValue(primaryServerKeybindingsAtom),
     "rightPanel.toggleMaximized",
+    { context: { rightPanelOpen: true } },
   );
   return (
     <Tooltip>

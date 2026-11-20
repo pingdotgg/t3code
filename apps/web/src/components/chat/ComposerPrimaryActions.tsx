@@ -158,6 +158,7 @@ function StopGenerationButton({
   const shortcutLabel = shortcutLabelForCommand(
     useAtomValue(primaryServerKeybindingsAtom),
     "thread.stop",
+    { context: { turnRunning: true } },
   );
   const isStopDisabled = stopPhase === "pending";
   return (
