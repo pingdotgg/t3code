@@ -9,6 +9,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import { withMessageSenderNote } from "@t3tools/contracts";
 
 import { sentMessageText } from "@t3tools/shared/displayModes";
 import * as Config from "effect/Config";
@@ -141,6 +142,7 @@ export function historicalMessage(
   let text: string;
   switch (item.type) {
     case "user_message":
+<<<<<<< origin/main
       if (item.fyi !== true) {
         text = item.text;
         break;
@@ -148,6 +150,9 @@ export function historicalMessage(
       // A runless FYI waits for a turn's FYI block; a carried one is history whatever its turn's outcome.
       if (item.runId === null) return null;
       text = fyiElement(item);
+=======
+      text = withMessageSenderNote(item, item.text);
+>>>>>>> upstream/main
       break;
     case "assistant_message":
       text = item.text;

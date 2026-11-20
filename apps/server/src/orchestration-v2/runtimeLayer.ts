@@ -28,6 +28,7 @@ import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
+import * as ThreadViewers from "./ThreadViewers.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
@@ -92,9 +93,16 @@ const layerStores = Layer.mergeAll(
   TurnItemPositionStore.layer,
 );
 
+<<<<<<< origin/main
 export const layerEventSink = EventSink.layerFromStores.pipe(Layer.provide(layerStores));
 // Claude's adapter shares it through layer memoization, so its writes go through the one event sink.
 export const layerFyiDelivery = FyiDelivery.layer.pipe(Layer.provide(layerEventSink));
+=======
+// The server provides this same layer to thread subscriptions; memoized, they share one registry.
+export const layerEventSink = EventSink.layerFromStores.pipe(
+  Layer.provide(Layer.merge(layerStores, ThreadViewers.layer)),
+);
+>>>>>>> upstream/main
 const layerProjectionMaintenanceProvided = ProjectionMaintenance.layer.pipe(
   Layer.provide(layerStores),
 );

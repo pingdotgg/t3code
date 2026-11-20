@@ -279,6 +279,34 @@ describe("environment grouping", () => {
     });
   });
 
+  it("targets an open copy when the preferred project is archived", () => {
+    const archived = makeProject({
+      repositoryIdentity,
+      archivedAt: "2026-01-02T00:00:00.000Z",
+    });
+    const open = makeProject({
+      id: ProjectId.make("open-copy"),
+      environmentId: remoteEnvironmentId,
+      repositoryIdentity,
+    });
+    const groups = buildSidebarProjectSnapshots({
+      projects: [archived, open],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+    const [entry] = buildSidebarProjectPickerEntries({
+      groups: pickableProjectGroups(groups),
+      preferredProjectRef: { environmentId: archived.environmentId, projectId: archived.id },
+    });
+
+    expect(entry?.targetProject).toMatchObject({ environmentId: open.environmentId, id: open.id });
+    expect(entry?.group.memberProjectRefs).toContainEqual({
+      environmentId: archived.environmentId,
+      projectId: archived.id,
+    });
+  });
+
   it("puts the preferred project before pinned projects", () => {
     const project = (title: string, pinnedAt: string | null = null) =>
       makeProject({

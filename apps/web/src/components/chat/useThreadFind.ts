@@ -4,9 +4,11 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { useThreadDisplayMode } from "~/fork/displayMode/useThreadDisplayMode";
 import { orchestrationEnvironment } from "~/state/orchestration";
+import { useRenderedAppearance } from "~/hooks/useTheme";
 import { useThreadProjection } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
 import { useDebouncedValue } from "~/state/queries";
+import type { ThemeAppearance } from "~/themePalette";
 import { type ThreadFindMatch, type ThreadFindStart, stepThreadFindIndex } from "./threadFind";
 import {
   CLOSED_THREAD_FIND,
@@ -41,6 +43,11 @@ export function useThreadFind({
   const isOpen = useThreadFindOpen(thread, enabled);
   const stored = useThreadFindStore();
   const state = isOpen ? stored : CLOSED_THREAD_FIND;
+  const theme = useRenderedAppearance();
+  const requestId =
+    state.localSelection && state.localSelection.theme !== theme
+      ? state.navigationId
+      : state.requestId;
   const setState = (update: (previous: ThreadFindState) => Partial<ThreadFindState>) =>
     useThreadFindStore.setState((previous) =>
       previous.threadKey === threadKey ? update(previous) : previous,
@@ -50,10 +57,11 @@ export function useThreadFind({
     isOpen ? thread : null,
     state.query,
     state.offset,
-    state.requestId,
+    requestId,
     state.start,
     skills,
     progressive,
+    theme,
   );
   const status: "loading" | "error" | null = remote.error
     ? "error"
@@ -64,6 +72,7 @@ export function useThreadFind({
     state.localSelection,
     remote.data,
     remote.navigationId,
+    theme,
   );
   const count = remote.data?.totalMatches ?? 0;
   const activeIndex = localSelection?.activeIndex ?? remote.data?.activeIndex ?? 0;
@@ -96,7 +105,12 @@ export function useThreadFind({
   const step = (delta: number) => {
     if (count === 0 || counting) return;
     setState((previous) => {
-      const local = rebaseLocalSelection(previous.localSelection, remote.data, remote.navigationId);
+      const local = rebaseLocalSelection(
+        previous.localSelection,
+        remote.data,
+        remote.navigationId,
+        theme,
+      );
       const pending = previous.navigationId !== (local?.navigationId ?? remote.navigationId);
       const selected = local?.match ?? remote.data?.match;
       const nextIndex = stepThreadFindIndex(
@@ -126,6 +140,7 @@ export function useThreadFind({
           ...previous,
           navigationId: nextNavigationId,
           localSelection: {
+            theme,
             base: remote.data,
             baseNavigationId: remote.navigationId,
             activeIndex: nextIndex,
@@ -259,8 +274,9 @@ function rebaseLocalSelection(
   selection: ThreadFindLocalSelection | null,
   data: OrchestrationV2SearchThreadResult | null,
   navigationId: number,
+  theme: ThemeAppearance,
 ) {
-  if (!selection || !data) return null;
+  if (!selection || !data || selection.theme !== theme) return null;
   if (selection.base === data && selection.baseNavigationId === navigationId) return selection;
   if (navigationId >= selection.navigationId) return null;
   const entry = data.navigation?.find((entry) => entry.entryId === selection.match.entryId);
@@ -277,6 +293,7 @@ function useServerResults(
   start: ThreadFindStart | undefined,
   skills: readonly InlineSkill[],
   progressive: boolean,
+  theme: ThemeAppearance,
 ) {
   const displayMode = useThreadDisplayMode(thread).id;
   const skillLabels = skills.map(({ name, displayName }) => ({ name, displayName }));
@@ -292,6 +309,7 @@ function useServerResults(
             threadId,
             displayMode,
             query: debouncedQuery,
+            theme,
             ...(start ? { start } : {}),
             ...(offset !== 0 ? { offset } : {}),
             skills: skillLabels,
@@ -310,7 +328,7 @@ function useServerResults(
   }
   const result = useEnvironmentQuery(atom);
   const key = thread
-    ? JSON.stringify([thread.environmentId, thread.threadId, normalizedQuery, skillLabels])
+    ? JSON.stringify([thread.environmentId, thread.threadId, normalizedQuery, skillLabels, theme])
     : null;
   const [previous, setPrevious] = useState({
     key,

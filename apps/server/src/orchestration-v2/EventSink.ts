@@ -14,6 +14,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as ProviderCommitBatch from "./ProviderCommitBatch.ts";
+import * as ThreadViewers from "./ThreadViewers.ts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -95,6 +96,7 @@ export interface EventSinkV2Shape {
     process: (event: A) => Effect.Effect<void, E2, R2>,
     after: Effect.Effect<boolean, E2, R2>,
     canBatch: Effect.Effect<boolean, never, R2>,
+    priority?: ProviderCommitBatch.StreamPriority,
   ) => Effect.Effect<
     void,
     E | E2 | ProviderCommitBatch.CommitBatchError | Schema.SchemaError,
@@ -287,10 +289,12 @@ const layerBase: Layer.Layer<
   | ProjectStore.ProjectStoreV2
   | SqlClient.SqlClient
   | TurnItemPositionStore.TurnItemPositionStoreV2
+  | ThreadViewers.ThreadViewers
 > = Layer.effect(
   EventSinkV2,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const threadViewers = yield* ThreadViewers.ThreadViewers;
     const commandReceipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
     const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
     const eventStore = yield* EventStore.EventStoreV2;
@@ -1164,6 +1168,7 @@ const layerBase: Layer.Layer<
           ),
         );
       }),
+      threadViewers.isViewed,
     );
 
     return EventSinkV2.of({
@@ -1317,6 +1322,7 @@ export const layer: Layer.Layer<
       EffectOutbox.layer,
       ProjectStore.layer,
       TurnItemPositionStore.layer,
+      ThreadViewers.layer,
     ),
   ),
 );
