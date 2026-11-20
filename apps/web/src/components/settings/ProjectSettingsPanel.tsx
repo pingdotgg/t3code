@@ -488,7 +488,8 @@ function ProjectDetail({
             <SettingsRow
               key={member.physicalProjectKey}
               title={member.environmentLabel ?? gt("Environment")}
-              description={member.workspaceRoot}
+              // A path has few places to wrap, so a long one would run under the controls.
+              description={<span className="break-all">{member.workspaceRoot}</span>}
               control={checkoutControls(member)}
             />
           ));
