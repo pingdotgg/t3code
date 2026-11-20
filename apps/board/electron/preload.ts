@@ -13,6 +13,8 @@ const bridge: BoardBridge = {
   },
   engineToken: () => ipcRenderer.invoke("board:engine-token"),
   answerPrompt: (accepted) => ipcRenderer.send("board:prompt-answer", accepted),
+  pickFolder: () => ipcRenderer.invoke("board:pick-folder"),
+  resolveFolder: (text) => ipcRenderer.invoke("board:resolve-folder", text),
 };
 
 contextBridge.exposeInMainWorld("board", bridge);

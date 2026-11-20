@@ -1,9 +1,16 @@
-import type { ReactNode } from "react";
+import { CircleHelp, Plus, Settings } from "lucide-react";
+import { type ReactNode, useState } from "react";
 
+import { Tooltip } from "../ui/Tooltip";
+import { AddProject } from "./AddProject";
 import { ProjectList } from "./ProjectList";
 import { Section } from "./Section";
 
+const footerIcon =
+  "grid size-6 place-items-center rounded-md text-muted enabled:hover:bg-hover enabled:hover:text-fg disabled:opacity-60";
+
 export function Sidebar({ footer }: { footer?: ReactNode }) {
+  const [adding, setAdding] = useState(false);
   return (
     <aside
       aria-label="Sidebar"
@@ -15,14 +22,43 @@ export function Sidebar({ footer }: { footer?: ReactNode }) {
         </div>
         Agent Board
       </div>
-      <Section title="Projects" className="min-h-0 shrink">
+      <Section
+        title="Projects"
+        className="min-h-0 shrink"
+        actions={
+          <Tooltip text="Add project" side="bottom">
+            <button
+              type="button"
+              aria-label="Add project"
+              aria-expanded={adding}
+              onClick={() => setAdding((value) => !value)}
+              className="grid size-6 place-items-center rounded-md text-muted hover:bg-hover hover:text-fg"
+            >
+              <Plus className="size-4" />
+            </button>
+          </Tooltip>
+        }
+      >
+        {adding && <AddProject onDone={() => setAdding(false)} />}
         <ProjectList />
       </Section>
       <Section title="Workspace" empty="Nothing here yet" className="shrink-0" />
       <div className="flex-1" />
-      {footer && (
-        <div className="shrink-0 border-t border-line p-2 text-xs text-muted">{footer}</div>
-      )}
+      <div className="flex shrink-0 flex-col gap-2 border-t border-line p-2 text-xs text-muted">
+        {footer}
+        <div className="flex items-center gap-1">
+          <Tooltip text="Settings">
+            <button type="button" disabled aria-label="Settings" className={footerIcon}>
+              <Settings className="size-4" />
+            </button>
+          </Tooltip>
+          <Tooltip text="Help">
+            <button type="button" disabled aria-label="Help" className={footerIcon}>
+              <CircleHelp className="size-4" />
+            </button>
+          </Tooltip>
+        </div>
+      </div>
     </aside>
   );
 }
