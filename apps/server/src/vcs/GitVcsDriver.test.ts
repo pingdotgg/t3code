@@ -1859,21 +1859,24 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
 
       const commands = yield* captureRecordingGitCommands(cwd, checkpointRef);
 
-      assert.deepStrictEqual(commands, [
-        "rev-parse",
-        "rev-parse",
-        "rev-parse",
-        "config",
-        "rev-parse",
-        "read-tree",
-        "ls-files",
-        "add",
-        "write-tree",
-        "commit-tree",
-        "update-ref",
-        // Without a parsed top level, capture cannot rule out submodules.
-        "submodule",
-      ]);
+      // Without a parsed top level, capture cannot rule out submodules; it lists them alongside.
+      assert.include(commands, "submodule");
+      assert.deepStrictEqual(
+        commands.filter((command) => command !== "submodule"),
+        [
+          "rev-parse",
+          "rev-parse",
+          "rev-parse",
+          "config",
+          "rev-parse",
+          "read-tree",
+          "ls-files",
+          "add",
+          "write-tree",
+          "commit-tree",
+          "update-ref",
+        ],
+      );
       assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "unstaged\n");
       assert.deepEqual(yield* fileSystem.readFile(path.join(cwd, ".git", "index")), originalIndex);
       assert.deepStrictEqual(

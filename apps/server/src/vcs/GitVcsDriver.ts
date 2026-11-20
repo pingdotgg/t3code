@@ -1187,7 +1187,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         { discard: true },
       );
 
-      yield* Effect.gen(function* () {
+      const captureRoot = Effect.gen(function* () {
         const sparseConfig = yield* execute({
           operation,
           cwd: input.cwd,
@@ -1807,9 +1807,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         (yield* fileSystem
           .exists(path.join(topLevel, ".gitmodules"))
           .pipe(Effect.orElseSucceed(() => true)));
-      if (!hasSubmodules) return;
+      if (!hasSubmodules) return yield* captureRoot;
       // A submodule that cannot be captured drops its ref, so restore leaves it alone.
-      yield* listSubmodules(input.cwd).pipe(
+      const captureSubmodules = listSubmodules(input.cwd).pipe(
         Effect.flatMap((submodules) =>
           Effect.forEach(
             submodules,
@@ -1845,6 +1845,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           Effect.logWarning("submodule checkpoint capture failed", { cwd: input.cwd, cause }),
         ),
       );
+      // The root's git add checks each submodule in turn; overlap that with their own captures.
+      yield* Effect.all([captureRoot, captureSubmodules], { concurrency: 2, discard: true });
     }, Effect.scoped),
 
     hasCheckpointRef: (input) =>
