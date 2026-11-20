@@ -15,7 +15,8 @@ import type {
 import { AsyncResult } from "effect/reactivity";
 import { T, useGT, useMessages, Var } from "gt-react-native";
 import { useContext, useState } from "react";
-import { Linking, Platform, Pressable, Share, View } from "react-native";
+import { Platform, Pressable, Share, View } from "react-native";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
 
 import { RelativeTime } from "../../components/RelativeTime";
@@ -278,7 +279,7 @@ function LinkedPullRequests(props: {
                       ...(props.params.host ? { host: props.params.host } : {}),
                     }),
                   )
-                : void Linking.openURL(link.url)
+                : void tryOpenExternalUrl(link.url)
             }
             className="flex-row items-center gap-2 rounded-2xl bg-grouped-card p-3 active:opacity-70"
           >
@@ -592,7 +593,7 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
                         id: "open-on-host",
                         title: gt("Open on the tracker"),
                         icon: "arrow.up.right",
-                        onPress: () => void Linking.openURL(url),
+                        onPress: () => void tryOpenExternalUrl(url),
                       },
                       {
                         id: "copy-link",
