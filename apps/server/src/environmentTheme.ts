@@ -1,4 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off - guarded reads need native open flags.
+// @effect-diagnostics nodeBuiltinImport:off - the guarded file read needs open
+// flags (O_NOFOLLOW, O_NONBLOCK) the FileSystem service does not expose.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
