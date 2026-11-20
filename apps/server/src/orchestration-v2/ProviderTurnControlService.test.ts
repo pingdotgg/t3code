@@ -498,28 +498,45 @@ it.effect("applies the thread's current mode to its live session without a messa
         readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
       }) => Effect.sync(() => void applied.push(input.runtimePolicy)),
     } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime;
-    const layerControl = ProviderTurnControlService.layer.pipe(
-      Layer.provide(
-        Layer.mergeAll(
-          layerProjectionStore(() => Effect.die("unused control context"), (() =>
-            Effect.succeed(
-              projection,
-            )) as ProjectionStore.ProjectionStoreV2["Service"]["getThreadRecords"]),
-          layerSessions(sessionId, runtime),
-          RuntimePolicy.layer,
-          Layer.mock(EventSink.EventSinkV2)({}),
-          McpAppModelContext.layerEmpty,
+    const layerControl = (layerRuntimePolicy: Layer.Layer<RuntimePolicy.RuntimePolicyV2>) =>
+      ProviderTurnControlService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            layerProjectionStore(() => Effect.die("unused control context"), (() =>
+              Effect.succeed(
+                projection,
+              )) as ProjectionStore.ProjectionStoreV2["Service"]["getThreadRecords"]),
+            layerSessions(sessionId, runtime),
+            layerRuntimePolicy,
+            Layer.mock(EventSink.EventSinkV2)({}),
+            McpAppModelContext.layerEmpty,
+          ),
         ),
-      ),
-    );
+      );
 
-    yield* Effect.gen(function* () {
+    const apply = Effect.gen(function* () {
       const control = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
       yield* control.applyRuntimePolicy({ threadId });
-    }).pipe(Effect.provide(layerControl));
-
+    });
+    yield* apply.pipe(Effect.provide(layerControl(RuntimePolicy.layer)));
     assert.deepEqual(applied, [
       { runtimeMode: "full-access", interactionMode: "default", cwd: "/workspace" },
     ]);
+
+    // A policy that fails to resolve fails the effect so the worker retries it.
+    const failure = new RuntimePolicy.RuntimePolicyResolveError({
+      projectId: projection.thread.projectId,
+      providerInstanceId,
+    });
+    const failed = yield* apply.pipe(
+      Effect.provide(
+        layerControl(
+          Layer.succeed(RuntimePolicy.RuntimePolicyV2, { resolve: () => Effect.fail(failure) }),
+        ),
+      ),
+      Effect.flip,
+    );
+    assert.strictEqual(failed, failure);
+    assert.lengthOf(applied, 1);
   }),
 );

@@ -92,6 +92,7 @@ export interface ProviderTurnControlServiceV2Shape {
     readonly threadId: ThreadId;
   }) => Effect.Effect<
     void,
+    | RuntimePolicy.RuntimePolicyResolveError
     | ProjectionStore.ProjectionStoreV2Error
     | ProviderSessionManager.ProviderSessionManagerV2Error
     | ProviderAdapter.ProviderAdapterV2Error
@@ -301,7 +302,10 @@ export const layer: Layer.Layer<
           // Above the ceiling the running turn keeps the policy it started with.
           const runtimePolicy = yield* runtimePolicies
             .resolve({ thread, modelSelection: thread.modelSelection })
-            .pipe(Effect.option);
+            .pipe(
+              Effect.asSome,
+              Effect.catchTags({ RuntimePolicyAboveCeilingError: () => Effect.succeedNone }),
+            );
           if (Option.isNone(runtimePolicy)) return;
           yield* session.value.applyRuntimePolicy({
             providerThread,

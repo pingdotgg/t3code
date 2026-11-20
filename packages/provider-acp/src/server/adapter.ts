@@ -9898,6 +9898,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             providerThread,
             runtimePolicy,
           }) {
+            // The session-wide fallback belongs to the native session this thread has loaded.
+            if (providerThread.nativeThreadRef?.nativeId !== (yield* Ref.get(activeSessionId))) {
+              return;
+            }
             latestRuntimePolicy = runtimePolicy;
             const context = yield* Ref.get(activeTurn);
             if (context !== null && context.input.providerThread.id === providerThread.id) {
