@@ -1,21 +1,22 @@
+import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   createLinkedThreadSession,
   type LinkedThreadOpen,
-  type LinkedThreadTarget,
   resolveLinkedThreadOpen,
 } from "@t3tools/client-runtime/linked-thread";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { useState, useSyncExternalStore } from "react";
+import { Atom } from "effect/reactivity";
+import { useSyncExternalStore } from "react";
 
 import { useRightPanelStore } from "../rightPanelStore";
-import { useStableCallback } from "../hooks/useStableCallback";
+import { getDocumentActivity } from "../lib/documentActivity";
+import type { LinkedThreadSurface } from "../linkedThreadSurface";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { useEnvironment } from "./environments";
 import { peerLinkEnvironment, useLinkedEnvironments } from "./peerLinks";
-import { useAtomCommand } from "./use-atom-command";
 
 /**
  * How a click opens a thread that the thread `panelRef` says is on a linked environment: in place
@@ -68,43 +69,72 @@ export function useLinkedThreadOpener(
   };
 }
 
+type SessionKey = readonly [
+  panelEnvironmentId: EnvironmentId,
+  panelThreadId: ThreadId,
+  surfaceId: string,
+  viaEnvironmentId: EnvironmentId,
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+];
+
 /**
- * The transcript of `target`, read through the environment that links to it. Reads start when the
- * calling view mounts and stop when it unmounts; key the view by its target.
+ * One tab's reads. It outlives the pane for a while, so coming back to the tab shows what was
+ * read and carries on from there; a session nothing subscribes to asks for nothing.
  */
-export function useLinkedThreadSession(
-  target: Pick<LinkedThreadTarget, "viaEnvironmentId" | "environmentId" | "threadId">,
-  options: {
-    /** Whether the view is being looked at; reads wait while it is not. */
-    readonly isActive: () => boolean;
-    /** The thread's own title, each time a read names it. */
-    readonly onTitle: (title: string) => void;
-  },
-) {
-  const onTitle = useStableCallback(options.onTitle);
-  const read = useAtomCommand(peerLinkEnvironment.readThread, {
-    reportFailure: false,
-    reportDefect: false,
-  });
-  const [session] = useState(() =>
+const linkedThreadSessionAtom = Atom.family((key: string) => {
+  const [panelEnvironmentId, panelThreadId, surfaceId, viaEnvironmentId, environmentId, threadId] =
+    JSON.parse(key) as SessionKey;
+  const panelRef = scopeThreadRef(panelEnvironmentId, panelThreadId);
+  return Atom.make((get) =>
     createLinkedThreadSession({
       read: async (cursor) => {
-        const result = await read({
-          environmentId: target.viaEnvironmentId,
-          input: { environmentId: target.environmentId, threadId: target.threadId, ...cursor },
-        });
-        if (result._tag !== "Success")
+        const result = await runAtomCommand(
+          get.registry,
+          peerLinkEnvironment.readThread,
+          { environmentId: viaEnvironmentId, input: { environmentId, threadId, ...cursor } },
+          { reportFailure: false, reportDefect: false },
+        );
+        if (result._tag !== "Success") {
           return { ok: false, error: squashAtomCommandFailure(result) };
-        if (result.value.thread.title) onTitle(result.value.thread.title);
+        }
+        const { title } = result.value.thread;
+        if (title) useRightPanelStore.getState().setLinkedThreadTitle(panelRef, surfaceId, title);
         return { ok: true, page: result.value };
       },
       schedule: (run, delayMs) => {
         const timer = setTimeout(run, delayMs);
         return () => clearTimeout(timer);
       },
-      isActive: options.isActive,
+      isActive: () => getDocumentActivity().visible,
     }),
+  ).pipe(Atom.setIdleTTL(5 * 60_000), Atom.withLabel(`linked-thread-session:${key}`));
+});
+
+const noSubscription = () => () => {};
+
+/**
+ * The transcript of `surface`, read through the environment that links to it for the tab in
+ * `panelRef`'s panel. Reads run only while `visible`.
+ */
+export function useLinkedThreadSession(
+  panelRef: ScopedThreadRef,
+  surface: Pick<LinkedThreadSurface, "id" | "viaEnvironmentId" | "environmentId" | "threadId">,
+  visible: boolean,
+) {
+  const key: SessionKey = [
+    panelRef.environmentId,
+    panelRef.threadId,
+    surface.id,
+    surface.viaEnvironmentId,
+    surface.environmentId,
+    surface.threadId,
+  ];
+  const session = useAtomValue(linkedThreadSessionAtom(JSON.stringify(key)));
+  const state = useSyncExternalStore(
+    visible ? session.subscribe : noSubscription,
+    session.getSnapshot,
+    session.getSnapshot,
   );
-  const state = useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot);
   return { state, session };
 }

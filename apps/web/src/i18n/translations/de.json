@@ -3597,23 +3597,11 @@
     " verknüpft. Der Agent kann diese Verknüpfung so verwenden; ändere den Zugriff unter Einstellungen → Umgebungen."
   ],
   "000b0df227182d39": "Andere Adresse…",
+  "6bb5b1b35b2796ae": "Auf {label} über {via} · Arbeitet",
+  "a73b7ab25d6e9bdf": "Auf {label} über {via}",
   "009e2ca841fdc1ef": "diese Umgebung",
   "c8e6ea4d6313e912": "Langer Text, hier gekürzt.",
-  "59fb6d9ab29a1513": [
-    "Schreibgeschützt · auf ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " über ",
-    {
-      "i": 2,
-      "k": "_gt_value_2",
-      "v": "v"
-    }
-  ],
-  "ff1728d6a7065373": "Arbeitet",
+  "0014ce0aaf1bd68a": "Schreibgeschützt",
   "d0bda35aeec66684": [
     "Wird von ",
     {
@@ -5787,7 +5775,6 @@
   "56ca98b79cc9ce49": "Aktivität ({count})",
   "ddc5e5413923c471": "Du kannst hier nicht kommentieren.",
   "516def6f5a881e00": "Schließt dieses Issue",
-  "0014ce0aaf1bd68a": "Schreibgeschützt",
   "fd93f4720ff70aaf": "Keine",
   "b6a29fff7c7c0808": "Niemand",
   "54420465784bb1bd": "Ältere Kommentare laden",

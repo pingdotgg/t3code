@@ -3596,23 +3596,11 @@
     ". L’agent peut utiliser cette association telle quelle ; modifiez son accès dans Paramètres → Environnements."
   ],
   "000b0df227182d39": "Autre adresse…",
+  "6bb5b1b35b2796ae": "Sur {label} via {via} · En cours",
+  "a73b7ab25d6e9bdf": "Sur {label} via {via}",
   "009e2ca841fdc1ef": "cet environnement",
   "c8e6ea4d6313e912": "Texte long, coupé ici.",
-  "59fb6d9ab29a1513": [
-    "Lecture seule · sur ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " via ",
-    {
-      "i": 2,
-      "k": "_gt_value_2",
-      "v": "v"
-    }
-  ],
-  "ff1728d6a7065373": "En cours",
+  "0014ce0aaf1bd68a": "Lecture seule",
   "d0bda35aeec66684": [
     "Lecture depuis ",
     {
@@ -5787,7 +5775,6 @@
   "56ca98b79cc9ce49": "Activité ({count})",
   "ddc5e5413923c471": "Vous ne pouvez pas commenter ici.",
   "516def6f5a881e00": "Ferme ce ticket",
-  "0014ce0aaf1bd68a": "Lecture seule",
   "fd93f4720ff70aaf": "Aucun",
   "b6a29fff7c7c0808": "Personne",
   "54420465784bb1bd": "Charger les commentaires plus anciens",

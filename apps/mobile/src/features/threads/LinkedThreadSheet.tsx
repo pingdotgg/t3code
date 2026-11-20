@@ -23,6 +23,7 @@ import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import { useEnvironments } from "../../state/environments";
 import { useLinkedThreadSession } from "../../state/linkedThread";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
+import { ReadOnlyComposerBar } from "./ReadOnlyComposerBar";
 
 type LinkedThreadRouteParams = {
   readonly viaEnvironmentId: string;
@@ -130,6 +131,41 @@ function FailureCard(props: {
   );
 }
 
+/**
+ * Stands where a composer would: the thread takes no messages from here. `action` is the one way
+ * forward it offers, and `notice` what came of it.
+ */
+function LinkedThreadComposer(props: {
+  /** The linked environment the thread is on. */
+  readonly label: string;
+  /** The environment that reads it. */
+  readonly via: string;
+  readonly working: boolean;
+  readonly action?: React.ReactNode;
+  readonly notice?: React.ReactNode;
+}) {
+  const { label, via } = props;
+  const gt = useGT();
+  return (
+    <>
+      {props.notice}
+      <ReadOnlyComposerBar>
+        <View accessible className="min-w-0 flex-1 gap-0.5">
+          <Text numberOfLines={1} className="font-t3-bold text-sm text-foreground">
+            <T>Read-only</T>
+          </Text>
+          <Text numberOfLines={1} className="font-sans text-xs text-foreground-secondary">
+            {props.working
+              ? gt("On {label} via {via} · Working", { label, via })
+              : gt("On {label} via {via}", { label, via })}
+          </Text>
+        </View>
+        {props.action}
+      </ReadOnlyComposerBar>
+    </>
+  );
+}
+
 function LinkedThreadView(props: { readonly target: LinkedThreadTarget }) {
   const { target } = props;
   const gt = useGT();
@@ -152,13 +188,7 @@ function LinkedThreadView(props: { readonly target: LinkedThreadTarget }) {
     <View collapsable={false} className="flex-1 bg-sheet">
       <SheetHeader
         title={transcript?.thread.title || target.title || gt("Thread on {label}", { label })}
-        subtitle={
-          working
-            ? gt("Read-only · on {label} via {via} · Working", { label, via })
-            : gt("Read-only · on {label} via {via}", { label, via })
-        }
         onClose={() => navigation.goBack()}
-        // A "Connect to interact" action belongs here once this app can pair with the linked environment.
       />
       <ScreenContent>
         <ScrollView
@@ -166,8 +196,7 @@ function LinkedThreadView(props: { readonly target: LinkedThreadTarget }) {
           nestedScrollEnabled
           className="flex-1"
           contentInsetAdjustmentBehavior="automatic"
-          contentContainerClassName="gap-3 px-5 pt-3"
-          contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 8 }}
+          contentContainerClassName="gap-3 px-5 pb-3 pt-3"
           // An earlier page lands above what is being read without moving it.
           maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
           scrollEventThrottle={64}
@@ -221,6 +250,12 @@ function LinkedThreadView(props: { readonly target: LinkedThreadTarget }) {
             </>
           )}
         </ScrollView>
+        <View
+          className="gap-2 px-3 pt-1.5"
+          style={{ paddingBottom: Math.max(insets.bottom, 10) + 6 }}
+        >
+          <LinkedThreadComposer label={label} via={via} working={working} />
+        </View>
       </ScreenContent>
     </View>
   );

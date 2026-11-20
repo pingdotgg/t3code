@@ -9,15 +9,19 @@ import { T, useGT, useMessages, Var } from "gt-react";
 import { ChevronRightIcon, EyeIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
-import { useStableCallback } from "../../hooks/useStableCallback";
-import { getDocumentActivity } from "../../lib/documentActivity";
 import { type LinkedThreadSurface, linkedThreadTitle } from "../../linkedThreadSurface";
-import { useRightPanelStore } from "../../rightPanelStore";
 import { useEnvironment } from "../../state/environments";
 import { useLinkedThreadSession } from "../../state/linkedThreadView";
 import ChatMarkdown from "../ChatMarkdown";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
+import { ComposerBannerStack, type ComposerBannerStackItem } from "./ComposerBannerStack";
+import { ComposerSurface } from "./ComposerSurface";
+import {
+  ReadOnlyComposerBar,
+  ReadOnlyComposerLead,
+  ReadOnlyComposerStatus,
+} from "./ReadOnlyComposerBar";
 import { Spinner } from "../ui/spinner";
 
 function TruncatedNote() {
@@ -64,33 +68,43 @@ function LinkedThreadItem(props: { readonly item: LinkedThreadItemPresentation }
   );
 }
 
-/** Names the thread and where it is read from. `actions` sits at the trailing edge. */
-function LinkedThreadHeader(props: {
-  readonly title: string;
+/**
+ * Stands where a composer would: the thread takes no messages from here. `action` is the one way
+ * forward it offers, and `notice` what came of it.
+ */
+function LinkedThreadComposer(props: {
   /** The linked environment the thread is on. */
   readonly label: string;
   /** The environment that reads it. */
   readonly via: string;
   readonly working: boolean;
-  readonly actions?: ReactNode;
+  readonly action?: ReactNode;
+  readonly notice?: ComposerBannerStackItem | null;
 }) {
+  const { label, via } = props;
+  const gt = useGT();
   return (
-    <div className="flex shrink-0 items-start gap-2 border-b border-border px-3 py-2">
-      <div className="min-w-0 flex-1">
-        <h2 className="truncate text-sm font-medium">{props.title}</h2>
-        <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
-          <EyeIcon aria-hidden className="size-3.5" />
-          <T>
-            Read-only · on <Var>{props.label}</Var> via <Var>{props.via}</Var>
-          </T>
-          {props.working ? (
-            <span className="text-foreground/80">
-              · <T>Working</T>
-            </span>
-          ) : null}
-        </p>
-      </div>
-      {props.actions}
+    <div className="flex shrink-0 flex-col gap-1 px-3 pb-3">
+      {props.notice ? <ComposerBannerStack items={[props.notice]} detached /> : null}
+      <ComposerSurface.Shell>
+        <ComposerSurface.Host>
+          <div className="relative z-10">
+            <ReadOnlyComposerBar actions={props.action}>
+              <ReadOnlyComposerLead>
+                <EyeIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 truncate font-medium text-foreground">
+                  <T>Read-only</T>
+                </span>
+              </ReadOnlyComposerLead>
+              <ReadOnlyComposerStatus role="status">
+                {props.working
+                  ? gt("On {label} via {via} · Working", { label, via })
+                  : gt("On {label} via {via}", { label, via })}
+              </ReadOnlyComposerStatus>
+            </ReadOnlyComposerBar>
+          </div>
+        </ComposerSurface.Host>
+      </ComposerSurface.Shell>
     </div>
   );
 }
@@ -103,19 +117,14 @@ export function LinkedThreadPane(props: {
   /** The thread whose panel shows the tab. */
   readonly panelRef: ScopedThreadRef;
   readonly surface: LinkedThreadSurface;
-  /** Whether the panel is showing; reads wait while it is not. */
+  /** Whether the tab is showing; reads wait while it is not. */
   readonly visible: boolean;
 }) {
   const { surface, panelRef } = props;
   const gt = useGT();
   const m = useMessages();
   const via = useEnvironment(surface.viaEnvironmentId)?.label ?? gt("this environment");
-  const isActive = useStableCallback(() => props.visible && getDocumentActivity().visible);
-  const { state, session } = useLinkedThreadSession(surface, {
-    isActive,
-    onTitle: (title) =>
-      useRightPanelStore.getState().setLinkedThreadTitle(panelRef, surface.id, title),
-  });
+  const { state, session } = useLinkedThreadSession(panelRef, surface, props.visible);
   const { transcript } = state;
   const label = transcript?.label ?? surface.label;
   const failure = state.error === null ? null : linkedThreadFailure(state.error, { via, label }, m);
@@ -128,15 +137,12 @@ export function LinkedThreadPane(props: {
   ) : null;
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <LinkedThreadHeader
-        title={linkedThreadTitle(
+      <h2 className="shrink-0 truncate border-b border-border px-3 py-2 text-sm font-medium">
+        {linkedThreadTitle(
           { title: transcript?.thread.title || surface.title },
           gt("Thread on {label}", { label }),
         )}
-        label={label}
-        via={via}
-        working={transcript !== null && isLinkedThreadWorking(transcript)}
-      />
+      </h2>
       {/* Reversed, so the view opens at the newest item and stays there as items arrive. */}
       <div className="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto p-3">
         <div className="flex flex-col gap-3">
@@ -192,6 +198,11 @@ export function LinkedThreadPane(props: {
           )}
         </div>
       </div>
+      <LinkedThreadComposer
+        label={label}
+        via={via}
+        working={transcript !== null && isLinkedThreadWorking(transcript)}
+      />
     </div>
   );
 }

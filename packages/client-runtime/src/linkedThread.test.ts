@@ -373,6 +373,10 @@ describe("createLinkedThreadSession", () => {
     await closing.reads[0]!.answer({ ok: true, page: page([item(1, "one")]) });
     close();
     expect(closing.pending()).toEqual([]);
+    // Opened again, it shows what it read and asks only for what followed.
+    closing.session.subscribe(() => {});
+    expect(closing.session.getSnapshot().transcript?.items).toHaveLength(1);
+    expect(closing.reads[1]!.cursor).toEqual({ afterPosition: 1 });
 
     const late = harness();
     const closeLate = late.session.subscribe(() => {});

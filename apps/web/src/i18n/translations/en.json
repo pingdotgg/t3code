@@ -3596,23 +3596,11 @@
     ". The agent can use that link as it is; change its access in Settings → Environments."
   ],
   "000b0df227182d39": "Another address…",
+  "6bb5b1b35b2796ae": "On {label} via {via} · Working",
+  "a73b7ab25d6e9bdf": "On {label} via {via}",
   "009e2ca841fdc1ef": "this environment",
   "c8e6ea4d6313e912": "Long text, cut short here.",
-  "59fb6d9ab29a1513": [
-    "Read-only · on ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " via ",
-    {
-      "i": 2,
-      "k": "_gt_value_2",
-      "v": "v"
-    }
-  ],
-  "ff1728d6a7065373": "Working",
+  "0014ce0aaf1bd68a": "Read-only",
   "d0bda35aeec66684": [
     "Reading from ",
     {
@@ -5788,7 +5776,6 @@
   "56ca98b79cc9ce49": "Activity ({count})",
   "ddc5e5413923c471": "You cannot comment here.",
   "516def6f5a881e00": "Closes this issue",
-  "0014ce0aaf1bd68a": "Read-only",
   "fd93f4720ff70aaf": "None",
   "b6a29fff7c7c0808": "None",
   "54420465784bb1bd": "Load older comments",

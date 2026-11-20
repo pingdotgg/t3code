@@ -3596,23 +3596,11 @@
     ". O agente pode usar esse vínculo como está; altere o acesso em Configurações → Ambientes."
   ],
   "000b0df227182d39": "Outro endereço…",
+  "6bb5b1b35b2796ae": "Em {label} via {via} · Trabalhando",
+  "a73b7ab25d6e9bdf": "Em {label} via {via}",
   "009e2ca841fdc1ef": "este ambiente",
   "c8e6ea4d6313e912": "Texto longo, cortado aqui.",
-  "59fb6d9ab29a1513": [
-    "Somente leitura · em ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " via ",
-    {
-      "i": 2,
-      "k": "_gt_value_2",
-      "v": "v"
-    }
-  ],
-  "ff1728d6a7065373": "Trabalhando",
+  "0014ce0aaf1bd68a": "Somente leitura",
   "d0bda35aeec66684": [
     "Lendo de ",
     {
@@ -5786,7 +5774,6 @@
   "56ca98b79cc9ce49": "Atividade ({count})",
   "ddc5e5413923c471": "Você não pode comentar aqui.",
   "516def6f5a881e00": "Fecha esta issue",
-  "0014ce0aaf1bd68a": "Somente leitura",
   "fd93f4720ff70aaf": "Nenhuma",
   "b6a29fff7c7c0808": "Ninguém",
   "54420465784bb1bd": "Carregar comentários mais antigos",
