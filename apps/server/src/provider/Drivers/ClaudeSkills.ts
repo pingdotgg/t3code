@@ -520,6 +520,44 @@ const discoverInlinePluginSkillRoots = Effect.fn("discoverInlinePluginSkillRoots
   return { roots, names };
 });
 
+const installedPluginsPath = Effect.fnUntraced(function* (
+  configDirPath: string,
+  cwd: string | undefined,
+  environment: NodeJS.ProcessEnv,
+) {
+  const path = yield* Path.Path;
+  const pluginDirectory = environment.CLAUDE_CODE_PLUGIN_CACHE_DIR;
+  const pluginsPath = pluginDirectory
+    ? path.resolve(cwd ?? ".", expandHomePath(pluginDirectory, yield* HostProcess.HomeDirectory))
+    : path.join(configDirPath, "plugins");
+  return path.join(pluginsPath, "installed_plugins.json");
+});
+
+/**
+ * Files whose change can alter which plugins a Claude session loads. `localSettingsDirectory`
+ * holds the `settings.local.json` Claude uses for the cwd, the main checkout for a worktree.
+ */
+export const claudePluginStatePaths = Effect.fn("claudePluginStatePaths")(function* (
+  config: Pick<ClaudeSettings, "homePath">,
+  cwd: string | null,
+  localSettingsDirectory: string | null,
+  environment: NodeJS.ProcessEnv,
+): Effect.fn.Return<ReadonlyArray<string>, never, Path.Path> {
+  const workspace = cwd ?? undefined;
+  const configDirPath = yield* resolveClaudeConfigDirPath(config, environment, workspace);
+  return [
+    yield* installedPluginsPath(configDirPath, workspace, environment),
+    ...claudeSettingsPaths(
+      yield* Path.Path,
+      configDirPath,
+      workspace,
+      yield* HostProcess.Platform,
+      environment,
+      localSettingsDirectory ?? undefined,
+    ),
+  ];
+});
+
 const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function* (
   configDirPath: string,
   cwd: string | undefined,
@@ -530,13 +568,8 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const home = yield* HostProcess.HomeDirectory;
-  const pluginDirectory = environment.CLAUDE_CODE_PLUGIN_CACHE_DIR;
-  const pluginsPath = pluginDirectory
-    ? path.resolve(cwd ?? ".", expandHomePath(pluginDirectory, home))
-    : path.join(configDirPath, "plugins");
   const installed = yield* fileSystem
-    .readFileString(path.join(pluginsPath, "installed_plugins.json"))
+    .readFileString(yield* installedPluginsPath(configDirPath, cwd, environment))
     .pipe(
       Effect.flatMap(Schema.decodeUnknownEffect(InstalledPlugins)),
       Effect.orElseSucceed(() => undefined),
