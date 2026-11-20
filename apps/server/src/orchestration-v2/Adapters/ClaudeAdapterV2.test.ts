@@ -9738,6 +9738,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       result:
         "API Error: Request rejected (429) · All credentials for model claude-opus-5-5 are cooling down (reset after 1m) (last error: All credentials for model upstream are cooling down (reset after 1h))",
     },
+    {
+      status: 429,
+      cooldown: "untyped rejection",
+      seconds: 8777,
+      proxy: true,
+      sdkResetSeconds: null,
+      sdkLimitType: null,
+      result:
+        "API Error: Server is temporarily limiting requests (not your usage limit) · All credentials for model claude-opus-5-5 are cooling down (last error: rate_limit_error: This request would exceed your account's rate limit. Please try again later.) (reset after 2h26m17s)",
+    },
   ])("recovers wrapped gateway limits with status $status and cooldown $cooldown", (input) =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
@@ -9759,7 +9769,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 type: "rate_limit_event",
                 rate_limit_info: {
                   status: "rejected",
-                  rateLimitType: "five_hour",
+                  ...(input.sdkLimitType === null
+                    ? { isUsingOverage: false }
+                    : { rateLimitType: "five_hour" }),
                   ...(input.sdkResetSeconds === null
                     ? {}
                     : {

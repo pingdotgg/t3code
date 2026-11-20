@@ -4235,6 +4235,15 @@
   "f6f962de62b3e462": "Ask anything",
   "64338d507e708bef": "The shared content is no longer in the inbox. You can continue editing this task draft.",
   "c5b11890aa7f406f": "What should we work on?",
+  "39a92e68dd2bf6cc": [
+    "Your draft is saved on this device. ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " has no model available. Install or sign in to a provider there to choose one."
+  ],
   "3a3930717d8d73b4": "Your draft is saved on this device. Connect to an environment to choose its first model.",
   "8b53cd9e9e107f7c": "Add an environment before creating a task.",
   "b369a312b533f975": "Loading projects from the saved environment.",

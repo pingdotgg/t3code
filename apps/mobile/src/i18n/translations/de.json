@@ -4234,6 +4234,15 @@
   "f6f962de62b3e462": "Frag irgendwas",
   "64338d507e708bef": "Die geteilten Inhalte sind nicht mehr im Posteingang. Du kannst diesen Aufgabenentwurf weiter bearbeiten.",
   "c5b11890aa7f406f": "Woran sollen wir arbeiten?",
+  "39a92e68dd2bf6cc": [
+    "Dein Entwurf ist auf diesem Gerät gespeichert. ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " hat kein verfügbares Modell. Installiere dort einen Anbieter oder melde dich an, um eines zu wählen."
+  ],
   "3a3930717d8d73b4": "Dein Entwurf ist auf diesem Gerät gespeichert. Verbinde dich mit einer Umgebung, um ihr erstes Modell zu wählen.",
   "8b53cd9e9e107f7c": "Füge eine Umgebung hinzu, bevor du eine Aufgabe erstellst.",
   "b369a312b533f975": "Projekte werden aus der gespeicherten Umgebung geladen.",
