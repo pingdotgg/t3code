@@ -1,7 +1,7 @@
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { createContext, type MouseEvent } from "react";
 
-import type { ModelCameraView } from "./files/modelAnnotations";
+import type { ModelCameraView } from "@t3tools/client-runtime/model-preview/annotations";
 
 export interface ComposerContextActions {
   environmentId: EnvironmentId | null;

@@ -1,3 +1,16 @@
+import {
+  modelAnnotationPayload,
+  reconcileModelNotes,
+  type ModelCameraView,
+  type ModelCapture,
+  type ModelNote,
+  type Vec3,
+} from "@t3tools/client-runtime/model-preview/annotations";
+import type {
+  ModelHit,
+  ModelScene,
+  ModelViewPreset,
+} from "@t3tools/client-runtime/model-preview/scene";
 import type { ModelPreviewKind } from "@t3tools/shared/filePreview";
 import { msg, T, useGT } from "gt-react";
 import { MapPinIcon, RotateCcwIcon } from "lucide-react";
@@ -21,16 +34,8 @@ import { m } from "~/i18n/messages";
 import { cn, randomUUID } from "~/lib/utils";
 
 import { FileSurfaceAction, FileSurfaceFailure, FileSurfaceLoading } from "./fileSurfaceChrome";
-import {
-  modelAnnotationPayload,
-  reconcileModelNotes,
-  useModelPreviewStore,
-  type ModelCameraView,
-  type ModelCapture,
-  type ModelNote,
-  type Vec3,
-} from "./modelAnnotations";
-import { ModelScene, type ModelHit, type ModelViewPreset } from "./modelScene";
+import { useModelPreviewStore } from "./modelAnnotations";
+import { loadModelScene } from "./modelScene";
 import { previewErrorText } from "./previewFailureMessages";
 
 interface DraftPin {
@@ -148,7 +153,7 @@ export default function ModelViewer(props: {
     setError(null);
     setDraft(null);
     setSending(false);
-    ModelScene.load({
+    loadModelScene({
       container,
       src: props.src,
       format: props.format,

@@ -1268,9 +1268,6 @@ importers:
       tailwind-merge:
         specifier: ^3.4.0
         version: 3.6.0
-      three:
-        specifier: 0.180.0
-        version: 0.180.0
       tiff:
         specifier: 7.1.3
         version: 7.1.3
@@ -1323,9 +1320,6 @@ importers:
       '@types/sql.js':
         specifier: 1.4.11
         version: 1.4.11
-      '@types/three':
-        specifier: 0.180.0
-        version: 0.180.0
       '@types/use-sync-external-store':
         specifier: ^0.0.6
         version: 0.0.6
@@ -1525,6 +1519,9 @@ importers:
 
   packages/client-runtime:
     dependencies:
+      '@noble/hashes':
+        specifier: 'catalog:'
+        version: 1.8.0
       '@pierre/diffs':
         specifier: 1.7.0-beta.4
         version: 1.7.0-beta.4(patch_hash=7edcdd484a99c7ec0b2667499c4cb21d113ec9bea1f8570c0b0a030d33bbf1cd)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)

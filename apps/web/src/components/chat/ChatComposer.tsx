@@ -1,5 +1,6 @@
 import { copySnapshot } from "./copySnapshot";
-import { openFileAtModelView, type ModelCameraView } from "../files/modelAnnotations";
+import type { ModelCameraView } from "@t3tools/client-runtime/model-preview/annotations";
+import { openFileAtModelView } from "../files/modelAnnotations";
 import { VoiceInputSetup } from "./VoiceInputSetup";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";

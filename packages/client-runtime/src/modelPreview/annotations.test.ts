@@ -7,7 +7,7 @@ import {
   modelViewFromHref,
   reconcileModelNotes,
   type ModelNote,
-} from "./modelAnnotations";
+} from "./annotations.ts";
 
 const view = { position: [120, 80.5, -40] as const, target: [0, 0.25, 0] as const };
 

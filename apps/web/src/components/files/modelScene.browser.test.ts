@@ -1,8 +1,8 @@
 import { expect, it } from "vite-plus/test";
 
 import { stubGlobal } from "../../../test/render";
-import { reconcileModelNotes } from "./modelAnnotations";
-import { ModelScene } from "./modelScene";
+import { reconcileModelNotes } from "@t3tools/client-runtime/model-preview/annotations";
+import { loadModelScene } from "./modelScene";
 
 it("marks a note stale when a triangle changes shape within the same bounds", async () => {
   using resources = new DisposableStack();
@@ -20,7 +20,7 @@ it("marks a note stale when a triangle changes shape within the same bounds", as
     );
     const src = URL.createObjectURL(new Blob([bytes]));
     resources.defer(() => URL.revokeObjectURL(src));
-    const scene = await ModelScene.load({
+    const scene = await loadModelScene({
       container,
       src,
       format: "stl",
@@ -73,7 +73,7 @@ it("loads a compressed 3MF through the bounded archive reader", async () => {
   const container = document.createElement("div");
   document.body.append(container);
   resources.defer(() => container.remove());
-  const scene = await ModelScene.load({
+  const scene = await loadModelScene({
     src,
     format: "3mf",
     container,
@@ -131,7 +131,7 @@ it("previews embedded GLB data and refuses a reference to a separate file", asyn
   const load = (uri?: string) => {
     const src = URL.createObjectURL(new Blob([modelBytes(uri)]));
     resources.defer(() => URL.revokeObjectURL(src));
-    return ModelScene.load({ container, src, format: "glb", signal: new AbortController().signal });
+    return loadModelScene({ container, src, format: "glb", signal: new AbortController().signal });
   };
   const scene = await load();
   resources.defer(() => scene.dispose());
@@ -150,4 +150,57 @@ it("previews embedded GLB data and refuses a reference to a separate file", asyn
   await expect(load("separate-buffer.bin")).rejects.toMatchObject({
     code: "model-invalid",
   });
+});
+
+it("captures colours the file supplies over a transparent background", async () => {
+  // One upward triangle per STL; `faceColor` is the Magics 15-bit colour, or null for none.
+  const stl = (faceColor: number | null) => {
+    const bytes = new ArrayBuffer(134);
+    const data = new DataView(bytes);
+    if (faceColor !== null) {
+      new Uint8Array(bytes).set(new TextEncoder().encode("COLOR="), 0);
+      data.setUint32(6, 0xffffffff);
+    }
+    data.setUint32(80, 1, true);
+    [0, 0, 1, -1, -1, 0, 1, -1, 0, 0, 1, 0].forEach((value, index) =>
+      data.setFloat32(84 + 4 * index, value, true),
+    );
+    data.setUint16(132, faceColor ?? 0, true);
+    return URL.createObjectURL(new Blob([bytes]));
+  };
+  using resources = new DisposableStack();
+  const container = document.createElement("div");
+  container.style.cssText = "width: 200px; height: 200px; background: black";
+  document.body.append(container);
+  resources.defer(() => container.remove());
+  const capture = async (src: string) => {
+    resources.defer(() => URL.revokeObjectURL(src));
+    const scene = await loadModelScene({
+      container,
+      src,
+      format: "stl",
+      signal: new AbortController().signal,
+    });
+    resources.defer(() => scene.dispose());
+    scene.setPreset("top");
+    const { dataUrl, width, height } = scene.capture([]);
+    const image = await createImageBitmap(await (await fetch(dataUrl)).blob());
+    const canvas = new OffscreenCanvas(width, height);
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("The capture could not be decoded");
+    context.drawImage(image, 0, 0);
+    image.close();
+    const pixel = (x: number, y: number) =>
+      Array.from(context.getImageData(Math.floor(x * width), Math.floor(y * height), 1, 1).data);
+    return { center: pixel(0.5, 0.55), corner: pixel(0, 0) };
+  };
+
+  const white = await capture(stl(0x7fff));
+  // The display's own theme shows through, so a capture taken in one theme reads in another.
+  expect(white.corner[3]).toBe(0);
+  const [red = 0, green = 0, blue = 0, alpha = 0] = white.center;
+  expect(alpha).toBe(255);
+  // A white face lit from above stays white rather than taking the uncoloured STL grey.
+  expect(Math.max(red, green, blue) - Math.min(red, green, blue)).toBeLessThanOrEqual(4);
+  expect(red).toBeGreaterThan(200);
 });

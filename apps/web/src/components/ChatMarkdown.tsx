@@ -1,4 +1,8 @@
 import { m } from "../i18n/messages";
+import {
+  modelViewFromHref,
+  type ModelCameraView,
+} from "@t3tools/client-runtime/model-preview/annotations";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
@@ -243,11 +247,7 @@ import {
   nodeToPlainText,
 } from "./chat/MarkdownCodeBlock.logic";
 import { reportMarkdownActionFailure } from "./chat/markdownActionFailure";
-import {
-  modelViewFromHref,
-  openFileAtModelView,
-  type ModelCameraView,
-} from "./files/modelAnnotations";
+import { openFileAtModelView } from "./files/modelAnnotations";
 
 const isAssetNotFoundError = Schema.is(AssetWorkspaceAssetNotFoundError);
 

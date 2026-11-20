@@ -68,7 +68,8 @@ import {
   type ReviewCommentContext,
 } from "../../reviewCommentContext";
 import { TimelineRowCtx } from "./timelineRowContext";
-import { modelAnnotationFileTarget, openFileAtModelView } from "../files/modelAnnotations";
+import { modelAnnotationFileTarget } from "@t3tools/client-runtime/model-preview/annotations";
+import { openFileAtModelView } from "../files/modelAnnotations";
 import { Button } from "../ui/button";
 import { userMessageFileLabel } from "./TimelineUserMessageRow.logic";
 

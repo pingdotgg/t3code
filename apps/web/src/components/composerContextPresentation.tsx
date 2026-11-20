@@ -13,7 +13,7 @@ import { createContext, type ReactElement, type ReactNode, use } from "react";
 import { msg, T, useGT, useMessages } from "gt-react";
 import type { MessageResolver } from "../i18n/messages";
 import { ComposerContextActionsContext } from "./composerContextActions";
-import { modelAnnotationFileTarget } from "./files/modelAnnotations";
+import { modelAnnotationFileTarget } from "@t3tools/client-runtime/model-preview/annotations";
 import { Button } from "./ui/button";
 
 import type { ComposerFileAttachment, ComposerImageAttachment } from "~/composerDraftStore";
