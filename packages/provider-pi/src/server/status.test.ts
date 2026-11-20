@@ -12,7 +12,7 @@ import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { checkPiProviderStatus, MINIMUM_PI_VERSION } from "./status.ts";
+import { checkPiProviderStatus } from "./status.ts";
 
 const encoder = new TextEncoder();
 const decodeRpcRequest = Schema.decodeSync(
@@ -174,15 +174,24 @@ const settings = {
   customModels: [],
 } as const;
 
+const BROKEN_ADVISORY = {
+  status: "broken",
+  message: null,
+  recommendedVersion: null,
+  recommendedRange: ">=1.0.0",
+} as const;
+
 describe("PiProvider", () => {
-  it.effect("requires session-scoped thinking changes", () =>
+  it.effect("reports a version the policy rates broken as an error", () =>
     Effect.gen(function* () {
-      const snapshot = yield* checkPiProviderStatus(settings).pipe(
+      const snapshot = yield* checkPiProviderStatus(settings, undefined, undefined, () =>
+        Effect.succeed(BROKEN_ADVISORY),
+      ).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, piProbeSpawner("0.84.2")),
       );
       assert.equal(snapshot.status, "error");
       assert.equal(snapshot.version, "0.84.2");
-      assert.include(snapshot.message ?? "", `Pi ${MINIMUM_PI_VERSION} or newer`);
+      assert.include(snapshot.message ?? "", "Pi 0.84.2 does not work");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

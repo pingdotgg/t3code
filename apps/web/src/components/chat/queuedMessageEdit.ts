@@ -7,6 +7,8 @@ import {
   type ComposerImageAttachment,
   type ComposerThreadTarget,
 } from "../../composerDraftStore";
+import { msg } from "gt-react";
+import { m } from "../../i18n/messages";
 import { releaseDraftAttachments } from "../../lib/attachmentUploadQueue";
 
 /** Staged attachments upload as soon as they are added, so a dropped edit must release them. */
@@ -60,7 +62,7 @@ export async function prepareQueuedEditAttachments(input: {
 }) {
   const files = input.files.length === 0 ? [] : await input.uploadFiles(input.files);
   if (files.length !== input.files.length)
-    throw new Error("Retry or remove failed uploads before saving.");
+    throw new Error(m(msg("Retry or remove failed uploads before saving.")));
   const images = await Promise.all(
     input.images.map(async (image) => ({
       type: "image" as const,

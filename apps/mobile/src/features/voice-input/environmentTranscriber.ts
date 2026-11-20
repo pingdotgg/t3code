@@ -1,3 +1,6 @@
+import { msg } from "gt-react-native";
+
+import { m } from "../../i18n/messages";
 import {
   VoiceTranscriptionError,
   VOICE_RECORDING_LIMIT_SECONDS,
@@ -19,7 +22,7 @@ export function createEnvironmentTranscriber(input: {
     if (!input.canSend()) {
       throw new VoiceTranscriptionError({
         code: "cancelled",
-        message: "Your transcription choice changed.",
+        message: m(msg("Your transcription choice changed.")),
       });
     }
   }
@@ -41,7 +44,7 @@ export function createEnvironmentTranscriber(input: {
           ) {
             throw new VoiceTranscriptionError({
               code: "transcription-failed",
-              message: "This recording couldn’t be read. Try recording again.",
+              message: m(msg("This recording couldn’t be read. Try recording again.")),
             });
           }
           // A timed native stop can include a final encoder packet beyond the recording limit.
