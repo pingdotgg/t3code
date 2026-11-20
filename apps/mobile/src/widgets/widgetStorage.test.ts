@@ -78,12 +78,22 @@ it("retains project icons through pushes and summaries through foreground sync, 
 });
 
 it("stores the installed app scheme and schedules a delayed-update rendering", async () => {
-  await saveWidgetSnapshot(snapshot());
+  await saveWidgetSnapshot(snapshot(), [environmentId]);
   expect(storage.overview[0]?.props.appScheme).toBe("t3code-dev");
   expect(storage.overview).toHaveLength(2);
-  expect(
-    storage.overview[1]!.date.getTime() - storage.overview[0]!.date.getTime(),
-  ).toBeGreaterThanOrEqual(25 * 60_000);
+  const checkedAt = storage.overview[0]?.props.environments?.[0]?.snapshot.checkedAt;
+  expect(checkedAt).toBeDefined();
+  expect(storage.overview[1]?.date.getTime()).toBe(Date.parse(checkedAt!) + 25 * 60_000);
+});
+
+it("omits missing timestamps and optional fields from WidgetKit property lists", async () => {
+  const empty = { activeCount: 0, attentionCount: 0, updatedAt: null, activities: [] };
+  await saveWidgetSnapshot({ ...empty, environments: [{ environmentId, snapshot: empty }] });
+
+  expect(storage.original[0]?.props).not.toHaveProperty("updatedAt");
+  expect(storage.original[0]?.props.environments?.[0]?.snapshot).not.toHaveProperty("updatedAt");
+  expect(storage.overview[0]?.props.environments?.[0]?.snapshot).not.toHaveProperty("updatedAt");
+  expect(storage.overview[0]?.props).not.toHaveProperty("overviewStaleAt");
 });
 
 it("does not roll an attention push back when an older foreground snapshot arrives", async () => {
@@ -107,11 +117,44 @@ it("does not roll an attention push back when an older foreground snapshot arriv
       ],
     },
   });
-  await saveWidgetSnapshot(snapshot());
+  await saveWidgetSnapshot(snapshot(), [environmentId]);
   expect(storage.overview[0]?.props.attentionCount).toBe(1);
+  expect(storage.overview[0]?.props.environments?.[0]?.snapshot.checkedAt).toBeUndefined();
   expect(storage.overview[0]?.props.activities[0]).toMatchObject({
     phase: "waiting_for_input",
     summary: "Choose the deployment environment.",
+  });
+});
+
+it("merges exact stats from a capped background push and preserves the foreground views", async () => {
+  const work = {
+    recent: [row],
+    review: [],
+    finished: 0,
+    failed: 0,
+  };
+  await saveWidgetSnapshot({ ...snapshot(), work }, [environmentId]);
+  await saveWidgetPush({
+    environmentId,
+    attentionCount: 7,
+    approvalCount: 4,
+    activeProjectCount: 3,
+    activity: {
+      title: "Activity",
+      subtitle: "Needs you",
+      activeCount: 9,
+      updatedAt: "2026-09-09T12:01:00.000Z",
+      activities: [],
+    },
+  });
+
+  expect(storage.original[0]?.props.work).toBeUndefined();
+  expect(storage.overview[0]?.props).toMatchObject({
+    activeCount: 9,
+    attentionCount: 7,
+    approvalCount: 4,
+    activeProjectCount: 3,
+    work,
   });
 });
 

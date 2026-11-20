@@ -197,11 +197,13 @@ export const make = Effect.gen(function* () {
           reason: response.reason,
         });
     });
+    const current = [...states.values()];
     const widgetUpdate = compactWidgetUpdate({
       environmentId: yield* environment.getEnvironmentId,
       activity: yield* aggregate,
-      attentionCount: [...states.values()].filter((state) => state.phase.startsWith("waiting"))
-        .length,
+      attentionCount: current.filter((state) => state.phase.startsWith("waiting")).length,
+      approvalCount: current.filter((state) => state.phase === "waiting_for_approval").length,
+      activeProjectCount: new Set(current.filter(isActive).map((state) => state.projectId)).size,
     });
     if (attention && registration.notificationsEnabled && registration.pushToken) {
       const payload = attentionPayload(attention);
@@ -236,6 +238,7 @@ export const make = Effect.gen(function* () {
           Math.floor(now.epochMilliseconds / 1000),
           end,
           `DirectAgentActivity:${environmentId}`,
+          registration.appScheme,
         ),
       );
       if (end)

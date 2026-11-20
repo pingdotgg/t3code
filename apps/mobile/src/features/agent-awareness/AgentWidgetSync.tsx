@@ -1,15 +1,22 @@
 import { ProjectIconSync } from "../../widgets/pseudocode/ProjectIconSync";
 import { useAtomValue } from "@effect/atom-react";
+import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
+import { Atom } from "effect/reactivity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Platform } from "react-native";
 import { environmentCatalog } from "../../connection/catalog";
 import { useProjects, useThreadShells } from "../../state/entities";
-import { environmentShellSummaryAtom } from "../../state/shell";
+import { environmentShell, environmentShellSummaryAtom } from "../../state/shell";
 import { agentWidgetContentKey, buildAgentWidgetSnapshot } from "../../widgets/agentWidgetSnapshot";
 import { supportsAgentAwarenessPush } from "./capabilities";
 import { saveWidgetSnapshot } from "../../widgets/widgetStorage";
 
 const WIDGET_REFRESH_MS = 10 * 60_000;
+const liveEnvironmentKeyAtom = Atom.make((get) =>
+  [...enabledEnvironmentIds(get(environmentCatalog.catalogValueAtom))]
+    .filter((environmentId) => get(environmentShell.statusAtom(environmentId)) === "live")
+    .join("\n"),
+);
 
 // The React Compiler cannot lower `import()`, so it stays outside the component.
 const loadWidgetLayouts = () =>
@@ -25,6 +32,7 @@ function IosAgentWidgetSync() {
   const threads = useThreadShells();
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const shell = useAtomValue(environmentShellSummaryAtom);
+  const liveEnvironmentKey = useAtomValue(liveEnvironmentKeyAtom);
   const previousContent = useRef<string | null>(null);
   const lastTick = useRef(0);
   const [icons, setIcons] = useState<Record<string, string>>({});
@@ -39,31 +47,36 @@ function IosAgentWidgetSync() {
       }),
     [],
   );
-  const threadIndex = useMemo(
-    () => new Map(threads.map((thread) => [`${thread.environmentId}:${thread.id}`, thread])),
-    [threads],
+  const activitySnapshot = useMemo(
+    () => buildAgentWidgetSnapshot({ projects, threads, captureWork: true }),
+    [projects, threads],
+  );
+  const visibleProjectKeys = new Set(
+    [
+      ...activitySnapshot.activities,
+      ...(activitySnapshot.work?.recent ?? []),
+      ...(activitySnapshot.work?.review ?? []),
+    ].map((row) => `${row.environmentId}:${row.projectId}`),
   );
   const snapshot = useMemo(() => {
-    const snapshot = buildAgentWidgetSnapshot({ projects, threads });
+    const workProjectKeys = new Set(
+      [...(activitySnapshot.work?.recent ?? []), ...(activitySnapshot.work?.review ?? [])].map(
+        (row) => `${row.environmentId}:${row.projectId}`,
+      ),
+    );
     return {
-      ...snapshot,
-      activities: snapshot.activities.map((row) => {
-        const thread = threadIndex.get(`${row.environmentId}:${row.threadId}`);
-        const projectIcon = thread
-          ? icons[`${thread.environmentId}:${thread.projectId}`]
-          : undefined;
+      ...activitySnapshot,
+      projectIcons: Object.fromEntries(
+        Object.entries(icons).filter(([key]) => workProjectKeys.has(key)),
+      ),
+      activities: activitySnapshot.activities.map((row) => {
+        const projectIcon = icons[`${row.environmentId}:${row.projectId}`];
         return { ...row, ...(projectIcon ? { projectIcon } : {}) };
       }),
     };
-  }, [projects, threads, icons, threadIndex]);
-  const contentKey = agentWidgetContentKey(snapshot);
-  // A shell that is still synchronizing carries the cached rows the widget
-  // already shows, so writing them is harmless and keeps the timeline fresh
-  // through a reconnect instead of letting it age into "delayed".
+  }, [activitySnapshot, icons]);
+  const contentKey = `${liveEnvironmentKey}:${agentWidgetContentKey(snapshot)}`;
   const canPublish = catalog.isReady && (catalog.entries.size === 0 || shell.hasSnapshot);
-  // Identical content still needs a periodic write: the timeline's "delayed"
-  // entry is dated from the last write, and a quiet, healthy app must not
-  // let the widget claim its updates are late.
   const [refreshTick, setRefreshTick] = useState(0);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- runs the timer that forces a periodic widget write
   useEffect(() => {
@@ -80,7 +93,10 @@ function IosAgentWidgetSync() {
     void loadWidgetLayouts()
       .then(async () => {
         if (cancelled || !canPublish) return;
-        await saveWidgetSnapshot(snapshot);
+        await saveWidgetSnapshot(
+          snapshot,
+          liveEnvironmentKey ? liveEnvironmentKey.split("\n") : [],
+        );
         previousContent.current = contentKey;
         lastTick.current = refreshTick;
       })
@@ -90,13 +106,7 @@ function IosAgentWidgetSync() {
     return () => {
       cancelled = true;
     };
-  }, [canPublish, contentKey, snapshot, refreshTick]);
-  const visibleProjectKeys = new Set(
-    snapshot.activities.map((row) => {
-      const thread = threadIndex.get(`${row.environmentId}:${row.threadId}`);
-      return `${row.environmentId}:${thread?.projectId}`;
-    }),
-  );
+  }, [canPublish, contentKey, liveEnvironmentKey, snapshot, refreshTick]);
   const visibleProjects = projects.filter((project) =>
     visibleProjectKeys.has(`${project.environmentId}:${project.id}`),
   );

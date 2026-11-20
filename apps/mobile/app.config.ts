@@ -162,9 +162,29 @@ const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
       {
         name: "PseudoCodeOverview",
         displayName: "PseudoCode Overview",
-        description: "Project updates, concise summaries, and requests that need you.",
+        description: "See active work, recent threads, and results ready to review.",
         android: null,
-        ios: { supportedFamilies: ["systemMedium", "systemLarge"] },
+        ios: {
+          configuration: {
+            title: "PseudoCode Overview",
+            description: "Choose what this widget shows.",
+            parameters: {
+              view: {
+                title: "View",
+                type: "enum",
+                default: "overview",
+                values: [
+                  { name: "Overview", value: "overview" },
+                  { name: "Active now", value: "active" },
+                  { name: "Recent threads", value: "recent" },
+                  { name: "Ready to review", value: "review" },
+                ],
+              },
+            },
+          },
+          supportedFamilies: ["systemSmall", "systemMedium", "systemLarge", "systemExtraLarge"],
+          initialLayout: "./src/widgets/pseudocode/OverviewWidget.tsx",
+        },
       },
       {
         name: "SubscriptionUsage",

@@ -15,11 +15,22 @@ setup complete, the widget also receives occasional background snapshot updates.
 Input and approval alerts include a fresh snapshot. iOS may delay these updates;
 open the app to refresh when needed.
 
-Add **PseudoCode Overview** from the widget gallery for a separate medium or large
-widget. The large version shows up to four threads with project icons, a short
-update, and colored status text. Tap an individual row to open that thread.
-Project icons are saved when you open the connected app; a folder appears until
-an icon is available. The existing PseudoCode widget remains available.
+Add **PseudoCode Overview** from the widget gallery. Touch and hold the widget,
+choose **Edit Widget**, and pick a view. You can add multiple copies.
+
+- **Overview** shows work in progress and the threads that need you. The
+  extra-large iPad widget puts activity next to recent threads and results.
+- **Active now** shows how many threads are working or need you. Larger sizes
+  include approvals, questions, and active projects when available.
+- **Recent threads** shows your newest threads by activity. The large widget
+  has three individually tappable rows.
+- **Ready to review** shows finished or failed runs you haven't opened since
+  they ended.
+
+Tap a row to open its thread. Small widgets open the single thread they show or
+the app's thread list. Recent threads and Ready to review use the last sync
+from the open app. Direct background updates refresh thread statuses and active counts.
+Delayed active counts are marked **Last known**.
 
 The Overview widget can include AI progress summaries when the host has an
 enabled, signed-in Claude provider. Summaries use Haiku through that connection
@@ -36,11 +47,10 @@ Open the app while work is active to create a card. It can then receive updates
 while the app is in the background, and ends when work finishes. Open the app
 again during subsequent work to create a new card.
 
-Each card shows the number of active agents and how many need attention, then up
-to five tasks with their project and status, requests for input or approval first.
-Tap the card to open the task that needs attention. Hold the Dynamic Island to see
-up to three tasks; its compact view shows the app icon and a status icon, or
-**Approval**, **Input**, or **Failed** when a task needs you.
+Each card puts an approval or question first and opens that thread when tapped.
+When no thread needs you, it shows the current activity and any recent outcome
+it received. The compact Dynamic Island gives the number of threads that need
+you or are working. Hold the Dynamic Island to see the thread behind the status.
 
 Completed and failed tasks appear among recent results for up to an hour when
 activity refreshes. Failures show **Needs review** and a short error explanation

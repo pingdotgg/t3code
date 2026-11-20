@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
         activityToken: string | null;
         liveActivitiesEnabled: boolean;
         apsEnvironment: string;
+        appScheme: string;
       };
     };
   }>,
@@ -63,11 +64,12 @@ vi.mock("../../state/atom-registry", () => ({ appAtomRegistry: {} }));
 vi.mock("../../persistence/imperative", () => ({
   loadOrCreateAgentAwarenessDeviceId: async () => "phone",
 }));
-vi.mock("../../widgets/AgentActivity", () => ({ AgentActivity: "layout" }));
+vi.mock("../../widgets/pseudocode/WorkLiveActivity", () => ({ WorkLiveActivity: "layout" }));
 vi.mock("./registrationPayload", () => ({ resolveApsEnvironment: () => "production" }));
 vi.mock("expo-constants", () => ({
   default: { expoConfig: { ios: { bundleIdentifier: "test.app" }, extra: {} } },
 }));
+vi.mock("expo-linking", () => ({ createURL: () => "t3code-dev:///" }));
 vi.mock("expo-application", () => ({
   applicationId: "test.app",
   ApplicationReleaseType: { UNKNOWN: 0, SIMULATOR: 1, DEVELOPMENT: 3, APP_STORE: 5 },
@@ -131,6 +133,10 @@ it("creates one card per environment and registers its ActivityKit token", async
     mocks.requests.find((item) => item.request.action === "register")?.request.registration
       ?.apsEnvironment,
   ).toBe("sandbox");
+  expect(
+    mocks.requests.find((item) => item.request.action === "register")?.request.registration
+      ?.appScheme,
+  ).toBe("t3code-dev");
   expect(mocks.readReleaseType).not.toHaveBeenCalled();
   expect(
     mocks.requests

@@ -9,6 +9,8 @@ import {
   selectWidgetActivities,
   type AgentAwarenessState,
 } from "@t3tools/shared/agentAwareness";
+import { createWorkSnapshotBuilder, type WorkSnapshot } from "./pseudocode/workSnapshot";
+import type { OverviewCopy } from "./pseudocode/overviewCopy";
 
 export interface AgentWidgetCopy {
   readonly caughtUp: string;
@@ -32,7 +34,13 @@ export interface AgentWidgetSnapshot {
   readonly activeCount: number;
   readonly attentionCount: number;
   readonly activities: readonly AgentAwarenessState[];
-  readonly updatedAt: string | null;
+  readonly updatedAt?: string | null;
+  readonly checkedAt?: string;
+  readonly overviewStaleAt?: number;
+  readonly approvalCount?: number;
+  readonly activeProjectCount?: number;
+  readonly work?: WorkSnapshot;
+  readonly overviewText?: OverviewCopy;
   /** Last resolved bitmap per `environmentId:projectId`; see `carryProjectIcons`. */
   readonly projectIcons?: Readonly<Record<string, string>>;
   readonly environments?: readonly {
@@ -64,6 +72,7 @@ export function buildAgentWidgetSnapshot(input: {
     "projectId" | "environmentId" | "archivedAt" | "source" | "runtime"
   >[];
   readonly now?: number;
+  readonly captureWork?: boolean;
 }): AgentWidgetSnapshot {
   const projects = new Map(
     input.projects.map((project) => [
@@ -72,6 +81,7 @@ export function buildAgentWidgetSnapshot(input: {
     ]),
   );
   const activities: AgentAwarenessState[] = [];
+  const work = input.captureWork ? createWorkSnapshotBuilder() : null;
   for (const thread of input.threads) {
     if (thread.archivedAt !== null) continue;
     const project = projects.get(
@@ -83,6 +93,7 @@ export function buildAgentWidgetSnapshot(input: {
       project,
       thread: thread.source,
     });
+    work?.add(thread.environmentId, project, thread.source, activity);
     if (activity) {
       activities.push(
         activity.phase === "failed" && thread.runtime?.lastError
@@ -98,6 +109,7 @@ export function buildAgentWidgetSnapshot(input: {
     activeCount: activities.filter((activity) => priority(activity.phase) < 2).length,
     attentionCount: activities.filter((activity) => priority(activity.phase) === 0).length,
     activities: visible,
+    ...(work ? { work: work.snapshot() } : {}),
     updatedAt: visible.reduce<string | null>(
       (latest, activity) =>
         latest === null || activity.updatedAt > latest ? activity.updatedAt : latest,
@@ -107,11 +119,19 @@ export function buildAgentWidgetSnapshot(input: {
       ? {
           environments: environmentIds.map((environmentId) => {
             const rows = selected.filter((activity) => activity.environmentId === environmentId);
+            const active = rows.filter((activity) => priority(activity.phase) < 2);
             return {
               environmentId,
               snapshot: {
-                activeCount: rows.filter((activity) => priority(activity.phase) < 2).length,
+                activeCount: active.length,
                 attentionCount: rows.filter((activity) => priority(activity.phase) === 0).length,
+                ...(work
+                  ? {
+                      approvalCount: active.filter((row) => row.phase === "waiting_for_approval")
+                        .length,
+                      activeProjectCount: new Set(active.map((row) => row.projectId)).size,
+                    }
+                  : {}),
                 activities: rows.slice(0, 5),
                 updatedAt: rows.reduce<string | null>(
                   (latest, row) =>
@@ -131,6 +151,13 @@ export function agentWidgetContentKey(snapshot: AgentWidgetSnapshot): string {
   return JSON.stringify({
     activeCount: snapshot.activeCount,
     attentionCount: snapshot.attentionCount,
+    approvalCount: snapshot.approvalCount,
+    activeProjectCount: snapshot.activeProjectCount,
+    projectIcons: snapshot.projectIcons,
+    work: snapshot.work && {
+      ...snapshot.work,
+      recent: snapshot.work.recent.map(({ updatedAt: _updatedAt, ...row }) => row),
+    },
     activities: snapshot.activities.map(({ updatedAt: _updatedAt, ...activity }) => activity),
     environments: snapshot.environments?.map(({ environmentId, snapshot }) => ({
       environmentId,
@@ -153,11 +180,7 @@ export function mergeWidgetUpdate(
 ): AgentWidgetSnapshot {
   const environments = snapshot.environments ?? [];
   const previous = environments.find((entry) => entry.environmentId === update.environmentId);
-  if (
-    previous !== undefined &&
-    previous.snapshot.updatedAt !== null &&
-    previous.snapshot.updatedAt >= update.activity.updatedAt
-  )
+  if (previous?.snapshot.updatedAt && previous.snapshot.updatedAt >= update.activity.updatedAt)
     return snapshot;
   const replacement = {
     environmentId: update.environmentId,
@@ -165,6 +188,10 @@ export function mergeWidgetUpdate(
       activeCount: update.activity.activeCount,
       attentionCount: update.attentionCount,
       updatedAt: update.activity.updatedAt,
+      ...(update.approvalCount !== undefined ? { approvalCount: update.approvalCount } : {}),
+      ...(update.activeProjectCount !== undefined
+        ? { activeProjectCount: update.activeProjectCount }
+        : {}),
       activities: update.activity.activities.map(({ status, ...row }) => ({
         ...row,
         headline: status,
@@ -186,6 +213,7 @@ export function mergeWidgetUpdate(
     .sort((a, b) => priority(a.phase) - priority(b.phase) || b.updatedAt.localeCompare(a.updatedAt))
     .slice(0, 5);
   return {
+    ...snapshot,
     activeCount: next.reduce((sum, entry) => sum + entry.snapshot.activeCount, 0),
     attentionCount: next.reduce((sum, entry) => sum + entry.snapshot.attentionCount, 0),
     activities,

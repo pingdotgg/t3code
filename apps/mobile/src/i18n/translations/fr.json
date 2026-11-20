@@ -5485,5 +5485,17 @@
   "ad208e3e32c85029": "Tout masquer",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Appels d’outils dans la discussion",
-  "8d545d54c0a9e950": "Masque les commandes, modifications et recherches lancées par les agents. Masquer les réussis garde les échecs. Zen n’affiche que les réponses finales. Les approbations, questions et erreurs s’affichent toujours."
+  "8d545d54c0a9e950": "Masque les commandes, modifications et recherches lancées par les agents. Masquer les réussis garde les échecs. Zen n’affiche que les réponses finales. Les approbations, questions et erreurs s’affichent toujours.",
+  "3830d250935346a2": "Activité en cours",
+  "5a6131d2f6f13dba": "Fils récents",
+  "0c446c1262e2b92b": "Prêt à vérifier",
+  "bc9915a425b82021": "À traiter",
+  "ce19cbab7a347f89": "Approbations",
+  "dd3f019dd4a099fb": "Questions",
+  "fd1316b1f627872b": "Approbation requise",
+  "70332291f576f89c": "Dernier état connu",
+  "bb0027ec89708cfc": "Aucun fil actif",
+  "9ab5d36ac520907d": "Aucun fil récent",
+  "5c8355c1b8581221": "Vous êtes à jour",
+  "210d496dd7338edd": "Ouvrez PseudoCode pour actualiser"
 }

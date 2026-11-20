@@ -5485,5 +5485,17 @@
   "ad208e3e32c85029": "Ocultar todas",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Chamadas de ferramentas no chat",
-  "8d545d54c0a9e950": "Oculta os comandos, edições e pesquisas que os agentes executam. \"Ocultar bem-sucedidas\" mantém as falhas. Zen mostra só as respostas finais. Aprovações, perguntas e erros sempre aparecem."
+  "8d545d54c0a9e950": "Oculta os comandos, edições e pesquisas que os agentes executam. \"Ocultar bem-sucedidas\" mantém as falhas. Zen mostra só as respostas finais. Aprovações, perguntas e erros sempre aparecem.",
+  "3830d250935346a2": "Atividade atual",
+  "5a6131d2f6f13dba": "Conversas recentes",
+  "0c446c1262e2b92b": "Pronto para revisão",
+  "bc9915a425b82021": "Atenção",
+  "ce19cbab7a347f89": "Aprovações",
+  "dd3f019dd4a099fb": "Perguntas",
+  "fd1316b1f627872b": "Aprovação necessária",
+  "70332291f576f89c": "Último estado conhecido",
+  "bb0027ec89708cfc": "Nenhuma conversa ativa",
+  "9ab5d36ac520907d": "Nenhuma conversa recente",
+  "5c8355c1b8581221": "Tudo em dia",
+  "210d496dd7338edd": "Abra o PseudoCode para atualizar"
 }

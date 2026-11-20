@@ -6,6 +6,9 @@ const Token = Schema.String.check(Schema.isPattern(/^[a-fA-F0-9]+$/), Schema.isM
 export const DirectPushRegistration = Schema.Struct({
   deviceId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128)),
   bundleId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(255)),
+  appScheme: Schema.optionalKey(
+    Schema.String.check(Schema.isPattern(/^t3code(?:-dev|-preview)?$/)),
+  ),
   apsEnvironment: Schema.Literals(["sandbox", "production"]),
   pushToken: Schema.NullOr(Token),
   activityToken: Schema.NullOr(Token),
@@ -37,5 +40,7 @@ export const DirectWidgetUpdate = Schema.Struct({
   environmentId: EnvironmentId,
   activity: RelayAgentActivityAggregateState,
   attentionCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  approvalCount: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  activeProjectCount: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
 });
 export type DirectWidgetUpdate = typeof DirectWidgetUpdate.Type;

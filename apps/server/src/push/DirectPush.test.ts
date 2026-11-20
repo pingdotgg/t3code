@@ -218,7 +218,7 @@ it.effect(
         aps: { sound: "default", "content-available": 1 },
         environmentId,
         threadId,
-        directWidget: { environmentId },
+        directWidget: { environmentId, attentionCount: 1, approvalCount: 0, activeProjectCount: 1 },
       });
     }).pipe(Effect.provide(h.layer));
   },

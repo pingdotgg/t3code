@@ -1,7 +1,12 @@
 import { msg } from "gt-react-native";
 import { m } from "../i18n/messages";
-import { carryProjectIcons, reconcileOverviewSnapshot } from "./pseudocode/overviewSnapshot";
-import * as Linking from "expo-linking";
+import {
+  carryProjectIcons,
+  overviewMetrics,
+  reconcileOverviewSnapshot,
+} from "./pseudocode/overviewSnapshot";
+import { overviewCopy } from "./pseudocode/overviewCopy";
+import { widgetAppScheme } from "./pseudocode/widgetAppScheme";
 import type { DirectWidgetUpdate } from "@t3tools/contracts";
 import {
   EMPTY_AGENT_WIDGET_SNAPSHOT,
@@ -15,7 +20,18 @@ function write<T>(operation: () => Promise<T>): Promise<T> {
   pending = result.catch(() => undefined);
   return result;
 }
-export function saveWidgetSnapshot(input: AgentWidgetSnapshot) {
+
+function propertyListSnapshot(snapshot: AgentWidgetSnapshot): AgentWidgetSnapshot {
+  // WidgetKit persists the bridge payload in UserDefaults, which cannot store null values.
+  return JSON.parse(
+    JSON.stringify(snapshot, (_key, value: unknown) => value ?? undefined),
+  ) as AgentWidgetSnapshot;
+}
+
+export function saveWidgetSnapshot(
+  input: AgentWidgetSnapshot,
+  liveEnvironments: readonly string[] = [],
+) {
   const copy = {
     caughtUp: m(msg("All caught up. Start a task in PseudoCode.")),
     recent: m(msg("Recent results")),
@@ -33,13 +49,22 @@ export function saveWidgetSnapshot(input: AgentWidgetSnapshot) {
     moreThreads: m(msg("+{value} more threads", { value: "{value}" })),
     workOverview: m(msg("Your work, at a glance")),
   };
-  const snapshot = { ...input, copy };
+  const { work, projectIcons, ...activity } = input;
+  const snapshot = { ...activity, copy };
   return write(async () => {
     const { default: widget } = await import("./AgentWidget");
-    widget.updateSnapshot(snapshot);
+    widget.updateSnapshot(propertyListSnapshot(snapshot));
     const { default: overview } = await import("./pseudocode/OverviewWidget");
     const previous = (await overview.getTimeline()).at(0)?.props;
-    updateOverview(overview, reconcileOverviewSnapshot(snapshot, previous), previous);
+    updateOverview(
+      overview,
+      reconcileOverviewSnapshot(
+        { ...snapshot, work, projectIcons, overviewText: overviewCopy() },
+        previous,
+        liveEnvironments,
+      ),
+      previous,
+    );
   });
 }
 export type WidgetPushOutcome = "applied" | "seeded" | "unchanged";
@@ -56,7 +81,7 @@ export function saveWidgetPush(update: DirectWidgetUpdate): Promise<WidgetPushOu
     const current = timeline.at(-1)?.props;
     const base = current ?? EMPTY_AGENT_WIDGET_SNAPSHOT;
     const next = mergeWidgetUpdate(base, update);
-    if (next !== base) widget.updateSnapshot(next);
+    if (next !== base) widget.updateSnapshot(propertyListSnapshot(next));
     const { default: overview } = await import("./pseudocode/OverviewWidget");
     const overviewCurrent = (await overview.getTimeline()).at(0)?.props ?? base;
     const overviewNext = mergeWidgetUpdate(overviewCurrent, update);
@@ -66,21 +91,25 @@ export function saveWidgetPush(update: DirectWidgetUpdate): Promise<WidgetPushOu
 }
 
 function updateOverview(
-  widget: import("expo-widgets").Widget<AgentWidgetSnapshot>,
+  widget: Pick<typeof import("./pseudocode/OverviewWidget").default, "updateTimeline">,
   snapshot: AgentWidgetSnapshot,
   previous: AgentWidgetSnapshot | undefined,
 ) {
   const now = new Date();
-  const props = {
+  const metrics = overviewMetrics(snapshot);
+  const props = propertyListSnapshot({
     ...carryProjectIcons(snapshot, previous),
-    appScheme: Linking.createURL("/").split(":")[0],
+    ...metrics,
+    appScheme: widgetAppScheme(),
     updatedAt: snapshot.updatedAt ?? now.toISOString(),
-  };
-  widget.updateTimeline([
-    { date: now, props },
-    {
-      date: new Date(Math.max(now.getTime(), Date.parse(props.updatedAt)) + 25 * 60_000 + 1),
-      props,
-    },
-  ]);
+  });
+  const deadline = metrics.overviewStaleAt;
+  widget.updateTimeline(
+    deadline !== undefined && deadline > now.getTime()
+      ? [
+          { date: now, props },
+          { date: new Date(deadline), props },
+        ]
+      : [{ date: now, props }],
+  );
 }

@@ -22,7 +22,8 @@ import { connectionAtomRuntime } from "../../connection/runtime";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { loadOrCreateAgentAwarenessDeviceId } from "../../persistence/imperative";
 import { relativeTime } from "../../lib/time";
-import type { AgentActivityProps } from "../../widgets/AgentActivity";
+import type { WorkLiveActivityProps } from "../../widgets/pseudocode/WorkLiveActivity";
+import { widgetAppScheme } from "../../widgets/pseudocode/widgetAppScheme";
 
 const command = createRuntimeCommand(connectionAtomRuntime, {
   label: "direct-push",
@@ -41,7 +42,7 @@ async function request(
   return result.value;
 }
 
-const factories = new Map<EnvironmentId, LiveActivityFactory<AgentActivityProps>>();
+const factories = new Map<EnvironmentId, LiveActivityFactory<WorkLiveActivityProps>>();
 const listeners = new Map<EnvironmentId, { id: string; remove: () => void }>();
 const registrations = new Map<EnvironmentId, DirectPushRegistration>();
 const pending = new Map<EnvironmentId, Promise<DirectPushStatus | null>>();
@@ -76,18 +77,18 @@ async function readDevicePushToken() {
 async function factory(environmentId: EnvironmentId) {
   const existing = factories.get(environmentId);
   if (existing) return existing;
-  const [{ createLiveActivity }, { AgentActivity }] = await Promise.all([
+  const [{ createLiveActivity }, { WorkLiveActivity }] = await Promise.all([
     import("expo-widgets"),
-    import("../../widgets/AgentActivity"),
+    import("../../widgets/pseudocode/WorkLiveActivity"),
   ]);
-  const created = createLiveActivity(`DirectAgentActivity:${environmentId}`, AgentActivity);
+  const created = createLiveActivity(`DirectAgentActivity:${environmentId}`, WorkLiveActivity);
   factories.set(environmentId, created);
   return created;
 }
 
 async function attachToken(
   environmentId: EnvironmentId,
-  activity: LiveActivity<AgentActivityProps>,
+  activity: LiveActivity<WorkLiveActivityProps>,
 ) {
   const id = activity.getId();
   if (listeners.get(environmentId)?.id !== id) {
@@ -136,9 +137,11 @@ export function syncDirectPush(
     const permission = await Notifications.getPermissionsAsync();
     if (!devicePushToken) rememberDirectPushToken(await readDevicePushToken());
     const pushToken = devicePushToken;
+    const appScheme = widgetAppScheme();
     const registration: DirectPushRegistration = {
       deviceId: await loadOrCreateAgentAwarenessDeviceId(),
       bundleId,
+      appScheme,
       apsEnvironment: apsEnvironment === "development" ? "sandbox" : "production",
       pushToken: typeof pushToken === "string" ? pushToken : null,
       activityToken: null,
@@ -150,7 +153,8 @@ export function syncDirectPush(
     try {
       const activityFactory = await factory(environmentId);
       const instances = activityFactory.getInstances();
-      let activity: LiveActivity<AgentActivityProps> | undefined = instances[0];
+      const content = { ...status.activity, appScheme };
+      let activity: LiveActivity<WorkLiveActivityProps> | undefined = instances[0];
       for (const duplicate of instances.slice(1)) await duplicate.end("immediate");
       if (!liveActivitiesEnabled || status.activity.activeCount === 0) {
         if (activity) await activity.end("immediate");
@@ -158,16 +162,12 @@ export function syncDirectPush(
         listeners.get(environmentId)?.remove();
         listeners.delete(environmentId);
       } else if (!activity && AppState.currentState === "active") {
-        activity = activityFactory.start(
-          status.activity,
-          undefined,
-          new Date(Date.now() + 600_000),
-        );
+        activity = activityFactory.start(content, undefined, new Date(Date.now() + 600_000));
       }
       if (activity) {
         const token = await attachToken(environmentId, activity);
         if (token) registrations.set(environmentId, { ...registration, activityToken: token });
-        await activity.update(status.activity, new Date(Date.now() + 600_000));
+        await activity.update(content, new Date(Date.now() + 600_000));
       }
     } catch {
       activityFailed = true;

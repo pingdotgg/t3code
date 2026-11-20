@@ -61,9 +61,11 @@ export function liveActivityPayload(
   nowSeconds: number,
   end = false,
   name = "DirectAgentActivity",
+  appScheme?: string,
 ) {
   // Only the fields apps/mobile AgentActivity reads; the widget-only extras would spend APNs bytes.
   const compact = {
+    appScheme,
     title: state.title,
     subtitle: state.subtitle,
     activeCount: state.activeCount,

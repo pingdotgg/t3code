@@ -53,6 +53,59 @@ function thread(overrides: Partial<WidgetThread> = {}): WidgetThread {
 }
 
 describe("agent widget snapshots", () => {
+  it("keeps three threads by meaningful recency and counts unseen runs separately", () => {
+    const at = (minute: string) => DateTime.makeUnsafe(`2026-09-06T18:${minute}:00Z`);
+    const recent = (
+      id: string,
+      created: string,
+      overrides: Partial<WidgetThread["source"]> = {},
+    ) => {
+      const base = thread({ id: ThreadId.make(id), hasPendingUserInput: false });
+      return {
+        ...base,
+        source: { ...base.source, createdAt: at(created), updatedAt: at("59"), ...overrides },
+      };
+    };
+    const snapshot = buildAgentWidgetSnapshot({
+      projects: [project],
+      captureWork: true,
+      now: at("50").epochMilliseconds,
+      threads: [
+        recent("old-wait", "01", {
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("request"),
+            kind: "command",
+            createdAt: at("02"),
+          },
+        }),
+        recent("new", "05", { latestUserAuthoredMessageAt: at("15") }),
+        recent("finished", "03", {
+          status: "completed",
+          latestRunCompletedAt: at("14"),
+          lastVisitedAt: at("13"),
+        }),
+        recent("seen-failure", "04", {
+          status: "failed",
+          latestRunCompletedAt: at("12"),
+          lastVisitedAt: at("13"),
+        }),
+        recent("deleted", "18", { deletedAt: at("19") }),
+      ],
+    });
+
+    expect(snapshot.work?.recent.map(({ threadId }) => threadId)).toEqual([
+      "new",
+      "finished",
+      "seen-failure",
+    ]);
+    expect(snapshot.work).toMatchObject({
+      review: [{ threadId: "finished" }],
+      finished: 1,
+      failed: 0,
+    });
+    expect(snapshot.activities[0]?.threadId).toBe("old-wait");
+  });
+
   it("keeps recent error details but excludes old failures from the widget", () => {
     const now = Date.parse("2026-09-06T18:10:00Z");
     const failed = thread({

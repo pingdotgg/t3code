@@ -5485,5 +5485,17 @@
   "ad208e3e32c85029": "Ocultar todo",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Llamadas a herramientas en el chat",
-  "8d545d54c0a9e950": "Oculta los comandos, ediciones y búsquedas que ejecutan los agentes. Ocultar las correctas mantiene los fallos. Zen solo muestra las respuestas finales. Las aprobaciones, preguntas y errores siempre se muestran."
+  "8d545d54c0a9e950": "Oculta los comandos, ediciones y búsquedas que ejecutan los agentes. Ocultar las correctas mantiene los fallos. Zen solo muestra las respuestas finales. Las aprobaciones, preguntas y errores siempre se muestran.",
+  "3830d250935346a2": "Actividad actual",
+  "5a6131d2f6f13dba": "Hilos recientes",
+  "0c446c1262e2b92b": "Listo para revisar",
+  "bc9915a425b82021": "Por atender",
+  "ce19cbab7a347f89": "Aprobaciones",
+  "dd3f019dd4a099fb": "Preguntas",
+  "fd1316b1f627872b": "Se necesita aprobación",
+  "70332291f576f89c": "Último estado conocido",
+  "bb0027ec89708cfc": "No hay hilos activos",
+  "9ab5d36ac520907d": "No hay hilos recientes",
+  "5c8355c1b8581221": "Todo al día",
+  "210d496dd7338edd": "Abre PseudoCode para actualizar"
 }

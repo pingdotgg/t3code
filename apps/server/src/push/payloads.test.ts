@@ -46,8 +46,15 @@ describe("direct activity summaries", () => {
       [{ ...state, projectId: "project", turnId: "turn", summary: "Deployed", detail: "Note" }],
       now,
     );
-    const payload = liveActivityPayload(summary, 100, false, "DirectAgentActivity:environment");
+    const payload = liveActivityPayload(
+      summary,
+      100,
+      false,
+      "DirectAgentActivity:environment",
+      "t3code-dev",
+    );
     expect(JSON.parse(payload.aps["content-state"].props)).toEqual({
+      appScheme: "t3code-dev",
       title: summary.title,
       subtitle: summary.subtitle,
       activeCount: 1,
