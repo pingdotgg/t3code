@@ -486,7 +486,9 @@ are connected to over its link. It follows the thread live. On web and desktop
 it opens as a tab in the right panel, beside the thread you are in, or in the
 main view with ⌘/Ctrl-click, like
 [subagents and side chats](thread-sidebar.md#open-a-thread-beside-the-one-you-are-in).
-It shows the same timeline as any other thread.
+On mobile it opens in the inspector on layouts that have one, where Maximize
+fills the screen, and as its own screen elsewhere. It shows the same timeline as
+any other thread on web and desktop, and a shorter read-only list on mobile.
 
 - The view is marked **Read-only** with both machines' names. To reply, approve
   or stop the thread, choose **Connect to interact**. When the link has full

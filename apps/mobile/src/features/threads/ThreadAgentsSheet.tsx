@@ -30,10 +30,10 @@ import { SubagentStopButton } from "./SubagentStopButton";
 import { ThreadWorkflowGroup } from "./ThreadWorkflowGroup";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { subagentThreadTarget, type SubagentThreadTarget } from "./threadAgentsPresentation";
-import { linkedThreadRouteParams } from "./LinkedThreadSheet";
 import { useLinkedThreadReach } from "../../state/linkedThread";
 
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
+import { useOpenLinkedThreadRead } from "./useOpenLinkedThread";
 
 type AgentsTarget = { readonly environmentId: EnvironmentId; readonly threadId: ThreadId };
 
@@ -53,6 +53,7 @@ export function ThreadAgentsSheet({ route }: StaticScreenProps<AgentsTarget>) {
   const target = route.params;
   const navigation = useNavigation();
   const openInspector = useOpenThreadInspector();
+  const openLinkedRead = useOpenLinkedThreadRead();
   const insets = useSafeAreaInsets();
   const gt = useGT();
   const messages = useMessages();
@@ -73,9 +74,7 @@ export function ThreadAgentsSheet({ route }: StaticScreenProps<AgentsTarget>) {
   const openChildThread = (child: SubagentThreadTarget, title: string | null = null) => {
     void Haptics.selectionAsync();
     if (child.linked !== undefined) {
-      navigation.dispatch(
-        StackActions.replace("LinkedThread", linkedThreadRouteParams(child, child.linked, title)),
-      );
+      openLinkedRead(child, child.linked, title, { source: target, replace: true });
       return;
     }
     if (
