@@ -7,7 +7,12 @@ import * as Redacted from "effect/Redacted";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
-import { DEFAULT_SERVER_SETTINGS, SecretProviderId, SecretProviderKind } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  SecretProviderId,
+  SecretProviderKind,
+  VcsProcessExitError,
+} from "@t3tools/contracts";
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
@@ -177,6 +182,40 @@ describe("GitHubCredentials", () => {
       expect((yield* Effect.flip(credentials.get("github.com")))._tag).toBe(
         "GitHubHostDisabledError",
       );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("names an outdated gh that has no `auth token --hostname` instead of a sign-in", () => {
+    // gh before 2.17 has no `auth token`, and Ubuntu 22.04 still ships 2.4.0.
+    const stderr = "unknown flag: --hostname\n\nUsage:  gh auth <command> [flags]\n";
+    const run: SourceControlHost.SourceControlHost["Service"]["process"]["run"] = (input) =>
+      input.allowNonZeroExit
+        ? Effect.succeed({
+            exitCode: ChildProcessSpawner.ExitCode(1),
+            stdout: "",
+            stderr,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          })
+        : Effect.fail(
+            VcsProcessExitError.fromProcessExit(
+              { operation: input.operation, command: input.command, cwd: input.cwd },
+              { exitCode: 1, stderr, stderrTruncated: false },
+              "command-failed",
+            ),
+          );
+    const layer = GitHubCredentials.layer.pipe(
+      Layer.provideMerge(
+        TestSourceControlHost.layer({ settings: DEFAULT_SERVER_SETTINGS, process: { run } }),
+      ),
+      Layer.provide(NodeCrypto.layer),
+      Layer.provide(FileSystem.layerNoop({})),
+    );
+    return Effect.gen(function* () {
+      const credentials = yield* GitHubCredentials.GitHubCredentials;
+      const error = yield* Effect.flip(credentials.get("github.com"));
+      expect(error._tag).not.toBe("GitHubNotSignedInError");
+      expect(error.message).toMatch(/update|upgrade/i);
     }).pipe(Effect.provide(layer));
   });
 

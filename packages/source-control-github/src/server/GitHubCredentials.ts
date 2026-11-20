@@ -82,6 +82,15 @@ export class GitHubCliFailedError extends Schema.TaggedError<GitHubCliFailedErro
   }
 }
 
+export class GitHubCliOutdatedError extends Schema.TaggedError<GitHubCliOutdatedError>()(
+  "GitHubCliOutdatedError",
+  { host: Schema.String },
+) {
+  override get message(): string {
+    return `The GitHub CLI on the server is too old to hand over a credential for ${this.host}. Update \`gh\` to 2.40.0 or newer and try again.`;
+  }
+}
+
 export class GitHubCliTimeoutError extends Schema.TaggedError<GitHubCliTimeoutError>()(
   "GitHubCliTimeoutError",
   { host: Schema.String, timeoutMs: Schema.Number, cause: Schema.Defect() },
@@ -96,6 +105,7 @@ export type GitHubCredentialUnavailableError =
   | GitHubNotSignedInError
   | GitHubHostDisabledError
   | GitHubCliFailedError
+  | GitHubCliOutdatedError
   | GitHubCliTimeoutError
   | SettingsSecretUnresolvedError;
 
@@ -178,6 +188,7 @@ export const make = Effect.gen(function* () {
         env: { GH_DEBUG: "", GH_PROMPT_DISABLED: "1" },
         timeoutMs: 10_000,
         concurrency: GH_PROCESS_CONCURRENCY,
+        allowNonZeroExit: true,
       })
       .pipe(
         Effect.mapError((error) =>
@@ -185,17 +196,23 @@ export const make = Effect.gen(function* () {
           error.cause instanceof PlatformError.PlatformError &&
           error.cause.reason._tag === "NotFound"
             ? new GitHubCliMissingError({ host })
-            : // gh exits non-zero with "no oauth token" when it has no login for the host.
-              error._tag === "VcsProcessExitError"
-              ? new GitHubNotSignedInError({ host, ...(account === undefined ? {} : { account }) })
-              : error._tag === "VcsProcessTimeoutError"
-                ? new GitHubCliTimeoutError({ host, timeoutMs: error.timeoutMs, cause: error })
-                : new GitHubCliFailedError({ host, cause: error }),
+            : error._tag === "VcsProcessTimeoutError"
+              ? new GitHubCliTimeoutError({ host, timeoutMs: error.timeoutMs, cause: error })
+              : new GitHubCliFailedError({ host, cause: error }),
         ),
-        Effect.map((output) => output.stdout.trim()),
-        Effect.filterOrFail(
-          (token) => token !== "",
-          () => new GitHubNotSignedInError({ host, ...(account === undefined ? {} : { account }) }),
+        Effect.flatMap(
+          (output): Effect.Effect<string, GitHubCliOutdatedError | GitHubNotSignedInError> => {
+            const token = output.stdout.trim();
+            if (output.exitCode === 0 && token !== "") return Effect.succeed(token);
+            // gh before 2.17 has no `auth token`, and before 2.40 no `--user`; its parser rejects the flag.
+            if (output.exitCode !== 0 && output.stderr.includes("unknown flag: --")) {
+              return Effect.fail(new GitHubCliOutdatedError({ host }));
+            }
+            // gh exits non-zero with "no oauth token" when it has no login for the host.
+            return Effect.fail(
+              new GitHubNotSignedInError({ host, ...(account === undefined ? {} : { account }) }),
+            );
+          },
         ),
       );
 
@@ -235,6 +252,9 @@ export const make = Effect.gen(function* () {
       (yield* fromGh(host, choice).pipe(
         Effect.catchTags({
           GitHubNotSignedInError: (error) =>
+            choice === undefined ? Effect.fail(error) : fromGh(host, undefined),
+          // gh 2.17 to 2.39 has `auth token` but not `--user`, so read its active login instead.
+          GitHubCliOutdatedError: (error) =>
             choice === undefined ? Effect.fail(error) : fromGh(host, undefined),
         }),
       ));
