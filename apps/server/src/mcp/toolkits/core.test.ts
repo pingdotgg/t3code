@@ -1301,7 +1301,10 @@ it.effect(
         .pipe(
           Effect.provideService(McpInvocationContext.McpInvocationContext, {
             ...scope,
-            capabilities: new Set(["orchestration", "background-wait"]),
+            capabilities: new Set<McpInvocationContext.McpCapability>([
+              "orchestration",
+              "background-wait",
+            ]),
           }),
           Effect.provideService(McpSchema.McpServerClient, client),
         );
