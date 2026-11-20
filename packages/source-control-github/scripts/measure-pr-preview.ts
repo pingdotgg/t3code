@@ -1,4 +1,7 @@
-// Run with: node packages/source-control-github/scripts/measure-pr-preview.ts owner/repo 123 456
+// Run with: node packages/source-control-github/scripts/measure-pr-preview.ts owner/repo 123 456 [--repeats=N]
+// With repeats, `elapsedMs` is the lower median and `minMs` the fastest sample; request counts and
+// `points` are totals across all samples.
+
 // Real GitHub reads share repository-permission caches, excluding browser and service caches.
 // HTTP client request counts are exact; GraphQL cost uses changes in `x-ratelimit-used`,
 // which are approximate when other clients spend the same token's quota.
@@ -138,8 +141,6 @@ for (const mode of ["detail", "preview"] as const) {
             const samples: number[] = [];
             let state: string | undefined;
             const measured: Read[] = [];
-            // The first sample warms shared caches; min/median separate cold
-            // start from steady state instead of trusting one noisy sample.
             for (let run = 0; run < repeats; run += 1) {
               reads.length = 0;
               const start = performance.now();
