@@ -657,6 +657,17 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
         const result = yield* fixture.textGeneration.generateThreadTitle(fixture.titleInput);
         expect(result).toEqual({ title: "Repair login" });
         expect(fixture.state.workspaces).toHaveLength(1);
+        expect(yield* fixture.fs.exists(fixture.state.workspaces[0]!)).toBe(false);
+        expect(yield* fixture.fs.readFileString(`${fixture.sessionBase}.db`)).toBe(
+          "helper session",
+        );
+        expect(yield* fixture.fs.readFileString(`${fixture.sessionBase}.db-wal`)).toBe(
+          "helper journal",
+        );
+        expect(yield* fixture.fs.exists(`${fixture.sessionBase}.meta`)).toBe(true);
+        expect(
+          yield* fixture.fs.readFileString(fixture.path.join(fixture.brainDirectory, "output.txt")),
+        ).toBe("helper artifact");
         expect(
           yield* fixture.fs.readFileString(
             fixture.path.join(
