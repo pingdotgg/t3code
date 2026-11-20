@@ -162,6 +162,28 @@ type Scenario = (
 ) => Effect.Effect<Metrics, ScenarioFailure, SecureRandom.SecureRandom>;
 
 export const SCENARIOS = {
+  /** A small drag must stay where the reader leaves it, even inside the default end threshold. */
+  shortDragFromEnd: Effect.fn("scenario.shortDragFromEnd")(function* (ctx: ScenarioContext) {
+    const initial = yield* openThread(ctx, ctx.fixtures.longThread);
+    if ((initial.feed?.fromEnd ?? Infinity) > 2) yield* ctx.device.run(["scroll", "bottom"]);
+    const { height, threadX } = yield* geometry(ctx);
+    const startY = Math.round(height * 0.5);
+    yield* ctx.device.swipe(threadX, startY + 150, startY - 150);
+    yield* ctx.device.waitFor(
+      "the end of the feed",
+      (state) => Math.abs(state.feed?.fromEnd ?? Infinity) <= 2,
+    );
+    const recording = yield* recordFor(
+      ctx,
+      true,
+      ctx.device.swipe(threadX, startY, startY + 45).pipe(Effect.andThen(Effect.sleep("1 second"))),
+    );
+    return {
+      ...feedMotion(recording.feed, 1),
+      finalFromEndPx: (yield* ctx.device.state).feed?.fromEnd ?? null,
+    } satisfies Metrics;
+  }, failure),
+
   /** Six upward flings in the long settled thread. */
   scrollUpLongThread: Effect.fn("scenario.scrollUpLongThread")(function* (ctx: ScenarioContext) {
     yield* openThread(ctx, ctx.fixtures.longThread);
