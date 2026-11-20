@@ -1,4 +1,5 @@
 import { ReadAloudButton } from "./ReadAloudButton";
+import { readAloudHighlightRoot } from "../../speech/readAloudHighlight";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
 import { MessageId, type RunId, type TurnItemId } from "@t3tools/contracts";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
@@ -56,7 +57,10 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
     <>
       <div className="relative min-w-0 px-1 py-0.5">
         <MessageAuthorHeading>T3 Code</MessageAuthorHeading>
-        <div data-thread-find-text="true">
+        <div
+          data-thread-find-text="true"
+          ref={readAloudHighlightRoot(`${ctx.routeThreadKey}:${row.message.id}`)}
+        >
           <AssistantCitationSource
             messageId={row.message.id}
             {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}

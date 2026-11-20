@@ -223,6 +223,7 @@ import { MarkdownFileLink } from "./chat/MarkdownFileLink";
 import { canUseMarkdownFileShellActions } from "./chat/MarkdownFileLink.logic";
 import { rehypeChipPunctuation } from "./chat/markdownChipPunctuation";
 import { handleMarkdownFragmentClick, rehypeHeadingIds } from "./chat/markdownFragments";
+import { rehypeSpeechOffsets } from "../speech/rehypeSpeechOffsets";
 import { rehypeTextDirection } from "./chat/markdownTextDirection";
 import { hastHasText, hastPlainTextDeep, plainHastText } from "./chat/markdownHast.logic";
 import {
@@ -420,12 +421,14 @@ const CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS = [
   rehypeHeadingIds,
   rehypeTextDirection,
   rehypeChipPunctuation,
+  rehypeSpeechOffsets,
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
 
 const CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS = [
   rehypeHeadingIds,
   rehypeTextDirection,
   rehypeChipPunctuation,
+  rehypeSpeechOffsets,
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
 
 function markdownUrlTransform(href: string) {
