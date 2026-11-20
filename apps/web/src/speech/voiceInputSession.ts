@@ -72,7 +72,6 @@ export type VoiceInputSessionActivity = {
 
 type SessionKey = {
   readonly environmentId: EnvironmentId;
-  readonly prepared: PreparedConnection;
   readonly grantId: string;
   readonly cloudProvider: CloudSpeechProvider | undefined;
   readonly cloudModel: CloudSpeechModelId | undefined;
@@ -111,9 +110,9 @@ export class VoiceInputSession {
   private readonly activityListeners = new Set<() => void>();
   private disposed = false;
 
-  constructor(key: SessionKey) {
+  constructor(key: SessionKey, prepared: PreparedConnection) {
     this.key = key;
-    this.prepared = key.prepared;
+    this.prepared = prepared;
     const hasAudioConsent = bindAudioGrant(key.grantId);
     let recordingPreferences:
       | {
@@ -123,7 +122,7 @@ export class VoiceInputSession {
         }
       | undefined;
     const platform = createBrowserVoiceInputPlatform({
-      prepared: key.prepared,
+      prepared,
       getPrepared: () => this.prepared,
       cloudProvider: key.cloudProvider,
       cloudModel: key.cloudModel,
@@ -237,9 +236,9 @@ export class VoiceInputSession {
     return this.controller.currentState;
   }
 
+  /** A reconnect to the same destination replaces the transport; null while it is down. */
   updatePrepared(prepared: PreparedConnection | null): void {
-    if (prepared === null || prepared.environmentId === this.key.environmentId)
-      this.prepared = prepared;
+    this.prepared = prepared;
   }
 
   get ownerKey(): string | null {
@@ -321,10 +320,7 @@ export class VoiceInputSession {
 const sessions = new Map<VoiceInputSession, number>();
 const registryListeners = new Set<() => void>();
 
-function sameKey(
-  session: VoiceInputSession,
-  key: Pick<SessionKey, "environmentId" | "grantId" | "cloudProvider" | "cloudModel">,
-): boolean {
+function sameKey(session: VoiceInputSession, key: SessionKey): boolean {
   return (
     session.key.environmentId === key.environmentId &&
     session.key.grantId === key.grantId &&
@@ -333,22 +329,15 @@ function sameKey(
   );
 }
 
-type SessionLookupKey = Omit<SessionKey, "prepared"> & {
-  readonly prepared?: PreparedConnection | null;
-};
-
-function findSession(key: SessionLookupKey): VoiceInputSession | null {
+function findSession(key: SessionKey): VoiceInputSession | null {
   for (const session of sessions.keys()) if (sameKey(session, key)) return session;
   return null;
 }
 
 /** Every holder of a destination shares one session; the last release disposes it. */
-function retainVoiceInputSession(key: SessionKey): {
-  readonly session: VoiceInputSession;
-  readonly release: () => void;
-} {
-  const session = findSession(key) ?? new VoiceInputSession(key);
-  session.updatePrepared(key.prepared);
+function retainVoiceInputSession(key: SessionKey, prepared: PreparedConnection) {
+  const session = findSession(key) ?? new VoiceInputSession(key, prepared);
+  session.updatePrepared(prepared);
   sessions.set(session, (sessions.get(session) ?? 0) + 1);
   for (const listener of registryListeners) listener();
   let released = false;
@@ -374,7 +363,11 @@ function subscribeRegistry(listener: () => void): () => void {
   return () => registryListeners.delete(listener);
 }
 
-/** Holds the destination's shared session while mounted; null until it is retained. */
+/**
+ * Holds the destination's shared session while mounted; null until it is retained. The
+ * session is first retained on a live connection and then survives it dropping for as long
+ * as `retainOnDisconnect` holds, so a reconnect resumes the same recording.
+ */
 export function useRetainedVoiceInputSession(input: {
   readonly environmentId: EnvironmentId | null;
   readonly prepared: PreparedConnection | null;
@@ -384,66 +377,33 @@ export function useRetainedVoiceInputSession(input: {
   readonly cloudModel?: CloudSpeechModelId | undefined;
 }): VoiceInputSession | null {
   const { environmentId, prepared, grantId, retainOnDisconnect, cloudProvider, cloudModel } = input;
-  const leaseRef = useRef<{
-    readonly session: VoiceInputSession;
-    readonly release: () => void;
-  } | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- retains the shared recording session for this destination while mounted
+  const leaseRef = useRef<ReturnType<typeof retainVoiceInputSession> | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases the shared recording session on unmount
+  useEffect(
+    () => () => {
+      leaseRef.current?.release();
+      leaseRef.current = null;
+    },
+    [],
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- acquires, refreshes, or releases the shared recording session as the destination and its transport change
   useEffect(() => {
-    return () => {
-      leaseRef.current?.release();
-      leaseRef.current = null;
-    };
-  }, []);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- acquires or refreshes the external recording lease when the current transport changes
-  useEffect(() => {
-    const currentKey = leaseRef.current?.session.key;
-    if (
-      currentKey &&
-      (currentKey.environmentId !== environmentId ||
-        currentKey.grantId !== grantId ||
-        currentKey.cloudProvider !== cloudProvider ||
-        currentKey.cloudModel !== cloudModel)
-    ) {
-      leaseRef.current?.release();
+    const key =
+      environmentId && grantId ? { environmentId, grantId, cloudProvider, cloudModel } : null;
+    const lease = leaseRef.current;
+    if (lease && (!key || !retainOnDisconnect || !sameKey(lease.session, key))) {
+      lease.release();
       leaseRef.current = null;
     }
-    if (!retainOnDisconnect) {
-      leaseRef.current?.release();
-      leaseRef.current = null;
-      return;
-    }
-    if (
-      !environmentId ||
-      !prepared ||
-      !grantId ||
-      !retainOnDisconnect ||
-      typeof navigator === "undefined"
-    )
-      return;
-    if (!leaseRef.current) {
-      const lease = retainVoiceInputSession({
-        environmentId,
-        prepared,
-        grantId,
-        cloudProvider,
-        cloudModel,
-      });
-      leaseRef.current = lease;
-    } else {
-      leaseRef.current.session.updatePrepared(prepared);
-    }
-  }, [environmentId, grantId, prepared, retainOnDisconnect, cloudProvider, cloudModel]);
-  const session = useSyncExternalStore(subscribeRegistry, () =>
+    if (leaseRef.current) leaseRef.current.session.updatePrepared(prepared);
+    else if (key && prepared && retainOnDisconnect && typeof navigator !== "undefined")
+      leaseRef.current = retainVoiceInputSession(key, prepared);
+  }, [environmentId, grantId, cloudProvider, cloudModel, prepared, retainOnDisconnect]);
+  return useSyncExternalStore(subscribeRegistry, () =>
     environmentId && grantId
-      ? findSession({ environmentId, grantId, cloudProvider, cloudModel, prepared })
+      ? findSession({ environmentId, grantId, cloudProvider, cloudModel })
       : null,
   );
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- updates the retained session transport after the chosen environment reconnects
-  useEffect(() => {
-    if (session) session.updatePrepared(prepared);
-  }, [prepared, session]);
-  return session;
 }
 
 const IDLE_SNAPSHOT: VoiceInputSessionSnapshot = {
