@@ -233,3 +233,27 @@ it("shows compatibility in the version popover even when the installed version i
     targetVersion: null,
   });
 });
+
+it("says a failed update check instead of hiding it as up to date", () => {
+  const advisory = {
+    status: "unknown" as const,
+    currentVersion: "1.0.0",
+    latestVersion: null,
+    updateCommand: "npm install -g fixture@latest",
+    canUpdate: true,
+    checkedAt: provider.checkedAt,
+    message: null,
+    latestVersionCheckFailed: true,
+  };
+  expect(getProviderVersionAdvisoryPresentation(advisory)).toEqual({
+    title: "Could not check for updates",
+    detail: "Refresh provider status",
+    updateCommand: null,
+    emphasis: "normal",
+    targetVersion: null,
+    warning: true,
+  });
+  expect(
+    getProviderVersionAdvisoryPresentation({ ...advisory, latestVersionCheckFailed: false }),
+  ).toBeNull();
+});
