@@ -1,7 +1,7 @@
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
-import { T3ProjectFile, T3_PROJECT_FILE_SCHEMA_URL } from "@t3tools/contracts";
+import { T3ProjectFile } from "@t3tools/contracts";
 
 import { fromLenientJson } from "./schemaJson.ts";
 
@@ -14,11 +14,12 @@ export function parseT3ProjectFile(contents: string): T3ProjectFile | null {
   return Exit.isSuccess(decoded) ? decoded.value : null;
 }
 
-export function buildT3ProjectFileJsonSchema(): Record<string, unknown> {
+/** `id` is where the schema is served; a local copy, such as `t3 project schema` writes, has none. */
+export function buildT3ProjectFileJsonSchema(id?: string): Record<string, unknown> {
   const document = Schema.toJsonSchemaDocument(T3ProjectFile, { onExcessProperty: "error" });
   const jsonSchema: Record<string, unknown> = {
     $schema: "https://json-schema.org/draft/2020-12/schema",
-    $id: T3_PROJECT_FILE_SCHEMA_URL,
+    ...(id ? { $id: id } : {}),
     ...document.schema,
   };
   if (document.definitions && Object.keys(document.definitions).length > 0) {

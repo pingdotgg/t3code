@@ -4,7 +4,7 @@ import * as NodePath from "node:path";
 import { defineConfig, mergeConfig } from "vite-plus";
 
 import baseConfig from "../../vite.config.ts";
-import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
+import { appSchemeDefine, loadRepoEnv } from "../../scripts/lib/public-config.ts";
 import { standaloneBuildDefine } from "../../scripts/lib/standalone-build.ts";
 import { resolveTaggedSourceVersion } from "../../scripts/lib/tagged-source-version.ts";
 import rootPackageJson from "../../package.json" with { type: "json" };
@@ -165,6 +165,7 @@ export default mergeConfig(
           repoEnv.T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN?.trim() ?? "",
         ),
         ...standaloneBuildDefine(repoEnv),
+        ...appSchemeDefine(repoEnv),
       },
     },
     test: {

@@ -4,7 +4,7 @@ import * as NodeOS from "node:os";
 import { defaultInclude, defineConfig } from "vite-plus";
 
 import { isDesktopRuntimeExternalDependency } from "../../scripts/lib/desktop-external-packages.ts";
-import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
+import { appSchemeDefine, loadRepoEnv } from "../../scripts/lib/public-config.ts";
 import { standaloneBuildDefine } from "../../scripts/lib/standalone-build.ts";
 
 const repoEnv = loadRepoEnv();
@@ -34,6 +34,7 @@ const publicConfigDefine = {
     : {}),
   // Standalone builds validate the fork repository and override the value above.
   ...standaloneBuildDefine(repoEnv),
+  ...appSchemeDefine(repoEnv),
 };
 
 export default defineConfig({
