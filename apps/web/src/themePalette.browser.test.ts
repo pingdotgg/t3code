@@ -57,6 +57,34 @@ describe("standard painted theme colors", () => {
 });
 
 describe("imported user message colors", () => {
+  it.each(["light", "dark"] as const)(
+    "keeps the usual link and footnote styling on readable %s bubbles",
+    (appearance) => {
+      const root = document.documentElement;
+      const bubble = document.createElement("div");
+      bubble.className = "bg-message text-message-foreground chat-markdown";
+      bubble.innerHTML = '<a href="#sample">Link</a><section data-footnotes>Footnote</section>';
+      document.body.append(bubble);
+      const link = getComputedStyle(bubble.querySelector("a")!);
+      const footnote = getComputedStyle(bubble.querySelector("section")!);
+      const styling = () => [link.color, link.textDecorationLine, footnote.color];
+      try {
+        root.classList.toggle("dark", appearance === "dark");
+        for (const theme of ["t3-chat", "system"] as const) {
+          applyThemePalette(theme, appearance);
+          bubble.classList.remove("user-message-markdown");
+          const usualStyling = styling();
+          bubble.classList.add("user-message-markdown");
+          expect(styling(), theme).toEqual(usualStyling);
+        }
+      } finally {
+        bubble.remove();
+        applyThemePalette("system", "light");
+        root.classList.remove("dark");
+      }
+    },
+  );
+
   it.each([
     { type: "light", canvas: "#ffffff", surface: "#000000", contrast: 200, foreground: 1 },
     { type: "dark", canvas: "#000000", surface: "#ffffff", contrast: 200, foreground: 0 },

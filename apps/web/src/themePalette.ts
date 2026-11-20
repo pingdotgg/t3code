@@ -1733,11 +1733,18 @@ export const THEME_PREVIEW_ID = "__preview";
 
 const MESSAGE_CONTRAST_TARGET_VARIABLE = "--message-contrast-target";
 const MESSAGE_MUTED_FOREGROUND_VARIABLE = "--message-muted-foreground";
+const MESSAGE_FOOTNOTE_FOREGROUND_VARIABLE = "--message-footnote-foreground";
 
 function applyMessageInkVariables(root: HTMLElement, colors: ThemeColors): void {
   const canvas = compositeThemeColor(colors.canvas, THEME_WHITE_FOREGROUND);
   const surface = compositeThemeColor(colors.messageSurface, canvas);
   const foreground = compositeThemeColor(colors.messageForeground, surface);
+  const style = getComputedStyle(root);
+  const link = compositeThemeColor(style.getPropertyValue("--info-foreground"), surface);
+  const canvasTarget = compositeThemeColor(
+    style.getPropertyValue("--appearance-contrast-target"),
+    surface,
+  );
   const surfaceLuminance = themeRelativeLuminance(surface);
   const foregroundIsLighter = themeRelativeLuminance(foreground) > surfaceLuminance;
   const sameSide = foregroundIsLighter ? THEME_WHITE_FOREGROUND : THEME_BLACK_FOREGROUND;
@@ -1760,6 +1767,22 @@ function applyMessageInkVariables(root: HTMLElement, colors: ThemeColors): void 
     MESSAGE_MUTED_FOREGROUND_VARIABLE,
     themeRgbToHexColor(themeOklchToRgb(solved)),
   );
+
+  root.toggleAttribute("data-message-link-fallback", themeContrastRatio(link, surface) < 4.5);
+  // As contrast rises, the canvas footnote color moves from muted text toward the canvas target.
+  const canvasTargetIsLighter = themeRelativeLuminance(canvasTarget) > surfaceLuminance;
+  if (
+    mutedIsLighter !== canvasTargetIsLighter ||
+    themeContrastRatio(muted, surface) < 4.5 ||
+    themeContrastRatio(canvasTarget, surface) < 4.5
+  ) {
+    root.style.setProperty(
+      MESSAGE_FOOTNOTE_FOREGROUND_VARIABLE,
+      "var(--contrast-message-foreground)",
+    );
+  } else {
+    root.style.removeProperty(MESSAGE_FOOTNOTE_FOREGROUND_VARIABLE);
+  }
 }
 
 /** Callers must restore the stored theme with refreshTheme when the draft closes. */
@@ -1777,9 +1800,9 @@ export function applyThemeColorPreview(
   for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
     if (isThemeColor(value)) root.style.setProperty(APP_THEME_VARIABLES[role], value);
   }
+  applyThemeCss(css);
   applyMessageInkVariables(root, colors);
   applyContextChipVariables(root, colors);
-  applyThemeCss(css);
   setThemePreviewAppearance(appearance);
 }
 
@@ -1807,8 +1830,10 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
   }
 
   delete root.dataset.themeId;
+  delete root.dataset.messageLinkFallback;
   root.style.removeProperty(MESSAGE_CONTRAST_TARGET_VARIABLE);
   root.style.removeProperty(MESSAGE_MUTED_FOREGROUND_VARIABLE);
+  root.style.removeProperty(MESSAGE_FOOTNOTE_FOREGROUND_VARIABLE);
   for (const variable of Object.values(APP_THEME_VARIABLES)) {
     root.style.removeProperty(variable);
   }

@@ -2109,7 +2109,7 @@ code {
   background-size: 4px 2px;
 }
 
-.chat-markdown:where(.user-message-markdown)
+.chat-markdown:where([data-message-link-fallback] .user-message-markdown)
   a:not(
     .chat-markdown-file-link,
     :has([data-slot="context-chip-label"]),
@@ -2170,7 +2170,7 @@ code {
 }
 
 .chat-markdown:where(.user-message-markdown) section[data-footnotes] {
-  color: var(--contrast-message-foreground);
+  color: var(--message-footnote-foreground, var(--contrast-muted-foreground));
 }
 
 .chat-markdown section[data-footnotes] ol {
