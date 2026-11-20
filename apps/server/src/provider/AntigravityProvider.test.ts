@@ -13,6 +13,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -172,10 +173,14 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
     Effect.andThen(initialUpdate),
     Effect.asVoid,
   );
-  // Subscribe before the trigger; yield the returned pull to await the publish.
+  // Subscribes now, before the trigger runs; yield the returned effect to await the publish.
   const nextPublish = (predicate: (snapshot: ServerProvider) => boolean) =>
-    Stream.toPull(provider.snapshot.streamChanges.pipe(Stream.filter(predicate))).pipe(
-      Effect.map((pull) => pull.pipe(Effect.map((snapshots) => snapshots[0]))),
+    provider.snapshot.streamChanges.pipe(
+      Stream.filter(predicate),
+      Stream.runHead,
+      Effect.map(Option.getOrUndefined),
+      Effect.forkChild({ startImmediately: true }),
+      Effect.map(Fiber.join),
     );
   return {
     provider,
@@ -729,8 +734,24 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         ],
       };
       const usage = yield* Ref.make(limits);
-      const harness = yield* makeHarness({ probeUsage: Ref.get(usage) });
-      const published = yield* harness.nextPublish((snapshot) => !!snapshot.usageLimits);
+      const reads = yield* Ref.make(0);
+      const harness = yield* makeHarness({
+        probeUsage: Ref.update(reads, (count) => count + 1).pipe(Effect.andThen(Ref.get(usage))),
+      });
+      // The health check after read N republishes it; its version marks that publish.
+      const republished = yield* Ref.make(0);
+      yield* Ref.set(
+        harness.probe,
+        Effect.gen(function* () {
+          const read = yield* Ref.get(reads);
+          const isRepublish = (yield* Ref.getAndSet(republished, read)) < read;
+          const version = isRepublish ? `republish-${read}` : `check-${read}`;
+          return { ...initializeResult, agentInfo: { ...initializeResult.agentInfo, version } };
+        }),
+      );
+      const published = yield* harness.nextPublish(
+        (snapshot) => snapshot.version === "republish-1" && snapshot.usageLimits !== undefined,
+      );
       yield* harness.initialize;
       expect((yield* published)?.usageLimits).toEqual(limits);
       const failedRead: ServerProviderUsageLimits = {
@@ -738,11 +759,8 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         windows: [],
         unavailable: { reason: "probeFailed" },
       };
-      // The second health check is the republish the failed background read triggers.
-      let checks = 0;
-      yield* Ref.set(harness.probe, Effect.sync(() => checks++).pipe(Effect.as(initializeResult)));
       yield* Ref.set(usage, failedRead);
-      const failed = yield* harness.nextPublish(() => checks === 2);
+      const failed = yield* harness.nextPublish((snapshot) => snapshot.version === "republish-2");
       yield* harness.provider.snapshot.refresh;
       expect((yield* failed)?.usageLimits).toEqual(failedRead);
       const recovered: ServerProviderUsageLimits = {
@@ -755,8 +773,11 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
       );
       yield* harness.provider.snapshot.refresh;
       expect((yield* recoveredPublish)?.usageLimits).toEqual(recovered);
+      const signedOut = yield* harness.nextPublish(
+        (snapshot) => snapshot.auth.status === "unauthenticated",
+      );
       yield* harness.provider.onSignedOut;
-      expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
+      expect((yield* signedOut)?.usageLimits).toBeUndefined();
       yield* Ref.set(usage, {
         checkedAt: "2026-10-09T12:02:00.000Z",
         windows: [],

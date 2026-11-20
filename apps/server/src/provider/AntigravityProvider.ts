@@ -268,7 +268,6 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
             },
           })),
         ),
-        // Enrichment cannot change published limits; a health check publishes them.
         Effect.andThen(
           Deferred.await(republish).pipe(
             Effect.flatten,
@@ -378,8 +377,8 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     haveSettingsChanged: () => false,
     initialSnapshot: () => getSnapshot,
     checkProvider: checkProvider(),
-    // A failed read is shown as failed; the CLI token expires, so old limits would mislead.
-    retainUsageLimitsOnProbeFailure: false,
+    // The draft holds the current account's limits; the CLI token expires, so old ones mislead.
+    retainUsageLimits: false,
     enrichSnapshot: ({ publishSnapshot }) =>
       SubscriptionRef.changes(metadata).pipe(
         Stream.runForEach((state) =>
@@ -554,8 +553,8 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     onSessionStarted,
     onConfigOptionsUpdated,
     onAvailableCommands,
-    // The new sign-in may be another account. Clear and republish its limits so a failed read
-    // cannot fall back to them; the session start then reads the new account's limits.
+    // The new sign-in may be another account. Clear the old limits and republish; the session
+    // start then reads the new account's limits.
     onSignedIn: resetUsage.pipe(
       Effect.andThen(
         SubscriptionRef.update(metadata, (state) => {
