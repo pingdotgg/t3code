@@ -16,6 +16,7 @@ import {
   type ComposerTrigger,
   collapseExpandedComposerCursor,
   composerSubmissionIntentForKey,
+  isShellModePrompt,
 } from "../../composer-logic";
 import { type PendingUserInput } from "../../session-logic";
 import {
@@ -84,7 +85,7 @@ export function composerCommandKeyHandler(input: {
   readonly nudgeComposerMenuHighlight: (key: "ArrowDown" | "ArrowUp") => void;
   readonly onSelectComposerItem: (item: ComposerCommandItem) => void;
   readonly resolveActiveComposerTrigger: () => { trigger: ComposerTrigger | null };
-  readonly readComposerSnapshot: () => { value: string };
+  readonly readComposerSnapshot: () => { value: string; expandedCursor: number };
   readonly applyPromptReplacement: (
     rangeStart: number,
     rangeEnd: number,
@@ -221,6 +222,17 @@ export function composerCommandKeyHandler(input: {
     );
   };
 
+  const exitShellMode = (): boolean => {
+    if (pendingUserInputs.length > 0) return false;
+    const snapshot = readComposerSnapshot();
+    if (!isShellModePrompt(snapshot.value)) return false;
+    const bang = snapshot.value.indexOf("!");
+    return applyPromptReplacement(bang, bang + 1, "", {
+      expandedCursorAfterReplace:
+        snapshot.expandedCursor > bang ? snapshot.expandedCursor - 1 : snapshot.expandedCursor,
+    });
+  };
+
   const onComposerCommandKey = (key: string, event: KeyboardEvent, isTaskItem = false) => {
     const submissionIntent = composerSubmissionIntentForKey({
       event,
@@ -244,11 +256,12 @@ export function composerCommandKeyHandler(input: {
         dismissPromptSuggestion();
         return true;
       }
-      if (!menuIsActive) return false;
+      if (!menuIsActive) return exitShellMode();
       dismissComposerTrigger(trigger);
       composerMenuOpenRef.current = false;
       return true;
     }
+    if (key === "Backspace" && promptRef.current === "!") return exitShellMode();
     if (menuIsActive && (submissionIntent === null || submissionIntent === "foreground")) {
       const currentItems = composerMenuItemsRef.current;
       const selectedItem = activeComposerMenuItemRef.current ?? currentItems[0];

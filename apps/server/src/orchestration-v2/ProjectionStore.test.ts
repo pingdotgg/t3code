@@ -7591,6 +7591,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         });
         for (const [table, index] of [
           ["messages", "orchestration_v2_projection_messages_deferred_command_idx"],
+          ["messages", "orchestration_v2_projection_messages_shell_command_idx"],
           ["subagents", "orchestration_v2_projection_subagents_routable_idx"],
           ["context_transfers", "orchestration_v2_projection_context_transfers_fork_idx"],
         ] as const) {

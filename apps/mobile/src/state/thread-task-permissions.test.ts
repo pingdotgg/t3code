@@ -128,6 +128,7 @@ vi.mock("../lib/attachmentUpload", async () => {
   };
 });
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid" }));
+vi.mock("../features/threads/userShellCommands", () => ({ shellCommandSendBlock: () => null }));
 vi.mock("../lib/composerAttachmentPreviewRetention", () => ({
   retainComposerAttachmentFileForPreview: (attachment: { readonly fileUri: string }) => {
     state.fileHolds.push(attachment.fileUri);

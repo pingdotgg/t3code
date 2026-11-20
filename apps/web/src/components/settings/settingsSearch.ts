@@ -826,6 +826,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "respond-to-shell-commands",
+    title: msg("Respond to shell commands"),
+    to: "/settings/threads",
+    scope: "environment-defaults",
+    searchTerms: [msg("! bang shell command terminal run result agent reply respond composer")],
+  },
+  {
     id: "keep-awake-while-agents-work",
     title: msg("Keep awake while agents work"),
     to: "/settings/maintenance",

@@ -598,6 +598,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate
       ? [gt("Continue threads after restarts")]
       : []),
+    ...(settings.respondToShellCommands !== DEFAULT_UNIFIED_SETTINGS.respondToShellCommands
+      ? [gt("Respond to shell commands")]
+      : []),
     ...(isBackgroundActivityDirty ? [gt("Background activity")] : []),
     ...(settings.keepAwakeWhileAgentsWork !== DEFAULT_UNIFIED_SETTINGS.keepAwakeWhileAgentsWork
       ? [gt("Keep awake while agents work")]
@@ -728,6 +731,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
+      respondToShellCommands: DEFAULT_UNIFIED_SETTINGS.respondToShellCommands,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       keepAwakeWhileAgentsWork: DEFAULT_UNIFIED_SETTINGS.keepAwakeWhileAgentsWork,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
@@ -2129,6 +2133,40 @@ export function ThreadsSettingsPanel() {
           ) : null}
         </SettingsSection>
       ) : null}
+
+      <SettingsSection id="shell-commands" title={gt("Shell commands")}>
+        <SettingsRow
+          serverScoped
+          settingKeys={["respondToShellCommands"]}
+          {...setting("respond-to-shell-commands")}
+          description={gt(
+            "Start an agent response after a ! command finishes. When off, the result waits and goes with your next message.",
+          )}
+          resetAction={
+            settings.respondToShellCommands !== DEFAULT_UNIFIED_SETTINGS.respondToShellCommands ? (
+              <SettingResetButton
+                ariaLabel={gt("Reset respond to shell commands to default")}
+                onClick={() =>
+                  updateSettings({
+                    respondToShellCommands: DEFAULT_UNIFIED_SETTINGS.respondToShellCommands,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <ScopedSwitch
+              settingKeys={["respondToShellCommands"]}
+              checked={settings.respondToShellCommands}
+              disabled={!hasServerTargets}
+              onCheckedChange={(checked) =>
+                updateSettings({ respondToShellCommands: Boolean(checked) })
+              }
+              aria-label={gt("Respond to shell commands")}
+            />
+          }
+        />
+      </SettingsSection>
 
       <SettingsSection id="text-generation" title={gt("Text generation")}>
         <SettingsRow

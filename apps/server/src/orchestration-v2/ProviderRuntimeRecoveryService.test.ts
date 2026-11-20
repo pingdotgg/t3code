@@ -132,9 +132,9 @@ it.effect("preserves async questions across startup and shutdown", () => {
   }).pipe(Effect.provide(layer));
 });
 
-it.effect(
+it.effect.each([false, true])(
   "preserves a replayable waiting run while cancelling its process-bound background work",
-  () => {
+  (respondToShellCommands) => {
     const threadId = ThreadId.make("thread_waiting_checkpoint");
     const runId = RunId.make("run_waiting_checkpoint");
     const providerThreadId = ProviderThreadId.make("provider_thread_waiting_checkpoint");
@@ -169,12 +169,14 @@ it.effect(
           nodeId: null,
           providerThreadId,
           type: "command_execution",
+          input: "npm test",
+          userShell: { cwd: "/workspace", delivery: "pending", backgrounded: true },
           status: "running",
         },
       ],
     } as unknown as OrchestrationV2ThreadProjection;
     const layer = ProviderRuntimeRecovery.layer.pipe(
-      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(ServerSettings.layerTest({ respondToShellCommands })),
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -226,9 +228,12 @@ it.effect(
       assert.deepEqual(
         recorded.map((entry) => ({
           runId: entry.runId,
-          kinds: entry.restartCancelledBackgroundWork.map((work) => work.kind),
+          work: entry.restartCancelledBackgroundWork.map((work) => ({
+            kind: work.kind,
+            awaited: work.awaited,
+          })),
         })),
-        [{ runId, kinds: ["shell"] }],
+        [{ runId, work: [{ kind: "shell", awaited: respondToShellCommands ? true : undefined }] }],
       );
       assert.isTrue(
         command.events.some(

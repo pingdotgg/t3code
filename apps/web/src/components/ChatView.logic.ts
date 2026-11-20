@@ -1,7 +1,11 @@
 import { toServerClock } from "@t3tools/client-runtime/clock";
 import { msg } from "gt-react";
 import { m, type MessageResolver } from "../i18n/messages";
-import { type OrchestrationV2ProviderTurn, type RunAttemptId } from "@t3tools/contracts";
+import {
+  parseShellCommand,
+  type OrchestrationV2ProviderTurn,
+  type RunAttemptId,
+} from "@t3tools/contracts";
 import {
   deriveLatestThreadRun,
   deriveThreadRuntime,
@@ -1426,7 +1430,8 @@ export function planComposerTurn(input: {
     !input.freshContext &&
     input.resumeCompactionTokens !== null &&
     !input.keepFullHistory &&
-    !COMPACT_COMMAND_PATTERN.test(input.messageText);
+    !COMPACT_COMMAND_PATTERN.test(input.messageText) &&
+    parseShellCommand(input.messageText.trim()) === null;
   const dispatchMode =
     input.freshContext && (input.dispatchMode === "steer" || input.dispatchMode === "restart")
       ? "queue"

@@ -32,6 +32,7 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   MessageId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  parseShellCommand,
   type EnvironmentId,
   type ModelSelection,
   type RuntimeMode,
@@ -79,6 +80,7 @@ import {
   selectPendingAcknowledgedMessages,
 } from "../features/threads/pending-thread-feed";
 import { threadAllowsProviderSwitch } from "./thread-provider-switching";
+import { shellCommandSendBlock } from "../features/threads/userShellCommands";
 import { appAtomRegistry } from "./atom-registry";
 import { pendingThreadCreationMessage } from "./pending-thread-creation";
 import type { SideChatMessage } from "../features/threads/useStartSideChat";
@@ -697,6 +699,17 @@ export function useThreadComposerState(input: {
       Dialog.alert(m(msg("Too much context")), contextBlockReason);
       return null;
     }
+    const isShellCommand = parseShellCommand(text) !== null;
+    const shellBlock = shellCommandSendBlock({
+      environmentId: thread.environmentId,
+      text,
+      connected: selectedEnvironmentRuntime?.connectionState === "connected",
+      hasAttachmentsOrContext: attachments.length > 0 || (draft.context?.records.length ?? 0) > 0,
+    });
+    if (shellBlock) {
+      Dialog.alert(shellBlock.title, shellBlock.detail);
+      return null;
+    }
 
     // A redirect's text answers its approval, so `/side` there is that text, not the command.
     const sideChatCommand = beforeDispatch === undefined ? parseSideChatCommand(text) : null;
@@ -843,7 +856,8 @@ export function useThreadComposerState(input: {
       return null;
     }
 
-    if (beforeDispatch !== undefined) {
+    // A shell command queues behind the active run, so it never answers or redirects approvals.
+    if (beforeDispatch !== undefined && !isShellCommand) {
       const response = await beforeDispatch(
         text,
         attachments.length > 0 || draft.context !== undefined,
@@ -877,6 +891,7 @@ export function useThreadComposerState(input: {
       running: activeThreadBusy && canSteerActiveTurn,
       alternateModifier: followUpOverride !== undefined && followUpOverride !== activeTurnDefault,
       activeTurnDefault,
+      canSteer: !isShellCommand,
     });
     const setupRunning = [selectedThreadActivityRun?.status, selectedThreadRuntime?.status].some(
       (status) => status === "preparing" || status === "starting",
@@ -890,12 +905,14 @@ export function useThreadComposerState(input: {
           : "auto";
 
     // A redirect belongs to the approval it answers; the armed session waits for the next message.
-    const freshContext = beforeDispatch === undefined && isFreshSessionPending(threadKey);
+    const freshContext =
+      beforeDispatch === undefined && !isShellCommand && isFreshSessionPending(threadKey);
     const metadata = makeQueuedMessageMetadata();
     // A fresh session drops the context a compaction would summarize. Only a send the notice
     // announced compacts, since the notice's minute clock can trail the exact deadline.
     const compactBeforeSend =
       compactTokens !== null &&
+      !isShellCommand &&
       !freshContext &&
       followUpDispatchMode === null &&
       appAtomRegistry.get(fullHistoryThreadKeysAtom)[threadKey] !== true &&

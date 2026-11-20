@@ -85,6 +85,7 @@ import {
   formatAssistantCitationForComposer,
   isPathSuggestionCurrent,
   extendReplacementRangeForTrailingSpace,
+  isShellModePrompt,
   replaceTextRange,
 } from "../../composer-logic";
 import { DEFAULT_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
@@ -246,10 +247,14 @@ import { observeResize } from "~/lib/observeResize";
 const isEnvironmentRequestInvalidError = Schema.is(EnvironmentRequestInvalidError);
 import { toastManager } from "../ui/toast";
 import { m as resolveMessage } from "../../i18n/messages";
-import { BuildingIcon, PlayIcon, ReplyIcon } from "lucide-react";
+import { BuildingIcon, PlayIcon, ReplyIcon, TerminalIcon } from "lucide-react";
+import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
+import type { UserShellItem } from "@t3tools/client-runtime/state/user-shell-commands";
 import { assistantCitationLabel } from "@t3tools/shared/assistantCitations";
 import { assistantCitationNavigation } from "../../lib/assistantCitationNavigation";
+import { ComposerPendingShellCommands } from "./ComposerPendingShellCommands";
+import { shellCommandPermissionAtom } from "./userShellCommands";
 import { Button } from "../ui/button";
 import { useManagedPolicy } from "../../state/managedPolicy";
 import { hasProviderSetup } from "./ProviderStatusBanner";
@@ -391,6 +396,8 @@ export interface ChatComposerProps {
   isPreparingWorktree: boolean;
   canSteer: boolean;
   bannerItems: readonly ComposerBannerStackItem[];
+  /** Shell results the server sends with the next message. */
+  pendingShellCommands?: ReadonlyArray<UserShellItem>;
   resumeCompactionTokens: number | null;
   keepFullHistory: boolean;
   onToggleKeepFullHistory: () => void;
@@ -492,6 +499,7 @@ export interface ChatComposerProps {
 
 const NO_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const NO_PROVIDER_SLASH_COMMANDS: ServerProvider["slashCommands"] = [];
+const NO_PENDING_SHELL_COMMANDS: ReadonlyArray<UserShellItem> = [];
 
 export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps) {
   const gt = useGT();
@@ -523,7 +531,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isRevertingCheckpoint = false,
     sendDisabledReason: externalSendDisabledReason,
     isPreparingWorktree,
-    canSteer,
+    canSteer: canSteerActiveTurn,
+    pendingShellCommands = NO_PENDING_SHELL_COMMANDS,
     environmentUnavailable,
     activePendingApproval: incomingPendingApproval,
     pendingApprovals,
@@ -1194,6 +1203,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   )
     ? "steer"
     : settings.followUpBehavior;
+  const isShellMode = pendingUserInputs.length === 0 && isShellModePrompt(prompt);
+  const canRunShellCommands = useAtomValue(shellCommandPermissionAtom(environmentId));
+  // The server queues a shell command behind an active run; it never steers.
+  const canSteer = canSteerActiveTurn && !isShellMode;
   const composerSuggestionsVisible = composerMenuOpen;
   const composerSuggestionListVisible = composerSuggestionsVisible && composerMenuItems.length > 0;
   const activePendingUserInput = pendingUserInputs[0] ?? null;
@@ -2600,7 +2613,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         },
       ]
     : [];
-  const bannerItems: readonly ComposerBannerStackItem[] =
+  const sendBannerItems: readonly ComposerBannerStackItem[] =
     runtimeModeCeilingDenial === undefined || activePendingProgress
       ? [...props.bannerItems, ...replyBannerItems]
       : [
@@ -2629,6 +2642,28 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 }),
           },
         ];
+  const bannerItems: readonly ComposerBannerStackItem[] = isShellMode
+    ? [
+        ...sendBannerItems,
+        canRunShellCommands
+          ? {
+              id: "shell-mode",
+              variant: "info",
+              icon: <TerminalIcon />,
+              title: gt("Shell command", {
+                $context: "composer banner title shown while typing a ! command",
+              }),
+              description: gt("Runs in the thread's working directory. Press Esc to exit."),
+            }
+          : {
+              id: "shell-mode",
+              variant: "warning",
+              icon: <TerminalIcon />,
+              title: gt("Shell commands need terminal access"),
+              description: gt("This connection can't run commands here. Press Esc to exit."),
+            },
+      ]
+    : sendBannerItems;
   const shelfItems = hasBlockingComposerTopDrawer
     ? bannerItems.filter(
         (item) =>
@@ -3675,6 +3710,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onRemove={onRemoveEditingQueuedAttachment}
                   />
                 )}
+
+              {!isComposerCollapsedMobile &&
+              pendingUserInputs.length === 0 &&
+              pendingShellCommands.length > 0 ? (
+                <ComposerPendingShellCommands
+                  environmentId={environmentId}
+                  items={pendingShellCommands}
+                  canDismiss={canOperateThread}
+                />
+              ) : null}
 
               {composerAttachmentMediaRow}
 

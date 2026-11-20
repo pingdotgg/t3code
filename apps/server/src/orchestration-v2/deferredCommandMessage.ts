@@ -13,3 +13,6 @@ export const DEFERRED_COMMAND_MESSAGE_CONDITION = `role = 'user' AND (
   lower(trim(${text}, ${whitespace})) = '/compact'
   OR trim(${text}, ${whitespace}) GLOB '/goal*'
 )`;
+
+/** A user message starting `!`; settled shell runs defer history too. userShellCommand narrows it. */
+export const SHELL_COMMAND_MESSAGE_CONDITION = `role = 'user' AND ${text} GLOB '!*'`;

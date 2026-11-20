@@ -26,6 +26,8 @@ import {
   turnItemNeedsDetailFetch,
 } from "@t3tools/client-runtime/work-log/item-detail";
 import { claudeSkillInvocation } from "@t3tools/shared/toolActivity";
+import { isUserShellItem } from "@t3tools/client-runtime/state/user-shell-commands";
+import { useAtomValue } from "@effect/atom-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { memo, use, useState, type KeyboardEvent } from "react";
 import {
@@ -73,6 +75,7 @@ import {
   thoughtPreviewPlugins,
   THOUGHT_PREVIEW_SOURCE_MAX_LENGTH,
 } from "./TimelineWorkEntryRow.logic";
+import { shellCommandPermissionAtom, useUserShellCommandActions } from "./userShellCommands";
 
 export function useThreadReadTarget(entry: TimelineWorkEntry, environmentId: EnvironmentId) {
   const rawThreadId = threadReadTargetId(entry);
@@ -619,6 +622,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               <T>Open subagent</T>
             </InlineButton>
           ) : null}
+          <UserShellRowActions workEntry={workEntry} />
           {showFailedIndicator &&
           !showDestructiveRowStyle &&
           !toolIconAcceptsTint(entryToolIcon) ? (
@@ -693,6 +697,55 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         </WorkLogDetails>
       ) : null}
     </WorkLogRow>
+  );
+}
+
+function UserShellRowActions({ workEntry }: { workEntry: TimelineWorkEntry }) {
+  const ctx = use(TimelineRowCtx);
+  const gt = useGT();
+  const canRunShell = useAtomValue(shellCommandPermissionAtom(ctx.activeThreadEnvironmentId));
+  const actions = useUserShellCommandActions();
+  const projected = workEntry.projectedItem;
+  const item = projected?.item;
+  // Inherited items belong to the thread they were forked from.
+  if (
+    !ctx.canOperateThread ||
+    projected?.visibility !== "local" ||
+    item === undefined ||
+    !isUserShellItem(item)
+  ) {
+    return null;
+  }
+  const target = {
+    environmentId: ctx.activeThreadEnvironmentId,
+    threadId: projected.sourceThreadId,
+    itemId: projected.sourceItemId,
+  };
+  return (
+    <>
+      {canRunShell && item.status === "running" && item.userShell.backgrounded ? (
+        <InlineButton
+          onClick={(event) => {
+            event.stopPropagation();
+            void actions.stop(target);
+          }}
+          onKeyDown={stopRowToggle}
+        >
+          {gt("Stop", { $context: "button that stops a running shell command" })}
+        </InlineButton>
+      ) : null}
+      {item.userShell.delivery === "dismissed" ? (
+        <InlineButton
+          onClick={(event) => {
+            event.stopPropagation();
+            void actions.setDelivery(target, "pending");
+          }}
+          onKeyDown={stopRowToggle}
+        >
+          {gt("Include in next message")}
+        </InlineButton>
+      ) : null}
+    </>
   );
 }
 

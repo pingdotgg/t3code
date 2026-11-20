@@ -1,7 +1,9 @@
+import * as ShellCommandService from "./ShellCommandService.ts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
 import {
+  userShellCommand,
   CommandId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   latestProviderTurnForAttempt,
@@ -253,6 +255,7 @@ export class ProviderTurnStartServiceV2 extends Context.Service<
 export const layer: Layer.Layer<
   ProviderTurnStartServiceV2,
   never,
+  | ShellCommandService.ShellCommandService
   | EventSink.EventSinkV2
   | ContextHandoffService.ContextHandoffServiceV2
   | IdAllocator.IdAllocatorV2
@@ -271,6 +274,8 @@ export const layer: Layer.Layer<
 > = Layer.effect(
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
+    const shells = yield* ShellCommandService.ShellCommandService;
+    const shellSettings = yield* ServerSettings.ServerSettingsService;
     const eventSink = yield* EventSink.EventSinkV2;
     const turnAnalytics = yield* ProviderUsageAnalytics.ProviderTurnAnalytics;
     const contextHandoffService = yield* ContextHandoffService.ContextHandoffServiceV2;
@@ -420,6 +425,7 @@ export const layer: Layer.Layer<
         readonly rootNode: OrchestrationV2ExecutionNode;
         readonly attempt: OrchestrationV2RunAttempt;
         readonly turnItems: ReadonlyArray<OrchestrationV2TurnItem>;
+        readonly existingItem?: OrchestrationV2TurnItem;
         readonly signal: string;
         readonly status: "completed" | "failed";
         readonly now: DateTime.Utc;
@@ -437,7 +443,7 @@ export const layer: Layer.Layer<
         const { run, rootNode, attempt, turnItems, now, status } = input;
         const runId = run.id;
         const started = input.startedAt === undefined ? {} : { startedAt: input.startedAt };
-        const item: OrchestrationV2TurnItem = {
+        const item: OrchestrationV2TurnItem = input.existingItem ?? {
           id: idAllocator.derive.runSignalTurnItem({ runId, signal: input.signal }),
           threadId: run.threadId,
           runId,
@@ -458,7 +464,9 @@ export const layer: Layer.Layer<
           ...input.item,
         };
         const eventPayloads = [
-          { type: "turn-item.updated", payload: item },
+          ...(input.existingItem === undefined
+            ? [{ type: "turn-item.updated" as const, payload: item }]
+            : []),
           { type: "run.updated", payload: { ...run, status, ...started, completedAt: now } },
           {
             type: "run-attempt.updated",
@@ -543,6 +551,17 @@ export const layer: Layer.Layer<
           .filter((transfer) => transfer.type === "subagent_result")
           .map((transfer) => transfer.id),
       );
+      // A `!` run that settled without a provider turn leaves its history and fork to the next turn.
+      const isSettledShellRun = (runId: RunId | null) =>
+        projection.runs.some(
+          (source) =>
+            source.id === runId &&
+            source.status === "completed" &&
+            projection.messages.some(
+              (message) =>
+                message.id === source.userMessageId && userShellCommand(message) !== null,
+            ),
+        );
       const isPendingForRun = (handoff: OrchestrationV2ContextHandoff, anyProviderThread = false) =>
         handoff.status === "ready" &&
         (handoff.targetRunId === run.id ||
@@ -567,11 +586,12 @@ export const layer: Layer.Layer<
                   (source.status === "completed" &&
                     handoff.delivery === undefined &&
                     // Compaction and /goal turns defer history to the next turn.
-                    projection.messages.some(
+                    (projection.messages.some(
                       (message) =>
                         message.id === source.userMessageId &&
                         (isCompactionCommandMessage(message) || parseGoalCommand(message) !== null),
-                    ))),
+                    ) ||
+                      isSettledShellRun(source.id)))),
             )));
       const isSideChatHandoff = (handoff: OrchestrationV2ContextHandoff) =>
         projection.thread.lineage.sideChat === true &&
@@ -596,7 +616,7 @@ export const layer: Layer.Layer<
         (transfer) =>
           transfer.type === "fork" &&
           transfer.targetThreadId === input.threadId &&
-          transfer.targetRunId === run.id &&
+          (transfer.targetRunId === run.id || isSettledShellRun(transfer.targetRunId)) &&
           transfer.status === "pending" &&
           transfer.resolution === null,
       );
@@ -867,6 +887,62 @@ export const layer: Layer.Layer<
         return;
       }
       const resolvedRuntimePolicy = resolvedPolicy.success;
+      const shellCommand = userShellCommand(message);
+      if (shellCommand !== null) {
+        const now = yield* DateTime.now;
+        const item = yield* shells.execute({
+          run,
+          driver: providerThread.driver,
+          item: {
+            id: idAllocator.derive.runSignalTurnItem({ runId, signal: "user-shell-command" }),
+            threadId: input.threadId,
+            runId,
+            nodeId: rootNode.id,
+            providerThreadId: providerThread.id,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal:
+              Math.max(
+                0,
+                ...projection.turnItems
+                  .filter((item) => item.runId === runId)
+                  .map((item) => item.ordinal),
+              ) + 1,
+            type: "command_execution",
+            title: "You ran",
+            input: shellCommand,
+            userShell: { cwd: resolvedRuntimePolicy.cwd ?? process.cwd(), delivery: "pending" },
+            status: "running",
+            startedAt: now,
+            completedAt: null,
+            updatedAt: now,
+          },
+        });
+        if (
+          !(yield* shellSettings.getSettings).respondToShellCommands ||
+          item.userShell.backgrounded ||
+          item.status === "interrupted" ||
+          item.status === "running"
+        ) {
+          yield* settleRunBeforeStart({
+            run,
+            rootNode,
+            attempt,
+            turnItems: projection.turnItems,
+            signal: "user-shell-command",
+            status: "completed",
+            now: yield* DateTime.now,
+            startedAt: now,
+            providerInstanceId: run.providerInstanceId,
+            itemProviderThreadId: providerThread.id,
+            item,
+            existingItem: item,
+          });
+          return;
+        }
+      }
+
       if (!(yield* isCurrentAttemptInStatus("starting"))) return;
       const existingSessionProjection = projection.providerSessions.find(
         (candidate) => candidate.id === providerSessionId,
@@ -986,13 +1062,16 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
-      const userText = withMessageSenderNote(
-        providerMessage,
-        projectComposerContextForProvider({
-          text: providerMessage.text,
-          records: providerMessage.context?.records ?? [],
-        }),
-      );
+      const userText =
+        shellCommand !== null
+          ? ""
+          : withMessageSenderNote(
+              providerMessage,
+              projectComposerContextForProvider({
+                text: providerMessage.text,
+                records: providerMessage.context?.records ?? [],
+              }),
+            );
       // Native goal commands go verbatim; handoff history waits a turn.
       const goalDriver =
         session.driver === "codex" ||
@@ -1966,6 +2045,13 @@ export const layer: Layer.Layer<
           ],
         });
       });
+      const pendingShells =
+        goalCommand ||
+        isCompactionCommandMessage(message) ||
+        (run.restartContinuationOfRunId !== undefined && !noteContinuation)
+          ? []
+          : yield* shells.pending(input.threadId);
+      const shellContext = pendingShells.map(ShellCommandService.shellCommandContext).join("\n\n");
       const startWithHandoffs = Effect.fn("ProviderTurnStartService.startWithHandoffs")(
         function* (turnInput: Parameters<typeof session.startTurn>[0], compact = false) {
           const delivery = yield* deliverContextHandoffs({
@@ -1992,7 +2078,7 @@ export const layer: Layer.Layer<
             sideChatHandoff === undefined || compact || goalCommand
               ? ""
               : sideChatHandoff.summaryText;
-          const context = [delivery.context, sideChatContext, restartNote]
+          const context = [shellContext, delivery.context, sideChatContext, restartNote]
             .filter((part) => part !== "")
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
@@ -2043,6 +2129,13 @@ export const layer: Layer.Layer<
             ),
           );
           // After provider acceptance, failed delivery bookkeeping must not stop live ingestion.
+          yield* shells
+            .delivered(pendingShells)
+            .pipe(
+              Effect.catchCause(() =>
+                Effect.logWarning("Failed to record shell command delivery", { runId: run.id }),
+              ),
+            );
           const nativeThreadId = runningProviderThread.nativeThreadRef?.nativeId;
           yield* Effect.forEach(
             [
@@ -2082,6 +2175,7 @@ export const layer: Layer.Layer<
         ),
       );
       const deliverySession =
+        pendingShells.length === 0 &&
         effectiveHandoffs.length === 0 &&
         retryHandoff.handoffs.length === 0 &&
         retryHandoff.attachments.length === 0 &&

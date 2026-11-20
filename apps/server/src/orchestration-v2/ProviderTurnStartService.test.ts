@@ -3,6 +3,7 @@ import {
   expandAssistantCitationsForProvider,
 } from "@t3tools/shared/assistantCitations";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as ShellCommandService from "./ShellCommandService.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
@@ -165,6 +166,9 @@ function startWithMissingWorktree(
   const createWorktree = vi.fn(() => Effect.succeed({} as never));
   const listLocalBranchNames = vi.fn(() => Effect.succeed(["feature/restore"]));
   const layer = ProviderTurnStart.layer.pipe(
+    Layer.provide(
+      Layer.mock(ShellCommandService.ShellCommandService)({ pending: () => Effect.succeed([]) }),
+    ),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
@@ -1328,6 +1332,9 @@ function makeLocalCommandHarness(input: {
   );
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
+      Layer.mock(ShellCommandService.ShellCommandService)({ pending: () => Effect.succeed([]) }),
+    ),
+    Layer.provide(
       Layer.mergeAll(
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({
           prepareProviderHandoff,
@@ -1462,6 +1469,7 @@ function layerStartEffectWorker(
         Layer.mock(ThreadTitleRegenerationService.ThreadTitleRegenerationService)({}),
         Layer.mock(ThreadManagementService.ThreadManagementService)({}),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+        Layer.mock(ShellCommandService.ShellCommandService)({}),
         ServerSettings.layerTest(),
       ),
     ),

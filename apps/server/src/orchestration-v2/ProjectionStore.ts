@@ -106,6 +106,7 @@ import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
 import { DELEGATED_TASK_MESSAGE_CONDITION } from "./delegatedTaskMessage.ts";
 import {
   DEFERRED_COMMAND_MESSAGE_CONDITION,
+  SHELL_COMMAND_MESSAGE_CONDITION,
   JAVASCRIPT_TRIM_WHITESPACE,
 } from "./deferredCommandMessage.ts";
 import { readableSearchText } from "./messageSearchIndex.ts";
@@ -401,6 +402,7 @@ export interface ProjectionRecordFilter {
   readonly subagentRunIds?: ReadonlyArray<RunId>;
   readonly subagentChildThreadIds?: ReadonlyArray<ThreadId>;
   readonly nodeIds?: ReadonlyArray<NodeId>;
+  readonly pendingUserShellCommands?: boolean;
   readonly turnItemRequestIds?: ReadonlyArray<RuntimeRequestId>;
   readonly turnItemTypes?: ReadonlyArray<OrchestrationV2TurnItem["type"]>;
   readonly turnItemStatuses?: ReadonlyArray<OrchestrationV2TurnItem["status"]>;
@@ -3730,6 +3732,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       ${threadColumn(filter?.turnItemNodeIds)} = ${threadId}
         ${filter?.turnItemRequestIds === undefined ? sql`` : sql`AND json_extract(payload_json, '$.requestId') IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemRequestIds)}))`}
         ${filter?.turnItemTypes === undefined ? sql`` : sql`AND type IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemTypes)}))`}
+        ${filter?.pendingUserShellCommands === true ? sql`AND json_extract(payload_json, '$.userShell.delivery') = 'pending'` : sql``}
         ${filter?.turnItemStatuses === undefined ? sql`` : sql`AND status IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemStatuses)}))`}
         ${filter?.turnItemRunId === undefined ? sql`` : sql`AND run_id = ${filter.turnItemRunId}`}
         ${filter?.turnItemNodeIds === undefined ? sql`` : sql`AND node_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemNodeIds)}))`}
@@ -5161,6 +5164,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND CASE WHEN json_valid(payload_json)
                     THEN json_extract(payload_json, '$.restartContinuationOfRunId') IS NOT NULL
                     ELSE 0 END
+                UNION
+                SELECT thread_id FROM orchestration_v2_projection_turn_items
+                WHERE type = 'command_execution' AND status = 'running'
+                  AND CASE WHEN json_valid(payload_json)
+                    THEN json_extract(payload_json, '$.userShell.backgrounded') = 1
+                    ELSE 0 END
               `;
             case "runtime":
               return sql`
@@ -5501,7 +5510,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             const messageIds = [run, unsentSource].flatMap((source) =>
               source === undefined ? [] : [source.userMessageId],
             );
-            // Earlier /compact and /goal turns defer context too; parseGoalCommand narrows the /goal prefix match.
+            // Earlier /compact, /goal and ! shell turns defer context too; parseGoalCommand and userShellCommand narrow the prefix matches.
             const messages = yield* sql<PayloadRow>`
               SELECT payload_json FROM (
                 SELECT payload_json, created_at, message_id FROM orchestration_v2_projection_messages
@@ -5509,6 +5518,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 UNION
                 SELECT payload_json, created_at, message_id FROM orchestration_v2_projection_messages
                 WHERE thread_id = ${threadId} AND ${sql.literal(DEFERRED_COMMAND_MESSAGE_CONDITION)}
+                UNION
+                SELECT payload_json, created_at, message_id FROM orchestration_v2_projection_messages
+                WHERE thread_id = ${threadId} AND ${sql.literal(SHELL_COMMAND_MESSAGE_CONDITION)}
               ) ORDER BY created_at ASC, message_id ASC
             `.pipe(Effect.flatMap(decodeRows(decodeMessagePayload, threadId)));
             const conversation = yield* sql<{ present: number }>`

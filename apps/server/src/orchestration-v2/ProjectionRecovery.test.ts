@@ -898,15 +898,42 @@ it.effect("includes shared sessions and provider-owned background rosters in rec
       providerThreadId: preparedProviderThreadId,
       restartContinuationOfRunId: RunId.make("run:recovery:source"),
     });
+    const shell = yield* createThread("backgrounded-shell");
+    const shellRunId = yield* createRun(shell, "completed");
+    yield* projections.apply({
+      id: EventId.make("event:recovery:backgrounded-shell"),
+      type: "turn-item.updated",
+      threadId: shell,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make("item:recovery:backgrounded-shell"),
+        threadId: shell,
+        runId: shellRunId,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        type: "command_execution",
+        status: "running",
+        title: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+        input: "npm test",
+        userShell: { cwd: "/workspace", delivery: "pending", backgrounded: true },
+      },
+    });
     assert.deepEqual(
       new Set(yield* projections.getRecoveryThreadIds("restart-continuations")),
-      new Set([sharedWork, prepared]),
+      new Set([sharedWork, prepared, shell]),
     );
     // One idle bound thread stops the shared session; the rest have nothing to recover.
     const runtime = yield* projections.getRecoveryThreadIds("runtime");
     assert.deepEqual(
       new Set(runtime.filter((threadId) => !idleShared.includes(threadId))),
-      new Set([sharedWork, roster, prepared]),
+      new Set([sharedWork, roster, prepared, shell]),
     );
     assert.equal(runtime.filter((threadId) => idleShared.includes(threadId)).length, 1);
     assert.deepEqual(
@@ -925,7 +952,7 @@ it.effect("includes shared sessions and provider-owned background rosters in rec
           include: ["project:recovery"],
         }),
       ),
-      new Set([sharedWork, prepared]),
+      new Set([sharedWork, prepared, shell]),
     );
     const preparedState = yield* projections.getRuntimeRecoveryProjection(prepared);
     assert.deepEqual(

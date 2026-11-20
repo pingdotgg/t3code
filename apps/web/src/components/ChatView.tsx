@@ -6,6 +6,10 @@ import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-edit";
+import {
+  pendingUserShellItems,
+  type UserShellItem,
+} from "@t3tools/client-runtime/state/user-shell-commands";
 import { ScrollToEndButton, WorkspaceFileDropOverlay } from "./chat/TimelineOverlays";
 import { usePasteToFocusComposer } from "./chat/usePasteToFocusComposer";
 import { useFocusComposerOnThreadOpen } from "./chat/useFocusComposerOnThreadOpen";
@@ -417,6 +421,7 @@ const EMPTY_TURN_ITEMS: ThreadStructure["turnItems"] = [];
 const EMPTY_RUNS: ThreadStructure["runs"] = [];
 const EMPTY_AUTO_UPDATE_ENVIRONMENTS: ReadonlyArray<EnvironmentPresentation> = [];
 const EMPTY_COMPOSER_BANNER_ITEMS: ReadonlyArray<ComposerBannerStackItem> = [];
+const EMPTY_PENDING_SHELL_COMMANDS: ReadonlyArray<UserShellItem> = [];
 
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 
@@ -520,6 +525,13 @@ export default function ChatView(props: ChatViewProps) {
   });
   const serverThreadProjection = useQuietThreadProjection(routeThreadDetailRef);
   const serverProjection = serverThreadProjection?.projection ?? null;
+  const pendingShellItems =
+    serverProjection === null
+      ? EMPTY_PENDING_SHELL_COMMANDS
+      : pendingUserShellItems(serverProjection);
+  // Keeps the memoized composer's props stable while nothing is pending.
+  const pendingShellCommands =
+    pendingShellItems.length === 0 ? EMPTY_PENDING_SHELL_COMMANDS : pendingShellItems;
   // Only the shell-less fallback needs these; with a shell, the shell carries them.
   const fallbackDetailRef = serverThreadShell === null ? routeThreadDetailRef : null;
   const fallbackUpdatedAt = useThreadUpdatedAt(fallbackDetailRef);
@@ -3729,6 +3741,7 @@ export default function ChatView(props: ChatViewProps) {
                                 }
                                 phase={phase}
                                 canSteer={!compactionBlocksSteer}
+                                pendingShellCommands={pendingShellCommands}
                                 canInterrupt={canInterruptRunningThread}
                                 isSendBusy={
                                   (isSendBusy && !sendQueuesBehindSetup) ||

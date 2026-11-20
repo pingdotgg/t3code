@@ -52,6 +52,7 @@ import {
   type FakeDriver,
 } from "../../test/fakeEnvironment";
 import { act, fakeTimers, render } from "../../test/render";
+import { renderAppDraft } from "../../test/renderAppDraft";
 
 const PNG = Uint8Array.from(
   atob(
@@ -391,6 +392,28 @@ it("a new draft does not load its reserved thread before the server lists it", a
     .filter((url) => url.includes(`/api/orchestration/threads/${threadId}/`));
   // A 404 here marks the thread deleted, and the view never loads it once the send creates it.
   expect(threadRequests).toEqual([]);
+});
+
+it("a leading ! enters shell mode, and Escape or Backspace on a bare ! leaves it", async () => {
+  using _environment = installFakeEnvironment([]);
+  const draftId = DraftId.make("draft-shell-mode");
+  await using _app = await renderAppDraft(draftId);
+  const draftPrompt = () => useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt;
+  const editor = page.getByTestId("composer-editor");
+  const banner = page.getByText("Shell command", { exact: true });
+
+  await userEvent.type(editor, "!ls");
+  await expect.element(banner).toBeVisible();
+  await userEvent.keyboard("{Escape}");
+  await expect.element(banner).not.toBeInTheDocument();
+  expect(draftPrompt()).toBe("ls");
+
+  await userEvent.clear(editor);
+  await userEvent.type(editor, "!{ArrowLeft}");
+  await expect.element(banner).toBeVisible();
+  await userEvent.keyboard("{Backspace}");
+  await expect.element(banner).not.toBeInTheDocument();
+  expect(draftPrompt() ?? "").toBe("");
 });
 
 it("an interrupted image-only first send of a new thread says it may not have been sent", async () => {

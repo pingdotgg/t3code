@@ -1360,7 +1360,12 @@ describe("planComposerTurn", () => {
         shouldQueueBehindActiveRun: true,
       });
     }
-    for (const messageText of ["/COMPACT", "/compact keep the API notes", "/compact\n  tests"]) {
+    for (const messageText of [
+      "/COMPACT",
+      "/compact keep the API notes",
+      "/compact\n  tests",
+      "!pwd",
+    ]) {
       expect(planComposerTurn({ ...stale, messageText })).toMatchObject({
         compactBeforeSend: false,
         turnDispatchMode: "auto",

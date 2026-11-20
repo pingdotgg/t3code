@@ -4,6 +4,7 @@
 import {
   type AssetCreateUrlResult,
   AuthStandardClientScopes,
+  type AuthEnvironmentScope,
   EnvironmentId,
   EventId,
   ExecutionEnvironmentDescriptor,
@@ -596,34 +597,35 @@ const encodedDescriptor = Schema.encodeSync(ExecutionEnvironmentDescriptor)(
 /** Serves the environment's HTTP API and these threads until disposed. */
 export function installFakeEnvironment(
   fixtures: ReadonlyArray<FakeThread>,
-  options?: {
+  options: {
+    readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
     readonly acceptCommands?: boolean;
     readonly keybindings?: ResolvedKeybindingsConfig;
     readonly extraProjects?: ReadonlyArray<Pick<OrchestrationProjectShell, "id" | "title">>;
     /** Commands left unanswered even when accepting, until `rejectPendingCommand`. */
     readonly holdCommand?: (command: OrchestrationV2Command) => boolean;
     readonly providers?: ReadonlyArray<unknown>;
-  },
+  } = {},
 ): Disposable {
   threads = fixtures;
   baseServerConfig = {
     ...makeServerConfig(
-      options?.providers ?? [CODEX_PROVIDER],
+      options.providers ?? [CODEX_PROVIDER],
       fixtures.some((thread) => (thread.issues?.length ?? 0) > 0),
     ),
-    keybindings: options?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS,
+    keybindings: options.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS,
   };
   dispatched = [];
-  acceptCommands = options?.acceptCommands === true;
+  acceptCommands = options.acceptCommands === true;
   projects = [
     project,
-    ...(options?.extraProjects ?? []).map((extra) => ({
+    ...(options.extraProjects ?? []).map((extra) => ({
       ...project,
       ...extra,
       workspaceRoot: `/workspace/${extra.title}`,
     })),
   ];
-  holdCommand = options?.holdCommand ?? (() => false);
+  holdCommand = options.holdCommand ?? (() => false);
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
     if (url.origin !== window.location.origin) return realFetch(input, init);
@@ -632,7 +634,7 @@ export function installFakeEnvironment(
       return json({
         authenticated: true,
         auth,
-        scopes: AuthStandardClientScopes,
+        scopes: options.scopes ?? AuthStandardClientScopes,
         sessionMethod: "browser-session-cookie",
         expiresAt: "2099-01-01T00:00:00.000Z",
       });

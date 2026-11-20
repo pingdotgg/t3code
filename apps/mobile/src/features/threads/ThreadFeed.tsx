@@ -9,6 +9,7 @@ import { ListActionRow } from "../../components/ui/ListActionRow";
 import { ListSection } from "../../components/ui/ListSection";
 import { collectMobileAssistantTextSelectors } from "../../lib/assistantCitationSelection";
 import { Button } from "../../components/ui/Button";
+import { isUserShellItem } from "@t3tools/client-runtime/state/user-shell-commands";
 import * as Dialog from "../../components/ui/Dialog";
 import { ASSISTANT_CITATION_MAX_TEXT_LENGTH, type AssistantCitation } from "@t3tools/contracts";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
@@ -4205,8 +4206,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         ) {
           return undefined;
         }
+        // A user shell row can grow a Stop or Include action line below it.
         return entry.activities.some(
-          (activity) => activity.prominent || expandedWorkRows[activity.id],
+          (activity) =>
+            activity.prominent ||
+            expandedWorkRows[activity.id] ||
+            isUserShellItem(activity.projectedItem.item),
         )
           ? undefined
           : collapsedWorkLogHeight(entry.activities, entry.continuesWorkLog);
