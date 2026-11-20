@@ -347,7 +347,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
     }),
   );
 
-  it.effect("offers Auto only while the session advertises agy's own Auto", () =>
+  it.effect("offers Auto only while the signed-in session advertises agy's own Auto", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
       yield* harness.initialize;
@@ -355,8 +355,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         Effect.map((snapshot) => snapshot.supportedRuntimeModes),
       );
       const withoutAuto = ["approval-required", "auto-accept-edits", "full-access"];
-      expect(yield* supportedModes).toEqual(withoutAuto);
-      yield* harness.provider.onSessionStarted({
+      const startedWithAuto = {
         ...started,
         sessionSetupResult: {
           ...sessionSetupResult,
@@ -368,7 +367,9 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
             ],
           },
         },
-      });
+      };
+      expect(yield* supportedModes).toEqual(withoutAuto);
+      yield* harness.provider.onSessionStarted(startedWithAuto);
       expect(yield* supportedModes).toEqual([
         "approval-required",
         "auto-accept-edits",
@@ -376,6 +377,9 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         "full-access",
       ]);
       yield* harness.provider.onSessionStarted(started);
+      expect(yield* supportedModes).toEqual(withoutAuto);
+      yield* harness.provider.onSessionStarted(startedWithAuto);
+      yield* harness.provider.onSignedOut;
       expect(yield* supportedModes).toEqual(withoutAuto);
     }),
   );

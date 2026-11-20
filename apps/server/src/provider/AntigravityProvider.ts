@@ -513,6 +513,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
             slashCommands: [],
             skills: [],
             workspaceSnapshots: [],
+            supportedRuntimeModes: RUNTIME_MODES_WITHOUT_AUTO,
             supportsTextGeneration: false,
             usageLimits: undefined,
           },
