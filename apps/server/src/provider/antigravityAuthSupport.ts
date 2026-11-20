@@ -59,8 +59,8 @@ const browserHelperSource =
   `()=>process.exit(0))`;
 const browserPreflightUrl = "https://example.invalid/t3-antigravity-browser-preflight";
 const ISOLATED_AUTH_FILES = [
-  "acp_token.json",
   "antigravity-oauth-token",
+  "acp_token.json",
   "installation_id",
 ] as const;
 const MAX_ISOLATED_AUTH_FILE_BYTES = 64 * 1024;
@@ -166,8 +166,8 @@ export interface AntigravityAuthorizationUrl {
   readonly state: string;
 }
 
-function authSupportError(detail: string) {
-  return new AcpErrors.AcpTransportError({ detail, cause: undefined });
+function authSupportError(detail: string, cause?: unknown) {
+  return new AcpErrors.AcpTransportError({ detail, cause });
 }
 
 // The 1.5 CLI answers `authenticate` with this internal error when it has no sign-in and no display.
@@ -554,11 +554,9 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
       path.resolve(input.copyAuthFromProfileDirectory),
       "antigravity-acp",
     );
-    const hasCliToken = yield* fs
-      .exists(path.join(sourceAcpDirectory, "antigravity-oauth-token"))
-      .pipe(Effect.orElseSucceed(() => false));
+    let copiedCliToken = false;
     for (const fileName of ISOLATED_AUTH_FILES) {
-      if (hasCliToken && fileName === "acp_token.json") continue;
+      if (copiedCliToken && fileName === "acp_token.json") continue;
       const sourcePath = path.join(sourceAcpDirectory, fileName);
       const isLink = yield* fs.readLink(sourcePath).pipe(
         Effect.as(true),
@@ -576,26 +574,35 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
       const contents = yield* fs
         .readFile(sourcePath)
         .pipe(
-          Effect.mapError(() =>
-            authSupportError("Could not read Antigravity sign-in credentials for isolated run."),
+          Effect.mapError((cause) =>
+            authSupportError(
+              "Could not read Antigravity sign-in credentials for isolated run.",
+              cause,
+            ),
           ),
         );
       const targetPath = path.join(acpDirectory, fileName);
       yield* fs
         .writeFile(targetPath, contents)
         .pipe(
-          Effect.mapError(() =>
-            authSupportError("Could not prepare Antigravity sign-in credentials for isolated run."),
+          Effect.mapError((cause) =>
+            authSupportError(
+              "Could not prepare Antigravity sign-in credentials for isolated run.",
+              cause,
+            ),
           ),
         );
       if (platform !== "win32") {
         yield* fs
           .chmod(targetPath, 0o600)
           .pipe(
-            Effect.mapError(() =>
-              authSupportError("Could not protect Antigravity sign-in credentials."),
+            Effect.mapError((cause) =>
+              authSupportError("Could not protect Antigravity sign-in credentials.", cause),
             ),
           );
+      }
+      if (fileName === "antigravity-oauth-token") {
+        copiedCliToken = true;
       }
     }
   }
@@ -612,16 +619,16 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
       yield* fs
         .writeFileString(targetPath, contents)
         .pipe(
-          Effect.mapError(() =>
-            authSupportError("Could not initialize isolated Antigravity configuration."),
+          Effect.mapError((cause) =>
+            authSupportError("Could not initialize isolated Antigravity configuration.", cause),
           ),
         );
       if (platform !== "win32") {
         yield* fs
           .chmod(targetPath, 0o600)
           .pipe(
-            Effect.mapError(() =>
-              authSupportError("Could not protect isolated Antigravity configuration."),
+            Effect.mapError((cause) =>
+              authSupportError("Could not protect isolated Antigravity configuration.", cause),
             ),
           );
       }

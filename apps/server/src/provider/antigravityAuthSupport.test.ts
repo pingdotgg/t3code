@@ -960,6 +960,66 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         );
         expect(yield* fs.exists(path.join(isolatedProfile, "AGENTS.md"))).toBe(false);
         expect(yield* fs.exists(path.join(isolatedProfile, "config", "skills"))).toBe(false);
+
+        // Oversized preferred token falls back to the legacy token.
+        const sourceOauthToken = path.join(
+          sourceProfile,
+          "antigravity-acp",
+          "antigravity-oauth-token",
+        );
+        yield* fs.writeFileString(sourceOauthToken, "x".repeat(64 * 1024 + 1));
+        const oversizedFallbackProfile = path.join(root, "isolated-profile-oversized-fallback");
+        yield* prepareAntigravityProfile({
+          profileDirectory: oversizedFallbackProfile,
+          userHome,
+          runtimeExecutablePath: "/fake/isolated-node",
+          platform: "linux",
+          baseEnv: {},
+          isolateUserConfig: true,
+          copyAuthFromProfileDirectory: sourceProfile,
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, helper.spawner));
+        expect(
+          yield* fs.exists(
+            path.join(oversizedFallbackProfile, "antigravity-acp", "antigravity-oauth-token"),
+          ),
+        ).toBe(false);
+        expect(
+          yield* fs.readFileString(
+            path.join(oversizedFallbackProfile, "antigravity-acp", "acp_token.json"),
+          ),
+        ).toBe('{"refresh_token":"legacy"}');
+        expect(
+          yield* fs.readFileString(
+            path.join(oversizedFallbackProfile, "antigravity-acp", "installation_id"),
+          ),
+        ).toBe("install-1");
+
+        if (symlinksSupported) {
+          const externalSecret = path.join(root, "external-secret");
+          yield* fs.writeFileString(externalSecret, '{"token":{"access_token":"outside"}}');
+          yield* fs.remove(sourceOauthToken);
+          yield* fs.symlink(externalSecret, sourceOauthToken);
+          const symlinkFallbackProfile = path.join(root, "isolated-profile-symlink-fallback");
+          yield* prepareAntigravityProfile({
+            profileDirectory: symlinkFallbackProfile,
+            userHome,
+            runtimeExecutablePath: "/fake/isolated-node",
+            platform: "linux",
+            baseEnv: {},
+            isolateUserConfig: true,
+            copyAuthFromProfileDirectory: sourceProfile,
+          }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, helper.spawner));
+          expect(
+            yield* fs.exists(
+              path.join(symlinkFallbackProfile, "antigravity-acp", "antigravity-oauth-token"),
+            ),
+          ).toBe(false);
+          expect(
+            yield* fs.readFileString(
+              path.join(symlinkFallbackProfile, "antigravity-acp", "acp_token.json"),
+            ),
+          ).toBe('{"refresh_token":"legacy"}');
+        }
       }),
   );
 
