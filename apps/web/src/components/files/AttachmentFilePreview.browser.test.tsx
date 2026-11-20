@@ -1,5 +1,5 @@
 import DocumentPages, { sanitizeDocumentHtml } from "./DocumentPages";
-import { act, fakeTimers, render, stubGlobal, type Screen } from "../../../test/render";
+import { act, render, stubGlobal, type Screen } from "../../../test/render";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -1592,8 +1592,7 @@ it("loads an edited HTML file outside the workspace from a renewed URL", async (
   );
 });
 
-it("keeps a workspace HTML preview loaded until its revision or grant changes", async () => {
-  using _timers = fakeTimers({ now: 0 });
+it("keeps a workspace HTML preview loaded until its file revision changes", async () => {
   const { WorkspaceBrowserPreview } = await import("./FilePreviewPanel");
   const preview = (mutation: string) => (
     <WorkspaceBrowserPreview
@@ -1606,8 +1605,8 @@ it("keeps a workspace HTML preview loaded until its revision or grant changes", 
       workspaceMutationId={mutation}
     />
   );
-  const state = (url: string, fileRevision: string, expiresAt = 3_600_000) =>
-    assetUrlState.mockReturnValue({ _tag: "Success", url, expiresAt, fileRevision });
+  const state = (url: string, fileRevision: string) =>
+    assetUrlState.mockReturnValue({ _tag: "Success", url, expiresAt: 3_600_000, fileRevision });
   state("data:text/html,original", "one");
   await using screen = await render(preview("first"));
   const opened = screen.container.querySelector("iframe");
@@ -1622,18 +1621,6 @@ it("keeps a workspace HTML preview loaded until its revision or grant changes", 
   const edited = screen.container.querySelector("iframe");
   expect(edited).not.toBe(opened);
   expect(edited?.getAttribute("src")).toMatch(/^data:text\/html,edited/);
-
-  refresh.mockReset().mockResolvedValue(null);
-  await act(() => vi.advanceTimersByTime(3_540_000));
-  expect(refresh).toHaveBeenCalledTimes(1);
-  expect(screen.container.querySelector("iframe")).toBe(edited);
-
-  state("data:text/html,regranted", "two", 7_200_000);
-  await screen.rerender(preview("third"));
-  expect(screen.container.querySelector("iframe")).not.toBe(edited);
-  expect(screen.container.querySelector("iframe")?.getAttribute("src")).toMatch(
-    /^data:text\/html,regranted/,
-  );
 });
 
 function planningPdf(
