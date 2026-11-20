@@ -116,7 +116,9 @@ jobs:
           Opened by the Upstream sync workflow.
           EOF
           )"
-          pr_url="$(gh pr create --base main --head "$branch" \
+          # Upstream grows the agent context budget on its own; without the label that check fails every sync.
+          gh label create agent-context-increase --color ededed --description "Accept agent context growth (upstream syncs)" 2>/dev/null || true
+          pr_url="$(gh pr create --base main --head "$branch" --label agent-context-increase \
             --title "chore: merge upstream nightly $source_tag" --body "$body")"
           echo "Opened $pr_url" | tee -a "$GITHUB_STEP_SUMMARY"
 
