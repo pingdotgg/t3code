@@ -74,7 +74,7 @@ export function IssueCommentComposer({
     (audiences && audience === null);
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-3 pb-3">
+    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-3">
       <ComposerSurface.Shell className="pointer-events-auto">
         <ComposerSurface.Host
           className={audience === "internal" ? "bg-warning-surface" : undefined}
@@ -162,6 +162,11 @@ export function IssueCommentComposer({
           </form>
         </ComposerSurface.Host>
       </ComposerSurface.Shell>
+      {/* The chat composer's bottom inset, so the two cards line up side by side. */}
+      <div
+        aria-hidden
+        className="h-[calc(env(safe-area-inset-bottom)+1rem)] sm:h-[calc(env(safe-area-inset-bottom)+1.25rem)]"
+      />
     </div>
   );
 }
