@@ -1,6 +1,12 @@
 /** Move the native scroller to its target immediately, then animate the stage back to rest; caret
  * measurements must see the final camera position. */
-import { MotionAnimation, playMotion, toDevicePixel, type MotionRun } from "./animation";
+import {
+  FINE_STEP_MS,
+  MotionAnimation,
+  playMotion,
+  toDevicePixel,
+  type MotionRun,
+} from "./animation";
 
 let current: { scroller: HTMLElement; run: MotionRun } | null = null;
 
@@ -74,7 +80,7 @@ export function moveStripCamera(scroller: HTMLElement, stage: HTMLElement, targe
     // own slides: a keypress whose commit takes a few frames would
     // otherwise land mid-move, skipping the start and out of step with them.
     undefined,
-    true,
+    FINE_STEP_MS,
   );
   if (!finished) current = { scroller, run };
 }

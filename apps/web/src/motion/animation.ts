@@ -109,13 +109,21 @@ export class MotionAnimation {
   }
 }
 
-/** Hold sampled keyframes on whole device pixels to avoid resampling text mid-motion; trim the tail
- * once rounded positions stop changing. */
+/** Keyframes this many ms apart keep pace with any display: an 8 ms grid against a 120 Hz vsync
+ * lands two steps in about one frame in nine, a visible hitch at speed. Finer costs more to start. */
+export const FINE_STEP_MS = 2;
+
+/** Hold sampled keyframes on whole device pixels to avoid resampling text mid-motion, every
+ * `gridMs`; keep only the ones that move, and trim the tail once rounded positions stop changing. */
 function steppedKeyframes(
   motion: MotionAnimation,
   keyframe: (value: number) => Keyframe,
+  gridMs: number,
 ): { keyframes: Keyframe[]; durationMs: number } {
-  const steps = Math.min(240, Math.max(2, Math.ceil(motion.durationMs / 8)));
+  const steps = Math.min(
+    gridMs < 8 ? 600 : 240,
+    Math.max(2, Math.ceil(motion.durationMs / gridMs)),
+  );
   const values: Keyframe[] = [];
   for (let i = 0; i <= steps; i++) {
     values.push(
@@ -125,9 +133,12 @@ function steppedKeyframes(
   const same = (a: Keyframe, b: Keyframe) => JSON.stringify(a) === JSON.stringify(b);
   let last = steps;
   while (last > 0 && same(values[last - 1]!, values[steps]!)) last--;
-  const keyframes = values
-    .slice(0, last + 1)
-    .map((value, i) => ({ ...value, offset: last === 0 ? 1 : i / last, easing: "steps(1, end)" }));
+  const keyframes: Keyframe[] = [];
+  for (let i = 0; i <= last; i++) {
+    // A step that shows the same pixels as the one before only holds it longer.
+    if (i > 0 && i < last && same(values[i]!, values[i - 1]!)) continue;
+    keyframes.push({ ...values[i], offset: last === 0 ? 1 : i / last, easing: "steps(1, end)" });
+  }
   return { keyframes, durationMs: (last / steps) * motion.durationMs };
 }
 
@@ -155,9 +166,11 @@ export function playMotion(
   keyframe: (value: number) => Keyframe,
   onFinish?: () => void,
   startTime?: Animation["startTime"],
-  stepped = false,
+  /** Whole device pixels: `true` on an 8 ms grid, a number on a grid that many ms apart. */
+  stepped: boolean | number = false,
 ): MotionRun {
-  const frames = stepped ? steppedKeyframes(motion, keyframe) : null;
+  const frames =
+    stepped === false ? null : steppedKeyframes(motion, keyframe, stepped === true ? 8 : stepped);
   if (motion.durationMs <= 0 || (frames && frames.durationMs <= 0)) {
     onFinish?.();
     return { motion, value: () => motion.to, velocity: () => 0, cancel: () => {} };
