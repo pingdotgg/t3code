@@ -331,6 +331,112 @@ describe("desktop-local media fallback", () => {
   );
 });
 
+describe("local media fallback", () => {
+  const remote = EnvironmentId.make("fallback-remote");
+  const local = EnvironmentId.make("fallback-local");
+  const threadId = ThreadId.make("fallback-thread");
+
+  // The remote never has the file; the desktop's own environment always does.
+  const makeFallbackHarness = Effect.fn("TestAssetUrl.makeFallbackHarness")(function* () {
+    const calls: Array<EnvironmentId> = [];
+    const makeSupervisor = (environmentId: EnvironmentId) =>
+      Effect.gen(function* () {
+        const session = {
+          client: {
+            [WS_METHODS.assetsCreateUrl]: (input: { readonly resource: AssetResource }) => {
+              calls.push(environmentId);
+              return environmentId === remote
+                ? Effect.fail(new AssetWorkspaceAssetNotFoundError({ resource: input.resource }))
+                : Effect.succeed({ relativeUrl: "/api/assets/local.png", expiresAt: 4e12 });
+            },
+          },
+        } as unknown as RpcSession.RpcSession;
+        return EnvironmentSupervisor.EnvironmentSupervisor.of({
+          target: new PrimaryConnectionTarget({
+            environmentId,
+            label: environmentId,
+            httpBaseUrl: "https://local.example.test",
+            wsBaseUrl: "wss://local.example.test",
+          }),
+          state: yield* SubscriptionRef.make<SupervisorConnectionState>({
+            ...AVAILABLE_CONNECTION_STATE,
+            desired: true,
+            network: "online",
+            phase: "connected",
+            attempt: 1,
+            generation: 1,
+          }),
+          session: yield* SubscriptionRef.make(Option.some(session)),
+          prepared: yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(Option.none()),
+          connect: Effect.void,
+          disconnect: Effect.void,
+          retryNow: Effect.void,
+        } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+      });
+    const supervisors = new Map([
+      [remote, yield* makeSupervisor(remote)],
+      [local, yield* makeSupervisor(local)],
+    ]);
+    const run: EnvironmentRegistry.EnvironmentRegistry["Service"]["run"] = (
+      environmentId,
+      effect,
+    ) =>
+      Effect.provideService(
+        effect,
+        EnvironmentSupervisor.EnvironmentSupervisor,
+        supervisors.get(environmentId)!,
+      );
+    const followStream: EnvironmentRegistry.EnvironmentRegistry["Service"]["followStream"] = (
+      environmentId,
+      stream,
+    ) =>
+      Stream.provideService(
+        stream,
+        EnvironmentSupervisor.EnvironmentSupervisor,
+        supervisors.get(environmentId)!,
+      );
+    const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
+      run,
+      followStream,
+    } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+    const registry = AtomRegistry.make();
+    yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+    const atoms = createAssetEnvironmentAtoms(
+      Atom.runtime(Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry)),
+      Atom.make({ environmentId: local, httpBaseUrl: "https://local.example.test" }),
+    );
+    const createUrl = (resource: AssetResource) =>
+      AtomRegistry.getResult(
+        registry,
+        atoms.createUrl({ environmentId: remote, input: { resource } }),
+      ).pipe(Effect.result);
+    return { calls, createUrl };
+  });
+
+  it.effect("previews a missing remote image from this machine but never saves it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeFallbackHarness();
+        const preview = yield* harness.createUrl({
+          _tag: "media-file",
+          threadId,
+          path: "/Users/me/shot.png",
+        });
+        expect(preview._tag).toBe("Success");
+
+        const save = yield* harness.createUrl({
+          _tag: "media-file",
+          threadId,
+          path: "/Users/me/shot.png",
+          disposition: "attachment",
+        });
+        expect(save._tag).toBe("Failure");
+        expect(harness.calls).toEqual([remote, local, remote]);
+      }),
+    ),
+  );
+});
+
 const revisionedEnvironmentId = EnvironmentId.make("environment-1");
 const revisionedResource: AssetResource = {
   _tag: "workspace-file",
