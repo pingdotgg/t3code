@@ -1136,6 +1136,7 @@ describe("AssetAccess", () => {
               kind: "file",
               path: yield* fs.realPath(target),
               renderIntent: "file-preview",
+              htmlPolicy: "file-page",
             });
           } else {
             expect(resolved).toBeNull();
@@ -1236,11 +1237,13 @@ describe("AssetAccess", () => {
         kind: "file",
         path: yield* fileSystem.realPath(dotHtmlPath),
         renderIntent: "file-preview",
+        htmlPolicy: "file-page",
       });
       expect(yield* resolveAsset(dotToken, "report.css")).toEqual({
         kind: "file",
         path: yield* fileSystem.realPath(dotCssPath),
         renderIntent: "file-preview",
+        htmlPolicy: "file-page",
       });
       expect(yield* resolveAsset(dotToken, ".cache/hidden.css")).toBeNull();
       for (const extension of [

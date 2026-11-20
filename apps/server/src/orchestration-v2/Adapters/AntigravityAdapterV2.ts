@@ -19,10 +19,8 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { PULL_REQUEST_LINKING_INSTRUCTIONS } from "@t3tools/provider-core/server/runtimeInstructions";
 import {
-  antigravitySessionDirectories,
   profileAntigravityRuntimeState,
   readAntigravityAccount,
-  withAntigravityCliCompaction,
   type AntigravityRuntimeState,
 } from "../../fork/antigravityCliRuntime/antigravityCliRuntime.ts";
 import type { AntigravityAuth } from "../../provider/AntigravityAuth.ts";
@@ -170,13 +168,6 @@ export function makeAntigravityAcpAdapterFlavor(
             ...input,
             clientFileReads: true,
             sessionSystemPromptAppend: PULL_REQUEST_LINKING_INSTRUCTIONS,
-<<<<<<< origin/main
-            additionalDirectories: antigravitySessionDirectories(
-              yield* runtimeState,
-              options.host.paths.attachmentsDir,
-            ),
-=======
->>>>>>> upstream/main
           }),
         )
         .pipe(Effect.provideService(Scope.Scope, scope));
@@ -243,19 +234,8 @@ export function makeAntigravityAcpAdapterFlavor(
     mcpOverHttp: true,
     sessionCarriesPullRequestLinking: antigravityAppendsSystemPrompt,
     makeRuntime,
-<<<<<<< origin/main
     readAccount: readAntigravityAccount(runtimeState, options),
-    buildAttachmentPrompt: ({
-      text,
-      attachments,
-      resolveAttachmentPath,
-      promptCapabilities,
-      agentVersion,
-      currentModel,
-    }) =>
-=======
     buildAttachmentPrompt: ({ text, attachments, resolveAttachmentPath, promptCapabilities }) =>
->>>>>>> upstream/main
       buildAntigravityPrompt({
         input: text,
         attachments,
@@ -318,12 +298,7 @@ export function makeAntigravityAcpAdapterFlavor(
     normalizeToolCall: normalizeAntigravityToolCall,
     extractSubagentUpdate: extractAntigravitySubagentUpdate,
     supportsImagePrompts: true,
-<<<<<<< origin/main
-    // `agy` compacts on /compact; makeAntigravityAdapterV2 withholds it from the older harness runtime.
-    supportsCompaction: true,
-=======
     compactViaAdvertisedCommand: true,
->>>>>>> upstream/main
     requiresSignIn: isAntigravitySignInRequiredError,
     checksVersionAtHandshake: true,
     // Antigravity can leave a prompt open without updates; long tools and approvals pause this.
@@ -334,19 +309,15 @@ export function makeAntigravityAcpAdapterFlavor(
       ? {}
       : {
           watchPromptOutcome: (sessionId: string) =>
-<<<<<<< origin/main
             runtimeState.pipe(
               Effect.flatMap((state) => watchAntigravityPromptOutcome(state, sessionId)),
             ),
-=======
-            watchAntigravityPromptOutcome(profileDirectory, sessionId),
           subagentsOutlivingPrompt: ({ sessionId, nativeTaskIds }) =>
             readAntigravityChildrenAtWork({
               profileDirectory,
               rootSessionId: sessionId,
               toolCallIds: nativeTaskIds,
             }),
->>>>>>> upstream/main
         }),
   };
 }
@@ -361,7 +332,7 @@ export const makeAntigravityAdapterV2 = Effect.fn("makeAntigravityAdapterV2")(fu
     path: yield* Path.Path,
     host: yield* ProviderHost.ProviderHost,
   };
-  const adapter = yield* makeAcpAdapterV2({
+  return yield* makeAcpAdapterV2({
     instanceId: options.instanceId,
     flavor: makeAntigravityAcpAdapterFlavor({ ...options, ...services }),
     selfInvocation: options.selfInvocation,
@@ -370,5 +341,4 @@ export const makeAntigravityAdapterV2 = Effect.fn("makeAntigravityAdapterV2")(fu
       ? {}
       : { continuationRequests: options.continuationRequests }),
   });
-  return { ...adapter, openSession: withAntigravityCliCompaction(adapter.openSession, options) };
 });

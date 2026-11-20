@@ -17,14 +17,8 @@ import {
   makeUsageLimits,
 } from "@t3tools/provider-core/server/usageLimits";
 import {
-  antigravityRuntimeStateOf,
-  antigravityTokenPath,
-  orAntigravityCliAccess,
-  readAntigravityCliUsageLogin,
-  type AntigravityRuntimeState,
-} from "../fork/antigravityCliRuntime/antigravityCliRuntime.ts";
-import {
-  type AntigravityAccountIdentity,
+  type AntigravityAccount,
+  antigravityAccountFields,
   withAntigravityAccountEmail,
 } from "../fork/antigravityAccountEmail/antigravityAccountEmail.ts";
 
@@ -331,12 +325,9 @@ function modelWindows(models: typeof Models.Type) {
 export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(function* (input: {
   readonly profileDirectory: string;
   readonly authMethod: AntigravitySettings["authMethod"];
-<<<<<<< origin/main
-  /** Where the running runtime keeps its login; the managed profile when absent. */
-  readonly runtimeState?: Effect.Effect<AntigravityRuntimeState>;
-=======
   readonly readKeyringSecret?: Effect.Effect<string | undefined, AntigravityKeyringError>;
->>>>>>> upstream/main
+  /** The runtime's app data folder, which holds its sign-in; the profile's when absent. */
+  readonly appDirectory?: string;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -344,23 +335,12 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   const crypto = yield* Digest.Digest;
   const platform = yield* HostProcess.Platform;
   const architecture = yield* HostProcess.Architecture;
-<<<<<<< origin/main
-=======
-  const tokenPath = path.join(input.profileDirectory, "antigravity-acp", "acp_token.json");
-  const cliTokenPath = path.join(
-    input.profileDirectory,
-    "antigravity-acp",
-    "antigravity-oauth-token",
-  );
+  const appDirectory = input.appDirectory ?? path.join(input.profileDirectory, "antigravity-acp");
+  const tokenPath = path.join(appDirectory, "acp_token.json");
+  const cliTokenPath = path.join(appDirectory, "antigravity-oauth-token");
   const readKeyringSecret = input.readKeyringSecret ?? readCliKeyringSecret(platform, architecture);
->>>>>>> upstream/main
   let cached:
-    | {
-        fingerprint: string;
-        account: AntigravityAccountIdentity;
-        accessToken: string;
-        expiresAt: number;
-      }
+    | { fingerprint: string; account: AntigravityAccount; accessToken: string; expiresAt: number }
     | undefined;
   let generation = 0;
 
@@ -377,45 +357,9 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     if (input.authMethod !== "oauth-personal" && input.authMethod !== "oauth-business") {
       return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
     }
-<<<<<<< origin/main
-    const state = yield* antigravityRuntimeStateOf(input);
-    const tokenPath = antigravityTokenPath(state, path);
-    if (!(yield* fs.exists(tokenPath))) {
-      cached = undefined;
-      return makeUnavailableUsageLimits({
-        checkedAt,
-        reason: "unsupported",
-        message: "Sign in with Google to see Antigravity limits.",
-      });
-    }
-    const tokenText = yield* fs.readFileString(tokenPath);
-    const cli = yield* readAntigravityCliUsageLogin(state, tokenText, checkedAt);
-    if (cli?.unavailable) return cli.unavailable;
-    const token = cli?.token ?? (yield* decodeTokenFile(tokenText));
-    const fingerprint = yield* sha256(
-      `${token.client_id}\0${token.refresh_token}\0${token.project_id ?? ""}`,
-    );
     const now = yield* Clock.currentTimeMillis;
     let accessToken: string;
-    let account: AntigravityAccountIdentity;
-    if (cached?.fingerprint !== fingerprint || cached.expiresAt <= now + 60_000) {
-      cached = undefined;
-      const refreshed = yield* request(
-        HttpClientRequest.post("https://oauth2.googleapis.com/token").pipe(
-          HttpClientRequest.bodyUrlParams({
-            client_id: token.client_id,
-            client_secret: token.client_secret,
-            refresh_token: token.refresh_token,
-            grant_type: "refresh_token",
-          }),
-        ),
-      ).pipe(Effect.flatMap(decodeTokenResponse), orAntigravityCliAccess(cli));
-      accessToken = refreshed.access_token;
-      // Use Google account IDs to merge accounts across environments; refresh tokens differ per machine.
-=======
-    const now = yield* Clock.currentTimeMillis;
-    let accessToken: string;
-    let account: string;
+    let account: AntigravityAccount;
     let projectId: string | undefined;
     if (!(yield* fs.exists(tokenPath))) {
       cached = undefined;
@@ -439,25 +383,13 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
         });
       }
       accessToken = token.access_token;
->>>>>>> upstream/main
       account = yield* request(
         HttpClientRequest.get("https://www.googleapis.com/oauth2/v2/userinfo").pipe(
           HttpClientRequest.setHeaders({ Authorization: `Bearer ${accessToken}` }),
         ),
       ).pipe(
-<<<<<<< origin/main
-        Effect.flatMap((userInfo) =>
-          antigravityAccountFingerprint(userInfo).pipe(
-            Effect.map((credentialFingerprint) =>
-              withAntigravityAccountEmail(credentialFingerprint, userInfo),
-            ),
-          ),
-        ),
-        Effect.orElseSucceed(() => ({ credentialFingerprint: fingerprint })),
-=======
-        Effect.flatMap(antigravityAccountFingerprint),
+        Effect.flatMap(withAntigravityAccountEmail(antigravityAccountFingerprint)),
         Effect.catch(() => sha256(`antigravity-cli\0${token.refresh_token || accessToken}`)),
->>>>>>> upstream/main
       );
     } else {
       const token = yield* fs.readFileString(tokenPath).pipe(Effect.flatMap(decodeTokenFile));
@@ -484,7 +416,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
             HttpClientRequest.setHeaders({ Authorization: `Bearer ${accessToken}` }),
           ),
         ).pipe(
-          Effect.flatMap(antigravityAccountFingerprint),
+          Effect.flatMap(withAntigravityAccountEmail(antigravityAccountFingerprint)),
           Effect.orElseSucceed(() => fingerprint),
         );
         if (generation === startedGeneration) {
@@ -549,7 +481,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
         message: "Antigravity did not return usable quota information.",
       });
     }
-    return { ...makeUsageLimits({ checkedAt, windows }), ...account };
+    return { ...makeUsageLimits({ checkedAt, windows }), ...antigravityAccountFields(account) };
   });
   const probe = read.pipe(
     Effect.provideService(Digest.Digest, crypto),

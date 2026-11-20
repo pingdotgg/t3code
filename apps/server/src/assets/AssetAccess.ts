@@ -1100,18 +1100,13 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       workspaceRoot: claims.workspaceRoot,
       relativePath: claims.relativePath,
     });
-<<<<<<< origin/main
-    return exactWorkspaceFile
+    // Checked again here: a link can be repointed after its URL was issued.
+    return exactWorkspaceFile && isWorkspacePreviewEntryPath(exactWorkspaceFile)
       ? ({
           kind: "file",
           path: exactWorkspaceFile,
           htmlPolicy: "file-page",
         } satisfies ResolvedAsset)
-=======
-    // Checked again here: a link can be repointed after its URL was issued.
-    return exactWorkspaceFile && isWorkspacePreviewEntryPath(exactWorkspaceFile)
-      ? ({ kind: "file", path: exactWorkspaceFile } satisfies ResolvedAsset)
->>>>>>> upstream/main
       : null;
   }
   if (!isPreviewDependencyPath(decodedPath, path)) return null;

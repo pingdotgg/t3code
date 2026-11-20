@@ -34,6 +34,7 @@ import {
 } from "../../textGeneration/AntigravityTextGeneration.ts";
 import {
   antigravityRuntimeState,
+  makeAntigravityRuntimeUsageProbe,
   profileAntigravityRuntimeState,
   removeAntigravityRuntimeSessionFiles,
   withUserAgyState,
@@ -71,7 +72,6 @@ import {
 import { makeAcpNativeLoggerFactory } from "@t3tools/provider-acp/server/nativeLogging";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeAntigravityProvider } from "../AntigravityProvider.ts";
-import { makeAntigravityUsageProbe } from "../antigravityUsageLimits.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
 import {
@@ -289,14 +289,17 @@ export const AntigravityDriver: ProviderDriver<
       );
       return {
         executable,
-        spawn: buildAntigravityAcpSpawnInput({
-          installation: executable,
-          profile,
-          cwd,
-          baseEnv,
-          auth,
-          runtimeTempDirectory,
-        }),
+        spawn: withUserAgyState(
+          executable,
+          buildAntigravityAcpSpawnInput({
+            installation: executable,
+            profile,
+            cwd,
+            baseEnv,
+            auth,
+            runtimeTempDirectory,
+          }),
+        ),
       };
     });
 
@@ -321,21 +324,7 @@ export const AntigravityDriver: ProviderDriver<
         runtimeVersion: executable.version,
         authMethod: auth.authMethod,
         childProcessSpawner: spawner,
-<<<<<<< origin/main
-        spawn: withUserAgyState(
-          executable,
-          buildAntigravityAcpSpawnInput({
-            installation: executable,
-            profile,
-            cwd: runtimeInput.cwd,
-            baseEnv: spawnEnvironment,
-            auth,
-            runtimeTempDirectory,
-          }),
-        ),
-=======
         spawn,
->>>>>>> upstream/main
       }).pipe(Effect.provideService(SecureRandom.SecureRandom, random));
       // A custom or PATH executable has no version until it answers initialize.
       const startCompatible = Effect.fn("AntigravityDriver.startCompatible")(function* () {
@@ -575,8 +564,9 @@ export const AntigravityDriver: ProviderDriver<
       };
     });
 
-    const usage = yield* makeAntigravityUsageProbe({
+    const usage = yield* makeAntigravityRuntimeUsageProbe({
       profileDirectory,
+      userHome,
       authMethod: auth.authMethod,
       runtimeState,
     }).pipe(
@@ -622,15 +612,10 @@ export const AntigravityDriver: ProviderDriver<
         ),
       ),
       profileDirectory,
-<<<<<<< origin/main
       runtimeState,
-      onSessionStarted: provider.onSessionStarted,
-      onSessionEvent: (event) => {
-=======
       onSessionStarted: (started, cwd) =>
         provider.onSessionStarted(started, cwd).pipe(Effect.andThen(authFlow.onSignedInElsewhere)),
       onSessionEvent: (event, cwd) => {
->>>>>>> upstream/main
         if (event._tag === "ConfigOptionsUpdated") {
           return provider.onConfigOptionsUpdated(event.configOptions);
         }

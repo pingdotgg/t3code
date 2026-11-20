@@ -2689,11 +2689,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 canShareWithGuestAtom(threadRef.environmentId),
               ),
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
-<<<<<<< origin/main
-              displayModeItems: displayModeMenuItems(threadRef),
-=======
               canRename: !fromSearch,
->>>>>>> upstream/main
+              displayModeItems: displayModeMenuItems(threadRef),
               supports: {
                 settlement: configLoaded,
                 autoSettleOptOut: supportsAutoSettleOptOut,

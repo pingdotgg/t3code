@@ -6,11 +6,8 @@ import {
   codexAppServerArgs,
   codexExecLaunchArgs,
   codexMcpListLaunchArgs,
-<<<<<<< origin/main
-  resolveCodexSkillRoot,
-=======
   resolveCodexLaunchArgs,
->>>>>>> upstream/main
+  resolveCodexSkillRoot,
 } from "./codexLaunchArgs.ts";
 
 describe("resolveCodexSkillRoot", () => {

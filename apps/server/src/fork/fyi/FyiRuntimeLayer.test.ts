@@ -45,6 +45,7 @@ import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
 import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
+import * as ModelManifest from "../../provider/ModelManifest.ts";
 import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import * as ProviderOrchestrationAdapterInfrastructure from "../../provider/ProviderOrchestrationAdapterInfrastructure.ts";
 import * as ServerSettings from "../../serverSettings.ts";
@@ -111,6 +112,7 @@ const layerTest = Layer.mergeAll(
   ),
   Layer.provide(layerServerConfig),
   Layer.provide(ServerSettings.layerTest()),
+  Layer.provide(ModelManifest.layerTest),
   Layer.provide(
     Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
       getInstance: (instanceId) =>

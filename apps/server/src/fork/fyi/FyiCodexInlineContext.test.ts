@@ -99,9 +99,19 @@ const oneTurnTranscript = (input: {
     { type: "expect_outbound", label: "initialized", frame: { method: "initialized" } },
     {
       type: "expect_outbound",
+      label: "config/read",
+      frame: { id: 2, method: "config/read", params: { includeLayers: false } },
+    },
+    {
+      type: "emit_inbound",
+      label: "config/read",
+      frame: { id: 2, result: { config: {}, origins: {} } },
+    },
+    {
+      type: "expect_outbound",
       label: "thread/start",
       frame: {
-        id: 2,
+        id: 3,
         method: "thread/start",
         params: { config: CodexAdapterV2.CODEX_THREAD_CONFIG },
       },
@@ -110,7 +120,7 @@ const oneTurnTranscript = (input: {
       type: "emit_inbound",
       label: "thread/start",
       frame: {
-        id: 2,
+        id: 3,
         result: {
           thread: {
             id: input.nativeThreadId,
@@ -148,19 +158,29 @@ const oneTurnTranscript = (input: {
     },
     {
       type: "expect_outbound",
+      label: "thread/name/set",
+      frame: {
+        id: 4,
+        method: "thread/name/set",
+        params: { threadId: input.nativeThreadId, name: "Codex continuation test" },
+      },
+    },
+    { type: "emit_inbound", label: "thread/name/set", frame: { id: 4, result: {} } },
+    {
+      type: "expect_outbound",
       label: "config/read",
-      frame: { id: 3, method: "config/read", params: { cwd: "/workspace", includeLayers: false } },
+      frame: { id: 5, method: "config/read", params: { cwd: "/workspace", includeLayers: false } },
     },
     {
       type: "emit_inbound",
       label: "config/read",
-      frame: { id: 3, result: { config: {}, origins: {} } },
+      frame: { id: 5, result: { config: {}, origins: {} } },
     },
     {
       type: "expect_outbound",
       label: "turn/start",
       frame: {
-        id: 4,
+        id: 6,
         method: "turn/start",
         params: {
           threadId: input.nativeThreadId,
@@ -178,7 +198,7 @@ const oneTurnTranscript = (input: {
     {
       type: "emit_inbound",
       label: "turn/start",
-      frame: { id: 4, result: { turn: replayTurn(input.nativeTurnId, "inProgress") } },
+      frame: { id: 6, result: { turn: replayTurn(input.nativeTurnId, "inProgress") } },
     },
     {
       type: "emit_inbound",

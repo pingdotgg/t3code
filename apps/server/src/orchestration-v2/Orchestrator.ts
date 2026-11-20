@@ -7125,7 +7125,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     const itemId = idAllocator.derive.userTurnItem({ messageId: command.messageId });
-    if (fyiAlreadyPosted(projection, command.messageId, itemId)) return;
+    if (fyiAlreadyPosted(projection, command.messageId)) return;
+    const stored = yield* projectionStore
+      .getTurnItem({ threadId: command.threadId, itemId })
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+    if (stored !== null) return;
     const now = yield* DateTime.now;
     const { message, item } = waitingFyi({
       command,
@@ -7155,11 +7163,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) {
     // A compacted thread reads every run, but attempts, nodes, messages, provider turns and prompts
     // only for its recent runs and the runs this command names. An idle compaction reads in full:
-    // its busy check below looks for a delegated result's message under any old run.
+    // its busy check below looks for a delegated result's message under any old run. So does an
+    // FYI wake: a waiting FYI's item has no run, or an old one.
     let projection = yield* getProjectionWithPendingEvents(
       command.threadId,
       events,
-      command.idleCompaction === undefined
+      command.idleCompaction === undefined && command.fyiWake !== true
         ? {
             keepRunIds: [
               command.manualContinuationOfRunId,

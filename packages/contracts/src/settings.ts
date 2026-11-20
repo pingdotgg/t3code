@@ -1410,7 +1410,6 @@ export const ServerSettings = Schema.Struct({
   ),
 
   enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-<<<<<<< origin/main
   /**
    * Fork: "native" runs chrome-headless-shell. On Linux and Windows, "xvfb" runs full Chrome for
    * Testing. On Linux with Xvfb, Chrome opens a window on a private Xvfb display. On macOS "xvfb"
@@ -1419,10 +1418,8 @@ export const ServerSettings = Schema.Struct({
   previewBrowserMode: PreviewBrowserMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("native" as const)),
   ),
-=======
   /** Lets clients reach this machine's loopback ports over `/api/preview/tunnel`. */
   enablePreviewTunnel: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
->>>>>>> upstream/main
   cloudSpeechCredentials: CloudSpeechCredentials.pipe(
     Schema.withDecodingDefault(Effect.succeed({ openai: "", xai: "", openrouter: "" })),
   ),
@@ -1903,11 +1900,8 @@ export const ServerSettingsPatch = Schema.Struct({
   keepAwakeWhileAgentsWork: Schema.optionalKey(Schema.Boolean),
   requireConnectDeviceApproval: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
-<<<<<<< origin/main
   previewBrowserMode: Schema.optionalKey(PreviewBrowserMode),
-=======
   enablePreviewTunnel: Schema.optionalKey(Schema.Boolean),
->>>>>>> upstream/main
   cloudSpeechCredentials: Schema.optionalKey(
     Schema.Struct({
       openai: Schema.optionalKey(SettingsSecretValue),

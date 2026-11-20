@@ -7776,12 +7776,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           const activation = { stopped: false };
           goalActivations.set(threadId, activation);
           yield* Effect.gen(function* () {
-<<<<<<< origin/main
-            yield* startNativeTurn(turnInput, yield* codexInput, turnInput.commandNote);
-=======
             yield* applyThreadName(threadId, turnInput.appThread.title);
-            yield* startNativeTurn(turnInput, yield* codexInput);
->>>>>>> upstream/main
+            yield* startNativeTurn(turnInput, yield* codexInput, turnInput.commandNote);
             if (activation.stopped) return;
             const { goal } = yield* client.request("thread/goal/set", {
               threadId,

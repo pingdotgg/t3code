@@ -474,7 +474,7 @@ it.effect("an FYI to an idle thread waits where it was sent and rides the next t
   ),
 );
 
-it.effect("an FYI posted again on a compacted thread changes nothing", () =>
+it.effect("an FYI posted again on a compacted thread changes nothing, and its wake is due", () =>
   runWithProvider("compacted", ({ events, cwd }) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -523,6 +523,8 @@ it.effect("an FYI posted again on a compacted thread changes nothing", () =>
       });
       const reposted = yield* fyiItemOf(threadId, "note");
       assert.deepStrictEqual(reposted.item, posted.item, "a repost changes nothing");
+      const woke = yield* orchestrator.dispatch(wakeCommand(threadId, run!.completedAt!));
+      assert.isUndefined(woke.replayed, "the wake sees the waiting FYI");
     }),
   ),
 );

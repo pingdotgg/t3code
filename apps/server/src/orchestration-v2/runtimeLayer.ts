@@ -93,16 +93,12 @@ const layerStores = Layer.mergeAll(
   TurnItemPositionStore.layer,
 );
 
-<<<<<<< origin/main
-export const layerEventSink = EventSink.layerFromStores.pipe(Layer.provide(layerStores));
-// Claude's adapter shares it through layer memoization, so its writes go through the one event sink.
-export const layerFyiDelivery = FyiDelivery.layer.pipe(Layer.provide(layerEventSink));
-=======
 // The server provides this same layer to thread subscriptions; memoized, they share one registry.
 export const layerEventSink = EventSink.layerFromStores.pipe(
   Layer.provide(Layer.merge(layerStores, ThreadViewers.layer)),
 );
->>>>>>> upstream/main
+// Claude's adapter shares it through layer memoization, so its writes go through the one event sink.
+export const layerFyiDelivery = FyiDelivery.layer.pipe(Layer.provide(layerEventSink));
 const layerProjectionMaintenanceProvided = ProjectionMaintenance.layer.pipe(
   Layer.provide(layerStores),
 );

@@ -81,11 +81,8 @@ function textKey(
   item: OrchestrationV2TurnItem,
   cwd: string | undefined,
   skills: TextKey["skills"],
-<<<<<<< origin/main
-  sentTexts: ReadonlyMap<string, string>,
-=======
   theme: TextKey["theme"],
->>>>>>> upstream/main
+  sentTexts: ReadonlyMap<string, string>,
 ) {
   return new TextKey({
     text:
@@ -475,11 +472,7 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
             rendered = row;
           } else {
             const decoded = yield* decode(row);
-<<<<<<< origin/main
-            const key = textKey(decoded.item, cwd, input.skills ?? [], sentTexts);
-=======
-            const key = textKey(decoded.item, cwd, input.skills ?? [], input.theme);
->>>>>>> upstream/main
+            const key = textKey(decoded.item, cwd, input.skills ?? [], input.theme, sentTexts);
             const segments =
               (input.displayMode !== undefined &&
                 !displayModeShowsText(input.displayMode, decoded.item)) ||

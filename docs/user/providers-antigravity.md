@@ -66,8 +66,9 @@ The CLI's tool-permission setting decides whether it asks before a tool call. Wh
 it asks, T3 Code answers by the thread's [permission mode](./permission-modes.md).
 When the CLI is set to always proceed, tools run without asking in every mode.
 
-**Usage > Limits** reads with the access the CLI last saved. T3 Code cannot renew
-that access, so once it expires the page says so until the CLI runs its next turn.
+**Usage > Limits** reads with the sign-in the CLI saved, in its state folder or
+the system keyring. T3 Code cannot renew it, so after it expires the limits wait
+for the CLI's next turn.
 
 T3 Code does not use the CLI for titles, commit messages, or other generated text
 while `~/.gemini/config` holds hooks or MCP servers, because they would run in
@@ -108,14 +109,9 @@ Antigravity. Antigravity cannot rewind its own conversation, so the next turn
 starts a fresh Antigravity session and T3 Code sends it the kept conversation,
 without the turns you removed.
 
-<<<<<<< origin/main
-Send `/compact` to compact the thread's context. The older 1.4.5 runtime has no
-manual compaction; send `/clear` when you need a fresh context, or update Antigravity.
-=======
 Use `/compact` to summarize a long conversation when your Antigravity runtime
 offers that command. If it is unavailable, update Antigravity in provider settings
 or send `/clear` when you need a fresh context.
->>>>>>> upstream/main
 
 ### Skills and attachments
 

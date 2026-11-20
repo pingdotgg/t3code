@@ -329,6 +329,9 @@ const codexRequest = (id: number, method: string, params: unknown, result: unkno
     { type: "emit_inbound", label: method, frame: { id, result } },
   ] satisfies Array<CodexReplay.CodexAppServerReplayEntry>;
 
+const codexThreadName = (id: number, nativeThreadId: string) =>
+  codexRequest(id, "thread/name/set", { threadId: nativeThreadId, name: "Compaction note" }, {});
+
 const codexNotification = (method: string, params: unknown) =>
   ({
     type: "emit_inbound",
@@ -413,7 +416,7 @@ const codexCompaction = (input: {
   ),
 ];
 
-/** The frames until Codex has started the thread, which take request ids 1 and 2. */
+/** The frames until Codex has started the thread, which take request ids 1 to 3. */
 const codexTranscript = (
   nativeThreadId: string,
   entries: ReadonlyArray<CodexReplay.CodexAppServerReplayEntry>,
@@ -453,10 +456,11 @@ const codexTranscript = (
       },
     },
     { type: "expect_outbound", frame: { method: "initialized" } },
+    ...codexRequest(2, "config/read", { includeLayers: false }, { config: {}, origins: {} }),
     {
       type: "expect_outbound",
       frame: {
-        id: 2,
+        id: 3,
         method: "thread/start",
         params: { config: CodexAdapterV2.CODEX_THREAD_CONFIG },
       },
@@ -464,7 +468,7 @@ const codexTranscript = (
     {
       type: "emit_inbound",
       frame: {
-        id: 2,
+        id: 3,
         result: {
           thread: {
             id: nativeThreadId,
@@ -591,9 +595,10 @@ it.live(
       text: "work",
       waitForTerminal: true,
       transcript: codexTranscript(nativeThreadId, [
-        ...codexTurnStart({ id: 3, nativeThreadId, nativeTurnId, text: "work" }),
+        ...codexThreadName(4, nativeThreadId),
+        ...codexTurnStart({ id: 5, nativeThreadId, nativeTurnId, text: "work" }),
         ...codexCompaction({
-          id: 5,
+          id: 7,
           nativeThreadId,
           nativeTurnId,
           turnEnd: [
@@ -632,15 +637,16 @@ it.live(
         commandNote: true,
         waitForTerminal: true,
         transcript: codexTranscript(nativeThreadId, [
-          ...codexRequest(3, "thread/goal/get", { threadId: nativeThreadId }, { goal: null }),
+          ...codexRequest(4, "thread/goal/get", { threadId: nativeThreadId }, { goal: null }),
           ...codexRequest(
-            4,
+            5,
             "thread/goal/set",
             { threadId: nativeThreadId, objective: "ship it", status: "paused" },
             { goal: codexGoal(nativeThreadId, "paused") },
           ),
+          ...codexThreadName(6, nativeThreadId),
           ...codexTurnStart({
-            id: 5,
+            id: 7,
             nativeThreadId,
             nativeTurnId,
             text: "This thread's goal is already set. Do not call create_goal. Start working on it now: ship it",
@@ -652,13 +658,13 @@ it.live(
             },
           }),
           ...codexRequest(
-            7,
+            9,
             "thread/goal/set",
             { threadId: nativeThreadId, status: "active" },
             { goal: codexGoal(nativeThreadId, "active") },
           ),
           ...codexCompaction({
-            id: 8,
+            id: 10,
             nativeThreadId,
             nativeTurnId,
             turnEnd: [
@@ -688,7 +694,7 @@ it.live("Codex leaves a /goal's note owed when the command starts no turn", () =
       commandNote: true,
       waitForTerminal: false,
       transcript: codexTranscript(nativeThreadId, [
-        ...codexRequest(3, "thread/goal/get", { threadId: nativeThreadId }, { goal: null }),
+        ...codexRequest(4, "thread/goal/get", { threadId: nativeThreadId }, { goal: null }),
       ]),
     });
     assert.strictEqual(deliveries, 0);

@@ -1145,74 +1145,10 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
             }),
         })),
       );
-<<<<<<< origin/main
-      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
-      let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
-      let requestPermission: Parameters<RuntimeService["handleRequestPermission"]>[0] | undefined;
-      const send = (update: EffectAcpSchema.SessionUpdate) =>
-        sessionUpdate === undefined
-          ? Effect.die("the adapter must handle session updates")
-          : sessionUpdate(
-              normalizeAntigravitySessionUpdate({ sessionId: "mock-session-1", update }),
-            );
-      const command = {
-        toolCallId: "call_fetch",
-        kind: "execute",
-        title: "node fetch_throughput.mjs",
-        rawInput: { CommandLine: "node fetch_throughput.mjs", WaitMsBeforeAsync: 10000 },
-      } as const;
-      const usage = { sessionUpdate: "usage_update", used: 9000, size: 1048576 } as const;
-      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
-      const instanceId = ProviderInstanceId.make("antigravity-wake-test");
-      const threadId = ThreadId.make("thread-antigravity-wake");
-      const adapter = yield* makeAntigravityAdapterV2({
-        instanceId,
-        profileDirectory: unusedProfileDirectory,
-        selfInvocation: yield* resolveSelfInvocation(),
-        continuationRequests: { offer: (request) => Effect.sync(() => void offers.push(request)) },
-        makeRuntime: (input) =>
-          makeAntigravityAcpRuntime({
-            ...input,
-            childProcessSpawner,
-            spawn: {
-              command: process.execPath,
-              args: [mockAgentPath],
-              cwd: input.cwd,
-              env: { T3_ACP_ANTIGRAVITY: "1" },
-            },
-          }).pipe(
-            Effect.provideService(SecureRandom.SecureRandom, crypto),
-            Effect.map((runtime): RuntimeService => ({
-              ...runtime,
-              handleSessionUpdate: (handler) =>
-                Effect.sync(() => {
-                  sessionUpdate = handler;
-                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
-              handleRequestPermission: (handler) =>
-                Effect.sync(() => {
-                  requestPermission = handler;
-                }).pipe(Effect.andThen(runtime.handleRequestPermission(handler))),
-              prompt: () =>
-                Effect.gen(function* () {
-                  yield* send({ sessionUpdate: "tool_call", ...command, status: "in_progress" });
-                  yield* send({
-                    sessionUpdate: "agent_message_chunk",
-                    content: { type: "text", text: "I'll render once the fetch finishes." },
-                  });
-                  yield* send(usage);
-                  return { stopReason: "end_turn" as const };
-                }),
-            })),
-          ),
-        withProcess: (_stop, task) => task,
-        defaultModel: Effect.undefined,
-      });
-      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-=======
     },
     withProcess: (_stop, task) => task,
     defaultModel: Effect.undefined,
-    ...(detachedChildProfile === undefined ? {} : { profileDirectory: detachedChildProfile }),
+    profileDirectory: detachedChildProfile ?? unusedProfileDirectory,
   });
   const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
     runtimeMode: "full-access",
@@ -1256,7 +1192,6 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
         title: "Antigravity wake",
         providerInstanceId: instanceId,
         modelSelection,
->>>>>>> upstream/main
         runtimeMode: "full-access",
         interactionMode: "default",
         branch: null,
@@ -2019,6 +1954,7 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
       const instanceId = ProviderInstanceId.make("antigravity-plan-exit-test");
       const adapter = yield* makeAntigravityAdapterV2({
         instanceId,
+        profileDirectory: unusedProfileDirectory,
         selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: (input) =>
           makeAntigravityAcpRuntime({

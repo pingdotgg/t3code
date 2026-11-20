@@ -10,6 +10,7 @@ import {
   MessageId,
   ProjectId,
   ThreadId,
+  withMessageSenderNote,
   type ModelSelection,
   type ServerProvider,
 } from "@t3tools/contracts";
@@ -46,6 +47,7 @@ import { ThreadDashboard } from "./threadDashboard/ThreadDashboard.ts";
 import { UserView } from "./userView/UserView.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import * as EnvironmentTheme from "../environmentTheme.ts";
+import { GitManager } from "../git/GitManager.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import { IssueService } from "../issue/IssueService.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
@@ -156,6 +158,22 @@ const maskPath = (node: unknown, [key, ...rest]: ReadonlyArray<string>): unknown
     : node;
 const maskPaths = (node: unknown, paths: ReadonlyArray<ReadonlyArray<string>>) =>
   paths.reduce(maskPath, node);
+
+// The child's task comes from its parent agent, so its prompt names that sender.
+const childTaskNote = `${withMessageSenderNote(
+  { createdBy: "agent", creationSource: "mcp", senderThreadId: ThreadId.make("thread:bot") },
+  "",
+)}\n\n`;
+const withoutChildTaskNote = (node: unknown): unknown =>
+  typeof node === "string"
+    ? node.replace(childTaskNote, "")
+    : Array.isArray(node)
+      ? node.map(withoutChildTaskNote)
+      : Predicate.isObject(node)
+        ? Object.fromEntries(
+            Object.entries(node).map(([key, value]) => [key, withoutChildTaskNote(value)]),
+          )
+        : node;
 
 interface ClaudeFirstRequest {
   readonly options: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions;
@@ -298,6 +316,7 @@ const codexNoisePaths: Readonly<Record<string, ReadonlyArray<ReadonlyArray<strin
     ["config", "mcp_servers.t3-code-direct", "http_headers", "Authorization"],
   ],
   "turn/start": [["threadId"]],
+  "thread/name/set": [["threadId"]],
 };
 
 // Upstream starts every delegated Codex child, the general role too, as a Codex subagent.
@@ -655,7 +674,10 @@ it.effect.each(
       );
       expect(sidebarRequest.promptCacheTtl).toBeUndefined();
       expect(childRequest.promptCacheTtl).toBe(input.fixture.childPromptCacheTtl);
-      expect(childRequest.withoutNoise).toEqual(sidebarRequest.withoutNoise);
+      expect(JSON.stringify(childRequest.withoutNoise)).toContain(
+        JSON.stringify(childTaskNote).slice(1, -1),
+      );
+      expect(withoutChildTaskNote(childRequest.withoutNoise)).toEqual(sidebarRequest.withoutNoise);
     }),
 );
 
@@ -669,6 +691,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(DocumentText)({}),
   Layer.mock(EnvironmentTheme.EnvironmentThemeService)({}),
   Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+  Layer.mock(GitManager)({}),
   Layer.mock(GitWorkflowService)({}),
   Layer.mock(IssueService)({}),
   Layer.mock(ManagedProjectFolders)({ namedProjectsRoot: "" }),
@@ -683,7 +706,8 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(ProjectCloneTracker)({}),
   Layer.mock(ProjectService.ProjectService)({}),
   Layer.mock(ProjectSetupScriptRunner)({}),
-  Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+  // An unknown forge lists the PR tools, as a thread with a forge does.
+  Layer.mock(ProjectionStore.ProjectionStoreV2)({ getThreadShell: () => Effect.succeed(null) }),
   Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
   Layer.mock(ProviderRegistry.ProviderRegistry)({}),
   Layer.mock(PullRequestReviewGuideService)({}),

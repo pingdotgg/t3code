@@ -4,61 +4,30 @@ import * as NodeURL from "node:url";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import {
-  ANTIGRAVITY_DEFAULT_MODEL,
-  MessageId,
-  NodeId,
-  ProjectId,
-  ProviderInstanceId,
-  ProviderSessionId,
-  RunAttemptId,
-  RunId,
-  ThreadId,
-} from "@t3tools/contracts";
-import { makeAntigravityAcpRuntime } from "../../provider/acp/AntigravityAcpSupport.ts";
-import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
-import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { ANTIGRAVITY_DEFAULT_MODEL, ProviderInstanceId } from "@t3tools/contracts";
 import { extractMcpToolCallIdentity } from "@t3tools/provider-acp/server/runtimeModel";
-import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
-import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Digest from "effect/crypto/Digest";
-import * as SecureRandom from "effect/crypto/SecureRandom";
-import * as DateTime from "effect/DateTime";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import { ChildProcessSpawner } from "effect/process";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-import {
-  makeAntigravityAcpAdapterFlavor,
-  makeAntigravityAdapterV2,
-} from "../../orchestration-v2/Adapters/AntigravityAdapterV2.ts";
+import { makeAntigravityAcpAdapterFlavor } from "../../orchestration-v2/Adapters/AntigravityAdapterV2.ts";
 import { antigravitySessionMeta } from "../../provider/acp/AntigravityAcpSupport.ts";
 import {
   antigravityRuntimeState,
-  type AntigravityRuntimeState,
+  makeAntigravityRuntimeUsageProbe,
   profileAntigravityRuntimeState,
-  withAntigravityCliCompaction,
   withUserAgyState,
 } from "./antigravityCliRuntime.ts";
-import { makeAntigravityUsageProbe } from "../../provider/antigravityUsageLimits.ts";
 import {
   type AntigravityTextGenerationOptions,
   makeAntigravityTextGeneration,
 } from "../../textGeneration/AntigravityTextGeneration.ts";
-
-type RuntimeInput = Parameters<
-  Parameters<typeof makeAntigravityAcpAdapterFlavor>[0]["makeRuntime"]
->[0];
 
 const baseOptions = {
   instanceId: ProviderInstanceId.make("antigravity-cli-test"),
@@ -95,12 +64,6 @@ const CLI_API_ERROR = Buffer.concat([
 ]);
 
 const layer = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer);
-const layerSession = Layer.mergeAll(
-  layer,
-  IdAllocator.layer,
-  McpProviderSessions.layer,
-  TestProviderHost.layer().pipe(Layer.provide(layer)),
-);
 
 type TextRuntime = Effect.Success<ReturnType<AntigravityTextGenerationOptions["makeRuntime"]>>;
 
@@ -265,63 +228,11 @@ describe("Antigravity CLI runtime", () => {
         ["the user's own", null, "cli", ["acp"]],
         ["a managed release", "/managed/versions/release", "managed", profileArgs],
       ] as const) {
-        const executable = { harnessPath: null, managedVersionDirectory };
+        const executable = { managedVersionDirectory };
         assert.equal(antigravityRuntimeState(executable, input).runtime, runtime, found);
         assert.deepEqual(withUserAgyState(executable, spawn).args, args, found);
       }
-      const harness = { harnessPath: "/release/harness", managedVersionDirectory: null };
-      assert.equal(antigravityRuntimeState(harness, input).runtime, "harness");
-      assert.deepEqual(withUserAgyState(harness, spawn).args, profileArgs);
     }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("offers /compact on every agy and not on the harness runtime", () =>
-    Effect.gen(function* () {
-      const session = { compactThread: () => Effect.void };
-      for (const [runtime, offered] of [
-        ["cli", true],
-        ["managed", true],
-        ["harness", false],
-      ] as const) {
-        const open = withAntigravityCliCompaction(() => Effect.succeed(session), {
-          profileDirectory: "profile",
-          runtimeState: Effect.succeed({ ...profileAntigravityRuntimeState("profile"), runtime }),
-        });
-        assert.equal("compactThread" in (yield* open(undefined)), offered, runtime);
-      }
-    }),
-  );
-
-  it.effect("opens CLI sessions without additional directories", () =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const attachmentsDir = path.join("state", "attachments");
-      const sent = (runtimeState: Effect.Effect<AntigravityRuntimeState>) =>
-        Effect.gen(function* () {
-          let directories: RuntimeInput["additionalDirectories"];
-          const options = {
-            ...baseOptions,
-            host: { paths: { attachmentsDir } } as never,
-            runtimeState,
-            makeRuntime: (input: RuntimeInput) => {
-              directories = input.additionalDirectories;
-              return Effect.succeed({} as AcpSessionRuntime.AcpSessionRuntime["Service"]);
-            },
-          };
-          const flavor = makeAntigravityAcpAdapterFlavor(options);
-          yield* flavor.makeRuntime({ cwd: "workspace" } as Parameters<
-            typeof flavor.makeRuntime
-          >[0]);
-          return directories ?? [];
-        });
-
-      assert.deepEqual(yield* sent(Effect.succeed(profileAntigravityRuntimeState("profile"))), [
-        attachmentsDir,
-      ]);
-      assert.deepEqual(yield* sent(cliRuntimeState(path, "home")), []);
-      const managedAgy = Effect.succeed(profileAntigravityRuntimeState("profile", "managed"));
-      assert.deepEqual(yield* sent(managedAgy), [], "T3's managed agy");
-    }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
   it.effect("fails a CLI turn whose session log ends in an upstream API error", () =>
@@ -451,119 +362,6 @@ describe("Antigravity CLI runtime", () => {
     assert.isFalse(sessionCarriesPullRequestLinking?.(initialize(false)));
   });
 
-  it.effect("compacts a CLI session with the bare /compact prompt", () =>
-    Effect.gen(function* () {
-      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const crypto = yield* SecureRandom.SecureRandom;
-      const mockAgentPath = yield* path.fromFileUrl(
-        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
-      );
-      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
-      const promptReceived = yield* Deferred.make<Parameters<RuntimeService["prompt"]>[0]>();
-      const instanceId = ProviderInstanceId.make("antigravity-cli-compaction-test");
-      const options = {
-        instanceId,
-        profileDirectory: "antigravity-profile-unused",
-        runtimeState: cliRuntimeState(path, "home"),
-        selfInvocation: yield* resolveSelfInvocation(),
-        makeRuntime: (input: RuntimeInput) =>
-          makeAntigravityAcpRuntime({
-            ...input,
-            childProcessSpawner,
-            spawn: {
-              command: process.execPath,
-              args: [mockAgentPath],
-              cwd: input.cwd,
-              env: { T3_ACP_ANTIGRAVITY: "1", T3_ACP_HANG_PROMPT_FOREVER: "1" },
-            },
-          }).pipe(
-            Effect.provideService(SecureRandom.SecureRandom, crypto),
-            Effect.map((runtime): RuntimeService => ({
-              ...runtime,
-              prompt: (request) =>
-                Deferred.succeed(promptReceived, request).pipe(
-                  Effect.andThen(runtime.prompt(request)),
-                ),
-            })),
-          ),
-        withProcess: ((_stop, task) => task) as Parameters<
-          typeof makeAntigravityAdapterV2
-        >[0]["withProcess"],
-        defaultModel: Effect.undefined,
-      };
-      const adapter = yield* makeAntigravityAdapterV2(options);
-      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-compact-" });
-      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        cwd: workspace,
-      });
-      const threadId = ThreadId.make("thread-antigravity-cli-compaction");
-      const modelSelection = { instanceId, model: "gemini-test-low" } as const;
-      const session = yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make("provider-session-antigravity-cli-compaction"),
-        modelSelection,
-        runtimePolicy,
-      });
-      assert.isDefined(session.compactThread, "the CLI runtime offers compaction");
-      const providerThread = yield* session.ensureThread({
-        threadId,
-        modelSelection,
-        runtimePolicy,
-      });
-      const now = yield* DateTime.now;
-      yield* session.compactThread!({
-        appThread: {
-          createdBy: "user",
-          creationSource: "web",
-          id: threadId,
-          projectId: ProjectId.make("project-antigravity-cli-compaction"),
-          title: "Antigravity CLI compaction",
-          providerInstanceId: instanceId,
-          modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: null,
-          activeProviderThreadId: providerThread.id,
-          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
-          forkedFrom: null,
-          createdAt: now,
-          updatedAt: now,
-          archivedAt: null,
-          settledOverride: null,
-          settledAt: null,
-          lastVisitedAt: null,
-          deletedAt: null,
-        },
-        threadId,
-        runId: RunId.make("run-antigravity-cli-compaction"),
-        runOrdinal: 1,
-        providerTurnOrdinal: 1,
-        attemptId: RunAttemptId.make("attempt-antigravity-cli-compaction"),
-        rootNodeId: NodeId.make("node-antigravity-cli-compaction"),
-        providerThread,
-        message: {
-          createdBy: "user",
-          creationSource: "web",
-          messageId: MessageId.make("message-antigravity-cli-compaction"),
-          text: " /compact ",
-          attachments: [],
-        },
-        modelSelection,
-        runtimePolicy,
-      }).pipe(Effect.forkScoped);
-
-      // The first prompt of a process is the one that would carry T3's instruction prefix.
-      assert.deepEqual((yield* Deferred.await(promptReceived)).prompt, [
-        { type: "text", text: "/compact" },
-      ]);
-    }).pipe(Effect.provide(layerSession), Effect.scoped),
-  );
-
   it.effect("removes the CLI session a helper turn created and no other session", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -600,70 +398,89 @@ describe("Antigravity CLI runtime", () => {
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
-  it.effect("reads CLI limits with the CLI's saved access until that access expires", () =>
+  it.effect("reads limits with the sign-in of the runtime that runs", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const userHome = yield* fileSystem.makeTempDirectoryScoped();
-      const appDirectory = path.join(userHome, ".gemini", "antigravity-cli");
-      yield* fileSystem.makeDirectory(appDirectory, { recursive: true });
+      const profileDirectory = path.join(userHome, "profile");
+      // A profile the 1.4.5 runtime used still holds its refreshable login.
+      const profileApp = path.join(profileDirectory, "antigravity-acp");
+      yield* fileSystem.makeDirectory(profileApp, { recursive: true });
       yield* fileSystem.writeFileString(
-        path.join(appDirectory, "antigravity-oauth-token"),
+        path.join(profileApp, "acp_token.json"),
+        JSON.stringify({
+          client_id: "client",
+          client_secret: "profile-secret",
+          refresh_token: "profile-refresh",
+        }),
+      );
+      const cliApp = path.join(userHome, ".gemini", "antigravity-cli");
+      yield* fileSystem.makeDirectory(cliApp, { recursive: true });
+      yield* fileSystem.writeFileString(
+        path.join(cliApp, "antigravity-oauth-token"),
         JSON.stringify({
           token: {
             access_token: "cli-access",
-            token_type: "Bearer",
             refresh_token: "cli-refresh",
             expiry: "1970-01-01T01:00:00.123456789Z",
-            expires_in: 3599,
           },
-          auth_method: "oauth",
-          id_token_email: "user@example.com",
         }),
       );
-      const requests: Array<string> = [];
+      const requests: Array<{ readonly url: string; readonly bearer: string | undefined }> = [];
       const http = HttpClient.make((request) =>
         Effect.sync(() => {
-          requests.push(request.url);
-          assert.equal(request.headers.authorization, "Bearer cli-access");
+          requests.push({ url: request.url, bearer: request.headers.authorization });
           return HttpClientResponse.fromWeb(
             request,
-            request.url.endsWith(":retrieveUserQuotaSummary")
-              ? Response.json({
-                  buckets: [{ bucketId: "gemini-5h", window: "5h", remainingFraction: 0.75 }],
-                })
-              : Response.json({}, { status: 403 }),
+            request.url.endsWith("/token")
+              ? Response.json({ access_token: "profile-access", expires_in: 3600 })
+              : request.url.endsWith(":retrieveUserQuotaSummary")
+                ? Response.json({
+                    buckets: [{ bucketId: "gemini-5h", window: "5h", remainingFraction: 0.75 }],
+                  })
+                : Response.json({}, { status: 403 }),
           );
         }),
       );
-      const options = {
-        profileDirectory: path.join(userHome, "profile-unused"),
-        authMethod: "oauth-personal" as const,
-        runtimeState: cliRuntimeState(path, userHome),
-      };
-      const { probe } = yield* makeAntigravityUsageProbe(options).pipe(
-        Effect.provideService(HttpClient.HttpClient, http),
-      );
+      let runtime: "cli" | "managed" = "cli";
+      const { probe } = yield* makeAntigravityRuntimeUsageProbe({
+        profileDirectory,
+        userHome,
+        authMethod: "oauth-personal",
+        readKeyringSecret: Effect.undefined,
+        runtimeState: Effect.sync(() =>
+          runtime === "cli"
+            ? antigravityRuntimeState(
+                { managedVersionDirectory: null },
+                { profileDirectory, userHome, path },
+              )
+            : profileAntigravityRuntimeState(profileDirectory),
+        ),
+      }).pipe(Effect.provideService(HttpClient.HttpClient, http));
 
-      const fresh = yield* probe;
-      assert.isUndefined(fresh.unavailable);
+      const cli = yield* probe;
+      assert.isUndefined(cli.unavailable);
       assert.deepEqual(
-        fresh.windows.map((window) => [window.id, window.usedPercent]),
+        cli.windows.map((window) => [window.id, window.usedPercent]),
         [["gemini-5h", 25]],
       );
       assert.isFalse(
-        requests.some((url) => url.endsWith("/token")),
-        "the CLI's login has no OAuth client to refresh with",
+        requests.some((request) => request.url.endsWith("/token")),
+        "the CLI's own login, not the profile's, with no refresh",
       );
+      assert.isTrue(requests.some((request) => request.bearer === "Bearer cli-access"));
 
-      yield* TestClock.setTime(3_600_000 - 30_000);
-      const sent = requests.length;
-      const expired = yield* probe;
-      assert.deepEqual(expired.windows, []);
-      assert.equal(expired.unavailable?.reason, "unsupported");
-      assert.match(expired.unavailable?.message ?? "", /Antigravity CLI/);
-      assert.equal(requests.length, sent, "no request with expired access");
-      assert.notMatch(JSON.stringify([fresh, expired]), /cli-access|cli-refresh/);
+      runtime = "managed";
+      requests.length = 0;
+      const managed = yield* probe;
+      assert.isTrue(requests.some((request) => request.url.endsWith("/token")));
+      assert.isFalse(requests.some((request) => request.bearer === "Bearer cli-access"));
+      assert.isUndefined(managed.unavailable);
+      assert.notMatch(
+        JSON.stringify([cli, managed]),
+        /cli-access|cli-refresh|profile-access|profile-refresh|profile-secret/,
+      );
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 });

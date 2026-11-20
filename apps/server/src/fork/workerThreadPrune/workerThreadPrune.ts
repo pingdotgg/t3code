@@ -34,6 +34,7 @@ const RECOVERY_KINDS = Object.keys({
   "restart-continuations": true,
   "subagent-results": true,
   "delegated-completions": true,
+  "unread-steers": true,
 } satisfies Record<
   ProjectionStore.ProjectionRecoveryKind,
   true

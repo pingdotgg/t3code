@@ -721,6 +721,7 @@ describe("Antigravity subscription limits", () => {
       const limits = yield* signedIn.probe;
       expect(limits.unavailable).toBeUndefined();
       expect(limits.windows).toHaveLength(4);
+      expect(limits.credentialEmail).toBe("someone@example.com");
       expect(signedIn.requests.some((request) => request.url.endsWith("/token"))).toBe(false);
 
       const expired = yield* fixture({

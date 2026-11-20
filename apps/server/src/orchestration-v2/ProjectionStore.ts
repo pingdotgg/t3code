@@ -104,15 +104,12 @@ import type * as Statement from "effect/sql/Statement";
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 import { SEND_TO_USER_PAYLOAD_LIKE } from "@t3tools/shared/displayModes";
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
-<<<<<<< origin/main
 import * as ShownHistory from "../fork/shownHistory/ShownHistory.ts";
-=======
 import { DELEGATED_TASK_MESSAGE_CONDITION } from "./delegatedTaskMessage.ts";
 import {
   DEFERRED_COMMAND_MESSAGE_CONDITION,
   JAVASCRIPT_TRIM_WHITESPACE,
 } from "./deferredCommandMessage.ts";
->>>>>>> upstream/main
 import { readableSearchText } from "./messageSearchIndex.ts";
 import {
   isFoldableWorkItem,

@@ -142,17 +142,13 @@ export function historicalMessage(
   let text: string;
   switch (item.type) {
     case "user_message":
-<<<<<<< origin/main
       if (item.fyi !== true) {
-        text = item.text;
+        text = withMessageSenderNote(item, item.text);
         break;
       }
       // A runless FYI waits for a turn's FYI block; a carried one is history whatever its turn's outcome.
       if (item.runId === null) return null;
       text = fyiElement(item);
-=======
-      text = withMessageSenderNote(item, item.text);
->>>>>>> upstream/main
       break;
     case "assistant_message":
       text = item.text;

@@ -60,23 +60,17 @@ export function ThreadTimeline({
     if (detailLoading || entries.length === 0 || timelineHasEphemeralPreviewUrls(entries)) {
       return;
     }
-<<<<<<< origin/main
     rememberReadyThreadTimeline({ threadKey: rememberKey, entries });
   }, [rememberKey, detailLoading, entries]);
   return (
     <ThreadFindTimelineContext value={shown.find}>
       <MessagesTimeline
         {...timelineProps}
+        syncing={syncing}
         citationRequest={shown.citationRequest}
         timelineEntries={displayedEntries}
         repliesChosen={repliesChosen}
       />
     </ThreadFindTimelineContext>
-=======
-    rememberReadyThreadTimeline({ threadKey: activeThreadKey, entries });
-  }, [activeThreadKey, detailLoading, entries]);
-  return (
-    <MessagesTimeline {...timelineProps} syncing={syncing} timelineEntries={displayedEntries} />
->>>>>>> upstream/main
   );
 }

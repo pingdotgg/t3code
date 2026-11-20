@@ -2325,8 +2325,13 @@ export function makeClaudeQueryOptions(input: {
   if (requestThinkingSummaries && extraArgs["thinking-display"] === undefined) {
     extraArgs["thinking-display"] = "summarized";
   }
-  const pluginDirectories =
-    input.settings === undefined ? [] : claudeLaunchArgPluginDirectories(input.settings.launchArgs);
+  const pluginRoot = input.environment?.T3CODE_CLAUDE_PLUGIN_ROOT?.trim();
+  const pluginDirectories = [
+    ...(input.settings === undefined
+      ? []
+      : claudeLaunchArgPluginDirectories(input.settings.launchArgs)),
+    ...(pluginRoot ? [pluginRoot] : []),
+  ];
   // A bare --plugin-dir still reaches Claude, which reports the missing path.
   if (launchArgPluginDir === null) extraArgs["plugin-dir"] = null;
   const threadIdentity: ClaudeAgentSdkThreadIdentity = input.resume
@@ -2343,7 +2348,6 @@ export function makeClaudeQueryOptions(input: {
       : typeof input.sdkSettings === "object" && input.sdkSettings !== null
         ? ({ ...input.sdkSettings, ...selectionSettings } as ClaudeSdkSettings)
         : selectionSettings;
-  const pluginRoot = input.environment?.T3CODE_CLAUDE_PLUGIN_ROOT?.trim();
   const autoCompactWindow =
     input.settings?.autoCompactWindow === undefined || input.settings.autoCompactWindow.length === 0
       ? undefined
@@ -2440,7 +2444,6 @@ export function makeClaudeQueryOptions(input: {
       : {}),
     ...(input.environment === undefined ? {} : { env: input.environment }),
     ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
-    ...(pluginRoot ? { plugins: [{ type: "local" as const, path: pluginRoot }] } : {}),
     systemPrompt: {
       type: "preset" as const,
       preset: "claude_code" as const,
@@ -2457,23 +2460,10 @@ export function makeClaudeQueryOptions(input: {
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
     },
-<<<<<<< origin/main
     ...(Object.keys(hooks).length === 0 ? {} : { hooks }),
-=======
-    ...(deviceInstructions || input.onStop !== undefined
-      ? {
-          hooks: {
-            ...(deviceInstructions
-              ? { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] }
-              : {}),
-            ...(input.onStop === undefined ? {} : { Stop: [{ hooks: [input.onStop] }] }),
-          },
-        }
-      : {}),
     ...(pluginDirectories.length === 0
       ? {}
       : { plugins: pluginDirectories.map((path) => ({ type: "local" as const, path })) }),
->>>>>>> upstream/main
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
   const additionalDirectories = [
@@ -4719,6 +4709,12 @@ function terminalStatusFromResult(
     return "cancelled";
   }
   return "failed";
+}
+
+function isClaudeActiveSteeringAbortResult(message: SDKResultMessage): boolean {
+  return (
+    message.terminal_reason === "aborted_streaming" || message.terminal_reason === "aborted_tools"
+  );
 }
 
 function isClaudeProviderContinuationTurn(
@@ -12057,15 +12053,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const completedAt = yield* DateTime.now;
             const interrupted = (yield* Ref.get(interruptedTurns)).has(context.providerTurnId);
             const wasSteered = (yield* Ref.get(steeredTurns)).has(context.providerTurnId);
-<<<<<<< origin/main
-            // Fork: a steer waits in Claude's queue, so the turn stays open while one is not yet taken in.
-            const steerQueued =
-              context.pendingSteers.size > 0 && (message.user_message_uuids?.length ?? 0) > 0;
-            if (!interrupted && wasSteered && steerQueued) {
-=======
             absorbHeldResult(context);
-            if (!interrupted && wasSteered && isClaudeActiveSteeringAbortResult(message)) {
->>>>>>> upstream/main
+            // Fork: with no steer left in Claude's queue, an aborted result ends the turn.
+            if (
+              !interrupted &&
+              wasSteered &&
+              context.pendingSteers.size > 0 &&
+              isClaudeActiveSteeringAbortResult(message)
+            ) {
               const cutOffReply = context.assistant.lastReply;
               context.assistant.lastReply = null;
               if (message.terminal_reason === "aborted_streaming") {
@@ -13917,11 +13912,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ),
         );
 
-<<<<<<< origin/main
-        // Move subagents to the background so a steer need not wait for their tool results.
-=======
         // Move subagents to the background so a steer reaches Claude without waiting for them to finish.
->>>>>>> upstream/main
         const backgroundForegroundSubagents = Effect.fnUntraced(function* (
           live: ClaudeLiveQueryContext,
           deadline: number,
@@ -14051,11 +14042,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ).promptEffort,
               ),
               attachments: turnInput.message.attachments,
-<<<<<<< origin/main
-=======
               // "now" makes Claude Code cancel the tool calls in flight and report them as a user refusal.
               priority: "next",
->>>>>>> upstream/main
               uuid: steerUuid,
               attachmentsDir,
               fileSystem,

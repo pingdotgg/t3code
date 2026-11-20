@@ -1,6 +1,4 @@
-import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
-import * as Clock from "effect/Clock";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
@@ -12,15 +10,15 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { removeAntigravitySessionFiles } from "../../provider/acp/AntigravitySessionFiles.ts";
+import { makeAntigravityUsageProbe } from "../../provider/antigravityUsageLimits.ts";
 import type { AntigravityExecutable } from "../../provider/AntigravityInstallation.ts";
 
 /**
- * Which runtime runs and where it keeps its sessions and its login. `harness` is the older 1.4.5
- * runtime and `managed` is T3's own `agy`; both use the profile T3 gives them. `cli` is a user's own
- * `agy`, which uses the user's folder.
+ * Which runtime runs and where it keeps its sessions and its login. `managed` is T3's own `agy`,
+ * which uses the profile T3 gives it. `cli` is a user's own `agy`, which uses the user's folder.
  */
 export interface AntigravityRuntimeState {
-  readonly runtime: "harness" | "managed" | "cli";
+  readonly runtime: "managed" | "cli";
   readonly root: string;
   readonly appFolder: string;
   readonly tokenFile: string;
@@ -28,21 +26,19 @@ export interface AntigravityRuntimeState {
 
 export const profileAntigravityRuntimeState = (
   profileDirectory: string,
-  runtime: "harness" | "managed" = "harness",
 ): AntigravityRuntimeState => ({
-  runtime,
+  runtime: "managed",
   root: profileDirectory,
   appFolder: "antigravity-acp",
   tokenFile: "acp_token.json",
 });
 
 /** An `agy` outside T3's managed releases; a managed release keeps its state in the profile. */
-const isUserAgy = (
-  executable: Pick<AntigravityExecutable, "harnessPath" | "managedVersionDirectory">,
-) => executable.harnessPath === null && executable.managedVersionDirectory === null;
+const isUserAgy = (executable: Pick<AntigravityExecutable, "managedVersionDirectory">) =>
+  executable.managedVersionDirectory === null;
 
 export function antigravityRuntimeState(
-  executable: Pick<AntigravityExecutable, "harnessPath" | "managedVersionDirectory">,
+  executable: Pick<AntigravityExecutable, "managedVersionDirectory">,
   input: {
     readonly profileDirectory: string;
     readonly userHome: string;
@@ -56,17 +52,14 @@ export function antigravityRuntimeState(
         appFolder: "antigravity-cli",
         tokenFile: "antigravity-oauth-token",
       }
-    : profileAntigravityRuntimeState(
-        input.profileDirectory,
-        executable.harnessPath === null ? "managed" : "harness",
-      );
+    : profileAntigravityRuntimeState(input.profileDirectory);
 }
 
 const PROFILE_FLAGS = new Set(["--gemini-dir", "--app-data-dir"]);
 
 /** Upstream points every `agy` at T3's profile; the user's own `agy` keeps its own login and state. */
 export const withUserAgyState = (
-  executable: Pick<AntigravityExecutable, "harnessPath" | "managedVersionDirectory">,
+  executable: Pick<AntigravityExecutable, "managedVersionDirectory">,
   spawn: AcpSessionRuntime.AcpSpawnInput,
 ): AcpSessionRuntime.AcpSpawnInput =>
   isUserAgy(executable)
@@ -86,30 +79,39 @@ export const antigravityRuntimeStateOf = (options: {
 }) =>
   options.runtimeState ?? Effect.succeed(profileAntigravityRuntimeState(options.profileDirectory));
 
-export const antigravityTokenPath = (state: AntigravityRuntimeState, path: Path.Path) =>
+const antigravityTokenPath = (state: AntigravityRuntimeState, path: Path.Path) =>
   path.join(state.root, state.appFolder, state.tokenFile);
 
-/** `agy` runs shell commands in an additional directory instead of the session's cwd. */
-export const antigravitySessionDirectories = (
-  state: AntigravityRuntimeState,
-  attachmentsDir: string,
-): ReadonlyArray<string> => (state.runtime === "harness" ? [attachmentsDir] : []);
-
 /**
- * `agy acp` runs a `/compact` prompt as its own command. The older harness runtime reads it as
- * chat, so its sessions offer no compaction. The runtime is read as each session opens.
+ * Limits read with the sign-in of whichever runtime runs when they are read. The runtime is
+ * resolved per read, as the binary path may resolve only later; each runtime's folder is fixed.
  */
-export const withAntigravityCliCompaction =
-  <Session extends { readonly compactThread?: unknown }, Input, E, R>(
-    openSession: (input: Input) => Effect.Effect<Session, E, R>,
-    options: Parameters<typeof antigravityRuntimeStateOf>[0],
-  ) =>
-  (input: Input): Effect.Effect<Session, E, R> =>
-    Effect.zipWith(openSession(input), antigravityRuntimeStateOf(options), (session, state) => {
-      if (state.runtime !== "harness") return session;
-      const { compactThread: _, ...harness } = session;
-      return harness as Session;
+export const makeAntigravityRuntimeUsageProbe = Effect.fn("makeAntigravityRuntimeUsageProbe")(
+  function* (
+    input: Parameters<typeof makeAntigravityUsageProbe>[0] & {
+      readonly userHome: string;
+      readonly runtimeState: Effect.Effect<AntigravityRuntimeState>;
+    },
+  ) {
+    const path = yield* Path.Path;
+    const { userHome, runtimeState, ...options } = input;
+    const cliState = antigravityRuntimeState(
+      { managedVersionDirectory: null },
+      { profileDirectory: options.profileDirectory, userHome, path },
+    );
+    const managed = yield* makeAntigravityUsageProbe(options);
+    const cli = yield* makeAntigravityUsageProbe({
+      ...options,
+      appDirectory: path.join(cliState.root, cliState.appFolder),
     });
+    return {
+      probe: Effect.flatMap(runtimeState, (state) =>
+        state.runtime === "cli" ? cli.probe : managed.probe,
+      ),
+      clear: Effect.andThen(managed.clear, cli.clear),
+    };
+  },
+);
 
 const RefreshToken = Schema.Struct({ refresh_token: Schema.NonEmptyString });
 const decodeRefreshToken = Schema.decodeUnknownOption(
@@ -150,60 +152,6 @@ export function antigravityCliApiError(text: string) {
   const match = CLI_API_ERROR.exec(text);
   return match === null ? null : ([match[0], match[2], match[3], match[1]] as const);
 }
-
-const CliLogin = Schema.Struct({
-  token: Schema.Struct({
-    access_token: Schema.NonEmptyString,
-    refresh_token: Schema.NonEmptyString,
-    expiry: Schema.NonEmptyString,
-  }),
-});
-const decodeCliLogin = Schema.decodeEffect(Schema.fromJsonString(CliLogin));
-
-interface AntigravityAccess {
-  readonly access_token: string;
-  readonly expires_in: number;
-}
-
-/**
- * Undefined unless the runtime is a user's own `agy`. The CLI's login holds no OAuth client, so T3 cannot
- * refresh it. The access token the CLI last saved stands in for a refresh until it expires.
- */
-export const readAntigravityCliUsageLogin = Effect.fn("readAntigravityCliUsageLogin")(function* (
-  state: AntigravityRuntimeState,
-  text: string,
-  checkedAt: string,
-) {
-  if (state.runtime !== "cli") return undefined;
-  const { token } = yield* decodeCliLogin(text);
-  const expiresIn = (Date.parse(token.expiry) - (yield* Clock.currentTimeMillis)) / 1000;
-  const login: {
-    readonly client_id: string;
-    readonly client_secret: string;
-    readonly refresh_token: string;
-    readonly project_id?: string;
-  } = { client_id: "", client_secret: "", refresh_token: token.refresh_token };
-  const access: AntigravityAccess = { access_token: token.access_token, expires_in: expiresIn };
-  return {
-    token: login,
-    access,
-    unavailable:
-      expiresIn > 60
-        ? undefined
-        : makeUnavailableUsageLimits({
-            checkedAt,
-            reason: "unsupported",
-            message:
-              "The Antigravity CLI's access has expired, and only the CLI can renew it. Limits show again after its next turn.",
-          }),
-  };
-});
-
-/** A CLI login's saved access replaces the refresh request, which is then never sent. */
-export const orAntigravityCliAccess =
-  (cli: { readonly access: AntigravityAccess } | undefined) =>
-  <E, R>(refresh: Effect.Effect<AntigravityAccess, E, R>): Effect.Effect<AntigravityAccess, E, R> =>
-    cli === undefined ? refresh : Effect.succeed(cli.access);
 
 const isNativeSessionId = Schema.is(Schema.String.check(Schema.isUUID(4)));
 

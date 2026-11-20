@@ -79,12 +79,8 @@ import {
   formatReadToolLabel,
   formatSearchToolLabel,
 } from "@t3tools/shared/toolActivityCopy";
-<<<<<<< origin/main
-import { isWindowsAbsolutePath } from "@t3tools/shared/path";
-import { displayModeRows } from "../../fork/displayMode/displayModeTimeline";
-=======
 import { isHostPath } from "@t3tools/shared/path";
->>>>>>> upstream/main
+import { displayModeRows } from "../../fork/displayMode/displayModeTimeline";
 
 export function timelineEntryRunId(entry: TimelineEntry): RunId | null {
   if (entry.kind === "message") {

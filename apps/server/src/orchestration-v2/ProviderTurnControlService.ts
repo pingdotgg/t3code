@@ -457,10 +457,13 @@ export const layer: Layer.Layer<
           const wrapped = yield* displayModeWrap.wrapUserText({
             threadId: input.threadId,
             message,
-            text: projectComposerContextForProvider({
-              text: message.text,
-              records: message.context?.records ?? [],
-            }),
+            text: withMessageSenderNote(
+              message,
+              projectComposerContextForProvider({
+                text: message.text,
+                records: message.context?.records ?? [],
+              }),
+            ),
           });
           yield* loaded.session.value
             .steerTurn({
@@ -474,17 +477,7 @@ export const layer: Layer.Layer<
               ...(appContext.length === 0 ? {} : { appContext }),
               message: {
                 messageId: message.id,
-<<<<<<< origin/main
                 text: wrapped.text,
-=======
-                text: withMessageSenderNote(
-                  message,
-                  projectComposerContextForProvider({
-                    text: message.text,
-                    records: message.context?.records ?? [],
-                  }),
-                ),
->>>>>>> upstream/main
                 attachments: message.attachments,
                 createdBy: message.createdBy,
                 creationSource: message.creationSource,

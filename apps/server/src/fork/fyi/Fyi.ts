@@ -171,15 +171,12 @@ export function fyiPostRefusal(
 
 /**
  * Its ids come from the sender's request id and outlive the receipt. A queued message has no
- * turn item yet; a compacted thread reads no messages of its older runs, but every turn item.
+ * turn item yet. The caller checks the stored item, which a compacted thread's read leaves out.
  */
 export const fyiAlreadyPosted = (
-  projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems">,
+  projection: Pick<OrchestrationV2ThreadProjection, "messages">,
   messageId: MessageId,
-  itemId: TurnItemId,
-): boolean =>
-  projection.messages.some((message) => message.id === messageId) ||
-  projection.turnItems.some((item) => item.id === itemId);
+): boolean => projection.messages.some((message) => message.id === messageId);
 
 /** The message and runless item an FYI post writes; the item waits where it was sent. */
 export function waitingFyi(input: {
