@@ -1,16 +1,25 @@
 diff --git a/dist/editor/editor.js b/dist/editor/editor.js
-index b4c280390b52434f63fbe7916d81b150d9006fb4..cb7fb89a22c8adac9ea951b8767b5fd446347746 100644
+index b4c280390b52434f63fbe7916d81b150d9006fb4..ae0e8e6f9e0473a152b921a50a8c7833cb466a03 100644
 --- a/dist/editor/editor.js
 +++ b/dist/editor/editor.js
-@@ -95,6 +95,7 @@ var Editor = class {
+@@ -95,6 +95,8 @@ var Editor = class {
  	#deletionsColumn;
  	#overlayElement;
  	#overlayElements;
 +	#fontProbeElement;
++	#lineReveal;
  	#caretElements;
  	#caretHighlightElements;
  	#primaryCaretElement;
-@@ -584,6 +585,7 @@ var Editor = class {
+@@ -536,6 +538,7 @@ var Editor = class {
+ 		const fileInstance = this.#fileInstance;
+ 		const recycle = reason === "recycle";
+ 		this.#virtualizedInstance?.cancelScroll(this.#handleCaretRevealDone);
++		this.#virtualizedInstance?.cancelScroll(this.#handleLineRevealDone);
+ 		this.#cancelEditPrediction(true, false);
+ 		if (!recycle) this.#editPredictionHistory = [];
+ 		const editSession = this.#editSession;
+@@ -584,6 +587,7 @@ var Editor = class {
  		this.#contentHasFocus = false;
  		this.#overlayElement?.remove();
  		this.#overlayElement = void 0;
@@ -18,7 +27,7 @@ index b4c280390b52434f63fbe7916d81b150d9006fb4..cb7fb89a22c8adac9ea951b8767b5fd4
  		this.#resizeObserver?.disconnect();
  		this.#resizeObserver = void 0;
  		this.#fontRemeasureScheduled = false;
-@@ -1022,6 +1024,19 @@ var Editor = class {
+@@ -1022,6 +1026,19 @@ var Editor = class {
  		this.#tokenizer?.applyStyle();
  		this.#spriteElement = createSpriteElement();
  		this.#overlayElement = h("div", { dataset: "editorOverlay" });
@@ -38,7 +47,7 @@ index b4c280390b52434f63fbe7916d81b150d9006fb4..cb7fb89a22c8adac9ea951b8767b5fd4
  		const replacementFocusTargetIsContent = (event) => {
  			const target = event.composedPath()[0];
  			return target instanceof Node && this.#contentElement?.contains(target) === true;
-@@ -1130,6 +1145,7 @@ var Editor = class {
+@@ -1130,6 +1147,7 @@ var Editor = class {
  		this.#editorEventDisposes = [
  			addEventListener(contentEl, "focus", () => {
  				this.#contentHasFocus = true;
@@ -46,7 +55,7 @@ index b4c280390b52434f63fbe7916d81b150d9006fb4..cb7fb89a22c8adac9ea951b8767b5fd4
  				onFocus?.();
  				if (!this.#isContentMouseDown && !this.#isComposing && this.#focusRequest == null && this.#selections !== void 0 && this.#selections.length > 0) this.#setWindowSelection(this.#selections.at(-1));
  			}, { passive: true }),
-@@ -1397,6 +1413,7 @@ var Editor = class {
+@@ -1397,6 +1415,7 @@ var Editor = class {
  		this.#resizeObserver = new ResizeObserver(this.#handleLayoutResize);
  		this.#resizeObserver.observe(contentEl);
  		this.#resizeObserver.observe(contentEl.parentElement);
@@ -54,7 +63,7 @@ index b4c280390b52434f63fbe7916d81b150d9006fb4..cb7fb89a22c8adac9ea951b8767b5fd4
  		this.#computeContentOffset(contentEl);
  	}
  	#handleCustomPasteEvent = async () => {
-@@ -1852,7 +1869,9 @@ var Editor = class {
+@@ -1852,7 +1871,9 @@ var Editor = class {
  		const change = textDocument.applyEdits(edits, true, selections, nextSelections, true);
  		if (change !== void 0) this.#applyChange(change, nextSelections);
  	}
@@ -65,7 +74,7 @@ index b4c280390b52434f63fbe7916d81b150d9006fb4..cb7fb89a22c8adac9ea951b8767b5fd4
  		const lineAnnotations = this.#lineAnnotations?.length ?? 0;
  		const prevGutterWidth = this.#gutterWidthCache;
  		const prevContentWidth = this.#contentWidthCache;
-@@ -1860,12 +1879,12 @@ var Editor = class {
+@@ -1860,12 +1881,12 @@ var Editor = class {
  		this.#contentWidthCache = void 0;
  		const gutterWidthChanged = this.#getGutterWidth() !== prevGutterWidth;
  		const contentWidthChanged = this.#getContentWidth() !== prevContentWidth;
@@ -81,8 +90,44 @@ index b4c280390b52434f63fbe7916d81b150d9006fb4..cb7fb89a22c8adac9ea951b8767b5fd4
  		}
  		if (this.#selections !== void 0 || this.#matches !== void 0 || this.#markerRenderer !== void 0) {
  			this.#updateSelections(this.#selections ?? []);
-@@ -3369,7 +3388,8 @@ var Editor = class {
- 		});
+@@ -2123,6 +2144,16 @@ var Editor = class {
+ 			this.#scrollCaretIntoView(line, character, "nearest");
+ 		}
+ 	};
++	#handleLineRevealDone = (result) => {
++		const target = this.#lineReveal;
++		if (result !== "settled" || target === void 0) return;
++		this.#lineReveal = void 0;
++		const { line, char, noFocus } = target;
++		if (this.#scrollCaretIntoView(line, char, "center") && !noFocus) this.#focusAt({
++			line,
++			character: char
++		});
++	};
+ 	#focusAt(position) {
+ 		if (this.#focusRequest?.restore != null) this.#restoreReplacementFocus(position);
+ 		else this.#focus(position);
+@@ -2145,6 +2176,19 @@ var Editor = class {
+ 			this.#scrollingToLineNoFocus = false;
+ 			return;
+ 		}
++		// The host knows wrapped row heights; a line-height estimate stops short of wrapped content.
++		const host = this.#virtualizedInstance;
++		if (host !== void 0) {
++			this.#scrollingToLine = void 0;
++			this.#scrollingToLineFixed = false;
++			this.#lineReveal = {
++				line,
++				char,
++				noFocus
++			};
++			host.scrollToLine(line + 1, "center", this.#handleLineRevealDone);
++			return;
++		}
+ 		let yFix = 0;
+ 		if (this.#scrollingToLine === line && this.#contentElement !== void 0) for (let i = this.#contentElement.childElementCount - 1; i >= 0; i--) {
+ 			const child = this.#contentElement.children[i];
+@@ -3370,6 +3414,7 @@ var Editor = class {
  		this.#searchPanel = searchPanel;
  		this.#retainSearchPanelFocus = false;
  		searchPanel.mount();
@@ -135,7 +180,7 @@ index 96d4fb137ea683b66381b1ce6e47e8708a89366c..13f2564897a5bf53a8f311300003b3ea
  	/**
  	* Re-measure the '0' character width against the font that is loaded right
 diff --git a/dist/utils/parsePatchFiles.js b/dist/utils/parsePatchFiles.js
-index 48568bd..f27123f 100644
+index 48568bd6f669ba4826de17ba03caad466e1f0000..f27123f7c812c728ee8393792665ba288141771c 100644
 --- a/dist/utils/parsePatchFiles.js
 +++ b/dist/utils/parsePatchFiles.js
 @@ -339,7 +339,7 @@ function parsePatchFiles(data, options = {}) {
