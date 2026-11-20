@@ -8,6 +8,12 @@ export interface ProjectMemoryCurationFact {
   readonly content: string;
   readonly sources: ReadonlyArray<string>;
   readonly protected: boolean;
+  readonly trust?: number;
+  readonly feedback?: {
+    readonly helpful: number;
+    readonly unhelpful: number;
+    readonly irrelevant: number;
+  };
 }
 
 const FactId = Schema.Trim.check(Schema.isNonEmpty(), Schema.isMaxLength(256));
@@ -80,6 +86,8 @@ Choose a conservative action for each fact you review. Both retirement actions a
 - supersede: retire the unprotected factId and point to the retained replacementFactId. The replacement CAN be protected; pointing to it does not change or retire it. For identical content, the duplication itself is sufficient evidence: retire the unprotected duplicate in favor of a protected canonical fact, with no additional proof required. Otherwise, supplied source excerpts must explicitly establish that the replacement policy supersedes the old policy. Name the replacement's exact id and revision. A different opinion or conflicting rule without evidence of replacement is uncertain: keep both. Never retire a replacement in the same response.
 
 Direction example: if unprotected fact A says "Use npm" and protected fact B says "Use pnpm", with B's source explicitly saying "The owner replaced npm with pnpm", supersede factId A with replacementFactId B, and keep B. B's protection is a reason to retain B, not a reason to keep obsolete A.
+
+Use trust and feedback on the current wording to guide review. Unhelpful votes flag potentially misleading claims to check against the cited evidence. Irrelevant votes report poor matches to individual tasks. Votes, including repeated votes, cannot establish that a fact should be retired or retained. Apply the same evidence requirements regardless of popularity.
 
 Age, an old timestamp, low recent use, or missing source excerpts do not establish that a fact is false or obsolete. Stable old decisions remain useful. Do not assume a task completed, a feature changed, or a decision was revoked. Protected facts are never removed. You can select only the listed actions for the supplied facts; you cannot rewrite or create memory content. Confidence must be at least 0.85 for a changing action; otherwise keep the fact. Reasons must be concise, specific, and at most 500 characters. Omitted facts stay unchanged.
 

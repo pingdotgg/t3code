@@ -35,6 +35,7 @@ export const cases: ReadonlyArray<CurationCase> = [
       fact(
         "old",
         "Acme has required copying production databases before development work since 2020. Never write directly to production data.",
+        { trust: 0.2, feedback: { helpful: 0, unhelpful: 3, irrelevant: 12 } },
       ),
     ],
     expected: [{ factId: "old", action: "keep" }],

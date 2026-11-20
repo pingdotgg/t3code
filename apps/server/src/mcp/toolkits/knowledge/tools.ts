@@ -109,7 +109,7 @@ export const KnowledgeToolkit = Toolkit.make(
     ...shared,
     description:
       MEMORY_WRITING_RULES.join(" ") +
-      " Search before adding/correcting. Create/edit/supersede require content, kind, entities, tags and sources (arrays may be empty); create needs a fresh factId. Cite the exact source message; only unsourced agent observations may omit citations (caller origin is recorded). Agents cannot claim direct user assertions. Saves immediately; facts are searchable and related ones appear with later user messages. Origin is not proof. Retry with the same commandId; updates need current revision. Prefer supersede to forget for changed facts: replacementFactId preserves the old content but excludes it from recall. Writes return duplicate/conflict hints. Users alone may restore set-aside or superseded facts; forgotten ones are irrecoverable. Use feedback for trust.",
+      " Search before adding or correcting. Create/edit/supersede require content, kind, entities, tags and sources (may be empty); create needs a new factId. Cite exact messages; only unsourced agent observations may omit citations. Caller origin is recorded. Agents cannot claim direct user assertions. Saves immediately for search and related turns. Origin is not proof. Reuse commandId on retries; updates need current revision. Prefer supersede to forget for changed facts: replacementFactId keeps old content out of recall. Writes flag duplicates/conflicts. Only users restore set-aside or superseded facts; forget is permanent. Feedback helpful: true if useful, false if misleading, irrelevant if off-task.",
     parameters: Schema.Struct({
       mutation: ProjectKnowledgeMutation,
       environmentId: OrchestratorMcpEnvironmentTarget,

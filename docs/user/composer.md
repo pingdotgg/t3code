@@ -231,12 +231,15 @@ has already found by searching or reading memory, or a fact that was saved from
 that thread. T3 sends recalled facts in a short form without their citations. It
 cuts a long fact short, and the agent reads the rest when it needs it.
 
-T3 asks the agent to rate each recalled fact it relies on. Helpful ratings raise
-the fact's trust and unhelpful ratings lower it, and T3 recalls only facts with
-enough trust. To remove a fact permanently, forget it in Project memory.
+T3 asks the agent to rate recalled facts it can judge. A helpful vote raises a
+fact's trust, and a misleading fact gets a downvote that lowers trust. Marking a
+fact unrelated to the task leaves its trust unchanged. T3 recalls only facts
+with enough trust. During review, the curator sees each fact's trust and votes
+since its last edit. It checks the fact and its sources before removing it.
 
-A fact's details show its history: when it was created, edited, superseded, and
-rated helpful or unhelpful, with the trust change from each rating. **Memory health** counts facts by status. When facts lose their cited
+Open a fact's details to see its revisions, ratings and trust changes. To remove
+it permanently, choose **Forget**. **Memory health** counts facts by status.
+When facts lose their cited
 source, the **Lost source** filter lists them; on mobile, select the lost-source
 count in the memory summary.
 
