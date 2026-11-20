@@ -332,7 +332,9 @@ function resultOfRun(
       ? ["Child task completed without an assistant result.", stopNotice(projection, run)]
           .filter((part) => part !== undefined)
           .join("\n\n")
-      : `Child task ended with status ${run.status}.`);
+      : run.status === "cancelled" && run.startedAt === null
+        ? "Child task was cancelled before it started; the child never read its message."
+        : `Child task ended with status ${run.status}.`);
   const executedModel = latestProviderTurnForAttempt(
     projection.providerTurns,
     run.activeAttemptId,

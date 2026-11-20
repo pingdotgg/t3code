@@ -133,7 +133,7 @@ import {
   visibleConversationItems,
   visibleDeltaRunOrdinals,
 } from "./ContextHandoffService.ts";
-import { notificationTurnItem } from "@t3tools/provider-core/server/notification";
+import { notificationTurnItem, reportLabel } from "@t3tools/provider-core/server/notification";
 import {
   cancelledBeforeStart,
   continuationFailedBeforePrompt,
@@ -2391,6 +2391,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .subagents[0];
     // An unknown task gives no evidence the question is obsolete.
     if (task === undefined) return false;
+    // The notice is sent while its task is still pending; once the task runs, it is old news.
+    if (messageId.startsWith("message:delegated-task-held:"))
+      return task.status !== "idle" && task.status !== "pending";
     const childThreadId = task.childThreadId;
     if (
       childThreadId === null ||
@@ -16261,6 +16264,50 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       : dispatch;
   });
 
+  // Only a user's Resume or send releases a held queue, so the task's owner must hear of it.
+  // Sent before the task turns idle, so the owner is told no later than the task row says so.
+  const tellOwnerOfHeldTask = Effect.fn("Orchestrator.tellOwnerOfHeldTask")(
+    function* (parentThreadId: ThreadId, run: OrchestrationV2Run, sequence: number) {
+      const taskId = run.delegatedTaskId;
+      if (taskId === undefined) return;
+      const parent = yield* projectionStore.getThreadRecords(parentThreadId, ["subagents"], {
+        subagentIds: [taskId],
+      });
+      const task = parent.subagents.find((candidate) => candidate.id === taskId);
+      if (
+        task === undefined ||
+        task.origin !== "app_owned" ||
+        task.childThreadId !== run.threadId ||
+        task.status !== "pending" ||
+        task.result !== null ||
+        task.completionDelivery?.state === "disposed" ||
+        parent.thread.archivedAt !== null ||
+        parent.thread.deletedAt !== null
+      )
+        return;
+      const label = reportLabel(task.title?.trim() || task.prompt);
+      yield* dispatchWithReceipt({
+        type: "message.dispatch",
+        commandId: CommandId.make(`server:delegated-task-held:${taskId}:${sequence}`),
+        threadId: parentThreadId,
+        messageId: MessageId.make(`message:delegated-task-held:${taskId}:${sequence}`),
+        text: `Delegated task ${taskId} is held: its message waits unread in the queue of child thread ${run.threadId} (queued run ${run.id}) after that thread was stopped or failed. It will not run until the user resumes that queue. Tell the user if the task is still needed; otherwise cancel it with t3_queue action cancel.`,
+        notification: {
+          source: { kind: "delegated_task", taskIds: [taskId], childThreadId: run.threadId },
+          outcome: "updated",
+          summary: `Delegated task${label === undefined ? "" : ` "${label}"`} is held`,
+        },
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "server",
+      });
+    },
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Failed to tell a delegated task's owner it is held", { cause }),
+    ),
+  );
+
   const handleRunUpdate = Effect.fn("Orchestrator.handleRunUpdate")(
     function* (stored: OrchestrationV2StoredEvent) {
       if (stored.event.type !== "run.updated") return;
@@ -16316,6 +16363,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       const parentThreadId = yield* appOwnedSubagentParentThreadId(threadId);
       if (parentThreadId !== undefined) {
+        if (run.status === "queued" && run.queueHeld === true) {
+          yield* tellOwnerOfHeldTask(parentThreadId, run, stored.sequence);
+        }
         yield* threadDispatch.withLock(
           parentThreadId,
           finalizeAppOwnedSubagent(threadId, { syncRunId: run.id }),
