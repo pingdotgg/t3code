@@ -70,6 +70,8 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     userId?: string;
     userInfoAt?: number;
     missingToken?: boolean;
+    /** The probe should use the native CLI's sign-in, which carries no project. */
+    cliSignIn?: boolean;
     authMethod?: "oauth-personal" | "oauth-business" | "gemini-api-key";
     keyringSecret?: string;
     /** Reads the OS keyring instead of `keyringSecret`. */
@@ -119,7 +121,9 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
             : Response.json({}, { status: 403 }),
         );
       }
-      expect(JSON.parse(body)).toEqual(options.missingToken ? {} : { project: "project-id" });
+      expect(JSON.parse(body)).toEqual(
+        options.missingToken || options.cliSignIn ? {} : { project: "project-id" },
+      );
       expect(request.headers["user-agent"]).toMatch(/^antigravity\/hub\/2\.24\.0 /);
       return HttpClientResponse.fromWeb(
         request,
@@ -688,6 +692,33 @@ describe("Antigravity subscription limits", () => {
         "Sign in with Google to see Antigravity limits.",
       );
       expect(limits.unavailable?.reason).not.toBe("unsupported");
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("prefers the native CLI's sign-in over a leftover acp_token.json", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      // A 1.4.5 runtime or an earlier account left acp_token.json; the 1.5.x CLI never updates it.
+      const { probe, tokenPath, requests } = yield* fixture({
+        tokenStatus: 401,
+        refreshToken: "stale-refresh",
+        cliSignIn: true,
+      });
+      yield* fs.writeFileString(
+        path.join(path.dirname(tokenPath), "antigravity-oauth-token"),
+        JSON.stringify({
+          token: {
+            access_token: "access-token",
+            token_type: "Bearer",
+            refresh_token: "refresh-b",
+            expiry: "2099-01-01T00:00:00Z",
+          },
+        }),
+      );
+      const limits = yield* probe;
+      expect(requests.map((request) => request.body).join("\n")).not.toContain("stale-refresh");
+      expect(limits.unavailable?.reason).not.toBe("probeFailed");
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
