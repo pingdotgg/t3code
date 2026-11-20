@@ -81,10 +81,9 @@ export function PullRequestThreadDialog({
   const [reference, setReference] = useState(initialReference ?? "");
   const [referenceDirty, setReferenceDirty] = useState(false);
   const [preparingMode, setPreparingMode] = useState<"local" | "worktree" | null>(null);
-  const [checkoutAttempt, setCheckoutAttempt] = useState<{
-    target: string;
-    errorMessage: string | null;
-  } | null>(null);
+  const [checkoutError, setCheckoutError] = useState<{ target: string; message: string } | null>(
+    null,
+  );
   const [debouncedReference, referenceDebouncer] = useDebouncedValue(
     reference,
     { wait: 450 },
@@ -156,8 +155,7 @@ export function PullRequestThreadDialog({
     if (!parsedReference || !resolvedPullRequest || !cwd) {
       return;
     }
-    const attempt = { target: checkoutTarget, errorMessage: null };
-    setCheckoutAttempt(attempt);
+    setCheckoutError(null);
     setPreparingMode(mode);
     const result = await preparePullRequestThreadAction.run({
       reference: parsedReference,
@@ -168,15 +166,15 @@ export function PullRequestThreadDialog({
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
-        const errorMessage =
-          thrownErrorMessage(error, m) ??
-          gt(
-            "Failed to prepare {term, select, mr {merge request} cr {change request} other {pull request}} thread.",
-            { term },
-          );
-        setCheckoutAttempt((current) =>
-          current === attempt ? { ...attempt, errorMessage } : current,
-        );
+        setCheckoutError({
+          target: checkoutTarget,
+          message:
+            thrownErrorMessage(error, m) ??
+            gt(
+              "Failed to prepare {term, select, mr {merge request} cr {change request} other {pull request}} thread.",
+              { term },
+            ),
+        });
       }
       return;
     }
@@ -206,7 +204,7 @@ export function PullRequestThreadDialog({
         : null;
   const errorMessage =
     validationMessage ??
-    (checkoutAttempt?.target === checkoutTarget ? checkoutAttempt.errorMessage : null) ??
+    (checkoutError?.target === checkoutTarget ? checkoutError.message : null) ??
     (resolvedPullRequest === null ? pullRequestResolution.error : null);
 
   return (
