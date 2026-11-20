@@ -46,7 +46,11 @@ export function hasProjectSettingsOverrides(
   return false;
 }
 
-/** Legacy aggregate fields apply only until folded into overrides, so stale values cannot undo later resets. */
+/**
+ * Legacy aggregate fields. Thread mode applies only until folded into overrides, so a reset is not
+ * undone. The model still applies after folding when no override was stored: project updates keep
+ * writing that column, and a draft with no explicit pick must follow it.
+ */
 export interface LegacyProjectSettingsFields {
   readonly defaultModelSelection?: ModelSelection | null | undefined;
   readonly defaultThreadEnvMode?: ThreadEnvMode | null | undefined;
@@ -113,13 +117,18 @@ function resolveProjectOverrides(
   project?: LegacyProjectSettingsFields | null,
 ): ResolvedProjectSettings {
   const stored = projectId === null ? undefined : settings.projectSettingsOverrides[projectId];
+  // An override, including an explicit null, wins. Otherwise the project's own model applies even
+  // after folding, so a later project update is not stuck behind the one-time fold.
+  const modelFromProject =
+    project?.defaultModelSelection != null &&
+    (stored == null || !Object.hasOwn(stored, "defaultModelSelection"))
+      ? { defaultModelSelection: project.defaultModelSelection }
+      : {};
   const overrides: ProjectSettingsOverrides =
     project == null || settings.projectSettingsFolded
-      ? (stored ?? EMPTY_OVERRIDES)
+      ? { ...modelFromProject, ...(stored ?? EMPTY_OVERRIDES) }
       : {
-          ...(project.defaultModelSelection != null
-            ? { defaultModelSelection: project.defaultModelSelection }
-            : {}),
+          ...modelFromProject,
           ...(project.defaultThreadEnvMode != null
             ? { defaultThreadEnvMode: project.defaultThreadEnvMode }
             : {}),

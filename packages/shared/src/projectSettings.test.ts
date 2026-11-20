@@ -70,7 +70,7 @@ describe("resolveProjectSettings", () => {
     expect(resolveProjectSettings(settings, otherProjectId).settings.defaultAutoPull).toBe(true);
   });
 
-  it("honours the aggregate's own fields only until the server has folded them", () => {
+  it("keeps the project's model after folding when no override was stored", () => {
     const aggregateModel = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.5");
     const project = {
       defaultModelSelection: aggregateModel,
@@ -99,8 +99,21 @@ describe("resolveProjectSettings", () => {
       projectId,
       project,
     );
-    expect(folded.settings.defaultModelSelection).toBeNull();
-    expect(folded.sources.defaultModelSelection).toBe("environment");
+    expect(folded.settings.defaultModelSelection).toEqual(aggregateModel);
+    expect(folded.sources.defaultModelSelection).toBe("project");
+    expect(folded.settings.defaultThreadEnvMode).toBe(DEFAULT_SERVER_SETTINGS.defaultThreadEnvMode);
+    expect(folded.sources.defaultThreadEnvMode).toBe("environment");
+    const reset = resolveProjectSettings(
+      {
+        ...DEFAULT_SERVER_SETTINGS,
+        projectSettingsFolded: true,
+        projectSettingsOverrides: { [projectId]: { defaultModelSelection: null } },
+      },
+      projectId,
+      project,
+    );
+    expect(reset.settings.defaultModelSelection).toBeNull();
+    expect(reset.sources.defaultModelSelection).toBe("project");
   });
 
   it("keeps the environment default model when the override's provider is disabled", () => {
