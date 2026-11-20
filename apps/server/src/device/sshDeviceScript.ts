@@ -205,7 +205,9 @@ async function install(name, version, entry) {
     // The hub's imagefile camera mode is not supported by every installed SDK emulator.
     return help.status === 0 && /\bemulated\b/.test(text) && !/\bimagefile\b/.test(text) ? ['-camera-' + facing, 'emulated'] : [];
   }) : [];
-  const emulatorExtraArgs = [cameraArgs.join(' '), process.env.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS].filter(Boolean).join(' ');
+  // Headless -gpu auto falls back to software rendering on macOS; keep user flags last.
+  const gpuArgs = android && process.platform === 'darwin' ? ['-gpu', 'host'] : [];
+  const emulatorExtraArgs = [...gpuArgs, ...cameraArgs, process.env.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS].filter(Boolean).join(' ');
   let hub = read(hubFile);
   if (!hub || hub.owner !== owner || hub.entryPath !== hubEntry || hub.platform !== hubPlatform || hub.emulatorExtraArgs !== emulatorExtraArgs || !await healthy(hub.port, '/readyz')) {
     stopHub(hub);
