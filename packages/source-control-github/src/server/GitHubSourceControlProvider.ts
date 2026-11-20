@@ -68,6 +68,7 @@ import {
 } from "@t3tools/source-control-core/shared/definition";
 
 import * as GitHubClient from "../shared/definition.ts";
+import { makeGhProcess } from "./gitHubCliProcess.ts";
 import {
   PullRequestByNumber,
   PullRequestNode,
@@ -215,7 +216,7 @@ function environmentTokenVariable(environment: NodeJS.ProcessEnv): string | null
 export const makeDiscovery = Effect.gen(function* () {
   const api = yield* GitHubRest.GitHubRest;
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
-  const process = sourceControlHost.process;
+  const process = yield* makeGhProcess;
   const environment = yield* HostProcess.Environment;
   const appSignIn = yield* GitHubAppSignIn.GitHubAppSignIn;
   const offerAppSignIn = <A extends SourceControlProviderDiscoveryItem>(item: A): A =>
@@ -398,6 +399,7 @@ function fromGitHubApiError(
     case "GitHubApiNotFoundError":
       return failure(notFound, error);
     case "GitHubCliFailedError":
+    case "GitHubCliTimeoutError":
     case "GitHubAppSessionError":
     case "GitHubApiResponseError":
     case "GitHubApiRequestError":

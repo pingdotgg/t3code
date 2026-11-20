@@ -15,6 +15,11 @@ export function isNetworkPath(value: string): boolean {
   return /^[\\/]{2}/.test(value);
 }
 
+/** A `\\wsl.localhost\<distro>` or `\\wsl$\<distro>` share: a WSL distro's files seen from Windows over 9P. */
+export function isWslSharePath(value: string): boolean {
+  return /^[\\/]{2}(?:[?.][\\/]UNC[\\/])?wsl(?:\.localhost|\$)[\\/]/i.test(value.trim());
+}
+
 export function isWindowsAbsolutePath(value: string): boolean {
   return isUncPath(value) || isWindowsDrivePath(value);
 }
@@ -67,7 +72,7 @@ const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
 const LATIN_FOLDS: Record<string, string> = {
   Ŀ: "L",
   ŀ: "l",
-  ŉ: "'n",
+  ŉ: "n",
   Đ: "D",
   đ: "d",
   Ð: "D",
