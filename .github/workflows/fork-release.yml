@@ -1,8 +1,10 @@
 name: Fork release
 
-# A fork's own Linux server releases. A version tag builds standalone CLI archives and
-# SHA256SUMS into a draft release; publishing the draft is the approval. `t3 update` and
-# T3CODE_AUTO_UPDATE servers never see drafts, so nothing reaches a server before that.
+# A fork's own releases. A version tag builds standalone Linux CLI archives with SHA256SUMS and
+# desktop apps with their updater feeds into a draft release; publishing the draft is the
+# approval. `t3 update`, auto-updating services and desktop apps never see drafts, so nothing
+# reaches an install before that. macOS builds only once the Apple signing secrets exist:
+# Squirrel.Mac refuses unsigned updates.
 on:
   push:
     tags:
@@ -20,7 +22,7 @@ concurrency:
 jobs:
   build:
     name: Linux ${{ matrix.arch }}
-    if: github.repository != 'pingdotgg/t3code'
+    needs: [config]
     strategy:
       matrix:
         include:
@@ -32,21 +34,11 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     env:
-      # Standalone builds refuse T3 Code's scheme and name, so the fork sets its own in repository variables.
       T3CODE_APP_SCHEME: ${{ vars.T3CODE_APP_SCHEME }}
       T3CODE_APP_NAME: ${{ vars.T3CODE_APP_NAME }}
+      T3CODE_HOSTED_APP_URL: ${{ vars.T3CODE_HOSTED_APP_URL }}
+      RELEASE_REPOSITORY: ${{ github.repository }}
     steps:
-      - name: Require the fork's app scheme and name
-        run: |
-          [ -n "$T3CODE_APP_SCHEME" ] || {
-            echo "::error::Set the repository variable T3CODE_APP_SCHEME to this fork's deep-link scheme: gh variable set T3CODE_APP_SCHEME --body <scheme>"
-            exit 1
-          }
-          [ -n "$T3CODE_APP_NAME" ] || {
-            echo "::error::Set the repository variable T3CODE_APP_NAME to this fork's product name: gh variable set T3CODE_APP_NAME --body '<name>'"
-            exit 1
-          }
-
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -71,7 +63,7 @@ jobs:
         run: command -v patchelf || { sudo apt-get update && sudo apt-get install -y patchelf; }
 
       - name: Build CLI archive
-        run: scripts/build-standalone-linux-cli.sh "${GITHUB_REF_NAME#v}" "$GITHUB_REPOSITORY" release-cli
+        run: scripts/build-standalone-linux-cli.sh "${GITHUB_REF_NAME#v}" "$RELEASE_REPOSITORY" release-cli
 
       - name: Upload CLI archive
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -80,29 +72,239 @@ jobs:
           path: release-cli/*
           if-no-files-found: error
 
+  config:
+    name: Resolve release config
+    if: github.repository != 'pingdotgg/t3code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.config.outputs.version }}
+      mac: ${{ steps.config.outputs.mac }}
+    env:
+      # Standalone builds refuse T3 Code's scheme and name, so the fork sets its own in repository variables.
+      T3CODE_APP_SCHEME: ${{ vars.T3CODE_APP_SCHEME }}
+      T3CODE_APP_NAME: ${{ vars.T3CODE_APP_NAME }}
+    steps:
+      - name: Require the fork's app scheme and name
+        run: |
+          [ -n "$T3CODE_APP_SCHEME" ] || {
+            echo "::error::Set the repository variable T3CODE_APP_SCHEME to this fork's deep-link scheme: gh variable set T3CODE_APP_SCHEME --body <scheme>"
+            exit 1
+          }
+          [ -n "$T3CODE_APP_NAME" ] || {
+            echo "::error::Set the repository variable T3CODE_APP_NAME to this fork's product name: gh variable set T3CODE_APP_NAME --body '<name>'"
+            exit 1
+          }
+
+      - id: config
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          # The same secrets release-desktop.yml signs with; a partial set fails the mac build there.
+          if [[ -n "$CSC_LINK" && -n "$CSC_KEY_PASSWORD" && -n "$APPLE_API_KEY" && -n "$APPLE_API_KEY_ID" && -n "$APPLE_API_ISSUER" ]]; then
+            echo "mac=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::macOS skipped: the Apple signing secrets are not set."
+            echo "mac=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build_bundle:
+    name: Build JS bundle
+    needs: [config]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      T3CODE_STANDALONE: "1"
+      T3CODE_APP_NAME: ${{ vars.T3CODE_APP_NAME }}
+      T3CODE_APP_SCHEME: ${{ vars.T3CODE_APP_SCHEME }}
+      T3CODE_DESKTOP_UPDATE_REPOSITORY: ${{ github.repository }}
+      T3CODE_HOSTED_APP_URL: ${{ vars.T3CODE_HOSTED_APP_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
+
+      - name: Align package versions to release version
+        run: node scripts/update-release-package-versions.ts "${{ needs.config.outputs.version }}"
+
+      - name: Build JS bundle
+        run: vp run build:desktop:bundle
+
+      - name: Upload JS bundle
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: js-bundle
+          path: |
+            apps/server/dist
+            apps/desktop/dist-electron
+          if-no-files-found: error
+          retention-days: 1
+
+  desktop_linux:
+    name: Desktop ${{ matrix.label }}
+    needs: [config, build_bundle]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux x64
+            runner: ubuntu-24.04
+            platform: linux
+            target: AppImage
+            arch: x64
+            rust_target: x86_64-unknown-linux-gnu
+            resource_key: linux-x64
+          - label: Linux arm64
+            runner: ubuntu-24.04-arm
+            platform: linux
+            target: AppImage
+            arch: arm64
+            rust_target: aarch64-unknown-linux-gnu
+            resource_key: linux-arm64
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/release-desktop.yml
+    secrets: inherit
+    with:
+      label: ${{ matrix.label }}
+      runner: ${{ matrix.runner }}
+      platform: ${{ matrix.platform }}
+      target: ${{ matrix.target }}
+      arch: ${{ matrix.arch }}
+      rust_target: ${{ matrix.rust_target }}
+      resource_key: ${{ matrix.resource_key }}
+      version: ${{ needs.config.outputs.version }}
+      ref: ${{ github.ref }}
+      release_channel: stable
+      relay_client_tracing: false
+      clerk_publishable_key: ""
+      clerk_jwt_template: ""
+      clerk_cli_oauth_client_id: ""
+      relay_url: ""
+      standalone: true
+
+  desktop_mac:
+    name: Desktop ${{ matrix.label }}
+    needs: [config, build_bundle]
+    if: needs.config.outputs.mac == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS arm64
+            runner: macos-15
+            platform: mac
+            target: dmg
+            arch: arm64
+            rust_target: aarch64-apple-darwin
+            resource_key: darwin-arm64
+          # Built on Apple silicon; release-desktop.yml installs Rosetta for x64 bytecode.
+          - label: macOS x64
+            runner: macos-15
+            platform: mac
+            target: dmg
+            arch: x64
+            rust_target: x86_64-apple-darwin
+            resource_key: darwin-x64
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/release-desktop.yml
+    secrets: inherit
+    with:
+      label: ${{ matrix.label }}
+      runner: ${{ matrix.runner }}
+      platform: ${{ matrix.platform }}
+      target: ${{ matrix.target }}
+      arch: ${{ matrix.arch }}
+      rust_target: ${{ matrix.rust_target }}
+      resource_key: ${{ matrix.resource_key }}
+      version: ${{ needs.config.outputs.version }}
+      ref: ${{ github.ref }}
+      release_channel: stable
+      relay_client_tracing: false
+      clerk_publishable_key: ""
+      clerk_jwt_template: ""
+      clerk_cli_oauth_client_id: ""
+      relay_url: ""
+      standalone: true
+
   release:
     name: Draft GitHub release
-    needs: [build]
+    needs: [config, build, build_bundle, desktop_linux, desktop_mac]
+    # desktop_mac is skipped until the Apple signing secrets exist.
+    if: ${{ !cancelled() && needs.config.result == 'success' && !contains(needs.*.result, 'failure') }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
+      - name: Checkout
+        if: needs.config.outputs.mac == 'true'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup dependencies
+        if: needs.config.outputs.mac == 'true'
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=@t3tools/scripts...
+
       - name: Download CLI archives
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: cli-linux-*
           merge-multiple: true
-          path: release-cli
+          path: release-assets
+
+      - name: Download desktop artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: desktop-*
+          merge-multiple: true
+          path: release-assets
+
+      # One latest-mac.yml must list both architectures; Linux feeds are already per arch.
+      - name: Merge macOS updater manifests
+        if: needs.config.outputs.mac == 'true'
+        run: |
+          set -euo pipefail
+          node scripts/merge-update-manifests.ts --platform mac \
+            release-assets/latest-mac.yml release-assets/latest-mac-x64.yml release-assets/latest-mac.yml
+          rm release-assets/latest-mac-x64.yml
 
       - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          APP_NAME: ${{ vars.T3CODE_APP_NAME }}
         run: |
           set -euo pipefail
-          cd release-cli
+          cd release-assets
           sha256sum t3-*.tar.gz > SHA256SUMS
           cat SHA256SUMS
+          shopt -s nullglob
           gh release create "$GITHUB_REF_NAME" --draft --verify-tag --generate-notes \
-            --title "T3 Code $GITHUB_REF_NAME" t3-*.tar.gz SHA256SUMS
+            --title "$APP_NAME $GITHUB_REF_NAME" t3-*.tar.gz SHA256SUMS \
+            *.dmg *.zip *.AppImage *.blockmap latest*.yml
