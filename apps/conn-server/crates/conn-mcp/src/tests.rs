@@ -1733,7 +1733,7 @@ async fn search_puts_titles_first_and_keeps_slots_for_messages() {
 /// Tools that a text we send to an agent names and that this server does not serve. An agent
 /// told to call one finds no such tool. Serve one, and this test makes you strike it here.
 /// `preview_*` in the orchestration text also names all 13 preview tools.
-const NAMED_NOT_SERVED: &[&str] = &["pull_request_create"];
+const NAMED_NOT_SERVED: &[&str] = &[];
 
 /// Every text we send to an agent that can name a tool: the orchestration text and Claude's
 /// texts (`conn-mcp`), the `next` text of a running task, the Codex additional context
@@ -3556,7 +3556,7 @@ fn forge_tools_are_hidden_only_without_a_forge() {
         device: false,
     });
     let forge: Vec<&str> = include_str!("forge-hidden.txt").lines().collect();
-    assert_eq!(forge.len(), 8);
+    assert_eq!(forge.len(), 9);
     for name in &forge {
         assert!(catalog::offered_to(name, &agent, true, true), "{name}");
         assert!(!catalog::offered_to(name, &agent, true, false), "{name}");

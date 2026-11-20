@@ -10,7 +10,7 @@ use conn_source_control::{
     cache::TtlCache,
     hosts::{DiscoveryContext, Endpoints, Environment},
     pull_requests::{
-        Client, Error, Lookup, actions, listing,
+        Client, Error, Lookup, actions, create, listing,
         normalize::{array, text},
         run_action,
     },
@@ -112,6 +112,63 @@ struct Panel {
     providers: conn_provider::ProviderSet,
     text_generators: Option<Arc<crate::text_generation::TextGenerators>>,
     guide_runs: guide_writer::Runs,
+}
+/// `PullRequestService.summary` and `runAction` for `createPullRequest`'s draft step.
+struct PanelDrafts<'a> {
+    panel: &'a Arc<Panel>,
+    project_id: Value,
+}
+impl PanelDrafts<'_> {
+    fn reference(&self, target: &create::DraftTarget) -> Value {
+        json!({"projectId": self.project_id, "host": target.host,
+            "repository": target.repository, "number": target.number})
+    }
+}
+impl create::Drafts for PanelDrafts<'_> {
+    async fn is_draft(&self, target: &create::DraftTarget) -> Result<bool, String> {
+        let input = self.reference(target);
+        let (project, client, lookup) = self
+            .panel
+            .reference_client("summary", &input)
+            .await
+            .map_err(|f| failure_message(&f))?;
+        let summary = self
+            .panel
+            .load_read("summary", &input, &project, &client, &lookup)
+            .await
+            .map_err(|f| failure_message(&f))?;
+        Ok(summary.get("isDraft") == Some(&Value::Bool(true)))
+    }
+    async fn make_draft(&self, target: &create::DraftTarget) -> Result<(), String> {
+        let mut input = self.reference(target);
+        input["action"] = json!("draft");
+        self.panel
+            .action("runAction", &input)
+            .await
+            .map(|_| ())
+            .map_err(|f| failure_message(&f))
+    }
+}
+/// A panel failure's `message`, as T3's error classes word it.
+fn failure_message(failure: &Failure) -> String {
+    let (Failure::Fail(error) | Failure::Die(error)) = failure;
+    match error.get("_tag").and_then(Value::as_str) {
+        Some("PullRequestOperationError") => format!(
+            "Pull request operation {} failed: {}",
+            text(error, "operation"),
+            text(error, "detail")
+        ),
+        Some("PullRequestUnavailableError") => {
+            match error.get("requirement").and_then(Value::as_str) {
+                Some(requirement) => requirement.to_owned(),
+                None => "Change requests cannot be browsed for this project's host yet.".to_owned(),
+            }
+        }
+        _ => error
+            .as_str()
+            .map(str::to_owned)
+            .unwrap_or_else(|| text(error, "detail").to_owned()),
+    }
 }
 struct MutationReads<'a> {
     panel: &'a Panel,
@@ -435,6 +492,8 @@ impl Panel {
             }
             "checkLogs" => self.check_logs(&input).await,
             "rerunChecks" => self.rerun_checks(&input).await,
+            // `GitManager.createPullRequest` for `pull_request_create`.
+            "createPullRequest" => self.create_pull_request(&input).await,
             _ => Err(Failure::die(format!(
                 "Unknown pull request operation {operation}"
             ))),
@@ -648,6 +707,41 @@ impl Panel {
             ));
         }
         Ok(matches)
+    }
+    /// `createPullRequest`: opens a PR from the checkout's pushed branch, or finds the open
+    /// one; a draft goes through this panel's own `summary` and `runAction`. Failures are
+    /// `PullRequestForgeError`s worded as T3's `GitManager` words them.
+    async fn create_pull_request(self: &Arc<Self>, input: &Value) -> Result<Value, Failure> {
+        let cwd = PathBuf::from(text(input, "cwd"));
+        let settings = self.settings();
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let ctx = DiscoveryContext {
+            cwd: &cwd,
+            home: home.as_deref(),
+            settings: &settings,
+            env: &self.host_environment,
+            endpoints: &self.endpoints,
+            child_env: &self.child_env,
+        };
+        let request = create::CreateRequest {
+            title: text(input, "title"),
+            body: text(input, "body"),
+            base: input.get("base").and_then(Value::as_str),
+            draft: input.get("draft") == Some(&Value::Bool(true)),
+        };
+        let drafts = PanelDrafts {
+            panel: self,
+            project_id: input.get("projectId").cloned().unwrap_or(Value::Null),
+        };
+        let result = create::create_pull_request(ctx, &request, &drafts)
+            .await
+            .map_err(|error| {
+                Failure::Fail(json!({"_tag": "PullRequestForgeError", "detail": error.message()}))
+            })?;
+        // The new PR shows in the panel's lists and the thread's link sync.
+        self.refreshes
+            .send_modify(|value| *value = value.saturating_add(1));
+        Ok(result)
     }
     /// `checkLogs`: up to five failing checks' log tails, or the named check's.
     async fn check_logs(&self, input: &Value) -> Result<Value, Failure> {

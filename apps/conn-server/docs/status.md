@@ -21,6 +21,37 @@ the run stays open. Waiting for terminal confirmation is deliberate. `idle-diff`
 split in `KNOWN` as `intermittent`; a gate either side misses still fails it. Whether to
 match T3 is open.
 
+## `pull_request_create` (2026-11-20)
+
+Agents can open a PR from their thread's pushed branch: `pull_request_create`
+(`conn-mcp/src/tools/pull_request_forge.rs`, T3's `pullRequests/handlers.ts`). The server runs
+T3's `GitManager.createPullRequest` (`conn-source-control/src/pull_requests/create.rs`):
+the upstream fetch and branch read of `statusDetails`, `resolveBranchHeadContext` (forks,
+foreign remotes, `gh`'s target), the open-PR lookup per head, the unpushed-commit refusal,
+`resolvePrBase` (`t3-merge-base-ref`, `t3-merge-base`, `gh-merge-base`, the upstream, GitHub's
+default branch, the remote's HEAD, `main`), `POST repos/{o}/{n}/pulls`, the lookup again, and a
+draft through the panel's own `summary` and `runAction`. The tool links the PR as `created`.
+RPC 202 of 251 (unchanged by this step); `/mcp` 104 tools.
+
+- **Repository choice:** `resolveRepository` now follows T3's `resolveGitHubRepository`
+  (`gh repo set-default` marks, then `upstream`, `github`, `origin`), not the first GitHub
+  remote. Repository lookup, clone and PR checkout use it too.
+- **Proof:** `gen-pr-cases.mjs` runs T3's real `GitManager` and GitHub provider on temporary
+  checkouts and an in-memory GitHub (`tools/pr-create-recordings.mjs`, 19 cases: created,
+  not listed yet, already open, another head's PR, explicit and recorded bases, an upstream
+  under another name, an unreadable repository, a fork remote, a refusal, unpushed, not
+  pushed, detached, four draft cases); `create_pull_request_matches_t3s_recorded_runs` replays
+  them: every request body, result, error text and draft call equal. 20 cases of T3's
+  `resolveGitHubRepository`. `parity.mjs`: 6 calls (input checks, refusal outside a thread). `/mcp` input decode now lists every missing required key, as T3 does.
+  `cargo test -p conn-mcp create_links`: the link as `created`, no second link, the "not
+  listed yet" refusal.
+- **Not built:** the client's stacked `create_pr` and `commit_push_pr` (`git.runStackedAction`
+  still answers that push and PR creation are Orbit's): they need push and T3's generated PR
+  text. Not run against live GitHub.
+- **Known differences:** T3 clears its VCS status cache after a create; here `pr` in VCS
+  status is not served, so the panel only refreshes. The background head lookups
+  (`pull_requests_by_heads`) still omit `operationName`.
+
 ## Desktop tab relay (2026-11-20)
 
 Agents on this server can drive a browser tab that is open in a Conn desktop, as with the T3
@@ -191,7 +222,7 @@ Agents can read, list, update, answer, review and merge a thread's PR, and read 
 CI, through `/mcp`: `pull_request_read`, `pull_request_list`, `pull_request_update`,
 `pull_request_respond`, `pull_request_review`, `pull_request_merge`, `ci_logs`, `ci_rerun`
 (`conn-mcp/src/tools/pull_request_forge.rs`, T3's `pullRequests/handlers.ts`). Before, they
-were unregistered. `pull_request_create` is not served yet (it needs `GitManager`'s PR flow).
+were unregistered. `pull_request_create` is served since 2026-11-20 (next section).
 
 - **The panel acts now.** `pullRequests.runAction` ran nothing before ("This host cannot …").
   It now runs T3's GitHub flow for `merge`, `enable-auto-merge`, `disable-auto-merge`,

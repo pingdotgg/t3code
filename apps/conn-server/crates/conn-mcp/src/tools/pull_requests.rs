@@ -479,6 +479,35 @@ impl Cx<'_> {
             .map_err(|_| message(LINK_FAILED))
     }
 
+    /// `linkToThread`: links a PR the thread opened, unless a link that is not dismissed
+    /// already names it.
+    pub(super) async fn link_created(
+        &self,
+        thread: &Value,
+        target: &Target,
+    ) -> Result<(), ToolError> {
+        let key = key_of(&target.source());
+        if links_of(thread)
+            .iter()
+            .any(|link| !is_dismissed(link) && key_of(link) == key)
+        {
+            return Ok(());
+        }
+        let thread_id = text(thread, "id");
+        let mut command = target.json();
+        command.insert("type".into(), json!("thread.pull-request.link"));
+        command.insert(
+            "commandId".into(),
+            json!(Self::pull_request_command_id("mcp-pr-create", thread_id)),
+        );
+        command.insert("threadId".into(), json!(thread_id));
+        command.insert("source".into(), json!("created"));
+        self.dispatch(Value::Object(command))
+            .await
+            .map(|_| ())
+            .map_err(|_| message(LINK_FAILED))
+    }
+
     async fn dispatch_unlink(
         &self,
         thread_id: &str,
@@ -497,7 +526,7 @@ impl Cx<'_> {
     }
 }
 
-fn subagent_next(thread: &Value, map: &mut Map<String, Value>) {
+pub(super) fn subagent_next(thread: &Value, map: &mut Map<String, Value>) {
     if thread["lineage"]["relationshipToParent"] == "subagent" {
         map.insert("next".into(), json!(CHILD_REPORT_NEXT));
     }

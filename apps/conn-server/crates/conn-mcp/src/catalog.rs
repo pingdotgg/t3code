@@ -216,10 +216,14 @@ pub(crate) fn check_arguments(
     arguments.retain(|key, value| {
         !value.is_null() || required.contains(&key.as_str()) || keeps_null(name, key)
     });
-    for key in &required {
-        if !arguments.contains_key(*key) {
-            return Err(format!("Missing key\n  at [\"{key}\"]"));
-        }
+    // T3 decodes with every issue: each missing key is listed, in schema order.
+    let missing: Vec<String> = required
+        .iter()
+        .filter(|key| !arguments.contains_key(**key))
+        .map(|key| format!("Missing key\n  at [\"{key}\"]"))
+        .collect();
+    if !missing.is_empty() {
+        return Err(missing.join("\n"));
     }
     for (key, value) in arguments.iter() {
         if value.is_null() && keeps_null(name, key)

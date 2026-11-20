@@ -1,5 +1,6 @@
 pull_request_read
 pull_request_list
+pull_request_create
 pull_request_update
 pull_request_respond
 pull_request_review

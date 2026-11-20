@@ -13,6 +13,17 @@ fn host(state: &'static str) -> crate::PullRequestHost {
                     "provider": "github", "requirement": "No GitHub credential on the server."})),
                 "watchSummary" => Ok(json!({"state": state})),
                 "locateProject" => Ok(json!({"projectId": project_id()})),
+                // `GitManager.createPullRequest`: opened, found open, or not listed yet.
+                "createPullRequest" => Ok(match input["title"].as_str() {
+                    Some("unlisted") => json!({"status": "created", "baseBranch": "main",
+                        "headBranch": "feature", "title": "unlisted"}),
+                    Some(title) => {
+                        json!({"status": if title == "again" { "opened_existing" } else { "created" },
+                        "url": URL, "number": 7, "baseBranch": input["base"].as_str().unwrap_or("main"),
+                        "headBranch": "feature", "title": title})
+                    }
+                    None => json!(null),
+                }),
                 "reviewGuide" => Ok(json!({"guide": guide(), "run": null,
                     "currentHeadSha": format!("new-{}", input["number"])})),
                 "generateReviewGuide" if input["number"] == 9 => Err(json!({
@@ -212,4 +223,45 @@ async fn guides_read_the_store_and_writes_start_or_join_runs() {
         ])
     );
     f.service.config.engine.shutdown().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn create_links_the_opened_pull_request_as_t3() {
+    let f = with_host(fixture("pr-create"), "open");
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    let thread = launch_as_swamp(&mut swamp, "Create", "hang", "full-access", "default").await;
+    let mut agent = Client::open(&f.service, agent_of(&f, &thread)).await;
+    let created = agent
+        .ok(
+            "pull_request_create",
+            json!({"title": "Feature", "body": "Body", "base": "develop", "draft": true}),
+        )
+        .await;
+    assert_eq!(
+        created,
+        json!({"host": "github.com", "repository": "o/r", "number": 7, "url": URL, "created": true})
+    );
+    let listed = swamp
+        .ok("list_thread_pull_requests", json!({"threadId": thread}))
+        .await;
+    assert_eq!(listed["pullRequests"].as_array().map(Vec::len), Some(1));
+    assert_eq!(listed["pullRequests"][0]["source"], "created");
+    // The open PR comes back as it is; the link is not repeated.
+    let again = agent
+        .ok("pull_request_create", json!({"title": "again", "body": ""}))
+        .await;
+    assert_eq!(again["created"], false);
+    let listed = swamp
+        .ok("list_thread_pull_requests", json!({"threadId": thread}))
+        .await;
+    assert_eq!(listed["pullRequests"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        plain_failure(
+            &mut agent,
+            "pull_request_create",
+            json!({"title": "unlisted", "body": ""})
+        )
+        .await,
+        "The host accepted the PR but does not list it yet. Find it with pull_request_list."
+    );
 }

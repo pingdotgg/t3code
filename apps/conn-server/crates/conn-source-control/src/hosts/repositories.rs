@@ -205,18 +205,9 @@ fn fetch_remotes(stdout: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// The host part of `resolveRepository`: `GH_REPO`, else the checkout's GitHub remote
-/// (origin first). `None` when neither names a repository.
-pub(crate) async fn resolve_repository(ctx: DiscoveryContext<'_>) -> HostResult<Locator> {
-    let default_host = ctx
-        .env
-        .non_blank("GH_HOST")
-        .unwrap_or_else(|| "github.com".into());
-    if let Some(repository) = ctx.env.non_blank("GH_REPO")
-        && let Some(locator) = parse_selector(&repository, &default_host)
-    {
-        return Ok(locator);
-    }
+/// `readRemotes`: `git remote -v` and the `gh repo set-default` marks, each empty when git
+/// fails.
+pub(crate) async fn read_remotes(ctx: DiscoveryContext<'_>) -> (String, String) {
     let read = |args: Vec<String>| {
         let mut call = CliCall::new(
             "GitHubSourceControlProvider.resolveRepository",
@@ -229,7 +220,7 @@ pub(crate) async fn resolve_repository(ctx: DiscoveryContext<'_>) -> HostResult<
         call.env = ctx.probe_env(&[]);
         cli::run(call)
     };
-    let (remotes, _resolved) = tokio::join!(
+    let (remotes, resolved) = tokio::join!(
         read(vec!["remote".into(), "-v".into()]),
         read(vec![
             "config".into(),
@@ -237,36 +228,266 @@ pub(crate) async fn resolve_repository(ctx: DiscoveryContext<'_>) -> HostResult<
             "^remote\\..*\\.gh-resolved$".into()
         ]),
     );
-    let remotes = remotes
-        .ok()
-        .filter(|o| o.exit_code == 0)
-        .map(|o| fetch_remotes(&o.stdout))
-        .unwrap_or_default();
-    let hosts: Vec<(String, Option<String>)> = remotes
-        .iter()
-        .map(|(name, url)| (name.clone(), api_host_for_remote(url)))
-        .collect();
-    let host = hosts
-        .iter()
-        .find(|(name, host)| name == "origin" && host.is_some())
-        .or_else(|| hosts.iter().find(|(_, host)| host.is_some()))
-        .and_then(|(_, host)| host.clone())
-        .unwrap_or_else(|| default_host.to_owned());
-    remotes
-        .iter()
-        .find_map(|(_, url)| {
-            (api_host_for_remote(url).as_deref() == Some(&host))
-                .then(|| {
-                    let (_, path) = crate::remote::parse_git_remote_repository(url)?;
-                    parse_selector(&path, &host)
-                })
+    let stdout = |output: Result<cli::CliOutput, _>| {
+        output
+            .ok()
+            .filter(|o: &cli::CliOutput| o.exit_code == 0)
+            .map(|o| o.stdout)
+            .unwrap_or_default()
+    };
+    (stdout(remotes), stdout(resolved))
+}
+
+/// `resolveRepository`: `GH_REPO`, else the repository `gh` would pick among the checkout's
+/// remotes ([`resolve_github_repository`]). `host_hint` is a remote's host, when the caller
+/// knows the remote.
+pub(crate) async fn resolve_repository_on(
+    ctx: DiscoveryContext<'_>,
+    host_hint: Option<&str>,
+) -> HostResult<Locator> {
+    let default_host = host_hint
+        .map(str::to_owned)
+        .or_else(|| ctx.env.get("GH_HOST"))
+        .unwrap_or_else(|| "github.com".into())
+        .to_lowercase();
+    if let Some(repository) = ctx.env.non_blank("GH_REPO")
+        && let Some(locator) = parse_selector(&repository, &default_host)
+    {
+        return Ok(locator);
+    }
+    let (remotes, resolved) = read_remotes(ctx).await;
+    let (host, locator) = resolve_github_repository(&remotes, &resolved, host_hint, &default_host);
+    locator.ok_or_else(|| {
+        HostFailure::new(format!(
+            "No GitHub repository on {host} was found among this checkout's git remotes."
+        ))
+    })
+}
+
+/// [`resolve_repository_on`] without a host hint.
+pub(crate) async fn resolve_repository(ctx: DiscoveryContext<'_>) -> HostResult<Locator> {
+    resolve_repository_on(ctx, None).await
+}
+
+/// `isSshRemoteUrl`: `user@host:`, `ssh://`, or a user-less `host:path`.
+pub(crate) fn is_ssh_remote_url(url: &str) -> bool {
+    let trimmed = url.trim();
+    // `/^[a-zA-Z0-9._-]+@([^:/]+):/`
+    let scp = trimmed.split_once('@').is_some_and(|(user, rest)| {
+        !user.is_empty()
+            && user
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+            && rest
+                .split_once(':')
+                .is_some_and(|(host, _)| !host.is_empty() && !host.contains('/'))
+    });
+    scp || trimmed.to_lowercase().starts_with("ssh://") || userless_scp_host(trimmed)
+}
+
+/// `USERLESS_SCP_SSH_REMOTE_PATTERN`: `host:path`, a host of two or more characters, no `::`.
+fn userless_scp_host(trimmed: &str) -> bool {
+    let Some((host, path)) = trimmed.split_once(':') else {
+        return false;
+    };
+    let host_ok = host.chars().count() >= 2
+        && !host
+            .chars()
+            .any(|c| matches!(c, '@' | ':' | '/' | '\\') || c.is_whitespace());
+    if !host_ok || path.starts_with(':') {
+        return false;
+    }
+    let path = path.strip_prefix('/').unwrap_or(path);
+    let path = path.strip_suffix('/').unwrap_or(path);
+    !path.is_empty()
+        && path
+            .split('/')
+            .all(|part| !part.is_empty() && !part.chars().any(char::is_whitespace))
+}
+
+/// `/^github\.com-[a-z0-9_-]+$/`.
+fn is_github_dot_com_alias(host: &str) -> bool {
+    host.strip_prefix("github.com-").is_some_and(|alias| {
+        !alias.is_empty()
+            && alias
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
+    })
+}
+
+/// `apiHostForSshAlias`: `Some(None)` for an undotted host that is not GitHub's.
+fn api_host_for_ssh_alias(host: &str) -> Option<Option<String>> {
+    if !host.contains('.') {
+        return Some(host.contains("github").then(|| "github.com".to_owned()));
+    }
+    is_github_dot_com_alias(host).then(|| Some("github.com".to_owned()))
+}
+
+fn normalized_host(url: &str) -> String {
+    let normalized = crate::remote::normalize_git_remote_url(url);
+    normalized.split('/').next().unwrap_or_default().to_owned()
+}
+
+/// `apiHostForHint`.
+fn api_host_for_hint(host: &str, remotes: &[(String, String)]) -> String {
+    let normalized = host.to_lowercase();
+    if is_github_dot_com_alias(&normalized) {
+        let matching: Vec<&(String, String)> = remotes
+            .iter()
+            .filter(|(_, url)| normalized_host(url) == normalized)
+            .collect();
+        if matching.is_empty() || matching.iter().any(|(_, url)| !is_ssh_remote_url(url)) {
+            return normalized;
+        }
+    }
+    api_host_for_ssh_alias(&normalized)
+        .flatten()
+        .unwrap_or(normalized)
+}
+
+/// `selectGitHubBaseRepository`: `gh`'s pick of the base repository on `host`: the remote
+/// `gh repo set-default` marked, else `upstream`, `github`, `origin`, else the only remote.
+/// `None` when a remote is on another host or the pick is ambiguous.
+fn select_base_repository(remotes: &str, resolved: &str, host: &str) -> Option<(String, String)> {
+    let host = host.to_lowercase();
+    let mut repositories: Vec<(String, (String, String))> = Vec::new();
+    for (remote, url) in fetch_remotes(remotes) {
+        let normalized = crate::remote::normalize_git_remote_url(&url);
+        let mut parts = normalized.split('/');
+        let normalized_host = parts.next().unwrap_or_default();
+        let owner = parts.next().unwrap_or_default();
+        let name = parts.next().unwrap_or_default();
+        let remote_host = if !normalized_host.is_empty() && is_ssh_remote_url(&url) {
+            api_host_for_ssh_alias(normalized_host)
                 .flatten()
+                .unwrap_or_else(|| normalized_host.to_owned())
+        } else {
+            normalized_host.to_owned()
+        };
+        if remote_host != host || owner.is_empty() || name.is_empty() || parts.next().is_some() {
+            return None;
+        }
+        let value = (owner.to_owned(), name.to_owned());
+        match repositories.iter_mut().find(|(n, _)| *n == remote) {
+            Some(entry) => entry.1 = value,
+            None => repositories.push((remote, value)),
+        }
+    }
+    let marks: Vec<(&str, &str)> = resolved
+        .split('\n')
+        .filter_map(|line| {
+            let rest = line.trim().strip_prefix("remote.")?;
+            // `^remote\.(.+)\.gh-resolved\s+(\S+)$`, greedy on the name.
+            let at = rest.rfind(".gh-resolved")?;
+            let (name, tail) = (rest.get(..at)?, rest.get(at + ".gh-resolved".len()..)?);
+            let value = tail.trim_start();
+            let ok = !name.is_empty()
+                && tail.starts_with(char::is_whitespace)
+                && !value.is_empty()
+                && !value.contains(char::is_whitespace);
+            ok.then_some((name, value))
         })
-        .ok_or_else(|| {
-            HostFailure::new(format!(
-                "No GitHub repository on {host} was found among this checkout's git remotes."
-            ))
+        .filter(|(name, _)| repositories.iter().any(|(n, _)| n == name))
+        .collect();
+    if marks.len() > 1 {
+        return None;
+    }
+    if let Some((name, value)) = marks.first() {
+        if *value == "base" {
+            return repositories
+                .iter()
+                .find(|(n, _)| n == name)
+                .map(|(_, r)| r.clone());
+        }
+        let lower = value.to_lowercase();
+        let parts: Vec<&str> = lower.split('/').collect();
+        return match parts.as_slice() {
+            [owner, name] if !owner.is_empty() && !name.is_empty() => {
+                Some(((*owner).to_owned(), (*name).to_owned()))
+            }
+            _ => None,
+        };
+    }
+    let score = |name: &str| match name.to_lowercase().as_str() {
+        "origin" => 1,
+        "github" => 2,
+        "upstream" => 3,
+        _ => 0,
+    };
+    repositories.sort_by_key(|(name, _)| std::cmp::Reverse(score(name)));
+    match repositories.as_slice() {
+        [] => None,
+        [(_, top)] => Some(top.clone()),
+        [(top_name, top), (next_name, _), ..] => {
+            (score(top_name) > score(next_name)).then(|| top.clone())
+        }
+    }
+}
+
+/// `resolveGitHubRepository`: the API host and the repository `gh` would target, from
+/// `git remote -v` and the `gh-resolved` marks.
+pub(crate) fn resolve_github_repository(
+    remotes: &str,
+    resolved: &str,
+    host_hint: Option<&str>,
+    default_host: &str,
+) -> (String, Option<Locator>) {
+    let fetch: Vec<(String, String)> = fetch_remotes(remotes);
+    let hosts: Vec<Option<String>> = fetch
+        .iter()
+        .map(|(_, url)| api_host_for_remote(url))
+        .collect();
+    let host = host_hint
+        .map(|hint| api_host_for_hint(hint, &fetch))
+        .or_else(|| {
+            fetch
+                .iter()
+                .zip(&hosts)
+                .find(|((name, _), host)| name == "origin" && host.is_some())
+                .and_then(|(_, host)| host.clone())
         })
+        .or_else(|| hosts.iter().flatten().next().cloned())
+        .unwrap_or_else(|| default_host.to_owned());
+    if let Some((owner, name)) = select_base_repository(remotes, resolved, &host) {
+        let locator = Locator {
+            host: host.clone(),
+            owner,
+            name,
+        };
+        return (host, Some(locator));
+    }
+    let rank = |name: &str| match name.to_lowercase().as_str() {
+        "upstream" => 0,
+        "github" => 1,
+        "origin" => 2,
+        _ => 99,
+    };
+    let mut candidates: Vec<&(String, String)> = fetch
+        .iter()
+        .zip(&hosts)
+        .filter(|((_, url), remote_host)| match remote_host {
+            Some(remote_host) => *remote_host == host,
+            None => normalized_host(url) == host,
+        })
+        .map(|(remote, _)| remote)
+        .collect();
+    candidates.sort_by_key(|(name, _)| rank(name));
+    for (_, url) in candidates {
+        let normalized = crate::remote::normalize_git_remote_url(url);
+        let parts: Vec<&str> = normalized.split('/').skip(1).collect();
+        if let [owner, name] = parts.as_slice()
+            && !owner.is_empty()
+            && !name.is_empty()
+        {
+            let locator = Locator {
+                host: host.clone(),
+                owner: (*owner).to_owned(),
+                name: (*name).to_owned(),
+            };
+            return (host, Some(locator));
+        }
+    }
+    (host, None)
 }
 
 fn gh_host(ctx: DiscoveryContext<'_>) -> Option<String> {

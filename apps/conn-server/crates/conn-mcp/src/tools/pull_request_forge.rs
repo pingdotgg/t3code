@@ -1,10 +1,12 @@
 //! The forge tools on a thread's pull request: `pull_request_read`, `pull_request_list`,
-//! `pull_request_update`, `pull_request_respond`, `pull_request_review`, `pull_request_merge`,
+//! `pull_request_create`, `pull_request_update`, `pull_request_respond`, `pull_request_review`,
+//! `pull_request_merge`,
 //! `ci_logs` and `ci_rerun` (`apps/server/src/mcp/toolkits/pullRequests/handlers.ts`). The
 //! thread, its project and the target are found here, as the toolkit's `locate`; every host
 //! read and write goes through the server's GitHub panel (`McpConfig::pull_requests`).
 //!
-//! `pull_request_create` is not served yet: it needs `GitManager.createPullRequest`.
+//! `pull_request_create` runs `GitManager.createPullRequest` on the server
+//! (`conn_source_control::pull_requests::create`) and links what it opened.
 
 use serde_json::{Map, Value, json};
 
@@ -542,6 +544,44 @@ pub(crate) async fn list(cx: &Cx<'_>, args: &Args) -> ToolResult {
             json!(encode_cursor(next))
         },
     }))
+}
+
+// ---- pull_request_create ------------------------------------------------------------------
+
+const NOT_LISTED_YET: &str =
+    "The host accepted the PR but does not list it yet. Find it with pull_request_list.";
+
+/// `pull_request_create`: opens a PR from the thread's pushed branch, or finds the open one,
+/// and links it to the thread as `created`.
+pub(crate) async fn create(cx: &Cx<'_>, args: &Args) -> ToolResult {
+    cx.forge_writer().await?;
+    let thread = cx.pull_request_thread(&Args::new()).await?;
+    let Some(project) = cx.project_of(&thread).await else {
+        return Err(message(&project_not_found("")));
+    };
+    let cwd = thread
+        .get("worktreePath")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| text(&project, "workspaceRoot"));
+    let mut input = json!({"cwd": cwd, "projectId": project["id"], "title": args.get("title"),
+        "body": args.get("body")});
+    for key in ["base", "draft"] {
+        if let Some(value) = args.get(key) {
+            input[key] = value.clone();
+        }
+    }
+    let created = cx.forge_call("createPullRequest", input).await?;
+    let Some(url) = created.get("url").and_then(Value::as_str) else {
+        return Err(message(NOT_LISTED_YET));
+    };
+    let mut named = Args::new();
+    named.insert("url".into(), json!(url));
+    let target = resolve_target(&named, Some(&project))?;
+    cx.link_created(&thread, &target).await?;
+    let mut result = target.json();
+    result.insert("created".into(), json!(created["status"] == "created"));
+    super::pull_requests::subagent_next(&thread, &mut result);
+    Ok(Value::Object(result))
 }
 
 // ---- pull_request_update ------------------------------------------------------------------

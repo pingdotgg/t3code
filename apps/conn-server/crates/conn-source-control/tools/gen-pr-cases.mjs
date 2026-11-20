@@ -4,11 +4,13 @@ import { stripTypeScriptTypes } from "node:module";
 import { importSource } from "../../../tools/monorepo.mjs";
 import { recordActions, recordCapabilities, recordIssueTracker, recordRunActions } from "./pr-action-recordings.mjs";
 import { recordGuide } from "../../conn-server/tools/pr-guide-recordings.mjs";
+import { recordCreatePullRequests } from "./pr-create-recordings.mjs";
 const pure = await importSource("packages/source-control-github/src/server/gitHubPullRequestJson.ts");
 const { loginAvatarUrl, gitHubViewerPermissions } = await importSource("packages/source-control-github/src/server/GitHubPullRequestProvider.ts");
 const { removeAgentCredits } = await importSource("packages/source-control-core/src/server/mergeMessage.ts");
 const { gitHubActionsJobId, tailLogLines } = await importSource("packages/source-control-core/src/server/PullRequestProvider.ts");
 const { isGitHubHost } = await importSource("packages/source-control-github/src/server/GitHubCredentials.ts");
+const { resolveGitHubRepository } = await importSource("packages/source-control-github/src/server/gitHubRepositoryResolution.ts");
 const { toChangeBreakdown } = await importSource("apps/server/src/pullRequest/pullRequestChangeBreakdown.ts");
 const path = new URL("../src/pull_requests/cases.json", import.meta.url);
 const pr = JSON.parse(fs.readFileSync(new URL("../src/pull_requests/sample.json", import.meta.url)));
@@ -74,6 +76,33 @@ for (const credential of ["settings", "env", "gh"]) {
 }
 for (const host of ["github.com", "github.example:8443", "localhost", "169.254.169.254", "169.254.1.2:443", "[fe80::1]", "user@github.com", "github.com/path"]) {
   add("github-host", host, isGitHubHost(host));
+}
+// `gh`'s pick of the repository a checkout's pull requests go to (`resolveRepository`).
+const fetchLine = (name, url) => `${name}\t${url} (fetch)\n${name}\t${url} (push)\n`;
+for (const [remotes, resolved, hostHint, defaultHost] of [
+  [fetchLine("origin", "https://github.com/acme/web.git"), "", undefined, "github.com"],
+  [fetchLine("fork", "https://github.com/me/web.git") + fetchLine("origin", "https://github.com/acme/web.git"), "", undefined, "github.com"],
+  [fetchLine("origin", "https://github.com/me/web.git") + fetchLine("upstream", "https://github.com/acme/web.git"), "", undefined, "github.com"],
+  [fetchLine("github", "git@github.com:acme/web.git") + fetchLine("origin", "https://github.com/me/web.git"), "", undefined, "github.com"],
+  [fetchLine("a", "https://github.com/a/web.git") + fetchLine("b", "https://github.com/b/web.git"), "", undefined, "github.com"],
+  [fetchLine("a", "https://github.com/a/web.git") + fetchLine("b", "https://github.com/b/web.git"), "remote.b.gh-resolved base\n", undefined, "github.com"],
+  [fetchLine("a", "https://github.com/a/web.git") + fetchLine("b", "https://github.com/b/web.git"), "remote.a.gh-resolved Other/Repo\n", undefined, "github.com"],
+  [fetchLine("a", "https://github.com/a/web.git") + fetchLine("b", "https://github.com/b/web.git"), "remote.a.gh-resolved base\nremote.b.gh-resolved base\n", undefined, "github.com"],
+  [fetchLine("origin", "https://github.com/acme/web.git") + fetchLine("lab", "https://gitlab.com/acme/web.git"), "", undefined, "github.com"],
+  [fetchLine("origin", "git@github.com-work:acme/web.git"), "", undefined, "github.com"],
+  [fetchLine("origin", "git@github.com-work:acme/web.git"), "", "github.com-work", "github.com"],
+  [fetchLine("origin", "https://github.example.com/acme/web.git"), "", undefined, "github.com"],
+  [fetchLine("origin", "https://github.example.com:8443/acme/web.git"), "", undefined, "github.com"],
+  [fetchLine("origin", "https://gitlab.com/acme/web.git"), "", undefined, "github.com"],
+  [fetchLine("origin", "https://github.com/acme/group/web.git"), "", undefined, "github.com"],
+  [fetchLine("origin", "github:acme/web.git"), "", undefined, "github.com"],
+  ["", "", undefined, "github.com"],
+  ["", "", "GitHub.Example.com", "github.example.com"],
+  [fetchLine("origin", "https://github.com/acme/web.git") + fetchLine("upstream", "https://github.com/Acme/Web.git"), "", "github.com", "github.com"],
+  ["origin\thttps://github.com/acme/web.git (fetch) [blob:none]\n", "", undefined, "github.com"],
+]) {
+  const input = { remotes, resolved, hostHint: hostHint ?? null, defaultHost };
+  add("resolveRepository", input, resolveGitHubRepository({ remotes, resolved, hostHint, defaultHost }));
 }
 for (const [key,reason] of [["missing","cli-missing"],["unauthenticated","cli-unauthenticated"]]) {
   const match=new RegExp(key+':\\s*"((?:[^"\\\\]|\\\\.)*)"').exec(providerSource);
@@ -169,6 +198,9 @@ const runActionOut = lines(runActionCases);
 const issuePath = new URL("../src/pull_requests/issue-cases.json", import.meta.url);
 const issueCases = await recordIssueTracker();
 const issueOut = lines(issueCases);
+const createPath = new URL("../src/pull_requests/create-cases.json", import.meta.url);
+const createCases = await recordCreatePullRequests();
+const createOut = lines(createCases);
 const capabilitiesPath = new URL("../src/pull_requests/capabilities.json",import.meta.url);
 const capabilitiesOut = JSON.stringify(await recordCapabilities())+"\n";
 if (process.argv.includes("--check")) {
@@ -177,6 +209,7 @@ if (process.argv.includes("--check")) {
   if (fs.readFileSync(guidePath,"utf8") !== guideOut) throw new Error("PR guide storage changed; run gen-pr-cases.mjs and port the difference");
   if (fs.readFileSync(runActionPath,"utf8") !== runActionOut) throw new Error("PR run-action and CI traces changed; run gen-pr-cases.mjs and port the difference");
   if (fs.readFileSync(issuePath,"utf8") !== issueOut) throw new Error("GitHub issue tracker traces changed; run gen-pr-cases.mjs and port the difference");
+  if (fs.readFileSync(createPath,"utf8") !== createOut) throw new Error("T3's createPullRequest traces changed; run gen-pr-cases.mjs and port the difference");
   if (fs.readFileSync(capabilitiesPath,"utf8") !== capabilitiesOut) throw new Error("GitHub PR capabilities changed; run gen-pr-cases.mjs and port the difference");
   console.log(`PR characterizations: ${cases.length} T3 cases and ${actionCases.length} action traces current`);
-} else { fs.writeFileSync(path,out); fs.writeFileSync(actionPath,actionOut); fs.writeFileSync(runActionPath,runActionOut); fs.writeFileSync(issuePath,issueOut); fs.writeFileSync(guidePath,guideOut); fs.writeFileSync(capabilitiesPath,capabilitiesOut); console.log(`recorded ${cases.length} PR characterizations, ${actionCases.length} API action traces, capabilities and T3's stored guide`); }
+} else { fs.writeFileSync(path,out); fs.writeFileSync(actionPath,actionOut); fs.writeFileSync(runActionPath,runActionOut); fs.writeFileSync(issuePath,issueOut); fs.writeFileSync(createPath,createOut); fs.writeFileSync(guidePath,guideOut); fs.writeFileSync(capabilitiesPath,capabilitiesOut); console.log(`recorded ${cases.length} PR characterizations, ${actionCases.length} API action traces, capabilities and T3's stored guide`); }
