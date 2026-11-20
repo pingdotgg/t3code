@@ -51,7 +51,8 @@ const clientLaunchHarness = (input: {
   readonly runtimeModeCeiling: RuntimeMode;
   readonly defaultRuntimeMode?: RuntimeMode;
   readonly newWorktreesStartFromOrigin?: boolean;
-  readonly defaultThreadEnvMode?: "local" | "worktree";
+  /** Null follows t3.json. Omitted is local, since the fork itself defaults to worktrees. */
+  readonly defaultThreadEnvMode?: "local" | "worktree" | null;
   readonly fallbackModel?: ModelSelection;
   readonly providers?: readonly ServerProvider[];
   /** Where Settings saves a project's model; the legacy project field stays null. */
@@ -90,9 +91,8 @@ const clientLaunchHarness = (input: {
       ...(input.newWorktreesStartFromOrigin === undefined
         ? {}
         : { newWorktreesStartFromOrigin: input.newWorktreesStartFromOrigin }),
-      ...(input.defaultThreadEnvMode === undefined
-        ? {}
-        : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
+      defaultThreadEnvMode:
+        input.defaultThreadEnvMode === undefined ? "local" : input.defaultThreadEnvMode,
       ...(input.overrideModel === undefined
         ? {}
         : {
@@ -822,7 +822,7 @@ it.effect("a launch that omits its workspace follows the new-threads-in-a-worktr
         runtimeModeCeiling: "auto",
         launched,
         workspaceRoot: repo,
-        ...(source === "setting" ? { defaultThreadEnvMode: "worktree" as const } : {}),
+        defaultThreadEnvMode: source === "setting" ? "worktree" : null,
       });
       const git = yield* GitVcsDriver.GitVcsDriver.pipe(Effect.provide(dependencies));
       for (const args of [
