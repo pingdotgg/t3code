@@ -1,5 +1,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Layer from "effect/Layer";
 import { describe, expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
@@ -10,7 +11,11 @@ import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 
-import { makeAntigravityUsageProbe } from "./antigravityUsageLimits.ts";
+import {
+  decodeGoKeyringSecret,
+  makeAntigravityUsageProbe,
+  readWindowsCliCredential,
+} from "./antigravityUsageLimits.ts";
 
 const summary = {
   groups: [
@@ -66,8 +71,9 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     userInfoAt?: number;
     missingToken?: boolean;
     authMethod?: "oauth-personal" | "oauth-business" | "gemini-api-key";
-    /** Read on every probe; defaults to the ACP executable, which stores its token in the profile. */
-    credentialsInProfile?: Effect.Effect<boolean, string>;
+    keyringSecret?: string;
+    /** Reads the OS keyring instead of `keyringSecret`. */
+    nativeKeyring?: boolean;
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -113,7 +119,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
             : Response.json({}, { status: 403 }),
         );
       }
-      expect(JSON.parse(body)).toEqual({ project: "project-id" });
+      expect(JSON.parse(body)).toEqual(options.missingToken ? {} : { project: "project-id" });
       expect(request.headers["user-agent"]).toMatch(/^antigravity\/hub\/2\.24\.0 /);
       return HttpClientResponse.fromWeb(
         request,
@@ -134,7 +140,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
   const usage = yield* makeAntigravityUsageProbe({
     profileDirectory,
     authMethod: options.authMethod ?? "oauth-personal",
-    credentialsInProfile: options.credentialsInProfile ?? Effect.succeed(true),
+    ...(options.nativeKeyring ? {} : { readKeyringSecret: Effect.succeed(options.keyringSecret) }),
   }).pipe(Effect.provideService(HttpClient.HttpClient, http));
   return { ...usage, requests, writeToken, tokenPath };
 });
@@ -657,6 +663,117 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.effect("reads the native CLI's stored sign-in when acp_token.json is absent", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { probe, tokenPath } = yield* fixture({ missingToken: true });
+      // The 1.5.x CLI never writes acp_token.json; without a keyring it stores this file instead.
+      yield* fs.writeFileString(
+        path.join(path.dirname(tokenPath), "antigravity-oauth-token"),
+        JSON.stringify({
+          token: {
+            access_token: "access-token",
+            token_type: "Bearer",
+            refresh_token: "refresh-a",
+            expiry: "2099-01-01T00:00:00Z",
+            expires_in: 3600,
+          },
+          auth_method: "consumer",
+          id_token_email: "someone@example.com",
+        }),
+      );
+      const limits = yield* probe;
+      expect(limits.unavailable?.message).not.toBe(
+        "Sign in with Google to see Antigravity limits.",
+      );
+      expect(limits.unavailable?.reason).not.toBe("unsupported");
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("reads a Gemini Enterprise keyring sign-in and reports when it has expired", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-09T12:00:00Z")));
+      const keyringSecret = (expiry: string) =>
+        JSON.stringify({ token: { access_token: "access-token", refresh_token: "r", expiry } });
+      // Google account instances keep their own sign-in; the shared entry belongs to another app.
+      const personal = yield* fixture({
+        missingToken: true,
+        keyringSecret: keyringSecret("2026-10-09T14:00:00Z"),
+      });
+      expect((yield* personal.probe).unavailable?.message).toBe(
+        "Sign in with Google to see Antigravity limits.",
+      );
+      expect(personal.requests).toEqual([]);
+
+      const signedIn = yield* fixture({
+        authMethod: "oauth-business",
+        missingToken: true,
+        userId: "google-user-1",
+        keyringSecret: keyringSecret("2026-10-09T14:00:00.123456789+01:00"),
+      });
+      const limits = yield* signedIn.probe;
+      expect(limits.unavailable).toBeUndefined();
+      expect(limits.windows).toHaveLength(4);
+      expect(signedIn.requests.some((request) => request.url.endsWith("/token"))).toBe(false);
+
+      const expired = yield* fixture({
+        authMethod: "oauth-business",
+        missingToken: true,
+        keyringSecret: keyringSecret("2026-10-09T12:00:30Z"),
+      });
+      expect((yield* expired.probe).unavailable?.reason).toBe("probeFailed");
+      expect(expired.requests).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect.runIf(HostProcess.Platform.defaultValue() === "win32")(
+    "reads go-keyring's Windows credential target without changing it",
+    (ctx) =>
+      Effect.gen(function* () {
+        // Never overwrite a real sign-in on a developer's machine.
+        if (readWindowsCliCredential(HostProcess.Architecture.defaultValue())) return ctx.skip();
+        yield* TestClock.setTime(
+          DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-09T12:00:00Z")),
+        );
+        const { AsyncEntry } = yield* Effect.promise(() => import("@napi-rs/keyring"));
+        // go-keyring writes the UTF-8 JSON at `<service>:<user>`.
+        const target = AsyncEntry.withTarget("gemini:antigravity", "gemini", "antigravity");
+        const stored = new TextEncoder().encode(
+          JSON.stringify({
+            token: { access_token: "access-token", expiry: "2026-10-09T14:00:00Z" },
+          }),
+        );
+        yield* Effect.acquireRelease(
+          Effect.promise(() => target.setSecret(stored)),
+          () => Effect.promise(() => target.deleteCredential()),
+        );
+        const { probe } = yield* fixture({
+          authMethod: "oauth-business",
+          missingToken: true,
+          nativeKeyring: true,
+        });
+        const limits = yield* probe;
+        expect(limits.unavailable).toBeUndefined();
+        expect(limits.windows).toHaveLength(4);
+        expect(readWindowsCliCredential(HostProcess.Architecture.defaultValue())).toEqual(
+          Buffer.from(stored),
+        );
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it("decodes go-keyring's macOS encodings", () => {
+    const value = '{"token":{}}';
+    const bytes = (text: string) => new TextEncoder().encode(text);
+    expect(decodeGoKeyringSecret(bytes(value))).toBe(value);
+    expect(
+      decodeGoKeyringSecret(bytes(`go-keyring-base64:${Buffer.from(value).toString("base64")}`)),
+    ).toBe(value);
+    expect(
+      decodeGoKeyringSecret(bytes(`go-keyring-encoded:${Buffer.from(value).toString("hex")}`)),
+    ).toBe(value);
+  });
+
   it.effect("does not make network requests for API keys or missing sign-ins", () =>
     Effect.gen(function* () {
       for (const options of [{ authMethod: "gemini-api-key" as const }, { missingToken: true }]) {
@@ -664,80 +781,6 @@ describe("Antigravity subscription limits", () => {
         expect((yield* probe).unavailable?.reason).toBe("unsupported");
         expect(requests).toEqual([]);
       }
-    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
-  );
-
-  // Oracle: only the ACP executable writes the profile token; a leftover one is another account's.
-  it.effect("ignores a leftover profile token while the runtime is the agy CLI", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      // "unresolved" stands for a runtime that no longer resolves, such as a launcher mid-update.
-      let credentialsInProfile: boolean | "unresolved" = false;
-      let tokenPath: string | undefined;
-      const cliTokenAccesses: Array<string> = [];
-      const watched = (operation: string, file: string) => {
-        if (file === tokenPath && credentialsInProfile !== true) cliTokenAccesses.push(operation);
-      };
-      const { probe, requests, ...usage } = yield* fixture({
-        credentialsInProfile: Effect.suspend(() =>
-          credentialsInProfile === "unresolved"
-            ? Effect.fail("unresolved")
-            : Effect.succeed(credentialsInProfile),
-        ),
-      }).pipe(
-        Effect.provideService(FileSystem.FileSystem, {
-          ...fs,
-          exists: (file) => Effect.suspend(() => (watched("exists", file), fs.exists(file))),
-          readFileString: (file, encoding) =>
-            Effect.suspend(() => (watched("read", file), fs.readFileString(file, encoding))),
-        }),
-      );
-      tokenPath = usage.tokenPath;
-      const cli = {
-        windows: [],
-        unavailable: {
-          reason: "unsupported",
-          message: "Antigravity limits are unavailable when using the agy CLI.",
-        },
-      };
-      const unresolved = {
-        windows: [],
-        unavailable: {
-          reason: "unsupported",
-          message: "Antigravity limits are unavailable while its runtime cannot be resolved.",
-        },
-      };
-      expect(yield* probe).toMatchObject(cli);
-      credentialsInProfile = "unresolved";
-      expect(yield* probe).toMatchObject(unresolved);
-      expect(requests).toEqual([]);
-
-      credentialsInProfile = true;
-      expect((yield* probe).credentialFingerprint).toMatch(/^[0-9a-f]{64}$/);
-      credentialsInProfile = false;
-      const limits = yield* probe;
-      expect(limits).toMatchObject(cli);
-      expect(limits.credentialFingerprint).toBeUndefined();
-      credentialsInProfile = true;
-      yield* probe;
-      expect(requests.filter((request) => request.url.endsWith("/token"))).toHaveLength(2);
-
-      // An ACP runtime that stops resolving may have been replaced by the CLI, so its limits go.
-      const requestsBeforeLoss = requests.length;
-      credentialsInProfile = "unresolved";
-      const lost = yield* probe;
-      expect(lost).toMatchObject(unresolved);
-      expect(lost.credentialFingerprint).toBeUndefined();
-      expect(requests).toHaveLength(requestsBeforeLoss);
-      credentialsInProfile = true;
-      expect((yield* probe).credentialFingerprint).toMatch(/^[0-9a-f]{64}$/);
-      expect(requests.filter((request) => request.url.endsWith("/token"))).toHaveLength(3);
-      expect(cliTokenAccesses).toEqual([]);
-
-      // A runtime that never resolved could be either kind, so no profile token is trusted.
-      const neverResolved = yield* fixture({ credentialsInProfile: Effect.fail("unresolved") });
-      expect(yield* neverResolved.probe).toMatchObject(unresolved);
-      expect(neverResolved.requests).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 });

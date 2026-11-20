@@ -22,6 +22,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -38,6 +39,7 @@ import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "./config.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import { watchDirectoryPath } from "./watchDirectoryReplacements.ts";
 
 const decodeEnvironmentThemeFileJsonExit = Schema.decodeUnknownExit(
   Schema.fromJsonString(EnvironmentThemeFile),
@@ -315,8 +317,31 @@ const make = Effect.gen(function* () {
     .makeDirectory(environmentThemesDir, { recursive: true })
     .pipe(Effect.ignoreCause({ log: true }));
 
-  // A save emits several events, and fs.watch can fire before content is flushed.
-  const watchEvents = fs.watch(environmentThemesDir).pipe(Stream.debounce(Duration.millis(100)));
+  const watchDirectory = (directory: string) =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        const ready = yield* Deferred.make<void>();
+        const markReady = () => Deferred.doneUnsafe(ready, Exit.void);
+        const events = fs.watch(directory, { onReady: markReady }).pipe(
+          Stream.as(undefined),
+          Stream.catchIf(
+            (error) => error.reason._tag === "NotFound",
+            () => Stream.empty,
+          ),
+          Stream.ignoreCause({ log: true }),
+          Stream.ensuring(Effect.sync(markReady)),
+        );
+        return Stream.merge(events, Stream.fromEffect(Deferred.await(ready)));
+      }),
+    );
+
+  const watchEvents = watchDirectoryPath(
+    environmentThemesDir,
+    watchDirectory(environmentThemesDir),
+  ).pipe(
+    // A save emits several events, and fs.watch can fire before content is flushed.
+    Stream.debounce(Duration.millis(100)),
+  );
 
   yield* refresh;
   yield* Stream.runForEach(watchEvents, () => refresh.pipe(Effect.ignoreCause({ log: true }))).pipe(
