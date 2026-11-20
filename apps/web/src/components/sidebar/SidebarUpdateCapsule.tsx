@@ -105,7 +105,7 @@ export function SidebarUpdateCapsule({
     <Popover>
       <div
         className={cn(
-          "relative ml-auto flex h-8 w-8 shrink-0 items-center rounded-full bg-sidebar-control-surface text-sidebar-foreground transition-[width] duration-200 ease-out motion-reduce:transition-none @min-[5rem]/sidebar-update:w-full",
+          "relative ml-auto flex h-8 w-8 shrink-0 items-center justify-end rounded-full bg-sidebar-control-surface text-sidebar-foreground transition-[width] duration-200 ease-out motion-reduce:transition-none @min-[5rem]/sidebar-update:w-full",
           view.tone === "slow" && "ring-1 ring-warning/40 ring-inset",
           view.tone === "failed" && "ring-1 ring-destructive/40 ring-inset",
         )}
