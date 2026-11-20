@@ -471,6 +471,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     messages,
   );
   const isVoiceInputPresented = voicePresentation.statusKind === "active";
+  // Stop agent keeps its place, as on web; otherwise recording offers a one-tap send.
+  const showsDictationSend = voicePresentation.showsDictationSend && !showStopAction;
   const isExpanded = isFocused || settingsSheetPresentation.keepsComposerExpanded;
   const { usesLargeControls, paddingVertical: surfacePaddingVertical } = useComposerChrome();
   const [compactRowWidth, setCompactRowWidth] = useState(0);
@@ -1129,18 +1131,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                     onStart={voiceInput.start}
                     onConfirm={voiceInput.stop}
                     onCancel={voiceInput.cancel}
-                    secondary={voicePresentation.showsDictationSend}
+                    secondary={showsDictationSend}
                   />
-                  {voicePresentation.showsDictationSend ? (
-                    <ComposerActionButton
-                      size={usesLargeControls ? "large" : "regular"}
-                      accessibilityLabel={sendLabel}
-                      icon={sendPresentation.icon}
-                      variant="primary"
-                      disabled={!voicePresentation.confirmationEnabled}
-                      onPress={sendDictation}
-                    />
-                  ) : showStopAction ? (
+                  {showStopAction ? (
                     <ComposerActionButton
                       size={usesLargeControls ? "large" : "regular"}
                       accessibilityLabel={gt("Stop agent")}
@@ -1148,6 +1141,15 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                       variant="danger"
                       disabled={!props.canOperateThread}
                       onPress={props.onStopThread}
+                    />
+                  ) : showsDictationSend ? (
+                    <ComposerActionButton
+                      size={usesLargeControls ? "large" : "regular"}
+                      accessibilityLabel={sendLabel}
+                      icon={sendPresentation.icon}
+                      variant="primary"
+                      disabled={!voicePresentation.confirmationEnabled}
+                      onPress={sendDictation}
                     />
                   ) : showResumeAction && voicePresentation.showsSend ? (
                     <ComposerActionButton
