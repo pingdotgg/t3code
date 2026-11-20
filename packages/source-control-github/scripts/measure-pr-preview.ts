@@ -151,7 +151,11 @@ for (const mode of ["detail", "preview"] as const) {
               measured.push(...reads);
             }
             const sorted = [...samples].sort((a, b) => a - b);
-            const medianMs = sorted[Math.floor((sorted.length - 1) / 2)] ?? 0;
+            const mid = Math.floor(sorted.length / 2);
+            const medianMs =
+              sorted.length % 2 === 1
+                ? (sorted[mid] ?? 0)
+                : Math.round(((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2);
             const points = measured.reduce((total, read) => total + read.cost, 0);
             return {
               repository,
