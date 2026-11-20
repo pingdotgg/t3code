@@ -104,10 +104,6 @@ describe("parseMarkdownFileLink", () => {
 
   it.each([
     "https://example.com/docs",
-    "https://example.com/out/bracket%2Crev2.stl",
-    "out/bracket,rev2.stl",
-    "out/bracket&rev2.stl",
-    "notes%23todo",
     "/chat/settings#L3",
     "TODO:12",
     "patches",

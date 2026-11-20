@@ -64,6 +64,8 @@ describe("model camera links", () => {
     "out/bracket.stl#view=1,2,3,1,2,3",
     "out/bracket.stl#view=1,2,,0,0,0",
     "out/bracket.stl#review=1,2,3,0,0,0",
+    "out/report.txt#view=120,80.5,-40,0,0.25,0",
+    "file:///tmp/report.html#view=120,80.5,-40,0,0.25,0",
   ])("ignores %s", (href) => {
     expect(modelViewFromHref(href)).toBeNull();
   });
@@ -140,13 +142,6 @@ describe("model notes as a chat annotation", () => {
     (linkPath) => {
       const { pageUrl } = payload({ linkPath });
       expect(modelAnnotationFileTarget(pageUrl)).toEqual({ path: linkPath, view });
-    },
-  );
-
-  it.each(["out/report.txt", "file:///tmp/report.html"])(
-    "ignores a camera on the non-model file %s",
-    (path) => {
-      expect(modelViewFromHref(path + formatModelViewHash(view))).toBeNull();
     },
   );
 

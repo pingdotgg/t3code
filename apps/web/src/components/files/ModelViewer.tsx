@@ -1,10 +1,10 @@
 import {
+  formatModelSize,
   modelAnnotationPayload,
   reconcileModelNotes,
   type ModelCameraView,
   type ModelCapture,
   type ModelNote,
-  type Vec3,
 } from "@t3tools/client-runtime/model-preview/annotations";
 import type {
   ModelHit,
@@ -45,10 +45,6 @@ interface DraftPin {
 }
 
 const CLICK_SLOP_PX = 4;
-
-function formatSize(size: Vec3) {
-  return size.map((value) => Number(value.toPrecision(3)).toLocaleString()).join(" × ");
-}
 
 interface Overlays {
   readonly notes: RefObject<ReadonlyArray<ModelNote>>;
@@ -334,10 +330,10 @@ export default function ModelViewer(props: {
   const summary = scene?.summary;
   const sizeLabel = summary
     ? summary.format === "stl"
-      ? gt("{size} (mm assumed, STL has no units)", { size: formatSize(summary.size) })
+      ? gt("{size} (mm assumed, STL has no units)", { size: formatModelSize(summary.size) })
       : summary.format === "3mf"
-        ? gt("{size} model units", { size: formatSize(summary.size) })
-        : gt("{size} m", { size: formatSize(summary.size) })
+        ? gt("{size} model units", { size: formatModelSize(summary.size) })
+        : gt("{size} m", { size: formatModelSize(summary.size) })
     : null;
   const staleCount = notes.filter((note) => note.stale).length;
   const editingNote = draft?.id ? notes.find((note) => note.id === draft.id) : undefined;

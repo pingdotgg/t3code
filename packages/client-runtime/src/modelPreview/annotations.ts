@@ -13,6 +13,11 @@ export const MAX_MODEL_BYTES = 128 * 1024 * 1024;
 
 export type Vec3 = readonly [number, number, number];
 
+/** A model's bounding size for the toolbar, at three significant figures. */
+export function formatModelSize(size: Vec3): string {
+  return size.map((value) => Number(value.toPrecision(3)).toLocaleString()).join(" × ");
+}
+
 /** A saved orbit camera: where it sits and the point it orbits, in scene coordinates. */
 export interface ModelCameraView {
   readonly position: Vec3;
@@ -149,9 +154,8 @@ export function modelAnnotationNotes(comment: string): {
 const ATTACHMENT_URL_PREFIX = "attachment:";
 
 /**
- * Notes on a model as a preview annotation, so the chat shows, stores and sends them like an
- * annotation on a web page: one chip with the annotated screenshot. The URL is a file link
- * carrying the camera. Its text is read by the agent, so it stays English.
+ * Model notes as a preview annotation whose URL is a file link carrying the camera.
+ * The agent reads its text, so it stays English.
  */
 export function modelAnnotationPayload(input: {
   readonly id: string;

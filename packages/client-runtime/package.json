@@ -531,10 +531,6 @@
       "types": "./src/device/frame.ts",
       "default": "./src/device/frame.ts"
     },
-    "./three/dispose-object": {
-      "types": "./src/three/disposeObject.ts",
-      "default": "./src/three/disposeObject.ts"
-    },
     "./model-preview/annotations": {
       "types": "./src/modelPreview/annotations.ts",
       "default": "./src/modelPreview/annotations.ts"

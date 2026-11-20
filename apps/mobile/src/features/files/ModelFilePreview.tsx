@@ -1,4 +1,5 @@
 import {
+  formatModelSize,
   formatModelViewHash,
   MAX_MODEL_BYTES,
   modelAnnotationPayload,
@@ -119,10 +120,6 @@ export function useModelViewerControls() {
       },
     ] as const,
   };
-}
-
-function formatSize(size: Vec3) {
-  return size.map((value) => Number(value.toPrecision(3)).toLocaleString()).join(" × ");
 }
 
 /** Adds model notes to the end of a composer draft; false when the draft has no room. */
@@ -489,10 +486,10 @@ export function ModelFilePreview({
             : gt("Could not load this 3D model. Check the connection and try again.");
   const sizeLabel = summary
     ? summary.format === "stl"
-      ? gt("{size} (mm assumed, STL has no units)", { size: formatSize(summary.size) })
+      ? gt("{size} (mm assumed, STL has no units)", { size: formatModelSize(summary.size) })
       : summary.format === "3mf"
-        ? gt("{size} model units", { size: formatSize(summary.size) })
-        : gt("{size} m", { size: formatSize(summary.size) })
+        ? gt("{size} model units", { size: formatModelSize(summary.size) })
+        : gt("{size} m", { size: formatModelSize(summary.size) })
     : null;
   const staleNotes = notes.flatMap((note, index) => (note.stale ? [{ note, index }] : []));
   const editingIndex = draft?.id ? notes.findIndex((note) => note.id === draft.id) : -1;

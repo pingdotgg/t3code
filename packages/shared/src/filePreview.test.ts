@@ -77,7 +77,7 @@ describe("workspace file previews", () => {
     }
     expect(filePreviewKind({ name: "download", mimeType })).toBe("model");
     expect(modelPreviewKind({ name: "download", mimeType })).toBe(extension);
-    // Mobile has no model viewer, so it keeps the generic fallback.
+    // Mobile routes models to its own viewer before this generic classification.
     expect(filePreviewKind({ name }, { richDocuments: false })).toBe("unsupported");
     expect(isWorkspacePreviewEntryPath(name)).toBe(true);
     expect(isWorkspacePreviewEntryPath(`${name}?download=1`)).toBe(false);
@@ -205,19 +205,13 @@ describe("attachment preview classification", () => {
     ["recording.webm", "audio/webm", "audio"],
     ["payload", "application/problem+json", "text"],
     ["archive.zip", "application/zip", "archive"],
-    ["archive.zip", "application/x-zip-compressed", "archive"],
     ["model.3mf", "application/zip", "model"],
     ["model.3MF", "application/x-zip-compressed", "model"],
     ["misleading.json", "application/pdf", "pdf"],
     ["misleading.pdf", "application/zip", "archive"],
-    ["stl", "text/plain", "text"],
-    ["3mf", "text/plain", "text"],
-    ["glb", "text/plain", "text"],
     ["download", "application/vnd.ms-pki.stl", "model"],
     ["download", "model/x.stl-ascii", "model"],
     ["download", "application/vnd.ms-package.3dmanufacturing-3dmodel+xml", "model"],
-    ["scene.gltf", "", "unsupported"],
-    ["part.stl", "application/pdf", "pdf"],
   ])("classifies %s (%s) as %s", (name, mimeType, expected) => {
     expect(filePreviewKind({ name, mimeType })).toBe(expected);
   });

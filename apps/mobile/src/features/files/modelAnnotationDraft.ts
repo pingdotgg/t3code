@@ -22,9 +22,8 @@ import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 const PNG_DATA_URL_PREFIX = "data:image/png;base64,";
 
 /**
- * The composer content for notes on a 3D model: its chip, the annotation record, and its
- * screenshot as an inline PNG, kept as PNG so its transparent background reaches every theme.
- * Matches web's preview annotation records, so either client shows and sends it the same way.
+ * Composer content for model notes, shaped like web's preview annotation records. The screenshot
+ * stays PNG so its transparent background follows every theme.
  */
 export function modelAnnotationComposerContent(
   annotation: PreviewAnnotationPayload,
