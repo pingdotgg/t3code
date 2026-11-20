@@ -123,13 +123,7 @@ export function PullRequestThreadDialog({
       ? (pullRequestResolution.data?.pullRequest ?? null)
       : null;
   const resolvedPullRequest = liveResolvedPullRequest ?? cachedPullRequest;
-  const checkoutTarget = JSON.stringify([
-    environmentId,
-    cwd,
-    threadId,
-    parsedReference,
-    resolvedPullRequest?.url,
-  ]);
+  const checkoutTarget = JSON.stringify([environmentId, cwd, threadId, parsedReference]);
   const isResolving =
     open &&
     parsedReference !== null &&
