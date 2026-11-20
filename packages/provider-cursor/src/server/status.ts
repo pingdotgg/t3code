@@ -19,6 +19,7 @@ import {
   buildBooleanOptionDescriptor,
   buildSelectOptionDescriptor,
   buildServerProvider,
+  COMPACT_SLASH_COMMAND,
   providerModelsFromSettings,
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
@@ -26,7 +27,7 @@ import * as CursorSdkCatalog from "./CursorSdkCatalog.ts";
 
 const CURSOR_PRESENTATION = {
   displayName: "Cursor",
-  supportsConversationRollback: false,
+  supportsConversationRollback: true,
   showInteractionModeToggle: true,
 } as const;
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
@@ -62,6 +63,7 @@ export const buildInitialCursorProviderSnapshot = Effect.fn(
     enabled: true,
     checkedAt,
     models,
+    slashCommands: [COMPACT_SLASH_COMMAND],
     probe: {
       installed: true,
       version: null,
@@ -172,10 +174,12 @@ export function buildCursorDiscoveredModelsFromSdk(
       return [];
     }
     seen.add(slug);
+    const aliases = model.aliases?.map((alias) => alias.trim()).filter(Boolean) ?? [];
     return [
       {
         slug,
         name,
+        ...(aliases.length > 0 ? { aliases } : {}),
         isCustom: false,
         capabilities: buildCursorCapabilitiesFromSdkModel(model),
       } satisfies ServerProviderModel,
@@ -234,6 +238,7 @@ export function buildCursorProviderSnapshot(input: {
       input.cursorSettings.customModels,
       EMPTY_CAPABILITIES,
     ),
+    slashCommands: [COMPACT_SLASH_COMMAND],
     probe: {
       installed: true,
       version: input.parsed.version,

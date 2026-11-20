@@ -34,7 +34,7 @@ it("drops strict MCP mode, and only that, next to an administrator's managed-mcp
     environment: { HOME: "/home/user" },
     cwd: undefined,
     managedMcpConfig: true,
-    spawnThroughEnv: false,
+    spawnVia: undefined,
   });
 
   // Claude exits before initializing when handed --strict-mcp-config here.
