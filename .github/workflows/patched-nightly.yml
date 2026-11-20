@@ -4,7 +4,7 @@ on:
   schedule:
     - cron: "23 20 * * *"
   workflow_dispatch:
-  # PRs only replay the patches onto the latest upstream nightly; nothing is built or released.
+  # Kept so the "Prepare latest upstream nightly" check still reports on PRs; nothing is built from one.
   pull_request:
     branches: [main]
 
@@ -39,60 +39,41 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           FORK_REPOSITORY: ${{ github.repository }}
           WORKFLOW_SHA: ${{ github.sha }}
-          # Upstream nightly main was merged with. Source nightlies must descend from it.
+          # Newest upstream nightly merged into main; upstream-sync.yml moves these two together.
           PATCH_BASE: v0.1.12-nightly.20261120.4994
           PATCH_BASE_SHA: 602e5b32f58e14e02b5885222f1c172049650312
-          # Head of main before it was reconciled with upstream. Its history has unrelated SHAs
-          # (upstream rewrote its history), so its old patch commits are already folded into the
-          # reconciled tree and must not be replayed.
-          LEGACY_MAIN_SHA: c4afed3e330a9795185d7800ce602cb8c430da6b
         run: |
           set -euo pipefail
 
-          source_tag="$(gh api repos/pingdotgg/t3code/releases?per_page=100 \
-            --jq '[.[] | select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-nightly\\.[0-9]{8}\\.[0-9]+$"))] | sort_by(.published_at) | last | .tag_name')"
-          if [[ -z "$source_tag" || "$source_tag" == "null" ]]; then
-            echo "No upstream nightly release was found." >&2
+          # A pull request only proves the workflow parses and its resolve job runs; CI covers the code.
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            echo "Pull request: nothing to build."
+            exit 0
+          fi
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Patched nightlies build main; this run is on $GITHUB_REF." >&2
             exit 1
           fi
 
-          patch_commits=""
-          while IFS= read -r patch_commit; do
-            [[ -z "$patch_commit" ]] && continue
-            has_source_changes=false
-            while IFS= read -r changed_path; do
-              case "$changed_path" in
-                apps/server/*|apps/web/*|apps/desktop/*|apps/mobile/*|packages/*|native/*|scripts/*|packaging/*|patches/*|package.json|pnpm-lock.yaml|pnpm-workspace.yaml)
-                  has_source_changes=true
-                  break
-                  ;;
-              esac
-            done < <(git diff-tree --no-commit-id --name-only -r "$patch_commit")
-            if [[ "$has_source_changes" != "true" ]]; then
-              echo "Skipping $patch_commit; it changes no shipped source."
-              continue
-            fi
-            patch_commits+="${patch_commit}"$'\n'
-          done < <(git log --reverse --no-merges --format='%H%x09%s' "^$PATCH_BASE_SHA" "^$LEGACY_MAIN_SHA" "$WORKFLOW_SHA" \
-            | awk -F '\t' '$2 ~ /^patch: [^[:space:]]/ { print $1 }')
-          patch_commits="${patch_commits%$'\n'}"
-          if [[ -z "$patch_commits" ]]; then
-            echo "No patch commits were found after $PATCH_BASE." >&2
+          # main already contains the upstream nightly named by PATCH_BASE (docs/operations/upstream-sync.md
+          # keeps it current), so the source of every build is main itself.
+          source_tag="$PATCH_BASE"
+          source_sha="$PATCH_BASE_SHA"
+          fork_sha="$WORKFLOW_SHA"
+          if ! git merge-base --is-ancestor "$source_sha" "$fork_sha"; then
+            echo "main does not contain $source_tag ($source_sha); PATCH_BASE_SHA is stale." >&2
             exit 1
           fi
-          patch_set="$(printf '%s\n' "$patch_commits" | sha256sum | cut -c1-16)"
 
-          dry_run=false
-          [[ "$GITHUB_EVENT_NAME" == "pull_request" ]] && dry_run=true
-          if [[ "$dry_run" == "false" ]]; then
           releases="$(gh api "repos/$FORK_REPOSITORY/releases?per_page=100")"
-          prior="$(jq -r --arg source "Source nightly: $source_tag" --arg patch_set "Patch set: $patch_set" \
-            '[.[] | select(((.body // "") | contains($source)) and ((.body // "") | contains($patch_set)))] | first // empty' <<<"$releases")"
+          prior="$(jq -r --arg source "Source nightly: $source_tag" --arg fork "Fork commit: $fork_sha" \
+            '[.[] | select(((.body // "") | contains($source)) and ((.body // "") | contains($fork)))] | first // empty' <<<"$releases")"
           if [[ -n "$prior" ]]; then
             release_tag="$(jq -r '.tag_name' <<<"$prior")"
             draft="$(jq -r '.draft' <<<"$prior")"
             if [[ "$draft" != "true" ]]; then
-              echo "Upstream nightly $source_tag with patch set $patch_set is already published as $release_tag; no build needed."
+              echo "main at ${fork_sha:0:12} on $source_tag is already published as $release_tag; no build needed."
               echo "should_build=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
@@ -128,35 +109,17 @@ jobs:
             echo "Reusing incomplete draft release $release_tag for $source_tag."
             exit 0
           fi
-          fi
 
-          git fetch --no-tags https://github.com/pingdotgg/t3code.git "$source_tag"
-          source_sha="$(git rev-parse 'FETCH_HEAD^{commit}')"
-          if ! git merge-base --is-ancestor "$PATCH_BASE_SHA" "$source_sha"; then
-            echo "Upstream nightly $source_tag does not contain the patch base $PATCH_BASE; refusing to apply patches to an older source." >&2
-            exit 1
-          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout --detach "$source_sha"
-          while IFS= read -r patch_commit; do
-            [[ -z "$patch_commit" ]] && continue
-            git cherry-pick "$patch_commit"
-          done <<<"$patch_commits"
-          if [[ "$dry_run" == "true" ]]; then
-            echo "should_build=false" >> "$GITHUB_OUTPUT"
-            echo "Patches replay cleanly onto $source_tag ($source_sha)."
-            exit 0
-          fi
-
           if git show-ref --verify --quiet "refs/tags/$release_tag"; then
             existing_sha="$(git rev-parse "$release_tag^{commit}")"
-            if [[ "$existing_sha" != "$(git rev-parse HEAD)" ]]; then
+            if [[ "$existing_sha" != "$fork_sha" ]]; then
               echo "Tag $release_tag already points at a different source commit." >&2
               exit 1
             fi
           else
-            git tag "$release_tag"
+            git tag "$release_tag" "$fork_sha"
             git push origin "refs/tags/$release_tag"
           fi
           upstream_notes="$(gh api "repos/pingdotgg/t3code/releases/tags/$source_tag" --jq '.body // empty' \
@@ -186,7 +149,8 @@ jobs:
           - Publish a Linux x64 server archive (`t3-<version>-linux-x64.tar.gz` plus `SHA256SUMS`) built from the patched source.
 
           ---
-          Patched nightly · source $source_tag (${source_sha:0:7}) · patch set $patch_set
+          Source nightly: $source_tag
+          Fork commit: $fork_sha
           EOF
           if gh release view "$release_tag" --repo "$FORK_REPOSITORY" >/dev/null 2>&1; then
             gh release edit "$release_tag" --repo "$FORK_REPOSITORY" \
