@@ -1829,18 +1829,17 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                 ),
             // Each submodule has its own Git dir, index and object store; process spawns dominate.
             { concurrency: 4, discard: true },
-          ).pipe(
-            // Callers hold the workspace lock, so many submodules must not stall the next turn.
-            // Refs are new per checkpoint, so a submodule left uncaptured has none and restore skips it.
-            Effect.timeoutOption(SUBMODULE_CAPTURE_BUDGET),
-            Effect.flatMap((captured) =>
-              Option.isSome(captured)
-                ? Effect.void
-                : Effect.logWarning("submodule checkpoint capture exceeded its budget", {
-                    cwd: input.cwd,
-                  }),
-            ),
           ),
+        ),
+        // Callers hold the workspace lock, so many submodules must not stall the next turn.
+        // Refs are new per checkpoint, so a submodule left uncaptured has none and restore skips it.
+        Effect.timeoutOption(SUBMODULE_CAPTURE_BUDGET),
+        Effect.flatMap((captured) =>
+          Option.isSome(captured)
+            ? Effect.void
+            : Effect.logWarning("submodule checkpoint capture exceeded its budget", {
+                cwd: input.cwd,
+              }),
         ),
         Effect.catch((cause) =>
           Effect.logWarning("submodule checkpoint capture failed", { cwd: input.cwd, cause }),

@@ -2178,6 +2178,52 @@ it.effect("restores and deletes checkpoints inside populated submodules", () =>
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+it.effect("returns after the submodule budget without a ref in uncaptured submodules", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const liveProcess = yield* VcsProcess.VcsProcess;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const git = (cwd: string, args: ReadonlyArray<string>) =>
+      driver.execute({ operation: "test", cwd, args });
+    const makeRepository = Effect.fn("makeRepository")(function* (prefix: string) {
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix });
+      yield* git(cwd, ["init"]);
+      yield* git(cwd, ["config", "user.email", "test@test.com"]);
+      yield* git(cwd, ["config", "user.name", "Test"]);
+      yield* fileSystem.writeFileString(path.join(cwd, "file.txt"), "original\n");
+      yield* git(cwd, ["add", "."]);
+      yield* git(cwd, ["commit", "-m", "initial"]);
+      return cwd;
+    });
+    const library = yield* makeRepository("t3-submodule-budget-library-");
+    const root = yield* makeRepository("t3-submodule-budget-root-");
+    yield* git(root, ["-c", "protocol.file.allow=always", "submodule", "add", library, "library"]);
+    yield* git(root, ["commit", "-m", "add library"]);
+    const submodule = path.join(root, "library");
+    const submoduleStarted = yield* Deferred.make<void>();
+    const stalledDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(VcsProcess.VcsProcess, {
+        run: (input) =>
+          input.cwd === submodule
+            ? Deferred.succeed(submoduleStarted, undefined).pipe(Effect.andThen(Effect.never))
+            : liveProcess.run(input),
+      }),
+    );
+    const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/budget");
+
+    const capture = yield* stalledDriver.checkpoints
+      .captureCheckpoint({ cwd: root, checkpointRef })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(submoduleStarted);
+    yield* TestClock.adjust("5 seconds");
+    yield* Fiber.join(capture);
+
+    assert.notStrictEqual((yield* git(root, ["for-each-ref", checkpointRef])).stdout, "");
+    assert.strictEqual((yield* git(submodule, ["for-each-ref", "refs/t3"])).stdout, "");
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 // The real VCS process, spawning `command` wherever the driver runs git.
 const vcsProcessSpawning = (command: string) =>
   Layer.effect(
