@@ -282,7 +282,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     if (record.releaseId === releaseId && record.executable.name !== cliExecutableName) {
       return yield* installationError(
         "resolve",
-        "This managed Antigravity runtime predates the Antigravity CLI and no longer works. Update it in Antigravity setup.",
+        `Antigravity ${record.version} predates the Antigravity CLI and no longer works with this T3 Code release. Update it in Antigravity setup.`,
       );
     }
     if (
@@ -1006,14 +1006,16 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       installedVersion: installed.version,
     }));
   }).pipe(
-    Effect.catch(() =>
+    Effect.catch((cause) =>
       SubscriptionRef.update(
         state,
         (current) =>
           ({
             ...current,
             phase: "failed",
-            message: "The managed Antigravity runtime is incomplete. Remove it and reinstall.",
+            message: isInstallationError(cause)
+              ? cause.detail
+              : "The managed Antigravity runtime is incomplete. Remove it and reinstall.",
           }) satisfies ProviderInstallState,
       ),
     ),

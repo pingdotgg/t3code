@@ -2,6 +2,7 @@ import {
   ProviderInstanceId,
   ProviderSetupError,
   type OrchestrationV2ProviderCapabilities,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -78,25 +79,30 @@ export const layerFromProviderInstanceRegistry: Layer.Layer<
               return new ProviderAdapterRegistryLookupError({ instanceId });
             const adapter = instance.orchestrationAdapter;
             const auth = instance.auth;
+            const refuseBroken = Effect.fnUntraced(function* (snapshot: ServerProvider) {
+              return snapshot.version
+                ? brokenRuntimeError({
+                    instanceId,
+                    name: snapshot.displayName ?? instance.displayName ?? adapter.driver,
+                    version: snapshot.version,
+                    advisory: ModelManifest.providerCompatibility(
+                      yield* manifest.current,
+                      adapter.driver,
+                      snapshot.version,
+                    ),
+                  })
+                : undefined;
+            });
             return Effect.succeed({
               ...adapter,
               openSession: (input) => {
                 const open = Effect.gen(function* () {
-                  // Every provider is refused here on a version the policy rates broken.
-                  const snapshot = yield* instance.snapshot.getSnapshot;
-                  const refused =
-                    snapshot.version &&
-                    brokenRuntimeError({
-                      instanceId,
-                      name: snapshot.displayName ?? instance.displayName ?? adapter.driver,
-                      version: snapshot.version,
-                      advisory: ModelManifest.providerCompatibility(
-                        yield* manifest.current,
-                        adapter.driver,
-                        snapshot.version,
-                      ),
-                    });
-                  if (refused) return yield* refused;
+                  if (!adapter.checksVersionAtHandshake) {
+                    let refused = yield* refuseBroken(yield* instance.snapshot.getSnapshot);
+                    // The last probe may predate an update, so look again before refusing.
+                    if (refused) refused = yield* refuseBroken(yield* instance.snapshot.refresh);
+                    if (refused) return yield* refused;
+                  }
                   if (!auth) return yield* adapter.openSession(input);
                   const binding = auth.credentialBinding;
                   const related = binding

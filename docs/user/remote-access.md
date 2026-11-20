@@ -330,6 +330,14 @@ and site data on the phone. On iPhone and iPad the page runs under a stand-in
 address while the address bar shows `localhost`, so browser features that need
 a secure page, such as the clipboard or service workers, aren't available there.
 
+All of this rides the host's preview tunnel. Turn off **Settings → Sharing &
+access → Preview tunnel** on the host to stop other devices from loading its
+`localhost` pages themselves: port forwarding and **Open on this device** go
+away, and open tunnels close. Tabs keep working by streaming from the host, so
+anyone who can use the host's browser tabs can still view its `localhost` pages
+there. An administrator can also turn it off with a
+[managed policy](./managed-policy.md#other-capabilities).
+
 The first tab downloads a headless Chrome, about 120 MB, into the T3 home. It
 is the same browser [HTML renders](html-renders.md) use, so a host downloads it
 only once. Some Linux hosts need [setup](#browser-host-setup) before it can

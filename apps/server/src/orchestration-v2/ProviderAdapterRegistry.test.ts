@@ -42,6 +42,7 @@ const makeInstance = (
   instanceId: ProviderInstanceId,
   orchestrationAdapter: ProviderAdapter.ProviderAdapterV2["Service"],
   version: string | null = null,
+  refreshedVersion = version,
 ): ProviderInstance => ({
   instanceId,
   driverKind: driver,
@@ -53,6 +54,7 @@ const makeInstance = (
   enabled: true,
   snapshot: {
     getSnapshot: Effect.succeed({ version }),
+    refresh: Effect.succeed({ version: refreshedVersion }),
   } as unknown as ProviderInstance["snapshot"],
   orchestrationAdapter,
   textGeneration: {} as ProviderInstance["textGeneration"],
@@ -87,34 +89,40 @@ it.effect("routes two configured instances of the same driver independently", ()
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("refuses a session on a provider version the policy rates broken", () =>
-  Effect.gen(function* () {
-    const broken = makeInstance(personalId, personalAdapter, "0.100.0");
-    const registry = yield* Effect.service(ProviderAdapterRegistry.ProviderAdapterRegistryV2).pipe(
-      Effect.provide(
-        layerRegistry.pipe(
-          Layer.provide(
-            Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-              getInstance: () => Effect.succeed(broken),
-            }),
-          ),
+const openOn = Effect.fn("openOn")(function* (instance: ProviderInstance) {
+  const registry = yield* Effect.service(ProviderAdapterRegistry.ProviderAdapterRegistryV2).pipe(
+    Effect.provide(
+      layerRegistry.pipe(
+        Layer.provide(
+          Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+            getInstance: () => Effect.succeed(instance),
+          }),
         ),
       ),
+    ),
+  );
+  return yield* (yield* registry.get(instance.instanceId))
+    .openSession({
+      threadId: ThreadId.make("gated-thread"),
+      providerSessionId: ProviderSessionId.make("gated-session"),
+      modelSelection: { instanceId: instance.instanceId, model: "test-model" },
+      runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: "/workspace" },
+    })
+    .pipe(Effect.exit);
+});
+
+it.effect("refuses a session only when a fresh probe still rates the version broken", () =>
+  Effect.gen(function* () {
+    const opened = { ...personalAdapter, openSession: () => Effect.succeed({} as never) };
+    const refused = yield* openOn(makeInstance(personalId, opened, "0.100.0"));
+    assert.include(JSON.stringify(refused), "0.100.0 does not work with this T3 Code release");
+    // Updated since the last probe.
+    assert.isTrue(
+      Exit.isSuccess(yield* openOn(makeInstance(personalId, opened, "0.100.0", "0.200.0"))),
     );
-    const error = yield* (yield* registry.get(personalId))
-      .openSession({
-        threadId: ThreadId.make("broken-thread"),
-        providerSessionId: ProviderSessionId.make("broken-session"),
-        modelSelection: { instanceId: personalId, model: "test-model" },
-        runtimePolicy: {
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          cwd: "/workspace",
-        },
-      })
-      .pipe(Effect.flip);
-    assert.instanceOf(error, ProviderAdapter.ProviderAdapterOpenSessionError);
-    assert.include(String(error.cause), "0.100.0 does not work with this T3 Code release");
+    // An adapter that rates the handshake version is not judged on the probe.
+    const handshake = { ...opened, checksVersionAtHandshake: true };
+    assert.isTrue(Exit.isSuccess(yield* openOn(makeInstance(personalId, handshake, "0.100.0"))));
   }),
 );
 
