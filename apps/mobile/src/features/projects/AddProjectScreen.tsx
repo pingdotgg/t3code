@@ -70,7 +70,7 @@ import {
 } from "@react-navigation/native";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { msg, useGT, useMessages } from "gt-react-native";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Arr from "effect/Array";
@@ -240,6 +240,8 @@ function ListRow(props: {
   readonly icon: ReactNode;
   readonly disabled?: boolean;
   readonly selected?: boolean;
+  readonly checked?: boolean;
+  readonly accessibilityRole?: ComponentProps<typeof Pressable>["accessibilityRole"];
   readonly isFirst?: boolean;
   readonly right?: ReactNode;
   readonly onPress?: () => void;
@@ -254,8 +256,16 @@ function ListRow(props: {
         trailing={props.right}
         disabled={props.disabled}
         onPress={props.onPress}
-        accessibilityRole={props.selected !== undefined ? "radio" : "button"}
-        accessibilityState={props.selected !== undefined ? { checked: props.selected } : undefined}
+        accessibilityRole={
+          props.accessibilityRole ?? (props.selected !== undefined ? "radio" : "button")
+        }
+        accessibilityState={
+          props.checked !== undefined
+            ? { checked: props.checked }
+            : props.selected !== undefined
+              ? { checked: props.selected }
+              : undefined
+        }
       />
     );
   }
@@ -263,6 +273,16 @@ function ListRow(props: {
     <Pressable
       disabled={props.disabled}
       onPress={props.onPress}
+      accessibilityRole={
+        props.accessibilityRole ?? (props.selected !== undefined ? "radio" : "button")
+      }
+      accessibilityState={
+        props.checked !== undefined
+          ? { checked: props.checked }
+          : props.selected !== undefined
+            ? { checked: props.selected }
+            : undefined
+      }
       className={cn(
         "bg-grouped-card px-3.5 py-2.5 active:opacity-70",
         !props.isFirst && "border-t border-border-subtle",
@@ -1368,6 +1388,8 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
                   />
                 }
                 isFirst
+                accessibilityRole="switch"
+                checked={publishes}
                 right={
                   <ThemedSwitch
                     accessibilityLabel={gt("Create private repository on {provider}", {
