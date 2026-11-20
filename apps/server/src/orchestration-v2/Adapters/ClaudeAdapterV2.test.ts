@@ -3392,6 +3392,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly uuid: string;
     readonly text: string;
     readonly model?: string;
+    readonly speed?: "standard" | "fast";
   }) =>
     claudeSdkFrame({
       type: "assistant",
@@ -3408,6 +3409,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           output_tokens: 1,
           cache_creation_input_tokens: 0,
           cache_read_input_tokens: 0,
+          ...(input.speed === undefined ? {} : { speed: input.speed }),
         },
       },
       parent_tool_use_id: null,
@@ -9557,19 +9559,66 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  // Claude Code 2.1.316+ frames: the CLI reports Fast off on the result, or only in a notification.
+  // Claude Code 2.1.316+ frames. A T3 session's first init can say "on" while every reply
+  // runs at standard speed; only the result then names the reason.
+  const fastModeInit = (state: "on" | "off", reason?: "extra_usage_disabled") =>
+    claudeSdkFrame({
+      type: "system",
+      subtype: "init",
+      uuid: "00000000-0000-4000-8000-000000000620",
+      session_id: WAKE_NATIVE_SESSION,
+      fast_mode_state: state,
+      ...(reason === undefined ? {} : { fast_mode_disabled_reason: reason }),
+    });
+  const standardSpeedReply = makeAssistantTextFrame({
+    uuid: "00000000-0000-4000-8000-000000000622",
+    text: "ok",
+    speed: "standard",
+  });
   it.effect.each([
     {
       name: "says when Claude Code reports a requested Fast mode as off",
+      beforeResult: [
+        makeAssistantTextFrame({ uuid: "00000000-0000-4000-8000-000000000622", text: "ok" }),
+      ],
+      noticeBeforeResult: false,
       result: { fast_mode_state: "off", fast_mode_disabled_reason: "preference" },
-      notification: false,
+      expected: /settings/u,
     },
     {
       name: "says when Claude Code rejects a requested Fast mode only in a notification",
+      beforeResult: [
+        claudeSdkFrame({
+          type: "system",
+          subtype: "notification",
+          key: "fast-mode-overage-rejected",
+          text: "Fast mode disabled · Out of usage credits",
+          priority: "immediate",
+          color: "error",
+          uuid: "00000000-0000-4000-8000-000000000621",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        makeAssistantTextFrame({ uuid: "00000000-0000-4000-8000-000000000622", text: "ok" }),
+      ],
+      noticeBeforeResult: true,
       result: { fast_mode_state: "on" },
-      notification: true,
+      expected: /Out of usage credits/u,
     },
-  ] as const)("$name", ({ result, notification }) =>
+    {
+      name: "says before the result when init reports a requested Fast mode as off",
+      beforeResult: [fastModeInit("off", "extra_usage_disabled"), standardSpeedReply],
+      noticeBeforeResult: true,
+      result: { fast_mode_state: "off", fast_mode_disabled_reason: "extra_usage_disabled" },
+      expected: /extra usage/u,
+    },
+    {
+      name: "says before the result when replies run at standard speed despite init reporting Fast on",
+      beforeResult: [fastModeInit("on"), standardSpeedReply],
+      noticeBeforeResult: true,
+      result: { fast_mode_state: "off", fast_mode_disabled_reason: "extra_usage_disabled" },
+      expected: /extra usage/u,
+    },
+  ] as const)("$name", ({ beforeResult, noticeBeforeResult, result, expected }) =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
       const now = yield* DateTime.now;
@@ -9587,37 +9636,26 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           },
         }),
       );
-      yield* Queue.offerAll(harness.sdkMessages, [
-        ...(notification
-          ? [
-              claudeSdkFrame({
-                type: "system",
-                subtype: "notification",
-                key: "fast-mode-overage-rejected",
-                text: "Fast mode disabled · Out of usage credits",
-                priority: "immediate",
-                color: "error",
-                uuid: "00000000-0000-4000-8000-000000000621",
-                session_id: WAKE_NATIVE_SESSION,
-              }),
-            ]
-          : []),
-        makeAssistantTextFrame({ uuid: "00000000-0000-4000-8000-000000000622", text: "ok" }),
+      yield* Queue.offerAll(harness.sdkMessages, beforeResult);
+      if (noticeBeforeResult) {
+        const early = (yield* Queue.take(harness.systemNoticeReceipts)).turnItem;
+        assert.strictEqual(early.type === "system_notice" && early.title, "Fast mode is off");
+      }
+      yield* Queue.offer(
+        harness.sdkMessages,
         claudeSdkFrame({
           ...makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000623", result: "ok" }),
           ...result,
         }),
-      ]);
+      );
       yield* Queue.take(harness.terminalReceipts);
       const notices = harness.events.flatMap((event) =>
         event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
           ? [event.turnItem]
           : [],
       );
-      assert.isTrue(
-        notices.some((notice) => /fast/iu.test(JSON.stringify(notice))),
-        `expected a notice that Fast mode is not in effect, got ${JSON.stringify(notices)}`,
-      );
+      assert.strictEqual(new Set(notices.map((notice) => notice.id)).size, 1);
+      assert.match(notices.at(-1)?.message ?? "", expected);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(

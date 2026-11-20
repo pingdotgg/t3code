@@ -5069,6 +5069,46 @@ const CLAUDE_FAST_MODE_DISABLED_REASONS: Record<FastModeDisabledReason, string> 
   pending: "Claude Code is still checking whether it is available",
 };
 
+interface ClaudeFastModeNotice {
+  readonly message: string;
+  // A bare standard-speed reply must not replace a notice that already says why.
+  readonly explained: boolean;
+}
+
+// Claude Code reports Fast as off on init or result, rejects it in a notification, or only
+// answers at standard speed: a T3 session's init can still say "on" for its first turn.
+function claudeFastModeNotice(message: SDKMessage): ClaudeFastModeNotice | null {
+  if (
+    (message.type === "result" || (message.type === "system" && message.subtype === "init")) &&
+    message.fast_mode_state === "off"
+  ) {
+    const reason =
+      CLAUDE_FAST_MODE_DISABLED_REASONS[message.fast_mode_disabled_reason ?? "unknown"];
+    return {
+      message: `Claude Code is not using Fast mode for this turn because ${reason}.`,
+      explained: true,
+    };
+  }
+  if (
+    message.type === "system" &&
+    message.subtype === "notification" &&
+    message.key === "fast-mode-overage-rejected"
+  ) {
+    return { message: message.text, explained: true };
+  }
+  const usage =
+    message.type === "assistant" && !message.parent_tool_use_id
+      ? message.message.usage
+      : message.type === "stream_event" &&
+          !message.parent_tool_use_id &&
+          message.event.type === "message_start"
+        ? message.event.message.usage
+        : undefined;
+  return usage?.speed === "standard"
+    ? { message: "Claude Code is answering at standard speed, not Fast mode.", explained: false }
+    : null;
+}
+
 function describeClaudeUsageLimit(
   info: SDKRateLimitInfo,
   nowMs: number,
@@ -5142,6 +5182,7 @@ interface ActiveClaudeTurnContext {
     // The CLI repeats a notice that ends a prompt as the turn's result text.
     noticeTexts: Set<string>;
   };
+  fastModeNotice: ClaudeFastModeNotice | null;
   readonly reasoning: {
     messageId: string | null;
     readonly streamBlocks: Map<number, string>;
@@ -9277,13 +9318,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         // One notice per turn: an overage notification and an "off" result share the item.
         const emitFastModeNotice = Effect.fnUntraced(function* (
           context: ActiveClaudeTurnContext,
-          message: string,
+          notice: ClaudeFastModeNotice,
         ) {
+          const current = context.fastModeNotice;
           if (
-            getModelSelectionBooleanOptionValue(context.input.modelSelection, "fastMode") !== true
+            getModelSelectionBooleanOptionValue(context.input.modelSelection, "fastMode") !==
+              true ||
+            current?.message === notice.message ||
+            (current !== null && !notice.explained)
           ) {
             return;
           }
+          context.fastModeNotice = notice;
           const now = yield* DateTime.now;
           const nativeItemId = `fast-mode:${context.providerTurnId}`;
           yield* emitProviderEvent({
@@ -9305,7 +9351,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               type: "system_notice",
               status: "completed",
               title: "Fast mode is off",
-              message,
+              message: notice.message,
               startedAt: now,
               completedAt: now,
               updatedAt: now,
@@ -10934,6 +10980,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return;
           }
           yield* trackClaudeGoal({ nativeThreadId: liveQuery.nativeThreadId, context, message });
+          const fastModeNotice = claudeFastModeNotice(message);
+          if (fastModeNotice !== null) yield* emitFastModeNotice(context, fastModeNotice);
 
           if (message.type === "stream_event" && !message.parent_tool_use_id) {
             const event = message.event;
@@ -11355,15 +11403,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 updatedAt: now,
               },
             });
-            return;
-          }
-
-          if (
-            message.type === "system" &&
-            message.subtype === "notification" &&
-            message.key === "fast-mode-overage-rejected"
-          ) {
-            yield* emitFastModeNotice(context, message.text);
             return;
           }
 
@@ -12086,16 +12125,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           if (message.type === "result") {
-            if (message.fast_mode_state === "off") {
-              const reason =
-                message.fast_mode_disabled_reason === undefined
-                  ? CLAUDE_FAST_MODE_DISABLED_REASONS.unknown
-                  : CLAUDE_FAST_MODE_DISABLED_REASONS[message.fast_mode_disabled_reason];
-              yield* emitFastModeNotice(
-                context,
-                `Claude Code ran this turn at standard speed because ${reason}.`,
-              );
-            }
             const contextUsage = context.streamUsage?.usage ?? context.compactionTokens;
             if (resultsReportingNewContextWindow.has(message) && contextUsage !== undefined) {
               yield* emitContextUsage(context, contextUsage);
@@ -13552,6 +13581,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 lastReply: null,
                 noticeTexts: new Set(),
               },
+              fastModeNotice: null,
               reasoning: {
                 messageId: null,
                 streamBlocks: new Map(),
