@@ -3869,6 +3869,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const previous = currentScope;
       connection = next;
       client = next.client;
+      // A restarted server may have reloaded its config, so relist agent permissions.
+      agentRules.clear();
       nativeGoalSupport = supportsNativeGoals();
       session = {
         ...session,

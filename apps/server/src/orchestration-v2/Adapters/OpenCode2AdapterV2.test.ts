@@ -4440,6 +4440,39 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
+  it.effect("Auto reloads native rules after a reconnect", () =>
+    Effect.gen(function* () {
+      const [build] = agentList.data;
+      const denied = { action: "shell", resource: "rm *", effect: "deny" };
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+          promptAccepted,
+          ...reconnected({}, "succeeded"),
+          out("agent.list", "<any>"),
+          reply("agent.list", {
+            ...agentList,
+            data: [{ ...build, permissions: [...build!.permissions, denied] }],
+          }),
+          out("session.update", {
+            sessionID: SESSION,
+            permissions: [...autoRules.slice(0, -mcpRules.length), denied, ...mcpRules],
+          }),
+          reply("session.update", null),
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        { auto: true },
+      );
+      for (let turn = 0; turn < 2; turn++) {
+        const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+        yield* runtime.startTurn(turnInput(thread, bigPickle, "auto"));
+        assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+      }
+    }),
+  );
+
   it.effect("continues a reply still streaming at reconnect from the text already shown", () =>
     Effect.gen(function* () {
       const delta = (text: string) =>
