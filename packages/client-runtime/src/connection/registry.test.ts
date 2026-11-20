@@ -1595,7 +1595,7 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 
-  it.effect("publishes the discovered catalog when a platform credential write fails", () =>
+  it.effect("publishes the catalog only once platform discovery completes", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness([], [], [], {
         beforeCredentialPut: () =>
@@ -1609,6 +1609,14 @@ describe("EnvironmentRegistry", () => {
 
       yield* Effect.gen(function* () {
         const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const discoveredNow = registry.entriesAfterPlatformDiscovery.pipe(
+          Stream.runHead,
+          Effect.map(Option.getOrThrow),
+        );
+        yield* registry.reconcilePlatform([], false);
+        expect(yield* discoveredNow).toBeNull();
+
+        // A failed credential write must not keep discovery pending.
         yield* registry.reconcilePlatform([
           new BearerConnectionRegistration({
             target: BEARER_TARGET,
@@ -1617,10 +1625,7 @@ describe("EnvironmentRegistry", () => {
           }),
         ]);
 
-        const discovered = yield* registry.entriesAfterPlatformDiscovery.pipe(
-          Stream.runHead,
-          Effect.map(Option.getOrThrow),
-        );
+        const discovered = yield* discoveredNow;
         expect(discovered?.has(BEARER_TARGET.environmentId)).toBe(true);
         expect(discovered?.has(TARGET.environmentId)).toBe(false);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
