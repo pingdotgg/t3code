@@ -258,6 +258,8 @@ function SubagentAvatar({
       aria-hidden
       className={cn(
         "relative inline-flex size-6 shrink-0 items-center justify-center rounded-full border border-border/70 bg-muted ring-2 ring-background",
+        // Room for the account tab, so the next stacked avatar does not cover it.
+        driver && showBadge && "mr-5",
         className,
       )}
     >
@@ -268,6 +270,7 @@ function SubagentAvatar({
           accentColor={accentColor}
           acpRegistryIconUrl={iconUrl}
           showBadge={showBadge}
+          badgePlacement="corner"
           size="compact"
           className="z-auto"
           iconClassName="size-3.5"
@@ -745,7 +748,6 @@ function HandoffEndpoint(props: {
               acpRegistryIconUrl={entry?.acpRegistryIconUrl}
               showBadge={showBadge}
               size="compact"
-              iconClassName={cn(showBadge && "opacity-60")}
               indicatorBackground="var(--background)"
             />
             <span

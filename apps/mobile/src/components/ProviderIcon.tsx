@@ -5,12 +5,12 @@ import {
   normalizeProviderAccentColor,
   providerAccentForegroundColor,
   providerInstanceInitials,
+  providerInstanceTabMetrics,
 } from "@t3tools/client-runtime/state/provider-instance-display";
 import { useId, useState } from "react";
 import { resolveOfficialAcpRegistryIconUrl } from "@t3tools/contracts";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { AppText as Text } from "./ui/AppText";
-import { cn } from "../lib/cn";
 import { getProviderClient, openRouterIcon } from "@t3tools/client-runtime/provider-clients";
 
 type ProviderIconProps = {
@@ -175,47 +175,70 @@ export function ProviderInstanceIcon(props: {
   readonly accentColor?: string;
   readonly showBadge?: boolean;
   readonly surfaceColor?: string;
+  /** "corner" keeps the logo centered in a fixed slot; the tab then hangs outside it. */
+  readonly badgePlacement?: "inline" | "corner";
 }) {
+  const { themeAppearance } = useAppearancePreferences();
+  const isDarkMode = themeAppearance === "dark";
+  const size = props.size ?? 16;
   const accentColor = normalizeProviderAccentColor(props.accentColor);
+  const tab = providerInstanceTabMetrics(size);
+  const corner = props.badgePlacement === "corner";
+  const badge = props.showBadge ? (
+    <View
+      className={props.surfaceColor ? undefined : "border-screen"}
+      style={{
+        height: tab.height + tab.ring * 2,
+        ...(corner
+          ? { width: tab.cornerWidth + tab.ring * 2 }
+          : { paddingHorizontal: tab.paddingHorizontal }),
+        borderRadius: tab.borderRadius + tab.ring,
+        borderWidth: tab.ring,
+        ...(props.surfaceColor ? { borderColor: props.surfaceColor } : {}),
+        backgroundColor: accentColor ?? (isDarkMode ? "#454545" : "#d0d0d4"),
+        alignItems: "center",
+        justifyContent: "center",
+        ...(corner ? {} : { marginLeft: -tab.overlap, marginBottom: -tab.drop }),
+      }}
+    >
+      <Text
+        numberOfLines={1}
+        style={{
+          fontSize: tab.fontSize,
+          fontWeight: "700",
+          lineHeight: tab.height,
+          letterSpacing: 0.3,
+          color: accentColor
+            ? providerAccentForegroundColor(accentColor)
+            : isDarkMode
+              ? "#ffffff"
+              : "#171717",
+        }}
+      >
+        {providerInstanceInitials(props.displayName)}
+      </Text>
+    </View>
+  ) : null;
   return (
-    <View style={{ position: "relative" }}>
-      <View style={{ opacity: 0.6 }}>
-        <ProviderIcon iconUrl={props.iconUrl} provider={props.provider} size={props.size} />
-      </View>
-      {props.showBadge ? (
-        // An absolute badge alone is capped at icon width and clips initials.
+    <View style={{ flexDirection: "row", alignItems: "flex-end" }}>
+      <ProviderIcon iconUrl={props.iconUrl} provider={props.provider} size={size} />
+      {corner && badge ? (
+        // An absolute view is capped at the logo width, so a wider anchor holds the tab.
         <View
           pointerEvents="none"
-          style={{ position: "absolute", right: -3, bottom: -3, width: 32, alignItems: "flex-end" }}
+          style={{
+            position: "absolute",
+            left: size - tab.overlap,
+            bottom: -tab.drop,
+            width: 40,
+            alignItems: "flex-start",
+          }}
         >
-          <View
-            className={cn(!accentColor && "bg-card", !props.surfaceColor && "border-screen")}
-            style={{
-              height: 12,
-              minWidth: 12,
-              paddingHorizontal: 2,
-              borderRadius: 999,
-              borderWidth: 1,
-              ...(props.surfaceColor ? { borderColor: props.surfaceColor } : {}),
-              backgroundColor: accentColor,
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <Text
-              className={accentColor ? undefined : "text-foreground-muted"}
-              style={{
-                fontSize: 7,
-                fontWeight: "600",
-                lineHeight: 9,
-                color: accentColor ? providerAccentForegroundColor(accentColor) : undefined,
-              }}
-            >
-              {providerInstanceInitials(props.displayName)}
-            </Text>
-          </View>
+          {badge}
         </View>
-      ) : null}
+      ) : (
+        badge
+      )}
     </View>
   );
 }
