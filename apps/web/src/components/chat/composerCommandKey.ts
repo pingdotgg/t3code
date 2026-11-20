@@ -104,6 +104,8 @@ export function composerCommandKeyHandler(input: {
   /** Predicted next prompt that Tab fills into an empty composer; Escape dismisses it. */
   readonly promptSuggestion: string | null;
   readonly dismissPromptSuggestion: () => void;
+  /** Escape with nothing else to dismiss: arms Stop, or stops when already armed. */
+  readonly onStopEscape: () => boolean;
 }) {
   const {
     keybindings,
@@ -145,6 +147,7 @@ export function composerCommandKeyHandler(input: {
     submitComposer,
     promptSuggestion,
     dismissPromptSuggestion,
+    onStopEscape,
   } = input;
 
   // The composer persists across threads. A recall from thread A must not
@@ -251,7 +254,7 @@ export function composerCommandKeyHandler(input: {
         dismissPromptSuggestion();
         return true;
       }
-      if (!menuIsActive) return false;
+      if (!menuIsActive) return onStopEscape();
       dismissComposerTrigger(trigger);
       composerMenuOpenRef.current = false;
       return true;

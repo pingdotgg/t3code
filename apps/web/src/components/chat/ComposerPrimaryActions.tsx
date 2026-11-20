@@ -13,6 +13,7 @@ import {
   PlayIcon,
   CornerUpRightIcon,
   ListPlusIcon,
+  XIcon,
 } from "lucide-react";
 import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
 import { formatContextWindowTokens } from "~/lib/contextWindow";
@@ -44,6 +45,8 @@ interface ComposerPrimaryActionsProps {
   isRunning: boolean;
   canInterrupt: boolean;
   runId?: string | null;
+  /** Escape armed Stop; the next Escape presses it. */
+  stopConfirmArmed?: boolean;
   followUpBehavior?: "queue" | "steer";
   canSteer?: boolean;
   alternateShortcutLabel?: string | null;
@@ -131,6 +134,7 @@ function useStopPhase(input: {
 
 function StopGenerationButton({
   stopPhase,
+  confirmArmed = false,
   canOperateThread,
   insidePendingAction,
   preserveComposerFocusOnPointerDown,
@@ -138,6 +142,7 @@ function StopGenerationButton({
   onInterrupt,
 }: {
   stopPhase: StopPhase;
+  confirmArmed?: boolean;
   canOperateThread: boolean;
   insidePendingAction: boolean;
   preserveComposerFocusOnPointerDown: boolean;
@@ -145,6 +150,7 @@ function StopGenerationButton({
   onInterrupt: () => void;
 }) {
   const isStopDisabled = stopPhase === "pending";
+  const showConfirm = confirmArmed && stopPhase !== "pending";
   return (
     <Tooltip>
       <TooltipTrigger
@@ -162,15 +168,32 @@ function StopGenerationButton({
               onStopRequested();
               onInterrupt();
             }}
-            aria-label={stopPhase === "pending" ? "Stopping" : "Stop generation"}
+            data-composer-stop-button="true"
+            aria-label={
+              stopPhase === "pending"
+                ? "Stopping"
+                : showConfirm
+                  ? "Press Esc again to stop generation"
+                  : "Stop generation"
+            }
           />
         }
       >
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
-          <rect x="2" y="2" width="8" height="8" rx="1.5" />
-        </svg>
+        {showConfirm ? (
+          <XIcon className="size-4" strokeWidth={2.5} aria-hidden="true" />
+        ) : (
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+            <rect x="2" y="2" width="8" height="8" rx="1.5" />
+          </svg>
+        )}
       </TooltipTrigger>
-      <TooltipPopup>{stopPhase === "pending" ? "Stopping…" : "Interrupt"}</TooltipPopup>
+      <TooltipPopup>
+        {stopPhase === "pending"
+          ? "Stopping…"
+          : showConfirm
+            ? "Press Esc again to stop"
+            : "Interrupt"}
+      </TooltipPopup>
     </Tooltip>
   );
 }
@@ -227,6 +250,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isRunning,
   canInterrupt,
   runId = null,
+  stopConfirmArmed = false,
   followUpBehavior = "steer",
   canSteer = true,
   alternateShortcutLabel = null,
@@ -270,6 +294,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     <StopGenerationButton
       key="interrupt"
       stopPhase={stopPhase}
+      confirmArmed={stopConfirmArmed}
       canOperateThread={canOperateThread}
       insidePendingAction={insidePendingAction}
       preserveComposerFocusOnPointerDown={preserveComposerFocusOnPointerDown}

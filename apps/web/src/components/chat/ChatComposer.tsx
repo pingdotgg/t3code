@@ -2363,8 +2363,32 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ? promptSuggestion
       : null;
 
-  const onComposerCommandKey = (key: string, event: KeyboardEvent, isTaskItem?: boolean) =>
-    composerCommandKeyHandler({
+  // Escape arms the visible Stop button and a second Escape presses it. Keyed to the run so a
+  // new turn or thread never inherits an armed Stop.
+  const stopConfirmKey = `${environmentId}:${activeThreadId ?? "new"}:${activeThread?.runtime?.activeRunId ?? ""}`;
+  const [armedStopConfirmKey, setArmedStopConfirmKey] = useState<string | null>(null);
+  const stopButtonVisible =
+    canInterrupt &&
+    canOperateThread &&
+    (pendingPrimaryAction !== null ||
+      (!composerSendState.hasSendableContent && !voiceInputActive && !isEditingQueuedMessage));
+  const stopConfirmArmed = stopButtonVisible && armedStopConfirmKey === stopConfirmKey;
+  const onStopEscape = () => {
+    if (!stopButtonVisible) return false;
+    if (!stopConfirmArmed) {
+      setArmedStopConfirmKey(stopConfirmKey);
+      return true;
+    }
+    setArmedStopConfirmKey(null);
+    composerFormRef.current
+      ?.querySelector<HTMLButtonElement>('[data-composer-stop-button="true"]')
+      ?.click();
+    return true;
+  };
+
+  const onComposerCommandKey = (key: string, event: KeyboardEvent, isTaskItem?: boolean) => {
+    if (key !== "Escape") setArmedStopConfirmKey(null);
+    return composerCommandKeyHandler({
       keybindings,
       getShortcutContext,
       sendShortcut: settings.sendShortcut,
@@ -2404,7 +2428,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       submitComposer,
       promptSuggestion: offeredPromptSuggestion,
       dismissPromptSuggestion,
+      onStopEscape,
     })(key, event, isTaskItem);
+  };
 
   const {
     stashQueue,
@@ -3401,6 +3427,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           event.target.closest('[data-testid="composer-editor"]')
         ) {
           onTypingGuardBlur();
+          setArmedStopConfirmKey(null);
         }
         scheduleComposerCollapseCheck();
       }}
@@ -3789,6 +3816,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     }
                     canInterrupt={canInterrupt}
                     runId={activeThread?.runtime?.activeRunId ?? null}
+                    stopConfirmArmed={stopConfirmArmed}
                     followUpBehavior={followUpBehavior}
                     canSteer={canSteer}
                     alternateShortcutLabel={shortcutLabelForCommand(

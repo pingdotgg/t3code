@@ -42,6 +42,7 @@ import {
   hasPendingAssetUrl,
   installFakeEnvironment,
   rejectPendingCommand,
+  runningRun,
   threadWithHistory,
   threadWithQuestion,
   type FakeDriver,
@@ -482,6 +483,40 @@ it("Enter on an empty prompt resumes an interrupted thread", async () => {
       expect.objectContaining({ manualContinuationOfRunId: interruptedRun.id }),
     ),
   );
+});
+
+it("Escape in the composer arms Stop, and only a second Escape stops the turn", async () => {
+  const history = threadWithHistory("esc-stop", 1);
+  const live = runningRun(history.id, "esc-stop-live", 2, "esc-stop-live-user");
+  const thread = { ...history, runs: [...history.runs, live] };
+  using _environment = installFakeEnvironment([thread], { acceptCommands: true });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  const stop = page.getByRole("button", { name: "Stop generation" });
+  const armedStop = page.getByRole("button", { name: "Press Esc again to stop generation" });
+  await expect.element(stop).toBeVisible();
+
+  await userEvent.click(page.getByTestId("composer-editor"));
+  await userEvent.keyboard("{Escape}");
+  await expect.element(armedStop).toBeVisible();
+  // Any other key disarms, so a later stray Escape only arms again.
+  await userEvent.keyboard("x{Backspace}");
+  await expect.element(stop).toBeVisible();
+  await userEvent.keyboard("{Escape}");
+  await expect.element(armedStop).toBeEnabled();
+
+  await userEvent.keyboard("{Escape}");
+  await expect.element(page.getByRole("button", { name: "Stopping" })).toBeDisabled();
 });
 
 it("opening a thread or returning to the window on a touch tablet does not focus the composer", async () => {
