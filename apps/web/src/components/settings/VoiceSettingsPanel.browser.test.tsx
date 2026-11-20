@@ -12,7 +12,7 @@ import {
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 import { __setClientSettingsForTests, getClientSettings } from "../../hooks/useSettings";
 import { readBrowserClientSettings } from "../../clientPersistenceStorage";
 import { chooseRecordingMicrophone } from "../../speech/browserMicrophones";
@@ -745,4 +745,33 @@ it("records from the first connected microphone in the saved order", async () =>
   await expect
     .element(screen.getByRole("button", { name: "Forget System default" }))
     .not.toBeInTheDocument();
+});
+
+it("does not remember microphones from a scan that finishes after leaving settings", async () => {
+  const previous = getClientSettings();
+  using cleanup = new DisposableStack();
+  cleanup.defer(() => __setClientSettingsForTests(previous));
+  __setClientSettingsForTests({ ...previous, voiceMicrophone: "", voiceMicrophones: [] });
+  const scan = deferred<MediaDeviceInfo[]>();
+  using _enumerate = vi
+    .spyOn(navigator.mediaDevices, "enumerateDevices")
+    .mockReturnValue(scan.promise);
+  await using screen = await render(
+    <SettingsScopeProvider search={{}} onChange={() => {}}>
+      <VoiceSettingsPanel />
+    </SettingsScopeProvider>,
+  );
+  await screen.unmount();
+  await act(() =>
+    scan.resolve([
+      {
+        kind: "audioinput",
+        deviceId: "usb",
+        groupId: "usb",
+        label: "USB test microphone",
+        toJSON: () => ({}),
+      },
+    ]),
+  );
+  expect(getClientSettings().voiceMicrophones).toEqual([]);
 });
