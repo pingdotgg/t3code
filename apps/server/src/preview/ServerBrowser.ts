@@ -1630,11 +1630,15 @@ const make = Effect.gen(function* () {
         : Option.some({ path: download.path, fileName: download.fileName });
     });
 
-  const preparedContexts = new WeakSet<BrowserContext>();
-  const prepareContext = async (context: BrowserContext) => {
-    if (preparedContexts.has(context)) return;
-    preparedContexts.add(context);
-    await context.grantPermissions(["clipboard-write"]);
+  // Tabs sharing a context await the same grant, so none runs ahead of it.
+  const preparedContexts = new WeakMap<BrowserContext, Promise<void>>();
+  const prepareContext = (context: BrowserContext) => {
+    let prepared = preparedContexts.get(context);
+    if (prepared === undefined) {
+      prepared = context.grantPermissions(["clipboard-write"]);
+      preparedContexts.set(context, prepared);
+    }
+    return prepared;
   };
 
   // Like the desktop's loopback-network allowlist; without it Chromium blocks a public page's
@@ -1642,11 +1646,9 @@ const make = Effect.gen(function* () {
   // Chromium drops a context's permission overrides when the session that set them detaches, so
   // this uses a browser-lifetime session, never a tab's, and runs after prepareContext's grant.
   const browserSessions = new WeakMap<Browser, Promise<CDPSession>>();
-  const loopbackContexts = new WeakSet<BrowserContext>();
-  const allowLoopback = async (context: BrowserContext, cdp: CDPSession) => {
-    const browser = context.browser();
-    if (browser === null || loopbackContexts.has(context)) return;
-    loopbackContexts.add(context);
+  const loopbackContexts = new WeakMap<BrowserContext, Promise<void>>();
+  const grantLoopback = async (context: BrowserContext, browser: Browser, cdp: CDPSession) => {
+    await prepareContext(context);
     const { browserContextId } = (await cdp.send("Target.getTargetInfo")).targetInfo;
     let session = browserSessions.get(browser);
     if (session === undefined) {
@@ -1660,6 +1662,17 @@ const make = Effect.gen(function* () {
       setting: "granted",
       ...(browserContextId === undefined ? {} : { browserContextId }),
     });
+  };
+  // Every tab in the context awaits the one in-flight grant before it navigates.
+  const allowLoopback = async (context: BrowserContext, cdp: CDPSession) => {
+    const browser = context.browser();
+    if (browser === null) return;
+    let granted = loopbackContexts.get(context);
+    if (granted === undefined) {
+      granted = grantLoopback(context, browser, cdp);
+      loopbackContexts.set(context, granted);
+    }
+    await granted;
   };
 
   const recordCopies = async (cdp: CDPSession) => {
