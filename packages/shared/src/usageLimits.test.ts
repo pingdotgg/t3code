@@ -1771,7 +1771,7 @@ describe("instance usage limits", () => {
     ["one hub account", [hub([hubAccount("a", 30)])], [30, 10]],
     ["the pool of hub accounts", [hub([hubAccount("a", 30), hubAccount("b", 70)])], [50, 10]],
     [
-      "each account once across registrations of one hub",
+      "each account once across hubs on one origin",
       [
         hub([hubAccount("a", 30)]),
         hub(
@@ -1786,6 +1786,7 @@ describe("instance usage limits", () => {
           ],
           {
             id: UsageLimitSourceId.make("hub-2"),
+            endpoint: `${hubOrigin}/second`,
           },
         ),
       ],
@@ -1804,6 +1805,11 @@ describe("instance usage limits", () => {
       [30, 10],
     ],
   ])("shows %s for an instance routed through its hub", (_, sources, usedPercents) => {
+    if (sources.some((source) => source.endpoint !== hubOrigin)) {
+      expect(limitsOf(routed, sources)).toEqual(unsupported);
+      // Two registrations of the same mount can report overlapping accounts.
+      sources = sources.map((source) => ({ ...source, endpoint: hubOrigin }));
+    }
     const limits = limitsOf(routed, sources);
     expect(limits?.unavailable).toBeUndefined();
     expect(limits?.windows.map((entry) => entry.usedPercent)).toEqual(usedPercents);
