@@ -16,8 +16,7 @@ export function ComposerAttachmentButton(props: {
   readonly disabled?: boolean;
   readonly size?: "regular" | "large";
   readonly supportsFiles: boolean;
-  readonly onTakePhoto: () => Promise<void>;
-  readonly onPickMedia: () => Promise<void>;
+  readonly onPickMedia: (source: "library" | "camera") => Promise<void>;
   readonly onPickFiles: () => Promise<void>;
 }) {
   const gt = useGT();
@@ -30,7 +29,7 @@ export function ComposerAttachmentButton(props: {
       accessibilityState={{ disabled: props.disabled }}
       className="size-[44px] shrink-0 items-center justify-center rounded-full active:opacity-70 disabled:opacity-50"
       disabled={props.disabled}
-      onPress={props.supportsFiles ? undefined : () => void props.onPickMedia()}
+      onPress={props.supportsFiles ? undefined : () => void props.onPickMedia("library")}
     >
       <SymbolView
         name="plus"
@@ -54,9 +53,9 @@ export function ComposerAttachmentButton(props: {
       actions={ATTACHMENT_MENU_ACTIONS.map((action) => ({ ...action, title: m(action.title) }))}
       onPressAction={({ nativeEvent }) => {
         if (nativeEvent.event === "camera") {
-          void props.onTakePhoto();
+          void props.onPickMedia("camera");
         } else if (nativeEvent.event === "photos") {
-          void props.onPickMedia();
+          void props.onPickMedia("library");
         } else if (nativeEvent.event === "files") {
           void props.onPickFiles();
         }
