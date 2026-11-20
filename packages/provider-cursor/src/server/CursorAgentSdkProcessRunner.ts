@@ -162,6 +162,7 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
           args: launch.args,
           name: "cursor-sdk",
           env,
+          shared: true,
         });
 
         const handle = yield* Scope.provide(
