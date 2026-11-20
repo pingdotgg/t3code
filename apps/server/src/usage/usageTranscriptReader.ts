@@ -324,12 +324,10 @@ async function* readChunks(
   }
 }
 
-// Match markers as raw bytes; UTF-8 is self-synchronizing, so a marker's bytes
-// cannot false-match inside a multi-byte sequence, and no per-line string is
-// allocated. Buffer.indexOf per marker beats a latin1 regex on long lines.
+// Match ASCII markers as raw bytes: UTF-8 cannot false-match them mid-sequence, and no line string is allocated.
 export function transcriptLineGate(markers: readonly [string, ...string[]]) {
-  const needle = markers.map((marker) => Buffer.from(marker));
-  return (line: Buffer) => needle.some((marker) => line.includes(marker));
+  const needles = markers.map((marker) => Buffer.from(marker));
+  return (line: Buffer) => needles.some((needle) => line.includes(needle));
 }
 
 /** Returns null on read failure; caching it as empty would hide usage until size/mtime changes. */
