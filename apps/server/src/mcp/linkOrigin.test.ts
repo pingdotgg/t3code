@@ -358,6 +358,11 @@ it.layer(Layer.provideMerge(layerTools, layerOrchestration))("work a link starts
       assert.deepEqual((yield* projections.getThreadShell(task))?.delegatedFrom, delegatedFrom);
       const claimed = yield* launch(claudeCode, "Claims a parent", { delegatedFrom });
       assert.equal((yield* projections.getThreadShell(claimed))?.delegatedFrom, undefined);
+      // Nor may a link name a thread here: that parent would hear each of the task's runs.
+      const namesHere = yield* launch(laptop, "Names a parent here", {
+        delegatedFrom: { ...delegatedFrom, environmentId: "environment:box" },
+      });
+      assert.equal((yield* projections.getThreadShell(namesHere))?.delegatedFrom, undefined);
 
       // A thread here that launches one is its parent, whatever parent it names.
       const orchestrator = yield* Orchestrator.OrchestratorV2;

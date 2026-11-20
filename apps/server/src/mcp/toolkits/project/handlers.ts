@@ -403,10 +403,13 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             )?.supportedRuntimeModes,
           });
         }
-        // A link's launch may name its parent there; a thread here is always its own launch's parent.
+        // A link's launch may name its parent there, never here; a thread here is always its own
+        // launch's parent.
         const delegatedFrom =
           linkOrigin !== undefined
-            ? input.delegatedFrom
+            ? input.delegatedFrom?.environmentId === scope.environmentId
+              ? undefined
+              : input.delegatedFrom
             : caller === undefined
               ? undefined
               : { environmentId: scope.environmentId, threadId: caller.id, title: caller.title };
