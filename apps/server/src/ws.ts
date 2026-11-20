@@ -1481,6 +1481,7 @@ export const layerWsRpc = (
       };
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
       const commandOutputHub = yield* CommandOutputHub.CommandOutputHub;
+      const threadViewers = yield* ThreadViewers.ThreadViewers;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const secretRequests = yield* SecretRequests.SecretRequests;
@@ -2323,13 +2324,8 @@ export const layerWsRpc = (
         [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input) =>
           Stream.unwrap(
             Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
+              Effect.andThen(threadViewers.view(input.threadId)),
               Effect.andThen(subscribeOrchestrationV2Thread(input)),
-              Effect.flatMap((stream) =>
-                Effect.gen(function* () {
-                  const release = (yield* ThreadViewers.ThreadViewers).view(input.threadId);
-                  return stream.pipe(Stream.ensuring(Effect.sync(release)));
-                }),
-              ),
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: (input) =>

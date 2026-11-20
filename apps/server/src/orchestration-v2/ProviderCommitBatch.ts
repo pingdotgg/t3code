@@ -10,8 +10,6 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
-import { ThreadViewers } from "./ThreadViewers.ts";
-
 const MAX_EVENTS = 64;
 const MAX_BYTES = 1024 * 1024;
 // While another write waits, a shared transaction stops taking jobs after this long.
@@ -157,8 +155,9 @@ export const make = Effect.fn("ProviderCommitBatch.make")(function* (
   isolate: (
     work: Effect.Effect<void, CommitBatchError>,
   ) => Effect.Effect<void, CommitBatchError> = (work) => work,
+  /** Whether a client has the thread open; its streams rank first. */
+  isViewed: (threadId: string) => boolean = () => false,
 ) {
-  const viewers = yield* ThreadViewers;
   const wake = yield* Queue.sliding<void>(1);
   const backlog = yield* Semaphore.make(MAX_QUEUED);
   const streams = new Set<StreamState>();
@@ -262,7 +261,7 @@ export const make = Effect.fn("ProviderCommitBatch.make")(function* (
     const tier =
       stream.priority === undefined
         ? 1
-        : viewers.isViewed(stream.priority.threadId)
+        : isViewed(stream.priority.threadId)
           ? 0
           : stream.priority.delegated
             ? 2

@@ -12,7 +12,6 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as ProviderCommitBatch from "./ProviderCommitBatch.ts";
-import * as ThreadViewers from "./ThreadViewers.ts";
 
 const driver = ProviderDriverKind.make("codex");
 function event(index: number, text = `delta:${index}`): ProviderAdapter.ProviderAdapterV2Event {
@@ -55,6 +54,7 @@ const control: ProviderAdapter.ProviderAdapterV2Event = {
 
 const recordBatches = Effect.fn("test.recordProviderBatches")(function* (
   beforeCommit: Effect.Effect<void> = Effect.void,
+  isViewed?: (threadId: string) => boolean,
 ) {
   const output = yield* Queue.unbounded<ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>>();
   let current: ProviderAdapter.ProviderAdapterV2Event[] = [];
@@ -67,6 +67,8 @@ const recordBatches = Effect.fn("test.recordProviderBatches")(function* (
         if (current.length > 0) yield* Queue.offer(output, current);
       }),
     true,
+    undefined,
+    isViewed,
   );
   const process = (raw: ProviderAdapter.ProviderAdapterV2Event) =>
     raw.type === "background_work.updated"
@@ -564,12 +566,8 @@ it.effect.each([false, true])(
   "orders a backlog by focus, thread kind and a finishing control with starved=%s",
   (starved) =>
     Effect.gen(function* () {
-      const viewers = ThreadViewers.make();
-      viewers.view("focused");
       const writer = yield* blockFirstCommit;
-      const recorder = yield* recordBatches(writer.block).pipe(
-        Effect.provideService(ThreadViewers.ThreadViewers, viewers),
-      );
+      const recorder = yield* recordBatches(writer.block, (threadId) => threadId === "focused");
       const leading = yield* recorder
         .consume(Stream.make(event(-1)), recorder.process, Effect.succeed(false))
         .pipe(Effect.forkScoped({ startImmediately: true }));

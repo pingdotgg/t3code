@@ -64,6 +64,7 @@ import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
+import * as ThreadViewers from "./ThreadViewers.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
@@ -4316,6 +4317,7 @@ it.effect.each(["direct", "provider-batch", "cancel-provider-batch"] as const)(
             layerCommandReceiptStoreProvided,
             ProjectStore.layer.pipe(Layer.provide(layerDatabase)),
             TurnItemPositionStore.layer.pipe(Layer.provide(layerDatabase)),
+            ThreadViewers.layer,
           ),
         ),
       );
@@ -4614,6 +4616,7 @@ it.effect.each(["cancel transaction", "fail transaction", "cancel publication"] 
             layerCommandReceiptStoreProvided,
             ProjectStore.layer.pipe(Layer.provide(layerDatabase)),
             TurnItemPositionStore.layer.pipe(Layer.provide(layerDatabase)),
+            ThreadViewers.layer,
           ),
         ),
       );
