@@ -202,6 +202,10 @@ Choose a speech provider in **Settings → Voice → Read aloud**, then use **Re
 beside a completed assistant reply. Select it again to stop playback. Leaving the
 thread stops it. Code blocks are skipped by default.
 
+On web and desktop, the paragraph and the word being read are highlighted, and the thread
+scrolls along until you scroll away. ElevenLabs reports exact word timings. With other
+providers the word position is an estimate. Turn this off with **Highlight words**.
+
 System voices run on your device. OpenAI, Grok TTS, OpenRouter, and ElevenLabs send the reply text
 through your selected environment and use API billing. They share the API keys saved for dictation. Choose a model and
 voice, then use the preview to try it.
