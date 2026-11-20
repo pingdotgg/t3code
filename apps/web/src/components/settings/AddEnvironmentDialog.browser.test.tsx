@@ -137,6 +137,8 @@ describe("AddEnvironmentDialog", () => {
     await expect.element(page.getByPlaceholder("root")).toHaveValue("");
     await expect.element(page.getByPlaceholder("22")).toHaveValue("");
 
+    await expect.element(page.getByRole("status")).toHaveTextContent("");
+
     let finishConnection!: (result: AtomCommandResult<void, Error>) => void;
     const pending = new Promise<AtomCommandResult<void, Error>>((resolve) => {
       finishConnection = resolve;
@@ -146,6 +148,8 @@ describe("AddEnvironmentDialog", () => {
     await userEvent.click(
       page.getByRole("dialog").getByRole("button", { name: "Add environment" }),
     );
+    await expect.element(page.getByRole("status")).toHaveTextContent("Connecting to devbox");
+    await expect.element(page.getByPlaceholder("Search hosts or type devbox")).toBeDisabled();
     await userEvent.keyboard("{Escape}");
     await expectDefaultModeAfterReopen();
     finishConnection(AsyncResult.failure(Cause.fail(new Error("dismissed SSH attempt"))));

@@ -42,6 +42,7 @@ import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "../settings/itemRo
 import { Checkbox } from "../ui/checkbox";
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
+import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { presentSavedCloudEnvironmentConnection } from "./cloudEnvironmentConnectionPresentation";
@@ -516,11 +517,16 @@ export function CloudEnvironmentConnectRows({
               disabled={connectingEnvironmentIds.size > 0}
               onClick={() => void connectEnvironment(environment)}
             >
-              {connectingEnvironmentIds.has(environment.environmentId)
-                ? gt("Adding…")
-                : savedWithoutRelay.has(environment.environmentId)
-                  ? gt("Add route")
-                  : gt("Add", { $context: "verb, adds an environment" })}
+              {connectingEnvironmentIds.has(environment.environmentId) ? (
+                <>
+                  <Spinner aria-hidden />
+                  {gt("Adding…")}
+                </>
+              ) : savedWithoutRelay.has(environment.environmentId) ? (
+                gt("Add route")
+              ) : (
+                gt("Add", { $context: "verb, adds an environment" })
+              )}
             </Button>
           )}
         </div>
