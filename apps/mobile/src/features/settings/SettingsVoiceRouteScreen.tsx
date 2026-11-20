@@ -409,7 +409,7 @@ export function SettingsVoiceRouteScreen() {
               )}
         </Text>
         {/* Google's on-device recognizer on Android always uses the device language. */}
-        {Platform.OS === "ios" && !grant ? (
+        {Platform.OS === "ios" && !grant && !sheetEnvironment ? (
           <>
             <SettingsSection title={gt("Dictation language")}>
               <SettingsChoiceRow
