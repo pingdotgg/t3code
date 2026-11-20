@@ -111,6 +111,28 @@ describe("codexRateLimitsToLimits", () => {
     });
   });
 
+  it("labels a day-long window daily instead of session", () => {
+    expect(
+      codexRateLimitsToLimits({
+        checkedAt,
+        snapshot: {
+          planType: "plus",
+          primary: { usedPercent: 12, resetsAt: 1_784_000_000, windowDurationMins: 1440 },
+          secondary: null,
+        },
+      }).windows,
+    ).toEqual([
+      {
+        id: "primary",
+        kind: "daily",
+        label: "Daily",
+        usedPercent: 12,
+        windowDurationMins: 1440,
+        resetsAt: "2026-07-14T03:33:20.000Z",
+      },
+    ]);
+  });
+
   it("treats a lone duration-less primary as monthly on Free and Go", () => {
     expect(
       codexRateLimitsToLimits({
