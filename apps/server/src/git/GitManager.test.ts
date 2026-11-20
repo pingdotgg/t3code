@@ -4577,6 +4577,73 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("createPullRequest pushes to the push remote and never to the base branch", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const originDir = yield* createBareRemote();
+      const forkDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["remote", "add", "fork", forkDir]);
+      const readOrigin = (branch: string) =>
+        runGit(repoDir, ["ls-remote", "origin", `refs/heads/${branch}`]).pipe(
+          Effect.map((result) => result.stdout),
+        );
+      const commit = (file: string) =>
+        Effect.gen(function* () {
+          NodeFS.writeFileSync(NodePath.join(repoDir, file), `${file}\n`);
+          yield* runGit(repoDir, ["add", file]);
+          yield* runGit(repoDir, ["commit", "-m", file]);
+        });
+      const createPr = (manager: GitManager.GitManager["Service"]) =>
+        manager.createPullRequest({
+          cwd: repoDir,
+          projectId: ProjectId.make("project-1"),
+          title: "Feature",
+          body: "Body",
+        });
+
+      // Commits on the base branch are never pushed to it.
+      yield* commit("on-main.txt");
+      const originMain = yield* readOrigin("main");
+      const onBase = yield* makeManager({ providerScenario: { prListSequence: [[]] } });
+      const error = yield* Effect.flip(createPr(onBase.manager));
+      expect(error.message).toContain("main is the base branch");
+      expect(yield* readOrigin("main")).toBe(originMain);
+      expect(created(onBase.providerCalls)).toEqual([]);
+      yield* runGit(repoDir, ["reset", "--hard", "origin/main"]);
+
+      // A push to a separate push remote leaves the upstream behind, and still opens the PR.
+      yield* runGit(repoDir, ["checkout", "-b", "topic"]);
+      yield* commit("topic.txt");
+      yield* runGit(repoDir, ["push", "-u", "origin", "topic"]);
+      yield* commit("late.txt");
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "git@github.com:pingdotgg/codething-mvp.git",
+        originDir,
+      );
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "fork",
+        "git@github.com:octocat/codething-mvp.git",
+        forkDir,
+      );
+      yield* runGit(repoDir, ["config", "remote.pushDefault", "fork"]);
+      const viaFork = yield* makeManager();
+      const result = yield* createPr(viaFork.manager);
+      expect(result.status).toBe("created");
+      expect(
+        yield* runGit(forkDir, ["--git-dir=.", "log", "-1", "--pretty=%s", "topic"]),
+      ).toMatchObject({ stdout: "late.txt\n" });
+      expect(created(viaFork.providerCalls)).toEqual([
+        { baseRefName: "main", headSelector: "octocat:topic" },
+      ]);
+    }),
+  );
+
   it.effect("generates PR content from the created worktree's selected remote base", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

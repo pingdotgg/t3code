@@ -2527,8 +2527,9 @@ export const make = Effect.gen(function* () {
       };
     }
 
-    // A PR opened from the remote branch would leave out commits not pushed yet.
-    if (details.aheadCount > 0) {
+    // A PR opened from the remote branch would leave out commits not pushed yet. The ahead
+    // count is against the upstream, which a push to a separate push remote leaves behind.
+    if (!pushRemoteRef && details.aheadCount > 0) {
       return yield* new GitManagerError({
         operation: "runPrStep",
         cwd,
@@ -2666,7 +2667,15 @@ export const make = Effect.gen(function* () {
     "GitManager.createPullRequest",
   )(function* (input) {
     const status = yield* gitCore.statusDetails(input.cwd);
-    const push = (yield* createPrNeedsPush(input.cwd, status))
+    const needsPush = yield* createPrNeedsPush(input.cwd, status);
+    if (needsPush && status.branch) {
+      yield* ensurePrHeadIsNotBase(
+        input.cwd,
+        { ...status, branch: status.branch },
+        (yield* changeRequestTermsFor(input.cwd)).shortLabelWithArticle,
+      );
+    }
+    const push = needsPush
       ? yield* pushCurrentBranch(input.cwd, status.branch).pipe(
           Effect.mapError(
             (cause) =>
