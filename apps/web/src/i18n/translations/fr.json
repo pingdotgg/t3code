@@ -11433,7 +11433,7 @@
   "63426ea5d50585a6": "Connectez un environnement pour enregistrer ce paramètre.",
   "5aedadfc9fef7d3b": "Connectez les checkouts sélectionnés, ou mettez à jour leurs environnements, pour réinitialiser ce remplacement.",
   "7d0ff8d36a670261": "Connectez les environnements pour réinitialiser ces remplacements.",
-  "f86f4c366c2e7bd9": "Cet environnement utilise une ancienne version de T3 Code sans ce paramètre. Mettez-y T3 Code à jour.",
+  "4832594df0aad785": "Cet environnement ne prend pas en charge ce paramètre. Mettez-y T3 Code à jour.",
   "b39ae97dcb01d891": "Détails de la règle d’arrière-plan",
   "7e3ed96c91b96428": "Réinitialiser {title} à la valeur par défaut",
   "27cc3baf3f6c04b1": "Réinitialiser le remplacement à la valeur par défaut",

@@ -11443,7 +11443,7 @@
   "63426ea5d50585a6": "Connect an environment to save this setting.",
   "5aedadfc9fef7d3b": "Connect the selected checkouts, or update their environments, to reset this override.",
   "7d0ff8d36a670261": "Connect the environments to reset these overrides.",
-  "f86f4c366c2e7bd9": "This environment runs an older T3 Code without this setting. Update T3 Code on it.",
+  "4832594df0aad785": "This environment does not support this setting. Update T3 Code on it.",
   "b39ae97dcb01d891": "Background policy details",
   "7e3ed96c91b96428": "Reset {title} to default",
   "27cc3baf3f6c04b1": "Reset override to default",
