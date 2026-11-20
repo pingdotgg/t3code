@@ -98,9 +98,11 @@ const linkedThreadSessionAtom = Atom.family((key: string) => {
         if (result._tag !== "Success") {
           return { ok: false, error: squashAtomCommandFailure(result) };
         }
-        const { title } = result.value.thread;
-        if (title) useRightPanelStore.getState().setLinkedThreadTitle(panelRef, surfaceId, title);
         return { ok: true, page: result.value };
+      },
+      onRead: (page) => {
+        const { title } = page.thread;
+        if (title) useRightPanelStore.getState().setLinkedThreadTitle(panelRef, surfaceId, title);
       },
       schedule: (run, delayMs) => {
         const timer = setTimeout(run, delayMs);

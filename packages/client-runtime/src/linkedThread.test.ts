@@ -261,6 +261,7 @@ describe("createLinkedThreadSession", () => {
       readonly answer: (result: LinkedThreadReadResult) => Promise<void>;
     }> = [];
     const timers: Array<{ readonly run: () => void; readonly delayMs: number; live: boolean }> = [];
+    const kept: Array<PeerLinkThreadPage> = [];
     const session = createLinkedThreadSession({
       read: (cursor) =>
         new Promise((resolve) => {
@@ -280,6 +281,7 @@ describe("createLinkedThreadSession", () => {
         };
       },
       isActive: () => active.current,
+      onRead: (page) => kept.push(page),
     });
     const pending = () => timers.filter((timer) => timer.live);
     const fire = () => {
@@ -287,7 +289,7 @@ describe("createLinkedThreadSession", () => {
       timer.live = false;
       timer.run();
     };
-    return { session, reads, pending, fire };
+    return { session, reads, pending, fire, kept };
   };
 
   it("reads the newest page on open, then follows the thread at its pace", async () => {
@@ -326,12 +328,13 @@ describe("createLinkedThreadSession", () => {
   });
 
   it("ignores a read that a newer one overtook", async () => {
-    const { session, reads } = harness();
+    const { session, reads, kept } = harness();
     session.subscribe(() => {});
     session.retry();
     await reads[1]!.answer({ ok: true, page: page([item(4, "new")]) });
     await reads[0]!.answer({ ok: true, page: page([item(4, "old")]) });
     expect(session.getSnapshot().transcript?.items.map((entry) => entry.text)).toEqual(["new"]);
+    expect(kept.map((kept) => kept.items[0]?.text)).toEqual(["new"]);
   });
 
   it("pages back without losing what a refresh brought in meanwhile", async () => {

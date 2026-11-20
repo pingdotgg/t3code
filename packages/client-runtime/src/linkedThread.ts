@@ -308,6 +308,8 @@ export function createLinkedThreadSession(options: {
   /** Runs `run` after `delayMs` and returns how to cancel it. */
   readonly schedule: (run: () => void, delayMs: number) => () => void;
   readonly isActive?: () => boolean;
+  /** Called with each forward read the session keeps, never with one a newer read overtook. */
+  readonly onRead?: (page: Page) => void;
 }) {
   let state: LinkedThreadSessionState = { transcript: null, error: null, loadingEarlier: false };
   const listeners = new Set<() => void>();
@@ -350,6 +352,7 @@ export function createLinkedThreadSession(options: {
     // An earlier page may have landed while this read was out.
     const transcript = mergeLinkedThreadPage(state.transcript, result.page, "later");
     update({ transcript, error: null });
+    options.onRead?.(result.page);
     scheduleNext(linkedThreadPollDelayMs(transcript));
   };
 
