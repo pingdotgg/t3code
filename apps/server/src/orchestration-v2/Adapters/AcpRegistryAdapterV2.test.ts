@@ -455,6 +455,8 @@ describe("AcpRegistryAdapterV2", () => {
   it.effect.each([
     { commandPath: "/root/.local/bin/agy", offers: 1 },
     { commandPath: "C:\\tools\\agy.exe", offers: 1 },
+    { commandPath: "/Users/me/.t3/tools/antigravity-cli/1.5.12/antigravity", offers: 1 },
+    { commandPath: "C:\\tools\\antigravity.exe", offers: 1 },
     { commandPath: "/opt/bin/other-agent", offers: 0 },
   ])("continues late output only for agy ($commandPath)", ({ commandPath, offers }) =>
     Effect.gen(function* () {

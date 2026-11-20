@@ -199,7 +199,9 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
   const isDevin = registryAgentId === "devin";
   const isAntigravityCli =
     options.settings.source === "local" &&
-    /^agy(\.exe|\.cmd)?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? "");
+    /^(?:agy|antigravity)(\.exe|\.cmd)?$/i.test(
+      options.settings.commandPath.split(/[\\/]/).pop() ?? "",
+    );
   const isOmp =
     options.settings.source === "local" &&
     /^omp(\.exe|\.cmd)?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? "");
@@ -311,7 +313,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     // Hermes replies on the root session when a background process it started exits; no
     // prompt response follows, so the continuation ends on the deferred-finalize debounce.
     // Hermes is not in the public registry and may run through a wrapper, so only its
-    // initialize reply identifies it. agy does the same and is known by its command.
+    // initialize reply identifies it. agy / antigravity does the same and is known by its command.
     enablePostSettleContinuation: (initializeResult) =>
       isAntigravityCli || isHermes(initializeResult),
     deferFinalizeForBackgroundWork: (initializeResult) =>
