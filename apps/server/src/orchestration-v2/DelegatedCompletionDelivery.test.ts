@@ -2464,6 +2464,138 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
       }),
     );
 
+    // A client (no sender thread) sends a follow-up that queues behind the child's running
+    // turn; Stop on the child (as task_cancel on another task does) then holds it.
+    const holdClientFollowUp = (name: string) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const parentThreadId = ThreadId.make(`thread:${name}-parent`);
+        const projectId = ProjectId.make(`project:${name}`);
+        const parentRunId = RunId.make(`run:${name}-parent`);
+        const rootNodeId = NodeId.make(`node:${name}-parent`);
+        yield* seedParentWithTerminalTask({
+          threadId: parentThreadId,
+          projectId,
+          runId: parentRunId,
+          rootNodeId,
+          taskId: NodeId.make(`node:${name}-seed`),
+          deliveryState: "acknowledged",
+          now,
+        });
+        const child = yield* seedRestartCancelledChild({
+          parentThreadId,
+          projectId,
+          parentRunId,
+          rootNodeId,
+          name: `${name}-child`,
+          completionWake: "always",
+          continuationPending: false,
+          runStatus: "completed",
+          now,
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+        const send = (text: string, senderThreadId?: ThreadId) =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "agent",
+            creationSource: "mcp",
+            commandId: CommandId.make(`command:${name}:${text}`),
+            threadId: child.childThreadId,
+            ...(senderThreadId === undefined ? {} : { senderThreadId }),
+            messageId: MessageId.make(`message:${name}:${text}`),
+            text,
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+          });
+        yield* send("active", parentThreadId);
+        yield* send("from-client");
+        const before = yield* orchestrator.getThreadProjection(child.childThreadId);
+        const active = before.runs.find((run) => run.ordinal === 2)!;
+        const queued = before.runs.find((run) => run.ordinal === 3)!;
+        assert.equal(queued.status, "queued");
+        assert.isDefined(queued.delegatedTaskId);
+        const waitForTask = (afterSequence: number, taskId: NodeId, status: string) =>
+          eventSink.stream({ afterSequence, eventType: "subagent.updated" }).pipe(
+            Stream.filter(
+              (stored) =>
+                stored.event.type === "subagent.updated" &&
+                stored.event.payload.id === taskId &&
+                stored.event.payload.status === status,
+            ),
+            Stream.take(1),
+            Stream.runHead,
+          );
+        const stopSequence = yield* eventSink.latestSequence();
+        yield* orchestrator.dispatch({
+          type: "thread.stop",
+          threadId: child.childThreadId,
+          commandId: CommandId.make(`command:${name}:stop`),
+        });
+        yield* waitForTask(stopSequence, queued.delegatedTaskId!, "idle");
+        return { parentThreadId, child, active, queued, waitForTask };
+      });
+
+    it.effect("a held follow-up tells the thread that owns its task", () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const { parentThreadId, queued } = yield* holdClientFollowUp("held-client-followup");
+        const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+        const task = parent.subagents.find((row) => row.id === queued.delegatedTaskId)!;
+        assert.equal(task.status, "idle");
+        assert.equal(task.completionWake, "always");
+        // Nothing but a person's send or Resume releases the hold, so the owner must hear of it.
+        const told = parent.messages.some(
+          (message) =>
+            message.notification?.source.kind === "delegated_task" &&
+            message.notification.source.taskIds.includes(task.id),
+        );
+        assert.isTrue(told, "the owner was never told its tracked message is held");
+      }),
+    );
+
+    it.effect("a follow-up cancelled unread by settlement says it never ran", () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const { parentThreadId, child, active, queued, waitForTask } =
+          yield* holdClientFollowUp("settled-client-followup");
+        const endedSequence = yield* eventSink.latestSequence();
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make("event:settled-client-followup-active-ended"),
+              type: "run.updated",
+              threadId: child.childThreadId,
+              runId: active.id,
+              occurredAt: now,
+              payload: { ...active, status: "interrupted", startedAt: now, completedAt: now },
+            },
+          ],
+        });
+        const activeTask = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+          (row) => row.id === active.delegatedTaskId,
+        )!;
+        if (activeTask.result === null) {
+          yield* waitForTask(endedSequence, active.delegatedTaskId!, "interrupted");
+        }
+        const settleSequence = yield* eventSink.latestSequence();
+        yield* orchestrator.dispatch({
+          type: "thread.settle",
+          threadId: child.childThreadId,
+          commandId: CommandId.make("command:settled-client-followup:settle"),
+        });
+        yield* waitForTask(settleSequence, queued.delegatedTaskId!, "cancelled");
+        const task = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+          (row) => row.id === queued.delegatedTaskId,
+        )!;
+        assert.notEqual(task.result, "Child task ended with status cancelled.");
+        assert.match(task.result ?? "", /never/);
+      }),
+    );
+
     it.effect("checkpoint retry releases a pending sibling after its wake offer failed", () =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
