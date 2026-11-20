@@ -6,7 +6,10 @@ import type { Browser } from "@e2e-dev/web";
 
 interface CompressionHold {
   readonly release: () => void;
+  readonly releaseNext: () => void;
+  readonly held: Array<() => void>;
   released: boolean;
+  releasedDecodes: number;
   compressionDecodes: number;
   inFlight: number;
 }
@@ -20,16 +23,18 @@ declare global {
 /** Installs the hold before the app loads; call before `t3.open`. */
 export const holdImageCompression = (browser: Browser) =>
   browser.addInitScript(() => {
-    let release!: () => void;
-    const released = new Promise<void>((resolve) => {
-      release = resolve;
-    });
     const hold: CompressionHold = {
       release: () => {
         hold.released = true;
-        release();
+        for (const resume of hold.held.splice(0)) resume();
       },
+      releaseNext: () => {
+        hold.releasedDecodes++;
+        hold.held.shift()?.();
+      },
+      held: [],
       released: false,
+      releasedDecodes: 0,
       compressionDecodes: 0,
       inFlight: 0,
     };
@@ -48,7 +53,7 @@ export const holdImageCompression = (browser: Browser) =>
       track(async () => {
         // Only attachment compression decodes with an orientation; placeholder thumbnails do not.
         if (rest[0]?.imageOrientation === undefined) return decode(source, ...rest);
-        await released;
+        if (!hold.released) await new Promise<void>((resume) => hold.held.push(resume));
         const bitmap = await decode(source, ...rest);
         hold.compressionDecodes++;
         return bitmap;
@@ -97,6 +102,28 @@ export const finishImageCompression = async (browser: Browser) => {
       browser.evaluate(() => {
         const hold = window.compressionHold!;
         return hold.released && hold.compressionDecodes > 0 && hold.inFlight === 0;
+      }),
+    )
+    .toBe(true);
+};
+
+/** Waits until `count` compressions are held, in the order their images were pasted. */
+export const expectHeldImageCompressions = (browser: Browser, count: number) =>
+  expect.poll(() => browser.evaluate(() => window.compressionHold!.held.length)).toBe(count);
+
+/** Lets the oldest held compression finish, keeping the rest held, and waits until it has. */
+export const finishNextImageCompression = async (browser: Browser) => {
+  await browser.evaluate(() => {
+    window.compressionHold!.releaseNext();
+    return null;
+  });
+  await expect
+    .poll(() =>
+      browser.evaluate(() => {
+        const hold = window.compressionHold!;
+        return (
+          hold.compressionDecodes === hold.releasedDecodes && hold.inFlight === hold.held.length
+        );
       }),
     )
     .toBe(true);

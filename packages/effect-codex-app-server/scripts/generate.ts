@@ -66,7 +66,27 @@ class GeneratorError extends Schema.TaggedError<GeneratorError>()("GeneratorErro
   }
 }
 
+// Codex leaves experimental requests out of its published schema.
+const ManualClientRequests: ReadonlyArray<MethodEntry> = [
+  { method: "thread/settings/update", paramsType: "ThreadSettingsUpdateParams" },
+];
+
 const ManualSchemas: Record<string, Schema.Json> = {
+  ThreadSettingsUpdateParams: {
+    type: "object",
+    title: "ThreadSettingsUpdateParams",
+    properties: {
+      threadId: { type: "string" },
+      serviceTier: {
+        anyOf: [{ type: "string" }, { type: "null" }],
+      },
+    },
+    required: ["threadId"],
+  },
+  ThreadSettingsUpdateResponse: {
+    type: "object",
+    title: "ThreadSettingsUpdateResponse",
+  },
   GetAuthStatusParams: {
     type: "object",
     title: "GetAuthStatusParams",
@@ -779,7 +799,7 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
     `https://raw.githubusercontent.com/openai/codex/${UPSTREAM_REF}/codex-rs/app-server-protocol/schema/typescript/ServerNotification.ts`,
   );
 
-  const clientRequestEntries = parseRequestEntries(clientRequestRaw);
+  const clientRequestEntries = [...parseRequestEntries(clientRequestRaw), ...ManualClientRequests];
   const clientNotificationEntries = parseNotificationEntries(clientNotificationRaw);
   const serverRequestEntries = parseRequestEntries(serverRequestRaw);
   const serverNotificationEntries = parseNotificationEntries(serverNotificationRaw);
