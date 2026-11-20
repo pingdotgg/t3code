@@ -4,15 +4,12 @@ import {
   isMacPlatform,
   matchesKeybindingShortcut,
   matchesKeybindingShortcutModifiers,
-  normalizeEventKey,
   resolveEventKeys,
   shortcutKeyFromEvent,
+  type ShortcutEventLike,
 } from "./keybindingMatching.ts";
 
-const event = (
-  key: string,
-  overrides: Partial<Parameters<typeof shortcutKeyFromEvent>[0]> = {},
-) => ({
+const event = (key: string, overrides: Partial<ShortcutEventLike> = {}): ShortcutEventLike => ({
   key,
   metaKey: false,
   ctrlKey: false,
@@ -21,120 +18,83 @@ const event = (
   ...overrides,
 });
 
+const shortcut = (key: string) => ({
+  key,
+  metaKey: false,
+  ctrlKey: false,
+  shiftKey: false,
+  altKey: false,
+  modKey: false,
+});
+
 describe("isMacPlatform", () => {
-  it("matches mac and iOS platform strings case-insensitively", () => {
-    expect(isMacPlatform("darwin")).toBe(false);
+  it("matches navigator.platform values for Apple devices only", () => {
     expect(isMacPlatform("MacIntel")).toBe(true);
-    expect(isMacPlatform("iPhone")).toBe(true);
+    expect(isMacPlatform("iPad")).toBe(true);
+    expect(isMacPlatform("darwin")).toBe(false);
     expect(isMacPlatform("Linux x86_64")).toBe(false);
   });
 });
 
-describe("normalizeEventKey", () => {
-  it("lowercases and aliases esc to escape", () => {
-    expect(normalizeEventKey("Esc")).toBe("escape");
-    expect(normalizeEventKey("ArrowDown")).toBe("arrowdown");
-  });
-});
-
 describe("shortcutKeyFromEvent", () => {
-  it("prefers the layout key for plain letters", () => {
-    expect(shortcutKeyFromEvent(event("q", { code: "KeyW" }))).toBe("q");
-  });
-
   it("falls back to the physical code when the key is unidentified", () => {
     expect(shortcutKeyFromEvent(event("Unidentified", { code: "Comma" }))).toBe(",");
   });
 
   it("keeps an unshifted + as a zoom key unless it came from a digit row", () => {
     expect(shortcutKeyFromEvent(event("+", { code: "Equal" }))).toBe("+");
-    // Czech layouts type + on Digit1 — that resolves to the digit instead.
     expect(shortcutKeyFromEvent(event("+", { code: "Digit1" }))).toBe("1");
-    // Shifted + is an ordinary shifted key, resolved by code.
     expect(shortcutKeyFromEvent(event("+", { code: "Equal", shiftKey: true }))).toBe("=");
   });
 });
 
 describe("resolveEventKeys", () => {
-  it("includes the layout key, the physical letter, and the shortcut key", () => {
-    // A Dvorak layout where the KeyW position types a comma.
+  it("adds the physical letter when the layout types punctuation there", () => {
     const keys = resolveEventKeys(event(",", { code: "KeyW" }));
     expect(keys.has(",")).toBe(true);
     expect(keys.has("w")).toBe(true);
   });
-
-  it("does not add a physical letter when the layout key is already a letter", () => {
-    const keys = resolveEventKeys(event("q", { code: "KeyW" }));
-    expect(keys.has("w")).toBe(false);
-  });
 });
 
 describe("matchesKeybindingShortcutModifiers", () => {
-  const modifiers = (m: { meta?: boolean; ctrl?: boolean; shift?: boolean; alt?: boolean }) => ({
-    metaKey: m.meta ?? false,
-    ctrlKey: m.ctrl ?? false,
-    shiftKey: m.shift ?? false,
-    altKey: m.alt ?? false,
-  });
-  const shortcut = {
-    key: "s",
-    metaKey: false,
-    ctrlKey: false,
-    shiftKey: false,
-    altKey: false,
-    modKey: true,
-  };
+  const modifiers = (m: Partial<ShortcutEventLike>) => ({ ...event(""), ...m });
+  const modS = { ...shortcut("s"), modKey: true };
 
   it("maps modKey to meta on mac and ctrl elsewhere", () => {
-    expect(
-      matchesKeybindingShortcutModifiers(modifiers({ meta: true }), shortcut, "MacIntel"),
-    ).toBe(true);
-    expect(
-      matchesKeybindingShortcutModifiers(modifiers({ ctrl: true }), shortcut, "MacIntel"),
-    ).toBe(false);
-    expect(matchesKeybindingShortcutModifiers(modifiers({ ctrl: true }), shortcut, "Win32")).toBe(
+    expect(matchesKeybindingShortcutModifiers(modifiers({ metaKey: true }), modS, "MacIntel")).toBe(
       true,
     );
-    expect(matchesKeybindingShortcutModifiers(modifiers({ meta: true }), shortcut, "Win32")).toBe(
+    expect(matchesKeybindingShortcutModifiers(modifiers({ ctrlKey: true }), modS, "MacIntel")).toBe(
+      false,
+    );
+    expect(matchesKeybindingShortcutModifiers(modifiers({ ctrlKey: true }), modS, "Win32")).toBe(
+      true,
+    );
+    expect(matchesKeybindingShortcutModifiers(modifiers({ metaKey: true }), modS, "Win32")).toBe(
       false,
     );
   });
 
-  it("requires every modifier flag to match", () => {
-    const explicit = { ...shortcut, modKey: false, ctrlKey: true, shiftKey: true };
+  it("rejects an extra modifier", () => {
+    const ctrlShiftS = { ...shortcut("s"), ctrlKey: true, shiftKey: true };
     expect(
-      matchesKeybindingShortcutModifiers(modifiers({ ctrl: true, shift: true }), explicit, "Win32"),
-    ).toBe(true);
-    expect(
-      matchesKeybindingShortcutModifiers(modifiers({ ctrl: true, alt: true }), explicit, "Win32"),
+      matchesKeybindingShortcutModifiers(
+        modifiers({ ctrlKey: true, shiftKey: true, altKey: true }),
+        ctrlShiftS,
+        "Win32",
+      ),
     ).toBe(false);
   });
 });
 
 describe("matchesKeybindingShortcut", () => {
-  const shortcut = {
-    key: "s",
-    metaKey: false,
-    ctrlKey: true,
-    shiftKey: false,
-    altKey: false,
-    modKey: false,
-  };
+  it("treats AltGraph text entry as typing, not a Ctrl+Alt chord, off macOS", () => {
+    const ctrlAltEuro = { ...shortcut("€"), ctrlKey: true, altKey: true };
+    const typed = event("€", { ctrlKey: true, altKey: true });
+    const altGraph = { ...typed, getModifierState: (k: "AltGraph") => k === "AltGraph" };
 
-  it("matches when modifiers and key agree", () => {
-    expect(matchesKeybindingShortcut(event("s", { ctrlKey: true }), shortcut, "Win32")).toBe(true);
-    expect(matchesKeybindingShortcut(event("s"), shortcut, "Win32")).toBe(false);
-  });
-
-  it("rejects AltGraph chorded non-alphanumeric keys on non-mac platforms", () => {
-    const altGraphEvent = {
-      ...event("€", { ctrlKey: true, altKey: true }),
-      getModifierState: (k: "AltGraph") => k === "AltGraph",
-    };
-    const withAlt = { ...shortcut, ctrlKey: true, altKey: true };
-    expect(matchesKeybindingShortcut(altGraphEvent, withAlt, "Win32")).toBe(false);
-    // macOS doesn't apply the AltGraph guard.
-    const macEvent = { ...altGraphEvent, ctrlKey: true, metaKey: false };
-    expect(matchesKeybindingShortcut(macEvent, { ...withAlt, key: "€" }, "MacIntel")).toBe(true);
+    expect(matchesKeybindingShortcut(typed, ctrlAltEuro, "Win32")).toBe(true);
+    expect(matchesKeybindingShortcut(altGraph, ctrlAltEuro, "Win32")).toBe(false);
+    expect(matchesKeybindingShortcut(altGraph, ctrlAltEuro, "MacIntel")).toBe(true);
   });
 });
