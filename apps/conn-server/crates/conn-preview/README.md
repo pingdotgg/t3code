@@ -14,5 +14,9 @@ T3's explicit `T3CODE_SERVER_BROWSER_SANDBOX=0` override is also supported.
 Orbit sets `CONN_SERVER_BROWSER_PATH` to an absolute bundled shell path, keeping adjacent files; missing or mismatched binaries fail without downloading.
 The release ships generated `chrome.json` beside the binary; leaving the variable unset keeps lazy development installs.
 
+Desktop tabs (`runtime: "desktop"`) are records only: the Conn desktop shows the page.
+`src/relay.rs` relays agent calls to the desktop that registered the tab, as T3's
+`PreviewAutomationBroker` does for desktop hosts; `src/tabs/desktop.rs` keeps the records.
+
 The generated browser-side DOM code comes from pinned Playwright (Apache-2.0).
 Its license and notice are in `LICENSE.playwright` and `NOTICE.playwright`.

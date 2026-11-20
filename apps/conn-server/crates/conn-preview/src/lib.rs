@@ -7,6 +7,7 @@ mod page;
 pub use page::credential_field_expression;
 mod proxy;
 mod recording;
+pub mod relay;
 mod screencast;
 mod spec;
 pub mod tabs;

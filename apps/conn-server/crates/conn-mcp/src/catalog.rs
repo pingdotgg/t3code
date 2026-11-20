@@ -361,6 +361,39 @@ fn range_problem(schema: &Value, n: f64) -> Option<String> {
 /// Whether `value` decodes with `schema` as T3's Effect schema would: `anyOf`, `not`, `enum`,
 /// types (an integral number such as `1.0` is an integer), string lengths in UTF-16 units, number
 /// bounds, array item counts and object fields.
+/// `value` encoded with `schema` as an Effect struct encode does: fields the schema does not
+/// name are left out; a union takes its first branch that fits. A schema without named
+/// fields (a record, `unknown`) keeps the value whole.
+pub(crate) fn prune(schema: &Value, value: Value) -> Value {
+    if let Some(options) = schema["anyOf"].as_array() {
+        return match options.iter().find(|o| conforms(o, &value, "").is_ok()) {
+            Some(option) => prune(option, value),
+            None => value,
+        };
+    }
+    match value {
+        Value::Object(object) => match schema["properties"].as_object() {
+            Some(properties) => Value::Object(
+                object
+                    .into_iter()
+                    .filter_map(|(key, field)| {
+                        let field_schema = properties.get(&key)?;
+                        Some((key, prune(field_schema, field)))
+                    })
+                    .collect(),
+            ),
+            None => Value::Object(object),
+        },
+        Value::Array(items) if schema.get("items").is_some_and(Value::is_object) => Value::Array(
+            items
+                .into_iter()
+                .map(|item| prune(&schema["items"], item))
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
 pub(crate) fn conforms(schema: &Value, value: &Value, at: &str) -> Result<(), String> {
     if let Some(options) = schema["anyOf"].as_array() {
         return if options.iter().any(|o| conforms(o, value, at).is_ok()) {

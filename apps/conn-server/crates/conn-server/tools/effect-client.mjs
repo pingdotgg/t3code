@@ -372,6 +372,23 @@ const decodeEach = (client) =>
     // No listener is ours at pid 1: the typed `not-found` refusal.
     yield* call("preview.stopLocalServer", {pid:1,port:1});
     yield* call("subscribePreviewEvents", {});
+    // The desktop tab relay over the real socket: a desktop tab record, its registration
+    // (a typed refusal for another environment), its request stream and an answer.
+    const { environmentId } = yield* Effect.promise(() =>
+      fetch(new URL("/.well-known/t3/environment", httpBaseUrl)).then((response) => response.json()),
+    );
+    const opened = yield* call("preview.open", { threadId: none, url: "http://localhost:3000" });
+    const snapshot = Exit.isSuccess(opened) ? opened.value : undefined;
+    check("preview.open: desktop tab record", snapshot?.runtime === "desktop", snapshot?.runtime);
+    const binding = { environmentId, threadId: none, tabId: snapshot.tabId, deviceName: "effect-client", snapshot };
+    const refused = yield* call("preview.desktopRegister", { ...binding, environmentId: "elsewhere" });
+    check("desktopRegister: another environment", Exit.isFailure(refused) && String(refused.cause).includes("binding"));
+    const registered = yield* call("preview.desktopRegister", binding);
+    const connectionId = Exit.isSuccess(registered) ? registered.value.connectionId : "missing";
+    const first = yield* call("preview.desktopRequests", { connectionId });
+    check("desktopRequests: connected first", Exit.isSuccess(first) && Option.getOrUndefined(Option.getOrUndefined(first.value) ?? Option.none())?.type === "connected");
+    yield* call("preview.desktopRespond", { clientId: "desktop", connectionId, requestId: "preview-none", ok: true });
+    yield* call("preview.close", { threadId: none, tabId: snapshot.tabId });
     yield* call("git.resolvePullRequest", { cwd: repo, reference: "42" });
     yield* call("git.preparePullRequestThread", { cwd: repo, reference: "42", mode: "worktree" });
     git(repo, "config", "user.name", "test");

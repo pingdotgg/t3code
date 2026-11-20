@@ -21,6 +21,45 @@ the run stays open. Waiting for terminal confirmation is deliberate. `idle-diff`
 split in `KNOWN` as `intermittent`; a gate either side misses still fails it. Whether to
 match T3 is open.
 
+## Desktop tab relay (2026-11-20)
+
+Agents on this server can drive a browser tab that is open in a Conn desktop, as with the T3
+server. The desktop registers the tab (`preview.desktopRegister`), takes its request stream
+(`preview.desktopRequests`) and answers each request (`preview.desktopRespond`). RPC 202 of
+251. No capability names the relay in the contract; the desktop registers each tab it shows
+itself, so nothing new is advertised.
+
+- **Desktop tabs:** `preview.open` without `runtime: "server"` (T3's default, `desktop`) now
+  makes a record, as T3's `PreviewManager` does; it no longer fails. `reportStatus`, `resize`,
+  `adjust`, `close`, `list` and `subscribePreviewEvents` serve these records
+  (`conn-preview/src/tabs/desktop.rs`). A desktop that kept a tab across a server restart
+  restores it when it registers again.
+- **Routing (`conn-preview/src/relay.rs`, `conn-mcp/src/tools/preview.rs`):** a `preview_*`
+  call goes to the desktop when it names the desktop's tab, or when the agent's last call
+  made that tab current; `preview_open` without such a tab stays on the server's browser.
+  The request input is T3's (`pixelsRequired`, `fullScreenshot`, `reuseExistingTab`, `open`
+  and `show`, act inputs without `action`). The answer is encoded with the tool's output
+  schema; remote errors read as T3's typed errors. `preview_status` adds the thread's desktop
+  tabs; `t3_preview_close` closes a desktop tab's record. Recording on a desktop tab answers
+  T3's refusal. `preview_cdp_endpoint` on a desktop tab returns the desktop's endpoint.
+- **Proof:** `crates/conn-mcp/tools/desktop-relay-parity.mjs` (in `parity.mjs`): T3's own
+  `PreviewManager`, `PreviewAutomationBroker`, `DesktopTabRelay` and preview toolkits against
+  ours, with one stand-in desktop: 23 MCP cases equal (explicit and followed tabs, eleven
+  remote error kinds, a withheld screenshot, recording, open, status, list, close) and the
+  requests the desktop received equal. `effect-client.mjs`: open a desktop tab, a refused and an accepted
+  registration, the stream's `connected` event and an answer over the real socket. Unit
+  tests: conflict, session ownership, the 30 s registration expiry, timeouts that release a
+  silent desktop, pending requests failed when the desktop leaves.
+- **Known differences:** a call that names a server tab stays on the server's browser while
+  a desktop tab is current (T3 sends it to the desktop, which refuses it). A desktop cannot
+  restore an unknown tab id from this server's own allocator. `preview.list` gives no
+  `host`/`hostedHere` (as T3's `preview.list`); `fill_credential` reads the server browser
+  only. Bounds T3 does not have: 64 registered desktop tabs, 128 desktop tab
+  records, 256 pending requests, 256 agent assignments, 64 queued requests per desktop (a
+  full queue answers `RequestQueueClosedError`). `preview_status` reads the desktop tabs one
+  after another (T3: four at a time). `preview_act` input is not decoded per action before it
+  reaches the desktop (T3 answers `invalid_request` first).
+
 ## Antigravity (2026-11-20)
 
 Google Antigravity runs as an agent: the `agy` CLI over ACP (`agy acp`), as T3's Antigravity
@@ -732,9 +771,9 @@ builder with a test that fails without the fix.
   a missing or wrong-version configured browser fails without a runtime download.
   Generated `chrome.json` exports the release pin. Limits: 32 tabs, eight per agent, four
   browser hosts, two recordings and two HTML captures. Downloads, viewer HTTP
-  file transfer and clipboard are unserved; iframe snapshots fail closed; desktop relay,
-  local-server discovery and stop RPCs stay unregistered. `preview_cdp_endpoint` returns
-  T3's desktop-only error. Native GUI interaction and the Orbit image remain unproven.
+  file transfer and clipboard are unserved; iframe snapshots fail closed; local-server
+  discovery and stop RPCs stay unregistered (the desktop relay is served since 2026-11-20).
+  `preview_cdp_endpoint` on a server tab returns T3's desktop-only error. Native GUI interaction and the Orbit image remain unproven.
 - **Clients** (VMPal macOS VM, Conn `c969c3ebd1`): the web client (through a host T3 as a
   remote environment) and the iOS dev client in a simulator (paired straight to the Conn
   Server) each ran a Haiku turn against the Conn Server on macOS. Retested on the iOS client

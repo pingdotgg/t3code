@@ -9,6 +9,7 @@ use std::{
 use tokio::sync::{Mutex as AsyncMutex, broadcast, watch};
 use tokio::time::Instant;
 
+mod desktop;
 mod profiles;
 mod viewer;
 pub use crate::screencast::Frame as ViewerFrame;
@@ -75,6 +76,8 @@ struct State {
     default_profile: Option<String>,
     recording_rate: u64,
     pending_popups: Vec<(String, String, Option<String>)>,
+    /// Tabs a Conn desktop shows itself (`runtime: "desktop"`): records only, no page here.
+    desktop: Vec<desktop::DesktopSession>,
 }
 #[derive(Debug)]
 struct Inner {
@@ -89,6 +92,7 @@ struct Inner {
     events: broadcast::Sender<Value>,
     fixture: Option<PathBuf>,
     recording_slots: Arc<tokio::sync::Semaphore>,
+    relay: crate::relay::Relay,
 }
 /// A server's browser state. Constructing it does not create files or launch a process.
 #[derive(Clone, Debug)]
@@ -125,6 +129,7 @@ impl Preview {
                 recording_rate: 30,
                 profile_reports: vec![],
                 pending_popups: vec![],
+                desktop: vec![],
             }),
             open: AsyncMutex::new(()),
             profiles_loaded: tokio::sync::OnceCell::new(),
@@ -136,6 +141,7 @@ impl Preview {
             events,
             fixture,
             recording_slots: Arc::new(tokio::sync::Semaphore::new(2)),
+            relay: crate::relay::Relay::default(),
         }));
         let weak = Arc::downgrade(&result.0);
         tokio::spawn(async move {
@@ -157,7 +163,25 @@ impl Preview {
     }
     pub fn list(&self, thread: &str) -> Value {
         let state = lock(&self.0.state);
-        json!({"sessions":state.tabs.iter().filter(|t|t.thread==thread).map(|t|t.snapshot.clone()).collect::<Vec<_>>(),"serverEpoch":self.0.epoch,"revision":state.revision})
+        let mut sessions = state
+            .tabs
+            .iter()
+            .filter(|t| t.thread == thread)
+            .map(|t| &t.snapshot)
+            .chain(desktop::sessions(&state, thread))
+            .cloned()
+            .collect::<Vec<_>>();
+        // T3 lists a thread's tabs by `updatedAt`, server and desktop tabs together.
+        sessions.sort_by(|a, b| {
+            let at = |v: &Value| {
+                v.get("updatedAt")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned()
+            };
+            at(a).cmp(&at(b))
+        });
+        json!({"sessions":sessions,"serverEpoch":self.0.epoch,"revision":state.revision})
     }
     pub async fn close(&self, thread: &str, tab: Option<&str>) -> Result<(), Error> {
         let removed = {
@@ -175,6 +199,7 @@ impl Preview {
             for tab in &removed {
                 publish(&self.0, &mut state, "closed", &tab.snapshot);
             }
+            desktop::close(&self.0, &mut state, thread, tab);
             removed
         };
         for mut tab in removed {
@@ -1140,6 +1165,9 @@ impl Preview {
         }
     }
     pub async fn resize(&self, thread: &str, id: &str, setting: Value) -> Result<Value, Error> {
+        if let Some(snapshot) = self.resize_desktop(thread, id, &setting) {
+            return snapshot;
+        }
         let (browser, session, width, height) = {
             let state = lock(&self.0.state);
             let tab = state
@@ -1684,13 +1712,19 @@ impl Preview {
         }
     }
     pub fn snapshot_for(&self, thread: &str, id: &str) -> Option<Value> {
-        lock(&self.0.state)
+        let state = lock(&self.0.state);
+        state
             .tabs
             .iter()
             .find(|t| t.thread == thread && t.id == id)
-            .map(|t| t.snapshot.clone())
+            .map(|t| &t.snapshot)
+            .or_else(|| desktop::find(&state, thread, id))
+            .cloned()
     }
     pub async fn adjust(&self, thread: &str, id: &str, input: &Value) -> Result<Value, Error> {
+        if let Some(snapshot) = self.adjust_desktop(thread, id, input) {
+            return Ok(snapshot);
+        }
         if let Some(color) = input.get("colorScheme").and_then(Value::as_str) {
             self.appearance(thread, id, color).await?;
         }

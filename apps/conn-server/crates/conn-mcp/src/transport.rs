@@ -276,7 +276,11 @@ async fn call(
             let data = value
                 .get_mut("screenshot")
                 .and_then(Value::as_object_mut)
-                .and_then(|s| s.remove("data"))
+                .and_then(|s| {
+                    // T3 states the PNG type whatever the host sent (a desktop may omit it).
+                    s.insert("mimeType".into(), json!("image/png"));
+                    s.remove("data")
+                })
                 .unwrap_or(Value::Null);
             let url = value.get("url").cloned().unwrap_or(Value::Null);
             let (mut value, text, omitted) = crate::snapshot::bound_metadata(value);
@@ -288,7 +292,10 @@ async fn call(
                 content.push(json!({"type":"text","text":format!("Snapshot text was bounded. Omitted: {}.",omitted.join("; "))}));
                 value["omitted"] = json!(omitted);
             }
-            if include_image {
+            // An empty image is withheld: a desktop filled a secret into the page (T3's notice).
+            if data.as_str() == Some("") {
+                content.push(json!({"type":"text","text":SCREENSHOT_WITHHELD_NOTICE}));
+            } else if include_image {
                 content.push(json!({"type":"image","data":data,"mimeType":"image/png"}));
             }
             json!({"content":content,"structuredContent":value,"isError":false})
@@ -353,3 +360,6 @@ async fn call(
         changed,
     )
 }
+
+/// T3's `SCREENSHOT_WITHHELD_NOTICE` (`McpHttpServer.ts`).
+const SCREENSHOT_WITHHELD_NOTICE: &str = "No screenshot: a password or code was filled into this page, so it is not shown as an image. The text above is redacted. Navigate to another page to see screenshots again.";

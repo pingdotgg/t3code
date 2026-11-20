@@ -47,7 +47,79 @@ async fn call(
     )?)
 }
 
-async fn run(state: PathBuf, cases: Vec<Value>) -> Result<Vec<Value>, Error> {
+/// A stand-in Conn desktop for the desktop relay cases: it registers one desktop tab on the
+/// first agent's thread, answers each request with the current case's reply (`status`
+/// reads get `statusReply`) and records what it received.
+struct Desktop {
+    tab: String,
+    reply: Arc<std::sync::Mutex<Value>>,
+    seen: Arc<std::sync::Mutex<Vec<Value>>>,
+}
+
+/// Puts the desktop tab id where a reply says `$desktop`.
+fn bind(value: &Value, tab: &str) -> Result<Value, Error> {
+    let text = serde_json::to_string(value)?.replace("\"$desktop\"", &serde_json::to_string(tab)?);
+    Ok(serde_json::from_str(&text)?)
+}
+
+fn start_desktop(
+    preview: &conn_preview::tabs::Preview,
+    thread: &str,
+    config: &Value,
+) -> Result<Desktop, Error> {
+    let snapshot = preview.open_desktop(
+        thread,
+        &json!({"threadId":thread,"runtime":"desktop","url":config["url"]}),
+    )?;
+    let tab = snapshot["tabId"]
+        .as_str()
+        .ok_or("no desktop tab")?
+        .to_owned();
+    let binding = json!({"environmentId":"html-parity","threadId":thread,"tabId":tab,"deviceName":"Parity Mac","snapshot":snapshot});
+    let connection = preview
+        .desktop_register("desktop-session", "html-parity", &binding)
+        .map_err(|reason| format!("register: {reason}"))?;
+    let mut feed = preview
+        .desktop_requests("desktop-session", &connection)
+        .map_err(|reason| format!("requests: {reason}"))?;
+    let reply = Arc::new(std::sync::Mutex::new(Value::Null));
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let status = bind(&config["statusReply"], &tab)?;
+    let (browser, answers, log) = (preview.clone(), reply.clone(), seen.clone());
+    tokio::spawn(async move {
+        while let Some(event) = feed.receiver.recv().await {
+            let Some(request) = event.get("request") else {
+                continue;
+            };
+            let operation = request["operation"].as_str().unwrap_or_default();
+            let canned = if operation == "status" {
+                status.clone()
+            } else {
+                answers.lock().map(|r| r.clone()).unwrap_or(Value::Null)
+            };
+            if canned.get("noReply").is_some() {
+                continue;
+            }
+            log.lock().map(|mut l| l.push(request.clone())).ok();
+            let mut response = canned;
+            response["clientId"] = json!("desktop");
+            response["connectionId"] = event["connectionId"].clone();
+            response["requestId"] = request["requestId"].clone();
+            browser.desktop_respond("desktop-session", &response);
+        }
+    });
+    Ok(Desktop { tab, reply, seen })
+}
+
+async fn run(state: PathBuf, input: Value) -> Result<Value, Error> {
+    let (cases, desktop) = match input {
+        Value::Array(cases) => (cases, None),
+        Value::Object(mut input) => (
+            serde_json::from_value(input.remove("cases").unwrap_or_default())?,
+            input.remove("desktop"),
+        ),
+        _ => return Err("cases must be an array or an object".into()),
+    };
     let mut config = EngineConfig::new(state.join("engine.sqlite"));
     config.projects = vec![ProjectConfig {
         title: "HTML".into(),
@@ -116,6 +188,18 @@ async fn run(state: PathBuf, cases: Vec<Value>) -> Result<Vec<Value>, Error> {
         let headers = open(&service, &caller).await?;
         agents.push((caller, headers));
     }
+    let desktop = match &desktop {
+        Some(config) => {
+            let Some((Caller::Thread(agent), _)) = agents.first() else {
+                return Err("no agent".into());
+            };
+            Some((
+                start_desktop(&preview, &agent.thread_id, config)?,
+                agent.thread_id.clone(),
+            ))
+        }
+        None => None,
+    };
     let before = anonymous_kib().await;
     let mut replies = Vec::new();
     if cases.len() > 256 {
@@ -130,10 +214,16 @@ async fn run(state: PathBuf, cases: Vec<Value>) -> Result<Vec<Value>, Error> {
         );
         let (caller, headers) = agents.get(mode).ok_or("missing caller")?;
         let mut args = case.get("args").cloned().ok_or("missing args")?;
+        if let Some((desktop, _)) = &desktop
+            && let Ok(mut reply) = desktop.reply.lock()
+        {
+            *reply = bind(case.get("reply").unwrap_or(&Value::Null), &desktop.tab)?;
+        }
         if let Some(id) = args.get("tabId").and_then(Value::as_str) {
             let replacement = match id {
                 "$first" => tabs.first(),
                 "$last" => tabs.last(),
+                "$desktop" => desktop.as_ref().map(|(d, _)| &d.tab),
                 _ => None,
             };
             if let Some(id) = replacement {
@@ -165,12 +255,19 @@ async fn run(state: PathBuf, cases: Vec<Value>) -> Result<Vec<Value>, Error> {
         }
         replies.push(reply);
     }
+    let output = match &desktop {
+        Some((desktop, thread)) => {
+            let seen = desktop.seen.lock().map(|s| s.clone()).unwrap_or_default();
+            json!({"replies":replies,"requests":seen,"thread":thread,"tab":desktop.tab})
+        }
+        None => json!(replies),
+    };
     preview.shutdown().await;
     eprintln!(
         "HTML fixture Pss_Anon KiB: before={before:?}, after={:?}",
         anonymous_kib().await
     );
-    Ok(replies)
+    Ok(output)
 }
 
 async fn anonymous_kib() -> Option<u64> {
