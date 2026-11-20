@@ -1,8 +1,9 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
-import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
+import { type EnvironmentId, type ProjectEntry, ProjectListEntriesError } from "@t3tools/contracts";
 import { useAtomMount, useAtomSubscribe } from "@effect/atom-react";
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
+import * as Schema from "effect/Schema";
 import { msg } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -11,9 +12,13 @@ import { m } from "~/i18n/messages";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
 
+const isProjectListEntriesError = Schema.is(ProjectListEntriesError);
+
 export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
   const [directories, setDirectories] = useState(new Map<string, readonly ProjectEntry[]>());
   const [errors, setErrors] = useState(new Map<string, string>());
+  // Storage cleanup removes a worktree and keeps its thread's path, so a missing root is expected.
+  const [rootMissing, setRootMissing] = useState(false);
   const [pending, setPending] = useState(1);
   const [loadingDirectories, setLoadingDirectories] = useState<ReadonlySet<string>>(
     () => new Set([""]),
@@ -54,6 +59,12 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
       .then((result) => {
         // A request is dropped from `requests` when its folder disappears, so its read is stale.
         if (!active.current || !result || requests.current.get(directoryPath) !== request) return;
+        if (directoryPath === "") {
+          const failure = result._tag === "Success" ? undefined : Cause.squash(result.cause);
+          setRootMissing(
+            isProjectListEntriesError(failure) && failure.failure === "workspace_root_not_found",
+          );
+        }
         if (result._tag === "Success") {
           const children = result.value.entries.filter(
             (entry) =>
@@ -189,6 +200,7 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
     isPending: pending > 0,
     loadingDirectories,
     ready: directories.has(""),
+    rootMissing,
     error: [...errors].find(([path]) => reachableDirectories.has(path))?.[1] ?? null,
   };
 }
