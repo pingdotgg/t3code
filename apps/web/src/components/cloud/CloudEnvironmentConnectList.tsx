@@ -35,7 +35,7 @@ import { environmentCatalog } from "~/connection/catalog";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { cn } from "~/lib/utils";
 import { relayEnvironmentDiscovery } from "~/state/relay";
-import { useRelayEnvironmentDiscovery } from "~/state/environments";
+import { useRelayEnvironmentDiscovery, useRetainedRelayEnvironments } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useT3ConnectAccountPage } from "../clerk/T3ConnectAccountPages";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
@@ -88,7 +88,10 @@ export function CloudEnvironmentConnectRows({
   empty = null,
   selection,
   onDiscoveryReady,
+  only,
 }: {
+  /** Show this machine's row alone, for a view that picks one machine at a time. */
+  readonly only?: EnvironmentId;
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly savedEnvironments: ReadonlyArray<SavedCloudEnvironmentConnection>;
   readonly showSavedEnvironments?: boolean;
@@ -112,6 +115,9 @@ export function CloudEnvironmentConnectRows({
       {accountPage.portals}
     </>
   );
+  const retainedEnvironments = useRetainedRelayEnvironments();
+  // A single row is a machine the user picked: it stays through a refresh, as it does on the map.
+  const discovered = only === undefined ? environmentsState.environments : retainedEnvironments;
   const registerEnvironment = useAtomCommand(environmentCatalog.register, {
     reportFailure: false,
   });
@@ -153,6 +159,8 @@ export function CloudEnvironmentConnectRows({
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fetches relay discovery when its inputs change, unless hidden polling covers it, and reports readiness
   useEffect(() => {
     let active = true;
+    // A single row belongs to a view that already listed the machines; listing again empties it.
+    if (only !== undefined) return;
     if (onDiscoveryReady || !refreshWhileEmpty || document.visibilityState === "visible") {
       void refreshRelayEnvironments().then(() => {
         if (active) onDiscoveryReady?.();
@@ -161,7 +169,7 @@ export function CloudEnvironmentConnectRows({
     return () => {
       active = false;
     };
-  }, [refreshRelayEnvironments, refreshWhileEmpty, onDiscoveryReady]);
+  }, [refreshRelayEnvironments, refreshWhileEmpty, onDiscoveryReady, only]);
 
   const connectEnvironment = async (environment: RelayClientEnvironmentRecord) => {
     if (
@@ -219,12 +227,13 @@ export function CloudEnvironmentConnectRows({
 
   // Omit machines saved over other routes; onboarding selection must not add a T3 Connect route.
   const isVisibleEnvironment = (environmentId: EnvironmentId) =>
+    (only === undefined || environmentId === only) &&
     environmentId !== primaryEnvironmentId &&
     !desktopLocalIds.has(environmentId) &&
     (showSavedEnvironments || !savedById.has(environmentId)) &&
     !(selection && savedWithoutRelay.has(environmentId));
-  const visibleEnvironments = [...environmentsState.environments.values()].filter(
-    ({ environment }) => isVisibleEnvironment(environment.environmentId),
+  const visibleEnvironments = [...discovered.values()].filter(({ environment }) =>
+    isVisibleEnvironment(environment.environmentId),
   );
   const selectNewComputers = useEffectEvent(
     (environments: typeof environmentsState.environments) => {
