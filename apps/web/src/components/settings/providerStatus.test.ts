@@ -2,8 +2,8 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  getProviderCompatibilityNote,
   getProviderSummary,
-  getProviderVersionAdvisoryPresentation,
   getProviderStatusKey,
 } from "./providerStatus";
 
@@ -131,46 +131,7 @@ describe("Antigravity with unchecked sign-in", () => {
   });
 });
 
-it("does not suggest copying a command that installs an incompatible latest version", () => {
-  const advisory = {
-    status: "behind_latest" as const,
-    currentVersion: "1.0.0",
-    latestVersion: "2.0.0",
-    updateCommand: "npm install -g fixture@latest",
-    canUpdate: true,
-    checkedAt: provider.checkedAt,
-    message: null,
-  };
-  const compatibility = {
-    status: "supported" as const,
-    latestVersionStatus: "broken" as const,
-    message: null,
-    recommendedRange: null,
-    recommendedVersion: null,
-  };
-  expect(getProviderVersionAdvisoryPresentation(advisory, compatibility)).toBeNull();
-  expect(
-    getProviderVersionAdvisoryPresentation(advisory, { ...compatibility, status: "broken" }, false),
-  ).toBeNull();
-  expect(
-    getProviderVersionAdvisoryPresentation(advisory, {
-      ...compatibility,
-      latestVersionStatus: "supported",
-    }),
-  ).not.toBeNull();
-});
-
-it("does not offer an update that cannot change a limited-support version", () => {
-  // OpenCode 1.18.35 is the newest `opencode-ai`; the recommended 2.x ships as another package.
-  const advisory = {
-    status: "current" as const,
-    currentVersion: "1.18.35",
-    latestVersion: "1.18.35",
-    updateCommand: "npm install -g opencode-ai@latest",
-    canUpdate: true,
-    checkedAt: provider.checkedAt,
-    message: null,
-  };
+it("describes a version Orbit should change in one quiet line", () => {
   const compatibility = {
     status: "graceful" as const,
     latestVersionStatus: "graceful" as const,
@@ -178,58 +139,16 @@ it("does not offer an update that cannot change a limited-support version", () =
     recommendedRange: ">=2.0.18",
     recommendedVersion: null,
   };
-  expect(getProviderVersionAdvisoryPresentation(advisory, compatibility)).toEqual({
-    title: "Limited support",
-    detail: "Use >=2.0.18 for full support.",
-    updateCommand: null,
-    emphasis: "normal",
-    targetVersion: null,
-  });
+  expect(getProviderCompatibilityNote(compatibility)).toBe(
+    "Limited support · Use >=2.0.18 for full support.",
+  );
   expect(
-    getProviderVersionAdvisoryPresentation(
-      { ...advisory, status: "behind_latest", currentVersion: "1.18.34" },
-      compatibility,
-    )?.updateCommand,
-  ).toBe(advisory.updateCommand);
-});
-
-it("shows compatibility in the version popover even when the installed version is current", () => {
-  const advisory = {
-    status: "current" as const,
-    currentVersion: "2.0.0",
-    latestVersion: "2.0.0",
-    updateCommand: "npm install -g fixture@latest",
-    canUpdate: true,
-    checkedAt: provider.checkedAt,
-    message: null,
-  };
-  const compatibility = {
-    status: "broken" as const,
-    latestVersionStatus: "broken" as const,
-    message: "This version drops turns. Use 1.9.0.",
-    recommendedRange: null,
-    recommendedVersion: "1.9.0",
-  };
-  expect(getProviderVersionAdvisoryPresentation(advisory, compatibility)).toEqual({
-    title: "Known broken version",
-    detail: compatibility.message,
-    updateCommand: null,
-    emphasis: "strong",
-    targetVersion: "1.9.0",
-  });
-  expect(
-    getProviderVersionAdvisoryPresentation(undefined, {
+    getProviderCompatibilityNote({
       ...compatibility,
-      status: "graceful",
-      recommendedVersion: null,
-      recommendedRange: ">=2.1.0",
-      message: null,
+      status: "broken",
+      message: "This version drops turns.",
     }),
-  ).toEqual({
-    title: "Limited support",
-    detail: "Use >=2.1.0 for full support.",
-    updateCommand: null,
-    emphasis: "normal",
-    targetVersion: null,
-  });
+  ).toBe("Known broken version · This version drops turns.");
+  expect(getProviderCompatibilityNote({ ...compatibility, status: "supported" })).toBeNull();
+  expect(getProviderCompatibilityNote(undefined)).toBeNull();
 });

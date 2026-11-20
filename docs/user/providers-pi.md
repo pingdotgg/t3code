@@ -29,9 +29,7 @@ paste the final redirect URL or authorization code back into Pi when prompted. Y
 set your model provider's API-key environment variable in the Pi instance's settings; mark
 secret values as sensitive.
 
-Update installer-managed Pi with `pi update`. If another package manager owns the installation,
-update it through that manager instead. For example, a Nix profile installation uses
-`nix profile upgrade pi`.
+Orbit installs and updates Pi on each environment. T3 Code does not update it.
 
 ## What Carries Over
 

@@ -109,7 +109,8 @@ The small leftovers were done instead (see the end).
 
 ### Changes software, or needs a supervisor
 
-- **`server.updateProvider`**: `S/provider/providerMaintenanceRunner.ts` (424 to 723). Finds
+- **`server.updateProvider`**: not served, by decision (Nick, 2026-11-20): Orbit installs and
+  updates every provider CLI. T3's version, for reference: `S/provider/providerMaintenanceRunner.ts` (424 to 723). Finds
   the latest version (`registry.npmjs.org`, `downloads.claude.ai/claude-code-releases`),
   checks a compatibility manifest, then runs the install command the CLI was installed with
   (`npm i -g`, `pnpm add -g`, `bun i -g`, `yarn global add`, `volta install`, `brew upgrade`,
@@ -133,7 +134,7 @@ official binary or SDK touches a credential.
 | Claude | No sign-in method. The user signs in with the CLI. | nothing | `claude` itself (`/login` in the CLI) |
 | Codex (standard) | No sign-in method; watches `auth.json` for changes. | nothing | `codex login`, `codex logout` |
 | Codex (managed ChatGPT) | Runs OAuth itself (`S/provider/CodexChatGptAuth.ts`): discovery at `auth.openai.com`, a loopback callback, PKCE, token exchange, refresh, revoke. Gives the token to `codex` through a private socket broker (`CodexManagedTokenBroker.ts`). | `{accessToken, refreshToken, idToken, ...}` in `<state>/secrets/provider-auth-<hash>` (0600) | `codex login` writes its own `auth.json` |
-| Codex install (`provider.install.*`) | Downloads pinned `rust-v0.166.0` archives from GitHub releases, checks SHA-256, unpacks to `<base>/tools/codex/<version>` | `active.json`, `.install-complete.json` | the vendor installer or npm |
+| Codex install (`provider.install.*`) | Downloads pinned `rust-v0.166.0` archives from GitHub releases, checks SHA-256, unpacks to `<base>/tools/codex/<version>` | `active.json`, `.install-complete.json` | the vendor installer or npm. Not served here, by decision (Nick, 2026-11-20): Orbit installs and updates provider CLIs |
 | Cursor | Cursor SDK `Cursor.auth.login`; stores what the SDK returns | instance store | the SDK |
 | Antigravity | through the Antigravity CLI runtime | not verified | the CLI |
 | ACP registry | the agent's `authenticate` method, a terminal login, or env secrets | settings secrets | the agent |

@@ -27,7 +27,6 @@ import {
   ProviderThreadId,
   RunId,
   SourceControlRepositoryError,
-  OfficialWsRpcGroup,
   RpcScopeAuthorization,
   WS_METHODS,
   WsServerRefreshProvidersRpc,
@@ -79,13 +78,10 @@ import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRe
 import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
-import * as AntigravityInstallation from "./provider/AntigravityInstallation.ts";
-import * as ProviderInstallation from "./provider/providerInstallation.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as NativeChildWorkQuery from "./orchestration-v2/NativeChildWorkQuery.ts";
 import * as CommandOutputHub from "./orchestration-v2/CommandOutputHub.ts";
-import * as CodexInstallation from "./provider/CodexInstallation.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import * as DocumentText from "./provider/DocumentText.ts";
 import * as DirectEndpoints from "./environment/DirectEndpoints.ts";
@@ -113,7 +109,6 @@ import * as ProviderAuthService from "./provider/ProviderAuthService.ts";
 import * as AcpRegistrySessions from "./provider/AcpRegistrySessions.ts";
 import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
-import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewGuideService.ts";
@@ -180,6 +175,7 @@ import * as ProjectEnrichment from "./project/ProjectEnrichmentService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import {
   layerWsRpc,
+  MountedOfficialWsRpcGroup,
   resolveOpenDiscoveryForConfig,
   subscribeOrchestrationV2Shell,
   subscribeOrchestrationV2Thread,
@@ -830,12 +826,10 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(AgentSessionImporter.AgentSessionImporter)({}),
   Layer.mock(AgentSessionScanner.AgentSessionScanner)({}),
   Layer.mock(AnalyticsService.AnalyticsService)({}),
-  Layer.mock(AntigravityInstallation.AntigravityInstallation)({ managedDirectory: "/unused" }),
   Layer.mock(BackgroundPolicy.BackgroundPolicy)({}),
   Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({}),
   Layer.mock(NativeChildWorkQuery.NativeChildWorkQuery)({}),
   Layer.mock(CommandOutputHub.CommandOutputHub)({}),
-  Layer.mock(CodexInstallation.CodexInstallation)({ managedDirectory: "/unused" }),
   Layer.mock(DeviceService.DeviceService)({}),
   Layer.mock(EnvironmentTheme.EnvironmentThemeService)({}),
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
@@ -858,10 +852,8 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
   Layer.mock(ProjectStore.ProjectStoreV2)({}),
   Layer.mock(ProviderAuthService.ProviderAuthService)({}),
-  Layer.mock(ProviderInstallation.ProviderInstallation)({}),
   Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({}),
   Layer.mock(ProviderLatestVersions.ProviderLatestVersions)({}),
-  Layer.mock(ProviderMaintenanceRunner.ProviderMaintenanceRunner)({}),
   Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
   Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
   Layer.mock(PullRequestService.PullRequestService)({}),
@@ -1280,7 +1272,7 @@ it.effect("access changes made while the snapshot loads reach the client after i
       );
     const revokedElsewhere = AuthSessionId.make("revoked-elsewhere");
     const responses = yield* Queue.unbounded<AuthAccessStreamEvent>();
-    const server = yield* RpcServer.makeNoSerialization(OfficialWsRpcGroup, {
+    const server = yield* RpcServer.makeNoSerialization(MountedOfficialWsRpcGroup, {
       ...WS_RPC_SERVER_OPTIONS,
       onFromServer: (response) =>
         response._tag === "Chunk"
@@ -1944,7 +1936,7 @@ it.effect("a git action that fails partway still refreshes the repository status
       Layer.mock(ServerEnvironment.ServerEnvironment)({}),
       Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
     );
-    const server = yield* RpcServer.makeNoSerialization(OfficialWsRpcGroup, {
+    const server = yield* RpcServer.makeNoSerialization(MountedOfficialWsRpcGroup, {
       ...WS_RPC_SERVER_OPTIONS,
       onFromServer: (response) =>
         response._tag === "Exit" ? Queue.offer(exits, response.exit) : Effect.void,
@@ -2025,7 +2017,7 @@ it.effect("a publish whose push fails still refreshes the new remote", () =>
       Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
     );
     const server = yield* RpcServer.makeNoSerialization(
-      OfficialWsRpcGroup.middleware(RpcScopeAuthorization),
+      MountedOfficialWsRpcGroup.middleware(RpcScopeAuthorization),
       {
         ...WS_RPC_SERVER_OPTIONS,
         onFromServer: (response) =>
@@ -2363,12 +2355,12 @@ const acpSessionTags = [
   WS_METHODS.serverImportAcpRegistrySession,
   WS_METHODS.serverDeleteAcpRegistrySession,
 ] as const;
-const acpSessionRpcs = OfficialWsRpcGroup.omit(
-  ...[...OfficialWsRpcGroup.requests.keys()].filter(
+const acpSessionRpcs = MountedOfficialWsRpcGroup.omit(
+  ...[...MountedOfficialWsRpcGroup.requests.keys()].filter(
     (
       tag,
     ): tag is Exclude<
-      Parameters<typeof OfficialWsRpcGroup.omit>[number],
+      Parameters<typeof MountedOfficialWsRpcGroup.omit>[number],
       (typeof acpSessionTags)[number]
     > => !(acpSessionTags as ReadonlyArray<string>).includes(tag),
   ),

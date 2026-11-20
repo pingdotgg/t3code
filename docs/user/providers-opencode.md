@@ -1,7 +1,7 @@
 # OpenCode
 
-Install and authenticate OpenCode on the machine running your environment, then
-enable it in **Settings > Providers**. See [provider setup](./install.md#providers).
+Orbit installs and updates OpenCode on the machine running your environment.
+Authenticate it there, then enable it in **Settings > Providers**. See [provider setup](./install.md#providers).
 T3 Code requires OpenCode 1.14.19 or newer, including when you connect an existing
 OpenCode server.
 
@@ -11,10 +11,8 @@ T3 Code supports OpenCode 2.0.18 and newer. It detects the version on its own, s
 the same provider settings work for OpenCode 1.x and 2.x. OpenCode 1.x shows
 **Limited support** in its provider settings.
 
-OpenCode 2 is a separate package, `@opencode/cli`. To move from 1.x, install it
-yourself, for example `npm install -g @opencode/cli`. Then refresh provider status.
-T3 Code's update button updates whichever package you have installed. It never
-switches a 1.x install to 2.x.
+OpenCode 2 is a separate package, `@opencode/cli`. Orbit decides which package an
+environment runs. After it switches, refresh provider status.
 
 OpenCode 2 converts the shared OpenCode database to its own format the first time it
 runs. Don't run OpenCode 1.x and 2.x side by side on the same machine. Threads you
@@ -41,19 +39,8 @@ settings. T3 Code uses only that configured password for an external server; it
 does not forward a local `OPENCODE_SERVER_PASSWORD`. If connection or version checks
 fail, check the URL, credentials, and OpenCode version, then refresh provider status.
 
-When **Server URL** points to a locally running server (such as `127.0.0.1`),
-the update button upgrades its installed CLI. If that server is this machine's
-OpenCode background service, T3 Code then restarts it on the new version. The URL
-must use the service's own protocol, host, and port. For a service listening on
-`0.0.0.0` use `127.0.0.1`, and for `[::]` use `[::1]`.
-
-Restarting interrupts running turns, and the service then runs with T3 Code's
-environment. Set any variables it needs with `opencode service set env <name> <value>`.
-
-T3 Code does not restart any other server, including the background service
-reached through `localhost`. That server can still report the previous version
-until you restart it. For a loopback URL, T3 Code shows that restart requirement
-instead of treating the CLI update as a failure.
+T3 Code does not update or restart an external server. After Orbit updates
+OpenCode, that server can still report the previous version until it restarts.
 
 T3 Code waits for a local server it started to recover after a lost connection.
 You can stop the turn while it reconnects. If the server exits or an external

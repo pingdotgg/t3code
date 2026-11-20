@@ -643,7 +643,7 @@ it("keeps saved picks when Start comes before the project list loads", async () 
   expect(localStorage.getItem(welcomeImportSelectionKey(primaryId))).toBe(saved);
 });
 
-it("offers Update for a signed-in agent whose version is broken, and keeps Start off", async () => {
+it("never blocks Start or offers an update for a signed-in agent whose version is broken", async () => {
   using _now = setup();
   appAtomRegistry.set(state.providers as Atom.Writable<ReadonlyArray<ServerProvider>>, [
     {
@@ -657,15 +657,26 @@ it("offers Update for a signed-in agent whose version is broken, and keeps Start
     },
   ]);
   await using _screen = await mountWelcome();
-  await vi.waitFor(() => expect(pageText()).toContain("Update Claude Code to 2.0 or later."));
-  const update = [...document.querySelectorAll("a")].find(
+  await vi.waitFor(() => expect(button("Import 2 projects and start").disabled).toBe(false));
+  const update = [...document.querySelectorAll("a, button")].find(
     (element) => element.textContent?.trim() === "Update",
   );
-  expect(update?.getAttribute("href")).toContain("/settings/providers");
-  expect(button("Import 2 projects and start").disabled).toBe(true);
+  expect(update).toBeUndefined();
 });
 
-it("checks an agent again once its install command finishes in the setup terminal", async () => {
+it("says Orbit installs an agent whose CLI is missing, with no install button", async () => {
+  using _now = setup();
+  appAtomRegistry.set(state.providers as Atom.Writable<ReadonlyArray<ServerProvider>>, [
+    { ...readyClaude, installed: false, status: "error", auth: { status: "unknown" } },
+  ]);
+  await using _screen = await mountWelcome();
+  await vi.waitFor(() => expect(pageText()).toContain("Orbit installs it."));
+  expect(
+    [...document.querySelectorAll("button")].some((element) => element.textContent === "Install"),
+  ).toBe(false);
+});
+
+it("checks an agent again once its sign-in command finishes in the setup terminal", async () => {
   using _now = setup();
   appAtomRegistry.set(
     sessionAtom(primaryId),
@@ -678,11 +689,11 @@ it("checks an agent again once its install command finishes in the setup termina
     settings: { providerInstances: {}, projectSettingsOverrides: {} },
   });
   appAtomRegistry.set(state.providers as Atom.Writable<ReadonlyArray<ServerProvider>>, [
-    { ...readyClaude, installed: false, status: "error", auth: { status: "unknown" } },
+    { ...readyClaude, status: "error", auth: { status: "unauthenticated" } },
   ]);
   await using _screen = await mountWelcome();
-  await vi.waitFor(() => button("Install"));
-  await click("Install");
+  await vi.waitFor(() => button("Sign in"));
+  await click("Sign in");
   await vi.waitFor(() => expect(state.writeTerminal).toHaveBeenCalledOnce());
   const { terminalId } = state.openTerminal.mock.calls[0]![0].input;
   const runningTerminalIds = state.runningTerminalIds as Atom.Writable<ReadonlyArray<string>>;
@@ -690,7 +701,7 @@ it("checks an agent again once its install command finishes in the setup termina
 
   await act(async () => appAtomRegistry.set(runningTerminalIds, [terminalId]));
   expect(state.refreshProviders).not.toHaveBeenCalledWith(recheck);
-  // The shell stays open at its prompt after the install, so only the command exits.
+  // The shell stays open at its prompt after the sign-in, so only the command exits.
   await act(async () => appAtomRegistry.set(runningTerminalIds, []));
   expect(state.refreshProviders).toHaveBeenCalledWith(recheck);
   expect(state.closeTerminal).not.toHaveBeenCalled();

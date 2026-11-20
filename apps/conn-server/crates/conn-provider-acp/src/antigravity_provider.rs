@@ -22,6 +22,9 @@ use crate::antigravity::{self, AntigravitySettings, Directories, Observed};
 use crate::session::{self, AcpSession};
 use crate::{ANTIGRAVITY, MAX_LINE_BYTES, lock, stop_process};
 
+/// The limit for `agy --version` in a health check.
+const VERSION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Where an Antigravity instance keeps its state.
 #[derive(Clone, Debug)]
 pub struct AntigravityConfig {
@@ -99,6 +102,25 @@ impl AntigravityProvider {
         })
         .await
         .unwrap_or_else(|_| Err("Could not read the Antigravity installation.".into()))
+    }
+
+    /// `<agy> --version`, read fresh on every health check: Orbit updates the binary on `PATH`,
+    /// so a version kept from an earlier check or session could be stale. It prints the version
+    /// and exits (about 0.4 s for 1.5.13); it does not start the agent.
+    async fn cli_version(&self, executable: &Path) -> Option<String> {
+        let program = executable.to_str()?;
+        let output = conn_provider_support::probe::spawn_and_collect(
+            program,
+            &["--version"],
+            &self.base_env(),
+            None,
+            VERSION_TIMEOUT,
+        )
+        .await
+        .ok()??;
+        (output.code == 0)
+            .then(|| antigravity::cli_version(&output.stdout))
+            .flatten()
     }
 
     /// `onSessionStarted`: the session proves the sign-in; its models and commands are listed.
@@ -226,8 +248,12 @@ impl Provider for AntigravityProvider {
                 return;
             }
             let executable = self.resolve().await;
+            let version = match &executable {
+                Ok(path) => self.cli_version(path).await,
+                Err(_) => None,
+            };
             let mut observed = lock(&self.observed);
-            *observed = antigravity::check(&self.settings, &observed, executable);
+            *observed = antigravity::check(&self.settings, &observed, executable, version);
         })
     }
 

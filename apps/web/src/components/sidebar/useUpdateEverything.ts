@@ -1,17 +1,13 @@
-import { msg, useMessages } from "gt-react";
+import { useMessages } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
-import { PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
 
 import { APP_VERSION } from "~/branding";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { isElectron } from "~/env";
 import { useEnvironments } from "~/state/environments";
 import { environmentIdsKey } from "~/state/environmentAtomList";
-import { environmentUpdateStatesAtom, serverEnvironment } from "~/state/server";
+import { environmentUpdateStatesAtom } from "~/state/server";
 import { environmentSessionStatesAtom } from "~/state/session";
-import { useAtomCommand } from "~/state/use-atom-command";
-import { getProviderUpdateRunOutcome } from "../ProviderUpdateLaunchNotification.logic";
-import { useProviderUpdates } from "../ProviderUpdatesAction";
 import { canUpdateServer, type ServerUpdateOutcome, useServerUpdate } from "../ServerUpdateAction";
 import {
   type ChannelSwitchRelease,
@@ -75,13 +71,7 @@ export function useUpdateEverything(
   // Track-only hosts save a setting and restart nothing, so they are neither listed nor counted.
   const moving = servers.filter((server) => server.trackOnly !== true);
   const restarts = collectRestartingMachines(machines, moving, localUpdateVersion !== null);
-  const providerUpdates = useProviderUpdates();
-  // A track switch moves app and servers only; provider updates stay a separate choice.
-  const providers = channelSwitch ? { machines: [], updateAll: async () => [] } : providerUpdates;
   const updateServer = useServerUpdate();
-  const stageServerUpdate = useAtomCommand(serverEnvironment.stageServerUpdate, {
-    reportFailure: false,
-  });
 
   const view = describeUpdateEverything(
     {
@@ -89,19 +79,12 @@ export function useUpdateEverything(
       localMachines: machines.filter((machine) => machine.hostedByThisApp),
       servers: moving,
       skipped,
-      providerMachines: providers.machines.map((machine) => ({
-        environmentId: machine.environmentId,
-        label: machine.label,
-        providers: machine.candidates.map(
-          (candidate) => PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver,
-        ),
-      })),
     },
     resolve,
   );
 
   return {
-    hasUpdates: servers.length > 0 || providers.machines.length > 0,
+    hasUpdates: servers.length > 0,
     ...view,
     restarts,
     run: async ({
@@ -116,115 +99,34 @@ export function useUpdateEverything(
         localFailures.push(`${title}: ${description}`);
       };
       const startedAt = Date.now();
-      const machinesById = new Map<UpdateRunMachine["environmentId"], UpdateRunMachine>();
-      for (const machine of providers.machines) {
-        machinesById.set(machine.environmentId, {
-          environmentId: machine.environmentId,
-          label: machine.label,
-          updatesProviders: true,
-          server: null,
-          handedOffVersion: null,
-          startedAt,
-          result: null,
-          failure: null,
-          providerFailure: null,
-        });
-      }
-      for (const server of servers) {
-        const existing = machinesById.get(server.environmentId);
-        machinesById.set(server.environmentId, {
-          environmentId: server.environmentId,
-          label: server.serverLabel,
-          updatesProviders: existing?.updatesProviders ?? false,
-          server,
-          handedOffVersion: null,
-          startedAt,
-          result: null,
-          failure: null,
-          providerFailure: null,
-        });
-      }
+      const runMachines: Array<UpdateRunMachine> = servers.map((server) => ({
+        environmentId: server.environmentId,
+        label: server.serverLabel,
+        server,
+        handedOffVersion: null,
+        startedAt,
+        result: null,
+        failure: null,
+      }));
       const localVersion = installLocal ? localUpdateVersion : null;
       setUpdateEverythingRun(() => ({
         ...(channelSwitch ? { trackSwitch: true } : {}),
         localVersion,
-        phase: "providers",
+        phase: "servers",
         restartAt: null,
-        machines: Array.from(machinesById.values()),
+        machines: runMachines,
       }));
-      const providerFailures = new Map<UpdateRunMachine["environmentId"], string>();
       const finishedServers: Array<{ label: string; outcome: ServerUpdateOutcome }> = [];
       try {
         const outcome = await runUpdateEverything({
           ...(downloadLocal ? { downloadLocal: () => downloadLocal(reportLocalError) } : {}),
-          updateProviders: async () => {
-            const runs = await providers.updateAll({ quiet: true });
-            const outcomes = runs.map((run) => {
-              const runOutcome = getProviderUpdateRunOutcome(run);
-              if (runOutcome.status !== "updated") {
-                providerFailures.set(
-                  run.environmentId,
-                  runOutcome.status === "failed"
-                    ? runOutcome.line
-                    : resolve(msg("Provider update interrupted")),
-                );
-              }
-              return runOutcome;
-            });
-            for (const machine of machinesById.values()) {
-              if (machine.server === null) {
-                settleUpdateRunMachine(
-                  machine.environmentId,
-                  providerFailures.get(machine.environmentId) ?? null,
-                );
-              }
-            }
-            const serversStartedAt = Date.now();
-            setUpdateEverythingRun(
-              (run) =>
-                run && {
-                  ...run,
-                  phase: "servers",
-                  machines: run.machines.map((machine) =>
-                    machine.server === null ? machine : { ...machine, startedAt: serversStartedAt },
-                  ),
-                },
-            );
-            return outcomes;
-          },
-          ...(providers.machines.length > 0
-            ? {
-                stageServers: () =>
-                  new Map(
-                    servers
-                      .filter(
-                        (server) =>
-                          machines.find((machine) => machine.environmentId === server.environmentId)
-                            ?.serverConfig?.environment.capabilities.serverUpdateStaging === true,
-                      )
-                      .map((server) => [
-                        server.environmentId,
-                        stageServerUpdate({
-                          environmentId: server.environmentId,
-                          input: { targetVersion: server.targetVersion, stageOnly: true },
-                        }),
-                      ]),
-                  ),
-              }
-            : {}),
-          updateServers: async (staged) => {
+          updateServers: async () => {
             const runs = servers.map(async (server) => {
-              await staged.get(server.environmentId);
               const serverOutcome = await updateServer(server, { quiet: true });
               settleUpdateRunMachine(
                 server.environmentId,
-                serverOutcome.status === "failed"
-                  ? serverOutcome.message
-                  : (providerFailures.get(server.environmentId) ?? null),
-                {
-                  serverUpdated: serverOutcome.status !== "failed",
-                  providerFailure: providerFailures.get(server.environmentId) ?? null,
-                },
+                serverOutcome.status === "failed" ? serverOutcome.message : null,
+                { serverUpdated: serverOutcome.status !== "failed" },
               );
               const finished = { label: server.serverLabel, outcome: serverOutcome };
               finishedServers.push(finished);
@@ -243,7 +145,6 @@ export function useUpdateEverything(
             localVersion: null,
             localFailures,
             servers: finished,
-            providers: outcome.providers,
           });
         if (outcome.localReady && installLocal) {
           if (await waitForUpdateRestart(UPDATE_RESTART_DELAY_MS)) {

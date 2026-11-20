@@ -248,11 +248,6 @@ describe("settings search targets", () => {
   });
 
   it("keeps environment-wide settings out of project scopes", () => {
-    const updates = getSettingsSearchTargetScope("provider-update-checks")!;
-    expect(updates.scope).toBe("environment-defaults");
-    expect(isSettingsSearchScopeAvailable(updates.scope, "environment")).toBe(true);
-    expect(isSettingsSearchScopeAvailable(updates.scope, "all")).toBe(true);
-    expect(isSettingsSearchScopeAvailable(updates.scope, "project")).toBe(false);
     const fallback = getSettingsSearchTargetScope("fallback-model")!;
     expect(fallback.scope).toBe("environment-defaults");
     expect(isSettingsSearchScopeAvailable(fallback.scope, "environment")).toBe(true);

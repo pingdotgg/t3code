@@ -10,6 +10,15 @@ const restoredFeatureRpcs = [
   WS_METHODS.annotationsRemove,
 ] as const;
 
+// Orbit installs and updates provider CLIs, so these official RPCs stay unmounted.
+const orbitManagedProviderRpcs = new Set<string>([
+  WS_METHODS.providerInstallStart,
+  WS_METHODS.providerInstallCancel,
+  WS_METHODS.providerInstallSubscribe,
+  WS_METHODS.providerInstallRemove,
+  WS_METHODS.serverUpdateProvider,
+]);
+
 const connMainAlreadyMountedExtras = [
   WS_METHODS.desktopTabRegister,
   WS_METHODS.desktopTabRequests,
@@ -19,7 +28,9 @@ const connMainAlreadyMountedExtras = [
 describe("mounted server WS RPCs", () => {
   it("mounts official RPCs and only the authorized annotation fork RPCs", () => {
     const mounted = new Set(mountedServerWsRpcTags);
-    const official = new Set(OfficialWsRpcGroup.requests.keys());
+    const official = new Set(
+      [...OfficialWsRpcGroup.requests.keys()].filter((tag) => !orbitManagedProviderRpcs.has(tag)),
+    );
     const splitAndOther = new Set([...mountedSplitWsRpcTags, ...mountedOtherWsRpcTags]);
 
     expect(mounted).toEqual(new Set([...official, ...restoredFeatureRpcs]));
@@ -33,7 +44,7 @@ describe("mounted server WS RPCs", () => {
 
   it("mounts only authorized upstream, desktop relay and restored feature RPCs", () => {
     const authorized = new Set([
-      ...authorizedUpstreamWsRpcTags,
+      ...authorizedUpstreamWsRpcTags.filter((tag) => !orbitManagedProviderRpcs.has(tag)),
       ...connMainAlreadyMountedExtras,
       WS_METHODS.providerAuthRemoveMethod,
       WS_METHODS.serverGetSettings,

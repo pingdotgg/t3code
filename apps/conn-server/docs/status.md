@@ -692,35 +692,33 @@ the stubs on both sides. Not built: T3's managed Codex sign-in (`setupMode: mana
 `provider.chatgpt.*`. That flow is T3's own OAuth against `auth.openai.com`, with tokens in
 T3's secret store; AGENTS.md "Providers" forbids it here.
 
-## Provider install through the AI router (item 7, 2026-11-20)
+## Provider install and update: not served, by decision (2026-11-20)
 
-`provider.install.start`, `cancel` and `remove` are served, and `provider.install.subscribe`
-now matches T3. Nick decided on 2026-11-20 that providers authenticate through Orbit's AI
-router: this server holds no ChatGPT or managed-Codex token, and T3's token broker
-(`CodexManagedRuntime.ts`, `CodexChatGptAuth.ts`) is not ported.
+Nick decided on 2026-11-20 that Orbit installs and updates every provider CLI and owns
+`PATH`. Conn and this server never install or update one; each CLI is found on `PATH` only.
+Providers authenticate through Orbit's AI router: this server holds no ChatGPT or
+managed-Codex token, and T3's token broker (`CodexManagedRuntime.ts`, `CodexChatGptAuth.ts`)
+is not ported. The T3 server in this tree stops mounting the same methods in a parallel
+change; the contract keeps their definitions.
 
-- T3 installs only for a Codex instance with `setupMode: "managed"` (and Antigravity, not
-  offered here). Every other instance gets `requireInstance`'s `ProviderSetupError`, on all
-  four methods; ours answers the same.
-- A managed Codex: T3 takes a supported `codex` on `PATH` before it downloads (`reuseLocal`).
-  In an Orbit container that is Orbit's agent bundle, and Orbit's `~/.codex/config.toml` sends
-  its model calls to the router (`base_url` on the Node forwarder, `env_key =
-  "ORBIT_MODEL_KEY"`). Claude reads `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` from
-  `model.env`. The server only passes its environment on. So `start` and `remove` answer the
-  "succeeded, local" state for that runtime (`crates/conn-provider-codex/src/install.rs`,
-  T3's checks: `--version` is exactly `codex-cli X.Y.Z`, `app-server --help` exits 0, a script
-  or a binary with `codex-code-mode-host` beside it, 5 s). `cancel` answers T3's "no longer
-  current" error: no install ever runs.
-- **Deliberate differences:** no download. Without a `codex` on `PATH`, `start` fails with
-  our text instead of downloading. `version` (what T3 would download next) is always null, so
-  no client offers an update. No compatibility check against T3's download manifest: Orbit
-  pins the bundled version. The managed instance still runs the plain Codex provider with
-  `setup.canAuthenticate: false`; T3's `CodexManagedProvider` (ChatGPT sign-in, shadow home)
-  is not built.
-- **Proof:** `provider-auth-diff.mjs` now also calls the four install methods for
-  `claudeAgent`, `codex`, `grok` and an unknown id against both servers (16 more calls, all
-  equal). `effect-client.mjs` drives a managed instance against a stub `codex` on `PATH`; the
-  real client decodes each state. Unit tests in `install.rs`.
+- **Not served:** `provider.install.start`, `cancel`, `remove`, `subscribe` and
+  `server.updateProvider`. They stay unregistered and answer "not supported", as the other
+  methods not served by decision (FORK.md, "Conn Server"). The managed-Codex path that
+  answered "succeeded, local" for Orbit's bundled `codex` (`conn-provider-codex`
+  `install.rs`) is removed.
+- **Every provider entry says `setup.canInstall: false`**, Antigravity included (T3 says
+  `true` for its managed runtime), so no client offers an install.
+- **Antigravity version:** each health check runs `<agy> --version` (5 s limit; about 0.4 s
+  for 1.5.13) and shows what it prints. A missing binary or a failed `--version` shows no
+  version, so an earlier version never sticks after Orbit replaces the binary on `PATH`. A
+  session's `initialize` still sets it, as T3's `onSessionStarted`. T3 runs no `--version`
+  here; it keeps the last version it saw. Claude, Codex and Grok already read the version in
+  every probe.
+- **Proof:** unit tests `install_and_update_are_not_served` (`methods/provider.rs`) and
+  `version_follows_the_binary_on_path` (`conn-provider-acp` `antigravity.rs`);
+  `effect-client.mjs` calls the five methods for `codex` and a managed Codex instance and
+  needs a failure from each, and checks that no entry in `server.getConfig` offers an
+  install. `provider-auth-diff.mjs` compares sign-in only.
 
 ## Managed access, target side (item 4)
 

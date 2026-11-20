@@ -44,11 +44,6 @@ its user-global skill directories under that profile, so the profile links those
 back to the user's real `~/.gemini`; MCP servers, hooks, and rules there stay out of the profile.
 See [profile isolation](../../apps/server/src/provider/antigravityAuthSupport.ts).
 
-The [Antigravity installer](../../apps/server/src/provider/AntigravityInstallation.ts) outlives
-client connections and provider-instance rebuilds. Releases are immutable, with an atomic pointer
-selecting the version for new processes. Running processes hold leases on their version. Updates
-and removal must respect those leases instead of replacing executables under a running agent.
-
 ## Setup must not happen as a health-check side effect
 
 Opening a provider session can start MCP servers, run hooks, or launch a login browser.
@@ -78,41 +73,15 @@ run before the prompt. They reject profiles with such configuration before launc
 instructions and tool denial do not create a native sandbox.
 See [helper constraints](../../apps/server/src/textGeneration/AntigravityTextGeneration.ts).
 
-## Provider updates run only through the owning installer
+## Provider CLIs are managed by Orbit
 
-A package manager runs only when the resolved executable's path proves it owns the install. Homebrew
-and npm are proven by the real path (symlinks followed): a versioned keg or cask under
-`brew --prefix`, or `<prefix>/lib/node_modules/<pkg>/` (Windows: the shim beside `node_modules`).
-Native installer layouts and the global directories of pnpm, Bun, Yarn, and Vite+ may match on
-either the resolved path or its real target, since those installers place real files or their own
-symlinks there. Volta is proven by the package's image directory plus either its `volta-shim` link
-or, on Windows, the exact cmd or bash forwarding script Volta generates; a custom script that merely
-calls `volta run` does not qualify. When nothing is proven, Pi's and Grok's own updaters
-(`pi update --self`, `grok update`) run instead, because each detects its installer itself; the
-runner's version check catches an updater that exits 0 without updating. Claude, Codex, and OpenCode updaters only act on their own native layout, so
-those providers stay manual-only unless that layout is proven. Mise is checked
-first, since a `mise x` wrapper can sit at a native installer's path, and `MISE_DATA_DIR` can put
-installs anywhere, so `mise which` is asked whenever mise is on `PATH`. Each driver names its fixed
-mise tool; mise must resolve the binary and list it in an active install of that tool requested as
-`latest`, which gets `mise upgrade <tool>`. T3 Code keeps launching the configured path, so that
-path must be a shim or under the tool's `latest` link, which the upgrade repoints: a version
-directory (including one `mise activate` put on `PATH`) would keep running the old binary until mise
-prunes it. Everything else mise touches (fixed version paths, pinned tools, wrappers, OpenCode 1.x,
-whose mise tool crosses into 2.x) stays manual-only, so T3 Code never edits mise config. Nix store installs stay manual-only too, since the store is read-only. `mise latest` supplies the version, because settings such as
-`minimum_release_age` can hold mise behind npm. A Grok cask whose Homebrew prefix
-cannot be verified also stays manual-only: `grok update` would install a second copy. npm updates pin `--prefix` because the
-`npm` on `PATH` can belong to a different Node than the one that owns the provider. Homebrew
-compares against `brew info` since casks trail npm by hours; native installs share npm's version
-train, so the registry stays authoritative for them. A Chocolatey install of Claude stays
-manual-only: its package directory is writable only by administrators, and `claude update` through
-the shim installs a native copy elsewhere. The latest version comes from `choco search`, and the
-card shows `choco upgrade claude-code` without running it.
-See the [resolver](../../apps/server/src/provider/providerMaintenanceRunner.ts).
-
-Ownership is cached per instance and re-read immediately before an update runs. The
-[runner](../../apps/server/src/provider/providerMaintenanceRunner.ts) refuses when the lock key
-changed since the advisory, and reports success only when the refreshed provider is still installed
-with a readable, current version.
+Conn never installs, updates or removes a provider CLI (Nick, 2026-11-20). Orbit installs and
+updates them and owns PATH; the server only resolves each CLI on PATH (or the instance's
+`binaryPath`) and reads its version on every health check, so an update on PATH shows at the next
+check. The server mounts no install or update RPC, looks up no latest versions, and publishes no
+`versionAdvisory` ([seam](../../apps/server/src/provider/orbitManagedProviders.ts)). A
+compatibility advisory is data for one quiet line; it never blocks a session or hides models.
+See FORK.md "Provider CLIs".
 
 ## Protocol traps
 

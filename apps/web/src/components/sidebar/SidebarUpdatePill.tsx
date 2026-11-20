@@ -28,7 +28,6 @@ import {
   shouldToastDesktopUpdateActionResult,
 } from "../desktopUpdate.logic";
 import { showDesktopUpdateDownloadedToast } from "../desktopUpdate.toast";
-import { useCheckProviderUpdates } from "../ProviderUpdatesAction";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { SidebarMenuItem } from "../ui/sidebar";
@@ -213,8 +212,6 @@ function SidebarUpdateControl({ variant }: { variant: "footer" | "rail" }) {
   // The desktop updates this machine, whose policy the primary environment reports.
   const updatesDenial = managedUpdatesDenial(usePrimaryManagedPolicy(), messages);
   const [isActionPending, setIsActionPending] = useState(false);
-  const [providerCheck, setProviderCheck] = useState<"button" | "dialog" | null>(null);
-  const isCheckingProviders = providerCheck === "button";
   const [isConfirmingEverything, setIsConfirmingEverything] = useState(false);
   const [checkAnimationKey, setCheckAnimationKey] = useState(0);
   const [releaseNotesPopoverHandle] = useState(() => PopoverCreateHandle());
@@ -245,13 +242,12 @@ function SidebarUpdateControl({ variant }: { variant: "footer" | "rail" }) {
   const localUpdateVersion =
     state && action !== "none" ? getDesktopUpdateDownloadedVersion(state) : null;
   const everything = useUpdateEverything(localUpdateVersion);
-  const checkProviderUpdates = useCheckProviderUpdates();
   const runsEverything = everything.hasUpdates && !isDownloading;
   const run = useUpdateEverythingRun();
   const isRunningEverything = run !== null;
   const showCheckIcon = shouldShowDesktopUpdateCheckIcon({
     isAnimationLatched: isCheckAnimationLatched,
-    isChecking: state?.status === "checking" || isCheckingProviders,
+    isChecking: state?.status === "checking",
     prefersReducedMotion,
   });
   const { iconStatus, showUpdateDetails, showUpdateIconState } = resolveSidebarUpdatePresentation({
@@ -301,9 +297,6 @@ function SidebarUpdateControl({ variant }: { variant: "footer" | "rail" }) {
 
     if (runsEverything) {
       setIsConfirmingEverything(true);
-      // Machines that still cache an older latest version add their rows while the dialog is open.
-      setProviderCheck("dialog");
-      void checkProviderUpdates({ quiet: true }).finally(() => setProviderCheck(null));
       return;
     }
 
@@ -371,9 +364,7 @@ function SidebarUpdateControl({ variant }: { variant: "footer" | "rail" }) {
           }),
         );
       });
-    setProviderCheck("button");
-    const providersChecked = checkProviderUpdates().finally(() => setProviderCheck(null));
-    void Promise.allSettled([appCheck, providersChecked]).then(() => setIsActionPending(false));
+    void appCheck.finally(() => setIsActionPending(false));
   };
 
   const runEverything = async () => {
@@ -409,7 +400,7 @@ function SidebarUpdateControl({ variant }: { variant: "footer" | "rail" }) {
   const handleCheckAnimationIteration = () => {
     setIsCheckAnimationLatched(
       shouldContinueDesktopUpdateCheckAnimation({
-        isChecking: state?.status === "checking" || isCheckingProviders,
+        isChecking: state?.status === "checking",
         prefersReducedMotion,
       }),
     );
@@ -431,10 +422,8 @@ function SidebarUpdateControl({ variant }: { variant: "footer" | "rail" }) {
       open={isConfirmingEverything}
       onOpenChange={setIsConfirmingEverything}
       version={everything.version}
-      providerCount={everything.providerCount}
       rows={everything.rows}
       restarts={everything.restarts}
-      checking={providerCheck === "dialog"}
       onConfirm={() => void runEverything()}
     />
   );
@@ -458,7 +447,6 @@ function SidebarUpdateControl({ variant }: { variant: "footer" | "rail" }) {
                   saveUpdateEverythingResult({
                     localVersion: localUpdateVersion,
                     updatedServers: 0,
-                    updatedProviders: 0,
                     failures: [],
                     restarting: [],
                   });

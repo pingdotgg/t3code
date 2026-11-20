@@ -645,7 +645,7 @@ remain separate from registration):
 | --- | --- | --- |
 | Git actions control (commit, push, PR) | `git.runStackedAction` | Registered; commit is served, push and PR creation return a typed error |
 | Thread PR panel, when a PR is linked | `pullRequests.*` | All 35 methods are registered; disabled guide generation and unavailable actions return typed errors |
-| Provider sign-in and install in Settings | `provider.auth.*`, `provider.install.*` | Sign-in is served as in T3: Claude, Codex and Grok are CLI-owned (`setup.canAuthenticate: false`), so the UI shows no sign-in and every `provider.auth.*` call answers T3's `ProviderSetupError`. Install is served: a managed Codex is Orbit's bundled `codex`, signed in through the AI router; nothing downloads (status.md, item 7) |
+| Provider sign-in and install in Settings | `provider.auth.*`, `provider.install.*` | Sign-in is served as in T3: Claude, Codex and Grok are CLI-owned (`setup.canAuthenticate: false`), so the UI shows no sign-in and every `provider.auth.*` call answers T3's `ProviderSetupError`. Install and update are not served, by decision (Nick, 2026-11-20): Orbit installs and updates every provider CLI, every entry says `setup.canInstall: false`, and `provider.install.*` and `server.updateProvider` answer "not supported" (status.md) |
 | Device panel | `device.*` | Served on this machine and on SSH hosts; Expo and Simlock hosts are not offered |
 | Test logins and credentials | `testLogins.*`, `credentials.*` | Test-login methods are served; the two site-credential methods remain unserved |
 | Secret request card | `secrets.answerRequest` | Served |
@@ -1048,10 +1048,10 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `provider.chatgpt.import-profile` | no | X | U | M | ChatGPT profile handoff for Codex |
 | `provider.chatgpt.reconnect-profile` | no | X | U | M | ChatGPT profile handoff for Codex |
 | `provider.consumeResetCredit` | no | X | U | S |  |
-| `provider.install.cancel` | yes | X | U | M | managed Codex = Orbit's bundled runtime through the AI router; no download |
-| `provider.install.remove` | yes | X | U | M | managed Codex = Orbit's bundled runtime through the AI router; no download |
-| `provider.install.start` | yes | X | U | M | managed Codex = Orbit's bundled runtime through the AI router; no download |
-| `provider.install.subscribe` | yes | U | U |  |  |
+| `provider.install.cancel` | no | X | X | — | not served, by decision: Orbit installs and updates provider CLIs (Nick, 2026-11-20) |
+| `provider.install.remove` | no | X | X | — | not served, by decision: Orbit installs and updates provider CLIs (Nick, 2026-11-20) |
+| `provider.install.start` | no | X | X | — | not served, by decision: Orbit installs and updates provider CLIs (Nick, 2026-11-20) |
+| `provider.install.subscribe` | no | X | X | — | not served, by decision: Orbit installs and updates provider CLIs (Nick, 2026-11-20) |
 | `provider.uploadFeedback` | no | U | U | S |  |
 | `pullRequests.activity` | yes | O | N |  | PR panel: list, review, comment, merge |
 | `pullRequests.changeBreakdown` | yes | O | N |  | PR panel: list, review, comment, merge |
@@ -1138,7 +1138,7 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `server.setAcpRegistryProvider` | no | X | X | L | ACP registry download and install: Nick ruled it out |
 | `server.signalProcess` | yes | U | U |  | diagnostics |
 | `server.uninstallAcpRegistryManagedBinary` | no | X | U | S | ACP registry, offline part |
-| `server.updateProvider` | no | X | U | M | update a provider CLI |
+| `server.updateProvider` | no | X | X | — | not served, by decision: Orbit installs and updates provider CLIs (Nick, 2026-11-20) |
 | `server.updateServer` | no | X | U | M | self-update; a native app ships the binary |
 | `server.updateServerWithProgress` | no | X | U | M | self-update; a native app ships the binary |
 | `server.updateSettings` | yes | N | N |  | connection and settings |

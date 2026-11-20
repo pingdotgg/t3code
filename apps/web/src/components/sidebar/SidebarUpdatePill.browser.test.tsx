@@ -40,7 +40,6 @@ vi.mock("./useUpdateEverything", () => ({
     hasUpdates: mocks.hasUpdates,
     summary: "Update everything",
     version: null,
-    providerCount: 0,
     rows: mocks.rows,
     restarts: [],
   }),
@@ -154,7 +153,7 @@ describe("SidebarUpdatePill update everything", () => {
     const label = "DESKTOP-WORKSTATION-UPSTAIRS";
     setup(null, {
       hasUpdates: true,
-      rows: [{ environmentId: null, label, app: "this-app", skipped: null, providers: ["Claude"] }],
+      rows: [{ environmentId: null, label, app: "this-app", skipped: null }],
     });
     await using screen = await render(<SidebarUpdatePill />);
     await userEvent.click(screen.getByRole("button", { name: "Update everything" }));
@@ -162,9 +161,7 @@ describe("SidebarUpdatePill update everything", () => {
     const table = page.getByRole("table");
     await expect.element(table.getByRole("columnheader", { name: "Machine" })).toBeVisible();
     await expect.element(table.getByRole("columnheader", { name: "T3 Code" })).toBeVisible();
-    await expect.element(table.getByRole("columnheader", { name: "Providers" })).toBeVisible();
     const row = table.getByRole("row", { name: new RegExp(label) });
     await expect.element(row.getByRole("cell", { name: label, exact: true })).toBeVisible();
-    await expect.element(row.getByRole("cell", { name: "Claude", exact: true })).toBeVisible();
   });
 });

@@ -64,19 +64,6 @@ NodeFS.writeFileSync(
   ].join("\n"),
   { mode: 0o755 },
 );
-// A stand-in `codex` on PATH: Orbit's bundled runtime for a managed Codex instance
-// (`provider.install.*`). It answers the two runtime checks and nothing else.
-NodeFS.writeFileSync(
-  NodePath.join(sshStub, "codex"),
-  [
-    "#!/bin/sh",
-    '[ "$1" = --version ] && { echo "codex-cli 0.166.0"; exit 0; }',
-    '[ "$1" = app-server ] && [ "$2" = --help ] && exit 0',
-    "exit 1",
-    "",
-  ].join("\n"),
-  { mode: 0o755 },
-);
 serverEnv.PATH = `${sshStub}:${serverEnv.PATH}`;
 const workflowScript = NodePath.join(serverEnv.HOME, ".claude", "projects", "effect-client.js");
 NodeFS.mkdirSync(NodePath.dirname(workflowScript), { recursive: true });
@@ -589,12 +576,9 @@ const decodeEach = (client) =>
     yield* call("provider.auth.cancel", { instanceId: "codex", flowId: "f" });
     yield* call("provider.auth.removeMethod", { instanceId: "codex", methodId: "chatgpt" });
     yield* call("provider.auth.logout", { instanceId: "codex" });
-    // Install: T3's ProviderSetupError outside managed Codex; a managed Codex is the runtime
-    // on PATH (Orbit's bundle, signed in through the AI router), never a download.
-    yield* call("provider.install.subscribe", { instanceId: "codex" });
-    yield* call("provider.install.start", { instanceId: "codex" });
-    yield* call("provider.install.cancel", { instanceId: "codex", operationId: "op" });
-    yield* call("provider.install.remove", { instanceId: "codex" });
+    // Install and update: not served, by decision (Nick, 2026-11-20). Orbit installs and
+    // updates every provider CLI; the server finds each on PATH only. Each call fails as an
+    // unsupported method, for an existing instance and for one in managed setup.
     yield* call("server.updateSettings", {
       patch: {},
       providerInstanceMutation: {
@@ -603,25 +587,27 @@ const decodeEach = (client) =>
         instance: { driver: "codex", enabled: false, config: { setupMode: "managed" } },
       },
     });
-    const installed = yield* call("provider.install.start", { instanceId: "codexManaged" });
+    for (const instanceId of ["codex", "codexManaged"]) {
+      for (const [tag, payload] of [
+        ["provider.install.start", { instanceId }],
+        ["provider.install.cancel", { instanceId, operationId: "op" }],
+        ["provider.install.remove", { instanceId }],
+        ["server.updateProvider", { provider: "codex", instanceId }],
+      ]) {
+        const exit = yield* Effect.exit(client[tag](payload).pipe(Effect.timeout("10 seconds")));
+        check(`${tag} is not served (${instanceId})`, Exit.isFailure(exit) && !String(exit.cause).includes("TimeoutError"), String(Exit.isFailure(exit) ? exit.cause : "succeeded").split("\n")[0]);
+      }
+      const watched = yield* Effect.exit(
+        Stream.runHead(client["provider.install.subscribe"]({ instanceId })).pipe(Effect.timeout("10 seconds")),
+      );
+      check(`provider.install.subscribe is not served (${instanceId})`, Exit.isFailure(watched) && !String(watched.cause).includes("TimeoutError"), String(Exit.isFailure(watched) ? watched.cause : "succeeded").split("\n")[0]);
+    }
+    const managed = yield* call("server.getConfig", {});
     check(
-      "managed Codex reuses the runtime on PATH",
-      Exit.isSuccess(installed) &&
-        installed.value.phase === "succeeded" &&
-        installed.value.source === "local" &&
-        installed.value.installedVersion === "0.166.0" &&
-        installed.value.executablePath === NodePath.join(sshStub, "codex") &&
-        installed.value.version === null,
-      JSON.stringify(Exit.isSuccess(installed) ? installed.value : String(installed.cause)),
+      "no provider entry offers an install",
+      Exit.isSuccess(managed) && managed.value.providers.every((p) => p.setup?.canInstall !== true),
+      Exit.isSuccess(managed) ? managed.value.providers.map((p) => `${p.instanceId}:${p.setup?.canInstall}`).join(",") : "",
     );
-    const watched = yield* call("provider.install.subscribe", { instanceId: "codexManaged" });
-    check(
-      "managed Codex install state",
-      Exit.isSuccess(watched) && Option.getOrUndefined(Option.flatten(watched.value))?.phase === "succeeded",
-    );
-    yield* call("provider.install.cancel", { instanceId: "codexManaged", operationId: "op" });
-    const removed = yield* call("provider.install.remove", { instanceId: "codexManaged" });
-    check("managed Codex remove keeps Orbit's runtime", Exit.isSuccess(removed) && removed.value.phase === "succeeded");
     yield* call("server.updateSettings", {
       patch: {},
       providerInstanceMutation: { operation: "remove", instanceId: "codexManaged" },

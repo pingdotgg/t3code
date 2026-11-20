@@ -1,7 +1,6 @@
 import * as CodexErrors from "effect-codex-app-server/errors";
 import { vi } from "vite-plus/test";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import * as CodexInstallation from "./CodexInstallation.ts";
 import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -56,7 +55,6 @@ import {
 import { BUNDLED_CLAUDE_MODEL_CATALOG } from "./ClaudeModelCatalog.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
-import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import { applyProviderCompatibility } from "./providerCompatibility.ts";
 import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
@@ -557,9 +555,6 @@ const layerTestNodeServices = Layer.mergeAll(
   NodeCrypto.layer,
   Layer.mock(CodexManagedTokenBroker.CodexManagedTokenBroker)({
     endpoint: Effect.succeed("unused-private-pipe"),
-  }),
-  Layer.mock(CodexInstallation.CodexInstallation)({
-    managedDirectory: "unused-managed-installation",
   }),
   Layer.mock(ServerSecretStore.ServerSecretStore)({}),
   Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
@@ -3986,7 +3981,6 @@ it.layer(
               ),
             ),
           ),
-          Layer.provideMerge(AntigravityInstallation.AntigravityInstallation.layer),
           Layer.provideMerge(
             Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
           ),
@@ -4112,7 +4106,6 @@ it.layer(
               ),
             ),
           ),
-          Layer.provideMerge(AntigravityInstallation.AntigravityInstallation.layer),
           Layer.provideMerge(
             Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
           ),
@@ -4220,7 +4213,6 @@ it.layer(
       } satisfies ServerSettingsModule.ServerSettingsService["Service"];
       const dependencies = yield* Layer.build(
         Layer.mergeAll(
-          AntigravityInstallation.AntigravityInstallation.layer,
           ServerSecretStore.layer,
           OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
         ).pipe(

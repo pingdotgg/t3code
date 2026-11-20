@@ -274,9 +274,12 @@ more per `providerInstances` entry with that driver (`supportsMultipleInstances`
   through); Stop as `session/cancel`, waiting for the prompt's reply; a restarted agent gets
   `session/resume`. `fs/read_text_file` is served inside the turn's workspace and the
   attachments folder (`conn-provider-support` `RootedFiles`).
-- **Status:** no spawn, as T3 (the agent unpacks about 1 GB per launch): the executable
-  resolves and the sign-in is configured. Models, version and `ready` come with the first
-  session, as T3's `onSessionStarted`.
+- **Status:** the agent does not start, as in T3 (it unpacks about 1 GB per launch): the
+  executable resolves and the sign-in is configured. Models and `ready` come with the first
+  session, as T3's `onSessionStarted`. The version is read fresh in every check with
+  `<agy> --version` (5 s), so it follows the binary Orbit puts on `PATH`; T3 runs no
+  `--version` and keeps the last version it saw. `setup.canInstall` is `false`: Orbit
+  installs and updates the CLI (Nick, 2026-11-20); T3 says `true` for its managed runtime.
 - **One accepted difference:** `BROWSER` runs this server (`<self> antigravity-browser -- %s`,
   which reports the URL on stderr with T3's marker) where T3 runs its Node with an inline
   script.

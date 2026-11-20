@@ -555,7 +555,11 @@ export function getAntigravitySendBlockReason(
 ): string | null {
   if (provider?.driver !== "antigravity") return null;
   if (!provider.installed) {
-    return resolve(msg("Install Antigravity in provider settings before sending."));
+    return resolve(
+      msg("{provider} is not on this environment's PATH. Orbit installs it.", {
+        provider: "Antigravity",
+      }),
+    );
   }
   if (provider.auth.status === "unauthenticated") {
     return resolve(msg("Sign in to Antigravity in provider settings before sending."));

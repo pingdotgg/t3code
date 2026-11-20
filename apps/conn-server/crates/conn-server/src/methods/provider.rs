@@ -1,4 +1,4 @@
-//! `provider.*` methods (provider status, models, sign-in, install).
+//! `provider.*` methods (provider status, models, sign-in).
 //!
 //! No `provider.*` method gates a turn. The client reads providers and their models from
 //! `ServerConfig.providers`, which `subscribeServerConfig` delivers at connect, and refreshes
@@ -16,16 +16,12 @@
 //! T3's `ProviderSetupError` from `ProviderAuthService.getController`. No CLI starts.
 //! `crates/conn-server/tools/provider-auth-diff.mjs` compares both servers.
 //!
-//! Install (`provider.install.*`): T3 installs only for a Codex instance with
-//! `setupMode: "managed"` (and Antigravity, which this server does not offer); every other
-//! instance gets T3's `ProviderSetupError` from `requireInstance`. For a managed Codex, T3 first
-//! takes a supported `codex` on `PATH` (`reuseLocal`) and downloads its own only without one.
-//! In an Orbit container that `codex` is Orbit's agent bundle, and Orbit's
-//! `~/.codex/config.toml` sends its model calls to the AI router with the key Orbit issues. So
-//! a managed Codex here is that runtime, signed in through the router: `start` and `remove`
-//! answer T3's "succeeded, local" state for it, and this server never downloads Codex, never
-//! signs in to ChatGPT and holds no token (Nick, 2026-11-20). ChatGPT profiles
-//! (`provider.chatgpt.*`), `uploadFeedback` and `consumeResetCredit` stay unregistered.
+//! Install and update (`provider.install.*`, `server.updateProvider`): not served, by
+//! decision (Nick, 2026-11-20). Orbit installs and updates every provider CLI and owns
+//! `PATH`; this server finds each CLI on `PATH` only. The methods stay unregistered, so a
+//! client gets "not supported", and every provider entry says `setup.canInstall: false`.
+//! ChatGPT profiles (`provider.chatgpt.*`), `uploadFeedback` and `consumeResetCredit` stay
+//! unregistered too.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -34,12 +30,11 @@ use conn_support::time::Mark;
 
 use conn_contract::{
     ProviderAuthCancelInput, ProviderAuthCompleteInput, ProviderAuthRespondInput,
-    ProviderAuthStartInput, ProviderInstallCancelInput, ProviderSetupError, ProviderSetupInput,
-    lit,
+    ProviderAuthStartInput, ProviderSetupError, ProviderSetupInput, lit,
 };
 use serde::Deserialize;
-use serde_json::{Value, json};
-use tokio::sync::{mpsc, watch};
+use serde_json::Value;
+use tokio::sync::watch;
 
 use super::Deps;
 use crate::table::{Failure, MethodTable};
@@ -135,193 +130,6 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
             },
         );
     }
-    register_install(table, deps);
-}
-
-/// T3's `ProviderSetupError` for an install method.
-fn setup_error(instance_id: &str, operation: &str, detail: &str) -> Failure {
-    Failure::fail(&ProviderSetupError {
-        tag: lit::ProviderSetupError,
-        instance_id: instance_id.to_owned(),
-        operation: operation.to_owned(),
-        detail: detail.to_owned(),
-        cause: None,
-    })
-}
-
-/// `ProviderInstallation.requireInstance`: only a Codex instance in managed setup has an
-/// installation; `managed_only` also refuses a custom executable.
-fn require_managed_codex(
-    deps: &Deps,
-    instance_id: &str,
-    operation: &str,
-    managed_only: bool,
-) -> Result<(), Failure> {
-    let driver = deps
-        .providers
-        .get(instance_id)
-        .map(|p| p.driver().to_owned());
-    if driver.as_deref() != Some("codex") {
-        return Err(setup_error(
-            instance_id,
-            operation,
-            "Managed installation is not available for this provider instance.",
-        ));
-    }
-    let config = instance_settings(deps, instance_id)
-        .and_then(|entry| entry.get("config").cloned())
-        .unwrap_or(Value::Null);
-    let setup_mode = config.get("setupMode");
-    let binary_path = config.get("binaryPath");
-    let valid_mode = setup_mode.is_none_or(|m| m == "managed" || m == "existing");
-    if !valid_mode || binary_path.is_some_and(|b| !b.is_string()) {
-        return Err(setup_error(
-            instance_id,
-            operation,
-            "The provider instance configuration is invalid.",
-        ));
-    }
-    if setup_mode.and_then(Value::as_str) != Some("managed") {
-        return Err(setup_error(
-            instance_id,
-            operation,
-            "Choose managed setup to install Codex in T3 Code.",
-        ));
-    }
-    let custom = binary_path
-        .and_then(Value::as_str)
-        .is_some_and(|b| !b.is_empty() && b != "codex");
-    if managed_only && custom {
-        return Err(setup_error(
-            instance_id,
-            operation,
-            "This instance uses a custom executable. Clear its binary path to manage installation in T3 Code.",
-        ));
-    }
-    Ok(())
-}
-
-/// The managed Codex installation state: T3's after `reuseLocal` when a runtime is on `PATH`,
-/// its first state otherwise. `version` (what T3 would download next) is always null: this
-/// server offers no download.
-fn codex_install_state(runtime: Option<&conn_provider_codex::install::LocalRuntime>) -> Value {
-    let mut state = json!({
-        "driver": "codex",
-        "operationId": null,
-        "phase": "idle",
-        "downloadedBytes": 0,
-        "totalBytes": null,
-        "version": null,
-        "installedVersion": null,
-        "executablePath": null,
-        "canRemove": false,
-        "message": null,
-    });
-    if let (Some(runtime), Some(object)) = (runtime, state.as_object_mut()) {
-        object.insert("phase".into(), json!("succeeded"));
-        object.insert("source".into(), json!("local"));
-        object.insert("installedVersion".into(), json!(runtime.version));
-        object.insert(
-            "executablePath".into(),
-            json!(runtime.executable_path.to_string_lossy()),
-        );
-    }
-    state
-}
-
-/// The runtime checks get `PATH` and `HOME` only: they need no model key, so none is passed on.
-async fn current_codex_runtime() -> Option<conn_provider_codex::install::LocalRuntime> {
-    let environment = ["PATH", "HOME"]
-        .into_iter()
-        .filter_map(|name| {
-            conn_support::login_env::var_os(name)
-                .map(|value| (name.to_owned(), value.to_string_lossy().into_owned()))
-        })
-        .collect();
-    conn_provider_codex::install::local_runtime(environment).await
-}
-
-fn register_install(table: &mut MethodTable, deps: &Deps) {
-    {
-        let deps = deps.clone();
-        table.unary("provider.install.start", move |_, input: ProviderSetupInput| {
-            let checked = require_managed_codex(&deps, &input.instance_id, "install", true);
-            async move {
-                checked?;
-                match current_codex_runtime().await {
-                    Some(runtime) => Ok(codex_install_state(Some(&runtime))),
-                    None => Err(setup_error(
-                        &input.instance_id,
-                        "start",
-                        "No Codex runtime is on this environment's PATH. Codex comes with Orbit's agent bundle; this server does not download it.",
-                    )),
-                }
-            }
-        });
-    }
-    {
-        let deps = deps.clone();
-        table.unary(
-            "provider.install.cancel",
-            move |_, input: ProviderInstallCancelInput| {
-                // No install ever runs here, so no operation id is current.
-                let failure = require_managed_codex(&deps, &input.instance_id, "cancel-install", false)
-                    .err()
-                    .unwrap_or_else(|| {
-                        setup_error(
-                            &input.instance_id,
-                            "cancel",
-                            "This installation is no longer current. Refresh its status before cancelling.",
-                        )
-                    });
-                async move { Err::<Value, _>(failure) }
-            },
-        );
-    }
-    {
-        let deps = deps.clone();
-        table.unary(
-            "provider.install.remove",
-            move |_, input: ProviderSetupInput| {
-                let checked =
-                    require_managed_codex(&deps, &input.instance_id, "remove-install", true);
-                let deps = deps.clone();
-                async move {
-                    checked?;
-                    // Nothing of ours to remove: the runtime is Orbit's. T3 then refreshes every
-                    // instance of the driver and answers the state after `reuseLocal`.
-                    for provider in deps.providers.snapshot() {
-                        if provider.driver() == "codex" {
-                            refresh(&deps, Some(provider.instance_id().as_str())).await;
-                        }
-                    }
-                    Ok(codex_install_state(current_codex_runtime().await.as_ref()))
-                }
-            },
-        );
-    }
-    let deps = deps.clone();
-    table.stream(
-        "provider.install.subscribe",
-        move |_, input: ProviderSetupInput| {
-            let checked =
-                require_managed_codex(&deps, &input.instance_id, "observe-install", false);
-            async move {
-                checked?;
-                Ok(open_with(codex_install_state(
-                    current_codex_runtime().await.as_ref(),
-                )))
-            }
-        },
-    );
-}
-
-/// One state, then open until the client unsubscribes.
-fn open_with(state: Value) -> mpsc::Receiver<Result<Value, Failure>> {
-    let (tx, rx) = mpsc::channel(1);
-    tx.try_send(Ok(state)).expect("room for the first state");
-    tokio::spawn(async move { tx.closed().await });
-    rx
 }
 
 /// Tells config streams that a provider entry changed (T3's `ProviderRegistry.streamChanges`),
@@ -670,6 +478,7 @@ mod tests {
     use std::sync::Arc;
 
     use conn_provider_claude::{ClaudeConfig, ClaudeProvider};
+    use serde_json::json;
 
     use super::*;
 
@@ -738,6 +547,23 @@ mod tests {
                     "{tag} {instance}"
                 );
             }
+        }
+    }
+
+    /// Orbit installs and updates provider CLIs (Nick, 2026-11-20): no install or update
+    /// method is registered, so the client gets "not supported".
+    #[tokio::test(flavor = "current_thread")]
+    async fn install_and_update_are_not_served() {
+        let mut table = MethodTable::new();
+        crate::methods::register_all(&mut table, &Deps::default());
+        for tag in [
+            "provider.install.start",
+            "provider.install.cancel",
+            "provider.install.remove",
+            "provider.install.subscribe",
+            "server.updateProvider",
+        ] {
+            assert!(table.get(tag).is_none(), "{tag} is registered");
         }
     }
 

@@ -16,13 +16,13 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient } from "effect/http";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
-import * as AntigravityInstallation from "../AntigravityInstallation.ts";
 import {
   ANTIGRAVITY_AUTH_STDOUT_PREFIX,
   resolveAntigravityInstanceDirectories,
@@ -36,8 +36,7 @@ import { AntigravityDriver } from "./AntigravityDriver.ts";
 import * as ProviderHostLive from "../ProviderHostLive.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 
-const hostPlatform = HostProcess.Platform.defaultValue();
-const windowsHost = hostPlatform === "win32";
+const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 const decodeRequest = Schema.decodeEffect(
   Schema.fromJsonString(
     Schema.Struct({
@@ -70,20 +69,27 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   const config = yield* ServerConfig.ServerConfig;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const nodePath = yield* HostProcess.ExecutablePath;
-  const baseEnv = yield* HostProcess.Environment;
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-antigravity-driver-" });
   const instanceId = ProviderInstanceId.make(path.basename(root));
   const mockAgentPath = yield* path.fromFileUrl(
     new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
   );
   const requestLog = path.join(root, "requests.jsonl");
+  // Each agent start appends its runtime name, so tests see which `agy` PATH resolved to.
+  const runLog = path.join(root, "runs.log");
   const directories = yield* resolveAntigravityInstanceDirectories(config.stateDir, instanceId);
   const profileDirectory = directories.profile;
-  const instancePath = `${path.join(root, "instance-bin")}:${baseEnv.PATH ?? ""}`;
+  const instanceBin = path.join(root, "instance-bin");
+  const agyOnPath = path.join(instanceBin, "agy");
+  yield* fs.makeDirectory(instanceBin, { recursive: true });
+  // No inherited PATH: an `agy` installed on the test machine must not answer for the fixture.
+  const instancePath = `${instanceBin}:/usr/bin:/bin`;
 
+  /** An `agy` CLI build; `use` puts it on the instance PATH. */
   const makeExecutable = Effect.fn("AntigravityDriverTest.makeExecutable")(function* (
     name: string,
     options: {
+      readonly version?: string;
       readonly loginRequired?: boolean;
       /** `data` of the agent's "Internal error" response to `session/new`. */
       readonly newSessionErrorData?: unknown;
@@ -91,15 +97,17 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     } = {},
   ) {
     const directory = path.join(root, name);
-    const executablePath = path.join(directory, "agy_acp_server.par");
-    const harnessPath = path.join(directory, "localharness_external");
+    const executablePath = path.join(directory, "agy");
     yield* fs.makeDirectory(directory, { recursive: true });
     const authorizationUrl =
       "https://accounts.google.com/o/oauth2/v2/auth?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A51234%2F&state=fixture-state";
+    const version = options.version ?? "1.5.13";
     yield* fs.writeFileString(
       executablePath,
       [
         "#!/bin/sh",
+        `if [ "$1" = "--version" ]; then printf '%s\\n' ${shellQuote(version)}; exit 0; fi`,
+        `printf '%s\\n' ${shellQuote(name)} >> ${shellQuote(runLog)}`,
         ...(options.loginRequired
           ? [`printf '%s\\n' ${shellQuote(ANTIGRAVITY_AUTH_STDOUT_PREFIX + authorizationUrl)}`]
           : []),
@@ -115,28 +123,21 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
         "",
       ].join("\n"),
     );
-    yield* fs.writeFileString(harnessPath, "#!/bin/sh\nexit 99\n");
     yield* fs.chmod(executablePath, 0o755);
-    yield* fs.chmod(harnessPath, 0o755);
-    return {
-      executablePath,
-      harnessPath,
-      source: "managed",
-      version: name,
-      managedVersionDirectory: directory,
-    } satisfies AntigravityInstallation.AntigravityExecutable;
+    return { name, version, executablePath };
   });
+  type Executable = Effect.Success<ReturnType<typeof makeExecutable>>;
+
+  /** Removes `agy` from the instance PATH, as before Orbit installs it. */
+  const removeCli = fs.remove(agyOnPath, { force: true });
+  /** Re-points `agy` on the instance PATH, as an Orbit install or update does. */
+  const use = (executable: Executable) =>
+    removeCli.pipe(Effect.andThen(fs.symlink(executable.executablePath, agyOnPath)));
 
   const first = yield* makeExecutable("runtime 'one");
   const second = yield* makeExecutable("runtime two");
   const signedOut = yield* makeExecutable("runtime signed-out", { loginRequired: true });
-  const controls: {
-    selected: AntigravityInstallation.AntigravityExecutable;
-    failResolution: boolean;
-    beforeAcquire: Effect.Effect<void>;
-  } = { selected: first, failResolution: false, beforeAcquire: Effect.void };
-  const acquisitions: Array<{ binaryPath: string | undefined; path: string | undefined }> = [];
-  const releases: Array<string | null> = [];
+  yield* use(first);
   const launches: Array<{
     command: string;
     args: ReadonlyArray<string>;
@@ -147,42 +148,10 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     harnessPath: string | undefined;
     forceFileStorage: string | undefined;
     credentialKeys: ReadonlyArray<string>;
-    geminiApiKey: string | undefined;
     tempDirectory: string | undefined;
     handle: ChildProcessSpawner.ChildProcessHandle;
   }> = [];
 
-  const layerInstallation = Layer.mock(AntigravityInstallation.AntigravityInstallation)({
-    managedDirectory: root,
-    resolve: () =>
-      Effect.gen(function* () {
-        if (controls.failResolution) {
-          return yield* new AntigravityInstallation.AntigravityInstallationError({
-            operation: "resolve",
-            detail: "Fixture resolution failed.",
-          });
-        }
-        return controls.selected;
-      }),
-    acquire: (binaryPath, environment) =>
-      Effect.gen(function* () {
-        acquisitions.push({ binaryPath, path: environment?.PATH });
-        yield* controls.beforeAcquire;
-        if (controls.failResolution) {
-          return yield* new AntigravityInstallation.AntigravityInstallationError({
-            operation: "resolve",
-            detail: "Fixture resolution failed.",
-          });
-        }
-        const selected = controls.selected;
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            releases.push(selected.version);
-          }),
-        );
-        return selected;
-      }),
-  });
   const observedSpawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
       if (command._tag !== "StandardCommand")
@@ -193,9 +162,10 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
         const value = environment[name];
         return Redacted.isRedacted(value) ? Redacted.value(value) : value;
       };
+      const args = command.args.map(String);
       launches.push({
         command: command.command,
-        args: command.args.map(String),
+        args,
         cwd: command.options.cwd,
         extendEnv: command.options.extendEnv,
         environment: Object.fromEntries(Object.keys(environment).map((name) => [name, env(name)])),
@@ -205,9 +175,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
         credentialKeys: Object.keys(environment).filter((key) =>
           blockedCredentialKeys.has(key.toUpperCase()),
         ),
-        geminiApiKey: env("GEMINI_API_KEY"),
-        tempDirectory:
-          environment.ANTIGRAVITY_HARNESS_PATH === undefined ? undefined : env("TMPDIR"),
+        tempDirectory: args[0] === "acp" ? env("TMPDIR") : undefined,
         handle,
       });
       return handle;
@@ -231,19 +199,21 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       { name: "BROWSER", value: "must-not-run" },
       ...(options.environment ?? []),
     ].map((variable) => ({ ...variable, sensitive: false })),
-  }).pipe(
-    Effect.provide(layerInstallation),
-    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, observedSpawner),
-  );
+  }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, observedSpawner));
   const refresh = instance.refreshModels;
   if (!refresh) return yield* Effect.die("Antigravity does not expose model refresh.");
-  const readRequests = Effect.gen(function* () {
-    if (!(yield* fs.exists(requestLog))) return [];
-    const text = yield* fs.readFileString(requestLog);
-    return yield* Effect.forEach(text.split(/\r?\n/u).filter(Boolean), (line) =>
-      decodeRequest(line),
-    );
-  });
+  const readLines = (file: string) =>
+    Effect.gen(function* () {
+      if (!(yield* fs.exists(file))) return [];
+      return (yield* fs.readFileString(file)).split(/\r?\n/u).filter(Boolean);
+    });
+  const readRequests = readLines(requestLog).pipe(
+    Effect.flatMap((lines) => Effect.forEach(lines, (line) => decodeRequest(line))),
+  );
+  /** Runtime names of the agents started so far, in order. */
+  const readRuns = readLines(runLog);
+  /** ACP agent starts; `agy --version` checks are left out. */
+  const agentLaunches = () => launches.filter((launch) => launch.args[0] === "acp");
   const assertClosed = Effect.gen(function* () {
     for (const launch of launches) {
       yield* launch.handle.exitCode.pipe(Effect.ignore);
@@ -256,6 +226,9 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     instance,
     refresh,
     makeExecutable,
+    use,
+    removeCli,
+    agyOnPath,
     fs,
     path,
     profileDirectory,
@@ -264,11 +237,10 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     first,
     second,
     signedOut,
-    controls,
-    acquisitions,
-    releases,
     launches,
+    agentLaunches,
     readRequests,
+    readRuns,
     assertClosed,
   };
 });
@@ -322,33 +294,34 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         expect(snapshot.models.every((model) => model.isLegacy !== true)).toBe(true);
         expect(snapshot.slashCommands.map((command) => command.name)).toEqual(["plan", "logout"]);
         expect(snapshot.supportsTextGeneration).toBe(true);
-        h.controls.selected = h.second;
+        yield* h.use(h.second);
         yield* h.refresh();
 
-        expect(h.acquisitions).toEqual([
-          { binaryPath: "", path: h.instancePath },
-          { binaryPath: "", path: h.instancePath },
-        ]);
-        const nativeLaunches = h.launches.filter((launch) => launch.harnessPath !== undefined);
-        expect(nativeLaunches.map((launch) => launch.command)).toEqual([
-          h.first.executablePath,
-          h.second.executablePath,
-        ]);
-        expect(nativeLaunches.map((launch) => launch.harnessPath)).toEqual([
-          h.first.harnessPath,
-          h.second.harnessPath,
-        ]);
-        for (const launch of nativeLaunches) {
+        // `agy` is looked up on the instance PATH before every start, so the new build runs.
+        expect(yield* h.readRuns).toEqual([h.first.name, h.second.name]);
+        const versionChecks = h.launches.filter((launch) => launch.args[0] === "--version");
+        expect(versionChecks.length).toBeGreaterThan(0);
+        for (const launch of versionChecks) {
+          expect(launch.command).toBe(h.agyOnPath);
+          expect(launch.environment.PATH).toBe(h.instancePath);
+        }
+        const agentLaunches = h.agentLaunches();
+        expect(agentLaunches).toHaveLength(2);
+        for (const launch of agentLaunches) {
+          expect(launch.command).toBe(h.agyOnPath);
           expect(launch.args).toEqual([
-            ...(hostPlatform === "linux" ? ["--uid="] : []),
-            "--alsologtostderr",
+            "acp",
+            "--gemini-dir",
+            h.profileDirectory,
+            "--app-data-dir",
+            "antigravity-acp",
           ]);
           expect(launch.profileDirectory).toBe(h.profileDirectory);
+          expect(launch.harnessPath).toBeUndefined();
           expect(launch.forceFileStorage).toBe("1");
           expect(launch.extendEnv).toBe(false);
+          expect(launch.credentialKeys).toEqual([]);
         }
-        for (const launch of h.launches) expect(launch.credentialKeys).toEqual([]);
-        expect(h.releases).toEqual([h.first.version, h.second.version]);
         const requests = yield* h.readRequests;
         expect(requests.map((request) => request.method)).toEqual([
           "initialize",
@@ -415,10 +388,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         ]);
 
         // The agy CLI rejects `yolo` and `auto_edit`; it stays in `default` and T3 answers its requests.
-        h.controls.selected = {
-          ...(yield* h.makeExecutable("runtime cli", { initialMode: "auto_edit" })),
-          harnessPath: null,
-        };
+        yield* h.use(yield* h.makeExecutable("runtime cli", { initialMode: "auto_edit" }));
         for (const runtimeMode of ["full-access", "auto-accept-edits"] as const) {
           const requestsBefore = (yield* h.readRequests).length;
           const cliThreadId = ThreadId.make(`thread-antigravity-cli-${runtimeMode}`);
@@ -438,7 +408,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
             modelSelection,
             runtimePolicy: cliPolicy,
           });
-          expect(h.launches.at(-1)?.args).toEqual([
+          expect(h.agentLaunches().at(-1)?.args).toEqual([
             "acp",
             "--gemini-dir",
             h.profileDirectory,
@@ -509,9 +479,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
 
         // Gemini Enterprise can strip the native MCP servers, and the documented `acp-mcp-call`
         // fallback reads these from the shell.
-        const agentLaunches = h.launches.filter(
-          (launch) => launch.command === h.first.executablePath,
-        );
+        const agentLaunches = h.agentLaunches();
         expect(agentLaunches).toHaveLength(2);
         expect(agentLaunches[1]?.environment).toMatchObject({
           T3CODE_THREAD_ID: threadId,
@@ -538,7 +506,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
       Effect.gen(function* () {
         const h = yield* makeHarness();
         yield* h.refresh();
-        h.controls.selected = h.signedOut;
+        yield* h.use(h.signedOut);
         const error = yield* h.refresh().pipe(Effect.flip);
         expect(error.detail).toContain("Sign in to Antigravity");
         const snapshot = yield* h.instance.snapshot.getSnapshot;
@@ -546,27 +514,55 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         expect(snapshot.models).toEqual([]);
         expect(snapshot.slashCommands).toEqual([]);
         expect(snapshot.supportsTextGeneration).toBe(false);
-        expect(h.acquisitions).toHaveLength(2);
-        expect(h.releases).toEqual([h.first.version, h.signedOut.version]);
+        expect(yield* h.readRuns).toEqual([h.first.name, h.signedOut.name]);
         yield* h.assertClosed;
       }),
   );
 
-  it.effect.skipIf(windowsHost)("keeps the previous catalog when executable resolution fails", () =>
+  it.effect.skipIf(windowsHost)("keeps the previous catalog when agy is not on PATH", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
       yield* h.refresh();
       const before = yield* h.instance.snapshot.getSnapshot;
-      h.controls.failResolution = true;
+      yield* h.removeCli;
+      // PATH lookups are cached for 30 seconds.
+      yield* TestClock.adjust("31 seconds");
       const error = yield* h.refresh().pipe(Effect.flip);
       expect(error.detail).toContain("previous model list is unchanged");
+      expect(error.cause).toMatchObject({
+        _tag: "ProviderSetupError",
+        operation: "resolve",
+        detail: "Antigravity (agy) is not installed on this environment's PATH. Orbit installs it.",
+      });
       const after = yield* h.instance.snapshot.getSnapshot;
       expect(after.models).toEqual(before.models);
       expect(after.auth).toEqual(before.auth);
-      expect(h.acquisitions).toHaveLength(2);
-      expect(h.releases).toEqual([h.first.version]);
+      expect(h.agentLaunches()).toHaveLength(1);
       yield* h.assertClosed;
     }),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "publishes the version of the agy on PATH at every health check",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        expect((yield* h.instance.snapshot.refresh).version).toBe("1.5.13");
+        // Orbit updates agy in place on PATH; the next check reports the new build.
+        yield* h.use(yield* h.makeExecutable("runtime updated", { version: "1.6.0" }));
+        const updated = yield* h.instance.snapshot.refresh;
+        expect(updated.version).toBe("1.6.0");
+        expect(updated.installed).toBe(true);
+        yield* h.removeCli;
+        // PATH lookups are cached for 30 seconds.
+        yield* TestClock.adjust("31 seconds");
+        const missing = yield* h.instance.snapshot.refresh;
+        expect(missing.version).toBeNull();
+        expect(missing.installed).toBe(false);
+        // The health check only asks `agy --version`; it never starts the agent.
+        expect(h.agentLaunches()).toEqual([]);
+        yield* h.assertClosed;
+      }),
   );
 
   it.effect.skipIf(windowsHost)(
@@ -576,9 +572,11 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         const h = yield* makeHarness();
         yield* h.refresh();
         const before = yield* h.instance.snapshot.getSnapshot;
-        h.controls.selected = yield* h.makeExecutable("runtime socks", {
-          newSessionErrorData: { details: "python-socks is required to use a SOCKS proxy" },
-        });
+        yield* h.use(
+          yield* h.makeExecutable("runtime socks", {
+            newSessionErrorData: { details: "python-socks is required to use a SOCKS proxy" },
+          }),
+        );
         const error = yield* h.refresh().pipe(Effect.flip);
         expect(error.detail).toBe(
           "Could not refresh Antigravity models. The previous model list is unchanged. Antigravity reported: python-socks is required to use a SOCKS proxy",
@@ -600,11 +598,13 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         const generic =
           "Could not refresh Antigravity models. The previous model list is unchanged.";
         const secret = "https://accounts.example.test/o/oauth2?code=sk-secret-123";
-        h.controls.selected = yield* h.makeExecutable("runtime socks with extra", {
-          newSessionErrorData: {
-            details: `Traceback (most recent call last):\n  proxy ${secret}\npython-socks is required to use a SOCKS proxy`,
-          },
-        });
+        yield* h.use(
+          yield* h.makeExecutable("runtime socks with extra", {
+            newSessionErrorData: {
+              details: `Traceback (most recent call last):\n  proxy ${secret}\npython-socks is required to use a SOCKS proxy`,
+            },
+          }),
+        );
         const known = yield* h.refresh().pipe(Effect.flip);
         expect(known.detail).toBe(
           `${generic} Antigravity reported: python-socks is required to use a SOCKS proxy`,
@@ -615,7 +615,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           ["runtime object details", { details: { stack: "secret frame", env: { HOME: "/" } } }],
           ["runtime no details", ["python-socks is required to use a SOCKS proxy"]],
         ] as const) {
-          h.controls.selected = yield* h.makeExecutable(name, { newSessionErrorData: data });
+          yield* h.use(yield* h.makeExecutable(name, { newSessionErrorData: data }));
           const error = yield* h.refresh().pipe(Effect.flip);
           expect(error.detail).toBe(generic);
         }
@@ -651,15 +651,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           enabled: false,
           config: AntigravityDriver.defaultConfig(),
           environment: [],
-        }).pipe(
-          Effect.provide(
-            Layer.mock(AntigravityInstallation.AntigravityInstallation)({
-              managedDirectory: config.stateDir,
-              resolve: () => Effect.die("unused"),
-              acquire: () => Effect.die("unused"),
-            }),
-          ),
-        );
+        });
         expect(yield* fs.exists(directories.runtimeTemp)).toBe(false);
         expect(yield* fs.exists(legacyRoot)).toBe(false);
       }),

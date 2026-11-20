@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-// Provider sign-in and install (`provider.auth.*`, `provider.install.*`) on the T3 server and
-// the Conn Server, call by call.
+// Provider sign-in (`provider.auth.*`) on the T3 server and the Conn Server, call by call.
 //
 //   node crates/conn-server/tools/provider-auth-diff.mjs [--keep] <conn-server>
 //
@@ -237,13 +236,9 @@ const CALLS = [
   ["provider.auth.removeMethod", { methodId: "chatgpt" }],
   ["provider.auth.logout", {}],
   ["provider.auth.subscribe", {}],
-  // Install: T3 installs only for a managed Codex (or Antigravity), so every instance here
-  // gets `requireInstance`'s error. A managed Codex is checked in effect-client.mjs: T3's
-  // side would check its version against the download manifest.
-  ["provider.install.start", {}],
-  ["provider.install.cancel", { operationId: "op-1" }],
-  ["provider.install.remove", {}],
-  ["provider.install.subscribe", {}],
+  // Install (`provider.install.*`) is not compared: neither server serves it, by decision
+  // (Nick, 2026-11-20; Orbit installs and updates provider CLIs). effect-client.mjs checks
+  // that the Conn Server answers it as an unsupported method.
 ];
 
 /** The reply as the client decodes it: a value, the first stream item, or the typed error. */

@@ -1,8 +1,4 @@
-import type {
-  ServerProvider,
-  ServerProviderVersionAdvisory,
-  ServerProviderCompatibilityAdvisory,
-} from "@t3tools/contracts";
+import type { ServerProvider, ServerProviderCompatibilityAdvisory } from "@t3tools/contracts";
 import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "../../i18n/messages";
@@ -147,68 +143,26 @@ const COMPATIBILITY_TITLES = {
   broken: msg("Known broken version"),
 } as const;
 
-export function getProviderVersionAdvisoryPresentation(
-  advisory: ServerProviderVersionAdvisory | undefined,
-  compatibility?: ServerProviderCompatibilityAdvisory | undefined,
-  showCompatibility = true,
+/** One quiet line for a version Orbit should change; it never blocks or replaces status. */
+export function getProviderCompatibilityNote(
+  compatibility: ServerProviderCompatibilityAdvisory | undefined,
   resolve: MessageResolver = m,
-): {
-  readonly title: string;
-  readonly detail: string;
-  readonly updateCommand: string | null;
-  readonly emphasis: "normal" | "strong";
-  readonly targetVersion: string | null;
-} | null {
-  const latestIsIncompatible =
-    compatibility?.latestVersionStatus === "broken" ||
-    compatibility?.latestVersionStatus === "unsupported";
+): string | null {
   if (
-    showCompatibility &&
-    compatibility &&
-    (compatibility.status === "graceful" ||
-      compatibility.status === "unsupported" ||
-      compatibility.status === "broken")
-  ) {
-    const targetVersion = compatibility.recommendedVersion;
-    const recommendation = getProviderVersionLabel(targetVersion) ?? compatibility.recommendedRange;
-    // Latest package versions cannot be updated into recommendations requiring another package.
-    const isAlreadyLatest = advisory?.status === "current";
-    return {
-      title: resolve(COMPATIBILITY_TITLES[compatibility.status]),
-      detail:
-        compatibility.message ??
-        (recommendation
-          ? resolve(msg("Use {version} for full support.", { version: recommendation }))
-          : resolve(msg("Update for full support."))),
-      updateCommand:
-        targetVersion || latestIsIncompatible || isAlreadyLatest
-          ? null
-          : (advisory?.updateCommand ?? null),
-      emphasis: compatibility.status === "graceful" ? "normal" : "strong",
-      targetVersion,
-    };
-  }
-  if (
-    !advisory ||
-    advisory.status === "current" ||
-    advisory.status === "unknown" ||
-    latestIsIncompatible
+    !compatibility ||
+    (compatibility.status !== "graceful" &&
+      compatibility.status !== "unsupported" &&
+      compatibility.status !== "broken")
   ) {
     return null;
   }
-
-  const version = advisory.latestVersion;
-  const versionLabel = getProviderVersionLabel(version);
-
-  return {
-    title: resolve(msg("Update available")),
-    detail:
-      advisory.message ??
-      (versionLabel
-        ? resolve(msg("Update available: install {version}.", { version: versionLabel }))
-        : resolve(msg("Update available: install the latest provider version."))),
-    updateCommand: advisory.updateCommand,
-    emphasis: "normal" as const,
-    targetVersion: null,
-  };
+  const recommendation =
+    getProviderVersionLabel(compatibility.recommendedVersion) ?? compatibility.recommendedRange;
+  const detail =
+    compatibility.message ??
+    (recommendation
+      ? resolve(msg("Use {version} for full support.", { version: recommendation }))
+      : null);
+  const title = resolve(COMPATIBILITY_TITLES[compatibility.status]);
+  return detail ? `${title} · ${detail}` : title;
 }

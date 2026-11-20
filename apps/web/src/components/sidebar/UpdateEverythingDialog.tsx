@@ -45,7 +45,6 @@ interface UpdateEverythingDialogProps {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly version: string | null;
-  readonly providerCount: number;
   readonly rows: ReadonlyArray<UpdateEverythingRow>;
   readonly restarts: ReadonlyArray<RestartingMachine>;
   readonly onConfirm: () => void;
@@ -57,8 +56,6 @@ interface UpdateEverythingDialogProps {
   readonly disabledReason?: string | null;
   /** The confirmed work is starting; it cannot be cancelled from here. */
   readonly busy?: boolean;
-  /** Machines are still looking for provider updates, so more rows can appear. */
-  readonly checking?: boolean;
 }
 
 type UpdateEverythingDialogContentProps = Omit<
@@ -96,7 +93,6 @@ const APP_LABELS = {
 
 function UpdateEverythingDialogContent({
   version,
-  providerCount,
   rows,
   restarts,
   onConfirm,
@@ -106,7 +102,6 @@ function UpdateEverythingDialogContent({
   notes = [],
   disabledReason = null,
   busy = false,
-  checking = false,
 }: UpdateEverythingDialogContentProps) {
   const gt = useGT();
   const m = useMessages();
@@ -128,7 +123,7 @@ function UpdateEverythingDialogContent({
   );
   const running = stopped + continuing;
   const restarting = new Set(restarts.map((machine) => machine.environmentId));
-  const updating = rows.filter((row) => row.app !== null || row.providers.length > 0);
+  const updating = rows.filter((row) => row.app !== null);
   const skipped = rows.filter((row) => row.skipped !== null);
 
   return (
@@ -146,16 +141,6 @@ function UpdateEverythingDialogContent({
               {appName()} <span className="font-mono text-xs">{version}</span>
             </>
           ) : null}
-          {version !== null && providerCount > 0 ? " · " : null}
-          {providerCount > 0
-            ? gt(
-                "{count, plural, one {{count} provider update} other {{count} provider updates}}",
-                { count: providerCount },
-              )
-            : null}
-          {checking
-            ? `${version !== null || providerCount > 0 ? " · " : ""}${gt("Checking for more…")}`
-            : null}
         </AlertDialogDescription>
       </AlertDialogHeader>
       <ScrollArea scrollFade>
@@ -165,10 +150,9 @@ function UpdateEverythingDialogContent({
               {note}
             </p>
           ))}
-          {/* Machine names truncate first. Provider lists wrap between names, never inside one. */}
           <div
             role="table"
-            className="grid grid-cols-[minmax(4rem,max-content)_max-content_minmax(min-content,1fr)_max-content] gap-x-4 text-sm"
+            className="grid grid-cols-[minmax(4rem,max-content)_minmax(min-content,1fr)_max-content] gap-x-4 text-sm"
           >
             <div
               role="row"
@@ -178,9 +162,6 @@ function UpdateEverythingDialogContent({
                 <T>Machine</T>
               </span>
               <span role="columnheader">{appName()}</span>
-              <span role="columnheader">
-                <T>Providers</T>
-              </span>
               <span role="columnheader" />
             </div>
             {updating.map((row) => (
@@ -205,14 +186,6 @@ function UpdateEverythingDialogContent({
                       <T>restarts last</T>
                     </span>
                   ) : null}
-                </span>
-                <span role="cell">
-                  {row.providers.map((provider, index) => (
-                    <Fragment key={provider}>
-                      <span className="whitespace-nowrap">{provider}</span>
-                      {index < row.providers.length - 1 ? ", " : null}
-                    </Fragment>
-                  ))}
                 </span>
                 <span role="cell" className="text-right">
                   {row.environmentId !== null && restarting.has(row.environmentId) ? (

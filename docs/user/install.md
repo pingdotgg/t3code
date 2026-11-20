@@ -191,9 +191,9 @@ before sharing.
 ## Providers
 
 Open **Settings → Providers** in the web or desktop app, select the environment,
-and enable the provider you want. Installation, login, and configuration belong
-to that environment's machine, even when you connect from a phone or another
-computer.
+and enable the provider you want. Login and configuration belong to that
+environment's machine, even when you connect from a phone or another computer.
+Orbit installs the CLIs listed below; the install links are for reference.
 
 | Provider    | Install and authenticate                                                                                                                                  |
 | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -203,40 +203,23 @@ computer.
 | Grok Build  | Install [Grok Build CLI](https://x.ai/cli), then run `grok login`.                                                                                        |
 | Kiro        | Install [Kiro CLI](https://kiro.dev/docs/cli/), then run `kiro-cli login`.                                                                                |
 | OpenCode    | Install [OpenCode](https://opencode.ai), then run `opencode auth login`.                                                                                  |
-| Antigravity | Install and sign in with Google from T3 Code's provider settings.                                                                                         |
+| Antigravity | Orbit installs the Antigravity CLI; sign in with Google from T3 Code's provider settings.                                                                 |
 | Pi          | Install [Pi](./providers-pi.md#set-up-pi) with Node.js 22.19 or newer, then run `pi` and `/login`.                                                        |
 | Muse Code   | Install [Muse Code](https://dev.meta.ai/docs/muse-code) on the server, run `muse login`, then enable it in Settings → Providers.                          |
 | fx          | Install [fx](https://fx.sh) with `curl -fsSL https://fx.sh/setup.sh \| bash`, then run `fx login`.                                                        |
 
+Orbit installs and updates every provider CLI on an environment. T3 Code finds
+each CLI on that environment's `PATH`, shows its version in **Settings → Providers**,
+and never installs, updates, or removes one.
+
 Provider CLIs must be on the server's `PATH`. If T3 Code cannot find one, set its
 **Binary path** in provider settings, especially when using a version manager.
 Cursor's executable is `cursor-agent`, although its login command is
-`agent login`. Codex connected through ChatGPT and Antigravity can use their
-managed runtimes without a `PATH` entry.
+`agent login`.
 
-T3 Code warns when a provider version has known compatibility problems with your
-release. Check **Settings → Providers** on that environment for the recommended
-version or range. When its package manager supports installing a specific version,
-you can install the recommendation there. Otherwise use the provider's installer
-on the environment's machine. An unlisted version is unverified.
-
-When a provider CLI is behind its latest release, its provider card shows the
-available version. **Update now** runs the installer that owns the CLI
-(Homebrew, mise, or a global npm, pnpm, Yarn, Bun, Volta, or Vite+ install), or
-the CLI's own update command when T3 Code cannot tell. Claude, Codex, and
-OpenCode installs T3 Code cannot identify stay manual: update them through the
-installer you used. T3 Code runs `mise upgrade`
-only for a tool your mise config requests as `latest` when the provider's binary
-path is a mise shim or under the tool's `installs/<tool>/latest` link; update a
-pinned version, or a path into one version's directory, through mise yourself.
-Update a CLI installed with Nix through Nix.
-Cursor and Antigravity update with T3 Code. Homebrew and Chocolatey installs
-compare against the version their package manager offers, which can trail the
-npm release; update Claude installed with Chocolatey through Chocolatey.
-
-The managed runtimes for Antigravity and for Codex connected through ChatGPT
-first install the release T3 Code tested. When T3 Code finds a newer compatible
-release, their setup in **Settings → Providers** offers an update.
+T3 Code shows a short note when a provider version has known compatibility
+problems with your release. The note never blocks the provider; Orbit decides
+which version runs.
 
 Add another provider instance for a separate account or configuration. Each
 instance can have its own environment variables, such as API keys or a custom

@@ -300,7 +300,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         status: "disabled",
         auth: { status: "unknown" },
         models: [],
-        setup: { canAuthenticate: true, canInstall: true },
+        setup: { canAuthenticate: true, canInstall: false },
         showInteractionModeToggle: false,
         supportsConversationRollback: true,
         supportsTextGeneration: false,
@@ -484,7 +484,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
     }),
   );
 
-  it.effect("does not replace a handshake version with an unknown custom-launcher probe", () =>
+  it.effect("clears an earlier version when the binary on PATH reports none", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
       yield* harness.initialize;
@@ -502,7 +502,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           agentInfo: { ...initializeResult.agentInfo, version: "unknown" },
         }),
       );
-      expect((yield* harness.provider.snapshot.refresh).version).toBe("1.4.0");
+      expect((yield* harness.provider.snapshot.refresh).version).toBeNull();
     }),
   );
 

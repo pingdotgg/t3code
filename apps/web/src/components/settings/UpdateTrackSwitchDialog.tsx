@@ -207,7 +207,6 @@ function SwitchPlan({
       onOpenChange={(open) => !open && !checking && onClose()}
       title={gt("Switch to {label}?", { label })}
       version={release.version}
-      providerCount={0}
       rows={everything.rows}
       notes={[
         ...(idle.note === null ? [] : [idle.note]),

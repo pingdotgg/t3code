@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - checks the host's default Codex directory without writing to it.
+import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Stream from "effect/Stream";
@@ -19,7 +20,6 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ServerConfig from "../config.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import * as CodexInstallation from "./CodexInstallation.ts";
 import { makeCodexManagedRuntime } from "./CodexManagedRuntime.ts";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
 import { codexAppServerArgs } from "./codexLaunchArgs.ts";
@@ -29,13 +29,9 @@ const decodeSettings = Schema.decodeSync(CodexSettings);
 const decodeCommand = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.Array(Schema.String)])),
 );
-it.live.each(
-  (["managed", "local"] as const).flatMap((source) =>
-    (["primary", "additional"] as const).map((account) => ({ source, account })),
-  ),
-)(
-  "$source Codex $account account shares home state without routing owned tokens through ambient CLI overrides",
-  ({ source, account }) =>
+it.live.each((["primary", "additional"] as const).map((account) => ({ account })))(
+  "managed Codex $account account runs codex from PATH and shares home state without routing owned tokens through ambient CLI overrides",
+  ({ account }) =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make(
         account === "primary" ? "codex" : "codex-personal",
@@ -60,28 +56,10 @@ it.live.each(
         create: () => Effect.die("unused"),
         getOrCreateRandom: () => Effect.die("unused"),
       });
-      let leases = 0;
-      const executable = {
-        executablePath:
-          source === "managed" ? "/isolated/tools/codex/0.156.1/bin/codex" : "/user/bin/codex",
-        managedVersionDirectory: source === "managed" ? "/isolated/tools/codex/0.156.1" : null,
-        source,
-        version: "0.156.1",
-      };
-      const layerInstaller = Layer.mock(CodexInstallation.CodexInstallation)({
-        managedDirectory: "/isolated/tools/codex",
-        resolve: () => Effect.succeed(executable),
-        acquire: () =>
-          Effect.gen(function* () {
-            leases++;
-            yield* Effect.addFinalizer(() =>
-              Effect.sync(() => {
-                leases--;
-              }),
-            );
-            return executable;
-          }),
-      });
+      const binDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "codex-path-" });
+      const codexOnPath = path.join(binDirectory, "codex");
+      yield* fs.writeFileString(codexOnPath, "#!/bin/sh\necho 'codex-cli 0.156.1'\n");
+      yield* fs.chmod(codexOnPath, 0o755);
       yield* Effect.gen(function* () {
         const store = yield* ProviderCredentialStore.make("codex-chatgpt", instanceId);
         const json = yield* encodeJson({
@@ -103,7 +81,7 @@ it.live.each(
           OPENAI_API_KEY: "dummy-global-key",
           OPENAI_BASE_URL: "https://user-proxy.test",
           T3CODE_CODEX_LAUNCH_ARGS: "--config model_provider=global-proxy",
-          PATH: hostEnv.PATH,
+          PATH: `${binDirectory}${NodePath.delimiter}${hostEnv.PATH ?? ""}`,
           SystemRoot: hostEnv.SystemRoot,
         };
         const runtime = yield* makeCodexManagedRuntime({
@@ -114,8 +92,10 @@ it.live.each(
         });
         yield* Effect.gen(function* () {
           const effective = yield* runtime.resolve;
-          assert.strictEqual(leases, 1);
-          assert.strictEqual(effective.config.binaryPath, executable.executablePath);
+          assert.strictEqual(
+            yield* fs.realPath(effective.config.binaryPath),
+            yield* fs.realPath(codexOnPath),
+          );
           assert.notStrictEqual(effective.config.homePath, ambient.CODEX_HOME);
           assert.equal(runtime.homeLayout.sharedHomePath, sharedHome);
           if (account === "primary") {
@@ -150,7 +130,7 @@ it.live.each(
           assert.include(provider, "refresh_interval_ms=0");
           // regression: #16132 Codex fetches each token through this helper, so a running
           // session picks up renewals instead of keeping the token it launched with.
-          if (source === "managed" && account === "primary") {
+          if (account === "primary") {
             const commandMatch = /auth=\{command=(.*),args=(\[.*\]),timeout_ms=/u.exec(provider);
             assert.isNotNull(commandMatch);
             const [command, helperArgs] = decodeCommand(
@@ -209,7 +189,6 @@ it.live.each(
           }
           assert.strictEqual(ambient.CODEX_HOME, "/user/.codex");
         }).pipe(Effect.scoped);
-        assert.strictEqual(leases, 0);
         yield* runtime.auth.controller.logout(Effect.void);
         assert.equal(
           yield* fs.readFileString(path.join(sharedHome, "auth.json")),
@@ -227,7 +206,6 @@ it.live.each(
             EnvironmentId.make("00000000-0000-4000-8000-000000000001"),
           ),
         }),
-        Effect.provide(layerInstaller),
         Effect.provideService(
           HttpClient.HttpClient,
           HttpClient.make((request) =>

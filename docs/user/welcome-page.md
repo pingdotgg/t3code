@@ -28,15 +28,13 @@ is found, it reads **Set up an agent** and opens by itself:
 
 - **Turn on** enables an agent that is off on this computer, including one only
   some projects use. T3 Code then checks whether it is installed and signed in.
-- For Claude Code, **Install** or **Sign in** opens a terminal with the correct
-  command ready to run. Install uses the vendor's own installer, which keeps
-  **Update now** working in Settings.
+- For Claude Code, **Sign in** opens a terminal with the login command ready to
+  run.
 - For Codex, **Set up** offers sign-in with your ChatGPT account or your own
-  Codex CLI. **Use existing CLI** opens the terminal to install or sign in, and
+  Codex CLI. **Use existing CLI** opens the terminal to sign in, and
   **Continue with ChatGPT** stays available until Codex is signed in.
-- When T3 Code knows an installed version does not work with it, **Update** opens
-  the agent in **Settings → Providers**, which shows the version to use and updates it
-  when it can.
+- An agent whose CLI is not on the computer's `PATH` says so. Orbit installs and
+  updates provider CLIs; T3 Code does not.
 - Other agents, and agents that could not load, open their page in
   **Settings → Providers**.
 - **Browse** opens the ACP Registry for more agents.

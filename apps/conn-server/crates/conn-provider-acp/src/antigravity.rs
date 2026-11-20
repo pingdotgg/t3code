@@ -414,6 +414,13 @@ fn version_triple(version: Option<&str>) -> Option<[u64; 3]> {
     Some([next(false)?, next(false)?, next(true)?])
 }
 
+/// The version in `agy --version` output (`1.5.13`): its first line, trimmed, when it starts
+/// with a version triple.
+pub(crate) fn cli_version(stdout: &str) -> Option<String> {
+    let line = stdout.lines().next()?.trim();
+    version_triple(Some(line)).map(|_| line.to_owned())
+}
+
 /// `antigravityClientInfo`: older releases offer non-Gemini models only to allowlisted
 /// clients such as Zed. The `agy` CLI found on `PATH` has no known version, so it is Zed.
 fn client_info(version: Option<&str>) -> (String, String) {
@@ -652,9 +659,11 @@ pub(crate) fn entry(
     entry.insert("models".into(), Value::Array(observed.models.clone()));
     entry.insert("slashCommands".into(), json!([]));
     entry.insert("skills".into(), json!([]));
+    // Orbit installs and updates every provider CLI and owns `PATH`; this server installs
+    // nothing (Nick, 2026-11-20). T3 says `canInstall: true` for its managed runtime.
     entry.insert(
         "setup".into(),
-        json!({"canAuthenticate": true, "canInstall": true}),
+        json!({"canAuthenticate": true, "canInstall": false}),
     );
     entry.insert("supportsConversationRollback".into(), json!(true));
     entry.insert("supportsTextGeneration".into(), json!(false));
@@ -674,14 +683,19 @@ pub(crate) fn entry(
     Value::Object(entry)
 }
 
-/// `checkAntigravityProvider` without a spawn (T3's probe never starts the agent: it unpacks
-/// about 1 GB per launch): the executable resolves and the sign-in is configured.
+/// `checkAntigravityProvider` without starting the agent (T3's probe never starts it: it
+/// unpacks about 1 GB per launch): the executable resolves and the sign-in is configured.
+/// `version` is what `<agy> --version` printed in this check ([`cli_version`]); it replaces
+/// the last one, so the version follows the binary on `PATH` when Orbit updates it. A missing
+/// executable or a failed `--version` leaves no version.
 pub(crate) fn check(
     settings: &AntigravitySettings,
     previous: &Observed,
     executable: Result<PathBuf, String>,
+    version: Option<String>,
 ) -> Observed {
     let mut next = previous.clone();
+    next.version = version.filter(|_| executable.is_ok());
     let error = match (&executable, settings.config_issue()) {
         (_, Some(issue)) => Some(issue.to_owned()),
         (Err(detail), None) => Some(detail.clone()),
@@ -823,6 +837,28 @@ mod tests {
             Ok(Some(("model".into(), "gemini-3.8-flash-high".into())))
         );
         assert!(model_switch(&s, "claude-x").is_err());
+    }
+
+    /// The version comes from this check's `--version`, never from an earlier one: a new
+    /// binary on `PATH` shows its own version, and a missing one shows none. The entry never
+    /// offers an install.
+    #[test]
+    fn version_follows_the_binary_on_path() {
+        let settings = AntigravitySettings::from_instance(Some(&json!({"enabled": true})));
+        let old = Observed {
+            version: Some("1.5.4".into()),
+            ..Observed::default()
+        };
+        let agy = || Ok(PathBuf::from("/usr/local/bin/agy"));
+        let next = check(&settings, &old, agy(), cli_version("1.5.13\n"));
+        assert_eq!(next.version.as_deref(), Some("1.5.13"));
+        assert_eq!(check(&settings, &old, agy(), None).version, None);
+        let missing = check(&settings, &old, Err("gone".into()), Some("1.5.13".into()));
+        assert_eq!(missing.version, None);
+        assert_eq!(cli_version("not a version"), None);
+        let entry = entry("antigravity", &settings, &next, "2026-11-20T00:00:00.000Z");
+        assert_eq!(entry["version"], "1.5.13");
+        assert_eq!(entry["setup"]["canInstall"], false);
     }
 
     #[test]

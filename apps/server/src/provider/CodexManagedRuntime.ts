@@ -3,12 +3,13 @@ import { CodexSettings, ProviderSetupError, type ProviderInstanceId } from "@t3t
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import { ChildProcessSpawner } from "effect/process";
 import * as Schema from "effect/Schema";
 import * as ServerConfig from "../config.ts";
 import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { resolveSelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
-import * as CodexInstallation from "./CodexInstallation.ts";
+import { resolveProviderCliOnPath, type ProviderCliOnPath } from "./providerCliOnPath.ts";
 import { makeCodexChatGptAuth } from "./CodexChatGptAuth.ts";
 import { COMMAND_TIMEOUT_MS } from "./CodexManagedTokenProtocol.ts";
 import { materializeCodexShadowHome } from "./Drivers/CodexHomeLayout.ts";
@@ -37,10 +38,10 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
   readonly environment: NodeJS.ProcessEnv;
   readonly config: CodexSettings;
 }) {
-  const installation = yield* CodexInstallation.CodexInstallation;
   const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const broker = yield* CodexManagedTokenBroker.CodexManagedTokenBroker;
   const environmentIdentity = yield* ServerEnvironment.ServerEnvironmentIdentity;
   const environmentId = yield* environmentIdentity.getEnvironmentId;
@@ -58,6 +59,21 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
     options.config,
   );
   const homePath = homeLayout.effectiveHomePath ?? homeLayout.sharedHomePath;
+  // Orbit installs and updates codex; managed Codex runs the one on PATH.
+  const resolveExecutable = resolveProviderCliOnPath("codex", options.environment).pipe(
+    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    Effect.provideService(FileSystem.FileSystem, fs),
+    Effect.provideService(Path.Path, path),
+    Effect.filterOrFail(
+      (found): found is ProviderCliOnPath => found !== null,
+      () =>
+        new ProviderSetupError({
+          instanceId: options.instanceId,
+          operation: "resolve",
+          detail: "Codex is not installed on this environment's PATH. Orbit installs it.",
+        }),
+    ),
+  );
   const resolve = Effect.gen(function* () {
     // Establish renewal availability before auth.access can consume a refresh token.
     const endpoint = yield* broker.endpoint.pipe(
@@ -72,16 +88,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
           }),
       ),
     );
-    const executable = yield* installation.acquire().pipe(
-      Effect.mapError(
-        () =>
-          new ProviderSetupError({
-            instanceId: options.instanceId,
-            operation: "install",
-            detail: "Set up managed Codex before starting a session.",
-          }),
-      ),
-    );
+    const executable = yield* resolveExecutable;
     const credentials = yield* auth.access;
     const profileKey = yield* auth.profileKey(credentials);
     const authArgs = selfInvocationArgs(invocation, [
@@ -134,5 +141,5 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
       revision: profileKey,
     } satisfies CodexEffectiveRuntime;
   });
-  return { auth, resolve, installation, homePath, homeLayout };
+  return { auth, resolve, resolveExecutable, homePath, homeLayout };
 });

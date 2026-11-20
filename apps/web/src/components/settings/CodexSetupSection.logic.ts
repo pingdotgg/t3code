@@ -1,8 +1,4 @@
-import type {
-  ChatGptHandoffState,
-  ProviderAuthState,
-  ProviderInstallState,
-} from "@t3tools/contracts";
+import type { ChatGptHandoffState, ProviderAuthState } from "@t3tools/contracts";
 
 export function readCodexSetupMode(config: unknown): "managed" | "existing" {
   return config !== null &&
@@ -11,26 +7,6 @@ export function readCodexSetupMode(config: unknown): "managed" | "existing" {
     config.setupMode === "managed"
     ? "managed"
     : "existing";
-}
-
-const RUNNING_INSTALL_PHASES = new Set(["downloading", "extracting", "verifying"]);
-
-/**
- * Whether the `started` install left a usable runtime; `undefined` until settled.
- * The subscription can still carry the previous operation's state when start
- * returns, so only a state with the same operation id settles a running install.
- */
-export function settleProviderInstall(
-  started: ProviderInstallState,
-  current: ProviderInstallState | null,
-): boolean | undefined {
-  const state = RUNNING_INSTALL_PHASES.has(started.phase)
-    ? current?.operationId === started.operationId
-      ? current
-      : null
-    : started;
-  if (state === null || RUNNING_INSTALL_PHASES.has(state.phase)) return undefined;
-  return state.phase !== "failed" && state.phase !== "cancelled" && state.installedVersion !== null;
 }
 
 /**
