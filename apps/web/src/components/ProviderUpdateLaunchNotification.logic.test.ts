@@ -274,6 +274,47 @@ describe("provider update launch notification logic", () => {
       title: "Claude v1.1.0 update failed",
     });
   });
+
+  it("does not count an already dismissed success again when another provider updates", () => {
+    const claudeUpdated = provider({
+      driver: driver("claudeAgent"),
+      version: "1.1.0",
+      latestVersion: "1.1.0",
+      advisoryStatus: "current",
+      updateState: {
+        status: "succeeded",
+        startedAt: checkedAt,
+        finishedAt: checkedAt,
+        message: "Provider updated.",
+        output: null,
+      },
+    });
+    const claudeView = getProviderUpdateSidebarPillView([claudeUpdated], {
+      visibleAfterIso: sessionStartedAt,
+    });
+    expect(claudeView).toMatchObject({ title: "Claude updated: v1.1.0" });
+
+    const codexView = getProviderUpdateSidebarPillView(
+      [
+        claudeUpdated,
+        provider({
+          driver: driver("codex"),
+          version: "1.2.0",
+          latestVersion: "1.2.0",
+          advisoryStatus: "current",
+          updateState: {
+            status: "succeeded",
+            startedAt: laterCheckedAt,
+            finishedAt: laterCheckedAt,
+            message: "Provider updated.",
+            output: null,
+          },
+        }),
+      ],
+      { visibleAfterIso: sessionStartedAt, dismissedKeys: new Set(claudeView?.dismissKeys) },
+    );
+    expect(codexView).toMatchObject({ tone: "success", title: "Codex updated: v1.2.0" });
+  });
 });
 
 it("does not offer incompatible latest versions and restores suggestions after policy relaxation", () => {
