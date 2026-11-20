@@ -1,3 +1,4 @@
+import { providerFailureTitle } from "@t3tools/shared/orchestrationV2ThreadError";
 import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
 import { WorkLogDetails, WorkLogRow } from "./WorkLog";
 import {
@@ -328,10 +329,11 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     const resetTime = resetAt
       ? `${formatUpcomingTimestamp(resetAt, timestampFormat, undefined, timeZone, m)} (${timeZone})`
       : null;
+    const title = providerFailureTitle(failureItem.failure.class, failureItem.failure.code, m);
     const label = warning
       ? resetTime
-        ? gt("Usage limit reached. Retry after {resetTime}.", { resetTime })
-        : gt("Usage limit reached.")
+        ? gt("{title}. Retry after {resetTime}.", { title, resetTime })
+        : gt("{title}.", { title })
       : workEntry.label;
     const retryRunId =
       failureItem.runId !== null &&
@@ -364,11 +366,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           />
         }
       >
-        {!warning ? (
-          <p className="ms-7 whitespace-pre-wrap break-words py-1 text-sm leading-relaxed text-foreground/80">
-            {failureItem.failure.message}
-          </p>
-        ) : null}
+        <p className="ms-7 whitespace-pre-wrap break-words py-1 text-sm leading-relaxed text-foreground/80">
+          {failureItem.failure.message}
+        </p>
         {retryRunId !== null && onRetryWorkspacePreparation ? (
           <div className="ms-7 pb-1">
             <Button

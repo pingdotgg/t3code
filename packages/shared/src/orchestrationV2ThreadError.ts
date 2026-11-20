@@ -4,6 +4,20 @@ import type {
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
+
+export function providerFailureTitle(
+  failureClass: OrchestrationV2ProviderFailure["class"] | null | undefined,
+  code: string | null | undefined,
+  resolve: MFunctionType = mFallback,
+): string {
+  if (failureClass !== "usage_limit") return resolve(msg("Provider error"));
+  // Codex's usage_limit retry exhaustion retains HTTP 429, but loses the upstream reason.
+  return code === "responseTooManyFailedAttempts"
+    ? resolve(msg("Provider rate limit (HTTP 429)"))
+    : resolve(msg("Usage limit reached"));
+}
 
 type ErrorTurnItem = Extract<OrchestrationV2TurnItem, { type: "error" }>;
 /** Only error items are read, so callers may pass items stripped of other fields. */

@@ -22,6 +22,7 @@ import type { ThreadRuntimeSummary } from "@t3tools/client-runtime/state/shell";
 import { deriveMessagesTimelineRows } from "./components/chat/MessagesTimeline.logic";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
+import { m as resolveEnglish, type MessageResolver } from "./i18n/messages";
 
 import {
   deriveCanInterruptRunningThread,
@@ -153,13 +154,42 @@ describe("V2 session presentation", () => {
       },
     } satisfies Extract<OrchestrationV2TurnItem, { readonly type: "error" }>;
 
-    expect(
-      providerErrorPresentation({
+    for (const [code, label] of [
+      ["responseTooManyFailedAttempts", "Provider rate limit (HTTP 429)"],
+      ["usageLimitExceeded", "Usage limit reached"],
+    ] as const) {
+      const failed = {
         ...retryItem,
-        status: "failed",
-        failure: { ...retryItem.failure, class: "usage_limit" },
-      }),
-    ).toMatchObject({ label: "Usage limit reached after 2/10 retries" });
+        status: "failed" as const,
+        title: "Usage limit reached",
+        failure: {
+          class: "usage_limit" as const,
+          code,
+          message: "exceeded retry limit, last status: 429 Too Many Requests",
+          retryable: null,
+        },
+      };
+      expect(providerErrorPresentation(failed)).toEqual({
+        label: `${label} after 2/10 retries`,
+        detail: failed.failure.message,
+      });
+      expect(providerErrorPresentation({ ...failed, retry: undefined })).toEqual({
+        label,
+        detail: failed.failure.message,
+      });
+      const translate: MessageResolver = (message, options) => {
+        const english = resolveEnglish(message, options);
+        return (
+          typeof english === "string" ? english.replace(label, "Translated failure") : english
+        ) as typeof english;
+      };
+      expect(providerErrorPresentation(failed, translate).label).toBe(
+        "Translated failure after 2/10 retries",
+      );
+      expect(providerErrorPresentation({ ...failed, retry: undefined }, translate).label).toBe(
+        "Translated failure",
+      );
+    }
     const recoveredLimit = {
       ...retryItem,
       status: "completed" as const,

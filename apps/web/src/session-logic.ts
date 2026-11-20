@@ -1,3 +1,4 @@
+import { providerFailureTitle } from "@t3tools/shared/orchestrationV2ThreadError";
 import type { ThreadStructureRuntime } from "@t3tools/client-runtime/state/shell";
 import { msg } from "gt-react";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
@@ -312,7 +313,7 @@ export function providerErrorPresentation(
     return {
       label:
         item.failure.class === "usage_limit"
-          ? resolve(msg("Usage limit reached"))
+          ? providerFailureTitle(item.failure.class, item.failure.code, resolve)
           : item.title?.trim() || resolve(msg("Provider error")),
       detail: item.failure.message,
     };
@@ -334,12 +335,19 @@ export function providerErrorPresentation(
           )
         : item.status === "failed"
           ? item.failure.class === "usage_limit"
-            ? resolve(
-                msg(
-                  "{attempt, plural, one {Usage limit reached after {progress} retries} other {Usage limit reached after {progress} retries}}",
-                ),
-                counts,
-              )
+            ? item.failure.code === "responseTooManyFailedAttempts"
+              ? resolve(
+                  msg(
+                    "{attempt, plural, one {Provider rate limit (HTTP 429) after {progress} retries} other {Provider rate limit (HTTP 429) after {progress} retries}}",
+                  ),
+                  counts,
+                )
+              : resolve(
+                  msg(
+                    "{attempt, plural, one {Usage limit reached after {progress} retries} other {Usage limit reached after {progress} retries}}",
+                  ),
+                  counts,
+                )
             : resolve(
                 msg(
                   "{attempt, plural, one {Provider error after {progress} retries} other {Provider error after {progress} retries}}",
