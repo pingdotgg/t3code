@@ -221,9 +221,19 @@ export interface OrbitTaskInsights {
     readonly tokensPerMergedPr: number | null;
   }>;
   /** Each day of the period, oldest first; empty for the 24-hour period. */
-  readonly daily: ReadonlyArray<{ readonly date: string; readonly merged: number }>;
+  readonly daily: ReadonlyArray<{
+    readonly date: string;
+    readonly merged: number;
+    /** The day's own numbers, by the same rules as `current`; null where Orbit reports none. */
+    readonly values: OrbitTaskInsightsSummary;
+  }>;
   /** Each hour of the 24-hour period, oldest first (ISO start of the hour); empty otherwise. */
-  readonly hourly: ReadonlyArray<{ readonly hour: string; readonly merged: number }>;
+  readonly hourly: ReadonlyArray<{
+    readonly hour: string;
+    readonly merged: number;
+    /** The hour's own numbers, by the same rules as `current`; null where Orbit reports none. */
+    readonly values: OrbitTaskInsightsSummary;
+  }>;
   readonly byModel: ReadonlyArray<OrbitTaskInsightsBreakdownRow>;
 }
 

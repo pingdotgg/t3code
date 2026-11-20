@@ -321,6 +321,20 @@ function insightsOf(period: "24h" | "7d" | "30d") {
   });
   const day = (offset: number) =>
     new Date(INSIGHTS_PERIOD_END - offset * 86_400_000).toISOString().slice(0, 10);
+  // A bucket's own numbers (Orbit 6112); a bucket without merges has no medians.
+  const bucket = (index: number, merged: number) => {
+    const wave = Math.sin(index / 2.5);
+    return {
+      tokens: merged === 0 ? null : Math.round(merged * (1_500_000 + wave * 300_000)),
+      tokens_per_merged_pr: merged === 0 ? null : Math.round(1_400_000 + wave * 250_000),
+      wasted_share: merged === 0 ? null : 0.15 + wave * 0.05,
+      lead_time_ms: merged === 0 ? null : Math.round((170 + wave * 40) * 60_000),
+      delivery_time_ms: merged === 0 ? null : Math.round((200 + wave * 45) * 60_000),
+      pr_first_pass: merged === 0 ? null : 0.6 + wave * 0.15,
+      pr_merge_wait_ms: merged === 0 ? null : Math.round((55 + wave * 20) * 60_000),
+      review_rounds: merged === 0 ? null : 1.4 + wave * 0.3,
+    };
+  };
   return {
     data: {
       period,
@@ -341,17 +355,26 @@ function insightsOf(period: "24h" | "7d" | "30d") {
       })),
       hourly:
         period === "24h"
-          ? Array.from({ length: 24 }, (_, index) => ({
-              hour: new Date(INSIGHTS_PERIOD_END - (24 - index) * 3_600_000).toISOString(),
-              merged: [0, 1, 0, 2, 1, 0][index % 6]!,
-              not_merged: index % 7 === 0 ? 1 : 0,
-            }))
+          ? Array.from({ length: 24 }, (_, index) => {
+              const merged = [0, 1, 0, 2, 1, 0][index % 6]!;
+              return {
+                hour: new Date(INSIGHTS_PERIOD_END - (24 - index) * 3_600_000).toISOString(),
+                merged,
+                not_merged: index % 7 === 0 ? 1 : 0,
+                ...bucket(index, merged),
+              };
+            })
           : [],
-      daily: Array.from({ length: period === "24h" ? 0 : days }, (_, index) => ({
-        date: day(days - index),
-        merged: [3, 5, 4, 2, 6, 4, 3, 1, 5, 7, 2, 4, 6, 3][index % 14]! + Math.floor(index / 10),
-        not_merged: index % 4 === 0 ? 1 : 0,
-      })),
+      daily: Array.from({ length: period === "24h" ? 0 : days }, (_, index) => {
+        const merged =
+          [3, 5, 4, 2, 6, 4, 3, 1, 5, 7, 2, 4, 6, 3][index % 14]! + Math.floor(index / 10);
+        return {
+          date: day(days - index),
+          merged,
+          not_merged: index % 4 === 0 ? 1 : 0,
+          ...bucket(index, merged),
+        };
+      }),
       breakdowns: {
         model: [
           {

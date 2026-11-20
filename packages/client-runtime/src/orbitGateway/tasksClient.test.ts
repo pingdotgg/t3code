@@ -198,7 +198,15 @@ describe("createOrbitTasksClient", () => {
             current: { ...summary, pr_first_pass: "0.5", pr_merge_wait_ms: 3_600_000 },
             previous: {},
             weekly: [{ week_start: "2026-11-09", tokens_per_merged_pr: null }, { week: 1 }],
-            daily: [{ date: "2026-11-18", merged: 3, not_merged: 1 }],
+            daily: [
+              {
+                date: "2026-11-18",
+                merged: 3,
+                not_merged: 1,
+                lead_time_ms: 600,
+                review_rounds: "2",
+              },
+            ],
             breakdowns: { model: [{ key: "gpt-5.5", label: "gpt-5.5", merged: 4 }] },
           },
         },
@@ -224,7 +232,13 @@ describe("createOrbitTasksClient", () => {
         },
         previous: { merged: null, deliveryTimeMs: null },
         weekly: [{ weekStart: "2026-11-09", tokensPerMergedPr: null }],
-        daily: [{ date: "2026-11-18", merged: 3 }],
+        daily: [
+          {
+            date: "2026-11-18",
+            merged: 3,
+            values: { merged: 3, leadTimeMs: 600, reviewRounds: null, tokens: null },
+          },
+        ],
         hourly: [],
         byModel: [{ key: "gpt-5.5", merged: 4, leadTimeMs: null }],
       },
@@ -245,7 +259,7 @@ describe("createOrbitTasksClient", () => {
       value: {
         period: "24h",
         daily: [],
-        hourly: [{ hour: "2026-11-19T10:00:00+00:00", merged: 2 }],
+        hourly: [{ hour: "2026-11-19T10:00:00+00:00", merged: 2, values: { merged: 2 } }],
       },
     });
     const failing = createOrbitTasksClient(

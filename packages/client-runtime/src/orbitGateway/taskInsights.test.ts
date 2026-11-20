@@ -87,10 +87,11 @@ describe("task insights", () => {
     expect(insightChangeTone(spec("completed"), null)).toBe("neutral");
   });
 
-  it("charts merges over a trailing window and tokens per task by week, and nothing else", () => {
+  it("charts merges over a trailing window and tokens per task by week without bucket values", () => {
     const daily = Array.from({ length: 7 }, (_, index) => ({
       date: `2026-11-1${index}`,
       merged: index,
+      values: EMPTY,
     }));
     const week = insights({ period: "7d", daily });
     expect(insightTrend(week, "completed")).toEqual([
@@ -114,6 +115,7 @@ describe("task insights", () => {
     const hourly = Array.from({ length: 4 }, (_, index) => ({
       hour: `2026-11-19T1${index}:00:00+00:00`,
       merged: index,
+      values: EMPTY,
     }));
     expect(insightTrend(insights({ period: "24h", hourly }), "completed")).toEqual([
       { date: "2026-11-19T10:00:00+00:00", value: 0 },
@@ -124,5 +126,59 @@ describe("task insights", () => {
     // An older Orbit answers the 24-hour period without hours: no line, not a daily one.
     expect(insightTrend(insights({ period: "24h", daily }), "completed")).toBeNull();
     expect(insightTrend(null, "completed")).toBeNull();
+  });
+
+  it("charts every other number by its value per day or per hour, with gaps", () => {
+    const daily = [
+      {
+        date: "2026-11-17",
+        merged: 2,
+        values: { ...EMPTY, merged: 2, leadTimeMs: 600, deliveryTimeMs: 900 },
+      },
+      { date: "2026-11-18", merged: 0, values: { ...EMPTY, merged: 0 } },
+      {
+        date: "2026-11-19",
+        merged: 1,
+        values: { ...EMPTY, merged: 1, leadTimeMs: 300, reviewRounds: 2 },
+      },
+    ];
+    const weekly = [
+      { weekStart: "2026-11-02", tokensPerMergedPr: 5 },
+      { weekStart: "2026-11-09", tokensPerMergedPr: 7 },
+    ];
+    const week = insights({ period: "7d", daily, weekly });
+    // Delivery time runs to deployed where a day has it, else to merged, as the tile does.
+    expect(insightTrend(week, "delivery")).toEqual([
+      { date: "2026-11-17", value: 900 },
+      { date: "2026-11-18", value: null },
+      { date: "2026-11-19", value: 300 },
+    ]);
+    expect(insightTrend(week, "reviewRounds")).toEqual([
+      { date: "2026-11-17", value: null },
+      { date: "2026-11-18", value: null },
+      { date: "2026-11-19", value: 2 },
+    ]);
+    // No day has a value: tokens per task falls back to the weekly series, the rest have no line.
+    expect(insightTrend(week, "tokens")).toEqual([
+      { date: "2026-11-02", value: 5 },
+      { date: "2026-11-09", value: 7 },
+    ]);
+    expect(insightTrend(week, "wasted")).toBeNull();
+    const hourly = [
+      {
+        hour: "2026-11-19T10:00:00+00:00",
+        merged: 1,
+        values: { ...EMPTY, merged: 1, tokens: 400 },
+      },
+      {
+        hour: "2026-11-19T11:00:00+00:00",
+        merged: 1,
+        values: { ...EMPTY, merged: 1, tokens: 600 },
+      },
+    ];
+    expect(insightTrend(insights({ period: "24h", hourly }), "spent")).toEqual([
+      { date: "2026-11-19T10:00:00+00:00", value: 400 },
+      { date: "2026-11-19T11:00:00+00:00", value: 600 },
+    ]);
   });
 });

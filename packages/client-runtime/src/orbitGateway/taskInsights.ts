@@ -134,28 +134,32 @@ export interface TrendPoint {
 }
 
 /**
- * The insight over time, where Orbit reports a series: merges summed over a trailing window of
- * days (7 days in the 30-day view, 3 in the 7-day view) or of hours (3 in the 24-hour view), and tokens per task by week. Null for
- * every other number until Orbit reports its history.
+ * The insight over time: merges summed over a trailing window (7 days in 30d, 3 days or hours else);
+ * every other number per day, or per hour in 24h, with gaps. Tokens per task falls back to weeks.
  */
 export function insightTrend(
   insights: OrbitTaskInsights | null,
   id: InsightId,
 ): ReadonlyArray<TrendPoint> | null {
   if (insights === null) return null;
-  if (id === "completed" && insights.period === "24h") {
-    return insights.hourly.length > 1
-      ? trailing(
-          insights.hourly.map((hour) => ({ date: hour.hour, merged: hour.merged })),
-          1,
-          3,
-        )
-      : null;
-  }
-  if (id === "completed" && insights.daily.length > 1) {
+  const buckets =
+    insights.period === "24h"
+      ? insights.hourly.map((hour) => ({
+          date: hour.hour,
+          merged: hour.merged,
+          values: hour.values,
+        }))
+      : insights.daily;
+  if (id === "completed") {
+    if (buckets.length < 2) return null;
     const [step, window] = insights.period === "30d" ? [2, 7] : [1, 3];
-    return trailing(insights.daily, step, window);
+    return trailing(buckets, step, window);
   }
+  const points = buckets.map((bucket) => ({
+    date: bucket.date,
+    value: rawValue(bucket.values, id),
+  }));
+  if (points.length > 1 && points.some((point) => point.value !== null)) return points;
   if (id === "tokens" && insights.weekly.length > 1) {
     return insights.weekly.map((week) => ({
       date: week.weekStart,
