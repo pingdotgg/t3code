@@ -1,11 +1,11 @@
+import { useLegendListRef } from "~/hooks/useLegendListRef";
 import type { VcsRef } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { useId, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { T, useGT } from "gt-react";
 
 import { MiddleTruncate } from "./ui/middle-truncate";
-import { observeResize } from "../lib/observeResize";
 import { cn } from "../lib/utils";
-import { shouldLoadNextBranchPageAfterScroll } from "../state/paginatedBranches";
 import { RefreshIcon } from "./ui/refresh-icon";
 import { Switch } from "./ui/switch";
 import { getVirtualizedScrollFadeClassName } from "./ui/scroll-area";
@@ -33,6 +33,7 @@ export function BranchPicker({
   isFetchingNextPage,
   onLoadNext,
   statusText,
+  notice,
   originControl,
   popupProps,
   renderItem,
@@ -51,18 +52,17 @@ export function BranchPicker({
   isFetchingNextPage: boolean;
   onLoadNext: () => void;
   statusText: string | null;
+  notice?: string | null | undefined;
   originControl?: { checked: boolean; onCheckedChange: (checked: boolean) => void } | undefined;
   popupProps: Omit<ComponentProps<typeof ComboboxPopup>, "children">;
   renderItem: (value: string, index: number) => ReactNode;
   getItemType?: ((value: string) => string) | undefined;
   children: ReactNode;
 }) {
+  const gt = useGT();
   const highlightedValueRef = useRef<string | null>(null);
   const startFromOriginSwitchId = useId();
-  const branchListScrollElementRef = useRef<HTMLElement | null>(null);
-  const previousBranchListScrollTopRef = useRef<number | null>(null);
   const handleOpenChange = (nextOpen: boolean) => {
-    previousBranchListScrollTopRef.current = null;
     if (!nextOpen) highlightedValueRef.current = null;
     onOpenChange(nextOpen);
   };
@@ -75,59 +75,14 @@ export function BranchPicker({
 
     onLoadNext();
   };
-  const maybeFetchNextBranchPage = () => {
-    const scrollElement = branchListScrollElementRef.current;
-    if (!scrollElement) {
-      return;
-    }
-
-    const previousScrollTop = previousBranchListScrollTopRef.current;
-    previousBranchListScrollTopRef.current = scrollElement.scrollTop;
-    if (
-      !open ||
-      !hasNextPage ||
-      isFetchingNextPage ||
-      !shouldLoadNextBranchPageAfterScroll({
-        previousScrollTop,
-        scrollTop: scrollElement.scrollTop,
-        scrollHeight: scrollElement.scrollHeight,
-        clientHeight: scrollElement.clientHeight,
-      })
-    ) {
-      return;
-    }
-
-    fetchNextBranchPage();
-  };
-
   const branchListRef = useRef<LegendListRef | null>(null);
   const updateBranchListScrollFades = () => {
-    const scrollElement = branchListRef.current?.getScrollableNode?.();
-    if (!(scrollElement instanceof HTMLElement)) {
-      return;
-    }
-    branchListScrollElementRef.current = scrollElement;
-    const maxScrollOffset = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
-    setShowTopBranchScrollFade(scrollElement.scrollTop > 1);
-    setShowBottomBranchScrollFade(maxScrollOffset - scrollElement.scrollTop > 1);
+    const metrics = branchListRef.current?.getState();
+    if (!metrics) return;
+    setShowTopBranchScrollFade(!metrics.isAtStart);
+    setShowBottomBranchScrollFade(!metrics.isAtEnd);
   };
-
-  // The popup mounts the list when it opens. Its content settles over a few
-  // frames as rows measure, so the fades follow the scroller and its content.
-  const attachBranchList = (list: LegendListRef | null) => {
-    branchListRef.current = list;
-    const scrollElement = list?.getScrollableNode?.();
-    if (!(scrollElement instanceof HTMLElement)) return;
-    const content = scrollElement.firstElementChild;
-    const stopObserving = observeResize(
-      content ? [scrollElement, content] : scrollElement,
-      updateBranchListScrollFades,
-    );
-    return () => {
-      stopObserving();
-      branchListRef.current = null;
-    };
-  };
+  const branchScrollRef = useLegendListRef(branchListRef, updateBranchListScrollFades);
 
   return (
     <Combobox
@@ -152,7 +107,7 @@ export function BranchPicker({
       {children}
       <ComboboxPopup {...popupProps}>
         <ComboboxSearchInput
-          placeholder="Search refs..."
+          placeholder={gt("Search refs...")}
           value={query}
           onChange={(event) => {
             onQueryChange(event.target.value);
@@ -173,26 +128,26 @@ export function BranchPicker({
           }}
         />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <ComboboxEmpty>No refs found.</ComboboxEmpty>
+          <ComboboxEmpty>
+            <T>No refs found.</T>
+          </ComboboxEmpty>
           <div className="relative flex min-h-0 w-full max-h-56 flex-1 flex-col overflow-hidden">
             <ComboboxListVirtualized className="flex size-full min-h-0 min-w-0 flex-col">
               <LegendList<string>
-                ref={attachBranchList}
+                ref={branchScrollRef}
                 data={filteredItems}
+                initialScrollOffset={0}
                 keyExtractor={(item) => item}
                 {...(getItemType ? { getItemType } : {})}
                 renderItem={({ item, index }) => renderItem(item, index)}
+                extraData={renderItem}
                 estimatedItemSize={28}
                 drawDistance={336}
-                onLayout={() => {
-                  updateBranchListScrollFades();
-                  previousBranchListScrollTopRef.current =
-                    branchListScrollElementRef.current?.scrollTop ?? null;
-                }}
-                onScroll={() => {
-                  updateBranchListScrollFades();
-                  maybeFetchNextBranchPage();
-                }}
+                onScroll={updateBranchListScrollFades}
+                onLayout={updateBranchListScrollFades}
+                onReady={updateBranchListScrollFades}
+                onEndReached={fetchNextBranchPage}
+                onEndReachedThreshold={0.5}
                 className={cn(
                   "min-h-0 max-h-56 scrollbar-gutter-stable overflow-x-hidden overscroll-y-contain ps-1 pe-0 py-2",
                   getVirtualizedScrollFadeClassName({
@@ -213,25 +168,30 @@ export function BranchPicker({
                   >
                     <span className="flex min-w-0 items-center gap-1.5 font-medium text-muted-foreground">
                       <RefreshIcon aria-hidden="true" className="size-3 shrink-0" />
-                      <span className="truncate">Start from remote</span>
+                      <span className="truncate">
+                        <T>Start from remote</T>
+                      </span>
                     </span>
                     <Switch
                       id={startFromOriginSwitchId}
                       checked={originControl.checked}
                       size="sm"
-                      aria-label="Start worktree from remote"
+                      aria-label={gt("Start worktree from remote")}
                       onCheckedChange={(checked) => originControl.onCheckedChange(Boolean(checked))}
                     />
                   </label>
                 }
               />
               <TooltipPopup side="top" className="max-w-72 whitespace-normal">
-                Uses the latest commit of the base branch’s tracked remote branch, even if its name
-                differs. Otherwise uses the same-named branch on origin. Uses your local branch if
-                that remote branch is missing.
+                <T>
+                  Uses the latest commit of the base branch’s tracked remote branch, even if its
+                  name differs. Otherwise uses the same-named branch on origin. Uses your local
+                  branch if that remote branch is missing.
+                </T>
               </TooltipPopup>
             </Tooltip>
           ) : null}
+          {notice ? <ComboboxStatus>{notice}</ComboboxStatus> : null}
           {statusText ? <ComboboxStatus>{statusText}</ComboboxStatus> : null}
         </div>
       </ComboboxPopup>
@@ -256,17 +216,18 @@ export function BranchPickerRefItem({
   onClick: ComponentProps<typeof ComboboxItem>["onClick"];
   onContextMenu?: ComponentProps<typeof ComboboxItem>["onContextMenu"];
 }) {
+  const gt = useGT();
   const itemValue = refName.name;
   const hasSecondaryWorktree =
     refName.worktreePath && activeProjectCwd && refName.worktreePath !== activeProjectCwd;
   const badge = refName.current
-    ? "current"
+    ? gt("current", { $context: "git ref badge, the checked-out branch" })
     : hasSecondaryWorktree
-      ? "worktree"
+      ? gt("worktree", { $context: "git ref badge, checked out in another worktree" })
       : refName.isRemote
-        ? "remote"
+        ? gt("remote", { $context: "git ref badge, a remote branch" })
         : refName.isDefault
-          ? "default"
+          ? gt("default", { $context: "git ref badge, the default branch" })
           : null;
   return (
     <ComboboxItem

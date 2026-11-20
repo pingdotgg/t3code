@@ -1,7 +1,13 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, TextGenerationError } from "@t3tools/contracts";
+import {
+  NonNegativeInt,
+  ProviderDriverKind,
+  settingsSecretLiteral,
+  TextGenerationError,
+} from "@t3tools/contracts";
+import { brokenVersionDetail } from "@t3tools/provider-core/server/compatibility";
 import type { OpenCodeSettings } from "../settings.ts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
@@ -18,6 +24,7 @@ const OpenCodeTextGenerationOperation = Schema.Literals([
   "generateBranchName",
   "generateThreadTitle",
   "generateReviewGuide",
+  "generateTranscriptionPostProcessing",
 ]);
 
 const openCodeTextGenerationErrorContext = {
@@ -202,6 +209,15 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
           "url" | "serverPassword" | "version"
         >,
       ) {
+        // Text generation does not open a session, so the shared session check never sees it.
+        const broken = brokenVersionDetail({
+          name: "OpenCode",
+          version: server.version,
+          advisory: yield* host.compatibility(ProviderDriverKind.make("opencode"), server.version),
+        });
+        if (broken !== undefined) {
+          return yield* new TextGenerationError({ operation: input.operation, detail: broken });
+        }
         const client = openCodeRuntime.createOpenCodeSdkClient({
           baseUrl: server.url,
           directory: input.cwd,
@@ -239,7 +255,11 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
           ).pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: "Warn" })),
         );
         const selectedAgent = getModelSelectionStringOptionValue(input.modelSelection, "agent");
-        const selectedVariant = getModelSelectionStringOptionValue(input.modelSelection, "variant");
+        const selectedVariant = yield* OpenCodeRuntime.resolveOpenCodeVariant(
+          client,
+          parsedModel,
+          getModelSelectionStringOptionValue(input.modelSelection, "variant"),
+        );
         const promptContext = {
           operation: input.operation,
           cwd: input.cwd,
@@ -358,8 +378,8 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
               binaryPath: openCodeSettings.binaryPath,
               directory: input.cwd,
               serverUrl: openCodeSettings.serverUrl,
-              ...(openCodeSettings.serverPassword
-                ? { serverPassword: openCodeSettings.serverPassword }
+              ...(settingsSecretLiteral(openCodeSettings.serverPassword)
+                ? { serverPassword: settingsSecretLiteral(openCodeSettings.serverPassword) }
                 : {}),
             })
             .pipe(Effect.flatMap(runAgainstServer), Effect.scoped)

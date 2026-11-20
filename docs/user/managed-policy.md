@@ -146,6 +146,8 @@ A few settings need care:
 - `worktreeCleanup`, which projects can also set, overrides the `worktree` rules in
   `storageCleanup`. Lock it along with those rules; T3 Code refuses a policy that locks only the
   rules.
+- `observability` cannot be managed. Its OTLP endpoints come from each user's environment
+  variables, settings file and desktop startup input, which a policy cannot override.
 - Manage `idleCompaction`, not the older `compactIdleThreads`. A Claude instance's own idle
   compaction choice still wins over `idleCompaction`.
 - A provider instance's fields override each other, so lock `providerInstances.<id>` as a whole,
@@ -167,6 +169,7 @@ A few settings need care:
     "connect": false,
     "webhookTasks": false,
     "browserCookieImport": false,
+    "previewTunnel": false,
     "telemetry": false,
     "providers": {
       "allowedDrivers": ["claudeAgent", "codex"],
@@ -248,6 +251,10 @@ so restart T3 Code after that.
   but do not run, and cannot be turned back on. Users can still edit or delete them.
 - `browserCookieImport: false`: users cannot import cookies from another browser into T3 Code's
   browser.
+- `previewTunnel: false`: other devices cannot load this machine's `localhost` pages themselves.
+  Browser tabs stream from it instead, and port forwarding and **Open on this device** are
+  unavailable. This wins over the user's
+  [Preview tunnel setting](./remote-access.md#browser-on-a-remote-environment).
 - `telemetry: false`: the server and desktop app send no [product usage data](./telemetry.md) or
   relay connection traces. A policy cannot turn them on. A browser that opens the server, such as
   app.t3.codes, still sends its own relay traces.

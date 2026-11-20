@@ -1,10 +1,10 @@
+import { isLocalEditorFileUrl } from "@t3tools/contracts";
 import { fileBasename, isAbsolutePath, workspaceRelativeFilePath } from "@t3tools/shared/path";
 import {
   inlineCodeFilePathCandidate,
   isRelativeFilePath,
   normalizeMarkdownLinkDestination,
-  parseMarkdownFileLink,
-  resolveMarkdownFileLinkTarget,
+  resolveMarkdownFileLink,
 } from "@t3tools/shared/markdownLinks";
 import { parseFileUrlHref, splitFilePathPosition } from "@t3tools/shared/fileLinks";
 
@@ -20,6 +20,7 @@ export interface MarkdownFileLinkMeta {
   basename: string;
   line?: number;
   column?: number;
+  endLine?: number;
 }
 
 export function shouldOpenMarkdownFileLinkInEditor(
@@ -29,14 +30,18 @@ export function shouldOpenMarkdownFileLinkInEditor(
   return isTerminalLinkActivation(event, platform);
 }
 
-export function shouldOpenMarkdownFileLinkInBrowserByDefault(path: string): boolean {
-  return /\.pdf$/i.test(path.split(/[?#]/, 1)[0] ?? "");
-}
-
 export function rewriteMarkdownFileUriHref(href: string | undefined): string | null {
   if (!href) return null;
   const target = parseFileUrlHref(normalizeMarkdownLinkDestination(href));
   return target ? `${target.path}${target.hash}` : null;
+}
+
+export function isLocalEditorFileHref(href: string): boolean {
+  try {
+    return isLocalEditorFileUrl(new URL(href));
+  } catch {
+    return false;
+  }
 }
 
 export function resolveInlineCodeFileLinkMeta(
@@ -70,30 +75,25 @@ export function resolveMarkdownFileLinkMeta(
   cwd?: string,
   baseDir: string | undefined = cwd,
 ): MarkdownFileLinkMeta | null {
-  const targetPath = resolveMarkdownFileLinkTarget(href, cwd, baseDir);
-  if (!targetPath) return null;
-  const source = href ? parseMarkdownFileLink(href) : null;
-  return {
-    ...buildFileLinkMetaFromTarget(targetPath, cwd),
-    workspaceLookupPath:
-      source !== null &&
-      !isAbsolutePath(source.path) &&
-      baseDir !== undefined &&
-      workspaceRelativeFilePath(baseDir, cwd) === "."
-        ? source.path
-        : null,
-  };
-}
-
-function buildFileLinkMetaFromTarget(targetPath: string, cwd?: string) {
-  const { path, line, column } = splitFilePathPosition(targetPath);
+  const resolved = resolveMarkdownFileLink(href, cwd, baseDir);
+  if (!resolved) return null;
+  const {
+    sourcePath,
+    targetPath,
+    position: { path, ...lines },
+  } = resolved;
   return {
     filePath: path,
     targetPath,
     displayPath: formatWorkspaceRelativePath(targetPath, cwd),
     workspaceRelativePath: workspaceRelativeFilePath(path, cwd),
     basename: fileBasename(path),
-    ...(line !== undefined ? { line } : {}),
-    ...(column !== undefined ? { column } : {}),
+    ...lines,
+    workspaceLookupPath:
+      !isAbsolutePath(sourcePath) &&
+      baseDir !== undefined &&
+      workspaceRelativeFilePath(baseDir, cwd) === "."
+        ? sourcePath
+        : null,
   };
 }
