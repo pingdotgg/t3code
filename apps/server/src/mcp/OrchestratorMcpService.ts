@@ -2075,15 +2075,16 @@ const make = Effect.gen(function* () {
       );
     const delivered = (waited: Option.Option<OrchestratorMcpDelegateTaskResult>) =>
       Option.isSome(waited) && isTerminalTaskStatus(waited.value.status);
-    // The finalizer runs uninterruptibly, and only the wait is restored, so a cancel just
-    // before or after the wait still upgrades.
+    // The finalizer runs uninterruptibly, and only the wait and the fallback read are
+    // restored, so a cancel just before or after the wait still upgrades without the read
+    // acknowledging a result the caller never receives.
     const waited = yield* restore(waitForTask(scope, taskId, timeoutMs)).pipe(
       Effect.onExit((exit) =>
         Exit.isSuccess(exit) && delivered(exit.value) ? Effect.void : upgradeWake,
       ),
     );
     if (Option.isSome(waited) && delivered(waited)) return waited.value;
-    return yield* readTask(scope, taskId, Option.isNone(waited), true);
+    return yield* restore(readTask(scope, taskId, Option.isNone(waited), true));
   });
 
   /**

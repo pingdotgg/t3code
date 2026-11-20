@@ -1898,6 +1898,92 @@ describe("OrchestratorMcpService provider resolution", () => {
     }),
   );
 
+  it.effect("leaves a result undelivered when the caller goes away after its wait times out", () =>
+    Effect.gen(function* () {
+      const subscribed = yield* Deferred.make<void>();
+      const upgrading = yield* Deferred.make<void>();
+      const finishUpgrade = yield* Deferred.make<void>();
+      const dispatched = yield* Ref.make<ReadonlyArray<{ readonly type: string }>>([]);
+      let task: Record<string, unknown> = {
+        id: taskId,
+        threadId: parentThreadId,
+        runId: parentRunId,
+        parentNodeId,
+        origin: "app_owned",
+        providerInstanceId: codexInstanceId,
+        driver: "codex",
+        childThreadId,
+        model: "gpt-5.4",
+        status: "running",
+        result: null,
+      };
+      const dependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(false),
+          assertProviderInstanceEnabled: () => Effect.void,
+          isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+          getThreadRecords: (threadId) =>
+            Effect.sync(() =>
+              threadId === parentThreadId ? parentProjection([task]) : childProjection,
+            ),
+          getThreadEventSequence: () => Effect.succeed(0),
+          delegatedTaskResultPending: () => Effect.succeed(false),
+          streamStoredEventsFrom: () =>
+            Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
+              Stream.drain,
+              Stream.concat(Stream.never),
+            ),
+          dispatch: (command) =>
+            Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+              Effect.andThen(
+                command.type === "delegated_task.wake-policy"
+                  ? Deferred.succeed(upgrading, undefined).pipe(
+                      Effect.andThen(Deferred.await(finishUpgrade)),
+                    )
+                  : Effect.void,
+              ),
+              Effect.as({
+                sequence: 1,
+                storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
+              } as never),
+            ),
+        }),
+        ServerSettings.layerTest(),
+        providerRegistryLayer([
+          providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const waiting = yield* service
+          .delegateTask(scope, { task: "Review the change.", mode: "wait", timeoutMs: 500 })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(subscribed);
+        yield* TestClock.adjust(Duration.millis(500));
+        yield* Deferred.await(upgrading);
+        yield* Effect.sync(() => waiting.interruptUnsafe());
+        task = { ...task, status: "completed", result: "Reviewed." };
+        yield* Deferred.succeed(finishUpgrade, undefined);
+        yield* Fiber.await(waiting);
+        assert.notInclude(
+          (yield* Ref.get(dispatched)).map((command) => command.type),
+          "delegated_task.completion-delivery.acknowledge",
+        );
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+    }),
+  );
+
   it.effect.each([
     { name: "ten-minute default", timeoutMs: undefined, budgetMs: 600_000 },
     { name: "one-hour maximum", timeoutMs: 3_600_000, budgetMs: 3_600_000 },
