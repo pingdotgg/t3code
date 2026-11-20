@@ -225,7 +225,7 @@ export function AccountLimits(props: {
         <Pressable
           accessibilityRole="link"
           className="min-h-11 justify-center"
-          onPress={() => void tryOpenExternalUrl(externalUsage.url).catch(() => undefined)}
+          onPress={() => void tryOpenExternalUrl(externalUsage.url)}
         >
           <Text className="text-sm font-t3-medium text-primary">
             <T>Manage usage</T>

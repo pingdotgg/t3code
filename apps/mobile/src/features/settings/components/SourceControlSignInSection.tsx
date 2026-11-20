@@ -24,8 +24,7 @@ const failureMessage = (cause: Cause.Cause<unknown>) => {
   return error instanceof Error ? (errorDisplayMessage(error, m) ?? error.message) : String(error);
 };
 
-const openUrl = (url: string) =>
-  void tryOpenExternalUrl(url, "provider-auth").catch(() => undefined);
+const openUrl = (url: string) => void tryOpenExternalUrl(url, "provider-auth");
 
 /** Signs an environment in through a forge's own app, such as T3 Code for GitHub. */
 export function AppSignInRow(props: {

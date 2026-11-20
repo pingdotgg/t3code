@@ -304,7 +304,7 @@ export function SourceControlTokenForm(props: {
               void tryOpenExternalUrl(
                 credentials.newTokenUrl(target || defaultHost),
                 "provider-auth",
-              ).catch(() => undefined)
+              )
             }
           />
         ) : null}

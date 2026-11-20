@@ -176,7 +176,7 @@ export function IssueTrackerCredentialForm(props: {
             label={gt("Create one")}
             tone="text"
             size="compact"
-            onPress={() => void tryOpenExternalUrl(helpUrl).catch(() => undefined)}
+            onPress={() => void tryOpenExternalUrl(helpUrl)}
           />
         ) : null}
         {tracker.connected ? (

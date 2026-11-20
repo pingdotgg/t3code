@@ -370,9 +370,9 @@ function ProviderAccount({
       variant="pill"
       label={gt("Docs")}
       onPress={() => {
-        void tryOpenExternalUrl(provider.setup!.documentationUrl!, "provider-auth").catch(() =>
-          setError(gt("Could not open the provider docs.")),
-        );
+        void tryOpenExternalUrl(provider.setup!.documentationUrl!).then((opened) => {
+          if (!opened) setError(gt("Could not open the provider docs."));
+        });
       }}
     />
   ) : active && state?.flowId ? (
@@ -531,7 +531,8 @@ function ProviderAccount({
                 !(await send({ type: "browser", action: "accept" }))
               )
                 return;
-              await tryOpenExternalUrl(url);
+              if (!(await tryOpenExternalUrl(url, "provider-auth")))
+                setError(gt("Could not open the sign-in page."));
             })().catch(() => setError(gt("Could not open the sign-in page.")));
           }}
         />

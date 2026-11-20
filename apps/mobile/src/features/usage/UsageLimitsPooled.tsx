@@ -544,7 +544,7 @@ export function UsageLimitsSection({
           <Pressable
             accessibilityRole="link"
             className="min-h-11 justify-center"
-            onPress={() => void tryOpenExternalUrl(link.url).catch(() => undefined)}
+            onPress={() => void tryOpenExternalUrl(link.url)}
           >
             <Text className="text-sm font-t3-medium text-primary">
               <T>Manage usage</T>

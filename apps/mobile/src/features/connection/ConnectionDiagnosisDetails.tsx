@@ -104,7 +104,7 @@ export function ConnectionDiagnosisDetails(props: {
           label={gt("More info")}
           icon="safari"
           tone="secondary"
-          onPress={() => void tryOpenExternalUrl(moreInfoUrl).catch(() => undefined)}
+          onPress={() => void tryOpenExternalUrl(moreInfoUrl)}
         />
       ) : null}
     </View>

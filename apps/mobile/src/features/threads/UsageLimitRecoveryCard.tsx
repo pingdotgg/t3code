@@ -134,9 +134,10 @@ export function UsageLimitRecoveryCard({
           setError(null);
           setActionPending(true);
           void tryOpenExternalUrl(CHATGPT_USAGE_URL)
-            .catch(() =>
-              setError(gt("Could not open ChatGPT. Go to chatgpt.com → Settings → Usage.")),
-            )
+            .then((opened) => {
+              if (!opened)
+                setError(gt("Could not open ChatGPT. Go to chatgpt.com → Settings → Usage."));
+            })
             .finally(() => setActionPending(false));
         },
       };

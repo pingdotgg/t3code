@@ -41,7 +41,7 @@ export function ChatGptSharingStatus({ provider }: { provider: ServerProvider | 
       <Pressable
         accessibilityRole="link"
         className="min-h-11 justify-center"
-        onPress={() => void tryOpenExternalUrl(CHATGPT_USAGE_URL).catch(() => undefined)}
+        onPress={() => void tryOpenExternalUrl(CHATGPT_USAGE_URL)}
       >
         <Text className="text-xs font-t3-medium text-primary">
           <T>Manage usage</T>

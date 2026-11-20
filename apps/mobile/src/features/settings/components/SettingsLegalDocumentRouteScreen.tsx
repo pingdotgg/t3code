@@ -39,14 +39,14 @@ export function SettingsLegalDocumentRouteScreen({
         {
           accessibilityLabel: gt("Open legal documents in external browser"),
           icon: "safari",
-          onPress: () => void tryOpenExternalUrl(safeExternalUrl).catch(() => undefined),
+          onPress: () => void tryOpenExternalUrl(safeExternalUrl),
         },
       ]}
     />
   );
 
   const openExternalUrl = (url: string) => {
-    void tryOpenExternalUrl(url).catch(() => undefined);
+    void tryOpenExternalUrl(url);
   };
   if (loadError) {
     return (

@@ -54,9 +54,7 @@ export function SourceControlAppAccessNotice(props: {
       </Text>
       <Pressable
         accessibilityRole="link"
-        onPress={() =>
-          void tryOpenExternalUrl(appSignIn.installUrl, "provider-auth").catch(() => undefined)
-        }
+        onPress={() => void tryOpenExternalUrl(appSignIn.installUrl, "provider-auth")}
       >
         <Text className="text-sm font-t3-bold text-foreground">
           <T>

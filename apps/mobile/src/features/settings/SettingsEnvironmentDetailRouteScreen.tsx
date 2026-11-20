@@ -309,7 +309,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                       label={gt("Get help from {organization}", {
                         organization: managedPolicy.organization,
                       })}
-                      onPress={() => void tryOpenExternalUrl(supportUrl).catch(() => undefined)}
+                      onPress={() => void tryOpenExternalUrl(supportUrl)}
                     />
                   ) : null}
                   {updatesDenial ? null : (

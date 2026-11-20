@@ -36,7 +36,7 @@ export function ChatGptUsageSummary({
         <Pressable
           accessibilityRole="link"
           className="min-h-11 justify-center"
-          onPress={() => void tryOpenExternalUrl(usage.url).catch(() => undefined)}
+          onPress={() => void tryOpenExternalUrl(usage.url)}
         >
           <Text className="text-sm font-t3-medium text-primary">
             <T>Manage usage</T>
