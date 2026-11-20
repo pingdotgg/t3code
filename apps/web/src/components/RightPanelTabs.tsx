@@ -1308,7 +1308,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     if (surface.kind === "preview") {
       items.push({
         id: "duplicate",
-        label: "Duplicate",
+        label: gt("Duplicate"),
         disabled: !props.browserAvailable || !menuPreviewTabId || !props.onDuplicateBrowser,
       });
       items.push({

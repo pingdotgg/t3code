@@ -138,6 +138,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     const snapshot = activePreviewState.sessions[surface.resourceId];
     if (snapshot) createBrowserSurface(undefined, snapshot);
   };
+  const duplicateBrowserSurfaceStable = useStableCallback(duplicateBrowserSurface);
   const createBrowserSurfaceStable = useStableCallback(createBrowserSurface);
   const addDiffSurface = () => {
     if (!activeThreadRef || !isServerThread || !isGitRepo) return;
@@ -354,7 +355,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     copyRightPanelFilePathStable,
     createBrowserSurface,
     createBrowserSurfaceStable,
-    duplicateBrowserSurface,
+    duplicateBrowserSurfaceStable,
     moveRightPanelSurfaceStable,
     onOpenToolDiffStable,
     onOpenTurnDiffStable,
