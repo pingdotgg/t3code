@@ -177,6 +177,7 @@ export const make = Effect.gen(function* () {
     const result = yield* gitlab
       .execute({
         cwd: input.cwd,
+        callerNamedHost: input.url.host,
         args: ["api", "--hostname", input.url.host, endpoint],
         timeoutMs: 3_000,
         maxOutputBytes: 32_000,
