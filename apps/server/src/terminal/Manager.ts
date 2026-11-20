@@ -3940,44 +3940,27 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     yield* closeIdle(input);
   });
 
-  const hasActiveSubprocess: TerminalManager["Service"]["hasActiveSubprocess"] = (input) =>
-    withThreadLock(
-      input.threadId,
-      Effect.gen(function* () {
-        const running = (yield* sessionsForThread(input.threadId)).filter(
-          (session): session is TerminalSessionState & { pid: number } =>
-            session.status === "running" && Number.isInteger(session.pid),
-        );
-        if (running.length === 0) return false;
-        const marks = new Map(
-          running.map((session) => [session.terminalId, terminalActivityMark(session)]),
-        );
-        const { inspector: inspectorResult } = yield* acquireSubprocessInspector(
-          platform === "win32" ? CLOSE_IDLE_QUERY_TIMEOUT.win32 : CLOSE_IDLE_QUERY_TIMEOUT.posix,
-        );
-        if (Result.isFailure(inspectorResult)) {
-          return running.some((session) => session.hasRunningSubprocess);
-        }
-        const inspector = inspectorResult.success;
-        for (const session of running) {
-          const result = yield* inspector(session.pid, session.shell);
-          if (
-            result.hasRunningSubprocess ||
-            terminalActivityMark(session) !== marks.get(session.terminalId)
-          ) {
-            return true;
-          }
-        }
-        return false;
-      }),
-    ).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("failed to check active terminal subprocess", {
-          threadId: input.threadId,
-          error: error.message,
-        }).pipe(Effect.as(false)),
-      ),
+  const hasActiveSubprocess = Effect.fn("terminal.hasActiveSubprocess")(function* (input: {
+    readonly threadId: string;
+  }) {
+    const running = (yield* sessionsForThread(input.threadId)).filter(
+      (session): session is TerminalSessionState & { pid: number } =>
+        session.status === "running" && Number.isInteger(session.pid),
     );
+    if (running.length === 0) return false;
+    const { inspector } = yield* acquireSubprocessInspector(
+      platform === "win32" ? CLOSE_IDLE_QUERY_TIMEOUT.win32 : CLOSE_IDLE_QUERY_TIMEOUT.posix,
+    );
+    // A failed process query falls back to the last poll's answer.
+    const isActive = (session: (typeof running)[number]) =>
+      Result.isFailure(inspector)
+        ? Effect.succeed(session.hasRunningSubprocess)
+        : inspector.success(session.pid, session.shell).pipe(
+            Effect.map((result) => result.hasRunningSubprocess),
+            Effect.orElseSucceed(() => session.hasRunningSubprocess),
+          );
+    return Option.isSome(yield* Effect.findFirst(running, isActive));
+  });
 
   return TerminalManager.of({
     open,
