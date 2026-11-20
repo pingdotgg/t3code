@@ -1825,7 +1825,11 @@ export function decodeMergeRequestGraphqlListJson(
           : {
               username: node.author.username ?? "",
               name: node.author.name,
-              avatar_url: node.author.avatarUrl,
+              // GraphQL gives an uploaded avatar as a path on the instance; REST gives a full URL.
+              avatar_url:
+                node.author.avatarUrl == null
+                  ? null
+                  : (URL.parse(node.author.avatarUrl, node.webUrl)?.toString() ?? null),
             },
       ),
       headBranch: node.sourceBranch,

@@ -1197,7 +1197,11 @@ describe("decodeMergeRequestGraphqlListJson", () => {
                     targetBranch: "main",
                     conflicts: true,
                     mergeStatusEnum: "CHECKING",
-                    author: { username: "bilal", name: "Bilal", avatarUrl: null },
+                    author: {
+                      username: "bilal",
+                      name: "Bilal",
+                      avatarUrl: "/uploads/-/system/user/avatar/42/avatar.png?v=1",
+                    },
                     labels: { nodes: [{ title: "bug", color: "#E24329", description: null }] },
                     approved: false,
                     approvedBy: { nodes: [] },
@@ -1223,6 +1227,11 @@ describe("decodeMergeRequestGraphqlListJson", () => {
     expect(page.items).toEqual([
       expect.objectContaining({
         number: 7,
+        author: {
+          login: "bilal",
+          name: "Bilal",
+          avatarUrl: "https://gitlab.com/uploads/-/system/user/avatar/42/avatar.png?v=1",
+        },
         state: "open",
         isDraft: true,
         mergeability: "conflicting",
