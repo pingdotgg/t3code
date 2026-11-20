@@ -10,6 +10,7 @@ import { Atom } from "effect/reactivity";
 import { useEffect, useEffectEvent } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";
+import { environmentAtomList } from "./environmentAtomList";
 import { useEnvironmentIdentities, useEnvironments } from "./environments";
 import { environmentPresentations } from "./presentation";
 import { relayEnvironmentDiscovery } from "./relay";
@@ -18,6 +19,11 @@ import { useEnvironmentsWithScope } from "./session";
 import { useAtomCommand } from "./use-atom-command";
 
 export const peerLinkEnvironment = createPeerLinkEnvironmentAtoms(connectionAtomRuntime);
+
+/** Each environment's link list as the settings list loads it, in the order of the ids. */
+export const peerLinkListsAtom = environmentAtomList("peer-links:lists", (environmentId) =>
+  peerLinkEnvironment.list({ environmentId, input: {} }),
+);
 
 /** Whether `environmentId` offers links, so its threads may name another machine. */
 export const offersLinkedEnvironmentsAtom = Atom.family((environmentId: EnvironmentId) =>

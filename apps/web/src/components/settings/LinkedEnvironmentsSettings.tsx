@@ -10,15 +10,16 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { peerLinkHealth } from "@t3tools/client-runtime/state/peerLinks";
+import { peerLinkHealth, type PeerLinkHealth } from "@t3tools/client-runtime/state/peerLinks";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import { PlusIcon } from "lucide-react";
 import { T, useGT, useMessages, Var } from "gt-react";
-import { useId, useRef, useState } from "react";
+import { type ReactNode, useId, useRef, useState } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
+import { useEnvironment } from "~/state/environments";
 import { mintPairingCodeOn } from "~/state/peerPairingCode";
 import { peerLinkEnvironment, useLinkableMachines } from "~/state/peerLinks";
 import { useEnvironments } from "~/state/environments";
@@ -140,38 +141,9 @@ function LinkedEnvironmentRow({
   const m = useMessages();
   const nowMinute = useNowMinute();
   const health = peerLinkHealth(link, DateTime.makeUnsafe(nowMinute));
-  const unlink = useAtomCommand(peerLinkEnvironment.unlink, { label: UNLINK_COMMAND_LABEL });
   const canUnlink = useAtomValue(peerLinkEnvironment.unlink.permissionAtom(environmentId));
-  const [busy, setBusy] = useState(false);
-  const forget = async () => {
-    const confirmed = await (requestConfirmDialog(
-      gt(
-        "Forget {label}? Agents here stop working there. Revoke \"T3 Code · …\" in {label}''s Sharing & access to end the session there too.",
-        { label: link.label },
-      ),
-      { variant: "destructive" },
-    ) ?? Promise.resolve(false));
-    if (!confirmed) return;
-    setBusy(true);
-    const result = await unlink({ environmentId, input: { environmentId: link.environmentId } });
-    setBusy(false);
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      failureToast(gt("Could not forget the link"), String(squashAtomCommandFailure(result)));
-    }
-  };
-  const status =
-    health.kind === "expired"
-      ? gt("Expired. Link it again with a new pairing code.")
-      : health.kind === "unreachable"
-        ? (health.detail ?? gt("Not answering right now."))
-        : health.kind === "failing"
-          ? health.detail
-          : health.expiresInDays !== null
-            ? gt(
-                "{days, plural, one {Expires in {days} day. Link it again to renew.} other {Expires in {days} days. Link it again to renew.}}",
-                { days: health.expiresInDays },
-              )
-            : gt("Reachable");
+  const { busy, forget } = useForgetPeerLink(environmentId, link);
+  const status = peerLinkStatusText(health, gt);
   return (
     <div className={ITEM_ROW_CLASSNAME}>
       <div className={ITEM_ROW_INNER_CLASSNAME}>
@@ -217,10 +189,57 @@ function LinkedEnvironmentRow({
 function LinkEnvironmentAction({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const gt = useGT();
   const [open, setOpen] = useState(false);
+  return (
+    <LinkEnvironmentDialog
+      environmentId={environmentId}
+      open={open}
+      onOpenChange={setOpen}
+      trigger={
+        <DialogTrigger
+          render={
+            <Button size="xs" variant="default">
+              <PlusIcon className="size-3" />
+              {gt("Link", { $context: "verb, links an environment" })}
+            </Button>
+          }
+        />
+      }
+    />
+  );
+}
+
+/** What the link dialog opens with when something other than its own button opened it. */
+export interface LinkEnvironmentPrefill {
+  /** The machine to link to, by environment id, or `ANOTHER_ADDRESS` with `address`. */
+  readonly choice: string | null;
+  readonly address?: string;
+}
+
+/**
+ * The one link flow. When this client is connected to the picked machine and may create pairing
+ * links there, it mints the code itself; otherwise it asks for one.
+ */
+export function LinkEnvironmentDialog({
+  environmentId,
+  open,
+  onOpenChange,
+  trigger = null,
+  prefill,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly trigger?: ReactNode;
+  readonly prefill?: LinkEnvironmentPrefill;
+}) {
+  const gt = useGT();
+  const setOpen = onOpenChange;
+  // Named in the title: from the map, nothing else on screen says which machine is linking.
+  const source = useEnvironment(environmentId);
   const machines = useLinkableMachines(environmentId, open);
   // Null until the user picks; with no other machines known, only an address is left.
-  const [choice, setChoice] = useState<string | null>(null);
-  const [address, setAddress] = useState("");
+  const [choice, setChoice] = useState<string | null>(prefill?.choice ?? null);
+  const [address, setAddress] = useState(prefill?.address ?? "");
   const [pairingCode, setPairingCode] = useState("");
   const [access, setAccess] = useState<AuthMcpClientAccess>("approval-required");
   const [busy, setBusy] = useState(false);
@@ -253,8 +272,8 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
   const handleOpenChange = (next: boolean) => {
     setOpen(next);
     if (!next) {
-      setChoice(null);
-      setAddress("");
+      setChoice(prefill?.choice ?? null);
+      setAddress(prefill?.address ?? "");
       setPairingCode("");
       setAccess("approval-required");
       setMintFailed(new Set());
@@ -316,18 +335,17 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
         handleOpenChange(next);
       }}
     >
-      <DialogTrigger
-        render={
-          <Button size="xs" variant="default">
-            <PlusIcon className="size-3" />
-            {gt("Link", { $context: "verb, links an environment" })}
-          </Button>
-        }
-      />
+      {trigger}
       <DialogPopup className="max-w-md">
         <DialogHeader>
           <DialogTitle>
-            <T>Link an environment</T>
+            {source === null ? (
+              <T>Link an environment</T>
+            ) : machine === null ? (
+              gt("Link {label} to another machine", { label: source.label })
+            ) : (
+              gt("Link {source} to {target}", { source: source.label, target: machine.label })
+            )}
           </DialogTitle>
           <DialogDescription>
             <T>
@@ -430,4 +448,44 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
       </DialogPopup>
     </Dialog>
   );
+}
+
+/** What a link's health means for the user, in a sentence. */
+export function peerLinkStatusText(health: PeerLinkHealth, gt: ReturnType<typeof useGT>): string {
+  return health.kind === "expired"
+    ? gt("Expired. Link it again with a new pairing code.")
+    : health.kind === "unreachable"
+      ? (health.detail ?? gt("Not answering right now."))
+      : health.kind === "failing"
+        ? health.detail
+        : health.expiresInDays !== null
+          ? gt(
+              "{days, plural, one {Expires in {days} day. Link it again to renew.} other {Expires in {days} days. Link it again to renew.}}",
+              { days: health.expiresInDays },
+            )
+          : gt("Reachable");
+}
+
+/** Forgets `link` from `environmentId` after the user confirms. */
+export function useForgetPeerLink(environmentId: EnvironmentId, link: PeerLinkSummary) {
+  const gt = useGT();
+  const unlink = useAtomCommand(peerLinkEnvironment.unlink, { label: UNLINK_COMMAND_LABEL });
+  const [busy, setBusy] = useState(false);
+  const forget = async () => {
+    const confirmed = await (requestConfirmDialog(
+      gt(
+        "Forget {label}? Agents here stop working there. Revoke \"T3 Code · …\" in {label}''s Sharing & access to end the session there too.",
+        { label: link.label },
+      ),
+      { variant: "destructive" },
+    ) ?? Promise.resolve(false));
+    if (!confirmed) return;
+    setBusy(true);
+    const result = await unlink({ environmentId, input: { environmentId: link.environmentId } });
+    setBusy(false);
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      failureToast(gt("Could not forget the link"), String(squashAtomCommandFailure(result)));
+    }
+  };
+  return { busy, forget };
 }
