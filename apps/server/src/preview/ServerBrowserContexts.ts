@@ -136,10 +136,9 @@ export const presentAsChrome = async (
 const previewPermissions = new WeakMap<BrowserContext, Promise<void>>();
 
 /**
- * Sets a server preview context's permissions once. Chromium clears a context's overrides when the
- * session that set them detaches, and a later Playwright grant replaces the whole set, so the
- * session lives as long as the context and both permissions go in one call. Loopback matches the
- * desktop preview; Playwright's `local-network-access` would also grant LAN, which the desktop denies.
+ * Chromium drops a context's overrides when the session that set them detaches, and a later grant
+ * replaces the whole set, so one context-long session grants both at once. Loopback only, as on
+ * desktop: Playwright's `local-network-access` would also grant LAN, which the desktop denies.
  */
 export const grantPreviewPermissions = (context: BrowserContext, page: Page) => {
   let granted = previewPermissions.get(context);
