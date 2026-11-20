@@ -14,8 +14,10 @@ import {
   RunId,
   ThreadId,
   TurnItemId,
+  type ApplicationProjectEvent,
   type ProviderDriverKind,
   type OrchestrationV2DomainEvent,
+  type RepositoryIdentity,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -217,10 +219,10 @@ export const LONG_TURN_THREAD_ID = ThreadId.make("transfer-budget-long-turn");
 export const LONG_TURN_WORK_ROWS = 900;
 
 /**
- * Three short user turns, then one agent turn far longer than a cold-open
- * window, with the item kinds a long agent run produces. One batch per turn.
- * Run, node, provider and item IDs follow the composite shapes the Claude
- * adapter stores, and every assistant message has its record, as real threads do.
+ * Three short user turns, then one agent turn far longer than a cold-open window, with the item
+ * kinds a long agent run produces. One batch per turn; the last batch only finishes the long turn.
+ * Run, node, provider and item IDs follow the composite shapes the Claude adapter stores, and
+ * every assistant message has its record, as real threads do.
  */
 export function longTurnThreadBatches(
   provider: ProviderDriverKind,
@@ -434,12 +436,14 @@ export function longTurnThreadBatches(
     return events;
   };
 
+  const longTurn = turn(3, LONG_TURN_WORK_ROWS);
   return [
     [threadCreated(provider, threadId)],
     turn(0, 4),
     turn(1, 4),
     turn(2, 4),
-    turn(3, LONG_TURN_WORK_ROWS),
+    longTurn.slice(0, -1),
+    longTurn.slice(-1),
   ];
 }
 
@@ -834,6 +838,44 @@ export function staleTodoListThreadBatches(
     turn(STALE_TODO_SETTLED_RUNS, true),
   ];
 }
+
+const FLEET_PROJECT_ID = ProjectId.make("transfer-project");
+export const FLEET_PROJECT_IDENTITY: RepositoryIdentity = {
+  canonicalKey: "github.com/t3/transfer-budget",
+  locator: {
+    source: "git-remote",
+    remoteName: "origin",
+    remoteUrl: "git@github.com:t3/transfer-budget.git",
+  },
+  owner: "t3",
+  name: "transfer-budget",
+};
+
+/**
+ * The project every fixture thread belongs to. The test resolves it to FLEET_PROJECT_IDENTITY,
+ * which a shell resume sends again unless the client names the identities it already holds.
+ */
+export const fleetProjectCreated: ApplicationProjectEvent = {
+  sequence: 0,
+  eventId: EventId.make("project-created:transfer-project"),
+  aggregateKind: "project",
+  aggregateId: FLEET_PROJECT_ID,
+  occurredAt: "2026-06-01T00:00:00.000Z",
+  commandId: null,
+  causationEventId: null,
+  correlationId: null,
+  metadata: {},
+  type: "project.created",
+  payload: {
+    projectId: FLEET_PROJECT_ID,
+    title: "Transfer budget",
+    workspaceRoot: "/tmp/transfer-budget",
+    defaultModelSelection: null,
+    scripts: [],
+    createdAt: "2026-06-01T00:00:00.000Z",
+    updatedAt: "2026-06-01T00:00:00.000Z",
+  },
+};
 
 export const SHELL_SETTLED_THREADS = 100;
 export const SHELL_IDLE_SUBAGENTS = 40;
