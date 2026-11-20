@@ -133,7 +133,11 @@ export const boardStoreAtom = Atom.family((key: string) =>
         Promise.all([read("tickets.json"), read("foryou.jsonl"), read("decisions.tsv")]).then(
           ([tickets, forYou, decisions]) => {
             const next = { tickets, forYou, decisions };
-            if (!sameFiles(Option.getOrNull(get.self<StoreFiles | null>()) ?? null, next)) {
+            const last = Option.getOrNull(get.self<StoreFiles | null>()) ?? null;
+            if (!sameFiles(last, next)) {
+              if (last !== null && last.forYou !== next.forYou) {
+                performance.mark("board:foryou-file-change", { detail: { key } });
+              }
               get.setSelf(next);
             }
           },

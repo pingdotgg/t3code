@@ -3,6 +3,8 @@ import { type ReactNode, useState } from "react";
 
 import { Tooltip } from "../ui/Tooltip";
 import { AddProject } from "./AddProject";
+import { ForYouRow } from "./ForYouRow";
+import { ForYouToasts } from "./ForYouToasts";
 import { ProjectList } from "./ProjectList";
 import { Section } from "./Section";
 
@@ -28,6 +30,8 @@ export function Sidebar({
         </div>
         Agent Board
       </div>
+      <ForYouRow />
+      <ForYouToasts />
       <Section
         title="Projects"
         className="min-h-0 shrink"

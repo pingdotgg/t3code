@@ -1,5 +1,5 @@
 import { RegistryContext } from "@effect/atom-react";
-import { useContext, useState } from "react";
+import { type ReactNode, useContext, useState } from "react";
 
 import { STAGE_LABEL } from "../domain/ticket";
 import type { BoardModel } from "../state/boardModel";
@@ -46,6 +46,7 @@ export function Lanes({
   model,
   boardId,
   forYouOpen,
+  forYouLane,
   peek,
   onPeek,
 }: {
@@ -53,6 +54,7 @@ export function Lanes({
   model: BoardModel;
   boardId: string;
   forYouOpen: number;
+  forYouLane: ReactNode;
   peek: Peek | null;
   onPeek: (peek: Peek) => void;
 }) {
@@ -120,7 +122,13 @@ export function Lanes({
           data-testid="lane"
           data-lane={lane.id}
           className="absolute rounded-xl border border-dashed border-line"
-          style={{ left: lane.x, top: lane.y, width: lane.width, height: lane.height }}
+          style={{
+            left: lane.x,
+            top: lane.y,
+            width: lane.width,
+            // The For-you lane grows with its cards, whose heights the layout only estimates.
+            ...(lane.id === "for_you" ? { minHeight: lane.height } : { height: lane.height }),
+          }}
         >
           <header className="flex items-center gap-1.5 px-3" style={{ height: LANE_HEAD }}>
             <span
@@ -130,11 +138,7 @@ export function Lanes({
             </span>
             <span className="text-[11px] text-faint">{laneCount(lane, model, forYouOpen)}</span>
           </header>
-          {lane.id === "for_you" && (
-            <p className="px-3 text-[11px] text-faint">
-              {forYouOpen === 0 ? "Nothing needs you" : `${forYouOpen} open`}
-            </p>
-          )}
+          {lane.id === "for_you" && forYouLane}
         </section>
       ))}
       {layout.lanes.flatMap((lane) =>

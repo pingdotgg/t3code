@@ -7,6 +7,7 @@ import {
   MIN_ZOOM,
   fitToContent,
   panBy,
+  revealDelta,
   zoomAt,
   type View,
 } from "./viewport";
@@ -78,5 +79,37 @@ describe("fitToContent", () => {
 
   it("resets to the initial view when there is no content", () => {
     expect(fitToContent(null, size)).toEqual(INITIAL_VIEW);
+  });
+});
+
+describe("revealDelta", () => {
+  const frame = { x: 0, y: 0, width: 800, height: 600 };
+
+  it("Given a target already inside the frame, when it is revealed, then nothing pans", () => {
+    expect(revealDelta({ x: 100, y: 100, width: 200, height: 200 }, frame, 24)).toEqual({
+      dx: 0,
+      dy: 0,
+    });
+  });
+
+  it("Given a target below the frame, when it is revealed, then it pans up to the bottom margin", () => {
+    expect(revealDelta({ x: 100, y: 500, width: 200, height: 200 }, frame, 24)).toEqual({
+      dx: 0,
+      dy: -124,
+    });
+  });
+
+  it("Given a target left of the frame, when it is revealed, then it pans right to the left margin", () => {
+    expect(revealDelta({ x: -300, y: 100, width: 200, height: 200 }, frame, 24)).toEqual({
+      dx: 324,
+      dy: 0,
+    });
+  });
+
+  it("Given a target taller than the frame, when it is revealed, then its top lines up with the top margin", () => {
+    expect(revealDelta({ x: 100, y: 300, width: 200, height: 900 }, frame, 24)).toEqual({
+      dx: 0,
+      dy: -276,
+    });
   });
 });
