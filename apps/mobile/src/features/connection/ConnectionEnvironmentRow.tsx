@@ -292,7 +292,6 @@ export function ConnectionEnvironmentRow(props: {
               {props.environment.isRelayManaged ? null : (
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={gt("Save")}
                   className="min-h-[42px] flex-1 flex-row items-center justify-center gap-1.5 rounded-[14px] bg-primary px-3.5 py-2.5 active:opacity-70"
                   onPress={handleSave}
                 >

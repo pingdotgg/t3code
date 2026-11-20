@@ -517,7 +517,6 @@ function RootStackLayout(props: {
 
 function NotFoundScreen() {
   const navigation = useNavigation();
-  const gt = useGT();
   const screenBgStyle = StyleSheet.flatten(useResolveClassNames("bg-screen"));
   const primaryBgStyle = StyleSheet.flatten(useResolveClassNames("bg-primary"));
   const returnHomeButtonStyle = StyleSheet.flatten([
@@ -547,7 +546,6 @@ function NotFoundScreen() {
       </Text>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={gt("Return home")}
         style={returnHomeButtonStyle}
         onPress={() => navigation.dispatch(StackActions.replace("Home"))}
       >
