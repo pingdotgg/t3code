@@ -15,7 +15,7 @@ import {
 } from "@t3tools/shared/markdownLinks";
 import { taskListMarkerOffset } from "@t3tools/shared/markdownTaskList";
 import { isHostPath, resolveWorkspaceFilePath } from "@t3tools/shared/path";
-import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
+import { useExternalLinkActions } from "./chat/useExternalLinkActions";
 import {
   AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
@@ -58,7 +58,6 @@ import {
   type ServerConfig,
   type ScopedThreadRef,
   type ServerProviderSkill,
-  type ThreadPullRequestKey,
 } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -127,15 +126,10 @@ import {
   revealInFileExplorerLabelForKind,
   revealInFileExplorerLabelForOs,
 } from "./preview/fileExplorerLabel";
-import {
-  resolveExternalWebLinkHost,
-  showExternalLinkContextMenu,
-} from "./chat/externalLinkContextMenu";
+import { resolveExternalWebLinkHost } from "./chat/externalLinkContextMenu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
-import { recordVisitForThread } from "../browserHistoryStore";
-import { contextMenuSourceOf } from "../contextMenuSource";
 import {
   PreferredEditorEnvironmentRequiredError,
   useOpenInPreferredEditor,
@@ -200,12 +194,10 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
 import { textDirection } from "~/textDirection";
 import { useOpenLink } from "../browser/useOpenLink";
-import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isPreviewAvailableFor } from "../browser/previewRuntime";
 import {
   isBrowserPreviewFile,
   openFileInPreview,
-  openUrlInPreview,
   BrowserPreviewUnavailableError,
   isBrowserSettingsReadError,
 } from "../browser/openFileInPreview";
@@ -596,7 +588,6 @@ function useChatMarkdownState({
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
-  const pullRequestLinking = usePullRequestLinking(threadRef?.environmentId);
   const environmentId = threadRef?.environmentId ?? explicitEnvironmentId ?? null;
   const canOperateHost = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
@@ -746,58 +737,7 @@ function useChatMarkdownState({
   const fileLinksKey = `${fileLinkSourcesKey(text, cwd, imageBaseDir)}`;
   const { markdownFileLinkMetaByHref, inlineCodeFileLinkMetaByText, fileLinkParentSuffixByPath } =
     resolveFileLinkSources(fileLinksKey, cwd, imageBaseDir);
-  const resolveThreadPullRequest = (
-    href: string,
-  ): (ThreadPullRequestKey & { readonly url: string }) | null => {
-    if (
-      threadRef === undefined ||
-      readThreadShell(threadRef) === null ||
-      !pullRequestLinking.canLink(href)
-    )
-      return null;
-    const parsed = sourceControlClients.parseChangeRequestUrl(href)?.link;
-    return parsed === undefined ? null : { ...parsed, url: href };
-  };
-  const linkedThreadPullRequestFor = (href: string) => {
-    if (threadRef === undefined || !pullRequestLinking.isLinked(readThreadShell(threadRef), href))
-      return null;
-    const parsed = sourceControlClients.parseChangeRequestUrl(href)?.link;
-    return parsed === undefined ? null : { ...parsed, url: href };
-  };
-  const updateThreadPullRequestLink = async (href: string, linked: boolean) => {
-    if (threadRef === undefined || (!linked && linkedThreadPullRequestFor(href) === null)) return;
-    if (!readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)) return;
-    await pullRequestLinking.changeLink(threadRef, href, linked);
-  };
-  const openExternalLinkInPreview = (url: string) => {
-    if (!threadRef || !canOperatePreview) {
-      return Promise.resolve(
-        AsyncResult.failure<void, BrowserPreviewUnavailableError>(
-          Cause.fail(
-            new BrowserPreviewUnavailableError({
-              message: gt("Preview access is unavailable for this client."),
-            }),
-          ),
-        ),
-      );
-    }
-    return openUrlInPreview({ threadRef, url, openPreview }).then((result) => {
-      if (result._tag === "Success") recordVisitForThread(threadRef, url);
-      else if (!isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        if (isBrowserSettingsReadError(error)) {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: gt("Unable to open link in browser"),
-              description: error.message,
-            }),
-          );
-        }
-      }
-      return result;
-    });
-  };
+  const { openExternalLinkInPreview, showLinkMenu } = useExternalLinkActions(threadRef);
   const openMarkdownFileInPreview = (path: string) => {
     const preparedConnection = threadRef ? readPreparedConnection(threadRef.environmentId) : null;
     if (!threadRef || !canOperatePreview || preparedConnection === null) {
@@ -1018,7 +958,6 @@ function useChatMarkdownState({
   };
 
   const componentState = {
-    canOperateHost,
     canOperatePreview,
     cwd,
     diffThemeName,
@@ -1048,14 +987,12 @@ function useChatMarkdownState({
     projects,
     issueProjects,
     issueTrackers,
-    linkedThreadPullRequestFor,
-    resolveThreadPullRequest,
     resolvedTheme,
     pullRequestsEnabled,
     issuesEnabled,
     skills,
     threadRef,
-    updateThreadPullRequestLink,
+    showLinkMenu,
   };
   return {
     componentState,
@@ -1204,7 +1141,6 @@ const CHAT_MARKDOWN_COMPONENTS = {
   a: function MarkdownAnchor({ node, href, children, title: _title, ...props }) {
     const gt = useGT();
     const {
-      canOperateHost,
       canOperatePreview,
       cwd,
       environmentId,
@@ -1220,11 +1156,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
       projects,
       issueProjects,
       issueTrackers,
-      linkedThreadPullRequestFor,
-      resolveThreadPullRequest,
       pullRequestsEnabled,
       issuesEnabled,
-      updateThreadPullRequestLink,
+      showLinkMenu,
       fileLinkChip,
       renderContextReference,
     } = use(ChatMarkdownRendererContext);
@@ -1386,61 +1320,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
             });
           }}
           onContextMenu={(event) => {
-            if (!href || !faviconHost) return;
-            event.preventDefault();
-            event.stopPropagation();
-            const api = readLocalApi();
-            if (!api) return;
-            const source = contextMenuSourceOf(event);
-            const threadLinkAction = !canOperateHost
-              ? undefined
-              : linkedThreadPullRequestFor(href) !== null
-                ? "unlink-from-thread"
-                : resolveThreadPullRequest(href) === null
-                  ? undefined
-                  : "link-to-thread";
-            void showExternalLinkContextMenu({
-              href,
-              canOpenInPreview,
-              threadLinkAction,
-              position: { x: event.clientX, y: event.clientY },
-              showContextMenu: (items, position) => api.contextMenu.show(items, position, source),
-              openInPreview: async (target) => {
-                const result = await openExternalLinkInPreview(target);
-                if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-                  reportMarkdownActionFailure(
-                    { operation: "open-link-in-preview", target },
-                    result.cause,
-                  );
-                }
-              },
-              openExternal: (target) => api.shell.openExternal(target),
-              copyLink: (target) =>
-                writeTextToClipboard(target, {
-                  target: "link",
-                  unavailableMessage: msg("Clipboard API is unavailable while copying link."),
-                  failureMessage: msg("Failed to copy link to the clipboard."),
-                }),
-              updateThreadLink: updateThreadPullRequestLink,
-              reportFailure: (operation, cause) => {
-                reportMarkdownActionFailure({ operation, target: href }, cause);
-                if (
-                  operation === "link-pull-request-to-thread" ||
-                  operation === "unlink-pull-request-from-thread"
-                ) {
-                  toastManager.add(
-                    stackedThreadToast({
-                      type: "error",
-                      title:
-                        operation === "link-pull-request-to-thread"
-                          ? gt("Unable to link pull request")
-                          : gt("Unable to unlink pull request"),
-                      description: thrownErrorMessage(cause, m) ?? gt("The request failed."),
-                    }),
-                  );
-                }
-              },
-            });
+            if (href && faviconHost) showLinkMenu(event, href);
           }}
         >
           {faviconHost && hasText && !isPullRequestAutolink ? (

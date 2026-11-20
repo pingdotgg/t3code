@@ -28,6 +28,7 @@ import { userEvent } from "vite-plus/test/browser";
 import { act, fakeTimers, render } from "../../test/render";
 
 import { flatToMarkdown, pmToFlat, serializeEditorDoc } from "~/composer-rich-text-doc";
+import { ensureLocalApi } from "~/localApi";
 import { isMacPlatform } from "~/lib/utils";
 import { registerCommands } from "~/shortcuts/dispatcher";
 import {
@@ -1129,7 +1130,7 @@ it.each(["other field", "document body"])(
   },
 );
 
-it("opens a draft URL only on a modified primary click", async () => {
+it("opens a draft URL by modifier click or context menu", async () => {
   await using screen = await mountEditor("Visit www.example.com.");
   using open = vi.spyOn(window, "open").mockReturnValue(null);
   const link = screen.container.querySelector("[data-composer-url]");
@@ -1141,5 +1142,12 @@ it("opens a draft URL only on a modified primary click", async () => {
     ["https://www.example.com", "_blank", "noopener,noreferrer"],
     ["https://www.example.com", "_blank", "noopener,noreferrer"],
   ]);
+  using menu = vi.spyOn(ensureLocalApi().contextMenu, "show").mockResolvedValue("open-external");
+  link?.dispatchEvent(
+    new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }),
+  );
+  await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(3));
+  expect(menu.mock.calls[0]?.[0].map((item) => item.id)).toEqual(["open-external", "copy-link"]);
+  expect(open.mock.lastCall?.[0]).toBe("https://www.example.com");
   expect(screen.editor.getText()).toBe("Visit www.example.com.");
 });

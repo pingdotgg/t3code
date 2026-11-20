@@ -119,6 +119,7 @@ import {
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { isRichTextFormattingShortcut } from "~/keybindings";
+import { useExternalLinkActions } from "./chat/useExternalLinkActions";
 import { readLocalApi } from "~/localApi";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { isThreadNavigationShortcut } from "~/keybindings";
@@ -730,6 +731,13 @@ function isInCodeBlock(view: EditorView): boolean {
   return view.state.selection.$from.parent.type.spec.code === true;
 }
 
+function composerUrlFromTarget(target: EventTarget | null) {
+  const text =
+    target instanceof Element ? target.closest("[data-composer-url]")?.textContent : null;
+  if (!text || !/^(?:https?:\/\/|www\.)/i.test(text)) return null;
+  return /^www\./i.test(text) ? `https://${text}` : text;
+}
+
 const ComposerUrlExtension = Extension.create({
   name: "composer-url",
   addProseMirrorPlugins() {
@@ -746,14 +754,9 @@ const ComposerUrlExtension = Extension.create({
           handleDOMEvents: {
             click: (_, event) => {
               if (event.button !== 0 || !(event.metaKey || event.ctrlKey)) return false;
-              const link =
-                event.target instanceof Element
-                  ? event.target.closest("[data-composer-url]")
-                  : null;
-              const text = link?.textContent;
-              if (!text || !/^(?:https?:\/\/|www\.)/i.test(text)) return false;
+              const url = composerUrlFromTarget(event.target);
+              if (!url) return false;
               event.preventDefault();
-              const url = /^www\./i.test(text) ? `https://${text}` : text;
               void readLocalApi()?.shell.openExternal(url).catch(console.error);
               return true;
             },
@@ -1055,7 +1058,8 @@ function ComposerPromptEditorTiptapInner(
     importContextFragment,
   }));
 
-  const { environmentId } = use(ComposerContextActionsContext);
+  const { environmentId, threadRef } = use(ComposerContextActionsContext);
+  const { showLinkMenu } = useExternalLinkActions(threadRef);
   const modelKeys = useAtomValue(modelMentionKeysAtom(environmentId ?? ""));
   // Stable so a skills or models refresh does not rerun the controlled-value effect.
   const skillLabelFor = useStableCallback((name: string) => composerSkillMeta(skills, name));
@@ -1956,6 +1960,10 @@ function ComposerPromptEditorTiptapInner(
             )}
           >
             <EditorContent
+              onContextMenu={(event) => {
+                const url = composerUrlFromTarget(event.target);
+                if (url) showLinkMenu(event, url);
+              }}
               editor={editor}
               onKeyDown={(event) => {
                 if (

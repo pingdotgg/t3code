@@ -723,6 +723,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [previewFileId, setPreviewFileId] = useState<string | null>(null);
   const previewFile = composerFiles.find((file) => file.id === previewFileId);
   const composerContextActions = {
+    threadRef: routeThreadRef,
     environmentId,
     cwd: gitCwd ?? undefined,
     projectId: activeProjectId ?? undefined,
