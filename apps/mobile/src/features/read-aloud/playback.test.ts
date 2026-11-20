@@ -42,6 +42,7 @@ vi.mock("../../state/session", () => ({
 }));
 vi.mock("@t3tools/client-runtime/voice-input", () => ({
   startSpeechSynthesis: vi.fn(() => ({ kind: "audio" })),
+  getSpeechSynthesisTimings: vi.fn(() => ({ kind: "timings" })),
   getSpeechSynthesisModels: vi.fn((_prepared: unknown, provider: string) => ({
     kind: "catalog",
     provider,
@@ -57,7 +58,9 @@ vi.mock("../voice-input/voiceDestination", async () => {
             defaultModel: "server-model",
             speedAppliedByProvider: operation.provider !== "openrouter",
           }
-        : "https://host.test/api/voice/synthesis/audio?token=stream",
+        : operation.kind === "timings"
+          ? { words: [], done: true }
+          : { url: "https://host.test/api/voice/synthesis/audio?token=stream", token: "stream" },
   };
 });
 

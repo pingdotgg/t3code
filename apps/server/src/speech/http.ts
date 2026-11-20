@@ -152,6 +152,13 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         }),
       )
       .handle(
+        "synthesisTimings",
+        Effect.fn("environment.voice.synthesisTimings")(function* (args) {
+          yield* guard(args.endpoint.name);
+          return yield* synthesisStreams.timings(args.payload.token, args.payload.after);
+        }),
+      )
+      .handle(
         "prepareSynthesisModel",
         Effect.fn("environment.voice.prepareSynthesisModel")(function* (args) {
           yield* guard(args.endpoint.name);

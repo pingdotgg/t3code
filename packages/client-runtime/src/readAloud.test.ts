@@ -3,7 +3,9 @@ import { DEFAULT_READ_ALOUD_SETTINGS, EnvironmentId } from "@t3tools/contracts";
 import {
   createReadAloudController,
   createReadAloudWarmup,
+  createTimedWords,
   type SpeechPlayback,
+  type SpokenWord,
 } from "./readAloud.ts";
 
 function deferred<A>() {
@@ -234,4 +236,106 @@ it("warms each local model once per interval, and again after a failed request",
     "broken",
     "broken",
   ]);
+});
+
+it("highlights the spoken word by its markdown range, across chunks, while highlighting is on", async () => {
+  const markdown = `Intro **bold** words.\n\n${"filler ".repeat(520)}\n\nLast \`code\` part.`;
+  const emit: Array<(word: SpokenWord | null) => void> = [];
+  // The intro, the filler up to the limit, and the rest.
+  const finished = [deferred<void>(), deferred<void>(), deferred<void>()];
+  const playing = [deferred<void>(), deferred<void>(), deferred<void>()];
+  const texts: string[] = [];
+  const controller = createReadAloudController(async (text) => {
+    const index = texts.push(text) - 1;
+    return {
+      play: async () => playing[index]?.resolve(),
+      pause: () => {},
+      stop: () => {},
+      finished: finished[index]?.promise ?? Promise.resolve(),
+      words: (listener) => {
+        emit[index] = listener;
+        return () => {
+          delete emit[index];
+        };
+      },
+    };
+  });
+  const settings = { ...DEFAULT_READ_ALOUD_SETTINGS, provider: "system" as const };
+  const run = controller.start("1", markdown, settings);
+  await playing[0]?.promise;
+  const bold = texts[0]!.indexOf("bold");
+  emit[0]?.({ start: bold, end: bold + 4 });
+  expect(controller.getHighlight()).toMatchObject({
+    id: "1",
+    word: { start: markdown.indexOf("bold"), end: markdown.indexOf("bold") + 4 },
+    block: { start: 0, first: { text: "Intro" }, last: { text: "words." } },
+  });
+  finished[0]?.resolve();
+  await playing[1]?.promise;
+  expect(controller.getHighlight()).toBeNull();
+  finished[1]?.resolve();
+  await playing[2]?.promise;
+  const code = texts[2]!.indexOf("code");
+  emit[2]?.({ start: code, end: code + 4 });
+  expect(controller.getHighlight()?.word).toMatchObject({
+    start: markdown.indexOf("code"),
+    cue: { text: "code", occurrence: 0 },
+  });
+  controller.stop();
+  expect(controller.getHighlight()).toBeNull();
+  expect(emit.filter(Boolean)).toHaveLength(0);
+  await run;
+
+  const off = controller.start("2", "Short reply.", { ...settings, highlightWords: false });
+  await Promise.resolve();
+  controller.stop();
+  await off;
+  expect(emit.filter(Boolean)).toHaveLength(0);
+});
+
+it("follows provider word timings on the audio clock and estimates them when there are none", async () => {
+  vi.useFakeTimers();
+  try {
+    let seconds = 0;
+    const clock = () => ({ seconds, rate: 2, playing: true });
+    const words = [
+      { start: 0, end: 3, startSeconds: 0, endSeconds: 1 },
+      { start: 4, end: 7, startSeconds: 1, endSeconds: 2 },
+    ];
+    const provider = createTimedWords({
+      text: "one two",
+      wordTimings: "provider",
+      load: async () => ({ words, done: true }),
+      clock,
+    });
+    const heard: Array<SpokenWord | null> = [];
+    provider.subscribe((word) => heard.push(word));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(heard).toEqual([{ start: 0, end: 3 }]);
+    seconds = 1;
+    // At 2× the next word starts after half a second of wall time.
+    await vi.advanceTimersByTimeAsync(499);
+    expect(heard).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(heard).toEqual([
+      { start: 0, end: 3 },
+      { start: 4, end: 7 },
+    ]);
+    provider.stop();
+
+    seconds = 2.5;
+    const estimated = createTimedWords({
+      text: "one two three.",
+      wordTimings: "estimated",
+      load: async () => ({ words: [], done: true, durationSeconds: 3 }),
+      clock,
+    });
+    const guessed: Array<SpokenWord | null> = [];
+    estimated.subscribe((word) => guessed.push(word));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(guessed).toEqual([{ start: 8, end: 14 }]);
+    estimated.stop();
+  } finally {
+    vi.useRealTimers();
+  }
 });

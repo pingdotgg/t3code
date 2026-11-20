@@ -254,6 +254,11 @@ export function ReadAloudSection() {
               value={settings.skipCodeBlocks}
               onValueChange={(skipCodeBlocks) => change({ skipCodeBlocks })}
             />
+            <ListToggleRow
+              label={gt("Highlight words")}
+              value={settings.highlightWords}
+              onValueChange={(highlightWords) => change({ highlightWords })}
+            />
             <ListActionRow
               label={
                 state.id === "preview" && state.status !== "error"

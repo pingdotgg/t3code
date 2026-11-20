@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { EnvironmentId } from "./baseSchemas.ts";
+import { EnvironmentId, NonNegativeInt } from "./baseSchemas.ts";
 import { CloudSpeechProvider } from "./speech.ts";
 
 /** `local` runs a downloaded model on the selected environment; the rest are hosted APIs. */
@@ -43,6 +43,7 @@ export const ReadAloudSettings = Schema.Struct({
   language: Schema.String.check(Schema.isMinLength(2), Schema.isMaxLength(16)),
   skipCodeBlocks: Schema.Boolean,
   backgroundPlayback: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  highlightWords: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
 export type ReadAloudSettings = typeof ReadAloudSettings.Type;
 export const DEFAULT_READ_ALOUD_SETTINGS: ReadAloudSettings = {
@@ -54,6 +55,7 @@ export const DEFAULT_READ_ALOUD_SETTINGS: ReadAloudSettings = {
   language: "auto",
   skipCodeBlocks: true,
   backgroundPlayback: true,
+  highlightWords: true,
 };
 export const ReadAloudPreference = ReadAloudSettings.pipe(
   Schema.withDecodingDefault(Effect.succeed(DEFAULT_READ_ALOUD_SETTINGS)),
@@ -72,6 +74,32 @@ export const SpeechSynthesisRequest = Schema.Struct({
 export type SpeechSynthesisRequest = typeof SpeechSynthesisRequest.Type;
 /** Single-purpose credential for `SPEECH_SYNTHESIS_AUDIO_PATH`, so media elements need no headers. */
 export const SpeechSynthesisStream = Schema.Struct({ token: Schema.String });
+/**
+ * Where a provider's word timings come from: `provider` timestamps from its API, `boundary`
+ * events from a platform voice, or an `estimated` spread of the text over the audio.
+ */
+export const ReadAloudWordTimings = Schema.Literals(["provider", "boundary", "estimated"]);
+export type ReadAloudWordTimings = typeof ReadAloudWordTimings.Type;
+/** A spoken word: UTF-16 offsets in the request text and seconds into its audio. */
+export const SpeechSynthesisWord = Schema.Struct({
+  start: Schema.Int,
+  end: Schema.Int,
+  startSeconds: Schema.Finite,
+  endSeconds: Schema.Finite,
+});
+export type SpeechSynthesisWord = typeof SpeechSynthesisWord.Type;
+/** Reads the word timings of a started synthesis after the first `after` words. */
+export const SpeechSynthesisTimingsRequest = Schema.Struct({
+  token: Schema.String,
+  after: NonNegativeInt,
+});
+/** Answers once new words exist or synthesis ends; `durationSeconds` comes with the end. */
+export const SpeechSynthesisTimings = Schema.Struct({
+  words: Schema.Array(SpeechSynthesisWord),
+  done: Schema.Boolean,
+  durationSeconds: Schema.optionalKey(Schema.Finite),
+});
+export type SpeechSynthesisTimings = typeof SpeechSynthesisTimings.Type;
 export const SpeechSynthesisModelInstall = Schema.Struct({
   state: Schema.Literals(["downloadable", "downloading", "verifying", "installed"]),
   /** Bytes to download, including the speech runtime when this environment lacks it. */
@@ -94,6 +122,8 @@ export const SpeechSynthesisCatalog = Schema.Struct({
   supportsModelSelection: Schema.Boolean,
   supportsVoiceSelection: Schema.Boolean,
   speedAppliedByProvider: Schema.Boolean,
+  /** Absent when the timings are `estimated`. */
+  wordTimings: Schema.optionalKey(ReadAloudWordTimings),
   error: Schema.optionalKey(Schema.String),
   models: Schema.Array(
     Schema.Struct({

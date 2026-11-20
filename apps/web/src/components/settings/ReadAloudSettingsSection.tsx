@@ -739,6 +739,17 @@ export function ReadAloudSettingsSection() {
             }
           />
           <SettingsRow
+            title={gt("Highlight words")}
+            description={gt("Highlight the paragraph and the word being read, and scroll along.")}
+            control={
+              <Switch
+                aria-label={gt("Highlight words while reading")}
+                checked={settings.highlightWords}
+                onCheckedChange={(highlightWords) => change({ highlightWords })}
+              />
+            }
+          />
+          <SettingsRow
             title={gt("Preview", { $context: "noun, a sample of the voice" })}
             description={
               state.id === "read-aloud-preview" && state.error
