@@ -19,6 +19,9 @@ import {
   type ThemeDefinition,
 } from "./themePalette";
 
+// The standard dark bubble stands about 1.26 off its canvas, the light one about 1.19.
+const MESSAGE_SURFACE_CONTRAST = 1.2;
+
 type VsCodeRgba = { r: number; g: number; b: number; a: number };
 type VsCodeRgb = { r: number; g: number; b: number };
 
@@ -306,6 +309,14 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
       break;
     }
   }
+  // VS Code's own chat bubble falls back to the selection color at 30%.
+  const selection = pick("editor.selectionBackground");
+  const bubble =
+    pick("chat.requestBubbleBackground") ?? (selection && { ...selection, a: selection.a * 0.3 });
+  // Most themes paint it faintly, so lift it along its hue to stand apart like the standard bubble.
+  const messageSurfaceHex = bubble
+    ? readableThemeColorOn(flattenOver(bubble, canvas), canvasHex, MESSAGE_SURFACE_CONTRAST)
+    : derived.messageSurface;
   const searchMatchBackground =
     solidOver(canvas, "editor.findMatchHighlightBackground") ?? derived.searchMatchBackground;
   const searchMatchActiveBackground =
@@ -334,6 +345,13 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
     accentSurface:
       solidOver(canvas, "list.activeSelectionBackground", "list.hoverBackground") ??
       derived.accentSurface,
+    messageSurface: messageSurfaceHex,
+    messageForeground: readableOn(
+      messageSurfaceHex,
+      derived.messageForeground,
+      "editor.foreground",
+      "foreground",
+    ),
     codeBackground: solidOver(canvas, "textCodeBlock.background") ?? derived.codeBackground,
     searchMatchBackground,
     searchMatchForeground: readableOn(
