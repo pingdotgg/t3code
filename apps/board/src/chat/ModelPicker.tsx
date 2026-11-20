@@ -1,5 +1,5 @@
 import { Check, ChevronUp } from "lucide-react";
-import { useEffect, useId, useRef } from "react";
+import { useId } from "react";
 
 import { effortOf, type PickableInstance, type PickerValue } from "../providers/providers";
 import { ProviderGlyph } from "../usage/ProviderGlyph";
@@ -38,29 +38,22 @@ export function ModelPicker({
   onOpenChange: (open: boolean) => void;
 }) {
   const panelId = useId();
-  const root = useRef<HTMLDivElement | null>(null);
-  const trigger = useRef<HTMLButtonElement | null>(null);
   const selected = instances.find((instance) => instance.instanceId === value.instanceId);
   const control = effortOf(instances, value);
 
-  useEffect(() => {
-    if (!open) return;
-    const close = (event: PointerEvent) => {
-      if (!root.current?.contains(event.target as Node)) onOpenChange(false);
-    };
-    document.addEventListener("pointerdown", close);
-    return () => document.removeEventListener("pointerdown", close);
-  }, [open, onOpenChange]);
-
-  // Focus moves into the panel on open, so the keyboard reaches its rows.
-  useEffect(() => {
-    if (open) root.current?.querySelector<HTMLElement>("[aria-pressed='true']")?.focus();
-  }, [open]);
-
   return (
     <div
-      ref={root}
       className="relative"
+      onBlur={(event) => {
+        if (
+          open &&
+          !(
+            event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)
+          )
+        ) {
+          onOpenChange(false);
+        }
+      }}
       onKeyDown={(event) => {
         if (event.key === "Escape" && open) {
           event.stopPropagation();
@@ -69,7 +62,6 @@ export function ModelPicker({
       }}
     >
       <button
-        ref={trigger}
         type="button"
         aria-label="Model"
         aria-haspopup="dialog"
@@ -87,7 +79,8 @@ export function ModelPicker({
           id={panelId}
           role="dialog"
           aria-label="Model"
-          className="absolute bottom-full left-0 z-20 mb-1 flex max-h-[min(22rem,50vh)] w-[min(22rem,calc(100vw-2rem))] flex-col gap-2 overflow-y-auto rounded-xl border border-line bg-panel p-2 shadow-panel"
+          tabIndex={-1}
+          className="outline-none absolute bottom-full left-0 z-20 mb-1 flex max-h-[min(22rem,50vh)] w-[min(22rem,calc(100vw-2rem))] flex-col gap-2 overflow-y-auto rounded-xl border border-line bg-panel p-2 shadow-panel"
         >
           <div role="group" aria-label="Provider" className="flex flex-col">
             {instances.map((instance) => {

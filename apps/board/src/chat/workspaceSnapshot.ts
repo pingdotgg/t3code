@@ -27,7 +27,7 @@ export function useWorkspaceSnapshot(
   environmentId: EnvironmentId,
   instanceId: ProviderInstanceId | undefined,
   cwd: string,
-): { readonly refresh: () => void; readonly scanning: boolean } {
+) {
   const atom =
     instanceId === undefined ? idle : snapshotRefresh({ environmentId, instanceId, cwd });
   return {

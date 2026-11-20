@@ -23,16 +23,16 @@ export interface SlashItem {
 
 export const GROUP_ORDER: ReadonlyArray<SlashGroup> = ["command", "skill", "action"];
 
-export const GROUP_TITLE: Record<SlashGroup, string> = {
+export const GROUP_TITLE = {
   command: "Commands",
   skill: "Skills",
   action: "T3 actions",
-};
+} satisfies Record<SlashGroup, string>;
 
-const ACTIONS: Record<SlashAction, { readonly description: string }> = {
+const ACTIONS = {
   model: { description: "Switch response model for this thread" },
   clear: { description: "Start a fresh session; earlier messages stay visible" },
-};
+} satisfies Record<SlashAction, { readonly description: string }>;
 
 /**
  * The menu's items for one instance. A command that a visible skill shares its name with is left

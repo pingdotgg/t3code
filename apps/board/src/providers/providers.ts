@@ -121,6 +121,12 @@ export function pickableInstances(
 export const canStart = (instance: PickableInstance) =>
   instance.unavailable === null && instance.signIn !== "signed-out";
 
+export interface DefaultPick {
+  readonly value: PickerValue;
+  /** Why the default is not Claude Code on its usual model, or null. */
+  readonly reason: string | null;
+}
+
 const instanceIsSignedIn = (instance: PickableInstance) =>
   instance.unavailable === null && instance.signIn === "signed-in";
 
@@ -129,10 +135,7 @@ const instanceIsSignedIn = (instance: PickableInstance) =>
  * signed-in Claude instance offers it. Otherwise the first signed-in instance on its default model,
  * with the reason shown under the picker.
  */
-export function defaultPick(instances: ReadonlyArray<PickableInstance>): {
-  readonly value: PickerValue;
-  readonly reason: string | null;
-} {
+export function defaultPick(instances: ReadonlyArray<PickableInstance>): DefaultPick {
   const claude = instances.filter((instance) => instance.driver === "claudeAgent");
   const preferred = claude.find(
     (instance) =>
@@ -218,11 +221,7 @@ export function pickOf(
     control === null || control === undefined
       ? undefined
       : (selection.options ?? []).find((option) => option.id === control.id)?.value;
-  return {
-    instanceId: selection.instanceId,
-    model: selection.model,
-    effort: typeof chosen === "string" ? chosen : "",
-  };
+  return { instanceId: selection.instanceId, model: selection.model, effort: String(chosen ?? "") };
 }
 
 /** The model selection a turn goes out with, or null when the pick names no instance or model. */

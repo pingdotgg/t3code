@@ -1,4 +1,4 @@
-import { Fragment, useEffect } from "react";
+import { Fragment, useLayoutEffect } from "react";
 
 import { GROUP_TITLE, type SlashItem } from "./slash";
 
@@ -22,7 +22,7 @@ export function SlashMenu({
   onHover: (index: number) => void;
 }) {
   // Two frames after the commit: the first runs the commit's paint, the second follows it.
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!MARK_SLASH) return;
     const frame = requestAnimationFrame(() =>
       requestAnimationFrame(() => performance.mark("board:slash-painted")),
