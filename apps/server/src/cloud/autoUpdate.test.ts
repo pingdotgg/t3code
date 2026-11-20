@@ -1,12 +1,13 @@
 import { ServerSelfUpdateError, type ServerSelfUpdateInput } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { CliUpdateError } from "../cli/update.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
-import { autoUpdateCheck, autoUpdateTarget } from "./autoUpdate.ts";
+import { autoUpdateCheck, autoUpdateSetting, autoUpdateTarget } from "./autoUpdate.ts";
 import { ServerSelfUpdate } from "./selfUpdate.ts";
 
 const outcome = (status: "committed" | "rolled-back" | "failed", targetVersion: string) => ({
@@ -31,6 +32,23 @@ it.each([
 ] as const)("moves to %s only when it can", (_, newest, lastOutcome, expected) => {
   expect(autoUpdateTarget({ current: "0.1.10", newest, lastOutcome })).toBe(expected);
 });
+
+it.effect.each([
+  ["unset in a standalone build", { T3CODE_STANDALONE: "1" }, true, false],
+  ["unset in an upstream build", {}, false, false],
+  [
+    "disabled in a standalone build",
+    { T3CODE_STANDALONE: "1", T3CODE_AUTO_UPDATE: "0" },
+    false,
+    true,
+  ],
+  ["disabled with false", { T3CODE_STANDALONE: "1", T3CODE_AUTO_UPDATE: "false" }, false, true],
+  ["enabled in an upstream build", { T3CODE_AUTO_UPDATE: "1" }, true, true],
+] as const)("automatic updates %s", ([_, env, enabled, explicit]) =>
+  Effect.gen(function* () {
+    expect(yield* autoUpdateSetting).toEqual({ enabled, explicit });
+  }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env })))),
+);
 
 const runStatuses = [
   ["preparing", false],
