@@ -31,6 +31,43 @@ export function autoUpdateTarget(input: {
   return input.newest;
 }
 
+// A restart would cut short a run that still owns its provider turn or a queued one about to
+// start. A held queue waits on the user and would block updates indefinitely.
+const runActive = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const [row] = yield* sql<{ readonly active: number }>`
+    SELECT EXISTS (
+      SELECT 1 FROM orchestration_v2_projection_runs
+      WHERE status IN ('preparing', 'queued', 'starting', 'running', 'waiting')
+        AND NOT (status = 'queued' AND json_extract(payload_json, '$.queueHeld') IS 1)
+    ) AS active
+  `;
+  return row?.active === 1;
+});
+
+/** One scheduled check. It never fails, so a failed download or lookup leaves the schedule running. */
+export const autoUpdateCheck = Effect.fn("cloud.auto_update.check")(
+  function* <E, R>(input: {
+    readonly newest: Effect.Effect<string, E, R>;
+    readonly lastOutcome: ServerSelfUpdateOutcome | undefined;
+  }) {
+    if (yield* runActive) return;
+    const targetVersion = autoUpdateTarget({
+      current: packageJson.version,
+      newest: yield* input.newest,
+      lastOutcome: input.lastOutcome,
+    });
+    if (targetVersion === undefined) return;
+    const selfUpdate = yield* ServerSelfUpdate;
+    // A run can start while the release downloads; activation reuses the staged runtime.
+    yield* selfUpdate.update({ targetVersion, stageOnly: true });
+    if (yield* runActive) return;
+    yield* Effect.logInfo("Updating to the newest published release.", { targetVersion });
+    yield* selfUpdate.update({ targetVersion });
+  },
+  Effect.catchCause((cause) => Effect.logWarning("Automatic update check failed.", { cause })),
+);
+
 /**
  * Opt-in for the background service: moves to the newest published release on this build's channel
  * through the same self-update a client starts, so the launcher's trial commits or rolls it back.
@@ -46,33 +83,14 @@ export const layer = Layer.effectDiscard(
       );
       return;
     }
-    const selfUpdate = yield* ServerSelfUpdate;
-    const sql = yield* SqlClient.SqlClient;
     const mirror = managedUpdateMirror((yield* ManagedPolicy.ManagedPolicy).document);
-
-    const check = Effect.gen(function* () {
-      // A restart would cut agent turns short; the next check tries again.
-      const [row] = yield* sql<{ readonly active: number }>`
-        SELECT EXISTS (
-          SELECT 1 FROM orchestration_v2_projection_runs
-          WHERE status IN ('preparing', 'starting', 'running')
-        ) AS active
-      `;
-      if (row?.active === 1) return;
-      const newest = yield* mirror === undefined
-        ? resolveNewestVersion(channel)
-        : resolveMirrorVersion(mirror, channel);
-      const targetVersion = autoUpdateTarget({
-        current: packageJson.version,
-        newest,
-        lastOutcome: launcher.lastOutcome,
-      });
-      if (targetVersion === undefined) return;
-      yield* Effect.logInfo("Updating to the newest published release.", { targetVersion });
-      yield* selfUpdate.update({ targetVersion });
-    }).pipe(
-      Effect.catchCause((cause) => Effect.logWarning("Automatic update check failed.", { cause })),
-    );
+    const check = autoUpdateCheck({
+      newest:
+        mirror === undefined
+          ? resolveNewestVersion(channel)
+          : resolveMirrorVersion(mirror, channel),
+      lastOutcome: launcher.lastOutcome,
+    });
 
     // ponytail: fixed hourly check; add a setting if operators need another cadence.
     yield* forkParked(
