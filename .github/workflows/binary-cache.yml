@@ -1,0 +1,40 @@
+name: Publish Nix binary cache
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: binary-cache-main
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Build and publish Nix packages
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout the tested commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - name: Configure Cachix
+        uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1 # v16
+        with:
+          name: alphas-t3code
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - name: Build packages
+        run: nix build .#t3code .#t3code-unwrapped --no-link --print-build-logs

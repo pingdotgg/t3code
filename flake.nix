@@ -23,6 +23,13 @@
 {
   description = "T3 Code, built from the local checkout";
 
+  nixConfig = {
+    extra-substituters = [ "https://alphas-t3code.cachix.org" ];
+    extra-trusted-public-keys = [
+      "alphas-t3code.cachix.org-1:aTh8RQ0Ietz26gaLDLMms7zDOiDX1JRd5TOwc1UMRu0="
+    ];
+  };
+
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/1d060086d60cb76a40cf37109f979d88a5bd6396";
   };

@@ -140,6 +140,13 @@ in
         // cfg.environment;
     in
     {
+      nix.settings = {
+        extra-substituters = [ "https://alphas-t3code.cachix.org" ];
+        extra-trusted-public-keys = [
+          "alphas-t3code.cachix.org-1:aTh8RQ0Ietz26gaLDLMms7zDOiDX1JRd5TOwc1UMRu0="
+        ];
+      };
+
       assertions = [
         {
           assertion = cfg.home != toString cfg.dataDir;

@@ -51,6 +51,13 @@ It works with Claude Code, Codex, Cursor, OpenCode, Grok Build, Antigravity, Kir
 | Nix            | `nix profile add github:NixOS/nixpkgs/nixos-unstable#t3code`         |
 | Debian, Ubuntu | `.deb` from [Releases](https://github.com/pingdotgg/t3code/releases) |
 
+The local flake uses the project's public Cachix binary cache automatically, so
+matching Nix store paths download instead of compiling locally. The cache is
+published by GitHub Actions after the `CI` workflow passes on `main`.
+To enable publishing, add the Cachix access token as the GitHub Actions
+repository secret `CACHIX_AUTH_TOKEN`. The `Publish Nix binary cache` workflow
+then builds `t3code` and `t3code-unwrapped` only after a successful `CI` run.
+
 ### Command line
 
 This installs the `t3` command. Run `t3` to start the server and open the web app.
