@@ -365,7 +365,11 @@ describe("CursorAgentSdkProcessRunner", () => {
         const error = yield* Effect.flip(run.wait);
         const msg = CursorAgentSdk.cursorSdkFailureMessage(error);
         assert.include(msg, "code 17");
-        assert.include(msg, "fatal worker boom");
+        assert.notInclude(msg, "fatal worker boom");
+        const diagnostic = error.cause instanceof Error ? error.cause.cause : undefined;
+        assert.isTrue(
+          diagnostic instanceof Error && diagnostic.message.includes("fatal worker boom"),
+        );
         yield* session.close;
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
@@ -378,6 +382,7 @@ describe("CursorAgentSdkProcessRunner", () => {
         Effect.gen(function* () {
           const scriptPath = yield* writeFakeWorker;
           const executable = yield* HostProcess.ExecutablePath;
+          const workerTerminated = yield* Deferred.make<void>();
 
           const runner = yield* CursorAgentSdkProcessRunner.makeCursorAgentSdkProcessRunner({
             resolveLaunch: Effect.succeed({
@@ -386,6 +391,8 @@ describe("CursorAgentSdkProcessRunner", () => {
               env: { FAKE_WORKER_MODE: "exit-after-done" },
             }),
             protocolLoggerFor: () => undefined,
+            onWorkerTerminated: () =>
+              Deferred.succeed(workerTerminated, undefined).pipe(Effect.asVoid),
           });
 
           const session = yield* runner.open(openInput);
@@ -402,8 +409,7 @@ describe("CursorAgentSdkProcessRunner", () => {
               }),
           });
           yield* Deferred.await(deltaStarted);
-          // Deterministic barrier: listMessages fails only after exit handling runs failAllPending.
-          yield* Effect.flip(session.listMessages);
+          yield* Deferred.await(workerTerminated);
           yield* Deferred.succeed(releaseDelta, undefined);
           const result = yield* run.wait;
           assert.equal(result.status, "finished");

@@ -22,6 +22,20 @@ const CURSOR_TIMEOUT_MS = 180_000;
 
 const isTextGenerationError = Schema.is(TextGenerationError);
 
+const TEXT_GENERATION_STAGE_DETAIL: Readonly<Record<string, string>> = {
+  "textGenerate.load": "Cursor SDK could not be loaded.",
+  "textGenerate.store": "Cursor SDK agent store could not be opened.",
+  "textGenerate.create": "Cursor SDK agent could not be created.",
+  "textGenerate.dispose": "Cursor SDK agent could not be disposed.",
+  "textGenerate.send": "Cursor SDK request could not be sent.",
+  "textGenerate.cancel": "Cursor SDK run could not be cancelled.",
+  "textGenerate.wait": "Cursor SDK run failed.",
+};
+
+function workerTextGenerationDetail(error: CursorAgentSdk.CursorAgentSdkRunnerError): string {
+  return TEXT_GENERATION_STAGE_DETAIL[error.method] ?? "Cursor SDK text generation failed.";
+}
+
 function cursorSdkResultDetail(result: RunResult): string {
   switch (result.status) {
     case "cancelled":
@@ -246,7 +260,9 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
               model: resolvedModel,
               cwd,
               stateRoot,
-            }).pipe(Effect.mapError(sdkFailure("Cursor SDK text generation failed.")))
+            }).pipe(
+              Effect.mapError((error) => sdkFailure(workerTextGenerationDetail(error))(error)),
+            )
           : yield* Effect.gen(function* () {
               const { Agent } = yield* Effect.try({
                 try: sdk.load,

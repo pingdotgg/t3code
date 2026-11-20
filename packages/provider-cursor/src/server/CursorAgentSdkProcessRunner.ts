@@ -73,13 +73,13 @@ function fromSerializedFailure(
 
 function workerExitError(method: string, exitCode: number | undefined, stderr: string) {
   const trimmedStderr = stderr.trim();
-  const detail =
-    trimmedStderr.length > 0
-      ? `Cursor SDK worker exited unexpectedly${exitCode === undefined ? "" : ` (code ${exitCode})`}: ${trimmedStderr}`
-      : `Cursor SDK worker exited unexpectedly${exitCode === undefined ? "" : ` (code ${exitCode})`}.`;
+  const detail = `Cursor SDK worker exited unexpectedly${exitCode === undefined ? "" : ` (code ${exitCode})`}.`;
   return new CursorAgentSdk.CursorAgentSdkRunnerError({
     method,
-    cause: new Error(detail),
+    cause: new Error(
+      detail,
+      trimmedStderr.length > 0 ? { cause: new Error(trimmedStderr) } : undefined,
+    ),
   });
 }
 
@@ -106,18 +106,18 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
     readonly protocolLoggerFor: (
       input: CursorAgentSdk.CursorAgentSdkOpenInput,
     ) => CursorAgentSdk.CursorAgentSdkProtocolLogger | undefined;
+    readonly onWorkerTerminated?: (exitCode: number | undefined) => Effect.Effect<void>;
   }) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const agentScope = yield* AgentScope;
     const hostEnvironment = yield* HostProcess.Environment;
-    const activeScopes = new Set<Scope.Closeable>();
+    const activeCleanups = new Set<Effect.Effect<void>>();
 
     yield* Effect.addFinalizer(() =>
-      Effect.forEach(
-        Array.from(activeScopes),
-        (scope) => Scope.close(scope, Exit.void).pipe(Effect.ignore),
-        { concurrency: "unbounded", discard: true },
-      ),
+      Effect.forEach(Array.from(activeCleanups), (cleanup) => cleanup.pipe(Effect.ignore), {
+        concurrency: "unbounded",
+        discard: true,
+      }),
     );
 
     const spawnWorker = Effect.fn("CursorAgentSdkProcessRunner.spawnWorker")(function* (input: {
@@ -128,10 +128,13 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
       ) => Effect.Effect<void>;
     }): Effect.fn.Return<SpawnedCursorWorker, CursorAgentSdk.CursorAgentSdkRunnerError> {
       const workerScope = yield* Scope.make();
-      activeScopes.add(workerScope);
+      let activeCleanup: Effect.Effect<void> = Scope.close(workerScope, Exit.void).pipe(
+        Effect.ignore,
+      );
+      activeCleanups.add(activeCleanup);
 
       const teardownScope = () => {
-        activeScopes.delete(workerScope);
+        activeCleanups.delete(activeCleanup);
         return Scope.close(workerScope, Exit.void).pipe(Effect.ignore);
       };
 
@@ -214,7 +217,8 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
         exitCode: number | undefined,
         forceActiveRuns: boolean,
       ) {
-        if (terminated === undefined) {
+        const wasTerminated = terminated !== undefined;
+        if (!wasTerminated) {
           terminated = { exitCode };
         }
         const pending = Array.from(pendingRequests.entries());
@@ -232,6 +236,9 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
             // Forced teardown interrupts the FIFO consumer, so settle waiters directly.
             yield* Deferred.fail(run.waitDeferred, error);
           }
+        }
+        if (!wasTerminated && options.onWorkerTerminated !== undefined) {
+          yield* options.onWorkerTerminated(exitCode).pipe(Effect.ignore);
         }
       });
 
@@ -311,7 +318,10 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
                   Effect.timeoutOption(Duration.millis(250)),
                   Effect.orElseSucceed(() => Option.none<number>()),
                   Effect.flatMap((exitCode) =>
-                    failAllPending(Option.getOrUndefined(exitCode), false),
+                    Deferred.await(stderrDone).pipe(
+                      Effect.timeoutOption(Duration.millis(500)),
+                      Effect.andThen(failAllPending(Option.getOrUndefined(exitCode), false)),
+                    ),
                   ),
                 );
               }),
@@ -408,6 +418,11 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
           ),
         );
       });
+
+      // Replace the raw scope closer with forced worker teardown so runner shutdown settles runs.
+      activeCleanups.delete(activeCleanup);
+      activeCleanup = close(false);
+      activeCleanups.add(activeCleanup);
 
       // Untraced: per-send registration inside CursorAgentSdkSession.send.
       const registerRun = Effect.fnUntraced(function* (sendId: number) {
@@ -516,8 +531,10 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
 
               const sendId = worker.nextId();
               const runState = yield* worker.registerRun(sendId);
-              const started = (yield* worker
-                .requestWithId(
+              let acknowledged = false;
+              let runHandedOff = false;
+              return yield* Effect.gen(function* () {
+                const started = (yield* worker.requestWithId(
                   sendId,
                   {
                     id: sendId,
@@ -530,121 +547,147 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
                     ...(sendInput.resume === undefined ? {} : { resume: sendInput.resume }),
                   },
                   sendInput.resume === true ? "run.resume" : "run.start",
-                )
-                .pipe(
-                  Effect.onError(() => Effect.sync(() => worker.unregisterRun(sendId))),
-                  Effect.onInterrupt(() => Effect.sync(() => worker.unregisterRun(sendId))),
                 )) as { readonly runId: string; readonly agentId: string };
+                acknowledged = true;
 
-              const { runId } = started;
-              yield* log({
-                direction: "incoming",
-                stage: "decoded",
-                payload: {
-                  type: "run.started",
+                const { runId } = started;
+                yield* log({
+                  direction: "incoming",
+                  stage: "decoded",
+                  payload: {
+                    type: "run.started",
+                    runId,
+                    agentId: started.agentId,
+                  },
+                });
+
+                // Consume deltas and terminal completion sequentially from one FIFO queue so every
+                // preceding onDelta finishes before run.wait resolves, matching the in-process runner.
+                yield* Effect.gen(function* () {
+                  let callbackFailure: { readonly cause: unknown } | undefined;
+                  while (true) {
+                    const item = yield* Queue.take(runState.queue);
+                    if (item._tag === "delta") {
+                      if (callbackFailure !== undefined) continue;
+                      const deltaExit = yield* Effect.exit(
+                        log({
+                          direction: "incoming",
+                          stage: "decoded",
+                          payload: {
+                            type: "interaction.update",
+                            runId,
+                            update: item.update,
+                          },
+                        }).pipe(Effect.andThen(sendInput.onDelta?.(item.update) ?? Effect.void)),
+                      );
+                      if (Exit.isFailure(deltaExit)) {
+                        callbackFailure = { cause: Cause.squash(deltaExit.cause) };
+                      }
+                      continue;
+                    }
+                    if (!item.ok) {
+                      yield* Deferred.fail(runState.waitDeferred, item.error);
+                      return;
+                    }
+                    if (callbackFailure !== undefined) {
+                      yield* Deferred.fail(
+                        runState.waitDeferred,
+                        toRunnerError("run.wait", callbackFailure.cause),
+                      );
+                      return;
+                    }
+                    yield* log({
+                      direction: "incoming",
+                      stage: "decoded",
+                      payload: {
+                        type: "run.completed",
+                        result: item.result,
+                      },
+                    });
+                    yield* Deferred.succeed(runState.waitDeferred, item.result);
+                    return;
+                  }
+                }).pipe(
+                  Effect.ensuring(Effect.sync(() => worker.unregisterRun(sendId))),
+                  Effect.forkIn(worker.scope),
+                );
+
+                const run = {
                   runId,
                   agentId: started.agentId,
-                },
-              });
-
-              // Consume deltas and terminal completion sequentially from one FIFO queue so every
-              // preceding onDelta finishes before run.wait resolves, matching the in-process runner.
-              yield* Effect.gen(function* () {
-                let callbackFailure: { readonly cause: unknown } | undefined;
-                while (true) {
-                  const item = yield* Queue.take(runState.queue);
-                  if (item._tag === "delta") {
-                    if (callbackFailure !== undefined) continue;
-                    const deltaExit = yield* Effect.exit(
-                      log({
-                        direction: "incoming",
-                        stage: "decoded",
-                        payload: {
-                          type: "interaction.update",
-                          runId,
-                          update: item.update,
-                        },
-                      }).pipe(Effect.andThen(sendInput.onDelta?.(item.update) ?? Effect.void)),
-                    );
-                    if (Exit.isFailure(deltaExit)) {
-                      callbackFailure = { cause: Cause.squash(deltaExit.cause) };
-                    }
-                    continue;
-                  }
-                  if (!item.ok) {
-                    yield* Deferred.fail(runState.waitDeferred, item.error);
-                    return;
-                  }
-                  if (callbackFailure !== undefined) {
-                    yield* Deferred.fail(
-                      runState.waitDeferred,
-                      toRunnerError("run.wait", callbackFailure.cause),
-                    );
-                    return;
-                  }
-                  yield* log({
-                    direction: "incoming",
-                    stage: "decoded",
-                    payload: {
-                      type: "run.completed",
-                      result: item.result,
-                    },
-                  });
-                  yield* Deferred.succeed(runState.waitDeferred, item.result);
-                  return;
-                }
-              }).pipe(
-                Effect.ensuring(Effect.sync(() => worker.unregisterRun(sendId))),
-                Effect.forkIn(worker.scope),
-              );
-
-              return {
-                runId,
-                agentId: started.agentId,
-                wait: Deferred.await(runState.waitDeferred),
-                steer: Effect.fn("CursorAgentSdkRun.steer")((text: string) =>
-                  log({
+                  wait: Deferred.await(runState.waitDeferred),
+                  steer: Effect.fn("CursorAgentSdkRun.steer")((text: string) =>
+                    log({
+                      direction: "outgoing",
+                      stage: "decoded",
+                      payload: {
+                        type: "run.steer",
+                        runId,
+                        text,
+                      },
+                    }).pipe(
+                      Effect.andThen(
+                        worker.request(
+                          (id) => ({ id, type: "steer", sendId, text }),
+                          "run.steer",
+                        ) as Effect.Effect<
+                          SteerAckOutcome,
+                          CursorAgentSdk.CursorAgentSdkRunnerError
+                        >,
+                      ),
+                      Effect.tap((outcome) =>
+                        log({
+                          direction: "incoming",
+                          stage: "decoded",
+                          payload: {
+                            type: "run.steered",
+                            runId,
+                            outcome,
+                          },
+                        }),
+                      ),
+                    ),
+                  ),
+                  cancel: log({
                     direction: "outgoing",
                     stage: "decoded",
                     payload: {
-                      type: "run.steer",
+                      type: "run.cancel",
                       runId,
-                      text,
                     },
                   }).pipe(
                     Effect.andThen(
-                      worker.request(
-                        (id) => ({ id, type: "steer", sendId, text }),
-                        "run.steer",
-                      ) as Effect.Effect<SteerAckOutcome, CursorAgentSdk.CursorAgentSdkRunnerError>,
+                      worker.request((id) => ({ id, type: "cancel", sendId }), "run.cancel"),
                     ),
-                    Effect.tap((outcome) =>
-                      log({
-                        direction: "incoming",
-                        stage: "decoded",
-                        payload: {
-                          type: "run.steered",
-                          runId,
-                          outcome,
-                        },
-                      }),
-                    ),
+                    Effect.asVoid,
                   ),
+                } satisfies CursorAgentSdk.CursorAgentSdkRun;
+                runHandedOff = true;
+                return run;
+              }).pipe(
+                Effect.ensuring(
+                  Effect.suspend(() => {
+                    if (runHandedOff) return Effect.void;
+                    const stopRun = acknowledged
+                      ? worker
+                          .request((id) => ({ id, type: "cancel", sendId }), "run.cancel")
+                          .pipe(
+                            Effect.timeoutOption(WORKER_CLOSE_TIMEOUT),
+                            Effect.flatMap(
+                              Option.match({
+                                onNone: () => worker.close(false),
+                                onSome: () => Effect.void,
+                              }),
+                            ),
+                            Effect.catch(() => worker.close(false)),
+                          )
+                      : Effect.void;
+                    return stopRun.pipe(
+                      Effect.ensuring(Effect.sync(() => worker.unregisterRun(sendId))),
+                    );
+                  }),
                 ),
-                cancel: log({
-                  direction: "outgoing",
-                  stage: "decoded",
-                  payload: {
-                    type: "run.cancel",
-                    runId,
-                  },
-                }).pipe(
-                  Effect.andThen(
-                    worker.request((id) => ({ id, type: "cancel", sendId }), "run.cancel"),
-                  ),
-                  Effect.asVoid,
-                ),
-              } satisfies CursorAgentSdk.CursorAgentSdkRun;
+              );
             }),
             listMessages: log({
               direction: "outgoing",
