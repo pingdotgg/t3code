@@ -139,6 +139,7 @@
   "1fa38fb049c6b56e": "Le filtre {number} a besoin d’un chemin sous body, headers ou query, et d’au moins une valeur.",
   "31ec02bdcb3920d1": "Le filtre {number} a besoin d’un chemin sous body, headers ou query, et d’une valeur.",
   "81f613bb68d85bb7": "Hors de la discussion, dans un fichier privé que les commandes de cet agent peuvent lire pendant 24 heures",
+  "07b56c0c12bd2de1": "Hors de la discussion, dans des fichiers privés que les commandes de cet agent peuvent lire pendant 24 heures",
   "62ae4688ece05590": "Stocké de façon sécurisée, jamais montré à l’agent",
   "8c2d901183b4e219": "Collez le secret",
   "610aea624f895a78": "Enregistré de façon sécurisée et gardé privé",
@@ -1712,7 +1713,9 @@
   "0efe7ba6d7f681f1": "Reconnectez-vous à cet environnement et réessayez. Le fichier a peut-être été déplacé ou supprimé.",
   "2b29584d2bcea749": "Le fichier est introuvable dans {path}.",
   "61026d122846876c": "Joignez à nouveau le fichier et réessayez.",
+  "d0872cb98b34eae8": "Désactiver {label} pour les environnements sélectionnés",
   "a9129aaa7c955e46": "Activer {label} pour les environnements sélectionnés",
+  "53207498f814efe0": "Mixte · Désactiver",
   "fd569def3acc6750": "Mixte · Activer",
   "8eebcd051255ba20": "Ignorer le message",
   "8711a1de99862971": "Diminuer {label}",
@@ -4228,6 +4231,15 @@
   "f6f962de62b3e462": "Demandez ce que vous voulez",
   "64338d507e708bef": "Le contenu partagé n’est plus dans la boîte de réception. Vous pouvez continuer à modifier ce brouillon de tâche.",
   "c5b11890aa7f406f": "Sur quoi travaille-t-on ?",
+  "39a92e68dd2bf6cc": [
+    "Votre brouillon est enregistré sur cet appareil. ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " n’a aucun modèle disponible. Installez un fournisseur ou connectez-vous à l’un d’eux sur cet environnement pour en choisir un."
+  ],
   "3a3930717d8d73b4": "Votre brouillon est enregistré sur cet appareil. Connectez-vous à un environnement pour choisir son premier modèle.",
   "8b53cd9e9e107f7c": "Ajoutez un environnement avant de créer une tâche.",
   "b369a312b533f975": "Chargement des projets depuis l’environnement enregistré.",

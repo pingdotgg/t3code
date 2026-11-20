@@ -139,6 +139,7 @@
   "1fa38fb049c6b56e": "O filtro {number} precisa de um caminho em body, headers ou query e de pelo menos um valor.",
   "31ec02bdcb3920d1": "O filtro {number} precisa de um caminho em body, headers ou query e de um valor.",
   "81f613bb68d85bb7": "Fora do chat, em um arquivo privado que os comandos deste agente podem ler por 24 horas",
+  "07b56c0c12bd2de1": "Fora do chat, em arquivos privados que os comandos deste agente podem ler por 24 horas",
   "62ae4688ece05590": "Armazenado com segurança, nunca mostrado ao agente",
   "8c2d901183b4e219": "Cole o segredo",
   "610aea624f895a78": "Salvo com segurança e mantido privado",
@@ -1712,7 +1713,9 @@
   "0efe7ba6d7f681f1": "Reconecte a este ambiente e tente novamente. O arquivo pode ter sido movido ou excluído.",
   "2b29584d2bcea749": "O arquivo não foi encontrado em {path}.",
   "61026d122846876c": "Anexe o arquivo novamente e tente de novo.",
+  "d0872cb98b34eae8": "Desativar {label} nos ambientes selecionados",
   "a9129aaa7c955e46": "Ativar {label} nos ambientes selecionados",
+  "53207498f814efe0": "Misto · Desativar",
   "fd569def3acc6750": "Misto · Ativar",
   "8eebcd051255ba20": "Dispensar mensagem",
   "8711a1de99862971": "Diminuir {label}",
@@ -4228,6 +4231,15 @@
   "f6f962de62b3e462": "Pergunte qualquer coisa",
   "64338d507e708bef": "O conteúdo compartilhado não está mais na caixa de entrada. Você pode continuar editando o rascunho desta tarefa.",
   "c5b11890aa7f406f": "No que vamos trabalhar?",
+  "39a92e68dd2bf6cc": [
+    "Seu rascunho está salvo neste dispositivo. ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " não tem nenhum modelo disponível. Instale um provedor ou entre em um lá para escolher um."
+  ],
   "3a3930717d8d73b4": "Seu rascunho está salvo neste dispositivo. Conecte-se a um ambiente para escolher o primeiro modelo.",
   "8b53cd9e9e107f7c": "Adicione um ambiente antes de criar uma tarefa.",
   "b369a312b533f975": "Carregando projetos do ambiente salvo.",
