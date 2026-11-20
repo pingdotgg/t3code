@@ -52,6 +52,7 @@ import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { isElectron } from "~/env";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import { useNowMinute } from "~/hooks/useNowMinute";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import {
@@ -723,7 +724,7 @@ function FleetCanvas({
   }, [canvas]);
 
   // Reads the view inside the updater so the scene's props stay the same while panning.
-  const reveal = (rect: FleetRect) => {
+  const reveal = useStableCallback((rect: FleetRect) => {
     if (size === null) return;
     setManual((current) => {
       const shown = current?.key === graphKey ? current.view : fitFleetLayout(layout, size);
@@ -747,7 +748,7 @@ function FleetCanvas({
         },
       };
     });
-  };
+  });
   const centre = (rect: FleetRect) => {
     if (size === null || view === null) return;
     const scale = Math.max(view.scale, FOUND_MIN_SCALE);
@@ -841,7 +842,8 @@ function FleetCanvas({
     }
     if (current.mode !== "box" || current.key !== layoutKey) return;
     const drawn = boxAt(current, event);
-    const { origin } = current;
+    // The box is in screen space: a zoom made mid-drag moved the map under it.
+    const origin = view ?? current.origin;
     onTick(
       fleetNodesInBox(layout, {
         x: (drawn.x - origin.x) / origin.scale,

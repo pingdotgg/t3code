@@ -1741,10 +1741,14 @@ export function fleetLinkAction(
       known ||= node.kind !== "target";
     }
     if (environmentIds.size === 0) return null;
+    if (known) return { kind: "batch", sourceEnvironmentId, environmentIds: [...environmentIds] };
+    const [only, ...rest] = machineIds;
+    if (rest.length > 0 || only === undefined) {
+      return { kind: "code-only", sourceId: source.id, sourceEnvironmentId, machineIds };
+    }
     // One such machine is the single flow's, which asks for its code.
-    return known || machineIds.length < 2
-      ? { kind: "batch", sourceEnvironmentId, environmentIds: [...environmentIds] }
-      : { kind: "code-only", sourceId: source.id, sourceEnvironmentId, machineIds };
+    const offer = fleetLinkOffer(graph, sourceId, only);
+    return offer.kind === "link" ? { kind: "single", sourceEnvironmentId, offer } : null;
   };
   const stack = targetId === null ? undefined : stacks.find((entry) => entry.id === targetId);
   if (stack !== undefined) return batch(stack.memberIds);
@@ -1897,7 +1901,7 @@ export function anchorFleetView(input: {
     readonly face: FleetPoint;
   };
   /** The stack and the map after it. */
-  readonly stack: Pick<FleetStackGeometry, "rect" | "face">;
+  readonly stack: Pick<FleetStackGeometry, "rect" | "face" | "tray">;
   readonly layout: Pick<FleetLayout, "width" | "height">;
   readonly bounds: { readonly min: number; readonly max: number };
 }): FleetHeldView {
@@ -1922,7 +1926,7 @@ export function anchorFleetView(input: {
           y: from.view.y + (from.face.y - stack.face.y) * scale,
         };
   const wanted = Math.ceil(view.y + layout.height * scale + padding);
-  const opened = stack.rect.height > stack.face.height;
+  const opened = stack.tray !== null;
   return {
     key: input.key,
     view,

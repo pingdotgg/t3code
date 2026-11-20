@@ -34,6 +34,7 @@ import {
   fleetTwoWayLinks,
   isLinkEdge,
   linkNeedsAttention,
+  linkTroubleRank,
 } from "./environmentsMap.logic";
 import { peerLinkStatusText, useForgetPeerLink } from "./LinkedEnvironmentsSettings";
 import { savedBackendStatus } from "./SavedEnvironmentRows";
@@ -184,6 +185,9 @@ export function FleetDetails(props: FleetDetailsProps) {
                 sourceLabel={labelOf(link.from)}
                 targetLabel={labelOf(link.to)}
                 onSelect={selectWithin}
+                {...(fleetLinkBackOffered(graph, link)
+                  ? { onLinkBack: () => props.onLinkBack(link) }
+                  : {})}
               />
             ))}
           </div>
@@ -369,8 +373,7 @@ function StackDetails({
     if (node.kind === "target") {
       const into = incoming.get(id) ?? [];
       const worst = into.toSorted(
-        (left, right) =>
-          Number(linkNeedsAttention(right.health)) - Number(linkNeedsAttention(left.health)),
+        (left, right) => linkTroubleRank(left.health) - linkTroubleRank(right.health),
       )[0];
       return [
         {

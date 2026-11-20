@@ -337,7 +337,9 @@ export function LinkEnvironmentDialog({
       alsoLinkBack &&
       backOffer.kind === "offered" &&
       linkBack.source !== null &&
-      targetId !== null
+      targetId !== null &&
+      // A typed address can answer as another machine: the picked one links back only if it did.
+      result.value.environmentId === targetId
         ? await linkWithMintedCode({
             machine: linkBack.source,
             access,
@@ -415,7 +417,11 @@ export function LinkEnvironmentDialog({
                 machines={machines}
                 value={selected}
                 disabled={busy}
-                onChange={setChoice}
+                onChange={(next) => {
+                  // The opt-in names one machine: it does not carry over to another.
+                  if (next !== selected) setAlsoLinkBack(false);
+                  setChoice(next);
+                }}
               />
             ) : null}
             {machine?.linked ? (

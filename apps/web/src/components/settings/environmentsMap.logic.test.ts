@@ -563,6 +563,14 @@ describe("fleetLinkAction", () => {
       sourceEnvironmentId: id("cups"),
       machineIds: members,
     });
+    // One such machine alone, ticked and dropped on, is asked for its code like any other.
+    expect(
+      fleetLinkAction(graph, stacks, new Set([node("fs-1")]), node("cups"), node("fs-1")),
+    ).toMatchObject({
+      kind: "single",
+      sourceEnvironmentId: id("cups"),
+      offer: { path: "pairing-code", target: { kind: "address" } },
+    });
     // One the client is connected to among them makes it a batch, which says why for the rest.
     const mixed = new Set([node("fs-1"), node("fs-2"), node("mbp")]);
     expect(fleetLinkAction(graph, stacks, mixed, node("cups"), node("mbp"))).toEqual({
@@ -1351,6 +1359,16 @@ describe("fitting the view", () => {
       expect(closedAgain.view.scale).toBe(panned.view.scale);
       expect(onScreen(closedAgain.view, face)).toEqual(onScreen(panned.view, face));
       expect(closedAgain.height).toBeLessThanOrEqual(size.height);
+      // The canvas that grew for the tray gives that room back, not just the pre-open size.
+      const grown = { width, height: opened.height };
+      const givenBack = anchorFleetView({
+        key: "closed",
+        from: { key: "open", held: panned, view: panned.view, size: grown, face },
+        stack: before.stacks.get(stackId)!,
+        layout: before,
+        bounds,
+      });
+      expect(givenBack.height).toBeLessThan(opened.height);
     }
   });
 
