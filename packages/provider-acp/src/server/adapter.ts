@@ -665,6 +665,13 @@ export interface AcpAdapterV2Flavor {
    * agent request, tool or subagent is open, and replaces the agent before the next turn.
    */
   readonly promptInactivityTimeout?: Duration.Input;
+  /**
+   * Checked when `promptInactivityTimeout` expires with no open requests, tools, or subagents.
+   * Returning `true` rearms the watchdog for native waits the agent never exposes over ACP.
+   */
+  readonly promptInactivityPaused?: (input: {
+    readonly sessionId: string;
+  }) => Effect.Effect<boolean>;
   /** Grok can retain task_already_running until process exit. */
   readonly restartRuntimeAfterInterrupt?: boolean;
   /** Prompt failures after which the agent process keeps failing until replaced. */
@@ -8702,6 +8709,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           for (const subagent of context.subagents.values()) {
             if (acpSubagentStatusBlocksTurnSettlement(subagent.task.status)) return true;
+          }
+          if (flavor.promptInactivityPaused !== undefined) {
+            if (yield* flavor.promptInactivityPaused({ sessionId: context.nativeThreadId })) {
+              return true;
+            }
           }
           return false;
         });
