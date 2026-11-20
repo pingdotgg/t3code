@@ -52,11 +52,6 @@ export interface PairingConnectionInput {
   readonly host?: string;
   readonly pairingCode?: string;
   readonly expectedEnvironmentId?: EnvironmentId;
-  /**
-   * The code was minted on the expected machine for this client, as a Boat holder does,
-   * so it is redeemed while the descriptor is read instead of after.
-   */
-  readonly codeIsForExpectedEnvironment?: boolean;
 }
 
 export interface SshConnectionInput {
@@ -128,20 +123,10 @@ export const preparePairingRegistration = Effect.fn(
 )(function* (input: PairingConnectionInput) {
   const target = yield* resolvePairingTarget(input);
   const presentation = yield* ClientCapabilities.ClientPresentation;
-  const redeem = bootstrapRemoteBearerSession({
-    httpBaseUrl: target.httpBaseUrl,
-    credential: target.credential,
-    clientMetadata: presentation.metadata,
-  }).pipe(Effect.mapError(mapRemoteEnvironmentError));
-  const readDescriptor = fetchRemoteEnvironmentDescriptor({
+  const descriptor = yield* fetchRemoteEnvironmentDescriptor({
     httpBaseUrl: target.httpBaseUrl,
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
-  const early =
-    input.codeIsForExpectedEnvironment === true && input.expectedEnvironmentId !== undefined
-      ? yield* Effect.all([readDescriptor, redeem], { concurrency: 2 })
-      : null;
-  const descriptor = early?.[0] ?? (yield* readDescriptor);
-  // Otherwise checked before redeeming the one-time code, so a wrong link is not spent.
+  // Checked before redeeming the one-time code, so a wrong link is not spent.
   if (
     input.expectedEnvironmentId !== undefined &&
     descriptor.environmentId !== input.expectedEnvironmentId
@@ -182,10 +167,9 @@ export const preparePairingRegistration = Effect.fn(
   );
   // A key-bound session renews itself, but only on a host that can renew it. The proof is made
   // before the one-time code is sent, so a device that cannot sign keeps the code for bearer.
-  // A code already redeemed alongside the descriptor read stays a bearer session.
   const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
   const dpopProof =
-    early === null && descriptor.capabilities.accessTokenRenewal === true && Option.isSome(signer)
+    descriptor.capabilities.accessTokenRenewal === true && Option.isSome(signer)
       ? yield* signer.value
           .createProof({
             method: "POST",
@@ -209,7 +193,11 @@ export const preparePairingRegistration = Effect.fn(
       }),
     });
   }
-  const access = early?.[1] ?? (yield* redeem);
+  const access = yield* bootstrapRemoteBearerSession({
+    httpBaseUrl: target.httpBaseUrl,
+    credential: target.credential,
+    clientMetadata: presentation.metadata,
+  }).pipe(Effect.mapError(mapRemoteEnvironmentError));
   yield* rememberDescriptor;
 
   return new BearerConnectionRegistration({

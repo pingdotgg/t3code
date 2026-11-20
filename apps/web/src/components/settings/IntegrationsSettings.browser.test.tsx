@@ -48,8 +48,6 @@ const environments: EnvironmentPresentation[] = [
     label: "Desk",
     displayUrl: "http://localhost:12345",
     relayManaged: false,
-    boatCloud: false,
-    boxdCloud: false,
     entry: {
       target: new PrimaryConnectionTarget({
         environmentId,

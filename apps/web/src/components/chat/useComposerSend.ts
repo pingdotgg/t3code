@@ -1,4 +1,3 @@
-import { markBoatCloudStartSent, unmarkBoatCloudStartSent } from "../../boatCloud";
 import { msg } from "gt-react";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
@@ -54,7 +53,6 @@ import {
 } from "@t3tools/client-runtime/environment";
 import { createModelSelection } from "@t3tools/shared/model";
 import { type SetStateAction, useLayoutEffect, useRef, useState } from "react";
-import { flushSync } from "react-dom";
 import { useNavigate } from "@tanstack/react-router";
 import {
   isAtomCommandInterrupted,
@@ -84,7 +82,6 @@ import {
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
-  isCloudEnvironmentSelection,
   useComposerDraftStore,
   DraftId,
 } from "../../composerDraftStore";
@@ -142,7 +139,6 @@ import {
   prepareTurnAttachments,
   restoreComposerDraft,
 } from "./chatViewSend";
-import type { ChatComposerHandle } from "./ChatComposer";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -260,9 +256,6 @@ interface ComposerSendInput {
   readonly needsLoadBalancing: boolean;
   readonly loadBalancing: DraftEnvironmentRouting["loadBalancing"];
   readonly refreshBeforeSend: DraftEnvironmentRouting["refreshBeforeSend"];
-  /** Turns the thread's sleeping Boat VM back on as the send goes out; null when it is not asleep. */
-  readonly wakeBeforeSend: (() => Promise<boolean>) | null;
-  readonly onRoutedSendDispatched: DraftEnvironmentRouting["onRoutedSendDispatched"];
   readonly readPendingEnvironmentChange: DraftEnvironmentRouting["readPendingEnvironmentChange"];
   readonly pendingApprovals: PendingThreadRequests["pendingApprovals"];
   readonly respondingRequestIds: PendingThreadRequests["respondingRequestIds"];
@@ -311,25 +304,6 @@ interface ComposerSendInput {
  * thread, a feedback upload, and resuming an interrupted run. Each path restores the draft
  * when it fails.
  */
-
-type ComposerSendContext = ReturnType<ChatComposerHandle["getSendContext"]>;
-
-/** A message taken out of the composer before it could go out, already shown in the thread. */
-interface QueuedComposerSend {
-  readonly message: ChatMessage;
-  readonly content: Pick<
-    ComposerSendContext,
-    | "prompt"
-    | "images"
-    | "files"
-    | "terminalContexts"
-    | "previewAnnotations"
-    | "reviewComments"
-    | "threadContexts"
-    | "environmentContexts"
-  > & { readonly replyTo: ResponseContextRecord | null };
-}
-
 export function useComposerSend(input: ComposerSendInput) {
   const {
     environmentId,
@@ -382,8 +356,6 @@ export function useComposerSend(input: ComposerSendInput) {
     needsLoadBalancing,
     loadBalancing,
     refreshBeforeSend,
-    wakeBeforeSend,
-    onRoutedSendDispatched,
     readPendingEnvironmentChange,
     pendingApprovals,
     respondingRequestIds,
@@ -458,28 +430,12 @@ export function useComposerSend(input: ComposerSendInput) {
       annotation: PreviewAnnotationPayload;
       image: ComposerImageAttachment | null;
     },
-    /**
-     * A message that already left the composer: it sends from its own contents, replaces its
-     * shown copy, and calls `onAccepted` once on its way, after which a failure restores it.
-     */
-    queued?: { readonly send: QueuedComposerSend; readonly onAccepted: () => void },
   ) => {
     e?.preventDefault();
     // What the user pressed send on; uploads below can take a while, and a redirect must not
     // decline approvals for a draft that changed meanwhile.
-    const promptAtSend = queued?.send.content.prompt ?? promptRef.current;
-    // The composer of a queued message was cleared when it left, and may hold a newer draft.
-    const clearSentDraft = () => {
-      if (queued) return;
-      clearComposerDraftContent(composerDraftTarget);
-      // The prompt ref and cursor belong to the thread on screen, which may no longer be this one.
-      if (currentRouteThreadKeyRef.current === routeThreadKey) {
-        promptRef.current = "";
-        composerRef.current?.resetCursorState();
-      }
-    };
+    const promptAtSend = promptRef.current;
     if (
-      !queued &&
       usageLimitsOffered &&
       usageLimitsKey !== null &&
       !directAnnotation &&
@@ -494,16 +450,7 @@ export function useComposerSend(input: ComposerSendInput) {
       return;
     }
 
-    const liveSendCtx = composerRef.current?.getSendContext();
-    const sendCtx: ComposerSendContext | undefined =
-      queued && liveSendCtx
-        ? {
-            ...liveSendCtx,
-            ...queued.send.content,
-            answeringPendingUserInput: false,
-            shownPendingApprovalIds: [],
-          }
-        : liveSendCtx;
+    const sendCtx = composerRef.current?.getSendContext();
     // `/side` beats an open question and a plan follow-up, which would send the text to main.
     const sideChatCommand =
       sendCtx && !directAnnotation && !queuedRunEdit.isEditing
@@ -854,10 +801,9 @@ export function useComposerSend(input: ComposerSendInput) {
       ? ensureInlineContextReferences(promptRef.current, [
           previewAnnotationContextReference(directAnnotation.annotation),
         ])
-      : (queued?.send.content.prompt ?? promptRef.current);
-    const replyTo = queued
-      ? queued.send.content.replyTo
-      : (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.replyTo ?? null);
+      : promptRef.current;
+    const replyTo =
+      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.replyTo ?? null;
     const promptForSend = withReplyReference(draftPrompt, replyTo);
     if (warnStrandedThreadContext(promptForSend, composerThreadContexts)) return;
     if (queuedRunEdit.isEditing) {
@@ -938,7 +884,11 @@ export function useComposerSend(input: ComposerSendInput) {
             command: trimmed,
             createdAt: new Date().toISOString(),
           },
-          clearDraft: clearSentDraft,
+          clearDraft: () => {
+            promptRef.current = "";
+            clearComposerDraftContent(composerDraftTarget);
+            composerRef.current?.resetCursorState();
+          },
           onUpdate: (submission) => {
             setFeedbackSubmissionsByThreadKey((current) => {
               const existing = current[routeThreadKey] ?? [];
@@ -975,7 +925,9 @@ export function useComposerSend(input: ComposerSendInput) {
       replyTo === null;
     if (freshSessionAvailable && composerHoldsOnlyText && isClearComposerCommand(trimmed)) {
       armFreshSession(routeThreadKey);
-      clearSentDraft();
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
       return;
     }
     // Read once: an arm made while this send is in flight belongs to the next message.
@@ -1076,7 +1028,7 @@ export function useComposerSend(input: ComposerSendInput) {
     const outgoingMessageContext = buildOutgoingMessageContext(
       composerAttachmentsSnapshot.map((attachment) => attachment.id),
     );
-    const messageIdForSend = queued?.send.message.id ?? newMessageId();
+    const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
     const outgoingMessageText = formatOutgoingPrompt({
       provider: ctxSelectedProvider,
@@ -1223,7 +1175,6 @@ export function useComposerSend(input: ComposerSendInput) {
     // the user sent. A direct annotation send writes its image and reference into the draft
     // as it sends, so the live draft may still lack them.
     const draftChangedSinceSend = () => {
-      if (queued) return false;
       const sendContext = composerRef.current?.getSendContext();
       // The reply is not in the prompt, so cancelling or changing it is checked on its own.
       const liveReply =
@@ -1282,7 +1233,9 @@ export function useComposerSend(input: ComposerSendInput) {
           useComposerDraftStore.getState().getComposerDraft(composerDraftTarget) ===
             draftBeforeDecline
         ) {
-          clearSentDraft();
+          promptRef.current = "";
+          clearComposerDraftContent(composerDraftTarget);
+          composerRef.current?.resetCursorState();
         }
         return;
       }
@@ -1363,7 +1316,6 @@ export function useComposerSend(input: ComposerSendInput) {
       draftTarget: composerDraftTarget,
     });
     if (multipleModelSelections !== null) {
-      queued?.onAccepted();
       await sendToMultipleModels({
         threadId: threadIdForSend,
         project: activeProject,
@@ -1411,11 +1363,7 @@ export function useComposerSend(input: ComposerSendInput) {
     } else {
       optimisticBlobPreviews.release(optimisticMessage);
     }
-    setOptimisticUserMessages((existing) => [
-      ...existing.filter((message) => message.id !== messageIdForSend),
-      optimisticMessage,
-    ]);
-    queued?.onAccepted();
+    setOptimisticUserMessages((existing) => [...existing, optimisticMessage]);
     if (shouldQueueBehindActiveRun) {
       undispatchedQueuedSendsRef.current.set(messageIdForSend, optimisticMessage);
     }
@@ -1438,7 +1386,12 @@ export function useComposerSend(input: ComposerSendInput) {
       : null;
     // Keep new-thread flows from reusing this draft while attachments and worktree setup settle.
     if (sentDraftThreadRef) markPromotedDraftThreadByRef(sentDraftThreadRef);
-    clearSentDraft();
+    clearComposerDraftContent(composerDraftTarget);
+    // The prompt ref and cursor belong to the thread on screen, which may no longer be this one.
+    if (currentRouteThreadKeyRef.current === routeThreadKey) {
+      promptRef.current = "";
+      composerRef.current?.resetCursorState();
+    }
 
     const title = deriveThreadTitleSeed(
       {
@@ -1862,186 +1815,18 @@ export function useComposerSend(input: ComposerSendInput) {
   }
 
   const onSendLatest = useStableCallback(onSend);
-
-  // The sends waiting on a Boat VM that starts or wakes, chained in the order they were sent.
-  const boatCloudSendsRef = useRef<Promise<void> | null>(null);
-  // Open once the thread takes another message: idle, or queueing behind its starting run.
-  const sendGateRef = useRef({ open: true, waiters: [] as Array<() => void> });
-  const sendGateOpen = !isSendBusy || sendQueuesBehindSetup;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases sends queued behind a Boat VM once the thread takes another message
-  useLayoutEffect(() => {
-    const gate = sendGateRef.current;
-    gate.open = sendGateOpen;
-    if (sendGateOpen) for (const release of gate.waiters.splice(0)) release();
-  }, [sendGateOpen]);
-  const whenThreadTakesMessages = () =>
-    sendGateRef.current.open
-      ? Promise.resolve()
-      : new Promise<void>((resolve) => sendGateRef.current.waiters.push(resolve));
-
-  /** Takes the composer's message out for a send that goes out later, and shows it now. */
-  const takeComposerSend = (queuedBehind: boolean): QueuedComposerSend | null => {
-    const context = composerRef.current?.getSendContext();
-    if (!context) return null;
-    const content: QueuedComposerSend["content"] = {
-      prompt: promptRef.current,
-      images: context.images,
-      files: context.files,
-      terminalContexts: context.terminalContexts,
-      previewAnnotations: context.previewAnnotations,
-      reviewComments: context.reviewComments,
-      threadContexts: context.threadContexts,
-      environmentContexts: context.environmentContexts,
-      replyTo:
-        useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.replyTo ?? null,
-    };
-    const { trimmedPrompt, hasSendableContent } = deriveComposerSendState({
-      prompt: content.prompt,
-      imageCount: content.images.length + content.files.length,
-      terminalContexts: content.terminalContexts,
-      elementContextCount:
-        content.previewAnnotations.length +
-        content.reviewComments.length +
-        content.threadContexts.length +
-        content.environmentContexts.length,
-    });
-    if (!hasSendableContent) return null;
-    const createdAt = new Date().toISOString();
-    const attachments = optimisticMessageAttachments([...content.images, ...content.files]);
-    const message: ChatMessage = {
-      id: newMessageId(),
-      role: "user",
-      text: trimmedPrompt,
-      ...(attachments.length > 0 ? { attachments } : {}),
-      runId: null,
-      createdAt,
-      updatedAt: createdAt,
-      streaming: false,
-      ...(queuedBehind ? { inputIntent: "queued_turn" as const } : {}),
-    };
-    setOptimisticUserMessages((existing) => [...existing, message]);
-    promptRef.current = "";
-    clearComposerDraftContent(composerDraftTarget);
-    composerRef.current?.resetCursorState();
-    return { message, content };
-  };
-
-  /** A queued message that never went out goes back to the composer, or to a toast when it holds a newer draft. */
-  const putBackComposerSend = useStableCallback((queued: QueuedComposerSend) => {
-    setOptimisticUserMessages((existing) =>
-      existing.filter((message) => message.id !== queued.message.id),
-    );
-    const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
-    const composerHoldsDraft =
-      promptRef.current.trim().length > 0 ||
-      (draft?.images.length ?? 0) > 0 ||
-      (draft?.files.length ?? 0) > 0;
-    if (composerHoldsDraft) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: m(msg("Message not sent")),
-          description: m(msg("Your new draft was kept. Copy the failed message to send it again.")),
-          timeout: 0,
-          data: { hideCopyButton: true },
-          actionProps: {
-            children: m(msg("Copy message")),
-            onClick: () => {
-              void writeTextToClipboard(queued.message.text, {
-                target: "failed message",
-                unavailableMessage: msg(
-                  "Clipboard API is unavailable while copying failed message.",
-                ),
-                failureMessage: msg("Failed to copy failed message to the clipboard."),
-              }).catch(() => undefined);
-            },
-          },
-        }),
-      );
-      return;
-    }
-    const snapshot = snapshotComposerSend({
-      ...queued.content,
-      sendableTerminalContexts: queued.content.terminalContexts,
-    });
-    composerImagesRef.current = restoreComposerDraft(composerDraftTarget, snapshot);
-    composerFilesRef.current = snapshot.files;
-    composerTerminalContextsRef.current = snapshot.terminalContexts;
-    promptRef.current = snapshot.draftText;
-    composerRef.current?.resetCursorState({
-      cursor: collapseExpandedComposerCursor(snapshot.draftText, snapshot.draftText.length),
-      prompt: snapshot.draftText,
-      detectTrigger: true,
-    });
-  });
-
-  const sendQueued = async (args: Parameters<typeof onSend>, send: QueuedComposerSend) => {
-    let accepted = false;
-    await onSendLatest(args[0], args[1], args[2], undefined, {
-      send,
-      onAccepted: () => {
-        accepted = true;
-      },
-    });
-    if (!accepted) putBackComposerSend(send);
-  };
-
-  const trackBoatCloudSend = (send: Promise<void>) => {
-    const settled = send.then(
-      () => undefined,
-      () => undefined,
-    );
-    boatCloudSendsRef.current = settled;
-    return send.finally(() => {
-      if (boatCloudSendsRef.current === settled) boatCloudSendsRef.current = null;
-    });
-  };
-
   const onSendWithRouting = async (...args: Parameters<typeof onSend>) => {
     args[0]?.preventDefault();
-    const ahead = boatCloudSendsRef.current;
-    if (ahead !== null && !args[3]) {
-      // Behind a send that waits on a Boat VM, a message queues as it would behind a running turn.
-      const queued = takeComposerSend(true);
-      if (queued === null) return;
-      return trackBoatCloudSend(
-        ahead.then(whenThreadTakesMessages).then(() => sendQueued(args, queued)),
-      );
-    }
-    const routable =
-      !args[3] && !sendInFlightRef.current && readPendingEnvironmentChange() === null;
-    if (routable && wakeBeforeSend !== null) {
-      // The send goes out now and its commands wait on this wake.
-      void wakeBeforeSend();
-      return trackBoatCloudSend(onSend(...args));
-    }
-    const refresh = routable ? refreshBeforeSend() : null;
+    const refresh =
+      args[3] || sendInFlightRef.current || readPendingEnvironmentChange() !== null
+        ? null
+        : refreshBeforeSend();
     if (refresh === null) return onSend(...args);
-    // A Boat cloud start takes a while, so the message moves to the thread now and goes out
-    // once the VM is ready. The composer stays free for the next one, which queues behind it.
-    const waitsOnBoatCloud =
-      isCloudEnvironmentSelection(draftThread?.environmentSelection) && !draftThread?.promotedTo;
-    const queued = waitsOnBoatCloud ? takeComposerSend(false) : null;
-    if (queued !== null) markBoatCloudStartSent(draftId);
-    const sendWhenReady = async () => {
-      const ready = await refresh.finally(() => {
-        sendInFlightRef.current = false;
-      });
-      // A draft's instance is keyed by its draft, so a route change there is the same draft moving
-      // or promoting. A server thread's instance is reused across threads, so it must still be here.
-      if (!ready || (draftId === null && currentRouteThreadKeyRef.current !== routeThreadKey)) {
-        if (queued !== null) putBackComposerSend(queued);
-        return;
-      }
-      // A woken VM's connection lands in a store update; commit it so the send reads it.
-      flushSync(() => {});
-      if (queued === null) await onSendLatest(...args);
-      else await sendQueued(args, queued);
-      onRoutedSendDispatched();
-    };
     sendInFlightRef.current = true;
-    if (queued === null) return sendWhenReady();
-    return trackBoatCloudSend(sendWhenReady().finally(() => unmarkBoatCloudStartSent(draftId)));
+    const ready = await refresh.finally(() => {
+      sendInFlightRef.current = false;
+    });
+    if (ready) return onSendLatest(...args);
   };
 
   const withdrawQueuedSend = (messageId: MessageId) => {

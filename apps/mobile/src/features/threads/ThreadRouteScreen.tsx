@@ -1,6 +1,4 @@
 import * as Dialog from "../../components/ui/Dialog";
-import { useBoatCloudSleep } from "../boatCloud/boatCloud";
-import { useRememberOpenedBoatCloudThread } from "../boatCloud/boatCloudThreads";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useRememberThreadProject } from "./useRememberThreadProject";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
@@ -384,11 +382,6 @@ function ThreadRouteContent(
     selectedEnvironmentConnection,
   } = useThreadSelection();
   useRememberThreadProject(selectedThreadProject);
-  useRememberOpenedBoatCloudThread(
-    selectedThread === null
-      ? null
-      : { environmentId: selectedThread.environmentId, threadId: selectedThread.id },
-  );
   const botProject = useBotProjectForThread(
     selectedThread?.environmentId ?? null,
     selectedThread?.id ?? null,
@@ -545,7 +538,6 @@ function ThreadRouteContent(
   const routeConnectionError = routeEnvironmentRuntime
     ? runtimeConnectionErrorText(routeEnvironmentRuntime, m)
     : null;
-  const boatCloudSleep = useBoatCloudSleep(environmentId, routeConnectionState);
   const selectedThreadWithDraftSettings = selectedThread
     ? {
         ...selectedThread,
@@ -1147,16 +1139,7 @@ function ThreadRouteContent(
           serverConfig={serverConfig}
           onStopThread={awaitingBootstrapTurn ? handleCancelWorktreeSetup : handleStopThread}
           onResumeQueue={composer.canResume ? handleResumeQueue : null}
-          onSendMessage={
-            boatCloudSleep
-              ? (...args) => {
-                  // The message waits in the queue until the VM it wakes is connected.
-                  boatCloudSleep.wake();
-                  return composer.onSendMessage(...args);
-                }
-              : composer.onSendMessage
-          }
-          boatCloudSleep={boatCloudSleep?.state ?? null}
+          onSendMessage={composer.onSendMessage}
           offersSideChat={composer.sideChatUnavailableReason === null}
           onSendCommand={composer.onSendCommand}
           onReconnectEnvironment={handleReconnectEnvironment}

@@ -93,7 +93,7 @@ import {
   type WorkingWindow,
   type WorkingWindowItem,
 } from "./MessagesTimeline.logic";
-import { BoatCloudStartRows, WorktreeSetupRows } from "./WorktreeSetupCard";
+import { WorktreeSetupRows } from "./WorktreeSetupCard";
 import { RunningFor } from "./RunningFor";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { cn } from "~/lib/utils";
@@ -410,7 +410,6 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
     isCompacting,
     isPreparingWorktree,
     worktreeSetup,
-    boatCloudStart,
     pendingRequest,
     providerStartingLabel,
   } = use(TimelineRowActivityCtx);
@@ -421,7 +420,7 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
     { overflows: false, fade: false },
   );
   // A turn that prepares a worktree keeps one "Working for" line from send to the agent's answer.
-  const setupTurn = isPreparingWorktree || worktreeSetup !== null || boatCloudStart !== null;
+  const setupTurn = isPreparingWorktree || worktreeSetup !== null;
   if (
     window?.compactCommand &&
     window.items.length === 0 &&
@@ -473,8 +472,6 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
       startingLabel={providerStartingLabel}
       onOpenTerminal={openTerminal && terminalId ? () => openTerminal(terminalId) : null}
     />
-  ) : boatCloudStart ? (
-    <BoatCloudStartRows {...boatCloudStart} />
   ) : null;
   return (
     <div>
@@ -535,14 +532,9 @@ export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind:
   const ctx = use(TimelineRowCtx);
   const gt = useGT();
   const m = useMessages();
-  const {
-    isCompacting,
-    isPreparingWorktree,
-    boatCloudStart,
-    liveAnswerPreview,
-    providerStartingLabel,
-  } = use(TimelineRowActivityCtx);
-  if (isPreparingWorktree || isCompacting || boatCloudStart) return <WorkLogRow label="" />;
+  const { isCompacting, isPreparingWorktree, liveAnswerPreview, providerStartingLabel } =
+    use(TimelineRowActivityCtx);
+  if (isPreparingWorktree || isCompacting) return <WorkLogRow label="" />;
   // A failed group keeps this disclosure while an approval waits, but nothing is thinking then.
   const live = ctx.pendingApprovals.size === 0;
   const { groupId } = row;
@@ -1062,7 +1054,6 @@ function WorkingWindowView({
   const {
     isCompacting,
     isPreparingWorktree,
-    boatCloudStart,
     turnEnded,
     pendingRequest,
     liveAnswerPreview,
@@ -1158,7 +1149,6 @@ function WorkingWindowView({
     !workingWindowItemIsLive(window.items.at(-1)) &&
     !isCompacting &&
     !isPreparingWorktree &&
-    !boatCloudStart &&
     !workingWindowHasActiveCompaction(window);
   if (shown.length === 0 && !showThinking && !leading) return null;
   return (

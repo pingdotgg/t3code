@@ -97,8 +97,6 @@ function setup() {
           label: id,
           displayUrl: null,
           relayManaged: false,
-          boatCloud: false,
-          boxdCloud: false,
           entry: {
             target: new PrimaryConnectionTarget({
               environmentId: id,

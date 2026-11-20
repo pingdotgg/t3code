@@ -16,7 +16,6 @@ import {
   PullRequestListState,
   type ProviderInstanceId,
   PullRequestMergeMethod,
-  ScopedThreadRef,
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import { ToolCallVisibility } from "@t3tools/contracts/settings";
@@ -133,7 +132,6 @@ const ThreadProject = Schema.Struct({
   projectId: Schema.NonEmptyString,
 });
 const isThreadProject = Schema.is(ThreadProject);
-const isScopedThreadRef = Schema.is(ScopedThreadRef);
 
 export interface Preferences {
   readonly navigationTabOrder?: readonly string[];
@@ -173,8 +171,6 @@ export interface Preferences {
   readonly workingShelfEnabled?: boolean;
   readonly useLastProjectForNewThreads?: boolean;
   readonly lastThreadProject?: typeof ThreadProject.Type;
-  /** Boat cloud VM threads this phone started or opened, the only VM threads its lists show. */
-  readonly boatCloudOpenedThreads?: ReadonlyArray<ScopedThreadRef>;
   readonly modelFavorites?: ReadonlyArray<{
     readonly provider: ProviderInstanceId;
     readonly model: string;
@@ -265,7 +261,6 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     workingShelfEnabled?: boolean;
     useLastProjectForNewThreads?: boolean;
     lastThreadProject?: typeof ThreadProject.Type;
-    boatCloudOpenedThreads?: Preferences["boatCloudOpenedThreads"];
     modelFavorites?: Preferences["modelFavorites"];
     threadListSettledShelfExpanded?: boolean;
     threadListSnoozedShelfExpanded?: boolean;
@@ -404,9 +399,6 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (isThreadProject(parsed.lastThreadProject)) {
     preferences.lastThreadProject = parsed.lastThreadProject;
-  }
-  if (Array.isArray(parsed.boatCloudOpenedThreads)) {
-    preferences.boatCloudOpenedThreads = parsed.boatCloudOpenedThreads.filter(isScopedThreadRef);
   }
   if (Array.isArray(parsed.modelFavorites)) {
     preferences.modelFavorites = parsed.modelFavorites.filter(

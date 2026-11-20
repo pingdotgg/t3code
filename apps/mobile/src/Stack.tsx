@@ -108,7 +108,6 @@ import {
 } from "./features/settings/SettingsSourceControlDetailRouteScreens";
 import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnvironmentsRouteScreen";
 import { SettingsFollowUpRouteScreen } from "./features/settings/SettingsFollowUpRouteScreen";
-import { SettingsCloudRouteScreen } from "./features/settings/SettingsCloudRouteScreen";
 import { SettingsLanguageRouteScreen } from "./features/settings/SettingsLanguageRouteScreen";
 import {
   SettingsEnvironmentMaintenanceRouteScreen,
@@ -205,7 +204,6 @@ const ROUTE_TITLES: Readonly<Record<string, string>> = {
   SettingsOpenSourceLicenses: msg("Open source licenses"),
   SettingsOpenSourceLicense: msg("License notice"),
   SettingsUsage: msg("Usage"),
-  SettingsCloud: msg("Cloud", { $context: "settings page title, cloud agent machines" }),
   BotNew: msg("New bot"),
   BotDetails: msg("Bot", { $context: "screen title, details of one bot" }),
   ComponentCatalog: msg("UI components"),
@@ -368,11 +366,6 @@ const SETTINGS_SCREENS = {
   SettingsFollowUp: createNativeStackScreen({
     screen: SettingsFollowUpRouteScreen,
     linking: "settings/follow-ups",
-    options: settingsPage(),
-  }),
-  SettingsCloud: createNativeStackScreen({
-    screen: SettingsCloudRouteScreen,
-    linking: "settings/cloud",
     options: settingsPage(),
   }),
   SettingsScheduledTasks: createNativeStackScreen({

@@ -318,8 +318,6 @@ export interface ThreadDetailScreenProps {
   /** Queues a standalone text command, such as `/goal clear`, without touching the draft. */
   readonly onSendCommand: (text: string) => Promise<MessageId | null>;
   readonly onReconnectEnvironment: () => void;
-  /** Set while the thread's Boat VM is stopped; it reads as asleep, not disconnected. */
-  readonly boatCloudSleep?: "sleeping" | "waking" | null;
   readonly canSwitchThreadProvider: boolean;
   readonly onRespondToApproval: ApprovalResponder;
   readonly onSelectUserInputOption: (
@@ -816,7 +814,6 @@ function ThreadDetailBody(
   const floatingStatus = ((): FloatingWorkingStatus | null => {
     const connectionStatus = connectionFloatingStatus(
       {
-        boatCloudSleep: props.boatCloudSleep ?? null,
         connectionError: props.connectionError,
         connectionState: props.connectionStateLabel,
         environmentLabel: props.environmentLabel,

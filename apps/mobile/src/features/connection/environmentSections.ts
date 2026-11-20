@@ -1,4 +1,4 @@
-import { type EnvironmentId, isBoatCloudHttpBaseUrl } from "@t3tools/contracts";
+import type { EnvironmentId } from "@t3tools/contracts";
 import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
 
@@ -30,10 +30,8 @@ export function splitEnvironmentSections(input: EnvironmentSectionsInput): Envir
   const savedEnvironmentIds = relayManagedEnvironmentIds(input.connectedEnvironments);
 
   return {
-    // Boat cloud VMs come and go with threads; Settings, Cloud lists them instead.
     localEnvironments: input.connectedEnvironments.filter(
-      (environment) =>
-        !environment.isRelayManaged && !isBoatCloudHttpBaseUrl(environment.displayUrl),
+      (environment) => !environment.isRelayManaged,
     ),
     connectedCloudEnvironments: input.connectedEnvironments.filter(
       (environment) => environment.isRelayManaged,

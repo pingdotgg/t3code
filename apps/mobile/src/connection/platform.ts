@@ -6,7 +6,6 @@ import {
   Wakeups,
 } from "@t3tools/client-runtime/connection";
 import { managedRelayAccountChanges, managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
-import { EnvironmentRpcUnavailableError, EnvironmentWaker } from "@t3tools/client-runtime/rpc";
 import * as Clock from "effect/Clock";
 import { msg } from "gt-react-native";
 import { m } from "../i18n/messages";
@@ -266,26 +265,6 @@ const layerPlatformConnectionSource = Layer.succeed(
 const layerProvidedConnectionStorage = ConnectionStorage.layer.pipe(Layer.provide(Runtime.layer));
 const layerProvidedCapabilities = layerCapabilities.pipe(Layer.provide(Runtime.layer));
 
-const layerEnvironmentWaker = Layer.succeed(
-  EnvironmentWaker,
-  EnvironmentWaker.of({
-    wakeIfAsleep: Effect.fn("mobile.connectionPlatform.wakeIfAsleep")(function* (environmentId) {
-      // Imported on use: the Boat cloud module reaches back into the connection runtime.
-      const woken = yield* Effect.promise(() =>
-        import("../features/boatCloud/boatCloud").then((boatCloud) =>
-          boatCloud.wakeBoatCloudIfAsleep(environmentId),
-        ),
-      );
-      if (!woken) {
-        return yield* new EnvironmentRpcUnavailableError({
-          environmentId,
-          message: "The Boat cloud machine did not wake up.",
-        });
-      }
-    }),
-  }),
-);
-
 type ConnectionPlatformLayerSource =
   | typeof layerProvidedConnectionStorage
   | typeof Runtime.layer
@@ -293,8 +272,7 @@ type ConnectionPlatformLayerSource =
   | typeof layerWakeups
   | typeof layerProvidedCapabilities
   | typeof layerPlatformConnectionSource
-  | typeof EnvironmentOwnedDataCleanup.layer
-  | typeof layerEnvironmentWaker;
+  | typeof EnvironmentOwnedDataCleanup.layer;
 
 export const layer: Layer.Layer<
   Layer.Success<ConnectionPlatformLayerSource>,
@@ -308,5 +286,4 @@ export const layer: Layer.Layer<
   layerProvidedCapabilities,
   layerPlatformConnectionSource,
   EnvironmentOwnedDataCleanup.layer,
-  layerEnvironmentWaker,
 );

@@ -86,14 +86,6 @@ const SETTINGS_SEARCH_TERMS = {
     msg("checkouts", { $context: "settings search keyword" }),
     msg("delete project", { $context: "settings search keyword" }),
   ],
-  SettingsCloud: [
-    "boat",
-    msg("cloud agents", { $context: "settings search keyword" }),
-    "vm",
-    msg("api key", { $context: "settings search keyword" }),
-    msg("snapshot", { $context: "settings search keyword" }),
-    msg("remote machine", { $context: "settings search keyword" }),
-  ],
   SettingsOrganization: [
     msg("language", { $context: "settings search keyword" }),
     msg("locale", { $context: "settings search keyword" }),

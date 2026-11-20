@@ -284,12 +284,8 @@ function ConnectionsSettingsContent({
     ? (accessSessionState.data.permissions ?? accessSessionState.data.scopes ?? null)
     : null;
   const currentAuthPolicy = desktopBridge ? null : (accessSessionState.data?.auth.policy ?? null);
-  // Boat cloud VMs come and go with their threads; Settings, Cloud manages them.
   const savedEnvironments = environments.filter(
-    (environment) =>
-      environment.entry.target._tag !== "PrimaryConnectionTarget" &&
-      !environment.boatCloud &&
-      !environment.boxdCloud,
+    (environment) => environment.entry.target._tag !== "PrimaryConnectionTarget",
   );
   const listedEnvironments = savedEnvironments.filter(
     (environment) => !isDesktopLocalConnectionTarget(environment.entry.target),
