@@ -1464,11 +1464,14 @@ function ScheduledTaskPromptEditor({
   value,
   richTextEnabled,
   skills,
+  disabled,
   onChange,
 }: {
   readonly value: string;
   readonly richTextEnabled: boolean;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
+  // The surrounding fieldset cannot disable a contenteditable.
+  readonly disabled: boolean;
   readonly onChange: (value: string) => void;
 }) {
   const gt = useGT();
@@ -1484,7 +1487,7 @@ function ScheduledTaskPromptEditor({
         richTextEnabled={richTextEnabled}
         contextRecords={EMPTY_COMPOSER_CONTEXT_RECORDS}
         skills={skills}
-        disabled={false}
+        disabled={disabled}
         placeholder={gt("What should the agent do each time this runs?")}
         className="max-h-64"
         onChange={(nextValue, nextCursor) => {
@@ -1981,6 +1984,7 @@ function ScheduledTaskEditorForm({
               value={draft.prompt}
               richTextEnabled={settings.composerRichTextEnabled}
               skills={promptSkills}
+              disabled={saving}
               onChange={(prompt) => setDraft((current) => ({ ...current, prompt }))}
             />
           </Field>
