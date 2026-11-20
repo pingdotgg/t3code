@@ -1,5 +1,5 @@
 import { useNavigation, useRoute, StackActions } from "@react-navigation/native";
-import { resolveIssueLinkTarget } from "@t3tools/client-runtime/issue-links";
+import { isStandaloneIssueLink, resolveIssueLinkTarget } from "@t3tools/client-runtime/issue-links";
 import {
   nativePullRequestDestination,
   pullRequestCandidateForIssueLink,
@@ -10,6 +10,7 @@ import { useProjects, useThreadShell } from "../state/entities";
 import { tryOpenExternalUrl } from "../lib/openExternalUrl";
 import { appAtomRegistry } from "../state/atom-registry";
 import { environmentServerConfigsAtom } from "../state/server";
+import { issueTrackerEnvironment } from "../state/issueTrackers";
 import { composerPullRequests } from "../state/pull-requests";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { withKnownPullRequestSummary } from "../state/use-thread-pr";
@@ -28,6 +29,10 @@ export function useNavigateToPullRequest(options?: { readonly replace?: boolean 
     reportFailure: false,
     reportDefect: false,
   });
+  const readTrackerConnections = useAtomQueryRunner(issueTrackerEnvironment.connections, {
+    reportFailure: false,
+    reportDefect: false,
+  });
   return async (url: string, context: PullRequestContext | null) => {
     // Read at press time so a config push does not hand every link a new handler.
     const serverConfigs = appAtomRegistry.get(environmentServerConfigsAtom);
@@ -37,12 +42,21 @@ export function useNavigateToPullRequest(options?: { readonly replace?: boolean 
     if (!destination) {
       // An issue link from the same text opens the issue; anything else leaves for the browser.
       const environmentId = context && EnvironmentId.make(context.environmentId);
+      const issuesEnabled =
+        environmentId !== null &&
+        serverConfigs.get(environmentId)?.environment.capabilities.issues === true;
+      // Only a standalone tracker's link needs the bindings, whose read probes the tracker.
+      const connections =
+        issuesEnabled && isStandaloneIssueLink(url)
+          ? await readTrackerConnections({ environmentId, input: {} })
+          : null;
       const issue =
-        environmentId && serverConfigs.get(environmentId)?.environment.capabilities.issues === true
+        issuesEnabled && context !== null
           ? resolveIssueLinkTarget({
               url,
               projects: projects.filter((project) => project.environmentId === environmentId),
               preferredProjectId: context.projectId,
+              trackers: connections?._tag === "Success" ? connections.value : undefined,
             })
           : null;
       if (!issue || !environmentId) return tryOpenExternalUrl(url, "pull-request");

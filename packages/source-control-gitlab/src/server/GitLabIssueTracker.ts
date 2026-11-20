@@ -1,7 +1,7 @@
 /**
- * GitLab's issue tracker over `glab api`. GitLab pages by offset and reports no total, so every
- * cursor is a page number and a full page is the only sign that more exists. Notes, label
- * events, linked merge requests and awards are separate endpoints, joined into the detail.
+ * GitLab's issue tracker over `glab api`. GitLab pages by offset, so every cursor is a page
+ * number. Notes, label events, linked merge requests and awards are separate endpoints, joined
+ * into the detail.
  */
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
@@ -9,11 +9,12 @@ import * as Schema from "effect/Schema";
 import {
   IssueTrackerKind,
   type IssueCapabilities,
-  type IssueInvolvement,
+  type IssueEvent,
   type IssueViewerPermissions,
 } from "@t3tools/contracts";
 import {
   IssueTrackerError,
+  type IssueInvolvementFilter,
   type IssueTrackerApi,
 } from "@t3tools/source-control-core/server/IssueTracker";
 
@@ -21,7 +22,7 @@ import * as GitLabCli from "./GitLabCli.ts";
 import {
   decodeCreatedIssueJson,
   decodeUserIdsJson,
-  decodeIssueDetailJson,
+  decodeIssueDetailListJson,
   decodeIssueListJson,
   decodeIssueNotesJson,
   decodeLabelEventsJson,
@@ -36,13 +37,17 @@ import {
   type GitLabTemplateEntry,
 } from "./gitLabIssueJson.ts";
 import {
+  awardReactions,
   decodeAwardEmojiJson,
+  decodeAwardListJson,
   decodeOwnAwardIdJson,
   decodeViewerJson,
   gitLabAwardName,
 } from "./gitLabMergeRequestJson.ts";
 
 const KIND = IssueTrackerKind.make("gitlab");
+/** How many pages of system notes the timeline reads before giving up on the rest. */
+const MAX_ACTIVITY_PAGES = 20;
 
 const CAPABILITIES: IssueCapabilities = {
   create: true,
@@ -108,15 +113,33 @@ function commentsCursor(notesNext: string | null, awardsNext: string | null): st
   return awardsNext === null ? notesNext : `${notesNext}:${awardsNext}`;
 }
 
+/**
+ * `glab api --include` output split into the body and GitLab's next page. GitLab can return a
+ * short page when it hides notes the viewer may not see, so only `X-Next-Page` says whether more
+ * exists; without headers a full page is taken as the sign.
+ */
+function splitPagedResponse(raw: string): {
+  readonly body: string;
+  readonly nextPage: number | null | undefined;
+} {
+  if (!raw.startsWith("HTTP/")) return { body: raw, nextPage: undefined };
+  const end = /\r?\n\r?\n/.exec(raw);
+  const headers = end === null ? raw : raw.slice(0, end.index);
+  const body = end === null ? "" : raw.slice(end.index + end[0].length);
+  const next = /^x-next-page:[ \t]*([1-9]\d{0,6})?[ \t]*\r?$/im.exec(headers);
+  return {
+    body,
+    nextPage: next === null ? undefined : next[1] === undefined ? null : Number(next[1]),
+  };
+}
+
 function query(params: ReadonlyArray<readonly [string, string]>): string {
   return params.map(([key, value]) => `${key}=${encodeURIComponent(value)}`).join("&");
 }
 
-function involvementParams(input: {
-  readonly involvement: IssueInvolvement;
-  readonly viewer: string;
-  readonly assignee?: string | undefined;
-}): ReadonlyArray<readonly [string, string]> {
+function involvementParams(
+  input: IssueInvolvementFilter & { readonly assignee?: string | undefined },
+): ReadonlyArray<readonly [string, string]> {
   switch (input.involvement) {
     case "authored":
       return [["author_username", input.viewer]];
@@ -185,6 +208,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
       readonly path: string;
       readonly method?: string;
       readonly body?: unknown;
+      readonly includeHeaders?: boolean;
     }) =>
       gitlab
         .execute({
@@ -193,6 +217,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
           args: [
             "api",
             input.path,
+            ...(input.includeHeaders === true ? ["--include"] : []),
             ...(input.method === undefined ? [] : ["--method", input.method]),
             // A JSON body from stdin: argv is visible in process listings, and `glab api --input`
             // sends no Content-Type of its own, which GitLab answers with HTTP 415.
@@ -214,6 +239,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
       readonly path: string;
       readonly method?: string;
       readonly body?: unknown;
+      readonly includeHeaders?: boolean;
       readonly decode: (raw: string) => Result.Result<A, unknown>;
     }): Effect.Effect<A, IssueTrackerError> =>
       api(input).pipe(
@@ -303,6 +329,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
       readonly path: string;
       readonly page: number;
       readonly operation: string;
+      readonly onlyActivity?: boolean;
     }) =>
       read({
         cwd: input.cwd,
@@ -313,14 +340,44 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
           ["page", String(input.page)],
           ["order_by", "created_at"],
           ["sort", "asc"],
+          ...(input.onlyActivity === true ? [["activity_filter", "only_activity"] as const] : []),
         ])}`,
-        decode: decodeIssueNotesJson,
-      }).pipe(
-        Effect.map((notes) => ({
-          ...notes,
-          nextCursor: notes.rawCount < PAGE_SIZE ? null : String(input.page + 1),
-        })),
-      );
+        includeHeaders: true,
+        decode: (raw) => {
+          const { body, nextPage } = splitPagedResponse(raw);
+          return Result.map(decodeIssueNotesJson(body), (notes) => {
+            const next =
+              nextPage === undefined
+                ? notes.rawCount < PAGE_SIZE
+                  ? null
+                  : input.page + 1
+                : nextPage;
+            return { ...notes, nextCursor: next === null ? null : String(next) };
+          });
+        },
+      });
+
+    /** Every system note, wherever it falls among the comments, for the issue's timeline. */
+    const activity = Effect.fn("GitLabIssueTracker.activity")(function* (input: {
+      readonly cwd: string;
+      readonly host: string;
+      readonly path: string;
+    }) {
+      const events: Array<IssueEvent> = [];
+      let page = 1;
+      for (let count = 0; count < MAX_ACTIVITY_PAGES; count++) {
+        const notes = yield* notesPage({
+          ...input,
+          page,
+          operation: "getIssue",
+          onlyActivity: true,
+        });
+        events.push(...notes.events);
+        if (notes.nextCursor === null) break;
+        page = Number(notes.nextCursor);
+      }
+      return events;
+    });
 
     const awards = (input: {
       readonly cwd: string;
@@ -407,6 +464,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
               : [["assignee_username", input.assignee] as const]),
             ["order_by", input.sort === "created" ? "created_at" : "updated_at"],
             ["sort", "desc"],
+            ["with_labels_details", "true"],
             ["per_page", String(perPage)],
             ["page", String(page)],
           ])}`,
@@ -433,9 +491,18 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
                   cwd: input.cwd,
                   host: input.host,
                   operation: "getIssue",
-                  path,
-                  decode: decodeIssueDetailJson,
-                }),
+                  path: `projects/${projectPath(input.scope)}/issues?${query([
+                    ["iids[]", String(number)],
+                    ["with_labels_details", "true"],
+                    ["per_page", "1"],
+                  ])}`,
+                  decode: decodeIssueDetailListJson,
+                }).pipe(
+                  Effect.filterOrFail(
+                    (issue) => issue !== null,
+                    () => notFound("getIssue"),
+                  ),
+                ),
                 viewer({ cwd: input.cwd, host: input.host, operation: "getIssue" }),
                 notesPage({
                   cwd: input.cwd,
@@ -444,6 +511,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
                   page: 1,
                   operation: "getIssue",
                 }),
+                activity({ cwd: input.cwd, host: input.host, path }),
                 read({
                   cwd: input.cwd,
                   host: input.host,
@@ -465,33 +533,56 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
                   number,
                   operation: "getIssue",
                 }),
+                read({
+                  cwd: input.cwd,
+                  host: input.host,
+                  operation: "getIssue",
+                  path: paged(`${path}/award_emoji`, 1),
+                  decode: decodeAwardListJson,
+                }),
               ],
               { concurrency: 4 },
             ),
           ),
-          Effect.map(([issue, viewerLogin, notes, labelEvents, closing, related, awardPage]) => {
-            const closingKeys = new Set(closing.map((link) => `${link.repository}!${link.number}`));
-            return {
-              ...issue,
-              viewer: viewerLogin,
-              viewerPermissions: VIEWER_PERMISSIONS,
-              states: ISSUE_STATES,
-              reactions: awardPage.reactions,
-              comments: notes.comments.map((comment) => ({
-                ...comment,
-                reactions: awardPage.reactionsByNoteId.get(comment.id) ?? [],
-              })),
-              commentsCursor: commentsCursor(notes.nextCursor, awardPage.nextCursor),
-              events: [...notes.events, ...labelEvents].sort((left, right) =>
-                left.createdAt.localeCompare(right.createdAt),
-              ),
-              // A merge request that closes the issue outranks its sighting as a mere mention.
-              linkedPullRequests: [
-                ...closing,
-                ...related.filter((link) => !closingKeys.has(`${link.repository}!${link.number}`)),
-              ],
-            };
-          }),
+          Effect.map(
+            ([
+              issue,
+              viewerLogin,
+              notes,
+              systemEvents,
+              labelEvents,
+              closing,
+              related,
+              awardPage,
+              issueAwards,
+            ]) => {
+              const closingKeys = new Set(
+                closing.map((link) => `${link.repository}!${link.number}`),
+              );
+              return {
+                ...issue,
+                viewer: viewerLogin,
+                viewerPermissions: VIEWER_PERMISSIONS,
+                states: ISSUE_STATES,
+                reactions: awardReactions(issueAwards, viewerLogin),
+                comments: notes.comments.map((comment) => ({
+                  ...comment,
+                  reactions: awardPage.reactionsByNoteId.get(comment.id) ?? [],
+                })),
+                commentsCursor: commentsCursor(notes.nextCursor, awardPage.nextCursor),
+                events: [...systemEvents, ...labelEvents].sort((left, right) =>
+                  left.createdAt.localeCompare(right.createdAt),
+                ),
+                // A merge request that closes the issue outranks its sighting as a mere mention.
+                linkedPullRequests: [
+                  ...closing,
+                  ...related.filter(
+                    (link) => !closingKeys.has(`${link.repository}!${link.number}`),
+                  ),
+                ],
+              };
+            },
+          ),
         ),
 
       getComments: (input) => {

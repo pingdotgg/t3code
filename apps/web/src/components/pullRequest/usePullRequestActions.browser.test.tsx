@@ -32,19 +32,26 @@ function deferred<T>() {
 }
 
 function MergeButton({ reference }: { reference: PullRequestRef }) {
-  const { actionPending, perform } = usePullRequestActionRunner({
+  const { actionPending, pendingAction, perform } = usePullRequestActionRunner({
     environmentId: EnvironmentId.make("environment"),
     reference,
     terminology: sourceControlClients.get(undefined).changeRequest,
   });
   return (
     <button type="button" disabled={actionPending} onClick={() => void perform("merge")}>
-      {actionPending ? "Merging..." : "Merge"}
+      {pendingAction === "merge" ? "Merging..." : "Merge"}
     </button>
   );
 }
 
+function setup() {
+  state.runAction.mockReset();
+  state.newThread.mockReset();
+  state.prepareThread.mockReset();
+}
+
 it("keeps pending merges with their pull request when navigating between threads", async () => {
+  setup();
   const first: PullRequestRef = {
     projectId: ProjectId.make("project"),
     repository: "owner/repo",
@@ -54,7 +61,6 @@ it("keeps pending merges with their pull request when navigating between threads
   const firstResult = deferred<{ _tag: "Success"; value: void }>();
   const secondResult = deferred<{ _tag: "Success"; value: void }>();
   state.runAction
-    .mockReset()
     .mockReturnValueOnce(firstResult.promise)
     .mockReturnValueOnce(secondResult.promise);
   await using screen = await render(<MergeButton reference={first} />);
@@ -62,6 +68,14 @@ it("keeps pending merges with their pull request when navigating between threads
 
   await userEvent.click(button);
   await expect.element(button).toHaveTextContent("Merging...");
+  await screen.rerender(
+    <MergeButton reference={{ ...first, projectId: ProjectId.make("other-project") }} />,
+  );
+  await expect.element(button).toHaveTextContent("Merge");
+  await expect.element(button).toBeEnabled();
+  await screen.rerender(<MergeButton reference={first} />);
+  await expect.element(button).toHaveTextContent("Merging...");
+  await expect.element(button).toBeDisabled();
   await screen.rerender(<MergeButton reference={second} />);
   await expect.element(button).toHaveTextContent("Merge");
   await expect.element(button).toBeEnabled();
@@ -102,6 +116,7 @@ function FixChecksButton() {
 }
 
 it("stops a pull request handoff when its loading toast is dismissed", async () => {
+  setup();
   const prepared = deferred<{
     _tag: "Success";
     value: {
@@ -112,10 +127,9 @@ it("stops a pull request handoff when its loading toast is dismissed", async () 
     };
   }>();
   state.newThread
-    .mockReset()
     .mockResolvedValueOnce({ draftId: "draft-1", threadId: ThreadId.make("thread-1") })
     .mockResolvedValueOnce({ draftId: "draft-2", threadId: ThreadId.make("thread-1") });
-  state.prepareThread.mockReset().mockReturnValueOnce(prepared.promise);
+  state.prepareThread.mockReturnValueOnce(prepared.promise);
   await using screen = await render(
     <ToastProvider>
       <FixChecksButton />

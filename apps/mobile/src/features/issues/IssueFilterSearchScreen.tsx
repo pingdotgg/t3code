@@ -1,6 +1,7 @@
 import { useAtom } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import type { IssueCandidatesTarget } from "@t3tools/client-runtime/state/issues";
+import { useGT } from "gt-react-native";
 import { useState } from "react";
 
 import { refreshIssueFilterCandidates, useIssueFilterCandidates } from "../../state/issues";
@@ -20,6 +21,7 @@ export function IssueFilterSearchScreen({
   readonly kind: "labels" | "assignee";
   readonly scopes: ReadonlyArray<IssueCandidatesTarget>;
 }>) {
+  const gt = useGT();
   const navigation = useNavigation();
   const { kind, scopes } = route.params;
   const known = useIssueFilterCandidates(scopes);
@@ -56,7 +58,7 @@ export function IssueFilterSearchScreen({
   const loaded = labels ? known.labels.length > 0 : known.assignees.length > 0;
   return (
     <IssueCandidatesSheet
-      title={labels ? "Filter by label" : "Filter by assignee"}
+      title={labels ? gt("Filter by label") : gt("Filter by assignee")}
       noun={labels ? "labels" : "people"}
       query={query}
       onQueryChange={setQuery}
