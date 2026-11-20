@@ -146,6 +146,7 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
           return "launcher-id";
         })),
     prepareTrial: () => Effect.undefined,
+    lastOutcome: undefined,
   });
   const config = yield* ServerConfig.ServerConfig.pipe(
     Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),

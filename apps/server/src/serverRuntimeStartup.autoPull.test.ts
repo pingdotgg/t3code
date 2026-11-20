@@ -145,6 +145,7 @@ it.effect("parks automatic pull until activation without delaying command readin
       Layer.mock(ServiceLauncherClient.ServiceLauncherClient)({
         managed: true,
         protocol: SERVICE_LAUNCHER_PROTOCOL,
+        lastOutcome: undefined,
         prepareTrial: () =>
           Deferred.succeed(prepared, undefined).pipe(
             Effect.andThen(Deferred.await(commitTrial)),
