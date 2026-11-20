@@ -45,6 +45,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
+import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -109,6 +110,10 @@ const OMP_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({
   source: "local",
   commandPath: "/usr/local/bin/omp",
   commandArgs: ["acp"],
+});
+const DROID_LOCAL_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({
+  source: "local",
+  commandPath: "/opt/droid/bin/droid",
 });
 const OPENCODE_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({
   source: "local",
@@ -201,16 +206,16 @@ describe("acpPerTurnPromptUsage", () => {
         reasoningTokens: 3,
       },
     );
-    // Antigravity 1.4.5: its harness reports prompt tokens without the 24 cached ones.
+    // Antigravity 1.5+: inputTokens excludes cached reads, while outputTokens already includes thinking.
     assert.deepEqual(
       acpPerTurnPromptUsage(
         {
-          inputTokens: 42,
-          outputTokens: 3,
-          totalTokens: 54,
-          cachedReadTokens: 24,
+          inputTokens: 2181,
+          outputTokens: 23,
+          totalTokens: 14323,
+          cachedReadTokens: 12119,
           cachedWriteTokens: 0,
-          thoughtTokens: 9,
+          thoughtTokens: 19,
         },
         false,
         "completed",
@@ -220,11 +225,11 @@ describe("acpPerTurnPromptUsage", () => {
         usageScope: "main_agent",
         usageStatus: "complete",
         hasSubagents: false,
-        inputTokens: 66,
-        outputTokens: 12,
-        cachedInputTokens: 24,
+        inputTokens: 14300,
+        outputTokens: 23,
+        cachedInputTokens: 12119,
         cacheCreationTokens: 0,
-        reasoningTokens: 9,
+        reasoningTokens: 19,
       },
     );
   });
@@ -622,6 +627,7 @@ const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
   ) => AcpSessionRuntime.AcpSessionRuntime["Service"]["prompt"];
   readonly cancelled?: Deferred.Deferred<void>;
   readonly followAgentWorkState?: boolean;
+  readonly sessionScope?: Scope.Scope;
 }) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const natives: Array<AcpSessionRuntime.AcpSessionRuntime["Service"]> = [];
@@ -662,12 +668,15 @@ const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
     cwd: process.cwd(),
   });
   const modelSelection = { instanceId, model: "default" } as const;
-  const runtime = yield* adapter.openSession({
+  const opened = adapter.openSession({
     threadId,
     providerSessionId: ProviderSessionId.make("provider-session-acp-prompt-inactivity"),
     modelSelection,
     runtimePolicy,
   });
+  const runtime = yield* input.sessionScope === undefined
+    ? opened
+    : opened.pipe(Effect.provideService(Scope.Scope, input.sessionScope));
   const providerThread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
   const startTurn = (ordinal: number) =>
     DateTime.now.pipe(
@@ -1518,6 +1527,117 @@ describe("AcpAdapterV2", () => {
       );
     }).pipe(Effect.provide(layerTest)),
   );
+  it.live("resends a resumable outcome failure's prompt once before failing the turn", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("acp-test-prompt-resume");
+      const threadId = ThreadId.make("thread-acp-prompt-resume");
+      const notFound = {
+        class: "provider_error",
+        message: "Requested entity was not found.",
+        code: "NOT_FOUND",
+        retryable: true,
+      } as const;
+      const promptTexts: Array<string> = [];
+      // Checks 1, 3 and 4 fail: turn 1 resumes and completes, turn 2 fails after one resume.
+      let checks = 0;
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          steersWithPrompt: () => true,
+          watchPromptOutcome: () =>
+            Effect.sync(() => {
+              checks += 1;
+              const outcome =
+                checks === 2
+                  ? undefined
+                  : {
+                      failure: notFound,
+                      threadDisposition: "reusable" as const,
+                      resumeWith: "continue",
+                    };
+              return () => Effect.succeed(outcome);
+            }),
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* bundledMockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              prompt: (payload) =>
+                Effect.sync(() => {
+                  promptTexts.push(
+                    payload.prompt
+                      .flatMap((block) => (block.type === "text" ? [block.text] : []))
+                      .join("\n"),
+                  );
+                  return { stopReason: "end_turn" as const };
+                }),
+            }),
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-prompt-resume"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const runTurn = (ordinal: number) =>
+        Effect.gen(function* () {
+          yield* runtime.startTurn(
+            makeTurnInput({
+              threadId,
+              providerThread,
+              instanceId,
+              runtimePolicy,
+              now: yield* DateTime.now,
+              ordinal,
+            }),
+          );
+          return Array.from(
+            yield* runtime.events.pipe(
+              Stream.takeUntil((event) => event.type === "turn.terminal"),
+              Stream.runCollect,
+            ),
+          );
+        });
+      const retryTitles = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
+        events.flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "error" &&
+          event.turnItem.retry !== undefined
+            ? [event.turnItem.title]
+            : [],
+        );
+
+      const resumed = yield* runTurn(1);
+      const completed = resumed.at(-1);
+      assert.equal(completed?.type === "turn.terminal" ? completed.status : null, "completed");
+      assert.deepEqual(promptTexts.slice(1), ["continue"]);
+      assert.deepEqual(retryTitles(resumed), ["Provider retry", "Provider recovered"]);
+
+      const failedEvents = yield* runTurn(2);
+      const failed = failedEvents.at(-1);
+      if (failed?.type !== "turn.terminal" || failed.status !== "failed") {
+        return assert.fail("expected a failed terminal");
+      }
+      assert.deepEqual(failed.failure, notFound);
+      assert.deepEqual(promptTexts.slice(3), ["continue"], "a turn resumes only once");
+    }).pipe(Effect.provide(layerTest)),
+  );
   it.live("retains returned usage when Stop finalizes before the prompt callback", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("acp-test-prompt-usage-stop");
@@ -2069,6 +2189,17 @@ describe("AcpAdapterV2", () => {
     },
     {
       scenario: "preserves selected IDs and encodes custom answers",
+      schema: droidSchema,
+      questions: droidQuestions,
+      answers: { question_1: "option_1", question_2: "Markdown" },
+      result: {
+        action: "accept",
+        content: { question_1: "option_1", question_2: "other", question_2_other: "Markdown" },
+      },
+    },
+    {
+      scenario: "extracts the paired form for a local droid command",
+      settings: DROID_LOCAL_SETTINGS,
       schema: droidSchema,
       questions: droidQuestions,
       answers: { question_1: "option_1", question_2: "Markdown" },
@@ -2788,15 +2919,20 @@ describe("AcpAdapterV2", () => {
 
   it.live.each([
     { active: "plan", target: "compact", allowed: true },
+    // regression: #39880 omp advertises a loaded session's commands ~50 ms after session/load.
+    { active: "plan", target: "compact", allowed: true, loadedCommandsDelayMs: 50 },
     { active: "compact", target: "plan", allowed: false },
     { active: "compact", target: undefined, allowed: false },
   ])(
     "validates the target session's compact command ($active -> $target)",
-    ({ active, target, allowed }) =>
+    ({ active, target, allowed, loadedCommandsDelayMs }) =>
       Effect.gen(function* () {
         const harness = yield* makeAdvertisedCompactionHarness({
           T3_ACP_AVAILABLE_COMMANDS: active,
           ...(target === undefined ? {} : { T3_ACP_LOADED_COMMANDS: target }),
+          ...(loadedCommandsDelayMs === undefined
+            ? {}
+            : { T3_ACP_LOADED_COMMANDS_DELAY_MS: String(loadedCommandsDelayMs) }),
         });
         const result = yield* harness.compact(true);
         assert.equal(Exit.isSuccess(result), allowed);
@@ -4222,6 +4358,17 @@ describe("AcpAdapterV2", () => {
                         }),
                       ),
                     );
+                  // Copilot 1.0.114 names the subagent only by agentId, on the delta and the chunk.
+                  const agentChunk = (text: string, agentId: string) =>
+                    raw("assistant.message_delta", { deltaContent: text }, agentId).pipe(
+                      Effect.andThen(
+                        update({
+                          sessionUpdate: "agent_message_chunk",
+                          content: { type: "text", text },
+                          _meta: { "github.com/copilot": { agentId } },
+                        }),
+                      ),
+                    );
                   const launch = (toolCallId: string, description: string, mode: string) =>
                     update({
                       sessionUpdate: "tool_call",
@@ -4259,10 +4406,10 @@ describe("AcpAdapterV2", () => {
                     _meta: { "github.com/copilot": { agentId: "agent-a" } },
                   });
                   yield* chunk("`a.txt` says", "task-a");
-                  yield* chunk("`b.txt` has", "task-b");
+                  yield* agentChunk("`b.txt` has", "agent-b");
                   yield* chunk(" hello.", "task-a");
                   yield* chunk("a.txt b.txt", "task-bg");
-                  yield* chunk(" three lines.", "task-b");
+                  yield* agentChunk(" three lines.", "agent-b");
                   for (const [task, agent, text] of [
                     ["task-a", "agent-a", "`a.txt` says hello."],
                     ["task-b", "agent-b", "`b.txt` has three lines."],
@@ -5520,6 +5667,65 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  // regression: #34160 a turn failed as silent right after the computer woke from sleep
+  it.effect.each([
+    { label: "a timer due during sleep fires on wake", timerCountsSleep: true, asleep: "2 hours" },
+    { label: "the host wakes before the deadline", timerCountsSleep: true, asleep: "9 minutes" },
+    {
+      label: "timers pause while only wall time jumps",
+      timerCountsSleep: false,
+      asleep: "2 hours",
+    },
+  ] as const)(
+    "does not count host sleep as prompt inactivity when $label",
+    ({ timerCountsSleep, asleep }) =>
+      Effect.gen(function* () {
+        const testClock = yield* TestClock.testClockWith(Effect.succeed);
+        const awake = yield* Latch.make(true);
+        let wallJumpMillis = 0;
+        // macOS and Windows timers count sleep and fire on the first tick after wake; on Linux
+        // timers pause while the wall clock jumps.
+        const hostClock: TestClock.TestClock = {
+          ...testClock,
+          currentTimeMillisUnsafe: () => testClock.currentTimeMillisUnsafe() + wallJumpMillis,
+          currentTimeMillis: Effect.sync(
+            () => testClock.currentTimeMillisUnsafe() + wallJumpMillis,
+          ),
+          sleep: (duration) => testClock.sleep(duration).pipe(Effect.andThen(awake.await)),
+        };
+        yield* Effect.gen(function* () {
+          const harness = yield* makePromptInactivityHarness({
+            environment: (runtimeOrdinal) =>
+              runtimeOrdinal === 1 ? { T3_ACP_HANG_PROMPT_FOREVER: "1" } : {},
+          });
+          yield* harness.startTurn(1);
+          yield* TestClock.adjust("5 minutes");
+          yield* harness.emitUpdate({
+            sessionId: "mock-session-1",
+            update: {
+              sessionUpdate: "agent_thought_chunk",
+              content: { type: "text", text: "Still working." },
+            },
+          });
+          if (timerCountsSleep) {
+            yield* awake.close;
+            yield* TestClock.adjust(asleep);
+            yield* awake.open;
+          } else {
+            wallJumpMillis = Duration.toMillis(asleep);
+          }
+          yield* TestClock.adjust(Duration.millis(15 * 60_000 - 1));
+          assert.isTrue(yield* harness.nextTurnRejected(2));
+
+          yield* TestClock.adjust("2 minutes");
+          yield* harness.startTurn(2);
+          const [silent, next] = yield* harness.terminals(2);
+          assert.equal(silent?.status, "failed");
+          assert.equal(next?.status, "completed");
+        }).pipe(Effect.provideService(Clock.Clock, hostClock));
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect(
     "holds the inactivity timeout while a tool runs and restarts it when the tool ends",
     () =>
@@ -5767,6 +5973,42 @@ describe("AcpAdapterV2", () => {
         const terminal = events.at(-1);
         assert.equal(terminal?.type === "turn.terminal" ? terminal.status : undefined, "failed");
       }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("ends a running T3 MCP tool call when its session closes mid-prompt", () =>
+    Effect.gen(function* () {
+      const sessionScope = yield* Scope.make();
+      const harness = yield* makePromptInactivityHarness({
+        sessionScope,
+        environment: () => ({ T3_ACP_EMIT_TRACKED_TOOL_CALL_KIND_THEN_HANG: "other" }),
+      });
+      const trackedToolStatus = (event: ProviderAdapter.ProviderAdapterV2Event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.nativeItemRef?.nativeId === "tracked-tool-call"
+          ? event.turnItem.status
+          : undefined;
+      yield* harness.startTurn(1);
+      yield* harness.runtime.events.pipe(
+        Stream.filter((event) => trackedToolStatus(event) !== undefined),
+        Stream.runHead,
+      );
+      // t3_worktree_handoff releases the live session while its own tool call is open.
+      yield* Scope.close(sessionScope, Exit.void);
+      // The event queue outlives the session; only events emitted by the close remain.
+      const after = yield* harness.runtime.events.pipe(
+        Stream.filter((event) => trackedToolStatus(event) !== undefined),
+        Stream.map(trackedToolStatus),
+        Stream.takeUntil((status) => status !== "pending" && status !== "running"),
+        Stream.runCollect,
+        Effect.map((collected) => Array.from(collected)),
+        Effect.timeoutOption("1 second"),
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("1 second");
+      const statuses = Option.getOrElse(yield* Fiber.join(after), () => []);
+      // regression: #39410 the handoff's tool call stayed running after the session closed.
+      assert.include(["completed", "failed", "interrupted", "cancelled"], statuses.at(-1));
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.live("does not poll the process ledger while a cgroup lease owns teardown", () =>
@@ -11853,6 +12095,122 @@ describe("AcpAdapterV2", () => {
           "Direct Stop must not carry a stopped subagent into the follow-up run",
         );
       }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("leaves command_execution input empty when the tool call carries no command", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* bundledMockAgentPath;
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+      const promptStarted = yield* Deferred.make<void>();
+      const promptGate = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+      const instanceId = ProviderInstanceId.make("acp-test-empty-command-input");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  sessionUpdateHandler = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              prompt: () =>
+                Deferred.succeed(promptStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(promptGate)),
+                ),
+            }),
+          }),
+        },
+        selfInvocation,
+      });
+      const threadId = ThreadId.make("thread-acp-empty-command-input");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-empty-command-input"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) => Queue.offer(events, event)),
+        Effect.forkScoped,
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn(
+        makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now }),
+      );
+      yield* Deferred.await(promptStarted);
+
+      const sessionId = "mock-session-1";
+      yield* sessionUpdateHandler!({
+        sessionId,
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "call-exec-no-cmd",
+          title: "Run command",
+          kind: "execute",
+          status: "in_progress",
+          rawInput: {},
+        },
+      });
+      yield* sessionUpdateHandler!({
+        sessionId,
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "call-monitor-no-cmd",
+          title: "Monitor",
+          kind: "other",
+          status: "in_progress",
+          rawInput: { variant: "monitor" },
+        },
+      });
+      yield* Deferred.succeed(promptGate, { stopReason: "end_turn" });
+
+      const commandItems: Array<{
+        readonly nativeId: string | null | undefined;
+        readonly status: string;
+        readonly input: string;
+      }> = [];
+      let terminal = false;
+      while (!terminal) {
+        const event = yield* Queue.take(events);
+        if (event.type === "turn_item.updated" && event.turnItem.type === "command_execution") {
+          commandItems.push({
+            nativeId: event.turnItem.nativeItemRef?.nativeId,
+            status: event.turnItem.status,
+            input: event.turnItem.input,
+          });
+        }
+        if (event.type === "turn.terminal") {
+          terminal = true;
+        }
+      }
+
+      assert.deepEqual(commandItems, [
+        { nativeId: "call-exec-no-cmd", status: "running", input: "" },
+        { nativeId: "call-monitor-no-cmd", status: "running", input: "" },
+        { nativeId: "call-exec-no-cmd", status: "completed", input: "" },
+        { nativeId: "call-monitor-no-cmd", status: "completed", input: "" },
+      ]);
+    }).pipe(Effect.provide(layerTest)),
   );
 });
 

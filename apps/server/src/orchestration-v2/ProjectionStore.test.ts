@@ -7178,6 +7178,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           if (/^SEARCH (r|run) /.test(detail)) {
             assert.include(detail, "COVERING INDEX", detail);
           }
+          // A thread's item count reads one count row per hidden run, not one per run it had.
+          if (detail.startsWith("SEARCH counts ")) {
+            assert.include(detail, "run_key=?", detail);
+          }
           if (detail.includes("orchestration_v2_projection_turn_items")) {
             // Only held input is read from the sparse index; transcript history stays unread.
             assert.include(
