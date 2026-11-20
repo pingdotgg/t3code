@@ -26,12 +26,14 @@ import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -178,6 +180,19 @@ export class ThreadLaunchBaseRefError extends Schema.TaggedError<ThreadLaunchBas
   }
 }
 
+export class ThreadLaunchBranchExistsError extends Schema.TaggedError<ThreadLaunchBranchExistsError>()(
+  "ThreadLaunchBranchExistsError",
+  {
+    projectId: ProjectId,
+    projectTitle: Schema.String,
+    branch: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Branch "${this.branch}" already exists in project "${this.projectTitle}".`;
+  }
+}
+
 export class ThreadLaunchBranchConflictError extends Schema.TaggedError<ThreadLaunchBranchConflictError>()(
   "ThreadLaunchBranchConflictError",
   {
@@ -222,7 +237,10 @@ export class ThreadLaunchService extends Context.Service<
       },
     ) => Effect.Effect<
       void,
-      ThreadLaunchBaseRefError | ThreadLaunchBranchConflictError | ThreadLaunchNotRepositoryError
+      | ThreadLaunchBaseRefError
+      | ThreadLaunchBranchExistsError
+      | ThreadLaunchBranchConflictError
+      | ThreadLaunchNotRepositoryError
     >;
     /** True only when the project's folder is known not to be a Git repository. */
     readonly isNonGitProject: (projectId: ProjectId) => Effect.Effect<boolean>;
@@ -356,6 +374,31 @@ const make = Effect.gen(function* () {
     }
   });
 
+  const refuseTakenBranch = Effect.fn("ThreadLaunchService.refuseTakenBranch")(function* (
+    project: { readonly id: ProjectId; readonly title: string },
+    branch: string,
+    localBranches: ReadonlyArray<string>,
+  ) {
+    if (localBranches.includes(branch))
+      return yield* new ThreadLaunchBranchExistsError({
+        projectId: project.id,
+        projectTitle: project.title,
+        branch,
+      });
+    // Provisioning flattens temporary names that collide, so only explicit names are refused.
+    if (isTemporaryWorktreeBranch(branch)) return;
+    const conflictingBranch = localBranches.find(
+      (existing) => existing.startsWith(`${branch}/`) || branch.startsWith(`${existing}/`),
+    );
+    if (conflictingBranch !== undefined)
+      return yield* new ThreadLaunchBranchConflictError({
+        projectId: project.id,
+        projectTitle: project.title,
+        branch,
+        conflictingBranch,
+      });
+  });
+
   const checkWorktreeBase: ThreadLaunchService["Service"]["checkWorktreeBase"] = Effect.fn(
     "ThreadLaunchService.checkWorktreeBase",
   )(function* (input) {
@@ -378,10 +421,22 @@ const make = Effect.gen(function* () {
     const project = Option.getOrUndefined(projectOption);
     if (project === undefined) return;
     const cwd = project.workspaceRoot;
-    if ((yield* groupMembers(cwd)) !== null) return;
     const { baseRef, branch } = strategy;
-    const checksBranch = branch !== undefined && !isTemporaryWorktreeBranch(branch);
-    // Errors keep their order below: missing repository, then base ref, then branch conflict.
+    const members = yield* groupMembers(cwd);
+    if (members !== null) {
+      // Each member resolves the base itself; the new branch must be free in all of them.
+      if (branch === undefined) return;
+      const memberBranches = yield* Effect.forEach(
+        members,
+        (member) =>
+          git
+            .listLocalBranchNames(`${cwd}/${member}`)
+            .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => [])),
+        { concurrency: "unbounded" },
+      );
+      return yield* refuseTakenBranch(project, branch, memberBranches.flat());
+    }
+    // Errors keep their order below: missing repository, then base ref, then branch exists or conflicts.
     const [repositoryRoot, hasBaseCommit, localBranches] = yield* Effect.all(
       [
         git.repositoryRoot(cwd).pipe(Effect.orElseSucceed(() => undefined)),
@@ -392,7 +447,7 @@ const make = Effect.gen(function* () {
             git
               .hasCommit({ cwd, refName: baseRef === "-" ? "@{-1}" : baseRef })
               .pipe(Effect.orElseSucceed(() => true)),
-        checksBranch
+        branch !== undefined
           ? git
               .listLocalBranchNames(cwd)
               .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))
@@ -429,18 +484,8 @@ const make = Effect.gen(function* () {
         workspaceRoot: project.workspaceRoot,
         baseRef,
       });
-    // Provisioning flattens temporary names that collide, so only explicit names are refused.
-    if (!checksBranch) return;
-    const conflictingBranch = localBranches.find(
-      (existing) => existing.startsWith(`${branch}/`) || branch.startsWith(`${existing}/`),
-    );
-    if (conflictingBranch !== undefined)
-      return yield* new ThreadLaunchBranchConflictError({
-        projectId: project.id,
-        projectTitle: project.title,
-        branch,
-        conflictingBranch,
-      });
+    if (branch === undefined) return;
+    return yield* refuseTakenBranch(project, branch, localBranches);
   });
 
   const isNonGitProject: ThreadLaunchService["Service"]["isNonGitProject"] = Effect.fn(
@@ -1131,36 +1176,78 @@ const make = Effect.gen(function* () {
     threadId: ThreadId,
     runId: RunId | null,
     cause: unknown,
-  ) =>
-    runId === null
-      ? Effect.logWarning("Thread workspace preparation failed", {
-          commandId: input.commandId,
-          threadId,
-          cause,
-        })
-      : threads
-          .dispatch({
-            type: "prepared-run.fail",
-            commandId: CommandId.make(`${input.commandId}:fail`),
+    retryPersistence = true,
+  ) => {
+    if (runId === null) {
+      return Effect.logWarning("Thread workspace preparation failed", {
+        commandId: input.commandId,
+        threadId,
+        cause,
+      });
+    }
+    const persistFailure = threads.dispatch({
+      type: "prepared-run.fail",
+      commandId: CommandId.make(`${input.commandId}:fail`),
+      threadId,
+      runId,
+      failure: makeProviderFailure({
+        cause,
+        message: failureDetail(cause),
+        class: "validation_error",
+        retryable: false,
+      }),
+    });
+    const runIsPreparing = threads.getThreadRecords(threadId, ["runs"], { runIds: [runId] }).pipe(
+      Effect.map((current) =>
+        current.runs.some((run) => run.id === runId && run.status === "preparing"),
+      ),
+      // The read can fail in the same outage, which says nothing about the run.
+      Effect.catchCause(() => Effect.succeed(true)),
+    );
+    return persistFailure.pipe(
+      Effect.catchCause((persistCause) =>
+        Effect.gen(function* () {
+          yield* Effect.logWarning("Failed to persist thread workspace preparation failure", {
+            commandId: input.commandId,
             threadId,
-            runId,
-            failure: makeProviderFailure({
-              cause,
-              message: failureDetail(cause),
-              class: "validation_error",
-              retryable: false,
-            }),
-          })
-          .pipe(
-            Effect.catchCause((persistCause) =>
-              Effect.logWarning("Failed to persist thread workspace preparation failure", {
-                commandId: input.commandId,
-                threadId,
-                cause,
-                persistCause,
-              }),
+            cause,
+            persistCause,
+          });
+          if (
+            !retryPersistence ||
+            Cause.hasInterruptsOnly(persistCause) ||
+            !(yield* runIsPreparing)
+          )
+            return;
+          // A full disk rejects this write as well, and nothing else moves the run out of
+          // "preparing", so it would hold the thread's queue until a restart. Retry until
+          // storage recovers or the run settles another way.
+          yield* persistFailure.pipe(
+            // Storage failures can be defects; retry both failure channels.
+            Effect.catchCauseIf(
+              (retryCause) => !Cause.hasInterruptsOnly(retryCause),
+              (retryCause) =>
+                runIsPreparing.pipe(
+                  Effect.flatMap((preparing) =>
+                    preparing ? Effect.fail(retryCause) : Effect.void,
+                  ),
+                ),
             ),
+            Effect.retry(
+              Schedule.exponential("1 second").pipe(
+                Schedule.modifyDelay(({ duration }) =>
+                  Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+                ),
+              ),
+            ),
+            Effect.ignoreCause,
+            // Callers reach this from finalizers; shutdown must still be able to stop it.
+            Effect.interruptible,
           );
+        }),
+      ),
+    );
+  };
 
   const reservePreparation = (commandId: CommandId) =>
     Ref.modify(scheduledLaunches, (scheduled) => {
@@ -1310,7 +1397,9 @@ const make = Effect.gen(function* () {
                 },
               )
             : input.workspaceStrategy;
-        const initialBranch = yield* launchBranch(workspaceStrategy, project.workspaceRoot);
+        const initialBranch = yield* Effect.interruptible(
+          launchBranch(workspaceStrategy, project.workspaceRoot),
+        );
         const initialWorktreePath =
           workspaceStrategy.type === "existing_worktree" ? workspaceStrategy.worktreePath : null;
         const initialMessage =
@@ -1377,7 +1466,10 @@ const make = Effect.gen(function* () {
         const threadId =
           claimed.storedEvents.find((stored) => stored.event.type.startsWith("thread."))?.event
             .threadId ?? candidateThreadId;
-        if (project.id !== input.projectId) {
+        const committedThread = yield* threads
+          .getThreadShell(threadId)
+          .pipe(Effect.mapError(mapError(input, "resolve-project", threadId)));
+        if (committedThread?.projectId !== input.projectId) {
           return yield* mapError(input, "resolve-project", threadId)("Project identity changed.");
         }
         let runId: RunId | null = null;
@@ -1453,7 +1545,8 @@ const make = Effect.gen(function* () {
             // retry's own strategy, whose defaults may resolve differently.
             const accepted = current?.runs.find((run) => run.id === runId)?.workspacePreparation;
             const preparationStrategy: ThreadLaunchWorkspaceStrategy =
-              Option.isSome(launchReceipt) && accepted?.type === "worktree"
+              Option.isSome(launchReceipt) &&
+              (accepted?.type === "worktree" || accepted?.type === "existing_worktree")
                 ? accepted
                 : Option.isSome(launchReceipt) &&
                     workspaceStrategy.type === "root" &&
@@ -1488,6 +1581,9 @@ const make = Effect.gen(function* () {
         };
       });
     },
+    // The message commits a preparing run that only this call schedules, so a
+    // caller that goes away must not stop the launch between the two.
+    Effect.uninterruptible,
   );
 
   const prepareRun: ThreadLaunchService["Service"]["prepareRun"] = Effect.fn(
@@ -1506,7 +1602,13 @@ const make = Effect.gen(function* () {
       );
     }).pipe(Effect.exit);
     if (Exit.isFailure(scheduled)) {
-      yield* failPreparedRun(input, input.threadId, input.runId, Cause.squash(scheduled.cause));
+      yield* failPreparedRun(
+        input,
+        input.threadId,
+        input.runId,
+        Cause.squash(scheduled.cause),
+        false,
+      );
     }
   });
 

@@ -1,4 +1,5 @@
 import { useNavigation } from "@react-navigation/native";
+import { useGT } from "gt-react-native";
 import { openSettings } from "../settings/settings-navigation";
 import { updateComposerDraftSettings } from "../../state/use-composer-drafts";
 import type { EnvironmentId, ModelSelection, ServerConfig, ThreadId } from "@t3tools/contracts";
@@ -18,6 +19,7 @@ export function ProfilePicker(props: {
   disabled: boolean;
   draftKey?: string;
 }) {
+  const gt = useGT();
   const navigation = useNavigation();
   // Settings → Refresh and opening the menu update this query, not the connection's config copy.
   const fresh = useEnvironmentQuery(
@@ -32,12 +34,12 @@ export function ProfilePicker(props: {
   const supported = driver !== undefined && supportsProfiles(driver);
   return (
     <Menu
-      accessibilityLabel="Profile"
+      accessibilityLabel={gt("Profile", { $context: "noun, agent profile picker" })}
       onOpenMenu={fresh.refresh}
       actions={[
         {
           id: "",
-          title: "No profile",
+          title: gt("No profile"),
           state: props.selection.profileId ? "off" : "on",
           attributes: { disabled: !supported },
         },
@@ -48,7 +50,7 @@ export function ProfilePicker(props: {
           attributes: { disabled: !supported || Boolean(profile.warning) },
           state: props.selection.profileId === id ? ("on" as const) : ("off" as const),
         })),
-        { id: "__edit_profiles__", title: "Edit profiles…" },
+        { id: "__edit_profiles__", title: gt("Edit profiles…") },
       ]}
       onPressAction={({ nativeEvent }) => {
         if (nativeEvent.event === "__edit_profiles__") {
@@ -68,26 +70,26 @@ export function ProfilePicker(props: {
           (provider) => provider.instanceId === picked.selection.instanceId,
         )?.driver;
         if (id && (!nextDriver || !supportsProfiles(nextDriver))) {
-          Dialog.alert("Profiles not supported here");
+          Dialog.alert(gt("Profiles not supported here"));
           return;
         }
         if (props.draftKey)
           updateComposerDraftSettings(props.draftKey, { modelSelection: picked.selection });
         else selectThreadModel(props, picked.selection);
         Dialog.alert(
-          "Profile selected",
-          `${picked.notice ? `${picked.notice}\n\n` : ""}Applies at the next session start. Stop and restart the thread to apply immediately.`,
+          gt("Profile selected"),
+          `${picked.notice ? `${picked.notice}\n\n` : ""}${gt("Applies at the next session start. Stop and restart the thread to apply immediately.")}`,
         );
       }}
     >
       <Button
         onPress={() => {}}
         tone="text"
-        label={supported ? (props.selection.profileId ?? "No profile") : "Profiles"}
+        label={supported ? (props.selection.profileId ?? gt("No profile")) : gt("Profiles")}
         accessibilityHint={
           supported
-            ? "Profile for the next session start"
-            : "This provider does not use profiles; open profile settings"
+            ? gt("Profile for the next session start")
+            : gt("This provider does not use profiles; open profile settings")
         }
         disabled={props.disabled}
       />

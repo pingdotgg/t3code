@@ -6,6 +6,7 @@ import type {
   ProviderSettingsFile,
   ProviderSettingsOptions,
 } from "@t3tools/contracts";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { useState } from "react";
 
 import { Badge } from "../ui/badge";
@@ -37,9 +38,9 @@ import {
 type Entry = ClaudeProviderSettings | CodexProviderSettings | PiProviderSettings;
 
 const TRI_STATE_LABELS: Record<TriState, string> = {
-  default: "Default",
-  on: "On",
-  off: "Off",
+  default: msg("Default", { $context: "setting state, follows the provider default" }),
+  on: msg("On", { $context: "setting state" }),
+  off: msg("Off", { $context: "setting state" }),
 };
 
 export interface ProviderSettingsEditorProps {
@@ -66,6 +67,8 @@ export interface ProviderSettingsEditorProps {
 }
 
 export function ProviderSettingsEditor(props: ProviderSettingsEditorProps) {
+  const gt = useGT();
+  const messages = useMessages();
   const [driver, setDriver] = useState<ProfileProviderSettingsDriver>("claudeAgent");
   const entries = props.value[driver] ?? {};
   const names = Object.keys(entries);
@@ -73,9 +76,9 @@ export function ProviderSettingsEditor(props: ProviderSettingsEditorProps) {
   const current = selected !== null && selected in entries ? selected : (names[0] ?? null);
   const [newName, setNewName] = useState("");
   const [renameTo, setRenameTo] = useState("");
-  const newNameError = newName === "" ? null : profileNameError(newName, names);
+  const newNameError = newName === "" ? null : profileNameError(newName, names, messages);
   const renameError =
-    renameTo === "" || renameTo === current ? null : profileNameError(renameTo, names);
+    renameTo === "" || renameTo === current ? null : profileNameError(renameTo, names, messages);
 
   const selectEntry = (name: string | null) => {
     if (current !== null) props.onJsonValidity(`${driver}:${current}`, true);
@@ -91,7 +94,7 @@ export function ProviderSettingsEditor(props: ProviderSettingsEditorProps) {
     <div className="space-y-3 px-3 py-3 sm:px-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <ToggleGroup
-          aria-label="Provider"
+          aria-label={gt("Provider")}
           value={[driver]}
           onValueChange={(next) => {
             const value = next[0];
@@ -113,7 +116,7 @@ export function ProviderSettingsEditor(props: ProviderSettingsEditorProps) {
           disabled={props.optionsPending}
           onClick={props.onRefreshOptions}
         >
-          {props.optionsPending ? "Detecting…" : "Detect options again"}
+          {props.optionsPending ? gt("Detecting…") : gt("Detect options again")}
         </Button>
         {driver === "claudeAgent" && props.onClearClaudeList ? (
           <Button
@@ -122,16 +125,24 @@ export function ProviderSettingsEditor(props: ProviderSettingsEditorProps) {
             disabled={props.optionsPending}
             onClick={props.onClearClaudeList}
           >
-            Clear list
+            <T>Clear list</T>
           </Button>
         ) : null}
       </div>
       <p className="text-xs text-muted-foreground">
-        Options come from what this machine’s {PROFILE_DRIVER_LABELS[driver]} reports. Muse and
-        other providers have no provider settings.
-        {driver === "claudeAgent"
-          ? " Claude’s list keeps everything its threads have reported. Clear it after you uninstall something; the next Claude thread fills it again."
-          : ""}
+        <T>
+          Options come from what this machine’s <Var>{PROFILE_DRIVER_LABELS[driver]}</Var> reports.
+          Muse and other providers have no provider settings.
+        </T>
+        {driver === "claudeAgent" ? (
+          <>
+            {" "}
+            <T>
+              Claude’s list keeps everything its threads have reported. Clear it after you uninstall
+              something; the next Claude thread fills it again.
+            </T>
+          </>
+        ) : null}
       </p>
       {props.optionsError ? (
         <p role="alert" className="text-xs text-destructive">
@@ -147,7 +158,10 @@ export function ProviderSettingsEditor(props: ProviderSettingsEditorProps) {
       <div className="flex flex-wrap items-center gap-2">
         {names.length === 0 ? (
           <p className="text-xs text-muted-foreground">
-            No named {PROFILE_DRIVER_LABELS[driver]} settings. Profiles use the provider default.
+            <T>
+              No named <Var>{PROFILE_DRIVER_LABELS[driver]}</Var> settings. Profiles use the
+              provider default.
+            </T>
           </p>
         ) : (
           <Select
@@ -156,7 +170,10 @@ export function ProviderSettingsEditor(props: ProviderSettingsEditorProps) {
               selectEntry(value);
             }}
           >
-            <SelectTrigger size="sm" aria-label={`${PROFILE_DRIVER_LABELS[driver]} settings`}>
+            <SelectTrigger
+              size="sm"
+              aria-label={gt("{provider} settings", { provider: PROFILE_DRIVER_LABELS[driver] })}
+            >
               <SelectValue>{current}</SelectValue>
             </SelectTrigger>
             <SelectPopup>
@@ -169,8 +186,8 @@ export function ProviderSettingsEditor(props: ProviderSettingsEditorProps) {
           </Select>
         )}
         <Input
-          aria-label="New settings name"
-          placeholder="New settings name"
+          aria-label={gt("New settings name")}
+          placeholder={gt("New settings name")}
           value={newName}
           disabled={props.disabled}
           aria-invalid={newNameError !== null}
@@ -186,7 +203,7 @@ export function ProviderSettingsEditor(props: ProviderSettingsEditorProps) {
             setNewName("");
           }}
         >
-          Add
+          <T>Add</T>
         </Button>
         {current !== null ? (
           <Button
@@ -199,7 +216,7 @@ export function ProviderSettingsEditor(props: ProviderSettingsEditorProps) {
               selectEntry(copy);
             }}
           >
-            Duplicate
+            <T>Duplicate</T>
           </Button>
         ) : null}
       </div>
@@ -209,7 +226,7 @@ export function ProviderSettingsEditor(props: ProviderSettingsEditorProps) {
         <div className="space-y-3 rounded-lg border border-border/60 p-3">
           <div className="flex flex-wrap items-center gap-2">
             <Input
-              aria-label="Rename settings"
+              aria-label={gt("Rename settings")}
               placeholder={current}
               value={renameTo}
               disabled={props.disabled || props.dirty}
@@ -231,7 +248,7 @@ export function ProviderSettingsEditor(props: ProviderSettingsEditorProps) {
                 selectEntry(renameTo);
               }}
             >
-              Rename
+              <T>Rename</T>
             </Button>
             <Button
               size="xs"
@@ -239,19 +256,23 @@ export function ProviderSettingsEditor(props: ProviderSettingsEditorProps) {
               disabled={props.disabled || props.dirty}
               onClick={() => props.onRename(driver, current, null)}
             >
-              Delete
+              <T>Delete</T>
             </Button>
           </div>
           {renameError ? <p className="text-xs text-destructive">{renameError}</p> : null}
           {props.dirty ? (
             <p className="text-xs text-muted-foreground">
-              Save or discard edits before renaming or deleting; profiles that use these settings
-              change with them.
+              <T>
+                Save or discard edits before renaming or deleting; profiles that use these settings
+                change with them.
+              </T>
             </p>
           ) : null}
           {props.usedBy(driver, current).length > 0 ? (
             <p className="text-xs text-muted-foreground">
-              Used by {props.usedBy(driver, current).join(", ")}.
+              <T>
+                Used by <Var>{props.usedBy(driver, current).join(", ")}</Var>.
+              </T>
             </p>
           ) : null}
           <DescriptionField
@@ -297,10 +318,11 @@ function DescriptionField(props: {
   disabled: boolean;
   onChange: (value: string | undefined) => void;
 }) {
+  const gt = useGT();
   return (
     <Input
-      aria-label="Description"
-      placeholder="Description"
+      aria-label={gt("Description")}
+      placeholder={gt("Description")}
       value={props.value ?? ""}
       disabled={props.disabled}
       onChange={(event) =>
@@ -356,6 +378,7 @@ function TriStateSelect(props: {
   disabled: boolean;
   onChange: (value: TriState) => void;
 }) {
+  const m = useMessages();
   return (
     <Select
       value={props.value}
@@ -365,12 +388,12 @@ function TriStateSelect(props: {
       }}
     >
       <SelectTrigger size="sm" aria-label={props.label}>
-        <SelectValue>{TRI_STATE_LABELS[props.value]}</SelectValue>
+        <SelectValue>{m(TRI_STATE_LABELS[props.value])}</SelectValue>
       </SelectTrigger>
       <SelectPopup>
         {(["default", "on", "off"] as const).map((state) => (
           <SelectItem key={state} value={state}>
-            {TRI_STATE_LABELS[state]}
+            {m(TRI_STATE_LABELS[state])}
           </SelectItem>
         ))}
       </SelectPopup>
@@ -395,7 +418,9 @@ function NameChecklist(props: {
         <p className="text-xs text-muted-foreground">{props.description}</p>
       </div>
       {props.options.length === 0 ? (
-        <p className="text-xs text-muted-foreground">Nothing reported on this machine.</p>
+        <p className="text-xs text-muted-foreground">
+          <T>Nothing reported on this machine.</T>
+        </p>
       ) : (
         <div className="grid grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-2">
           {props.options.map((option) => (
@@ -410,7 +435,7 @@ function NameChecklist(props: {
               <span className="truncate">{option.name}</span>
               {option.detected ? null : (
                 <Badge variant="outline" size="sm">
-                  not on this machine
+                  <T>not on this machine</T>
                 </Badge>
               )}
             </label>
@@ -429,8 +454,9 @@ function JsonField(props: {
   onChange: (value: JsonObject | undefined) => void;
   onValidity: (valid: boolean) => void;
 }) {
+  const messages = useMessages();
   const [text, setText] = useState(() => formatJsonObject(props.value));
-  const parsed = parseJsonObject(text);
+  const parsed = parseJsonObject(text, messages);
   return (
     <div className="space-y-1.5">
       <div>
@@ -443,7 +469,7 @@ function JsonField(props: {
         disabled={props.disabled}
         aria-invalid={!parsed.ok}
         onChange={(event) => {
-          const next = parseJsonObject(event.target.value);
+          const next = parseJsonObject(event.target.value, messages);
           setText(event.target.value);
           props.onValidity(next.ok);
           if (next.ok) props.onChange(next.value);
@@ -461,6 +487,7 @@ function ClaudeForm(props: {
   onChange: (entry: ClaudeProviderSettings) => void;
   onJsonValidity: (valid: boolean) => void;
 }) {
+  const gt = useGT();
   const { entry, disabled } = props;
   const set = <K extends keyof ClaudeProviderSettings>(
     key: K,
@@ -469,8 +496,8 @@ function ClaudeForm(props: {
   return (
     <div className="space-y-3">
       <NameChecklist
-        title="Blocked tools"
-        description="Claude may not use these. T3’s own tools are never blocked."
+        title={gt("Blocked tools")}
+        description={gt("Claude may not use these. T3’s own tools are never blocked.")}
         options={settingsOptions(
           props.options?.tools,
           entry.blockedTools ?? [],
@@ -481,16 +508,16 @@ function ClaudeForm(props: {
         onChange={(next) => set("blockedTools", next)}
       />
       <OptionalSwitch
-        title="Bundled skills"
-        description="Skills that ship with Claude Code."
+        title={gt("Bundled skills")}
+        description={gt("Skills that ship with Claude Code.")}
         value={entry.bundledSkills}
         fallback
         disabled={disabled}
         onChange={(value) => set("bundledSkills", value)}
       />
       <NameChecklist
-        title="Turned-off skills"
-        description="Installed Claude skills left out of the session."
+        title={gt("Turned-off skills")}
+        description={gt("Installed Claude skills left out of the session.")}
         options={settingsOptions(
           props.options?.skills,
           entry.disabledSkills ?? [],
@@ -501,8 +528,8 @@ function ClaudeForm(props: {
         onChange={(next) => set("disabledSkills", next)}
       />
       <NameChecklist
-        title="Turned-off plugins"
-        description="Installed Claude plugins left out of the session."
+        title={gt("Turned-off plugins")}
+        description={gt("Installed Claude plugins left out of the session.")}
         options={settingsOptions(
           props.options?.plugins,
           entry.disabledPlugins ?? [],
@@ -512,23 +539,24 @@ function ClaudeForm(props: {
         disabled={disabled}
         onChange={(next) => set("disabledPlugins", next)}
       />
-      <FieldRow title="Auto memory" description="Default follows your Claude settings.">
+      <FieldRow title={gt("Auto memory")} description={gt("Default follows your Claude settings.")}>
         <TriStateSelect
-          label="Auto memory"
+          label={gt("Auto memory")}
           value={triStateOf(entry.autoMemory)}
           disabled={disabled}
           onChange={(state) => set("autoMemory", booleanOfTriState(state))}
         />
       </FieldRow>
       <OptionalSwitch
-        title="Co-author"
-        description="Claude’s attribution on commits and pull requests."
+        title={gt("Co-author", { $context: "setting, commit attribution" })}
+        description={gt("Claude’s attribution on commits and pull requests.")}
         value={entry.coAuthor}
         fallback
         disabled={disabled}
         onChange={(value) => set("coAuthor", value)}
       />
       <OptionalSwitch
+        // oxlint-disable-next-line t3code/no-untranslated-copy -- Anthropic product name
         title="Claude in Chrome"
         value={entry.chrome}
         fallback={false}
@@ -536,8 +564,8 @@ function ClaudeForm(props: {
         onChange={(value) => set("chrome", value)}
       />
       <JsonField
-        title="Advanced settings"
-        description="Further Claude Code settings keys, as JSON. Keys T3 needs are ignored."
+        title={gt("Advanced settings")}
+        description={gt("Further Claude Code settings keys, as JSON. Keys T3 needs are ignored.")}
         value={entry.settings}
         disabled={disabled}
         onChange={(value) => set("settings", value)}
@@ -554,6 +582,7 @@ function CodexForm(props: {
   onChange: (entry: CodexProviderSettings) => void;
   onJsonValidity: (valid: boolean) => void;
 }) {
+  const gt = useGT();
   const { entry, disabled } = props;
   const features = settingsOptions(
     props.options?.features,
@@ -564,25 +593,28 @@ function CodexForm(props: {
   return (
     <div className="space-y-3">
       <div className="space-y-1.5">
-        <p className="text-sm text-foreground">Features</p>
+        <p className="text-sm text-foreground">
+          <T>Features</T>
+        </p>
         {features.length === 0 ? (
-          <p className="text-xs text-muted-foreground">Nothing reported on this machine.</p>
+          <p className="text-xs text-muted-foreground">
+            <T>Nothing reported on this machine.</T>
+          </p>
         ) : (
           <div className="space-y-1">
             {features.map((feature) => (
               <div key={feature.name} className="flex items-center justify-between gap-3">
                 <span className="min-w-0 truncate text-xs">
-                  {feature.name}
                   {feature.enabled === undefined
-                    ? ""
+                    ? feature.name
                     : feature.enabled
-                      ? " (on by default)"
-                      : " (off by default)"}
+                      ? gt("{name} (on by default)", { name: feature.name })
+                      : gt("{name} (off by default)", { name: feature.name })}
                 </span>
                 <span className="flex shrink-0 items-center gap-2">
                   {feature.detected ? null : (
                     <Badge variant="outline" size="sm">
-                      not on this machine
+                      <T>not on this machine</T>
                     </Badge>
                   )}
                   <TriStateSelect
@@ -607,8 +639,11 @@ function CodexForm(props: {
       </div>
       {unapplied.length > 0 ? (
         <FieldRow
-          title="Turned-off skills and plugins"
-          description={`${unapplied.join(", ")}. Codex cannot turn these off for one thread yet, so T3 does not apply them.`}
+          title={gt("Turned-off skills and plugins")}
+          description={gt(
+            "{names}. Codex cannot turn these off for one thread yet, so T3 does not apply them.",
+            { names: unapplied.join(", ") },
+          )}
         >
           <Button
             size="xs"
@@ -620,13 +655,13 @@ function CodexForm(props: {
               )
             }
           >
-            Clear
+            <T context="verb, removes the listed names">Clear</T>
           </Button>
         </FieldRow>
       ) : null}
       <JsonField
-        title="Advanced config"
-        description="Further dotted config keys, as JSON. Keys T3 needs are refused."
+        title={gt("Advanced config")}
+        description={gt("Further dotted config keys, as JSON. Keys T3 needs are refused.")}
         value={entry.config}
         disabled={disabled}
         onChange={(value) => props.onChange(withKey(entry, "config", value))}
@@ -641,18 +676,19 @@ function PiForm(props: {
   disabled: boolean;
   onChange: (entry: PiProviderSettings) => void;
 }) {
+  const gt = useGT();
   return (
     <div className="space-y-3">
       <OptionalSwitch
-        title="Pi skills"
-        description="Off starts Pi without its own skills. Profile skills are still listed."
+        title={gt("Pi skills")}
+        description={gt("Off starts Pi without its own skills. Profile skills are still listed.")}
         value={props.entry.skills}
         fallback
         disabled={props.disabled}
         onChange={(value) => props.onChange(withKey(props.entry, "skills", value))}
       />
       <OptionalSwitch
-        title="Prompt templates"
+        title={gt("Prompt templates")}
         value={props.entry.promptTemplates}
         fallback
         disabled={props.disabled}

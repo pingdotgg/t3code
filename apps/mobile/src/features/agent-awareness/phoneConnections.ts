@@ -17,7 +17,8 @@ export function phoneConnections(document: ConnectionCatalogDocument) {
     if (
       profile?._tag !== "BearerConnectionProfile" ||
       profile.authorization === "t3-connect" ||
-      !credential
+      // The native service sends a plain bearer token; it cannot sign DPoP proofs.
+      credential?.credential._tag !== "BearerConnectionCredential"
     )
       return [];
     environments.add(target.environmentId);

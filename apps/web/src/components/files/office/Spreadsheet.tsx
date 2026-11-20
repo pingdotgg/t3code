@@ -1,6 +1,8 @@
 import * as Schema from "effect/Schema";
 import { observeResize } from "~/lib/observeResize";
+import { msg, useGT } from "gt-react";
 import { useEffect, useRef, useState } from "react";
+import { m } from "~/i18n/messages";
 import {
   cellAtPoint,
   normalizeRange,
@@ -52,6 +54,7 @@ export default function Spreadsheet(props: {
   onError: (cause: unknown) => void;
 }) {
   const { onError, bytes: source, onDetails, view } = props;
+  const gt = useGT();
   const [opened, setOpened] = useState<Opened>();
   const [error, setError] = useState("");
   const picking = useRef<AbortController | null>(null);
@@ -71,9 +74,15 @@ export default function Spreadsheet(props: {
     void engine
       .call("open", { bytes, view }, { transfer: [bytes], signal: controller.signal })
       .then((value) => {
-        if (!value) throw new Error("This workbook has no visible sheets.");
+        if (!value) throw new Error(m(msg("This workbook has no visible sheets.")));
         setOpened({ ...value, engine });
-        onDetails(`${value.tabs.length} sheet${value.tabs.length === 1 ? "" : "s"}`);
+        onDetails(
+          m(
+            msg("{count, plural, one {{count} sheet} other {{count} sheets}}", {
+              count: value.tabs.length,
+            }),
+          ),
+        );
       })
       .catch(fail);
     return () => {
@@ -95,7 +104,7 @@ export default function Spreadsheet(props: {
         setOpened({ ...opened, layout, target });
       })
       .catch(() => {
-        if (!controller.signal.aborted) setError("This sheet could not be opened.");
+        if (!controller.signal.aborted) setError(m(msg("This sheet could not be opened.")));
       });
   };
   if (!opened) return <FileSurfaceLoading />;
@@ -114,7 +123,7 @@ export default function Spreadsheet(props: {
       />
       <div
         role="tablist"
-        aria-label="Sheets"
+        aria-label={gt("Sheets")}
         className="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-t border-border px-2"
         onKeyDown={(event) => {
           const current = opened.tabs.findIndex(
@@ -290,7 +299,7 @@ function SpreadsheetGrid(props: {
             received = order;
             if (!reply) {
               if (requested === key) requested = "";
-              setNotice("These cells could not be drawn. Try scrolling to another area.");
+              setNotice(m(msg("These cells could not be drawn. Try scrolling to another area.")));
               return;
             }
             if (
@@ -315,7 +324,7 @@ function SpreadsheetGrid(props: {
           .catch((cause: unknown) => {
             if (!isSupersededError(cause) && !controller.signal.aborted) {
               if (requested === key) requested = "";
-              setNotice("These cells could not be drawn.");
+              setNotice(m(msg("These cells could not be drawn.")));
             }
           });
       }
@@ -546,7 +555,7 @@ function SpreadsheetGrid(props: {
         schedule();
         if (track.delta === 0) return;
         resizingPending = true;
-        setNotice("Resizing preview...");
+        setNotice(m(msg("Resizing preview...")));
         void engine
           .call(
             "resize",
@@ -568,7 +577,8 @@ function SpreadsheetGrid(props: {
             schedule();
           })
           .catch(() => {
-            if (!controller.signal.aborted) setNotice("This row or column could not be resized.");
+            if (!controller.signal.aborted)
+              setNotice(m(msg("This row or column could not be resized.")));
           })
           .finally(() => {
             resizingPending = false;
@@ -613,7 +623,7 @@ function SpreadsheetGrid(props: {
         right: Math.min(selected.right, Math.max(selected.left, used?.right ?? 0)),
       };
       if ((clipped.bottom - clipped.top + 1) * (clipped.right - clipped.left + 1) > 200_000) {
-        setNotice("Select fewer than 200,000 cells to copy.");
+        setNotice(m(msg("Select fewer than 200,000 cells to copy.")));
         return;
       }
       void engine
@@ -623,7 +633,8 @@ function SpreadsheetGrid(props: {
           return navigator.clipboard.writeText(text);
         })
         .catch(() => {
-          if (!controller.signal.aborted) setNotice("The selected cells could not be copied.");
+          if (!controller.signal.aborted)
+            setNotice(m(msg("The selected cells could not be copied.")));
         });
     };
     const key = (event: KeyboardEvent) => {

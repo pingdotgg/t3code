@@ -4,7 +4,9 @@ import {
   deriveMultiRepoKey,
   listMultiRepoProjectsToSetUp,
 } from "@t3tools/client-runtime/state/project-grouping";
+import { msg } from "gt-react";
 import type { CommandPaletteMultiRepoSetup } from "./commandPaletteBus";
+import { m } from "./i18n/messages";
 
 /** Whether an environment can clone a multi-repo project from another machine. */
 export function canSetUpMultiRepoProjects(
@@ -67,11 +69,22 @@ export function buildMultiRepoProjectSetupMenu(input: {
     if (!setup) continue;
     const id: MultiRepoSetupMenuId = `multi-repo-setup:${environment.environmentId}`;
     setupsByAction.set(id, { environmentId: environment.environmentId, setup });
-    items.push({ id, label: `Set up on ${environment.label}`, icon: "folder" });
+    items.push({
+      id,
+      label: m(msg("Set up on {environment}", { environment: environment.label })),
+      icon: "folder",
+    });
   }
   const menuItems: ReadonlyArray<ContextMenuItem<MultiRepoSetupMenuId>> =
     items.length > 1
-      ? [{ id: "multi-repo-setup:submenu", label: "Set up on...", icon: "folder", children: items }]
+      ? [
+          {
+            id: "multi-repo-setup:submenu",
+            label: m(msg("Set up on...")),
+            icon: "folder",
+            children: items,
+          },
+        ]
       : items;
   return { items: menuItems, setupsByAction };
 }

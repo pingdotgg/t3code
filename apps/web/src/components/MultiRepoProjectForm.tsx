@@ -14,6 +14,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { inferProjectTitleFromPath } from "@t3tools/client-runtime/state/projects";
 import { useAtomValue } from "@effect/atom-react";
+import { T, useGT, Var } from "gt-react";
 import { useRef, useState } from "react";
 import { projectEnvironment } from "../state/projects";
 import { sourceControlEnvironment } from "../state/sourceControl";
@@ -32,6 +33,7 @@ export function MultiRepoProjectForm(props: {
   onBack: () => void;
   onCreated: (project: ScopedProjectRef) => Promise<void>;
 }) {
+  const gt = useGT();
   const [folder, setFolder] = useState(props.initialFolder ?? "");
   const [repositories, setRepositories] = useState(() => remoteList(props.setup));
   const [error, setError] = useState<string | null>(null);
@@ -71,7 +73,8 @@ export function MultiRepoProjectForm(props: {
       });
       if (inspected._tag === "Failure") throw squashAtomCommandFailure(inspected);
       const target = inspected.value;
-      if (target.kind === "unavailable") throw new Error(target.reason ?? "Choose another folder.");
+      if (target.kind === "unavailable")
+        throw new Error(target.reason ?? gt("Choose another folder."));
       let projectId =
         props.projects.find(
           (project) =>
@@ -81,7 +84,7 @@ export function MultiRepoProjectForm(props: {
         const parsed = parseMultiRepoCloneInput(repositories);
         const members = selected?.members ?? parsed.members;
         if (members.length === 0 || (selected === null && parsed.invalid.length > 0)) {
-          throw new Error("Enter Git URLs or owner/repo names for the repositories to clone.");
+          throw new Error(gt("Enter Git URLs or owner/repo names for the repositories to clone."));
         }
         const result = await clone({
           environmentId: props.environmentId,
@@ -124,7 +127,9 @@ export function MultiRepoProjectForm(props: {
     };
     void run()
       .catch((cause) => {
-        setError(cause instanceof Error ? cause.message : "Could not add the multi-repo project.");
+        setError(
+          cause instanceof Error ? cause.message : gt("Could not add the multi-repo project."),
+        );
       })
       .finally(() => {
         submitting.current = false;
@@ -134,21 +139,25 @@ export function MultiRepoProjectForm(props: {
 
   return (
     <div className="space-y-4 p-4">
-      <h2 className="text-lg font-medium">Multi-repo project</h2>
+      <h2 className="text-lg font-medium">
+        <T>Multi-repo project</T>
+      </h2>
       <p className="text-sm text-muted-foreground">
-        Choose a folder containing repositories, or an empty folder to clone into. Every new
-        workspace uses one branch across all members.
+        <T>
+          Choose a folder containing repositories, or an empty folder to clone into. Every new
+          workspace uses one branch across all members.
+        </T>
       </p>
       <Input
-        aria-label="Project folder"
-        placeholder="Absolute project folder path"
+        aria-label={gt("Project folder")}
+        placeholder={gt("Absolute project folder path")}
         value={folder}
         onChange={(event) => setFolder(event.target.value)}
         disabled={busy}
       />
       <Textarea
-        aria-label="Repositories to clone"
-        placeholder="Git URLs or owner/repo names (only for an empty folder)"
+        aria-label={gt("Repositories to clone")}
+        placeholder={gt("Git URLs or owner/repo names (only for an empty folder)")}
         value={repositories}
         onChange={(event) => {
           setRepositories(event.target.value);
@@ -170,7 +179,9 @@ export function MultiRepoProjectForm(props: {
                 setRepositories(remoteList(setup));
               }}
             >
-              Use {setup.source.title}
+              <T>
+                Use <Var>{setup.source.title}</Var>
+              </T>
             </Button>
           ))}
         </div>
@@ -182,7 +193,7 @@ export function MultiRepoProjectForm(props: {
       ) : null}
       <div className="flex justify-end gap-2">
         <Button variant="ghost" onClick={props.onBack} disabled={busy}>
-          Back
+          <T>Back</T>
         </Button>
         <Button
           onClick={() => void submit()}
@@ -190,7 +201,7 @@ export function MultiRepoProjectForm(props: {
             busy || !folder.trim() || !canMakeGroup || !canClone || !canCreate || !canInspect
           }
         >
-          {busy ? "Adding…" : "Add project"}
+          {busy ? gt("Adding…") : gt("Add project")}
         </Button>
       </div>
     </div>

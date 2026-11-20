@@ -26,6 +26,7 @@ import {
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { T, useGT, useMessages } from "gt-react-native";
 import { useRef, useState } from "react";
 import { TextInput, View } from "react-native";
 
@@ -53,6 +54,7 @@ const EMPTY_PROFILES: ProfilesFile = { profiles: {} };
 const isProfilesError = Schema.is(ProfilesError);
 
 export function ProfilesSettings({ environment }: { environment: SettingsTarget }) {
+  const gt = useGT();
   const environmentId = environment.environmentId;
   const query = useEnvironmentQuery(profilesEnvironment.editor({ environmentId, input: {} }));
   const refreshCatalog = useAtomRefresh(
@@ -66,7 +68,7 @@ export function ProfilesSettings({ environment }: { environment: SettingsTarget 
     <>
       <ProfilesFolderSettings environment={environment} state={query.data} refresh={refresh} />
       {query.error ? <Notice tone="danger" message={query.error} /> : null}
-      <Button label="Refresh profiles" tone="text" onPress={refresh} />
+      <Button label={gt("Refresh profiles")} tone="text" onPress={refresh} />
       {query.data ? (
         <ProfilesEditor
           key={query.data.folder}
@@ -75,7 +77,9 @@ export function ProfilesSettings({ environment }: { environment: SettingsTarget 
           refresh={refresh}
         />
       ) : !query.error ? (
-        <Text className="text-foreground-muted">Loading profiles…</Text>
+        <Text className="text-foreground-muted">
+          <T>Loading profiles…</T>
+        </Text>
       ) : null}
     </>
   );
@@ -86,6 +90,8 @@ function ProfilesFolderSettings(props: {
   readonly state: ProfilesEditorState | null;
   readonly refresh: () => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const { environment, state } = props;
   const environmentId = environment.environmentId;
   const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
@@ -115,24 +121,29 @@ function ProfilesFolderSettings(props: {
         void syncProfilesNow();
     } else {
       const failure = squashAtomCommandFailure(result);
-      setError(failure instanceof Error ? failure.message : "Could not save profiles settings.");
+      setError(
+        failure instanceof Error ? failure.message : gt("Could not save profiles settings."),
+      );
     }
   }
   return (
     <SettingsSection
-      title="Folder & sync"
-      footer="Changes apply at the next session start, not to a running session."
+      title={gt("Folder & sync")}
+      footer={gt("Changes apply at the next session start, not to a running session.")}
     >
       <View className="gap-3 p-4">
-        <Text className="text-sm text-foreground">Profiles folder</Text>
+        <Text className="text-sm text-foreground">
+          <T>Profiles folder</T>
+        </Text>
         <TextInput
           key={settings.profilesFolder}
-          accessibilityLabel="Profiles folder"
+          accessibilityLabel={gt("Profiles folder")}
           className="rounded-lg border border-border-subtle px-3 py-2 text-base text-foreground"
           autoCapitalize="none"
           autoCorrect={false}
           editable={canWrite && !saving}
           defaultValue={settings.profilesFolder}
+          // oxlint-disable-next-line t3code/no-untranslated-copy -- path placeholder
           placeholder={state?.folder ?? catalog?.folder ?? "<T3 home>/profiles"}
           placeholderTextColorClassName="accent-foreground-muted"
           onEndEditing={(event) => {
@@ -141,20 +152,23 @@ function ProfilesFolderSettings(props: {
           }}
         />
         <Text selectable className="text-sm text-foreground-muted">
+          {/* oxlint-disable-next-line t3code/no-untranslated-copy -- path placeholder */}
           {state?.folder ?? catalog?.folder ?? "<T3 home>/profiles"}
         </Text>
         <Text className="text-sm text-foreground-muted">
-          Revision: {state?.sync.revision ?? "Unknown"}
+          {state
+            ? gt("Revision: {revision}", { revision: String(state.sync.revision) })
+            : gt("Revision: Unknown")}
         </Text>
         <Menu
-          accessibilityLabel="Default profile for new threads"
+          accessibilityLabel={gt("Default profile for new threads")}
           actions={[
             {
               id: "__folder__",
-              title: "Folder default",
+              title: gt("Folder default"),
               attributes: { disabled: !canWrite || saving },
             },
-            { id: "", title: "No profile", attributes: { disabled: !canWrite || saving } },
+            { id: "", title: gt("No profile"), attributes: { disabled: !canWrite || saving } },
             ...Object.entries(catalog?.profiles ?? {}).map(([id, profile]) => ({
               id,
               title: id,
@@ -170,27 +184,37 @@ function ProfilesFolderSettings(props: {
         >
           <Button
             tone="text"
-            label={`Default profile: ${settings.defaultProfile === null ? "Folder default" : settings.defaultProfile || "No profile"}`}
+            label={
+              settings.defaultProfile === null
+                ? gt("Default profile: Folder default")
+                : settings.defaultProfile
+                  ? gt("Default profile: {profile}", { profile: settings.defaultProfile })
+                  : gt("Default profile: No profile")
+            }
             disabled={!canWrite || saving}
             onPress={() => {}}
           />
         </Menu>
         <ListToggleRow
-          label="Sync with other machines"
-          description="The latest change wins. Turn off to keep this machine's profiles to itself."
+          label={gt("Sync with other machines")}
+          description={gt(
+            "The latest change wins. Turn off to keep this machine's profiles to itself.",
+          )}
           disabled={!canWrite || saving}
           value={settings.profilesSync}
           onValueChange={(value) => void update({ profilesSync: value })}
         />
         <ListToggleRow
-          label="Allow MCP commands"
-          description="Let profiles start command servers on this machine. Off by default, because profiles sync from your other machines."
+          label={gt("Allow MCP commands")}
+          description={gt(
+            "Let profiles start command servers on this machine. Off by default, because profiles sync from your other machines.",
+          )}
           disabled={!canWrite || !canManageProviders || saving}
           value={settings.profilesMcpCommands}
           onValueChange={(value) => void update({ profilesMcpCommands: value })}
         />
         <Button
-          label="Sync now"
+          label={gt("Sync now")}
           disabled={!canSync || sync.running}
           onPress={() => {
             if (canSync) void syncProfilesNow().then(props.refresh);
@@ -200,11 +224,14 @@ function ProfilesFolderSettings(props: {
           <Text key={entry.environmentId} selectable className="text-sm text-foreground-muted">
             {entry.label}:{" "}
             {
-              syncStatusText({
-                connected: entry.connection.phase === "connected",
-                canWrite: writable.has(entry.environmentId),
-                status: sync.statuses.get(entry.environmentId),
-              }).text
+              syncStatusText(
+                {
+                  connected: entry.connection.phase === "connected",
+                  canWrite: writable.has(entry.environmentId),
+                  status: sync.statuses.get(entry.environmentId),
+                },
+                messages,
+              ).text
             }
           </Text>
         ))}
@@ -219,6 +246,8 @@ function ProfilesEditor(props: {
   readonly state: ProfilesEditorState;
   readonly refresh: () => void;
 }) {
+  const messages = useMessages();
+  const gt = useGT();
   const { environmentId, state } = props;
   const canWrite = useAtomValue(profilesEnvironment.writeEditor.permissionAtom(environmentId));
   const write = useAtomCommand(profilesEnvironment.writeEditor, { reportFailure: false });
@@ -240,7 +269,7 @@ function ProfilesEditor(props: {
   function changedElsewhere() {
     setDraft(null);
     props.refresh();
-    setNotice("Profiles changed elsewhere. This section was reloaded. Make your change again.");
+    setNotice(gt("Profiles changed elsewhere. This section was reloaded. Make your change again."));
   }
   async function save(create = false) {
     if (!canWrite || pending.current || (create ? state.exists : state.profiles === null)) return;
@@ -264,25 +293,29 @@ function ProfilesEditor(props: {
     setSaving(false);
     if (result._tag === "Success") {
       setDraft(null);
-      setNotice("Profiles saved.");
+      setNotice(gt("Profiles saved."));
     } else {
       const failure = squashAtomCommandFailure(result);
       if (isProfilesError(failure) && failure.reason === "conflict") changedElsewhere();
-      else setError(failure instanceof Error ? failure.message : "Could not save profiles.");
+      else setError(failure instanceof Error ? failure.message : gt("Could not save profiles."));
     }
   }
   function nameProfile(id?: string) {
     Dialog.prompt({
-      title: id === undefined ? "Add profile" : "Rename profile",
+      title: id === undefined ? gt("Add profile") : gt("Rename profile"),
       ...(id === undefined
         ? {}
-        : { message: "Threads that already use this profile keep its old name." }),
+        : { message: gt("Threads that already use this profile keep its old name.") }),
       initialValue: id ?? "",
-      confirmText: id === undefined ? "Add" : "Rename",
+      confirmText:
+        id === undefined
+          ? gt("Add", { $context: "verb, confirms adding a profile" })
+          : gt("Rename", { $context: "verb, confirms renaming a profile" }),
       onConfirm: (name) => {
         const validation = profileNameError(
           name,
           Object.keys(file.profiles).filter((key) => key !== id),
+          messages,
         );
         if (validation) {
           setError(validation);
@@ -295,8 +328,8 @@ function ProfilesEditor(props: {
   return (
     <>
       <SettingsSection
-        title="Profiles"
-        footer="Prompts keep their order; newly enabled prompts are appended."
+        title={gt("Profiles")}
+        footer={gt("Prompts keep their order; newly enabled prompts are appended.")}
       >
         {state.error ? (
           <View className="p-4">
@@ -321,7 +354,7 @@ function ProfilesEditor(props: {
         {!state.exists ? (
           <View className="p-4">
             <Button
-              label="Create profiles"
+              label={gt("Create profiles")}
               disabled={!canWrite || saving}
               onPress={() => void save(true)}
             />
@@ -329,15 +362,16 @@ function ProfilesEditor(props: {
         ) : null}
         {state.exists && state.profiles === null ? (
           <Text className="p-4 text-foreground-muted">
-            Invalid profiles.json is never overwritten. Fix it on web or desktop.
+            {gt("Invalid {file} is never overwritten. Fix it on web or desktop.", {
+              file: "profiles.json",
+            })}
           </Text>
         ) : null}
         {Object.entries(file.profiles).map(([id, profile]) => (
           <View key={id} className="gap-3 border-t border-border-subtle py-4">
             <View className="gap-2 px-4">
               <Text className="font-t3-medium text-foreground">
-                {id}
-                {file.default === id ? " · Default" : ""}
+                {file.default === id ? gt("{name} · Default", { name: id }) : id}
               </Text>
               {profile.description ? (
                 <Text className="text-sm text-foreground-muted">{profile.description}</Text>
@@ -347,7 +381,7 @@ function ProfilesEditor(props: {
               ) : null}
               <View className="flex-row flex-wrap gap-2">
                 <Button
-                  label={file.default === id ? "Clear default" : "Set default"}
+                  label={file.default === id ? gt("Clear default") : gt("Set default")}
                   tone="text"
                   disabled={disabled}
                   onPress={() =>
@@ -355,27 +389,29 @@ function ProfilesEditor(props: {
                   }
                 />
                 <Button
-                  label="Rename"
+                  label={gt("Rename", { $context: "verb, button that renames a profile" })}
                   tone="text"
                   disabled={disabled}
                   onPress={() => nameProfile(id)}
                 />
                 <Button
-                  label="Delete"
+                  label={gt("Delete")}
                   tone="danger"
                   disabled={disabled}
                   onPress={() =>
                     Dialog.confirm({
-                      title: `Delete profile “${id}”?`,
-                      message: "Save profiles to apply this change.",
-                      confirmText: "Delete",
+                      title: gt("Delete profile “{name}”?", { name: id }),
+                      message: gt("Save profiles to apply this change."),
+                      confirmText: gt("Delete"),
                       destructive: true,
                       onConfirm: () => edit(deleteProfile(file, id)),
                     })
                   }
                 />
               </View>
-              <Text className="text-sm text-foreground-muted">Prompts</Text>
+              <Text className="text-sm text-foreground-muted">
+                <T>Prompts</T>
+              </Text>
             </View>
             {[...new Set([...profile.prompts, ...state.prompts.map((prompt) => prompt.name)])].map(
               (name) => (
@@ -385,7 +421,7 @@ function ProfilesEditor(props: {
                   description={
                     state.prompts.some((prompt) => prompt.name === name)
                       ? undefined
-                      : "Not on this machine"
+                      : gt("Not on this machine")
                   }
                   value={profile.prompts.includes(name)}
                   disabled={disabled}
@@ -398,7 +434,9 @@ function ProfilesEditor(props: {
                 />
               ),
             )}
-            <Text className="px-4 text-sm text-foreground-muted">Skills</Text>
+            <Text className="px-4 text-sm text-foreground-muted">
+              <T>Skills</T>
+            </Text>
             {[...new Set([...profile.skills, ...state.skills.map((skill) => skill.name)])].map(
               (name) => (
                 <ListToggleRow
@@ -407,7 +445,7 @@ function ProfilesEditor(props: {
                   description={
                     state.skills.some((skill) => skill.name === name)
                       ? undefined
-                      : "Not on this machine"
+                      : gt("Not on this machine")
                   }
                   value={profile.skills.includes(name)}
                   disabled={disabled}
@@ -419,7 +457,9 @@ function ProfilesEditor(props: {
             )}
             {/* Missing when the file is broken or the server predates MCP servers. */}
             {state.mcpServers === undefined ? null : (
-              <Text className="px-4 text-sm text-foreground-muted">MCP servers</Text>
+              <Text className="px-4 text-sm text-foreground-muted">
+                <T>MCP servers</T>
+              </Text>
             )}
             {(state.mcpServers === undefined
               ? []
@@ -435,8 +475,8 @@ function ProfilesEditor(props: {
                 label={name}
                 description={
                   state.mcpServers?.mcpServers[name] === undefined
-                    ? "Not defined"
-                    : "For Claude and Codex"
+                    ? gt("Not defined")
+                    : gt("For {first} and {second}", { first: "Claude", second: "Codex" })
                 }
                 value={profile.mcpServers?.includes(name) === true}
                 disabled={disabled}
@@ -459,18 +499,21 @@ function ProfilesEditor(props: {
                 return (
                   <Menu
                     key={driver}
-                    accessibilityLabel={`${id} ${PROFILE_DRIVER_LABELS[driver]} provider settings`}
+                    accessibilityLabel={gt("{profile} {provider} provider settings", {
+                      profile: id,
+                      provider: PROFILE_DRIVER_LABELS[driver],
+                    })}
                     actions={[
                       {
                         id: "",
-                        title: "Provider default",
+                        title: gt("Provider default"),
                         state: current ? "off" : "on",
                         attributes: { disabled },
                       },
                       ...[...new Set([...names, ...(current ? [current] : [])])].map((name) => ({
                         id: name,
                         title: name,
-                        subtitle: names.includes(name) ? undefined : "Not on this machine",
+                        subtitle: names.includes(name) ? undefined : gt("Not on this machine"),
                         attributes: { disabled },
                         state: current === name ? ("on" as const) : ("off" as const),
                       })),
@@ -493,7 +536,13 @@ function ProfilesEditor(props: {
                     }}
                   >
                     <Button
-                      label={`${PROFILE_DRIVER_LABELS[driver]}: ${current ?? "Provider default"}`}
+                      label={
+                        current === undefined
+                          ? gt("{provider}: Provider default", {
+                              provider: PROFILE_DRIVER_LABELS[driver],
+                            })
+                          : `${PROFILE_DRIVER_LABELS[driver]}: ${current}`
+                      }
                       tone="text"
                       disabled={disabled}
                       onPress={() => {}}
@@ -506,20 +555,22 @@ function ProfilesEditor(props: {
         ))}
         {state.profiles !== null ? (
           <View className="gap-3 p-4">
-            <Button label="Add profile" disabled={disabled} onPress={() => nameProfile()} />
+            <Button label={gt("Add profile")} disabled={disabled} onPress={() => nameProfile()} />
             {section.dirty ? (
               <Text className="text-sm text-foreground-muted">
-                Unsaved changes{section.stale ? " · Profiles changed elsewhere" : ""}
+                {section.stale
+                  ? gt("Unsaved changes · Profiles changed elsewhere")
+                  : gt("Unsaved changes")}
               </Text>
             ) : null}
             <View className="flex-row flex-wrap gap-2">
               <Button
-                label="Save profiles"
+                label={gt("Save profiles")}
                 disabled={disabled || !section.dirty}
                 onPress={() => void save()}
               />
               <Button
-                label="Discard"
+                label={gt("Discard")}
                 tone="text"
                 disabled={saving || !section.dirty}
                 onPress={() => setDraft(null)}
@@ -528,7 +579,7 @@ function ProfilesEditor(props: {
           </View>
         ) : null}
       </SettingsSection>
-      <SettingsSection title="Provider settings" footer="Edit on web or desktop">
+      <SettingsSection title={gt("Provider settings")} footer={gt("Edit on web or desktop")}>
         <View className="gap-3 p-4">
           {PROFILE_DRIVERS.map((driver) => (
             <View key={driver} className="gap-1">
@@ -547,16 +598,20 @@ function ProfilesEditor(props: {
                 </View>
               ))}
               {Object.keys(state.providerSettings[driver] ?? {}).length === 0 ? (
-                <Text className="text-sm text-foreground-muted">Provider default only</Text>
+                <Text className="text-sm text-foreground-muted">
+                  <T>Provider default only</T>
+                </Text>
               ) : null}
             </View>
           ))}
         </View>
       </SettingsSection>
-      <SettingsSection title="Prompts" footer="Edit on web or desktop">
+      <SettingsSection title={gt("Prompts")} footer={gt("Edit on web or desktop")}>
         <View className="gap-3 p-4">
           {state.prompts.length === 0 ? (
-            <Text className="text-foreground-muted">No prompts</Text>
+            <Text className="text-foreground-muted">
+              <T>No prompts</T>
+            </Text>
           ) : null}
           {state.prompts.map((prompt) => (
             <View key={prompt.name} className="gap-1">

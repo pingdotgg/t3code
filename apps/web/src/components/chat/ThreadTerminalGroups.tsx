@@ -1,6 +1,7 @@
 import type { KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
 import type { TerminalSummary } from "@t3tools/contracts";
-import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
+import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabelsCopy";
+import { useGT, useMessages } from "gt-react";
 import { Bot, ChevronRightIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -23,6 +24,8 @@ function TerminalGroup({
   failedCount: number;
   onOpenTerminal: (terminalId: string) => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const [open, setOpen] = useState(false);
   return (
     <div>
@@ -39,18 +42,18 @@ function TerminalGroup({
         {group === "running" && (
           <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-info" />
         )}
-        {terminalGroupLabel(group, terminals.length)}
+        {terminalGroupLabel(group, terminals.length, messages)}
         {failedCount > 0 && (
           <>
             <span aria-hidden="true">·</span>
             <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-destructive" />
             <span className="sr-only">,</span>
-            {failedCount} failed
+            {gt("{count} failed", { count: failedCount, $context: "number of failed terminals" })}
           </>
         )}
       </button>
       {open && (
-        <ul aria-label={group === "running" ? "Running terminals" : "Settled terminals"}>
+        <ul aria-label={group === "running" ? gt("Running terminals") : gt("Settled terminals")}>
           {terminals.map((terminal) => {
             const failed = terminalFailed(terminal);
             return (
@@ -75,7 +78,7 @@ function TerminalGroup({
                     )}
                   />
                   {terminal.controller === "agent" && (
-                    <Bot aria-label="Agent has control" className="size-3 shrink-0" />
+                    <Bot aria-label={gt("Agent has control")} className="size-3 shrink-0" />
                   )}
                   <span
                     className={cn(
@@ -83,10 +86,10 @@ function TerminalGroup({
                       group === "settled" ? "text-muted-foreground" : "text-foreground",
                     )}
                   >
-                    {resolveTerminalSessionLabel(terminal.terminalId, terminal)}
+                    {resolveTerminalSessionLabel(terminal.terminalId, terminal, messages)}
                   </span>
                   <span className="shrink-0 text-3xs uppercase tracking-wide text-muted-foreground">
-                    {terminalStatusLabel(terminal)}
+                    {terminalStatusLabel(terminal, messages)}
                   </span>
                 </button>
               </li>

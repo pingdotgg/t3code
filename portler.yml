@@ -2,7 +2,7 @@
 # Stop this checkout's stack with `portler down`; data stays in .t3/portler.
 services:
   server:
-    command: node scripts/dev-runner.ts dev:server --home-dir .t3/portler --no-seed --dev-url "$VITE_DEV_SERVER_URL"
+    command: node scripts/dev-runner.ts dev:server --home-dir .t3/portler --no-seed --host "$T3CODE_HOST" --port "$T3CODE_PORT" --dev-url "$VITE_DEV_SERVER_URL"
     port: 13773
     port_env: T3CODE_PORT
     env:

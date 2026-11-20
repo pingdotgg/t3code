@@ -74,7 +74,9 @@ const layerOrchestrator = Layer.mergeAll(
 );
 const layerOrchestration = ThreadManagement.layer.pipe(
   Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
-  Layer.provideMerge(Layer.merge(layerOrchestrator, ServerSettings.layerTest())),
+  Layer.provideMerge(
+    Layer.merge(layerOrchestrator, ServerSettings.layerTest({ defaultThreadEnvMode: "local" })),
+  ),
 );
 
 /** Launches dispatch the real thread.create, and nothing more: no workspace, no run. */

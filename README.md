@@ -1,6 +1,6 @@
 # T3 Dulli
 
-T3 Dulli is the community fork of [T3 Code](https://github.com/pingdotgg/t3code), rebuilt on **stable v0.1.10**. It is an open-source desktop, web, and mobile control surface for coding agents, using your existing provider subscriptions.
+T3 Dulli is the community fork of [T3 Code](https://github.com/pingdotgg/t3code), rebuilt on **stable v0.1.11**. It is an open-source desktop, web, and mobile control surface for coding agents, using your existing provider subscriptions.
 
 The fork keeps upstream's native providers, subagents, schedules, and usage features. It is built around Claude, Muse, and Codex through T3's own integrations. T3 itself is the harness.
 
@@ -16,7 +16,7 @@ The fork keeps upstream's native providers, subagents, schedules, and usage feat
 
 ## Install
 
-Download desktop installers and the Android APK from [T3 Dulli releases](https://github.com/YJJosh/t3dulli/releases). Fork releases use versions such as `0.1.10-dulli.1` and are marked as prereleases on GitHub.
+Download desktop installers and the Android APK from [T3 Dulli releases](https://github.com/YJJosh/t3dulli/releases). Fork releases use versions such as `0.1.11-dulli.1` and are marked as prereleases on GitHub.
 
 For the CLI:
 

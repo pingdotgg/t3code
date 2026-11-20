@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import { useRef, useState } from "react";
 import { Linking } from "react-native";
 import * as Dialog from "../../components/ui/Dialog";
@@ -24,6 +25,7 @@ function batterySettings() {
 }
 
 export function SettingsPhoneNotifications() {
+  const gt = useGT();
   const [enabled, setEnabled] = useState(phoneNotificationsEnabled);
   const [busy, setBusy] = useState(false);
   const inFlight = useRef(false);
@@ -35,11 +37,11 @@ export function SettingsPhoneNotifications() {
         const permission = await runtime.runPromise(requestAgentNotificationPermission);
         if (permission.type !== "granted") {
           Dialog.alert(
-            "Notification permission needed",
-            "Allow notifications in Android Settings, then try again.",
+            gt("Notification permission needed"),
+            gt("Allow notifications in Android Settings, then try again."),
             [
-              { text: "Cancel", style: "cancel" },
-              { text: "Open Settings", onPress: () => void Linking.openSettings() },
+              { text: gt("Cancel"), style: "cancel" },
+              { text: gt("Open Settings"), onPress: () => void Linking.openSettings() },
             ],
           );
           return;
@@ -49,18 +51,21 @@ export function SettingsPhoneNotifications() {
       setEnabled(next);
       if (next) {
         Dialog.alert(
-          "Allow background connection?",
-          "For timely notifications with the screen off, allow Dulli to run without battery optimization. Your server and tailnet must remain reachable.",
+          gt("Allow background connection?"),
+          gt(
+            "For timely notifications with the screen off, allow {product} to run without battery optimization. Your server and tailnet must remain reachable.",
+            { product: "Dulli" },
+          ),
           [
-            { text: "Not now", style: "cancel" },
-            { text: "Battery settings", onPress: batterySettings },
+            { text: gt("Not now"), style: "cancel" },
+            { text: gt("Battery settings"), onPress: batterySettings },
           ],
         );
       }
     } catch (error) {
       setEnabled(phoneNotificationsEnabled());
       Dialog.alert(
-        "Couldn't update notifications",
+        gt("Couldn't update notifications"),
         error instanceof Error ? error.message : String(error),
       );
     }
@@ -78,19 +83,24 @@ export function SettingsPhoneNotifications() {
   }
 
   return (
-    <SettingsScreen title="Notifications">
+    <SettingsScreen title={gt("Notifications")}>
       <ScreenScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentContainerClassName="gap-6 px-5 pt-4"
       >
-        <SettingsSection title="Paired servers">
+        <SettingsSection title={gt("Paired servers")}>
           <SettingsSwitchRow
             icon="bell.badge"
-            label="Background phone notifications"
+            label={gt("Background phone notifications")}
             subtitle={
               available
-                ? "Stay connected to your own servers for approvals, questions and finished turns. Shows a persistent Dulli connected notification."
-                : "Install a newer Dulli Android app to enable background notifications."
+                ? gt(
+                    "Stay connected to your own servers for approvals, questions and finished turns. Shows a persistent {product} connected notification.",
+                    { product: "Dulli" },
+                  )
+                : gt("Install a newer {product} Android app to enable background notifications.", {
+                    product: "Dulli",
+                  })
             }
             value={enabled}
             disabled={!available || busy}
@@ -99,7 +109,7 @@ export function SettingsPhoneNotifications() {
           {enabled ? (
             <SettingsRow
               icon="bolt.circle"
-              label="Battery optimization"
+              label={gt("Battery optimization")}
               onPress={batterySettings}
             />
           ) : null}
