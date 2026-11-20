@@ -18,6 +18,9 @@ import {
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
 const directoryName = "t3code-backend-recovery";
 const maxRecordBytes = 512;
+// Darwin sys/fcntl.h. Node accepts these open flags but does not export them.
+const O_SHLOCK = 0x10;
+const O_EXLOCK = 0x20;
 const observedFileName = /^[0-9a-f]{64}\.[0-9a-f-]{36}\.json$/;
 const scopePattern = /^[0-9a-f]{64}$/;
 const bootIdPattern = /^[0-9a-f-]{36}$/i;
@@ -33,7 +36,9 @@ interface RecoveryRecord {
   readonly backend: string;
 }
 
-function decodeRecord(raw: string): RecoveryRecord | undefined {
+type RecordReadResult = RecoveryRecord | "incomplete" | undefined;
+
+function decodeRecord(raw: string): RecordReadResult {
   try {
     const value = JSON.parse(raw) as Partial<RecoveryRecord> | null;
     if (
@@ -60,7 +65,7 @@ function decodeRecord(raw: string): RecoveryRecord | undefined {
       backend: value.backend,
     };
   } catch {
-    return undefined;
+    return "incomplete";
   }
 }
 
@@ -71,10 +76,13 @@ function ownsPrivateFile(info: { uid: number; mode: number }): boolean {
   return info.uid === NodeProcess.getuid?.() && (info.mode & 0o077) === 0;
 }
 
-async function readRecord(path: string): Promise<RecoveryRecord | undefined> {
+async function readRecord(path: string): Promise<RecordReadResult> {
   const file = await NodeFSP.open(
     path,
-    NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW | NodeFS.constants.O_NONBLOCK,
+    NodeFS.constants.O_RDONLY |
+      NodeFS.constants.O_NOFOLLOW |
+      NodeFS.constants.O_NONBLOCK |
+      O_SHLOCK,
   );
   try {
     const info = await file.stat();
@@ -221,13 +229,20 @@ export function make(input: {
         });
         await privateDirectory();
         const path = NodePath.join(directory, `${prefix}.${NodeCrypto.randomUUID()}.json`);
-        // The backend waits for its bootstrap payload until this exclusive write has finished.
-        // If this app dies mid-write, the incomplete record cannot authorize a signal.
-        await NodeFSP.writeFile(
-          path,
-          JSON.stringify({ version: 1, bootId, scope: prefix, launcher, backend }),
-          { flag: "wx", mode: 0o600 },
-        );
+        // Take the lock at creation so recovery can distinguish a partial write from a crash.
+        {
+          await using file = await NodeFSP.open(
+            path,
+            NodeFS.constants.O_WRONLY |
+              NodeFS.constants.O_CREAT |
+              NodeFS.constants.O_EXCL |
+              O_EXLOCK,
+            0o600,
+          );
+          await file.writeFile(
+            JSON.stringify({ version: 1, bootId, scope: prefix, launcher, backend }),
+          );
+        }
         return async () => {
           await NodeFSP.unlink(path).catch((error) => {
             if (!isErrorCode(error, "ENOENT")) input.onError("forget backend", error);
@@ -254,18 +269,24 @@ export function make(input: {
             try {
               const record = await readRecord(path);
               if (
-                record !== undefined &&
-                record.scope === prefix &&
-                (record.bootId !== bootId ||
-                  (await recoverRecord(native, record, {
-                    signal,
-                    onRecovery: input.onRecovery,
-                  })))
+                record === "incomplete" ||
+                (record !== undefined &&
+                  record.scope === prefix &&
+                  (record.bootId !== bootId ||
+                    (await recoverRecord(native, record, {
+                      signal,
+                      onRecovery: input.onRecovery,
+                    }))))
               ) {
                 await NodeFSP.unlink(path);
               }
             } catch (error) {
-              if (!signal.aborted && !isErrorCode(error, "ENOENT")) {
+              // EAGAIN means the launcher is still writing this record.
+              if (
+                !signal.aborted &&
+                !isErrorCode(error, "ENOENT") &&
+                !isErrorCode(error, "EAGAIN")
+              ) {
                 input.onError("recover backend", error);
               }
             }

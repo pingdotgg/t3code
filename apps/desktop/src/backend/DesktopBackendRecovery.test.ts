@@ -1,5 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Drive actual macOS subprocesses and their file permissions.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
 import * as NodeEvents from "node:events";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeNet from "node:net";
@@ -90,6 +92,52 @@ async function checkPortIsFree(port: number) {
 }
 
 describe.runIf(NodeProcess.platform === "darwin")("macOS desktop backend recovery", () => {
+  it("cleans up a truncated record only after the writer releases it", async () => {
+    await using cleanup = new AsyncDisposableStack();
+    const stateDir = await NodeFSP.realpath(
+      await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-record-")),
+    );
+    cleanup.defer(() => NodeFSP.rm(stateDir, { recursive: true, force: true }));
+    const directory = NodePath.join(stateDir, "t3code-backend-recovery");
+    await NodeFSP.mkdir(directory, { mode: 0o700 });
+    const scope = NodeCrypto.createHash("sha256")
+      .update(JSON.stringify([stateDir, await NodeFSP.realpath(NodeProcess.execPath)]))
+      .digest("hex");
+    const path = () => NodePath.join(directory, `${scope}.${NodeCrypto.randomUUID()}.json`);
+    const partial = path();
+    const future = path();
+    const unsafe = path();
+    await NodeFSP.writeFile(future, '{"version":2}', { mode: 0o600 });
+    await NodeFSP.writeFile(unsafe, "{", { mode: 0o600 });
+    await NodeFSP.chmod(unsafe, 0o644);
+    const errors: unknown[] = [];
+    const recovered: number[] = [];
+    const recovery = make({
+      appDataDirectory: stateDir,
+      stateDir,
+      onRecovery: (pid) => recovered.push(pid),
+      onError: (_, error) => errors.push(error),
+    });
+    {
+      // Darwin O_EXLOCK keeps the record private to the writer until close or exit.
+      await using writer = await NodeFSP.open(
+        partial,
+        NodeFS.constants.O_WRONLY | NodeFS.constants.O_CREAT | NodeFS.constants.O_EXCL | 0x20,
+        0o600,
+      );
+      await writer.writeFile('{"version":');
+      await recovery.recover();
+      assert.equal(await NodeFSP.readFile(partial, "utf8"), '{"version":');
+    }
+    await recovery.recover();
+    await recovery.recover();
+    await expect(NodeFSP.stat(partial)).rejects.toMatchObject({ code: "ENOENT" });
+    assert.equal(await NodeFSP.readFile(future, "utf8"), '{"version":2}');
+    assert.equal(await NodeFSP.readFile(unsafe, "utf8"), "{");
+    assert.deepEqual(recovered, []);
+    assert.deepEqual(errors, []);
+  });
+
   it("releases a frozen orphan's port and leaves a backend with a live launcher running", async () => {
     await using cleanup = new AsyncDisposableStack();
     const appDataDirectory = await NodeFSP.mkdtemp(
