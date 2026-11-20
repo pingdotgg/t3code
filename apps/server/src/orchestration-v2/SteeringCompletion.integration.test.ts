@@ -1911,6 +1911,19 @@ it.effect("delivers agent messages queued behind /compact before a later one ste
         ["first", "/compact", "ALPHA"],
       );
 
+      // A person's edit of the agent's queued message leaves it the agent's for send order.
+      const bravo = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+        (run) => run.status === "queued",
+      )!;
+      yield* orchestrator.dispatch({
+        type: "queued-run.edit",
+        commandId: CommandId.make("edit-bravo"),
+        threadId,
+        runId: bravo.id,
+        text: "BRAVO",
+        editor: { createdBy: "user", creationSource: "web" },
+      });
+      yield* worker.drain();
       yield* sendFromAgent("CHARLIE");
       const delivered = [...steered, ...started.slice(3).map((turn) => turn.message.text)]
         .map((text) => text.split("\n").at(-1))

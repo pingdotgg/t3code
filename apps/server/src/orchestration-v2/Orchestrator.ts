@@ -7453,7 +7453,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             queuedRuns.map((run) => run.userMessageId),
           )
           .pipe(mapDispatchError(command));
-        if ([...queuedMessages.values()].some((message) => message.createdBy === "agent")) {
+        if (
+          queuedRuns.some(
+            (run) => (run.queuedBy ?? queuedMessages.get(run.userMessageId)?.createdBy) === "agent",
+          )
+        ) {
           dispatchMode = { type: "queue_after_active" };
         }
       }
