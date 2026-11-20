@@ -31,11 +31,7 @@ const INSIGHTS_POLL_MS = 300_000;
 type InsightsState = { readonly status: "loading" } | OrbitTasksResult<OrbitTaskInsights>;
 
 function useOrbitTaskInsights(period: OrbitTaskInsightsPeriod, project: number | null) {
-  const [state, setState] = useState<{ key: string; value: InsightsState }>({
-    key: "",
-    value: { status: "loading" },
-  });
-  const key = `${period}:${project ?? "all"}`;
+  const [state, setState] = useState<InsightsState>({ status: "loading" });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads Orbit's insights for the board's period and Project, and re-reads on a slow poll
   useEffect(() => {
     let disposed = false;
@@ -45,7 +41,7 @@ function useOrbitTaskInsights(period: OrbitTaskInsightsPeriod, project: number |
           ? await client.getTaskInsights(project === null ? { period } : { period, project })
           : { status: "error", reason: "unreachable", message: m(msg("No Orbit Gateway here.")) };
         // A failed re-read turns the numbers into dashes; stale numbers would read as current.
-        if (!disposed) setState({ key, value });
+        if (!disposed) setState(value);
       });
     read();
     const timer = window.setInterval(read, INSIGHTS_POLL_MS);
@@ -53,8 +49,10 @@ function useOrbitTaskInsights(period: OrbitTaskInsightsPeriod, project: number |
       disposed = true;
       window.clearInterval(timer);
     };
-  }, [key, period, project]);
-  return state.key === key ? state.value : ({ status: "loading" } as const);
+  }, [period, project]);
+  // A new period or Project keeps the previous numbers on screen until Orbit answers, then replaces
+  // them; dashes in between would flash the tiles empty.
+  return state;
 }
 
 /**
