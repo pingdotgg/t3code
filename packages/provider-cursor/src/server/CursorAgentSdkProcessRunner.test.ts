@@ -54,7 +54,7 @@ rl.on("line", (line) => {
   }
   if (req.type === "send") {
     if (mode === "hang-send") {
-      send({ type: "protocolLog", event: { direction: "incoming", stage: "decoded", payload: { type: "run.started", runId: "pending", agentId: "agent-worker-1" } } });
+      send({ type: "protocolLog", providerSessionId: "provider-session-worker-test", event: { direction: "incoming", stage: "decoded", payload: { type: "run.started", runId: "pending", agentId: "agent-worker-1" } } });
       return;
     }
     if (mode === "crash-mid-run") {
@@ -93,7 +93,7 @@ rl.on("line", (line) => {
     return;
   }
   if (req.type === "cancel") {
-    send({ type: "protocolLog", event: { direction: "incoming", stage: "decoded", payload: { type: "run.cancel", runId: "run-worker-1" } } });
+    send({ type: "protocolLog", providerSessionId: "provider-session-worker-test", event: { direction: "incoming", stage: "decoded", payload: { type: "run.cancel", runId: "run-worker-1" } } });
     send({ type: "response", id: req.id, ok: true, result: null });
     send({
       type: "runDone",
@@ -161,6 +161,10 @@ rl.on("line", (line) => {
         durationMs: 3,
       },
     });
+    return;
+  }
+  if (req.type === "closeSession") {
+    send({ type: "response", id: req.id, ok: true, result: null });
     return;
   }
   if (req.type === "close") {
@@ -270,7 +274,16 @@ describe("CursorAgentSdkProcessRunner", () => {
           const session = yield* runner.open(openInput);
           assert.equal(session.agentId, "agent-worker-1");
           assert.isTrue(session.isAlive?.());
+          const otherSession = yield* runner.open({
+            ...openInput,
+            threadId: ThreadId.make("thread-worker-test-2"),
+            providerSessionId: ProviderSessionId.make("provider-session-worker-test-2"),
+          });
+          yield* otherSession.close;
+          assert.isFalse(otherSession.isAlive?.());
+          assert.isTrue(session.isAlive?.());
           assert.lengthOf(registeredPids, 1);
+          assert.deepEqual(unregisteredPids, []);
 
           const receivedDeltas: Array<string> = [];
           const firstDeltaGate = yield* Deferred.make<void>();
@@ -464,23 +477,19 @@ describe("CursorAgentSdkProcessRunner", () => {
   );
 
   it.live(
-    "retires the worker when send is interrupted after transmission before acknowledgment",
+    "closes the session when send is interrupted after transmission before acknowledgment",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
           const scriptPath = yield* writeFakeWorker;
           const executable = yield* HostProcess.ExecutablePath;
           const receivedByWorker = yield* Deferred.make<void>();
-          const unregistered = yield* Deferred.make<void>();
 
           const runner = yield* CursorAgentSdkProcessRunner.makeCursorAgentSdkProcessRunner({
             resolveLaunch: Effect.succeed({
               command: executable,
               args: [scriptPath],
               env: { FAKE_WORKER_MODE: "hang-send" },
-              registerProcess: () => () => {
-                Deferred.doneUnsafe(unregistered, Exit.void);
-              },
             }),
             protocolLoggerFor: () => (event) =>
               event.payload.type === "run.started"
@@ -493,7 +502,6 @@ describe("CursorAgentSdkProcessRunner", () => {
           const sending = yield* Effect.forkChild(session.send({ message: "hi" }));
           yield* Deferred.await(receivedByWorker);
           yield* Fiber.interrupt(sending);
-          yield* Deferred.await(unregistered);
           assert.isFalse(session.isAlive?.());
           yield* session.close;
         }),

@@ -81,27 +81,32 @@ export async function runCursorSdkWorker(
   const runtime = ManagedRuntime.make(CursorSdk.layer.pipe(Layer.provideMerge(platformLayer)));
 
   let activeSendStarts = 0;
-  let session: CursorAgentSdk.CursorAgentSdkSession | undefined;
+  // One worker hosts every Cursor session; each session is keyed by its open request id.
+  const sessions = new Map<number, CursorAgentSdk.CursorAgentSdkSession>();
   const activeRuns = new Map<number, CursorAgentSdk.CursorAgentSdkRun>();
   let shuttingDown = false;
   let exitCode = 0;
 
   const runner = await runtime.runPromise(
     CursorAgentSdk.makeCursorAgentSdkRunner(
-      () => (event) =>
+      (input) => (event) =>
         Effect.sync(() => {
           if (activeSendStarts > 0 && event.payload.type === "run.cancel") {
-            writeMessage({ type: "protocolLog", event });
+            writeMessage({
+              type: "protocolLog",
+              providerSessionId: input.providerSessionId,
+              event,
+            });
           }
         }),
     ),
   );
 
-  const closeActiveSession = async (): Promise<
-    Exit.Exit<void, CursorAgentSdk.CursorAgentSdkRunnerError>
-  > => {
-    const current = session;
-    session = undefined;
+  const closeSession = async (
+    sessionId: number,
+  ): Promise<Exit.Exit<void, CursorAgentSdk.CursorAgentSdkRunnerError>> => {
+    const current = sessions.get(sessionId);
+    sessions.delete(sessionId);
     if (current === undefined) {
       return Exit.void;
     }
@@ -110,6 +115,9 @@ export async function runCursorSdkWorker(
     );
   };
 
+  const closeAllSessions = () =>
+    Promise.all(Array.from(sessions.keys(), (sessionId) => closeSession(sessionId)));
+
   let shutdownPromise: Promise<void> | undefined;
   const shutdown = (code: number): Promise<void> => {
     exitCode = Math.max(exitCode, code);
@@ -117,7 +125,7 @@ export async function runCursorSdkWorker(
     shuttingDown = true;
     shutdownPromise = (async () => {
       try {
-        await closeActiveSession();
+        await closeAllSessions();
       } catch {
         // Best-effort cleanup before exit.
       }
@@ -167,7 +175,7 @@ export async function runCursorSdkWorker(
           });
           return;
         }
-        session = exit.value;
+        sessions.set(req.id, exit.value);
         writeMessage({
           type: "response",
           id: req.id,
@@ -178,6 +186,7 @@ export async function runCursorSdkWorker(
       }
 
       case "send": {
+        const session = sessions.get(req.sessionId);
         if (session === undefined) {
           writeMessage({
             type: "response",
@@ -292,6 +301,7 @@ export async function runCursorSdkWorker(
       }
 
       case "listMessages": {
+        const session = sessions.get(req.sessionId);
         if (session === undefined) {
           writeMessage({
             type: "response",
@@ -319,6 +329,7 @@ export async function runCursorSdkWorker(
       }
 
       case "readContextUsage": {
+        const session = sessions.get(req.sessionId);
         if (session?.readContextUsage === undefined) {
           writeMessage({ type: "response", id: req.id, ok: true, result: null });
           return;
@@ -338,6 +349,7 @@ export async function runCursorSdkWorker(
       }
 
       case "runCheckpointed": {
+        const session = sessions.get(req.sessionId);
         if (session?.runCheckpointed === undefined) {
           writeMessage({ type: "response", id: req.id, ok: true, result: false });
           return;
@@ -357,6 +369,7 @@ export async function runCursorSdkWorker(
       }
 
       case "rewindAfterRun": {
+        const session = sessions.get(req.sessionId);
         if (session?.rewindAfterRun === undefined) {
           writeMessage({ type: "response", id: req.id, ok: true, result: null });
           return;
@@ -395,8 +408,19 @@ export async function runCursorSdkWorker(
         return;
       }
 
+      case "closeSession": {
+        const exit = await closeSession(req.sessionId);
+        writeMessage(
+          Exit.isFailure(exit)
+            ? { type: "response", id: req.id, ok: false, error: exitFailure("agent.close", exit) }
+            : { type: "response", id: req.id, ok: true, result: null },
+        );
+        return;
+      }
+
       case "close": {
-        const exit = await closeActiveSession();
+        const exits = await closeAllSessions();
+        const exit = exits.find(Exit.isFailure) ?? Exit.void;
         if (Exit.isFailure(exit)) {
           writeMessage({
             type: "response",

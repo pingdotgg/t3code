@@ -85,6 +85,8 @@ function workerExitError(method: string, exitCode: number | undefined, stderr: s
 
 interface SpawnedCursorWorker {
   readonly scope: Scope.Scope;
+  /** Routes worker-side protocol logs to the session that produced them. */
+  readonly protocolLoggers: Map<string, CursorAgentSdk.CursorAgentSdkProtocolLogger>;
   readonly nextId: () => number;
   readonly requestWithId: (
     id: number,
@@ -125,370 +127,404 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
       }),
     );
 
-    const spawnWorker = Effect.fn("CursorAgentSdkProcessRunner.spawnWorker")(function* (input: {
-      readonly name: string;
-      readonly threadId?: string | undefined;
-      readonly onProtocolLog?: (
-        event: CursorAgentSdk.CursorAgentSdkProtocolLogEvent,
-      ) => Effect.Effect<void>;
-    }): Effect.fn.Return<SpawnedCursorWorker, CursorAgentSdk.CursorAgentSdkRunnerError> {
-      const workerScope = yield* Scope.make();
-      let activeCleanup: Effect.Effect<void> = Scope.close(workerScope, Exit.void).pipe(
-        Effect.ignore,
-      );
-      activeCleanups.add(activeCleanup);
-
-      const teardownScope = () =>
-        Scope.close(workerScope, Exit.void).pipe(
+    const spawnWorker = Effect.fn("CursorAgentSdkProcessRunner.spawnWorker")(
+      function* (): Effect.fn.Return<
+        SpawnedCursorWorker,
+        CursorAgentSdk.CursorAgentSdkRunnerError
+      > {
+        const workerScope = yield* Scope.make();
+        let activeCleanup: Effect.Effect<void> = Scope.close(workerScope, Exit.void).pipe(
           Effect.ignore,
-          Effect.ensuring(
-            Effect.sync(() => {
-              activeCleanups.delete(activeCleanup);
-            }),
-          ),
         );
+        activeCleanups.add(activeCleanup);
 
-      const launch = yield* options.resolveLaunch.pipe(
-        Effect.onError(() => teardownScope()),
-        Effect.mapError((cause) => toRunnerError("worker.launch", cause)),
-      );
-      const env: NodeJS.ProcessEnv = {
-        ...hostEnvironment,
-        ...launch.env,
-        ELECTRON_RUN_AS_NODE: "1",
-      };
-      const wrapped = yield* agentScope.wrap({
-        command: launch.command,
-        args: launch.args,
-        name: input.name,
-        ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
-        env,
-      });
-
-      const handle = yield* Scope.provide(
-        Effect.acquireRelease(
-          spawner.spawn(
-            ChildProcess.make(wrapped.command, wrapped.args, {
-              stdin: { stream: "pipe", endOnDone: false },
-              stdout: "pipe",
-              stderr: "pipe",
-              env,
-              killSignal: "SIGTERM",
-              forceKillAfter: WORKER_EXIT_TIMEOUT,
-            }),
-          ),
-          (child) =>
-            child
-              .kill()
-              .pipe(
-                Effect.ignore,
-                Effect.andThen(
-                  wrapped.unit === undefined ? Effect.void : agentScope.stop(wrapped.unit),
-                ),
-              ),
-        ),
-        workerScope,
-      ).pipe(
-        Effect.onError(() => teardownScope()),
-        Effect.mapError((cause) => toRunnerError("worker.spawn", cause)),
-      );
-
-      if (launch.registerProcess !== undefined) {
-        const unregister = yield* Effect.try({
-          try: () => launch.registerProcess!(handle.pid),
-          catch: (cause) => toRunnerError("worker.register", cause),
-        }).pipe(Effect.onError(() => teardownScope()));
-        yield* Scope.addFinalizer(workerScope, Effect.sync(unregister));
-      }
-
-      const writeMutex = yield* Semaphore.make(1);
-      const closed = yield* Ref.make(false);
-      const closedDone = yield* Deferred.make<void>();
-      const stdoutDone = yield* Deferred.make<void>();
-      const stderrDone = yield* Deferred.make<void>();
-      let nextRequestId = 0;
-      let stderrTail = "";
-      let closing = false;
-      let terminated: { readonly exitCode: number | undefined } | undefined;
-
-      const pendingRequests = new Map<
-        number,
-        {
-          readonly method: string;
-          readonly deferred: Deferred.Deferred<
-            CursorWorkerResponsePayload,
-            CursorAgentSdk.CursorAgentSdkRunnerError
-          >;
-          readonly onWorkerRejected?: (() => void) | undefined;
-        }
-      >();
-      const activeRuns = new Map<number, ActiveWorkerRun>();
-
-      // Untraced: internal shutdown helper already covered by the enclosing operation span.
-      const failAllPending = Effect.fnUntraced(function* (
-        exitCode: number | undefined,
-        forceActiveRuns: boolean,
-      ) {
-        const wasTerminated = terminated !== undefined;
-        if (!wasTerminated) {
-          terminated = { exitCode };
-        }
-        const pending = Array.from(pendingRequests.entries());
-        pendingRequests.clear();
-        for (const [, entry] of pending) {
-          yield* Deferred.fail(entry.deferred, workerExitError(entry.method, exitCode, stderrTail));
-        }
-        for (const run of activeRuns.values()) {
-          const error = workerExitError("run.wait", exitCode, stderrTail);
-          if (!run.doneEnqueued) {
-            run.doneEnqueued = true;
-            Queue.offerUnsafe(run.queue, { _tag: "done", ok: false, error });
-            yield* Deferred.fail(run.waitDeferred, error);
-          } else if (forceActiveRuns) {
-            // Forced teardown interrupts the FIFO consumer, so settle waiters directly.
-            yield* Deferred.fail(run.waitDeferred, error);
-          }
-        }
-        if (!wasTerminated && options.onWorkerTerminated !== undefined) {
-          const notify = options.onWorkerTerminated;
-          yield* Effect.try({
-            try: () => notify(exitCode),
-            catch: () => undefined,
-          }).pipe(Effect.ignore);
-        }
-      });
-
-      const handleLine = (line: string): Effect.Effect<void> => {
-        if (line.trim().length === 0) return Effect.void;
-        let parsed: CursorWorkerMessage;
-        try {
-          parsed = decodeWorkerFrame(line) as CursorWorkerMessage;
-        } catch {
-          return Effect.void;
-        }
-        switch (parsed.type) {
-          case "response": {
-            const entry = pendingRequests.get(parsed.id);
-            if (entry === undefined) return Effect.void;
-            pendingRequests.delete(parsed.id);
-            if (parsed.ok) {
-              return Deferred.succeed(entry.deferred, parsed.result).pipe(Effect.asVoid);
-            }
-            entry.onWorkerRejected?.();
-            return Deferred.fail(entry.deferred, fromSerializedFailure(parsed.error)).pipe(
-              Effect.asVoid,
-            );
-          }
-          case "delta": {
-            const run = activeRuns.get(parsed.sendId);
-            if (run !== undefined && !run.doneEnqueued) {
-              Queue.offerUnsafe(run.queue, { _tag: "delta", update: parsed.update });
-            }
-            return Effect.void;
-          }
-          case "runDone": {
-            const run = activeRuns.get(parsed.sendId);
-            if (run !== undefined && !run.doneEnqueued) {
-              run.doneEnqueued = true;
-              Queue.offerUnsafe(
-                run.queue,
-                parsed.ok
-                  ? { _tag: "done", ok: true, result: deserializeRunResult(parsed.result) }
-                  : { _tag: "done", ok: false, error: fromSerializedFailure(parsed.error) },
-              );
-            }
-            return Effect.void;
-          }
-          case "protocolLog":
-            return input.onProtocolLog === undefined
-              ? Effect.void
-              : input.onProtocolLog(parsed.event).pipe(Effect.ignore);
-        }
-      };
-
-      yield* handle.stderr.pipe(
-        Stream.decodeText(),
-        Stream.runForEach((chunk) =>
-          Effect.sync(() => {
-            stderrTail += chunk;
-            if (stderrTail.length > MAX_STDERR_CHARS) {
-              stderrTail = stderrTail.slice(-MAX_STDERR_CHARS);
-            }
-          }),
-        ),
-        Effect.ignore,
-        Effect.ensuring(Deferred.succeed(stderrDone, undefined).pipe(Effect.asVoid)),
-        Effect.forkIn(workerScope),
-      );
-
-      yield* handle.stdout.pipe(
-        Stream.decodeText(),
-        Stream.splitLines,
-        Stream.runForEach(handleLine),
-        Effect.ignore,
-        Effect.ensuring(
-          Deferred.succeed(stdoutDone, undefined).pipe(
-            Effect.andThen(
-              Effect.suspend(() => {
-                if (terminated !== undefined) return Effect.void;
-                return handle.exitCode.pipe(
-                  Effect.map((code) => Number(code)),
-                  Effect.timeoutOption(Duration.millis(250)),
-                  Effect.orElseSucceed(() => Option.none<number>()),
-                  Effect.flatMap((exitCode) =>
-                    Deferred.await(stderrDone).pipe(
-                      Effect.timeoutOption(Duration.millis(500)),
-                      Effect.andThen(failAllPending(Option.getOrUndefined(exitCode), false)),
-                    ),
-                  ),
-                );
+        const teardownScope = () =>
+          Scope.close(workerScope, Exit.void).pipe(
+            Effect.ignore,
+            Effect.ensuring(
+              Effect.sync(() => {
+                activeCleanups.delete(activeCleanup);
               }),
             ),
-          ),
-        ),
-        Effect.forkIn(workerScope),
-      );
+          );
 
-      yield* handle.exitCode.pipe(
-        Effect.map((code) => Number(code)),
-        Effect.orElseSucceed(() => undefined),
-        Effect.flatMap((exitCode) =>
-          // Drain buffered stdout replies and stderr tail before failing remaining requests.
-          Effect.all([Deferred.await(stdoutDone), Deferred.await(stderrDone)], {
-            concurrency: "unbounded",
-            discard: true,
-          }).pipe(
-            Effect.timeoutOption(Duration.millis(500)),
-            Effect.andThen(failAllPending(exitCode, false)),
-          ),
-        ),
-        Effect.forkIn(workerScope),
-      );
-
-      const writeFrame = (
-        frame: CursorWorkerRequest,
-        method: string,
-        onTransmitting?: () => void,
-      ) =>
-        writeMutex.withPermits(1)(
-          Effect.suspend(() => {
-            if (terminated !== undefined) {
-              return Effect.fail(workerExitError(method, terminated.exitCode, stderrTail));
-            }
-            onTransmitting?.();
-            return Stream.run(
-              Stream.encodeText(Stream.make(encodeWorkerFrame(frame))),
-              handle.stdin,
-            ).pipe(Effect.mapError((cause) => toRunnerError(method, cause)));
-          }),
+        const launch = yield* options.resolveLaunch.pipe(
+          Effect.onError(() => teardownScope()),
+          Effect.mapError((cause) => toRunnerError("worker.launch", cause)),
         );
-
-      // Untraced: callers own the enclosing RPC operation span.
-      const requestWithId = Effect.fnUntraced(function* (
-        id: number,
-        frame: CursorWorkerRequest,
-        method: string,
-        callbacks?: {
-          readonly onTransmitting?: () => void;
-          readonly onWorkerRejected?: () => void;
-        },
-      ) {
-        if (terminated !== undefined) {
-          return yield* workerExitError(method, terminated.exitCode, stderrTail);
-        }
-        const deferred = yield* Deferred.make<
-          CursorWorkerResponsePayload,
-          CursorAgentSdk.CursorAgentSdkRunnerError
-        >();
-        pendingRequests.set(id, {
-          method,
-          deferred,
-          ...(callbacks?.onWorkerRejected === undefined
-            ? {}
-            : { onWorkerRejected: callbacks.onWorkerRejected }),
-        });
-        return yield* writeFrame(frame, method, callbacks?.onTransmitting).pipe(
-          Effect.andThen(Deferred.await(deferred)),
-          Effect.onInterrupt(() =>
-            Effect.sync(() => {
-              pendingRequests.delete(id);
-            }),
-          ),
-          Effect.onError(() =>
-            Effect.sync(() => {
-              pendingRequests.delete(id);
-            }),
-          ),
-        );
-      });
-
-      const nextId = () => ++nextRequestId;
-
-      const request = (
-        build: (id: number) => CursorWorkerRequest,
-        method: string,
-      ): Effect.Effect<CursorWorkerResponsePayload, CursorAgentSdk.CursorAgentSdkRunnerError> =>
-        Effect.suspend(() => {
-          const id = nextId();
-          return requestWithId(id, build(id), method);
+        const env: NodeJS.ProcessEnv = {
+          ...hostEnvironment,
+          ...launch.env,
+          ELECTRON_RUN_AS_NODE: "1",
+        };
+        const wrapped = yield* agentScope.wrap({
+          command: launch.command,
+          args: launch.args,
+          name: "cursor-sdk",
+          env,
         });
 
-      // Untraced: called from close/finalizer boundaries that already hold a span.
-      const close = Effect.fnUntraced(function* (graceful: boolean) {
-        closing = true;
-        if (yield* Ref.getAndSet(closed, true)) {
-          return yield* Deferred.await(closedDone);
-        }
-        const gracefulShutdown =
-          graceful && terminated === undefined
-            ? request((id) => ({ id, type: "close" }), "agent.close").pipe(
-                Effect.timeoutOption(WORKER_CLOSE_TIMEOUT),
-                Effect.ignore,
-                Effect.andThen(
-                  handle.exitCode.pipe(Effect.timeoutOption(WORKER_EXIT_TIMEOUT), Effect.ignore),
+        const handle = yield* Scope.provide(
+          Effect.acquireRelease(
+            spawner.spawn(
+              ChildProcess.make(wrapped.command, wrapped.args, {
+                stdin: { stream: "pipe", endOnDone: false },
+                stdout: "pipe",
+                stderr: "pipe",
+                env,
+                killSignal: "SIGTERM",
+                forceKillAfter: WORKER_EXIT_TIMEOUT,
+              }),
+            ),
+            (child) =>
+              child
+                .kill()
+                .pipe(
+                  Effect.ignore,
+                  Effect.andThen(
+                    wrapped.unit === undefined ? Effect.void : agentScope.stop(wrapped.unit),
+                  ),
                 ),
-              )
-            : Effect.void;
-        yield* gracefulShutdown.pipe(
+          ),
+          workerScope,
+        ).pipe(
+          Effect.onError(() => teardownScope()),
+          Effect.mapError((cause) => toRunnerError("worker.spawn", cause)),
+        );
+
+        if (launch.registerProcess !== undefined) {
+          const unregister = yield* Effect.try({
+            try: () => launch.registerProcess!(handle.pid),
+            catch: (cause) => toRunnerError("worker.register", cause),
+          }).pipe(Effect.onError(() => teardownScope()));
+          yield* Scope.addFinalizer(workerScope, Effect.sync(unregister));
+        }
+
+        const writeMutex = yield* Semaphore.make(1);
+        const closed = yield* Ref.make(false);
+        const protocolLoggers = new Map<string, CursorAgentSdk.CursorAgentSdkProtocolLogger>();
+        const closedDone = yield* Deferred.make<void>();
+        const stdoutDone = yield* Deferred.make<void>();
+        const stderrDone = yield* Deferred.make<void>();
+        let nextRequestId = 0;
+        let stderrTail = "";
+        let closing = false;
+        let terminated: { readonly exitCode: number | undefined } | undefined;
+
+        const pendingRequests = new Map<
+          number,
+          {
+            readonly method: string;
+            readonly deferred: Deferred.Deferred<
+              CursorWorkerResponsePayload,
+              CursorAgentSdk.CursorAgentSdkRunnerError
+            >;
+            readonly onWorkerRejected?: (() => void) | undefined;
+          }
+        >();
+        const activeRuns = new Map<number, ActiveWorkerRun>();
+
+        // Untraced: internal shutdown helper already covered by the enclosing operation span.
+        const failAllPending = Effect.fnUntraced(function* (
+          exitCode: number | undefined,
+          forceActiveRuns: boolean,
+        ) {
+          const wasTerminated = terminated !== undefined;
+          if (!wasTerminated) {
+            terminated = { exitCode };
+          }
+          const pending = Array.from(pendingRequests.entries());
+          pendingRequests.clear();
+          for (const [, entry] of pending) {
+            yield* Deferred.fail(
+              entry.deferred,
+              workerExitError(entry.method, exitCode, stderrTail),
+            );
+          }
+          for (const run of activeRuns.values()) {
+            const error = workerExitError("run.wait", exitCode, stderrTail);
+            if (!run.doneEnqueued) {
+              run.doneEnqueued = true;
+              Queue.offerUnsafe(run.queue, { _tag: "done", ok: false, error });
+              yield* Deferred.fail(run.waitDeferred, error);
+            } else if (forceActiveRuns) {
+              // Forced teardown interrupts the FIFO consumer, so settle waiters directly.
+              yield* Deferred.fail(run.waitDeferred, error);
+            }
+          }
+          if (!wasTerminated && options.onWorkerTerminated !== undefined) {
+            const notify = options.onWorkerTerminated;
+            yield* Effect.try({
+              try: () => notify(exitCode),
+              catch: () => undefined,
+            }).pipe(Effect.ignore);
+          }
+        });
+
+        const handleLine = (line: string): Effect.Effect<void> => {
+          if (line.trim().length === 0) return Effect.void;
+          let parsed: CursorWorkerMessage;
+          try {
+            parsed = decodeWorkerFrame(line) as CursorWorkerMessage;
+          } catch {
+            return Effect.void;
+          }
+          switch (parsed.type) {
+            case "response": {
+              const entry = pendingRequests.get(parsed.id);
+              if (entry === undefined) return Effect.void;
+              pendingRequests.delete(parsed.id);
+              if (parsed.ok) {
+                return Deferred.succeed(entry.deferred, parsed.result).pipe(Effect.asVoid);
+              }
+              entry.onWorkerRejected?.();
+              return Deferred.fail(entry.deferred, fromSerializedFailure(parsed.error)).pipe(
+                Effect.asVoid,
+              );
+            }
+            case "delta": {
+              const run = activeRuns.get(parsed.sendId);
+              if (run !== undefined && !run.doneEnqueued) {
+                Queue.offerUnsafe(run.queue, { _tag: "delta", update: parsed.update });
+              }
+              return Effect.void;
+            }
+            case "runDone": {
+              const run = activeRuns.get(parsed.sendId);
+              if (run !== undefined && !run.doneEnqueued) {
+                run.doneEnqueued = true;
+                Queue.offerUnsafe(
+                  run.queue,
+                  parsed.ok
+                    ? { _tag: "done", ok: true, result: deserializeRunResult(parsed.result) }
+                    : { _tag: "done", ok: false, error: fromSerializedFailure(parsed.error) },
+                );
+              }
+              return Effect.void;
+            }
+            case "protocolLog": {
+              const logger = protocolLoggers.get(parsed.providerSessionId);
+              return logger === undefined ? Effect.void : logger(parsed.event).pipe(Effect.ignore);
+            }
+          }
+        };
+
+        yield* handle.stderr.pipe(
+          Stream.decodeText(),
+          Stream.runForEach((chunk) =>
+            Effect.sync(() => {
+              stderrTail += chunk;
+              if (stderrTail.length > MAX_STDERR_CHARS) {
+                stderrTail = stderrTail.slice(-MAX_STDERR_CHARS);
+              }
+            }),
+          ),
+          Effect.ignore,
+          Effect.ensuring(Deferred.succeed(stderrDone, undefined).pipe(Effect.asVoid)),
+          Effect.forkIn(workerScope),
+        );
+
+        yield* handle.stdout.pipe(
+          Stream.decodeText(),
+          Stream.splitLines,
+          Stream.runForEach(handleLine),
+          Effect.ignore,
           Effect.ensuring(
-            failAllPending(terminated?.exitCode, true).pipe(
-              Effect.andThen(Effect.suspend(teardownScope)),
-              Effect.ensuring(Deferred.succeed(closedDone, undefined).pipe(Effect.asVoid)),
+            Deferred.succeed(stdoutDone, undefined).pipe(
+              Effect.andThen(
+                Effect.suspend(() => {
+                  if (terminated !== undefined) return Effect.void;
+                  return handle.exitCode.pipe(
+                    Effect.map((code) => Number(code)),
+                    Effect.timeoutOption(Duration.millis(250)),
+                    Effect.orElseSucceed(() => Option.none<number>()),
+                    Effect.flatMap((exitCode) =>
+                      Deferred.await(stderrDone).pipe(
+                        Effect.timeoutOption(Duration.millis(500)),
+                        Effect.andThen(failAllPending(Option.getOrUndefined(exitCode), false)),
+                      ),
+                    ),
+                  );
+                }),
+              ),
             ),
           ),
+          Effect.forkIn(workerScope),
         );
+
+        yield* handle.exitCode.pipe(
+          Effect.map((code) => Number(code)),
+          Effect.orElseSucceed(() => undefined),
+          Effect.flatMap((exitCode) =>
+            // Drain buffered stdout replies and stderr tail before failing remaining requests.
+            Effect.all([Deferred.await(stdoutDone), Deferred.await(stderrDone)], {
+              concurrency: "unbounded",
+              discard: true,
+            }).pipe(
+              Effect.timeoutOption(Duration.millis(500)),
+              Effect.andThen(failAllPending(exitCode, false)),
+            ),
+          ),
+          Effect.forkIn(workerScope),
+        );
+
+        const writeFrame = (
+          frame: CursorWorkerRequest,
+          method: string,
+          onTransmitting?: () => void,
+        ) =>
+          writeMutex.withPermits(1)(
+            Effect.suspend(() => {
+              if (terminated !== undefined) {
+                return Effect.fail(workerExitError(method, terminated.exitCode, stderrTail));
+              }
+              onTransmitting?.();
+              return Stream.run(
+                Stream.encodeText(Stream.make(encodeWorkerFrame(frame))),
+                handle.stdin,
+              ).pipe(Effect.mapError((cause) => toRunnerError(method, cause)));
+            }),
+          );
+
+        // Untraced: callers own the enclosing RPC operation span.
+        const requestWithId = Effect.fnUntraced(function* (
+          id: number,
+          frame: CursorWorkerRequest,
+          method: string,
+          callbacks?: {
+            readonly onTransmitting?: () => void;
+            readonly onWorkerRejected?: () => void;
+          },
+        ) {
+          if (terminated !== undefined) {
+            return yield* workerExitError(method, terminated.exitCode, stderrTail);
+          }
+          const deferred = yield* Deferred.make<
+            CursorWorkerResponsePayload,
+            CursorAgentSdk.CursorAgentSdkRunnerError
+          >();
+          pendingRequests.set(id, {
+            method,
+            deferred,
+            ...(callbacks?.onWorkerRejected === undefined
+              ? {}
+              : { onWorkerRejected: callbacks.onWorkerRejected }),
+          });
+          return yield* writeFrame(frame, method, callbacks?.onTransmitting).pipe(
+            Effect.andThen(Deferred.await(deferred)),
+            Effect.onInterrupt(() =>
+              Effect.sync(() => {
+                pendingRequests.delete(id);
+              }),
+            ),
+            Effect.onError(() =>
+              Effect.sync(() => {
+                pendingRequests.delete(id);
+              }),
+            ),
+          );
+        });
+
+        const nextId = () => ++nextRequestId;
+
+        const request = (
+          build: (id: number) => CursorWorkerRequest,
+          method: string,
+        ): Effect.Effect<CursorWorkerResponsePayload, CursorAgentSdk.CursorAgentSdkRunnerError> =>
+          Effect.suspend(() => {
+            const id = nextId();
+            return requestWithId(id, build(id), method);
+          });
+
+        // Untraced: called from close/finalizer boundaries that already hold a span.
+        const close = Effect.fnUntraced(function* (graceful: boolean) {
+          closing = true;
+          if (yield* Ref.getAndSet(closed, true)) {
+            return yield* Deferred.await(closedDone);
+          }
+          const gracefulShutdown =
+            graceful && terminated === undefined
+              ? request((id) => ({ id, type: "close" }), "agent.close").pipe(
+                  Effect.timeoutOption(WORKER_CLOSE_TIMEOUT),
+                  Effect.ignore,
+                  Effect.andThen(
+                    handle.exitCode.pipe(Effect.timeoutOption(WORKER_EXIT_TIMEOUT), Effect.ignore),
+                  ),
+                )
+              : Effect.void;
+          yield* gracefulShutdown.pipe(
+            Effect.ensuring(
+              failAllPending(terminated?.exitCode, true).pipe(
+                Effect.andThen(Effect.suspend(teardownScope)),
+                Effect.ensuring(Deferred.succeed(closedDone, undefined).pipe(Effect.asVoid)),
+              ),
+            ),
+          );
+        });
+
+        // Replace the raw scope closer with forced worker teardown so runner shutdown settles runs.
+        activeCleanups.delete(activeCleanup);
+        activeCleanup = close(false);
+        activeCleanups.add(activeCleanup);
+
+        // Untraced: per-send registration inside CursorAgentSdkSession.send.
+        const registerRun = Effect.fnUntraced(function* (sendId: number) {
+          const queue = yield* Queue.unbounded<RunQueueItem>();
+          const waitDeferred = yield* Deferred.make<
+            RunResult,
+            CursorAgentSdk.CursorAgentSdkRunnerError
+          >();
+          const state: ActiveWorkerRun = { queue, waitDeferred, doneEnqueued: false };
+          activeRuns.set(sendId, state);
+          return state;
+        });
+
+        return {
+          scope: workerScope,
+          protocolLoggers,
+          nextId,
+          requestWithId,
+          request,
+          registerRun,
+          unregisterRun: (sendId) => {
+            activeRuns.delete(sendId);
+          },
+          isAlive: () => terminated === undefined && !closing,
+          close,
+        };
+      },
+    );
+
+    // Every session and text generation shares one worker: a process per session duplicates the
+    // SDK's ~250 MB baseline and pages the host under concurrent threads. Idle, the worker exits.
+    interface WorkerLease {
+      readonly worker: SpawnedCursorWorker;
+      users: number;
+    }
+    let shared: WorkerLease | undefined;
+    const sharedLock = yield* Semaphore.make(1);
+    const acquireWorker = sharedLock.withPermits(1)(
+      Effect.suspend(() => {
+        if (shared !== undefined && shared.worker.isAlive()) {
+          shared.users += 1;
+          return Effect.succeed(shared);
+        }
+        return spawnWorker().pipe(
+          Effect.map((worker) => {
+            const lease: WorkerLease = { worker, users: 1 };
+            shared = lease;
+            return lease;
+          }),
+        );
+      }),
+    );
+    const releaseWorker = (lease: WorkerLease) =>
+      Effect.suspend(() => {
+        lease.users -= 1;
+        if (lease.users > 0) return Effect.void;
+        if (shared === lease) shared = undefined;
+        return lease.worker.close(true);
       });
-
-      // Replace the raw scope closer with forced worker teardown so runner shutdown settles runs.
-      activeCleanups.delete(activeCleanup);
-      activeCleanup = close(false);
-      activeCleanups.add(activeCleanup);
-
-      // Untraced: per-send registration inside CursorAgentSdkSession.send.
-      const registerRun = Effect.fnUntraced(function* (sendId: number) {
-        const queue = yield* Queue.unbounded<RunQueueItem>();
-        const waitDeferred = yield* Deferred.make<
-          RunResult,
-          CursorAgentSdk.CursorAgentSdkRunnerError
-        >();
-        const state: ActiveWorkerRun = { queue, waitDeferred, doneEnqueued: false };
-        activeRuns.set(sendId, state);
-        return state;
-      });
-
-      return {
-        scope: workerScope,
-        nextId,
-        requestWithId,
-        request,
-        registerRun,
-        unregisterRun: (sendId) => {
-          activeRuns.delete(sendId);
-        },
-        isAlive: () => terminated === undefined && !closing,
-        close,
-      };
-    });
 
     return CursorAgentSdk.CursorAgentSdkRunner.of({
       open: Effect.fn("CursorAgentSdkProcessRunner.open")(function* (input) {
@@ -507,17 +543,36 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
           },
         });
 
-        const worker = yield* spawnWorker({
-          name: "cursor-sdk",
-          threadId: input.threadId,
-          ...(protocolLogger === undefined ? {} : { onProtocolLog: protocolLogger }),
-        });
-
+        const lease = yield* acquireWorker;
+        const { worker } = lease;
+        if (protocolLogger !== undefined) {
+          worker.protocolLoggers.set(input.providerSessionId, protocolLogger);
+        }
+        const sessionId = worker.nextId();
+        let opened = false;
+        let sessionClosed = false;
         let handedOff = false;
+        const forgetLogger = Effect.sync(() => {
+          if (worker.protocolLoggers.get(input.providerSessionId) === protocolLogger) {
+            worker.protocolLoggers.delete(input.providerSessionId);
+          }
+        });
+        const closeWorkerSession = Effect.suspend(() => {
+          sessionClosed = true;
+          return worker
+            .request((id) => ({ id, type: "closeSession", sessionId }), "agent.close")
+            .pipe(Effect.timeoutOption(WORKER_CLOSE_TIMEOUT), Effect.ignore);
+        });
+        const release = (closeInWorker: boolean) =>
+          (closeInWorker ? closeWorkerSession : Effect.void).pipe(
+            Effect.ensuring(forgetLogger),
+            Effect.ensuring(releaseWorker(lease)),
+          );
         return yield* Effect.gen(function* () {
-          const opened = (yield* worker.request(
-            (id) => ({
-              id,
+          const openedAgent = (yield* worker.requestWithId(
+            sessionId,
+            {
+              id: sessionId,
               type: "open",
               operation: input.operation,
               ...(input.agentId === undefined ? {} : { agentId: input.agentId }),
@@ -525,11 +580,12 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
               options: input.options,
               threadId: input.threadId,
               providerSessionId: input.providerSessionId,
-            }),
+            },
             `agent.${input.operation}`,
           )) as { readonly agentId: string };
+          opened = true;
 
-          const agentId = opened.agentId;
+          const agentId = openedAgent.agentId;
           yield* log({
             direction: "incoming",
             stage: "decoded",
@@ -547,7 +603,7 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
                 type: "agent.close",
                 agentId,
               },
-            }).pipe(Effect.andThen(worker.close(true))),
+            }).pipe(Effect.andThen(release(true))),
           );
 
           const session = {
@@ -582,6 +638,7 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
                   {
                     id: sendId,
                     type: "send",
+                    sessionId,
                     message: sendInput.message,
                     ...(sendInput.options === undefined ? {} : { options: sendInput.options }),
                     ...(sendInput.summarize === undefined
@@ -724,17 +781,18 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
                           .request((id) => ({ id, type: "cancel", sendId }), "run.cancel")
                           .pipe(
                             Effect.timeoutOption(WORKER_CLOSE_TIMEOUT),
+                            // Other threads share the worker; closing this agent stops the run.
                             Effect.flatMap(
                               Option.match({
-                                onNone: () => worker.close(false),
+                                onNone: () => closeWorkerSession,
                                 onSome: () => Effect.void,
                               }),
                             ),
-                            Effect.catch(() => worker.close(false)),
+                            Effect.catch(() => closeWorkerSession),
                           )
                       : transmitted && !rejectedByWorker
                         ? // A send interrupted after hitting stdin may still start in the worker.
-                          worker.close(false)
+                          closeWorkerSession
                         : Effect.void;
                     return stopRun.pipe(
                       Effect.ensuring(Effect.sync(() => worker.unregisterRun(sendId))),
@@ -753,7 +811,7 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
             }).pipe(
               Effect.andThen(
                 worker.request(
-                  (id) => ({ id, type: "listMessages" }),
+                  (id) => ({ id, type: "listMessages", sessionId }),
                   "agent.messages.list",
                 ) as Effect.Effect<
                   ReadonlyArray<AgentMessage>,
@@ -773,7 +831,10 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
               ),
             ),
             readContextUsage: worker
-              .request((id) => ({ id, type: "readContextUsage" }), "agent.checkpoint.load")
+              .request(
+                (id) => ({ id, type: "readContextUsage", sessionId }),
+                "agent.checkpoint.load",
+              )
               .pipe(
                 Effect.map((result) =>
                   result === null ? undefined : (result as CursorAgentSdk.CursorContextUsage),
@@ -785,6 +846,7 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
                   (id) => ({
                     id,
                     type: "runCheckpointed",
+                    sessionId,
                     ...(runId === undefined ? {} : { runId }),
                   }),
                   "agent.run.get",
@@ -797,22 +859,23 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
                 payload: { type: "agent.rewind", agentId, afterRunId: runId },
               }).pipe(
                 Effect.andThen(
-                  worker.request((id) => ({ id, type: "rewindAfterRun", runId }), "agent.rewind"),
+                  worker.request(
+                    (id) => ({ id, type: "rewindAfterRun", sessionId, runId }),
+                    "agent.rewind",
+                  ),
                 ),
                 Effect.asVoid,
               ),
-            isAlive: worker.isAlive,
+            isAlive: () => !sessionClosed && worker.isAlive(),
             close: closeSession,
           } satisfies CursorAgentSdk.CursorAgentSdkSession;
           handedOff = true;
           return session;
-        }).pipe(
-          Effect.ensuring(Effect.suspend(() => (handedOff ? Effect.void : worker.close(false)))),
-        );
+        }).pipe(Effect.ensuring(Effect.suspend(() => (handedOff ? Effect.void : release(opened)))));
       }),
       textGenerate: Effect.fn("CursorAgentSdkProcessRunner.textGenerate")(function* (input) {
-        const worker = yield* spawnWorker({ name: "cursor-text-gen" });
-        return yield* worker
+        const lease = yield* acquireWorker;
+        return yield* lease.worker
           .request(
             (id) => ({
               id,
@@ -827,7 +890,7 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
           )
           .pipe(
             Effect.map((result) => deserializeRunResult(result as SerializedRunResult)),
-            Effect.ensuring(worker.close(false)),
+            Effect.ensuring(releaseWorker(lease)),
           );
       }),
       assertComplete: Effect.void,

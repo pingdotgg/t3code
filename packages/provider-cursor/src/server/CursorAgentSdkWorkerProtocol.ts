@@ -50,6 +50,7 @@ export type CursorWorkerRequest =
   | {
       readonly id: number;
       readonly type: "send";
+      readonly sessionId: number;
       readonly message: string | SDKUserMessage;
       readonly options?: Omit<SendOptions, "onDelta">;
       readonly summarize?: boolean;
@@ -69,22 +70,32 @@ export type CursorWorkerRequest =
   | {
       readonly id: number;
       readonly type: "listMessages";
+      readonly sessionId: number;
     }
   | {
       readonly id: number;
       readonly type: "readContextUsage";
+      readonly sessionId: number;
     }
   | {
       readonly id: number;
       readonly type: "runCheckpointed";
+      readonly sessionId: number;
       readonly runId?: string;
     }
   | {
       readonly id: number;
       readonly type: "rewindAfterRun";
+      readonly sessionId: number;
       readonly runId: string;
     }
   | {
+      readonly id: number;
+      readonly type: "closeSession";
+      readonly sessionId: number;
+    }
+  | {
+      /** Closes every session and exits the worker. */
       readonly id: number;
       readonly type: "close";
     }
@@ -135,6 +146,7 @@ export type CursorWorkerMessage =
     }
   | {
       readonly type: "protocolLog";
+      readonly providerSessionId: OrchestrationV2ProviderSession["id"];
       readonly event: CursorAgentSdkProtocolLogEvent;
     };
 
