@@ -15,10 +15,6 @@ import { existsSync } from "node:fs";
 import { createInterface } from "node:readline";
 
 const [recovered] = process.argv.slice(2);
-const withSessionDelete = (result) => {
-  result.agentCapabilities.sessionCapabilities.delete = {};
-  return result;
-};
 for await (const line of createInterface({ input: process.stdin })) {
   const { id, method, params } = JSON.parse(line);
   if (id === undefined) continue;
@@ -27,9 +23,7 @@ for await (const line of createInterface({ input: process.stdin })) {
     reply({ id, result: {
       protocolVersion: 1,
       agentInfo: { name: "history-scenario", version: "1.0.0" },
-      ...withSessionDelete({
-      agentCapabilities: { loadSession: true, sessionCapabilities: { list: {} } },
-      }),
+      agentCapabilities: { loadSession: true, sessionCapabilities: { list: {}, delete: {} } },
       authMethods: [],
     } });
   } else if (method === "session/new") {
