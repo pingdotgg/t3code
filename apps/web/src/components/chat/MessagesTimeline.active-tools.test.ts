@@ -70,6 +70,12 @@ describe("liveWorkEntryLabel for a command execution without a command", () => {
       toolTitle: "Ran command",
       expected: "Failed command",
     },
+    {
+      status: "failed" as const,
+      active: false,
+      toolTitle: "Run command",
+      expected: "Failed command",
+    },
   ])(
     "labels a $status entry titled $toolTitle as $expected",
     ({ status, active, toolTitle, expected }) => {

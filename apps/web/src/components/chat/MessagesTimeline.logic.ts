@@ -267,6 +267,7 @@ function genericCommandStatusLabel(
 function isGenericCommandHeading(heading: string, resolve: MessageResolver): boolean {
   return (
     heading === "Ran command" ||
+    heading === "Run command" ||
     heading === "Command" ||
     heading === resolve(msg("Ran command")) ||
     heading === resolve(msg("Command", { $context: "noun, a shell command tool" }))
