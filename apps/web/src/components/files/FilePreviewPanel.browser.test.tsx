@@ -470,7 +470,12 @@ describe("source file scroll", () => {
         });
 
       const startX = direction === "up" ? startRect.left + 140 : startRect.left + 2;
+      // The editor records the drag anchor on the press's selectionchange; drag only after it.
+      const anchored = new Promise((resolve) =>
+        document.addEventListener("selectionchange", resolve, { once: true }),
+      );
       await mouse("mousePressed", startX, startRect.top + 5);
+      await anchored;
       await mouse("mouseMoved", startRect.left + 80, nearEdgeY);
       await mouse("mouseMoved", startRect.left + 80, outsideEdgeY);
       await vi.waitFor(() => {
