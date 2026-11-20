@@ -1,3 +1,5 @@
+import { isStandaloneBuild, loadRepoEnv } from "./public-config.ts";
+
 const UPSTREAM_BRAND_ASSET_PATHS = {
   developmentIconComposerProject: "assets/dev/app-icon.icon",
   developmentIosIconPng: "assets/dev/blueprint-ios-1024.png",
@@ -79,19 +81,18 @@ export const STANDALONE_ANDROID_ASSETS = {
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
-export function isStandaloneBrandBuild(env: Environment): boolean {
-  return /^(1|true)$/i.test(env.T3CODE_STANDALONE?.trim() ?? "");
-}
-
 export function resolveBrandAssetPaths(
   env: Environment,
 ): Record<keyof typeof UPSTREAM_BRAND_ASSET_PATHS, string> {
-  return isStandaloneBrandBuild(env)
+  return isStandaloneBuild(env)
     ? { ...UPSTREAM_BRAND_ASSET_PATHS, ...STANDALONE_BRAND_ASSET_PATHS }
     : UPSTREAM_BRAND_ASSET_PATHS;
 }
 
-export const BRAND_ASSET_PATHS = resolveBrandAssetPaths(process.env);
+// From the repo env, not process.env, so a T3CODE_STANDALONE set only in .env matches the app UI.
+const REPO_ENV = loadRepoEnv();
+
+export const BRAND_ASSET_PATHS = resolveBrandAssetPaths(REPO_ENV);
 
 export type WebAssetBrand = "development" | "nightly" | "production";
 
@@ -179,7 +180,7 @@ export function resolveWebIconOverrides(
 
 // Upstream releases replace these at publish time; a standalone CLI build has no such step.
 export const CLI_CLIENT_ICON_OVERRIDES = resolveWebIconOverrides(
-  isStandaloneBrandBuild(process.env) ? "production" : "development",
+  isStandaloneBuild(REPO_ENV) ? "production" : "development",
   "dist/client",
 );
 

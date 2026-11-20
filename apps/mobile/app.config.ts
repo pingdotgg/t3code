@@ -4,7 +4,11 @@ import {
   resolveBrandAssetPaths,
   STANDALONE_ANDROID_ASSETS,
 } from "../../scripts/lib/brand-assets.ts";
-import { loadRepoEnv, resolveAppScheme } from "../../scripts/lib/public-config.ts";
+import {
+  isStandaloneBuild as isRepoStandaloneBuild,
+  loadRepoEnv,
+  resolveAppScheme,
+} from "../../scripts/lib/public-config.ts";
 
 type AppVariant = "development" | "preview" | "production";
 
@@ -17,7 +21,7 @@ const APP_VARIANT = resolveAppVariant(repoEnv.APP_VARIANT);
 // iOS URL types and Android intent filters claim it; a fork's own keeps official links out.
 const appScheme = resolveAppScheme(repoEnv);
 // Standalone builds use only the fork's own Expo project and hosted app; unset means none.
-const isStandaloneBuild = repoEnv.T3CODE_STANDALONE === "1";
+const isStandaloneBuild = isRepoStandaloneBuild(repoEnv);
 const easProjectId =
   repoEnv.T3CODE_EAS_PROJECT_ID?.trim() ||
   (isStandaloneBuild ? undefined : "d763fcb8-d37c-41ea-a773-b54a0ab4a454");
@@ -46,7 +50,6 @@ const observeEndpointUrl = repoEnv.T3CODE_RELAY_URL?.trim()
   : "https://observe.invalid";
 
 const fromRepoRoot = (relativePath: string) => `../../${relativePath}`;
-// From repoEnv, not process.env, so a T3CODE_STANDALONE set only in .env still swaps the artwork.
 const BRAND_ASSET_PATHS = resolveBrandAssetPaths(repoEnv);
 const androidAdaptiveForeground = "./assets/android-icon-foreground.png";
 

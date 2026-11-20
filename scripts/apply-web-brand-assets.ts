@@ -2,7 +2,6 @@
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -11,12 +10,12 @@ import * as Schema from "effect/Schema";
 import { Argument, Command, Flag } from "effect/cli";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import {
-  isStandaloneBrandBuild,
   resolveWebAssetBrandForChannel,
   resolveWebIconOverrides,
   WEB_ASSET_CHANNELS,
   type WebAssetBrand,
 } from "./lib/brand-assets.ts";
+import { isStandaloneBuild, loadRepoEnv } from "./lib/public-config.ts";
 
 const WEB_ASSET_BRANDS = [
   "development",
@@ -32,9 +31,9 @@ const encodeWebManifest = Schema.encodeEffect(WebManifestJson);
 export const applyStandaloneWebManifest = Effect.fn("applyStandaloneWebManifest")(function* (
   targetDirectory: string,
 ) {
-  const standalone = yield* Config.String("T3CODE_STANDALONE").pipe(Config.withDefault(""));
-  const appName = (yield* Config.String("T3CODE_APP_NAME").pipe(Config.withDefault(""))).trim();
-  if (!isStandaloneBrandBuild({ T3CODE_STANDALONE: standalone }) || !appName) return;
+  const env = loadRepoEnv();
+  const appName = env.T3CODE_APP_NAME?.trim();
+  if (!isStandaloneBuild(env) || !appName) return;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const manifestPath = path.join(targetDirectory, "manifest.webmanifest");

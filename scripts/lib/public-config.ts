@@ -140,7 +140,7 @@ export function appSchemeDefine(env: Environment): Record<string, string> {
 const UPSTREAM_EAS_PROJECT_ID = "d763fcb8-d37c-41ea-a773-b54a0ab4a454";
 const T3_OPERATED_DOMAINS = ["t3.codes", "t3.chat"];
 
-function isStandaloneBuild(...sources: readonly Environment[]) {
+export function isStandaloneBuild(...sources: readonly Environment[]): boolean {
   const value = firstNonEmpty(sources, "T3CODE_STANDALONE")?.toLowerCase();
   return value === "1" || value === "true";
 }

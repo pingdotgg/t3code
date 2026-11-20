@@ -5,24 +5,27 @@ import appleAppSiteAssociation from "../web/public/.well-known/apple-app-site-as
 import assetLinks from "../web/public/.well-known/assetlinks.json";
 
 // Keep config parsing independent of local env files and build credentials.
-vi.mock("../../scripts/lib/public-config.ts", async (importOriginal) => ({
-  resolveAppScheme: (await importOriginal<typeof import("../../scripts/lib/public-config.ts")>())
-    .resolveAppScheme,
-  // app.config copies these into process.env, so an unset key must stay absent, not "undefined".
-  loadRepoEnv: () =>
-    Object.fromEntries(
-      [
-        "APP_VARIANT",
-        "T3CODE_STANDALONE",
-        "T3CODE_EAS_PROJECT_ID",
-        "T3CODE_HOSTED_APP_URL",
-        "T3CODE_MOBILE_BUNDLE_ID",
-        "T3CODE_IOS_TEAM_ID",
-        "T3CODE_DESKTOP_UPDATE_REPOSITORY",
-        "T3CODE_APP_SCHEME",
-      ].flatMap((key) => (process.env[key] === undefined ? [] : [[key, process.env[key]]])),
-    ),
-}));
+vi.mock("../../scripts/lib/public-config.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../scripts/lib/public-config.ts")>();
+  return {
+    resolveAppScheme: actual.resolveAppScheme,
+    isStandaloneBuild: actual.isStandaloneBuild,
+    // app.config copies these into process.env, so an unset key must stay absent, not "undefined".
+    loadRepoEnv: () =>
+      Object.fromEntries(
+        [
+          "APP_VARIANT",
+          "T3CODE_STANDALONE",
+          "T3CODE_EAS_PROJECT_ID",
+          "T3CODE_HOSTED_APP_URL",
+          "T3CODE_MOBILE_BUNDLE_ID",
+          "T3CODE_IOS_TEAM_ID",
+          "T3CODE_DESKTOP_UPDATE_REPOSITORY",
+          "T3CODE_APP_SCHEME",
+        ].flatMap((key) => (process.env[key] === undefined ? [] : [[key, process.env[key]]])),
+      ),
+  };
+});
 
 afterEach(() => {
   vi.unstubAllEnvs();
