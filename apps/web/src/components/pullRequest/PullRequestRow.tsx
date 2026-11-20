@@ -69,8 +69,11 @@ export function PullRequestRowLabels({
         shown = index + 1;
         left = Math.round(right) + LABEL_GAP_PX;
       }
+      // Where "+N" sits matters only once something folds.
       setFit((current) =>
-        current.shown === shown && current.left === left ? current : { shown, left },
+        current.shown === shown && (current.left === left || shown === labels.length)
+          ? current
+          : { shown, left },
       );
     };
     // Measured only when the observer delivers, after layout and batched across rows: a read
