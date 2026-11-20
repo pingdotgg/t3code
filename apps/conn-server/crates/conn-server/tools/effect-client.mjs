@@ -668,6 +668,20 @@ const decodeEach = (client) =>
     yield* call("pullRequests.runAction", { ...prRef, action: "close" });
     yield* call("pullRequests.generateReviewGuide", prRef);
     yield* call("pullRequests.stack", prRef);
+    // Issues: no project is a GitHub checkout here, so each read and write answers with the
+    // contract's own error, which the client decodes.
+    const issueRef = { projectId: none, tracker: "github", host: "github.com", scope: "a/b", key: "7" };
+    yield* call("issues.list", { state: "open" });
+    yield* call("issues.detail", issueRef);
+    yield* call("issues.linkedThreads", { tracker: "github", host: "github.com", scope: "a/b", key: "7" });
+    yield* call("issues.comments", { ...issueRef, cursor: "older" });
+    yield* call("issues.templates", { projectId: none, tracker: "github", scope: "a/b" });
+    yield* call("issues.candidates", { projectId: none, tracker: "github", scope: "a/b" });
+    yield* call("issues.create", { projectId: none, tracker: "github", scope: "a/b", title: "T", body: "", labels: [], assignees: [] });
+    yield* call("issues.comment", { ...issueRef, body: "Comment" });
+    yield* call("issues.update", { ...issueRef, title: "T" });
+    yield* call("issues.setState", { ...issueRef, state: "Completed" });
+    yield* call("issues.react", { ...issueRef, content: "heart", reacted: true });
     yield* call("pullRequests.reviewGuide", prRef);
     yield* call("pullRequests.reportState", { reference: prRef, state: "open" });
     yield* call("pullRequests.invalidate", { reference: prRef });

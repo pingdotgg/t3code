@@ -30,6 +30,7 @@ use std::{
 use tokio::sync::{OnceCell, mpsc, watch};
 mod guide_writer;
 mod guides;
+mod issues;
 mod links;
 mod watches;
 
@@ -426,6 +427,12 @@ impl Panel {
                     .await
             }
             "placeReviewComments" => self.place_review_comments(&input).await,
+            // `IssueService` for the issue tools: `{method, input}`.
+            "issues" => {
+                let method = text(&input, "method").to_owned();
+                self.issue_call(&method, input.get("input").unwrap_or(&Value::Null))
+                    .await
+            }
             "checkLogs" => self.check_logs(&input).await,
             "rerunChecks" => self.rerun_checks(&input).await,
             _ => Err(Failure::die(format!(
@@ -1735,6 +1742,38 @@ fn register_panel(table: &mut MethodTable, panel: Arc<Panel>) {
     unary!("pullRequests.invalidate", invalidate);
     unary!("pullRequests.filesViewed", files_viewed);
     unary!("pullRequests.setFilesViewed", set_files_viewed);
+    macro_rules! issue {
+        ($name:literal,$area:ident) => {{
+            let panel = panel.clone();
+            table.unary(
+                $name,
+                move |_, input: conn_contract::rpc::issues::$area::Payload| {
+                    let panel = panel.clone();
+                    async move {
+                        let result = panel
+                            .issue_call(
+                                $name.strip_prefix("issues.").unwrap_or($name),
+                                &to_json(&input),
+                            )
+                            .await?;
+                        from_json::<conn_contract::rpc::issues::$area::Success>(result)
+                            .map_err(|e| Failure::die(format!("Invalid {} result: {e}", $name)))
+                    }
+                },
+            );
+        }};
+    }
+    issue!("issues.list", list);
+    issue!("issues.detail", detail);
+    issue!("issues.linkedThreads", linked_threads);
+    issue!("issues.comments", comments);
+    issue!("issues.templates", templates);
+    issue!("issues.candidates", candidates);
+    issue!("issues.create", create);
+    issue!("issues.comment", comment);
+    issue!("issues.update", update);
+    issue!("issues.setState", set_state);
+    issue!("issues.react", react);
     for (tag, linked) in [
         ("pullRequests.subscribeRefreshes", false),
         ("pullRequests.subscribeLinkedThreadRefreshes", true),

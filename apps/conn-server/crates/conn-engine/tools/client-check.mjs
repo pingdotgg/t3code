@@ -403,13 +403,22 @@ check("fork: lineage, a native fork, and the relationship graph", () => {
 });
 
 // Pull request links: T3's GitHub keys, a stack tombstone lifted by hand.
-check("pull requests: link, unlink and relink as T3 writes them", () => {
+check("pull requests and issues: link, unlink and relink as T3 writes them", () => {
   const followed = followThread(exported.pullRequestLinkItems);
   assert.equal(followed.status, "live");
   const kinds = exported.pullRequestLinkItems
     .filter((item) => item.event)
     .map((item) => item.event.type);
-  assert.deepEqual(kinds.slice(-6), Array(6).fill("thread.pull-request-synced"));
+  assert.deepEqual(kinds.slice(-10, -4), Array(6).fill("thread.pull-request-synced"));
+  assert.deepEqual(kinds.slice(-4), Array(4).fill("thread.issue-synced"));
+  // A link that is already there keeps the thread's time, so the sidebar does not move it.
+  const issueEvents = exported.pullRequestLinkItems.filter((item) => item.event?.type === "thread.issue-synced");
+  assert.equal(issueEvents[1].event.payload.updatedAt, issueEvents[0].event.payload.updatedAt);
+  // Issue links as T3's decider keeps them: one #12 (host in lower case), #13 gone.
+  assert.deepEqual(
+    followed.projection.thread.issues.map((link) => [link.host, link.scope, link.key, link.displayKey, link.source]),
+    [["github.com", "o/r", "12", "#12", "agent"]],
+  );
   const links = followed.projection.thread.pullRequests.map((link) => ({
     host: link.host,
     repository: link.repository,

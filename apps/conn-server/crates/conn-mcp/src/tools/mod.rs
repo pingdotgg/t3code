@@ -22,6 +22,7 @@ mod background;
 mod create_threads;
 mod devices;
 mod html;
+mod issues;
 mod manage;
 mod message;
 mod panels;
@@ -146,6 +147,14 @@ pub(crate) const HANDLED: &[&str] = &[
     "pull_request_merge",
     "ci_logs",
     "ci_rerun",
+    "list_issues",
+    "read_issue",
+    "create_issue",
+    "comment_on_issue",
+    "set_issue_state",
+    "link_issue",
+    "unlink_issue",
+    "list_thread_issues",
     "annotations_list",
     "annotations_claim",
     "annotations_complete",
@@ -335,6 +344,14 @@ async fn call_in(cx: &Cx<'_>, name: &str, args: Args) -> ToolResult {
         "list_scheduled_tasks" => scheduled::list(cx, &args).await,
         "delete_scheduled_task" => scheduled::delete(cx, &args).await,
         "run_scheduled_task_now" => scheduled::run_now(cx, &args).await,
+        "list_issues" => issues::list(cx, &args).await,
+        "read_issue" => issues::read(cx, &args).await,
+        "create_issue" => issues::create(cx, &args).await,
+        "comment_on_issue" => issues::comment(cx, &args).await,
+        "set_issue_state" => issues::set_state(cx, &args).await,
+        "link_issue" => issues::link(cx, &args).await,
+        "unlink_issue" => issues::unlink(cx, &args).await,
+        "list_thread_issues" => issues::list_thread(cx, &args).await,
         "link_pull_request" => pull_requests::link(cx, &args).await,
         "link_pull_requests" => pull_requests::link_many(cx, &args).await,
         "unlink_pull_request" => pull_requests::unlink(cx, &args).await,

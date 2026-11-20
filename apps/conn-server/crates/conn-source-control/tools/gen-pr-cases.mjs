@@ -2,7 +2,7 @@
 import * as fs from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
 import { importSource } from "../../../tools/monorepo.mjs";
-import { recordActions, recordCapabilities, recordRunActions } from "./pr-action-recordings.mjs";
+import { recordActions, recordCapabilities, recordIssueTracker, recordRunActions } from "./pr-action-recordings.mjs";
 import { recordGuide } from "../../conn-server/tools/pr-guide-recordings.mjs";
 const pure = await importSource("packages/source-control-github/src/server/gitHubPullRequestJson.ts");
 const { loginAvatarUrl, gitHubViewerPermissions } = await importSource("packages/source-control-github/src/server/GitHubPullRequestProvider.ts");
@@ -166,6 +166,9 @@ const guideOut = JSON.stringify(await recordGuide())+"\n";
 const runActionPath = new URL("../src/pull_requests/run-action-cases.json", import.meta.url);
 const runActionCases = await recordRunActions();
 const runActionOut = lines(runActionCases);
+const issuePath = new URL("../src/pull_requests/issue-cases.json", import.meta.url);
+const issueCases = await recordIssueTracker();
+const issueOut = lines(issueCases);
 const capabilitiesPath = new URL("../src/pull_requests/capabilities.json",import.meta.url);
 const capabilitiesOut = JSON.stringify(await recordCapabilities())+"\n";
 if (process.argv.includes("--check")) {
@@ -173,6 +176,7 @@ if (process.argv.includes("--check")) {
   if (fs.readFileSync(actionPath,"utf8") !== actionOut) throw new Error("PR action requests changed; run gen-pr-cases.mjs and port the difference");
   if (fs.readFileSync(guidePath,"utf8") !== guideOut) throw new Error("PR guide storage changed; run gen-pr-cases.mjs and port the difference");
   if (fs.readFileSync(runActionPath,"utf8") !== runActionOut) throw new Error("PR run-action and CI traces changed; run gen-pr-cases.mjs and port the difference");
+  if (fs.readFileSync(issuePath,"utf8") !== issueOut) throw new Error("GitHub issue tracker traces changed; run gen-pr-cases.mjs and port the difference");
   if (fs.readFileSync(capabilitiesPath,"utf8") !== capabilitiesOut) throw new Error("GitHub PR capabilities changed; run gen-pr-cases.mjs and port the difference");
   console.log(`PR characterizations: ${cases.length} T3 cases and ${actionCases.length} action traces current`);
-} else { fs.writeFileSync(path,out); fs.writeFileSync(actionPath,actionOut); fs.writeFileSync(runActionPath,runActionOut); fs.writeFileSync(guidePath,guideOut); fs.writeFileSync(capabilitiesPath,capabilitiesOut); console.log(`recorded ${cases.length} PR characterizations, ${actionCases.length} API action traces, capabilities and T3's stored guide`); }
+} else { fs.writeFileSync(path,out); fs.writeFileSync(actionPath,actionOut); fs.writeFileSync(runActionPath,runActionOut); fs.writeFileSync(issuePath,issueOut); fs.writeFileSync(guidePath,guideOut); fs.writeFileSync(capabilitiesPath,capabilitiesOut); console.log(`recorded ${cases.length} PR characterizations, ${actionCases.length} API action traces, capabilities and T3's stored guide`); }

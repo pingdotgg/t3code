@@ -570,6 +570,35 @@ async fn main() {
         synced.get() == 6
     })
     .await;
+    // Issue links: a second spelling of the same key changes nothing; unlink, then link again.
+    let issue = |kind: &str, host: &str, key: &str| {
+        json!({"type": kind, "tracker": "github", "host": host, "scope": "o/r", "key": key,
+            "projectId": project_id, "url": format!("https://github.com/o/r/issues/{key}"),
+            "displayKey": format!("#{key}"), "title": "Broken chip", "source": "agent"})
+    };
+    for (index, command) in [
+        issue("thread.issue.link", "GitHub.com", "12"),
+        issue("thread.issue.link", "github.com", "12"),
+        issue("thread.issue.link", "github.com", "13"),
+        json!({"type": "thread.issue.unlink", "tracker": "github", "host": "github.com",
+            "scope": "O/R", "key": "13"}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut command = command;
+        command["commandId"] = json!(format!("issue-link-{index}"));
+        command["threadId"] = json!("thread-1");
+        engine.dispatch(from_json(command).unwrap()).await.unwrap();
+    }
+    let issues = std::cell::Cell::new(0);
+    read(&mut links, &mut links_items, |item| {
+        if item["event"]["type"] == "thread.issue-synced" {
+            issues.set(issues.get() + 1);
+        }
+        issues.get() == 4
+    })
+    .await;
     drop(links);
 
     // A turn that is still running when the server stops.

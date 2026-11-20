@@ -21,6 +21,39 @@ the run stays open. Waiting for terminal confirmation is deliberate. `idle-diff`
 split in `KNOWN` as `intermittent`; a gate either side misses still fails it. Whether to
 match T3 is open.
 
+## Issues (2026-11-20)
+
+GitHub issues are served: 11 `issues.*` methods (`list`, `detail`, `comments`, `templates`,
+`candidates`, `create`, `comment`, `update`, `setState`, `react`, `linkedThreads`) and 8 `/mcp`
+tools (`list_issues`, `read_issue`, `create_issue`, `comment_on_issue`, `set_issue_state`,
+`link_issue`, `unlink_issue`, `list_thread_issues`). Before, all were unregistered and the
+engine refused `thread.issue.link`.
+
+- **The tracker** (`conn-source-control/src/pull_requests/issues.rs`, T3's
+  `GitHubIssueTracker` and `gitHubIssueJson`): search with T3's query, the detail with its
+  labels, assignees and closing references paged to the end, comments, create, comment,
+  update (refused when GitHub silently drops labels or assignees), state with close reasons,
+  reactions on the issue or one of its comments, candidates, templates.
+- **The service** (`conn-server/src/methods/pull_requests/issues.rs`, T3's `IssueService`): a
+  project's issues live in its GitHub repository; another repository on the host is read
+  through it, read-only. Listing reads each scope once and pages per scope.
+- **Links** (`conn-engine`): `thread.issue.link` and `thread.issue.unlink` as T3's decider,
+  `thread.issue-synced` with the whole thread, `issues` in the shell row when present.
+- **Proof:** `gen-pr-cases.mjs` records T3's `GitHubIssueTracker` (22 cases: search queries,
+  paging, missing issues, every write and refusal) on an in-memory GitHub;
+  `issue_tracker_matches_t3s_recorded_http_requests` replays them: results, failures and every
+  request equal. `client-check`: links, a second spelling of one key, an unlink, through the
+  client's reducers. `parity.mjs`: the tools' refusals outside a thread. The Effect client
+  decodes all 11 methods.
+- **Not built:** standalone trackers (Linear) and `issueTrackers.list/connect/bindProject`;
+  YAML issue forms in `templates` (`blank_issues_enabled: false` in `config.yml` is read);
+  issue URLs are read only in GitHub's canonical `/<owner>/<repo>/issues/<n>` form.
+- **Known differences (review, 2026-11-20):** a project on a GitHub Enterprise host is
+  classified by its remote's host name, so its issue URLs are refused; `link_issue` checks the
+  caller's limits once, not again under the target's lock; `issues.linkedThreads` reads active
+  and archived threads in two snapshots, so a thread archived between them can show twice; a
+  missing `gh` reads as signed out.
+
 ## `fill_credential` (2026-11-20)
 
 Agents can fill a saved test login into a sign-in form in their browser tab:

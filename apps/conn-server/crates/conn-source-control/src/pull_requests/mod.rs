@@ -14,6 +14,7 @@ mod activity;
 pub mod checks;
 mod detail;
 pub mod diff;
+pub mod issues;
 pub mod link_sync;
 pub mod listing;
 pub mod merge_message;

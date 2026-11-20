@@ -1149,8 +1149,11 @@ impl Tx<'_> {
             let deleted = event_type == "thread.deleted";
             // A host sync (link snapshot, branch pull request, watch read) keeps the thread's
             // `updatedAt`, as T3's deciders do; the sidebar must not move the thread.
-            keeps_activity = event_type == "thread.pull-request-synced"
-                && payload["updatedAt"].is_string()
+            // An issue link that was already there changes nothing either.
+            keeps_activity = matches!(
+                event_type,
+                "thread.pull-request-synced" | "thread.issue-synced"
+            ) && payload["updatedAt"].is_string()
                 && self
                     .thread(&thread_id)?
                     .is_some_and(|old| old["updatedAt"] == payload["updatedAt"]);

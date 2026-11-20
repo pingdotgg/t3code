@@ -282,7 +282,10 @@ impl Cx<'_> {
             | "read_pull_request_guide"
             | "pull_request_read"
             | "pull_request_list"
-            | "ci_logs" => true,
+            | "ci_logs"
+            | "list_issues"
+            | "read_issue"
+            | "list_thread_issues" => true,
             _ => false,
         };
         if reads {

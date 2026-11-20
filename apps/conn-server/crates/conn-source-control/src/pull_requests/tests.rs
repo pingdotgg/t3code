@@ -1341,3 +1341,108 @@ async fn run_actions_and_ci_match_t3s_recorded_http_requests() {
         assert_eq!(actual, expected, "T3 API trace for {method} {input}");
     }
 }
+
+/// T3's `GitHubIssueTracker` traces (`tools/pr-action-recordings.mjs`), replayed on the same
+/// answers: results, failures and every request in order.
+#[tokio::test]
+async fn issue_tracker_matches_t3s_recorded_http_requests() {
+    let cases: Vec<Value> =
+        serde_json::from_str(include_str!("issue-cases.json")).expect("T3 recordings");
+    for case in cases {
+        let responses = case["responses"].clone();
+        let server = crate::http::fake::serve(move |request| {
+            let body: Value = serde_json::from_str(&request.body).unwrap_or(Value::Null);
+            let operation = text(&body, "query")
+                .split_once(' ')
+                .and_then(|(_, rest)| rest.split(['(', '{']).next())
+                .map(str::to_owned);
+            let key = match (request.path.ends_with("/graphql"), &operation) {
+                (true, Some(name)) => format!("graphql {name}"),
+                _ => format!("{} {}", request.method, request.path),
+            };
+            let answer = responses.get(&key).cloned().unwrap_or_else(|| {
+                if operation.is_some() {
+                    json!({"data": {}})
+                } else {
+                    json!({"status": 200, "body": {}})
+                }
+            });
+            let status = answer["status"].as_u64().unwrap_or(200) as u16;
+            let body = answer
+                .get("body")
+                .map_or_else(|| answer.to_string(), Value::to_string);
+            (status, body)
+        })
+        .await;
+        let stubs = StubDir::new("issue-tracker");
+        stubs.executable("gh", &[], "printf '%s\\n' fake-pr-token");
+        let client = connect(&stubs, &server.base).await;
+        let input = &case["input"];
+        let scope = text(input, "scope");
+        let key = text(input, "key");
+        let method = text(&case, "method");
+        let result: Result<Value, super::issues::TrackerError> = match method {
+            "listIssues" => client.list_issues(input, input["viewer"].as_str()).await,
+            "getIssue" => client.get_issue(scope, key).await,
+            "getComments" => {
+                client
+                    .issue_comments_page(scope, key, &input["cursor"])
+                    .await
+            }
+            "create" => client.create_issue(scope, input).await,
+            "comment" => client
+                .comment_on_issue(scope, key, &input["body"])
+                .await
+                .map(|()| Value::Null),
+            "update" => client
+                .update_issue(scope, key, input)
+                .await
+                .map(|()| Value::Null),
+            "setState" => client
+                .set_issue_state(scope, key, text(input, "state"))
+                .await
+                .map(|()| Value::Null),
+            "setReaction" => client
+                .react_to_issue(scope, key, input)
+                .await
+                .map(|()| Value::Null),
+            "listCandidates" => client.issue_candidate_list(scope).await,
+            "listTemplates" => client.issue_template_list(scope).await,
+            "getViewer" => client.issue_viewer().await.map(Value::from),
+            other => panic!("unknown recorded method {other}"),
+        };
+        match case.get("error") {
+            Some(expected) => {
+                let error = result.expect_err("T3 failed this case");
+                assert_eq!(
+                    json!({"reason": error.reason, "detail": error.detail}),
+                    *expected,
+                    "T3 error for {method} {input}"
+                );
+            }
+            None => assert_eq!(
+                result.expect("T3 succeeded"),
+                case["result"],
+                "T3 result for {method} {input}"
+            ),
+        }
+        let actual: Vec<Value> = server
+            .requests
+            .lock()
+            .expect("requests")
+            .iter()
+            .map(|r| {
+                json!({"method": r.method, "path": r.path, "body": if r.body.is_empty() {
+                    Value::Null
+                } else {
+                    serde_json::from_str::<Value>(&r.body).expect("JSON")
+                }})
+            })
+            .collect();
+        assert_eq!(
+            json!(actual),
+            case["requests"],
+            "T3 API trace for {method} {input}"
+        );
+    }
+}

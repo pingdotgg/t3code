@@ -95,3 +95,11 @@ device_list
 device_open
 device_screenshot
 device_close
+list_issues
+read_issue
+create_issue
+comment_on_issue
+set_issue_state
+link_issue
+unlink_issue
+list_thread_issues

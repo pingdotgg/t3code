@@ -1319,7 +1319,7 @@ fn every_contract_command_is_handled_or_refused_with_a_reason() {
             );
         }
     }
-    assert_eq!(handled, 47);
+    assert_eq!(handled, 49);
     assert_eq!(conn_contract::COMMAND_TYPES.len(), 58);
 }
 

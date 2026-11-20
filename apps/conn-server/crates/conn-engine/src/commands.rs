@@ -153,6 +153,7 @@ pub(crate) fn handler(command_type: &str) -> Option<Handler> {
         "thread.tag.set" => thread_tag_set,
         "thread.mark-unread" => thread_mark_unread,
         "thread.pull-request.link" => thread_pull_request_link,
+        "thread.issue.link" | "thread.issue.unlink" => thread_issue_link,
         "thread.pull-request.unlink" => thread_pull_request_unlink,
         "thread.pull-request.watch" => thread_pull_request_watch,
         "thread.pull-request-link.sync" => thread_pull_request_link_sync,
@@ -184,9 +185,6 @@ pub(crate) fn refusal(command_type: &str) -> &'static str {
         }
         "notification.delivery.accept" => {
             "Conn Server does not deliver background notifications yet."
-        }
-        "thread.issue.link" | "thread.issue.unlink" => {
-            "Conn Server does not link issues to threads yet."
         }
         "subagent.stop" => {
             "Conn Server cannot stop a single subagent yet; stop the thread instead."
@@ -2451,6 +2449,58 @@ fn thread_pull_request_link(tx: &mut Tx<'_>, command: Value) -> Outcome {
     tx.append(
         Draft::new(&thread_id, "thread.pull-request-synced", updated).command(cid.as_deref()),
     )?;
+    Ok(vec![])
+}
+
+/// `threadIssueKeyOf`: tracker, host and scope compared trimmed and in lower case, key trimmed.
+fn issue_key(link: &Value) -> (String, String, String, String) {
+    let text = |key: &str| link[key].as_str().unwrap_or_default().trim().to_owned();
+    (
+        link["tracker"].as_str().unwrap_or_default().to_owned(),
+        text("host").to_lowercase(),
+        text("scope").to_lowercase(),
+        text("key"),
+    )
+}
+
+/// `thread.issue.link` and `thread.issue.unlink`: T3's decider over the thread's `issues`;
+/// `thread.issue-synced` with the thread either way, as T3 emits it.
+fn thread_issue_link(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
+    let mut thread = live_thread(tx, &thread_id)?;
+    let now = tx.now().to_owned();
+    let mut links = thread["issues"].as_array().cloned().unwrap_or_default();
+    let key = issue_key(&command);
+    let existing = links.iter().position(|link| issue_key(link) == key);
+    let changed = match (command["type"].as_str(), existing) {
+        (Some("thread.issue.unlink"), Some(index)) => {
+            links.remove(index);
+            true
+        }
+        (Some("thread.issue.link"), None) => {
+            let link = json!({
+                "tracker": command["tracker"],
+                "host": key.1,
+                "scope": command["scope"].as_str().unwrap_or_default().trim(),
+                "key": key.3,
+                "projectId": command["projectId"],
+                "url": command["url"],
+                "displayKey": command["displayKey"],
+                "title": command["title"],
+                "source": command["source"],
+                "linkedAt": now,
+            });
+            links.push(link);
+            true
+        }
+        _ => false,
+    };
+    if changed && let Some(map) = thread.as_object_mut() {
+        map.insert("issues".into(), json!(links));
+        map.insert("updatedAt".into(), json!(now));
+    }
+    let cid = command["commandId"].as_str().map(str::to_owned);
+    tx.append(Draft::new(&thread_id, "thread.issue-synced", thread).command(cid.as_deref()))?;
     Ok(vec![])
 }
 

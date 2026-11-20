@@ -185,3 +185,92 @@ export async function recordRunActions() {
   }
   return out;
 }
+
+// T3's `GitHubIssueTracker` on the same in-memory host: each case answers GraphQL operations by
+// name and REST requests by `METHOD /path`, and records the requests and the result.
+export async function recordIssueTracker() {
+  const Tracker = await moduleOf("GitHubIssueTracker");
+  const issue = (fields = {}) => ({ id: "I7", number: 7, title: "Broken chip", url: "https://github.com/a/b/issues/7",
+    state: "OPEN", stateReason: null, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-02T00:00:00Z", closedAt: null,
+    author: { __typename: "User", login: "nick", name: "Nick", avatarUrl: "https://avatars.example/nick" }, body: "Body",
+    assignees: { nodes: [{ login: "ann", name: null, avatarUrl: "https://avatars.example/ann" }], pageInfo: { hasNextPage: false, endCursor: null } },
+    labels: { nodes: [{ name: "bug", color: "d73a4a" }], pageInfo: { hasNextPage: false, endCursor: null } },
+    comments: { totalCount: 1, nodes: [{ id: "C1", author: { __typename: "User", login: "ann", name: null, avatarUrl: "https://avatars.example/ann" }, body: "Same here", createdAt: "2026-11-02T00:00:00Z", url: "https://github.com/a/b/issues/7#c1", reactionGroups: [{ content: "THUMBS_UP", viewerHasReacted: true, reactors: { totalCount: 2, nodes: [{ __typename: "User", login: "nick" }, { __typename: "User", login: "ann" }] } }] }], pageInfo: { hasPreviousPage: true, startCursor: "older" } },
+    reactionGroups: [], viewerCanUpdate: true, viewerCanClose: true, viewerCanReopen: false,
+    closedByPullRequestsReferences: { nodes: [{ number: 9, title: "Fix", url: "https://github.com/a/b/pull/9", state: "OPEN", isDraft: true, repository: { nameWithOwner: "a/b" } }], pageInfo: { hasNextPage: false, endCursor: null } },
+    timelineItems: { nodes: [
+      { __typename: "LabeledEvent", id: "E1", createdAt: "2026-11-01T01:00:00Z", actor: { __typename: "User", login: "nick", avatarUrl: "https://avatars.example/nick" }, label: { name: "bug" } },
+      { __typename: "CrossReferencedEvent", id: "E2", createdAt: "2026-11-01T02:00:00Z", actor: null, source: { __typename: "PullRequest", number: 11, title: "Other", url: "https://github.com/a/b/pull/11", state: "MERGED", isDraft: false, repository: { nameWithOwner: "a/b" } } },
+      { __typename: "MilestonedEvent", id: "E3", createdAt: "2026-11-01T03:00:00Z" },
+    ] },
+    ...fields });
+  const detail = (fields) => ({ data: { viewer: { login: "nick" }, repository: { viewerPermission: "TRIAGE", issue: issue(fields) } } });
+  const cases = [
+    { method: "listIssues", input: { scope: "a/b", state: "open", involvement: "all", limit: 30, sort: "updated", query: 'chip "quoted" \\\\ x', labels: ["bug", "good first"], assignee: "ann" }, responses: { "graphql IssueSearch": { data: { search: { nodes: [{ __typename: "Issue", ...issue() }, { __typename: "PullRequest" }], pageInfo: { hasNextPage: true, endCursor: "next" } } } } } },
+    { method: "listIssues", input: { scope: "a/b", state: "closed", involvement: "assigned", viewer: "nick", limit: 500, sort: "created", cursor: "c1" }, responses: { "graphql IssueSearch": { data: { search: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } } } } },
+    { method: "listIssues", input: { scope: "not a repo", state: "open", involvement: "all", limit: 1, sort: "updated" }, responses: {} },
+    { method: "getIssue", input: { scope: "a/b", key: "7" }, responses: { "graphql IssueDetail": detail() } },
+    { method: "getIssue", input: { scope: "a/b", key: "7" }, responses: {
+      "graphql IssueDetail": detail({ labels: { nodes: [{ name: "bug", color: "eeeeee" }], pageInfo: { hasNextPage: true, endCursor: "L1" } } }),
+      "graphql IssueCollections": { data: { repository: { issue: { labels: { nodes: [{ name: "ui", color: "fff" }], pageInfo: { hasNextPage: false, endCursor: null } } } } } },
+    } },
+    { method: "getIssue", input: { scope: "a/b", key: "07" }, responses: {} },
+    { method: "getIssue", input: { scope: "a/b", key: "7" }, responses: { "graphql IssueDetail": { data: { viewer: { login: "nick" }, repository: { viewerPermission: "READ", issue: null } } } } },
+    { method: "getComments", input: { scope: "a/b", key: "7", cursor: "older" }, responses: { "graphql IssueComments": { data: { viewer: { login: "nick" }, repository: { issue: { comments: issue().comments } } } } } },
+    { method: "create", input: { scope: "a/b", title: "New", body: "Body", labels: ["bug"], assignees: [] }, responses: { "POST /repos/a/b/issues": { status: 201, body: { number: 12, html_url: "https://github.com/a/b/issues/12" } } } },
+    { method: "comment", input: { scope: "a/b", key: "7", body: "Hi" }, responses: { "graphql IssueNodeId": { data: { repository: { issue: { id: "I7", state: "OPEN", stateReason: null } } } } } },
+    { method: "comment", input: { scope: "a/b", key: "9", body: "Hi" }, responses: { "graphql IssueNodeId": { data: { repository: { issue: null } } } } },
+    { method: "update", input: { scope: "a/b", key: "7", title: "T", labels: ["Bug", "bug"] }, responses: { "graphql IssueNodeId": { data: { repository: { issue: { id: "I7", state: "OPEN", stateReason: null } } } }, "PATCH /repos/a/b/issues/7": { status: 200, body: { labels: [{ name: "bug" }], assignees: [] } } } },
+    { method: "update", input: { scope: "a/b", key: "7", assignees: ["ann"] }, responses: { "graphql IssueNodeId": { data: { repository: { issue: { id: "I7", state: "OPEN", stateReason: null } } } }, "PATCH /repos/a/b/issues/7": { status: 200, body: { labels: [], assignees: [] } } } },
+    { method: "setState", input: { scope: "a/b", key: "7", state: "Not planned" }, responses: { "graphql IssueNodeId": { data: { repository: { issue: { id: "I7", state: "OPEN", stateReason: null } } } } } },
+    { method: "setState", input: { scope: "a/b", key: "7", state: "Open" }, responses: { "graphql IssueNodeId": { data: { repository: { issue: { id: "I7", state: "CLOSED", stateReason: "COMPLETED" } } } } } },
+    { method: "setState", input: { scope: "a/b", key: "7", state: "Duplicate" }, responses: { "graphql IssueNodeId": { data: { repository: { issue: { id: "I7", state: "CLOSED", stateReason: "COMPLETED" } } } } } },
+    { method: "setState", input: { scope: "a/b", key: "7", state: "Wontfix" }, responses: { "graphql IssueNodeId": { data: { repository: { issue: { id: "I7", state: "OPEN", stateReason: null } } } } } },
+    { method: "setReaction", input: { scope: "a/b", key: "7", content: "heart", reacted: true }, responses: { "graphql IssueNodeId": { data: { repository: { issue: { id: "I7", state: "OPEN", stateReason: null } } } }, "graphql AddReaction": { data: { addReaction: { reaction: { content: "HEART" } } } } } },
+    { method: "setReaction", input: { scope: "a/b", key: "7", subjectId: "C1", content: "eyes", reacted: false }, responses: { "graphql IssueCommentScope": { data: { repository: { issue: { id: "I7" } }, node: { __typename: "IssueComment", issue: { id: "I7" } } } }, "graphql RemoveReaction": { data: { removeReaction: { reaction: { content: "EYES" } } } } } },
+    { method: "setReaction", input: { scope: "a/b", key: "7", subjectId: "C9", content: "eyes", reacted: true }, responses: { "graphql IssueCommentScope": { data: { repository: { issue: { id: "I7" } }, node: { __typename: "IssueComment", issue: { id: "I8" } } } } } },
+    { method: "listTemplates", input: { scope: "a/b" }, responses: { "graphql IssueTemplates": { data: { repository: { templateDirectory: null, issueTemplates: [{ filename: "bug.md", name: "Bug", about: null, title: "[bug] ", body: "Steps", assignees: { nodes: [{ login: "ann" }] }, labels: { nodes: [{ name: "bug" }] } }, { filename: " ", name: "Blank", about: "x", title: null, body: null, assignees: { nodes: [] }, labels: { nodes: [] } }] } } } } },
+    { method: "listTemplates", input: { scope: "a/b" }, responses: { "graphql IssueTemplates": { data: { repository: { templateDirectory: { __typename: "Tree", entries: [{ name: "bug.md", object: { __typename: "Blob", text: "---", isTruncated: false } }, { name: "config.yml", object: { __typename: "Blob", text: "blank_issues_enabled: false\ncontact_links: []\n", isTruncated: false } }] }, issueTemplates: [] } } } } },
+    { method: "listTemplates", input: { scope: "a/b" }, responses: { "graphql IssueTemplates": { data: { repository: null } } } },
+    { method: "listTemplates", input: { scope: "a/b" }, responses: { "graphql IssueTemplates": { data: { repository: { templateDirectory: { __typename: "Tree", entries: [{ name: "config.yaml", object: { __typename: "Blob", text: "\"blank_issues_enabled\": false # no blanks\n", isTruncated: false } }] }, issueTemplates: [] } } } } },
+    { method: "listTemplates", input: { scope: "a/b" }, responses: { "graphql IssueTemplates": { data: { repository: { templateDirectory: { __typename: "Tree", entries: [{ name: "config.yml", object: { __typename: "Blob", text: null, isTruncated: true } }] }, issueTemplates: [] } } } } },
+    { method: "listTemplates", input: { scope: "a/b" }, responses: { "graphql IssueTemplates": { data: { repository: { templateDirectory: { __typename: "Tree", entries: [{ name: "Form.YML", object: { __typename: "Tree" } }] }, issueTemplates: [] } } } } },
+    { method: "listCandidates", input: { scope: "a/b" }, responses: { "graphql IssueCandidates": { data: { repository: { labels: { nodes: [{ name: "bug", color: "d73a4a", description: null }], pageInfo: { hasNextPage: true } }, assignableUsers: { nodes: [{ login: "ann", name: "Ann", avatarUrl: "https://avatars.example/ann" }, { login: " ", name: null, avatarUrl: "https://avatars.example/x" }], pageInfo: { hasNextPage: false } } } } } } },
+    { method: "getViewer", input: {}, responses: { "graphql IssueViewer": { data: { viewer: { login: "nick" } } } } },
+  ];
+  const out = [];
+  for (const entry of cases) {
+    const requests = [];
+    const http = Layer.succeed(HttpClient.HttpClient, HttpClient.make((request) => Effect.sync(() => {
+      const url = new URL(request.url);
+      const path = url.pathname + url.search;
+      const body = request.body._tag === "Uint8Array" ? JSON.parse(new TextDecoder().decode(request.body.body)) : null;
+      requests.push({ method: request.method, path, body });
+      const operation = path.endsWith("/graphql") ? /^(?:query|mutation) (\w+)/.exec(body.query)?.[1] : undefined;
+      const key = operation === undefined ? `${request.method} ${path}` : `graphql ${operation}`;
+      const answer = entry.responses[key] ?? (operation === undefined ? { status: 200, body: {} } : { data: {} });
+      return HttpClientResponse.fromWeb(request, new Response(JSON.stringify(answer.body ?? answer), { status: answer.status ?? 200, headers: { "content-type": "application/json" } }));
+    })));
+    const credentials = Layer.succeed(Credentials.GitHubCredentials, {
+      get: (host) => Effect.succeed({ host, token: Redacted.make("fake-pr-token"), source: "gh", fingerprint: "fixture" }),
+      saved: () => Effect.succeedNone, fingerprint: () => Effect.succeed("fixture"), invalidate: () => Effect.void,
+    });
+    const signedOut = Layer.mock(App.GitHubAppSignIn)({ enabled: false, token: () => Effect.succeedNone, invalidate: () => Effect.void });
+    const rest = Rest.layer.pipe(
+      Layer.provideMerge(Layer.mergeAll(credentials, http, signedOut)),
+      Layer.provideMerge(Quota.layer), Layer.provideMerge(Limits.layer),
+    );
+    const layer = Access.layer.pipe(
+      Layer.provideMerge(rest), Layer.provide(Host.layer()), Layer.provide(NodeServices.layer),
+    );
+    const outcome = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const tracker = yield* Tracker.make;
+      return yield* Effect.result(tracker[entry.method]({ cwd: "/fixture", host: "github.com", ...entry.input }));
+    }).pipe(Effect.provide(layer))));
+    out.push({
+      ...entry, requests,
+      ...(outcome._tag === "Success" ? { result: outcome.success ?? null } : { error: { reason: outcome.failure.reason, detail: outcome.failure.detail }, ...(process.env.ISSUE_DEBUG ? { cause: String(outcome.failure.cause?.reason?.cause?.message ?? outcome.failure.cause?.reason?.message ?? outcome.failure.cause?.message ?? JSON.stringify(Object.keys(outcome.failure.cause ?? {}))) } : {}) }),
+    });
+  }
+  return out;
+}
