@@ -77,6 +77,12 @@ describe("liveWorkEntryLabel for command executions without a command string", (
       expected: "Failed command",
     },
     {
+      status: "failed" as const,
+      active: false,
+      toolTitle: "Run command",
+      expected: "Failed command",
+    },
+    {
       status: "declined" as const,
       active: false,
       toolTitle: "Ran command",
