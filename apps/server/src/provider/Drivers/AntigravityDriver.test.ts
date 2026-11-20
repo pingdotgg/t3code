@@ -703,4 +703,54 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         expect(yield* fs.exists(legacyRoot)).toBe(false);
       }),
   );
+
+  it.effect.skipIf(windowsHost)(
+    "reports the stored Google email only for personal OAuth instances",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const writeStoredToken = (profileDirectory: string, email: string) =>
+          Effect.gen(function* () {
+            const acpDir = path.join(profileDirectory, "antigravity-acp");
+            yield* fs.makeDirectory(acpDir, { recursive: true });
+            yield* fs.writeFileString(
+              path.join(acpDir, "antigravity-oauth-token"),
+              JSON.stringify({ id_token_email: email }),
+            );
+          });
+
+        const personal = yield* makeHarness({ config: { authMethod: "oauth-personal" } });
+        yield* writeStoredToken(personal.profileDirectory, "personal@example.com");
+        expect((yield* personal.instance.snapshot.refresh).auth).toMatchObject({
+          status: "unknown",
+          type: "oauth-personal",
+          email: "personal@example.com",
+        });
+        yield* personal.refresh();
+        expect((yield* personal.instance.snapshot.getSnapshot).auth).toMatchObject({
+          status: "authenticated",
+          type: "oauth-personal",
+          label: "Google account",
+          email: "personal@example.com",
+        });
+        yield* personal.assertClosed;
+
+        const enterprise = yield* makeHarness({
+          config: {
+            authMethod: "oauth-business",
+            gcpProject: "demo-project",
+            gcpLocation: "us-central1",
+          },
+        });
+        yield* writeStoredToken(enterprise.profileDirectory, "ignored@example.com");
+        const enterpriseAuth = (yield* enterprise.instance.snapshot.refresh).auth;
+        expect(enterpriseAuth).toMatchObject({
+          status: "unknown",
+          type: "oauth-business",
+        });
+        expect(enterpriseAuth.email).toBeUndefined();
+        yield* enterprise.assertClosed;
+      }),
+  );
 });
