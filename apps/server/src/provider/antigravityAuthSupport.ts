@@ -245,7 +245,7 @@ class AntigravitySkillLinkError extends Schema.TaggedError<AntigravitySkillLinkE
   }
 }
 
-/** Private GEMINI_HOME isolates credentials/hooks/MCP; link global skills from the real ~/.gemini. */
+/** Private GEMINI_HOME isolates credentials/hooks/MCP; link global skills and rules from the real ~/.gemini. */
 const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(function* (input: {
   readonly profileDirectory: string;
   readonly userHome: string;
@@ -296,6 +296,37 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
     }).pipe(
       Effect.catch((error) =>
         Effect.logWarning("Antigravity user skills are not linked into the profile.", {
+          link,
+          target,
+          error,
+        }),
+      ),
+    );
+  }
+  // agy reads global rules from GEMINI_HOME's root. Only a link T3 made there is replaced.
+  for (const name of ["GEMINI.md", "AGENTS.md"]) {
+    const link = path.join(input.profileDirectory, name);
+    const target = path.join(input.userHome, ".gemini", name);
+    yield* Effect.gen(function* () {
+      const existing = yield* fs.readLink(link).pipe(
+        Effect.map((value): string | undefined => path.resolve(path.dirname(link), value)),
+        Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined),
+        Effect.orElseSucceed(() => null),
+      );
+      if (existing !== undefined && existing !== target) return;
+      const targetExists = yield* fs.exists(target);
+      if (existing === target) {
+        if (!targetExists) yield* fs.remove(link);
+        return;
+      }
+      if (!targetExists) return;
+      yield* Effect.tryPromise({
+        try: () => NodeFSP.symlink(target, link, "file"),
+        catch: (cause) => new AntigravitySkillLinkError({ link, cause }),
+      });
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Antigravity user rules are not linked into the profile.", {
           link,
           target,
           error,
