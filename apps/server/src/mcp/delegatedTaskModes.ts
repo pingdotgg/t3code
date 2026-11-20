@@ -9,6 +9,7 @@ import {
   type ProviderOptionSelection,
   type RuntimeMode,
 } from "@t3tools/contracts";
+import { ACP_SESSION_MODE_OPTION_ID } from "@t3tools/provider-acp/server/sessionConfig";
 import * as Effect from "effect/Effect";
 
 /** How much a runtime mode allows, narrowest first. */
@@ -103,9 +104,12 @@ export function refuseAgentModePick(input: {
   if (input.callerRuntimeMode === "full-access") return Effect.void;
   const pick = input.picked?.find(
     (selection) =>
-      input.descriptors.some(
-        (descriptor) => descriptor.id === selection.id && descriptor.role === "mode",
-      ) && !input.held?.some((held) => held.id === selection.id && held.value === selection.value),
+      // The adapter applies the synthetic mode id whether or not the probe advertised it.
+      (selection.id === ACP_SESSION_MODE_OPTION_ID ||
+        input.descriptors.some(
+          (descriptor) => descriptor.id === selection.id && descriptor.role === "mode",
+        )) &&
+      !input.held?.some((held) => held.id === selection.id && held.value === selection.value),
   );
   return pick === undefined
     ? Effect.void

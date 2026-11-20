@@ -476,7 +476,6 @@ it.effect("only a full-access client may pick the agent's own mode at launch", (
                           { id: "yolo", label: "YOLO" },
                         ],
                         currentValue: "default",
-                        role: "mode",
                       },
                     ],
                   },
