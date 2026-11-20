@@ -8,6 +8,9 @@ import {
   splitMarkdownLinkSearchAndHash,
 } from "@t3tools/shared/markdownLinks";
 
+/** Callers refuse larger files before loading them; parsing runs on the main thread. */
+export const MAX_MODEL_BYTES = 128 * 1024 * 1024;
+
 export type Vec3 = readonly [number, number, number];
 
 /** A saved orbit camera: where it sits and the point it orbits, in scene coordinates. */
@@ -47,7 +50,8 @@ export function modelViewFromHref(href: string): ModelCameraView | null {
   return modelAnnotationFileTarget(href)?.view ?? null;
 }
 
-function parseModelView(hash: string): ModelCameraView | null {
+/** Reads a camera from a `#view=` fragment, as `formatModelViewHash` writes it. */
+export function modelViewFromHash(hash: string): ModelCameraView | null {
   hash = safeDecodeURIComponent(hash);
   if (!hash.startsWith(VIEW_HASH_PREFIX)) return null;
   const parts = hash.slice(VIEW_HASH_PREFIX.length).split(",");
@@ -58,6 +62,49 @@ function parseModelView(hash: string): ModelCameraView | null {
   // A camera on its own target has no direction to look in.
   if (px === tx && py === ty && pz === tz) return null;
   return { position: [px, py, pz], target: [tx, ty, tz] };
+}
+
+/** The camera's compass direction around its target and its height above the ground, in degrees. */
+export function modelCameraStatus(view: ModelCameraView) {
+  const [x, y, z] = view.position.map((value, axis) => value - view.target[axis]!) as [
+    number,
+    number,
+    number,
+  ];
+  const radius = Math.hypot(x, y, z);
+  const polar = radius === 0 ? 0 : Math.acos(Math.min(1, Math.max(-1, y / radius)));
+  const degrees = (radians: number) => Math.round((radians * 180) / Math.PI);
+  return { azimuth: degrees(Math.atan2(x, z)), elevation: degrees(Math.PI / 2 - polar) };
+}
+
+/** What a client keeps per model between visits, so a reload of a changed file keeps it. */
+export interface ModelPreviewMemory {
+  readonly fingerprint: string;
+  readonly notes: ReadonlyArray<ModelNote>;
+  readonly view: ModelCameraView;
+  readonly wireframe: boolean;
+  /** The annotated view captured before the geometry changed under stale notes. */
+  readonly capture: { readonly screenshot: ModelCapture; readonly view: ModelCameraView } | null;
+}
+
+// Bounds what a long session keeps; the oldest model drops out first.
+const MAX_REMEMBERED_MODELS = 20;
+
+/** Stores one model's memory as the newest entry, dropping the oldest past the bound. */
+export function rememberModelPreview(
+  memory: Readonly<Record<string, ModelPreviewMemory>>,
+  key: string,
+  entry: ModelPreviewMemory,
+): Readonly<Record<string, ModelPreviewMemory>> {
+  const { [key]: _previous, ...rest } = memory;
+  const keys = Object.keys(rest);
+  const kept =
+    keys.length < MAX_REMEMBERED_MODELS
+      ? rest
+      : Object.fromEntries(
+          keys.slice(1 - MAX_REMEMBERED_MODELS).map((name) => [name, rest[name]!]),
+        );
+  return { ...kept, [key]: entry };
 }
 
 /**
@@ -71,6 +118,30 @@ export function reconcileModelNotes(
   if (!saved) return [];
   if (saved.fingerprint === fingerprint) return saved.notes;
   return saved.notes.map((note) => (note.stale ? note : { ...note, stale: true }));
+}
+
+const STALE_NOTE_PLACE =
+  "placed on an earlier version of the model, so its point may no longer match";
+const EARLIER_SCREENSHOT_LINE = "The screenshot shows the model before it last changed.";
+const NOTE_LINE = /^\d+\. (.*) \((surface point [-\d., e+]+|[^()]*earlier version[^()]*)\)$/;
+
+/**
+ * The numbered notes a model annotation's comment holds, as `modelAnnotationPayload` wrote them,
+ * so a client can list them. Null when the comment is not a model annotation's.
+ */
+export function modelAnnotationNotes(comment: string): {
+  readonly notes: ReadonlyArray<{ readonly text: string; readonly stale: boolean }>;
+  /** The screenshot shows the model before its geometry last changed. */
+  readonly earlier: boolean;
+} | null {
+  const lines = comment.split("\n");
+  const earlier = lines.at(-1) === EARLIER_SCREENSHOT_LINE;
+  const notes = (earlier ? lines.slice(0, -1) : lines).map((line) => {
+    const match = NOTE_LINE.exec(line);
+    return match ? { text: match[1]!, stale: match[2] === STALE_NOTE_PLACE } : null;
+  });
+  if (notes.length === 0 || notes.some((note) => note === null)) return null;
+  return { notes: notes.filter((note) => note !== null), earlier };
 }
 
 // Attachments have no workspace path to reopen, so their notes name the file under a scheme
@@ -99,7 +170,7 @@ export function modelAnnotationPayload(input: {
   const notes = input.notes.map((note, index) => {
     const text = note.text.trim().replace(/\s*\n\s*/g, " ");
     const where = note.stale
-      ? "placed on an earlier version of the model, so its point may no longer match"
+      ? STALE_NOTE_PLACE
       : `surface point ${note.point.map(formatNumber).join(", ")}`;
     return `${index + 1}. ${text} (${where})`;
   });
@@ -110,10 +181,7 @@ export function modelAnnotationPayload(input: {
         ? ATTACHMENT_URL_PREFIX + input.name
         : encodeMarkdownLinkDestination(input.linkPath) + formatModelViewHash(input.view),
     pageTitle: input.name,
-    comment: [
-      ...notes,
-      ...(earlier ? ["The screenshot shows the model before it last changed."] : []),
-    ].join("\n"),
+    comment: [...notes, ...(earlier ? [EARLIER_SCREENSHOT_LINE] : [])].join("\n"),
     elements: [],
     regions: [],
     strokes: [],
@@ -128,7 +196,7 @@ export function modelAnnotationFileTarget(
   pageUrl: string,
 ): { readonly path: string; readonly view: ModelCameraView } | null {
   const href = normalizeMarkdownLinkDestination(pageUrl);
-  const view = parseModelView(splitMarkdownLinkSearchAndHash(href).hash);
+  const view = modelViewFromHash(splitMarkdownLinkSearchAndHash(href).hash);
   const target = view ? parseMarkdownFileLink(href) : null;
   return target && view && modelPreviewKind({ name: target.path })
     ? { path: target.path, view }

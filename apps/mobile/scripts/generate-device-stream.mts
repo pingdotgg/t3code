@@ -5,8 +5,7 @@ import { build } from "vite-plus";
 
 const mobileRoot = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
 
-async function generateWebViewScript(feature: string, name: string) {
-  const stem = `${name.toLowerCase()}-stream`;
+async function generateWebViewScript(feature: string, stem: string, globalName: string) {
   const result = await build({
     configFile: false,
     logLevel: "silent",
@@ -16,7 +15,7 @@ async function generateWebViewScript(feature: string, name: string) {
       minify: true,
       lib: {
         entry: NodePath.join(mobileRoot, "src/features", feature, `${stem}.browser.ts`),
-        name: `T3${name}Stream`,
+        name: globalName,
         formats: ["iife"],
       },
     },
@@ -25,7 +24,7 @@ async function generateWebViewScript(feature: string, name: string) {
   const chunk = bundles
     .flatMap((bundle) => ("output" in bundle ? bundle.output : []))
     .find((output) => output.type === "chunk");
-  if (!chunk) throw new Error(`${name} build did not emit a script.`);
+  if (!chunk) throw new Error(`${stem} build did not emit a script.`);
   const root = NodePath.join(mobileRoot, ".generated", stem);
   await NodeFSP.mkdir(root, { recursive: true });
   for (const [file, contents] of [
@@ -38,5 +37,9 @@ async function generateWebViewScript(feature: string, name: string) {
   }
 }
 
-export const generateDeviceStreamScript = () => generateWebViewScript("devices", "Device");
-export const generatePreviewStreamScript = () => generateWebViewScript("browser", "Preview");
+export const generateDeviceStreamScript = () =>
+  generateWebViewScript("devices", "device-stream", "T3DeviceStream");
+export const generatePreviewStreamScript = () =>
+  generateWebViewScript("browser", "preview-stream", "T3PreviewStream");
+export const generateModelViewerScript = () =>
+  generateWebViewScript("files", "model-viewer", "T3ModelViewer");

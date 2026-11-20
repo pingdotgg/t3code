@@ -3,10 +3,15 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   formatModelViewHash,
   modelAnnotationFileTarget,
+  modelAnnotationNotes,
   modelAnnotationPayload,
+  modelCameraStatus,
+  modelViewFromHash,
   modelViewFromHref,
   reconcileModelNotes,
+  rememberModelPreview,
   type ModelNote,
+  type ModelPreviewMemory,
 } from "./annotations.ts";
 
 const view = { position: [120, 80.5, -40] as const, target: [0, 0.25, 0] as const };
@@ -24,6 +29,29 @@ describe("model camera links", () => {
     expect(formatModelViewHash(view)).toBe("#view=120,80.5,-40,0,0.25,0");
     expect(modelViewFromHref(`out/bracket.stl${formatModelViewHash(view)}`)).toEqual(view);
     expect(modelViewFromHref("out/bracket.stl#view=120%2C80.5%2C-40%2C0%2C0.25%2C0")).toEqual(view);
+    // A native route carries the fragment alone.
+    expect(modelViewFromHash(formatModelViewHash(view))).toEqual(view);
+  });
+
+  it.each([
+    [
+      { position: [0, 0, 10], target: [0, 0, 0] },
+      { azimuth: 0, elevation: 0 },
+    ],
+    [
+      { position: [11, 5, 1], target: [1, 5, 1] },
+      { azimuth: 90, elevation: 0 },
+    ],
+    [
+      { position: [2, 12, 3], target: [2, 2, 3] },
+      { azimuth: 0, elevation: 90 },
+    ],
+    [
+      { position: [-1, 1, 0], target: [0, 0, 0] },
+      { azimuth: -90, elevation: 45 },
+    ],
+  ] as const)("describes the camera %j as %j", (camera, status) => {
+    expect(modelCameraStatus(camera)).toEqual(status);
   });
 
   it.each([
@@ -46,6 +74,25 @@ describe("model notes after the geometry changes", () => {
     const notes = [note("a", "Widen")];
     expect(reconcileModelNotes({ fingerprint: "g1", notes }, "g1")).toBe(notes);
     expect(reconcileModelNotes(undefined, "g1")).toEqual([]);
+  });
+
+  it("keeps the most recently viewed models within its bound", () => {
+    const entry = (fingerprint: string): ModelPreviewMemory => ({
+      fingerprint,
+      notes: [],
+      view,
+      wireframe: false,
+      capture: null,
+    });
+    let memory: Readonly<Record<string, ModelPreviewMemory>> = {};
+    for (let index = 0; index < 21; index++) {
+      memory = rememberModelPreview(memory, `m${index}`, entry(`g${index}`));
+    }
+    memory = rememberModelPreview(memory, "m1", entry("g1b"));
+    expect(Object.keys(memory)).toHaveLength(20);
+    expect(memory.m0).toBeUndefined();
+    expect(Object.keys(memory).at(-1)).toBe("m1");
+    expect(memory.m1?.fingerprint).toBe("g1b");
   });
 
   it("marks every note stale instead of moving it onto changed geometry", () => {
@@ -115,6 +162,25 @@ describe("model notes as a chat annotation", () => {
         "The screenshot shows the model before it last changed.",
       ].join("\n"),
     );
+  });
+
+  it("lists the notes back from the comment it wrote", () => {
+    expect(
+      modelAnnotationNotes(
+        payload({
+          notes: [note("a", "Fillet (2 mm) here"), note("b", "Countersink", true)],
+          screenshot: { ...screenshot, earlier: true },
+        }).comment,
+      ),
+    ).toEqual({
+      notes: [
+        { text: "Fillet (2 mm) here", stale: false },
+        { text: "Countersink", stale: true },
+      ],
+      earlier: true,
+    });
+    expect(modelAnnotationNotes("Make the header bigger")).toBeNull();
+    expect(modelAnnotationNotes("")).toBeNull();
   });
 
   it.each([

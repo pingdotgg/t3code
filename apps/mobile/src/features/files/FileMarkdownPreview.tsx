@@ -1,4 +1,8 @@
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
+import {
+  formatModelViewHash,
+  modelViewFromHref,
+} from "@t3tools/client-runtime/model-preview/annotations";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { resolveMobileMarkdownMediaSource } from "../../lib/markdownMediaSource";
 import { getBrowseDirectoryPath } from "@t3tools/client-runtime/state/projects";
@@ -200,10 +204,13 @@ export function FileMarkdownPreview(props: {
     if (!media || media.kind === "file") {
       const fileLink = resolveMarkdownLinkPresentation(href);
       if (props.captured || fileLink.kind !== "file") return false;
+      const modelView = modelViewFromHref(href);
       const params = {
         environmentId: String(props.environmentId),
         path: fileRoutePathSegments(resolveWorkspaceFilePath(markdownDirectory, fileLink.path)),
         ...(fileLink.line ? { line: String(fileLink.line) } : {}),
+        // A 3D model link can carry a saved camera.
+        ...(modelView ? { view: formatModelViewHash(modelView) } : {}),
       };
       if (props.threadId) {
         navigation.navigate("ThreadFile", { ...params, threadId: String(props.threadId) });

@@ -1,5 +1,5 @@
 import * as Dialog from "../../components/ui/Dialog";
-import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   clampFileAttachmentUploadBytes,
@@ -7,6 +7,7 @@ import {
 } from "@t3tools/client-runtime/state/attachments";
 import { msg, useGT } from "gt-react-native";
 import { useRef, useState } from "react";
+import { modelPreviewKind } from "@t3tools/shared/filePreview";
 import { View } from "react-native";
 
 import { AppBar, type AppBarMenu } from "../../components/ui/AppBar";
@@ -23,6 +24,7 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { isZipFile, ZipArchiveView } from "./ZipArchiveView";
 import { AttachmentDocumentBody, nativeViewerKind } from "./AttachmentDocumentBody";
+import { ModelFilePreview, useModelViewerControls } from "./ModelFilePreview";
 
 export type AttachmentFileRouteParams = {
   readonly environmentId?: string;
@@ -62,7 +64,10 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     attachment: localAttachment,
   });
   const [nativeOpen, setNativeOpen] = useState(false);
-  const nativeKind = nativeViewerKind(document.kind);
+  const modelKind = modelPreviewKind(params);
+  const modelControls = useModelViewerControls();
+  // Models render in place; the native viewer is only for formats this app cannot show.
+  const nativeKind = modelKind ? null : nativeViewerKind(document.kind);
   const [nativeViewer, setNativeViewer] = useState<"pending" | "open" | "unavailable" | null>(
     nativeKind ? "pending" : null,
   );
@@ -111,6 +116,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
 
   const { content, renderedMode, activeMode, setRendered, share, sharing } = document;
   const menuActions = [
+    ...(modelKind ? modelControls.menuActions : []),
     renderedMode
       ? ({
           id: "preview",
@@ -226,11 +232,11 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
   const refresh = useRefreshAssetUrl(environmentId, resource);
   const capabilities = useEnvironmentServerConfig(environmentId)?.environment.capabilities;
 
+  const threadDraftKey =
+    environmentId && params.threadId
+      ? scopedThreadKey(environmentId, ThreadId.make(params.threadId))
+      : null;
   if (document.kind === "archive" && isZipFile(params) && !document.error) {
-    const threadDraftKey =
-      environmentId && params.threadId
-        ? scopedThreadKey(environmentId, ThreadId.make(params.threadId))
-        : null;
     return (
       <ZipArchiveView
         name={params.name}
@@ -256,18 +262,47 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
   return (
     <View className="flex-1 bg-sheet">
       <AppBar title={params.name} subtitle={subtitle} onBack={handleBack} menus={[fileMenu]} />
-      <AttachmentDocumentBody
-        document={document}
-        name={params.name}
-        environmentId={environmentId}
-        htmlRender={params.htmlRender === "1"}
-        nativeViewer={nativeViewer}
-        nativeError={nativeError}
-        onOpenNative={() => {
-          setNativeViewer((current) => (current === null ? null : "open"));
-          setNativeOpen(true);
-        }}
-      />
+      {modelKind && !document.error ? (
+        <ModelFilePreview
+          {...modelControls.viewer}
+          name={params.name}
+          format={modelKind}
+          uri={document.uri}
+          memoryKey={JSON.stringify(
+            draftKey
+              ? ["draft-attachment", params.attachmentId]
+              : ["attachment", environmentId, params.attachmentId],
+          )}
+          linkPath={null}
+          initialView={null}
+          // Notes go to the thread's chat composer, also from a question-answer draft.
+          draftKey={threadDraftKey ?? draftKey}
+          onSent={() => {
+            if (environmentId && params.threadId) {
+              navigation.dispatch(
+                StackActions.popTo("Thread", {
+                  environmentId: String(environmentId),
+                  threadId: params.threadId,
+                }),
+              );
+            } else handleBack();
+          }}
+          onRetry={document.retry}
+        />
+      ) : (
+        <AttachmentDocumentBody
+          document={document}
+          name={params.name}
+          environmentId={environmentId}
+          htmlRender={params.htmlRender === "1"}
+          nativeViewer={nativeViewer}
+          nativeError={nativeError}
+          onOpenNative={() => {
+            setNativeViewer((current) => (current === null ? null : "open"));
+            setNativeOpen(true);
+          }}
+        />
+      )}
       {nativeOpen && nativeSource ? (
         <FilePreviewModal
           source={nativeSource}

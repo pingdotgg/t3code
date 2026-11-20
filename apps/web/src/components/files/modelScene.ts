@@ -1,5 +1,6 @@
 import { ModelPreviewError } from "@t3tools/client-runtime/model-preview/error";
-import { MAX_MODEL_BYTES, ModelScene } from "@t3tools/client-runtime/model-preview/scene";
+import { MAX_MODEL_BYTES } from "@t3tools/client-runtime/model-preview/annotations";
+import { ModelScene } from "@t3tools/client-runtime/model-preview/scene";
 import type { ModelPreviewKind } from "@t3tools/shared/filePreview";
 
 import { readBoundedDocument } from "./readBoundedDocument";

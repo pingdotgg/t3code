@@ -75,6 +75,16 @@ import {
   useCompactComposerEditor,
 } from "../../components/ComposerSurface";
 import { fileRoutePathSegments } from "../files/filePath";
+import { modelAnnotationDrafts } from "../files/modelAnnotationDraft";
+import { ModelAnnotationDraftCard } from "./ModelAnnotationDraftCard";
+import {
+  formatModelViewHash,
+  type ModelCameraView,
+} from "@t3tools/client-runtime/model-preview/annotations";
+import {
+  formatComposerContextReference,
+  replaceComposerContextReferences,
+} from "@t3tools/shared/composerContextReferences";
 import {
   ComposerActionButton,
   ComposerInlineControl,
@@ -325,8 +335,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     AuthOrchestrationOperateScope,
   );
   const uploadStates = useAtomValue(composerAttachmentUploadsAtom);
+  const modelDrafts = modelAnnotationDrafts(draftContext, draftAttachments);
+  // A model annotation's card shows its own screenshot.
+  const modelScreenshotIds = new Set(modelDrafts.map((draft) => draft.screenshotId));
   const stripAttachments = composerStripAttachments(
-    draftAttachments,
+    draftAttachments.filter((attachment) => !modelScreenshotIds.has(attachment.id)),
     (attachment) => uploadStates[composerAttachmentUploadKey(props.environmentId, attachment.id)],
   );
   const attachmentsUploading =
@@ -477,7 +490,17 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const isToolbarVisible = isVoiceInputPresented;
   const hasEditingAttachments =
     (queuedEdit !== null && queuedEdit.existingAttachments.length > 0) ||
-    stripAttachments.length > 0;
+    stripAttachments.length > 0 ||
+    modelDrafts.length > 0;
+  const openModelView = (path: string, view: ModelCameraView) => {
+    Keyboard.dismiss();
+    navigation.navigate("ThreadFile", {
+      environmentId: String(props.environmentId),
+      threadId: String(props.selectedThread.id),
+      path: fileRoutePathSegments(path),
+      view: formatModelViewHash(view),
+    });
+  };
   const attachmentBlockReason = composerAttachmentUploadBlockReason(
     {
       environmentId: props.environmentId,
@@ -651,6 +674,32 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
           />
         </Animated.View>
       ) : null}
+      {modelDrafts.map((draft) => (
+        <Animated.View
+          key={draft.record.contextId}
+          className="px-[14px] pb-2 pt-2"
+          entering={COMPOSER_ATTACHMENT_ENTERING}
+          exiting={FadeOut.duration(120)}
+        >
+          <ModelAnnotationDraftCard
+            draft={draft}
+            screenshot={draftAttachments.find((attachment) => attachment.id === draft.screenshotId)}
+            disabled={isSubmissionLocked}
+            onRemove={() => {
+              props.onChangeDraftMessage(
+                replaceComposerContextReferences(draftMessage, (reference) =>
+                  reference.contextId === draft.record.contextId
+                    ? ""
+                    : formatComposerContextReference(reference),
+                ),
+              );
+              if (draft.screenshotId !== null) props.onRemoveDraftImage(draft.screenshotId);
+            }}
+            onPressScreenshot={(uri, name) => onPressPreview({ kind: "image", uri, name })}
+            onOpenView={props.isDraft ? undefined : openModelView}
+          />
+        </Animated.View>
+      ))}
       {stripAttachments.length > 0 ? (
         <Animated.View
           className="px-[14px] pb-2.5 pt-2"
@@ -883,6 +932,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                     }
                   }}
                   onOpenAttachment={openDraftDocument}
+                  {...(props.isDraft ? {} : { onOpenModelView: openModelView })}
                   chipsInert={!isExpanded}
                   onInertChipPress={() => inputRef.current?.focus()}
                   ref={inputRef}

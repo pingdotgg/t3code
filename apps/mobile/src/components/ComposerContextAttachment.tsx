@@ -27,6 +27,8 @@ export function ComposerContextAttachment(props: {
   record: Extract<ComposerContextRecord, { attachmentId: string }>;
   environmentId?: EnvironmentId;
   attachment?: DraftComposerAttachment;
+  /** Shows an image as a framed screenshot whose transparent areas take the theme. */
+  framed?: boolean;
 }) {
   const gt = useGT();
   const { record, attachment } = props;
@@ -93,16 +95,18 @@ export function ComposerContextAttachment(props: {
           accessibilityLabel={gt("Preview {name}", { name: record.name })}
           onPress={() => setPreviewOpen(true)}
         >
-          <Image
-            source={
-              remoteEnvironmentId === null
-                ? { uri }
-                : assetImageSource(remoteEnvironmentId, resource, uri)
-            }
-            style={{ width: "100%", height: 280 }}
-            contentFit="contain"
-            accessibilityLabel={record.name}
-          />
+          <View className={props.framed ? "overflow-hidden rounded-xl bg-grouped-card" : undefined}>
+            <Image
+              source={
+                remoteEnvironmentId === null
+                  ? { uri }
+                  : assetImageSource(remoteEnvironmentId, resource, uri)
+              }
+              style={{ width: "100%", height: props.framed ? 214 : 280 }}
+              contentFit="contain"
+              accessibilityLabel={record.name}
+            />
+          </View>
         </Pressable>
       ) : null}
       {error || (!local && asset._tag === "Failure") ? (

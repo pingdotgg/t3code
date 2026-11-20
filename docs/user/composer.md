@@ -436,13 +436,14 @@ Android opens a compatible installed file viewer.
 
 ## 3D models in the file viewer
 
-On web and desktop, STL, 3MF, and GLB files open as 3D views from the workspace, a file
-link, or an attachment. Drag to orbit, Shift-drag to pan, and scroll to zoom. Use **Top**,
+On web, desktop, and mobile, STL, 3MF, and GLB files open as 3D views from the workspace, a
+file link, or an attachment. Drag to orbit, Shift-drag to pan, and scroll to zoom. On mobile,
+drag one finger to orbit, use two fingers to pan, pinch to zoom, and double-tap to fit. Use **Top**,
 **Front**, **Iso**, or **Fit** to reset the camera. STL files carry no units, so their size
 assumes millimeters. The viewer accepts STL and self-contained GLB files up to 128 MiB.
 3MF previews have a 50 MiB archive limit and a 10 MiB limit per entry, and omit print settings.
 
-Choose **Annotate** and click the model to pin numbered notes. **Send to chat** adds them to
+Choose **Annotate** and click or tap the model to pin numbered notes. **Send to chat** adds them to
 your draft as one preview annotation with a screenshot. For a workspace model, **Open view**
 in the annotation details reopens the file at the saved camera. When the file changes,
-earlier notes keep their text and are marked as out of date. Mobile can read the annotations.
+earlier notes keep their text and are marked as out of date.

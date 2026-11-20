@@ -18,7 +18,6 @@ import {
   PerspectiveCamera,
   Raycaster,
   Scene,
-  Spherical,
   Vector2,
   Vector3,
   WebGLRenderer,
@@ -27,12 +26,15 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
 import { decodeDataUrl } from "../dataUrl.ts";
 import { disposeThreeObject } from "../three/disposeObject.ts";
-import type { ModelCameraView, ModelCapture, ModelNote, Vec3 } from "./annotations.ts";
+import {
+  modelCameraStatus,
+  type ModelCameraView,
+  type ModelCapture,
+  type ModelNote,
+  type Vec3,
+} from "./annotations.ts";
 import { unpackModelArchive } from "./archive.ts";
 import { ModelPreviewError } from "./error.ts";
-
-/** Callers refuse larger files before loading them; parsing runs on the main thread. */
-export const MAX_MODEL_BYTES = 128 * 1024 * 1024;
 
 export type ModelViewPreset = "top" | "front" | "iso";
 
@@ -348,13 +350,7 @@ export class ModelScene {
   }
 
   get cameraStatus() {
-    const offset = this.camera.position.clone().sub(this.controls.target);
-    const spherical = new Spherical().setFromVector3(offset);
-    const degrees = (radians: number) => Math.round((radians * 180) / Math.PI);
-    return {
-      azimuth: degrees(spherical.theta),
-      elevation: degrees(Math.PI / 2 - spherical.phi),
-    };
+    return modelCameraStatus(this.view);
   }
 
   setWireframe(on: boolean) {
