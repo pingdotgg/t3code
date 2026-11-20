@@ -25,7 +25,7 @@ import type {
 import { adfToMarkdown, hasUnwritableContent, markdownToAdf } from "./adf.ts";
 import * as JiraApi from "./JiraApi.ts";
 
-const DESCRIPTOR: StandaloneIssueTrackerDescriptor = {
+export const DESCRIPTOR: StandaloneIssueTrackerDescriptor = {
   tracker: JiraApi.KIND,
   displayName: "Jira",
   // Every Jira Cloud site; the one this server reads is part of the saved credential.
@@ -39,10 +39,15 @@ const DESCRIPTOR: StandaloneIssueTrackerDescriptor = {
       { key: "email", label: "Account email", placeholder: "you@example.com" },
     ],
   },
+  environmentLogin: {
+    label: "TWG",
+    description: "Uses the TWG login on this environment. Run twg login there first.",
+    fields: [{ key: "site", label: "Site", placeholder: "yourteam.atlassian.net" }],
+  },
 };
 
 /** No reactions or development panel: Jira Cloud's public API serves neither. */
-const CAPABILITIES: IssueCapabilities = {
+export const CAPABILITIES: IssueCapabilities = {
   create: true,
   edit: true,
   comment: true,

@@ -368,9 +368,12 @@ requests.
 
 To list a Linear team's or a Jira Cloud project's issues beside a project's, connect the tracker
 under Settings → Source control & issues, then choose the team or project there. Linear takes an
-API key; Jira takes your site (`yourteam.atlassian.net`), your account email, and an API token.
-Jira issues move along their workflow's transitions, and have no reactions or linked pull
-requests here. A new Jira issue is filed as a Task.
+API key. For Jira, choose **API token** and enter your site (`yourteam.atlassian.net`), account
+email, and token; or choose **TWG** and enter the site after running `twg login` (TWG CLI 1.3.8 or
+later) on the machine that runs the T3 environment. TWG uses that login, including when you
+connect from another computer or a phone, and T3 stores no Jira secret for it. Disconnecting Jira
+leaves the TWG login in place. Jira issues move along their workflow's transitions, and have no
+reactions or linked pull requests here. A new Jira issue is filed as a Task.
 
 Select an issue to open it beside the list: description, comments, state changes, linked pull
 requests, labels, assignees, and reactions. Linked pull requests open in the same panel. You can

@@ -523,6 +523,12 @@ export function threadIssueKeysEqual(left: ThreadIssueKey, right: ThreadIssueKey
   return threadIssueKeyOf(left) === threadIssueKeyOf(right);
 }
 
+const IssueTrackerCredentialField = Schema.Struct({
+  key: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  placeholder: Schema.NullOr(TrimmedNonEmptyString),
+});
+
 /**
  * A tracker that is not a git host: it is reached with its own credential rather than a
  * checkout's, and a project opts into it by binding one of the tracker's scopes. Everything a
@@ -544,18 +550,27 @@ export const StandaloneIssueTrackerDescriptor = Schema.Struct({
      * What the tracker must be told beside the secret, in the order a form asks: a Jira site, the
      * account's email. None of it is secret. Absent for a tracker its key alone identifies.
      */
-    fields: Schema.optional(
-      Schema.Array(
-        Schema.Struct({
-          key: TrimmedNonEmptyString,
-          label: TrimmedNonEmptyString,
-          placeholder: Schema.NullOr(TrimmedNonEmptyString),
-        }),
-      ),
-    ),
+    fields: Schema.optional(Schema.Array(IssueTrackerCredentialField)),
   }),
+  /**
+   * Signing in with a login the server's machine already holds, such as a CLI's, instead of a
+   * secret saved here. Absent for a tracker that only takes `credential`.
+   */
+  environmentLogin: Schema.optional(
+    Schema.Struct({
+      /** What the login is called: "TWG". */
+      label: TrimmedNonEmptyString,
+      /** What to do on the server's machine before connecting. */
+      description: TrimmedNonEmptyString,
+      fields: Schema.Array(IssueTrackerCredentialField),
+    }),
+  ),
 });
 export type StandaloneIssueTrackerDescriptor = typeof StandaloneIssueTrackerDescriptor.Type;
+
+/** A secret saved in Settings, or the descriptor's `environmentLogin`. */
+export const IssueTrackerAuthentication = Schema.Literals(["token", "environment"]);
+export type IssueTrackerAuthentication = typeof IssueTrackerAuthentication.Type;
 
 /** Which standalone tracker scope a project's issues come from, beside its git host's own. */
 export const IssueTrackerProjectBinding = Schema.Struct({
@@ -584,7 +599,9 @@ export const IssueTrackerConnection = Schema.Struct({
   /** Why a stored credential did not work, when it did not. */
   detail: Schema.NullOr(TrimmedNonEmptyString),
   scopes: Schema.Array(IssueTrackerScope),
-  /** What was saved for each of `credential.fields`, so a form can show and resend it. */
+  /** How the stored credential signs in; absent when none is stored. */
+  authentication: Schema.optional(IssueTrackerAuthentication),
+  /** What was saved for the authentication's fields, so a form can show and resend it. */
   fields: Schema.optional(Schema.Record(Schema.String, Schema.String)),
 });
 export type IssueTrackerConnection = typeof IssueTrackerConnection.Type;
@@ -596,11 +613,14 @@ export const IssueTrackerConnectionList = Schema.Struct({
 });
 export type IssueTrackerConnectionList = typeof IssueTrackerConnectionList.Type;
 
-/** A credential for one standalone tracker; `null` disconnects it and unbinds its projects. */
+/** A credential for one standalone tracker; a `null` token disconnects and unbinds its projects. */
 export const IssueTrackerConnectInput = Schema.Struct({
   tracker: IssueTrackerKind,
-  token: Schema.NullOr(TrimmedNonEmptyString.check(Schema.isMaxLength(4_096))),
-  /** A value for each of the tracker's `credential.fields`; ignored when disconnecting. */
+  /** The secret for `token` authentication. An environment login sends none. */
+  token: Schema.optional(Schema.NullOr(TrimmedNonEmptyString.check(Schema.isMaxLength(4_096)))),
+  /** Absent means `token`. */
+  authentication: Schema.optional(IssueTrackerAuthentication),
+  /** A value for each field the chosen authentication asks for; ignored when disconnecting. */
   fields: Schema.optional(
     Schema.Record(Schema.String, TrimmedNonEmptyString.check(Schema.isMaxLength(512))),
   ),
