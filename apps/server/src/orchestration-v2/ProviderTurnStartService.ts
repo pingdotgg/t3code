@@ -923,11 +923,15 @@ export const layer: Layer.Layer<
         });
         if (!repaired.committed) return;
       }
+      // The turn runs where the thread is now. The thread's scope follows its latest root run, which
+      // may be queued behind this one or predate a worktree switch; this run's checkpoints stay here.
+      const workspaceCwd = resolvedRuntimePolicy.cwd ?? checkpointScope.cwd;
+      const runCheckpointScope = { ...checkpointScope, cwd: workspaceCwd };
       // Opening a session does not prompt the provider, so the workspace is still unchanged.
       const baseline = yield* runExecution.forkBaseline({
         appThread: projection.thread,
         run,
-        checkpointScope,
+        checkpointScope: runCheckpointScope,
       });
       const brokenNativeThread = providerThread.status === "error";
       // Opened without the broken native id, a session that was not live starts fresh.
@@ -1821,6 +1825,7 @@ export const layer: Layer.Layer<
         ...run,
         status: "running",
         startedAt: run.startedAt ?? now,
+        workspaceCwd,
       };
       const runningAttempt: OrchestrationV2RunAttempt = {
         ...attempt,
@@ -2097,7 +2102,7 @@ export const layer: Layer.Layer<
         session: deliverySession,
         run: runningRun,
         rootNode: runningRootNode,
-        checkpointScope,
+        checkpointScope: runCheckpointScope,
         providerThread: runningProviderThread,
         attempt: runningAttempt,
         attemptId: attempt.id,
