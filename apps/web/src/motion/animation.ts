@@ -36,6 +36,15 @@ function curveFunction(curve: MotionCurve): (x: number) => number {
   }
 }
 
+/** A bezier curve that leaves at `slope` (progress per unit of time) instead of its own start, so a
+ * retarget keeps the speed it had; bounded so it never overshoots and turns back only a little. */
+function leaving(curve: MotionCurve, slope: number): (x: number) => number {
+  if (typeof curve !== "object" || !Number.isFinite(slope)) return curveFunction(curve);
+  const [, , x2, y2] = curve.cubicBezier;
+  const x1 = 1 / 3;
+  return cubicBezier(x1, Math.min(1, Math.max(-1 / 3, slope * x1)), x2, y2);
+}
+
 export class MotionAnimation {
   private constructor(
     readonly from: number,
@@ -47,7 +56,8 @@ export class MotionAnimation {
 
   /**
    * `velocity` is in units per real second (a gesture's, or a running
-   * animation's when it is retargeted). Easings ignore it, as niri's do.
+   * animation's when it is retargeted). An easing handed one leaves at that
+   * speed and keeps its own curve into the end.
    */
   static start(name: MotionName, from: number, to: number, velocity = 0): MotionAnimation {
     const { config, slowdown } = resolveMotion(name);
@@ -55,8 +65,11 @@ export class MotionAnimation {
       return new MotionAnimation(from, to, 0, () => to);
     }
     if (config.kind === "easing") {
-      const y = curveFunction(config.curve);
       const durationMs = config.durationMs * slowdown;
+      const y =
+        velocity === 0
+          ? curveFunction(config.curve)
+          : leaving(config.curve, (velocity * durationMs) / 1000 / (to - from));
       return new MotionAnimation(from, to, durationMs, (elapsed) =>
         durationMs <= 0
           ? to
@@ -156,6 +169,16 @@ export interface MotionRun {
   velocity(): number;
   /** Stops where it is; the element falls back to its own style. */
   cancel(): void;
+  /**
+   * Plays `motion` on the same Web Animation from this frame on. A new
+   * animation would wait a frame to start, holding the element still; null
+   * once this run has stopped.
+   */
+  retarget(
+    motion: MotionAnimation,
+    keyframe: (value: number) => Keyframe,
+    onFinish?: () => void,
+  ): MotionRun | null;
 }
 
 /** The element must already hold the final style. Leave no animation fill after completion so
@@ -169,11 +192,13 @@ export function playMotion(
   /** Whole device pixels: `true` on an 8 ms grid, a number on a grid that many ms apart. */
   stepped: boolean | number = false,
 ): MotionRun {
-  const frames =
-    stepped === false ? null : steppedKeyframes(motion, keyframe, stepped === true ? 8 : stepped);
+  const grid = stepped === false ? null : stepped === true ? 8 : stepped;
+  const framesOf = (next: MotionAnimation, keyframeOf: (value: number) => Keyframe) =>
+    grid === null ? null : steppedKeyframes(next, keyframeOf, grid);
+  const frames = framesOf(motion, keyframe);
   if (motion.durationMs <= 0 || (frames && frames.durationMs <= 0)) {
     onFinish?.();
-    return { motion, value: () => motion.to, velocity: () => 0, cancel: () => {} };
+    return finishedRun(motion);
   }
   const animation = frames
     ? element.animate(frames.keyframes, { duration: frames.durationMs })
@@ -184,22 +209,59 @@ export function playMotion(
   // A camera triggered on keydown can begin on the current document frame.
   // An inactive timeline keeps the browser's normal pending-start behavior.
   if (startTime != null) animation.startTime = startTime;
-  // Elapsed time once it stopped: at the end, or wherever it was cancelled.
-  let stoppedAt: number | null = null;
-  const elapsed = () => stoppedAt ?? Number(animation.currentTime ?? 0);
-  animation.onfinish = () => {
-    stoppedAt = motion.durationMs;
-    onFinish?.();
+  const runOf = (played: MotionAnimation, finish: (() => void) | undefined): MotionRun => {
+    // Elapsed time once it stopped: at the end, or wherever it was cancelled.
+    let stoppedAt: number | null = null;
+    const elapsed = () => stoppedAt ?? Number(animation.currentTime ?? 0);
+    animation.onfinish = () => {
+      stoppedAt = played.durationMs;
+      finish?.();
+    };
+    return {
+      motion: played,
+      value: () => played.valueAt(elapsed()),
+      velocity: () => played.velocityAt(elapsed()),
+      cancel: () => {
+        if (stoppedAt !== null) return;
+        stoppedAt = elapsed();
+        animation.onfinish = null;
+        animation.cancel();
+      },
+      retarget: (next, keyframeOf, nextFinish) => {
+        if (stoppedAt !== null) return null;
+        const nextFrames = framesOf(next, keyframeOf);
+        if (next.durationMs <= 0 || (nextFrames && nextFrames.durationMs <= 0)) {
+          stoppedAt = elapsed();
+          animation.onfinish = null;
+          animation.cancel();
+          nextFinish?.();
+          return finishedRun(next);
+        }
+        // Handed over: this run reads as stopped where it was.
+        stoppedAt = elapsed();
+        const effect = animation.effect as KeyframeEffect;
+        if (nextFrames) {
+          effect.setKeyframes(nextFrames.keyframes);
+          effect.updateTiming({ duration: nextFrames.durationMs });
+        } else {
+          effect.setKeyframes([keyframeOf(next.from), keyframeOf(next.to)]);
+          effect.updateTiming({ duration: next.durationMs, easing: next.cssEasing() });
+        }
+        // A running animation sought to 0 carries on from this frame.
+        animation.currentTime = 0;
+        return runOf(next, nextFinish);
+      },
+    };
   };
+  return runOf(motion, onFinish);
+}
+
+function finishedRun(motion: MotionAnimation): MotionRun {
   return {
     motion,
-    value: () => motion.valueAt(elapsed()),
-    velocity: () => motion.velocityAt(elapsed()),
-    cancel: () => {
-      if (stoppedAt !== null) return;
-      stoppedAt = elapsed();
-      animation.onfinish = null;
-      animation.cancel();
-    },
+    value: () => motion.to,
+    velocity: () => 0,
+    cancel: () => {},
+    retarget: () => null,
   };
 }

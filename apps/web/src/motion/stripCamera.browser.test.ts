@@ -51,4 +51,30 @@ describe("moveStripCamera", () => {
     }
     expect(late).toBe(0);
   });
+
+  it("carries a focus key's move on in the same frame, at the speed it had", async () => {
+    using strip = mountStrip();
+    moveStripCamera(strip, strip.stage, 400);
+    const [move] = strip.stage.getAnimations();
+    await move!.ready;
+    move!.currentTime = 39;
+    const before = stripCameraPosition(strip);
+    move!.currentTime = 40;
+    const shown = stripCameraPosition(strip);
+    const speed = shown - before;
+
+    moveStripCamera(strip, strip.stage, 800, { carryOn: true });
+
+    const [carried] = strip.stage.getAnimations();
+    expect(carried).toBe(move);
+    expect(carried!.pending).toBe(false);
+    expect(Math.abs(stripCameraPosition(strip) - shown)).toBeLessThan(0.5);
+    carried!.pause();
+    carried!.currentTime = 1;
+    expect(stripCameraPosition(strip) - shown).toBeCloseTo(speed, 0);
+
+    // A move whose layout changes with it waits for the frame that shows it, as before.
+    moveStripCamera(strip, strip.stage, 1200);
+    expect(strip.stage.getAnimations()[0]!.pending).toBe(true);
+  });
 });

@@ -477,9 +477,9 @@ function anticipateFocus(_from: LayoutState, to: LayoutState): boolean {
   const left = Math.round(slot.rect.left * stripPx);
   const right = left + Math.round(slot.rect.width * stripPx);
   const viewLeft = scroller.scrollLeft;
-  if (left < viewLeft - 1) moveStripCamera(scroller, stage, left);
+  if (left < viewLeft - 1) moveStripCamera(scroller, stage, left, { carryOn: true });
   else if (right > viewLeft + width + 1)
-    moveStripCamera(scroller, stage, Math.min(left, right - width));
+    moveStripCamera(scroller, stage, Math.min(left, right - width), { carryOn: true });
   // Already in view, the camera stays: nothing to paint ahead of React, so
   // the focus lands at once instead of a frame later.
   else return false;
