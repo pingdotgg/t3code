@@ -23,7 +23,11 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as ServerSettings from "../serverSettings.ts";
-import { makeSpeechTextCorrector, normalizeSpeechCustomWords } from "./customWords.ts";
+import {
+  makeSpeechTextCorrector,
+  normalizeSpeechCustomWords,
+  speechRecognitionWords,
+} from "./customWords.ts";
 import { removeSpeechFillerWords } from "./fillerWords.ts";
 import {
   DEFAULT_SPEECH_MODEL_ID,
@@ -626,7 +630,7 @@ const make = Effect.gen(function* () {
             const vadPath = yield* silenceModelPath(loaded, options, false);
             const dictionary = normalizeSpeechCustomWords(options.speechCustomWords);
             const customWords = dictionary.map(({ term }) => term);
-            const recognitionWords = [...(options.speechHints ?? []), ...customWords];
+            const recognitionWords = speechRecognitionWords(options.speechHints, customWords);
             // The vocabulary capability guarantees plain transcription, not translation.
             const vocabularyFor = (inference: LoadedModel) =>
               inference.supportsVocabulary && !translateToEnglish ? recognitionWords : [];
@@ -756,7 +760,7 @@ const make = Effect.gen(function* () {
     const language = effectiveSpeechLanguage(definition, options.speechLanguage);
     const dictionary = normalizeSpeechCustomWords(options.speechCustomWords);
     const customWords = dictionary.map(({ term }) => term);
-    const recognitionWords = [...(options.speechHints ?? []), ...customWords];
+    const recognitionWords = speechRecognitionWords(options.speechHints, customWords);
     let correct = makeSpeechTextCorrector(customWords, dictionary);
     const modelPath = yield* installedModelPath(definition);
     let streamModel = yield* attempt(operation, () =>
