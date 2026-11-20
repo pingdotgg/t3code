@@ -5693,5 +5693,7 @@
   "99451a5d2d40440f": "{by} が取り下げました。",
   "3ee30a50b70fffab": "{by} が取り下げました: {reason}",
   "201490988858b511": "{by} が取り下げ",
-  "46d614fa7b4bf1e5": "ワークフローの実行"
+  "46d614fa7b4bf1e5": "ワークフローの実行",
+  "03cc9d13df338ec1": "Tailscale が HTTPS の設定を拒否しました。ホストで T3 Code の実行アカウントに Tailscale の管理権限を付与し（Linux: {command}）、T3 Code バックエンドを再起動してください。",
+  "3fc83e017b2ed200": "ホストで Tailscale HTTPS を設定できませんでした。Tailscale が起動してログイン済みであること、tailnet で MagicDNS と HTTPS 証明書が有効であることを確認し、T3 Code バックエンドを再起動してください。"
 }

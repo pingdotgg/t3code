@@ -5703,5 +5703,7 @@
   "99451a5d2d40440f": "已由 {by} 撤回。",
   "3ee30a50b70fffab": "已由 {by} 撤回：{reason}",
   "201490988858b511": "已由 {by} 撤回",
-  "46d614fa7b4bf1e5": "工作流运行"
+  "46d614fa7b4bf1e5": "工作流运行",
+  "03cc9d13df338ec1": "Tailscale 拒绝了配置 HTTPS 的请求。请在主机上授予运行 T3 Code 的账户管理 Tailscale 的权限（Linux：{command}），然后重启 T3 Code 后端。",
+  "3fc83e017b2ed200": "主机上的 Tailscale HTTPS 配置失败。请确认 Tailscale 正在运行且已登录，并确认 tailnet 已启用 MagicDNS 和 HTTPS 证书，然后重启 T3 Code 后端。"
 }

@@ -13057,5 +13057,7 @@
   "95435f0b59cb2193": "音频预览",
   "4a12506938295127": "请先输入{field}。",
   "5807c08e225c6b3d": "下载",
-  "0d50b5bfe7151ece": "无法下载文件"
+  "0d50b5bfe7151ece": "无法下载文件",
+  "03cc9d13df338ec1": "Tailscale 拒绝了配置 HTTPS 的请求。请在主机上授予运行 T3 Code 的账户管理 Tailscale 的权限（Linux：{command}），然后重启 T3 Code 后端。",
+  "3fc83e017b2ed200": "主机上的 Tailscale HTTPS 配置失败。请确认 Tailscale 正在运行且已登录，并确认 tailnet 已启用 MagicDNS 和 HTTPS 证书，然后重启 T3 Code 后端。"
 }

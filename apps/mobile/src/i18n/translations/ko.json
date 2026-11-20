@@ -5700,5 +5700,7 @@
   "99451a5d2d40440f": "{by}에서 철회했습니다.",
   "3ee30a50b70fffab": "{by}에서 철회했습니다: {reason}",
   "201490988858b511": "{by}에서 철회함",
-  "46d614fa7b4bf1e5": "워크플로 실행"
+  "46d614fa7b4bf1e5": "워크플로 실행",
+  "03cc9d13df338ec1": "Tailscale에서 HTTPS 설정 권한을 거부했습니다. 호스트에서 T3 Code 실행 계정에 Tailscale 관리 권한을 부여한 후(Linux: {command}) T3 Code 백엔드를 다시 시작하세요.",
+  "3fc83e017b2ed200": "호스트에서 Tailscale HTTPS 설정에 실패했습니다. Tailscale이 실행 중이고 로그인되어 있는지, tailnet에서 MagicDNS와 HTTPS 인증서가 활성화되어 있는지 확인한 후 T3 Code 백엔드를 다시 시작하세요."
 }
