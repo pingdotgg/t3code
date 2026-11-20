@@ -10,6 +10,7 @@ on:
 permissions:
   actions: read
   contents: read
+  pull-requests: read
 
 jobs:
   report:
@@ -27,7 +28,7 @@ jobs:
           problems=()
           summary() { echo "$@" >> "$GITHUB_STEP_SUMMARY"; }
 
-          # PR runs are dry-run replays, so only scheduled and dispatched runs describe a release.
+          # PR runs build nothing, so only scheduled and dispatched runs describe a release.
           run="$(gh api "repos/$FORK/actions/workflows/patched-nightly.yml/runs?per_page=20&status=completed" \
             --jq '[.workflow_runs[] | select(.event != "pull_request")] | first')"
           run_id="$(jq -r .id <<<"$run")"
@@ -43,6 +44,10 @@ jobs:
           stalled="$(gh api "repos/$FORK/actions/workflows/patched-nightly.yml/runs?status=in_progress&per_page=20" \
             --jq '[.workflow_runs[] | select(.event != "pull_request") | select(now - (.created_at | fromdateiso8601) > 14400)] | length')"
           [[ "$stalled" == "0" ]] || problems+=("$stalled run(s) in progress for over 4 hours")
+
+          stale_sync="$(gh api "repos/$FORK/pulls?state=open&per_page=50" \
+            --jq '[.[] | select(.head.ref | startswith("chore/upstream-sync-")) | select(now - (.created_at | fromdateiso8601) > 129600)] | length')"
+          [[ "$stale_sync" == "0" ]] || problems+=("$stale_sync upstream sync PR(s) open for over 36 hours")
 
           release="$(gh api "repos/$FORK/releases?per_page=10" --jq '[.[] | select(.draft == false)] | first')"
           tag="$(jq -r .tag_name <<<"$release")"
