@@ -33,6 +33,7 @@ import { applyWebBrandAssets } from "./apply-web-brand-assets.ts";
 import {
   BRAND_ASSET_PATHS,
   resolveWebAssetBrandForChannel,
+  STANDALONE_DMG_BACKGROUND_SVG,
   type WebAssetBrand,
 } from "./lib/brand-assets.ts";
 import { getDefaultBuildArch } from "./lib/build-target-arch.ts";
@@ -40,7 +41,7 @@ import {
   findInlinedExternalPackages,
   selectCliRuntimeExternalDependencies,
 } from "./lib/cli-external-packages.ts";
-import { loadRepoEnv, resolveAppScheme } from "./lib/public-config.ts";
+import { isStandaloneBuild, loadRepoEnv, resolveAppScheme } from "./lib/public-config.ts";
 import { rebrandName, rebrandStrings } from "./lib/rebrand.ts";
 import { selectDesktopRuntimeExternalDependencies } from "./lib/desktop-external-packages.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
@@ -3813,6 +3814,16 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     }
   }
   if (options.platform === "mac" && options.target === "dmg") {
+    if (isStandaloneBuild(loadRepoEnv({ repoRoot }))) {
+      yield* fs.copyFile(
+        path.join(repoRoot, STANDALONE_DMG_BACKGROUND_SVG),
+        path.join(
+          stageResourcesDir,
+          "dmg",
+          `dmg-background-${resolveDesktopUpdateChannel(appVersion)}.svg`,
+        ),
+      );
+    }
     yield* stageDesktopDmgBackground(
       stageResourcesDir,
       resolveDesktopUpdateChannel(appVersion),

@@ -31,7 +31,10 @@ function withAssetFiles(config) {
   return withDangerousMod(config, [
     "ios",
     (cfg) => {
-      const source = path.join(cfg.modRequest.projectRoot, "assets", "widget", SVG_NAME);
+      // app.config.ts copies repo .env values into process.env before plugins run.
+      const source = /^(1|true)$/i.test(process.env.T3CODE_STANDALONE?.trim() ?? "")
+        ? path.join(cfg.modRequest.projectRoot, "..", "..", "assets", "easydev", "widget-mark.svg")
+        : path.join(cfg.modRequest.projectRoot, "assets", "widget", SVG_NAME);
       const catalogDir = path.join(cfg.modRequest.platformProjectRoot, TARGET_NAME, CATALOG_NAME);
       const imageSetDir = path.join(catalogDir, IMAGE_SET);
       fs.mkdirSync(imageSetDir, { recursive: true });

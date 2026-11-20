@@ -17,9 +17,18 @@ export function resolveAppName(env: Environment): string {
   return name;
 }
 
+/** The one standalone switch; the first source that sets T3CODE_STANDALONE decides. */
+export function isStandaloneBuild(...sources: readonly Environment[]): boolean {
+  const value = sources
+    .map((source) => source.T3CODE_STANDALONE?.trim())
+    .find(Boolean)
+    ?.toLowerCase();
+  return value === "1" || value === "true";
+}
+
 /** The name a standalone build shows in place of T3 Code; null leaves every build untouched. */
 export function rebrandName(env: Environment): string | null {
-  if (!/^(1|true)$/i.test(env.T3CODE_STANDALONE?.trim() ?? "")) return null;
+  if (!isStandaloneBuild(env)) return null;
   const name = resolveAppName(env);
   return name === DEFAULT_APP_NAME ? null : name;
 }

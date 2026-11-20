@@ -6,7 +6,7 @@ import { fromYaml } from "@t3tools/shared/schemaYaml";
 import * as Schema from "effect/Schema";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { appSchemeDefine, loadRepoEnv } from "./public-config.ts";
+import { appSchemeDefine, isStandaloneBuild, loadRepoEnv } from "./public-config.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -73,6 +73,20 @@ describe("loadRepoEnv in a standalone build", () => {
       T3CODE_STANDALONE: "1",
       VITE_HOSTED_APP_URL: "https://app.fork.example",
     });
+  });
+
+  it("turns standalone from .env alone, as brand artwork and the app UI both read it", () => {
+    const repoRoot = makeTemporaryDirectory();
+    NodeFS.writeFileSync(
+      NodePath.join(repoRoot, ".env"),
+      Object.entries(fork)
+        .map(([key, value]) => `${key}=${value}`)
+        .join("\n"),
+    );
+    const env = loadRepoEnv({ baseEnv: {}, repoRoot });
+    expect(env.T3CODE_STANDALONE).toBe("1");
+    expect(isStandaloneBuild(env)).toBe(true);
+    expect(isStandaloneBuild({ T3CODE_STANDALONE: "0" })).toBe(false);
   });
 
   it.each([

@@ -4,7 +4,9 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
 
-import { DEFAULT_APP_NAME, resolveAppName } from "./rebrand.ts";
+import { DEFAULT_APP_NAME, isStandaloneBuild, resolveAppName } from "./rebrand.ts";
+
+export { isStandaloneBuild };
 
 export interface T3CodePublicConfig {
   readonly clerkPublishableKey: string | undefined;
@@ -141,11 +143,6 @@ export function appSchemeDefine(env: Environment): Record<string, string> {
 
 const UPSTREAM_EAS_PROJECT_ID = "d763fcb8-d37c-41ea-a773-b54a0ab4a454";
 const T3_OPERATED_DOMAINS = ["t3.codes", "t3.chat"];
-
-function isStandaloneBuild(...sources: readonly Environment[]) {
-  const value = firstNonEmpty(sources, "T3CODE_STANDALONE")?.toLowerCase();
-  return value === "1" || value === "true";
-}
 
 export function isT3OperatedUrl(value: string): boolean {
   try {
