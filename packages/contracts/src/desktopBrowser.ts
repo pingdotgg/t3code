@@ -38,6 +38,12 @@ export const DesktopBrowserCommand = Schema.Union([
     x: Schema.Finite,
     y: Schema.Finite,
   }),
+  /** The size a streamed viewer asks for; the page takes it only while no desktop window shows it. */
+  Schema.Struct({
+    type: Schema.Literal("viewerSize"),
+    ...TabKey,
+    size: Schema.NullOr(Schema.Struct({ width: Schema.Int, height: Schema.Int })),
+  }),
   /** Whether an agent turn runs on the thread, so the tabs it uses stay focused between steps. */
   Schema.Struct({
     type: Schema.Literal("turn"),

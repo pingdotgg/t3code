@@ -372,6 +372,8 @@ interface ServerTab {
   } | null;
   dialog: Dialog | null;
   setting: PreviewViewportSetting;
+  /** The setting a desktop tab was last sized for; `setting` may run ahead of it. */
+  desktopSetting: PreviewViewportSetting;
   colorScheme: PreviewAppearancePreference;
   zoomFactor: number;
   /** Last usable CSS size measured on the desktop. */
@@ -924,17 +926,30 @@ const make = Effect.gen(function* () {
     for (const viewer of tab.viewers) viewer.push({ _tag: "viewport", ...size });
   };
 
+  const offerViewerSize = (
+    tab: ServerTab,
+    size: { readonly width: number; readonly height: number } | null,
+  ) =>
+    runPromise(
+      desktopChannel.viewerSize(
+        { threadId: tab.threadId, tabId: tab.tabId },
+        size && { width: size.width, height: size.height },
+      ),
+    );
+
   const applySetting = async (tab: ServerTab, setting: PreviewViewportSetting) => {
     tab.setting = setting;
 
-    if (tab.desktop) return;
-    const size =
-      fixedViewportSize(setting) ??
-      [...tab.viewers]
-        .map((viewer) => viewer.requestedSize)
-        .filter((requested) => requested !== null)
-        .sort((left, right) => right.order - left.order)[0] ??
-      UNATTACHED_FILL_VIEWPORT;
+    const latest = [...tab.viewers]
+      .map((viewer) => viewer.requestedSize)
+      .filter((requested) => requested !== null)
+      .sort((left, right) => right.order - left.order)[0];
+    if (tab.desktop) {
+      tab.desktopSetting = setting;
+      await offerViewerSize(tab, setting._tag === "fill" ? (latest ?? null) : null);
+      return;
+    }
+    const size = fixedViewportSize(setting) ?? latest ?? UNATTACHED_FILL_VIEWPORT;
     await tab.page.setViewportSize({ width: size.width, height: size.height });
     await applyZoom(tab);
     await broadcastViewport(tab);
@@ -1181,6 +1196,7 @@ const make = Effect.gen(function* () {
       fileChooser: null,
       dialog: null,
       setting: snapshot.viewport ?? FILL_PREVIEW_VIEWPORT,
+      desktopSetting: snapshot.viewport ?? FILL_PREVIEW_VIEWPORT,
       colorScheme: "system",
       zoomFactor: 1,
       desktopViewport: null,
@@ -2982,15 +2998,13 @@ const make = Effect.gen(function* () {
         return;
       }
       if (event.type === "resized") {
-        // Desktop tabs only record the setting, so status need not wait behind an agent action.
-        if (tab.desktop) tab.setting = event.snapshot.viewport ?? FILL_PREVIEW_VIEWPORT;
+        const setting = event.snapshot.viewport ?? FILL_PREVIEW_VIEWPORT;
+        // Desktop tabs record the setting at once, so status need not wait behind an agent action.
+        if (tab.desktop) tab.setting = setting;
         await tab.control
           .system(async () => {
-            if (
-              !viewportSettingsEqual(event.snapshot.viewport ?? FILL_PREVIEW_VIEWPORT, tab.setting)
-            ) {
-              await applySetting(tab, event.snapshot.viewport ?? FILL_PREVIEW_VIEWPORT);
-            }
+            const applied = tab.desktop ? tab.desktopSetting : tab.setting;
+            if (!viewportSettingsEqual(setting, applied)) await applySetting(tab, setting);
             await applyRendering(tab, event.snapshot);
             const request = event.request;
             if (request?.clear === "cookies") await tab.cdp.send("Network.clearBrowserCookies");
@@ -3122,7 +3136,8 @@ const make = Effect.gen(function* () {
         const height = Math.min(Math.round(num(message.height)), 2160);
         if (width < 100 || height < 100) return;
         viewer.requestedSize = { width, height, order: ++viewerResizeOrder };
-        if (tab.setting._tag !== "fill" || tab.desktop) return;
+        if (tab.setting._tag !== "fill") return;
+        if (tab.desktop) return offerViewerSize(tab, { width, height });
         const current = tab.page.viewportSize();
         if (current?.width === width && current.height === height) return;
         await tab.page.setViewportSize({ width, height });
@@ -3288,6 +3303,7 @@ const make = Effect.gen(function* () {
         Effect.promise(async () => {
           await tab.control.disconnect(viewer.id, () => releaseViewerInput(viewer, session));
           tab.viewers.delete(viewer);
+          if (tab.desktop && !tab.closing) await applySetting(tab, tab.setting);
           broadcastControl(tab);
           reportLiveTabs();
         }),
@@ -3383,9 +3399,11 @@ const make = Effect.gen(function* () {
               await taking;
               pushFileChooser(tab);
             } else if (message.type === "releaseControl") {
-              const releasing = tab.control.release(viewer.id, () =>
-                releaseViewerInput(viewer, session),
-              );
+              const releasing = tab.control.release(viewer.id, async () => {
+                await releaseViewerInput(viewer, session);
+                // The released viewer's size no longer applies to a hidden desktop tab.
+                if (tab.desktop && !tab.closing) await applySetting(tab, tab.setting);
+              });
               broadcastControl(tab);
               await releasing;
             } else if (
