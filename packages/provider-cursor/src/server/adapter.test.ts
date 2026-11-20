@@ -6,9 +6,11 @@ import { assert, describe, it } from "@effect/vitest";
 import type { InteractionUpdate } from "@cursor/sdk";
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import {
+  CheckpointId,
   EnvironmentId,
   MessageId,
   NodeId,
+  type OrchestrationV2ProviderTurn,
   ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
@@ -45,6 +47,7 @@ import {
   nestedToolCallFromEnvelope,
 } from "./adapter.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
+import * as CursorSdk from "./CursorSdk.ts";
 import { loadCursorSdk } from "./sdk.ts";
 import { cursorWorkspaceMcpServers } from "./workspaceMcpServers.ts";
 
@@ -757,6 +760,11 @@ describe("CursorAdapterV2", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-device-" });
       const sentMessages: Array<string> = [];
+      const rewoundAfter: Array<string> = [];
+      let rewindFails = false;
+      let nextRunStatus: "finished" | "error" = "finished";
+      let nextSummaryCompleted: { readonly failed?: boolean } | undefined;
+      let createdAgents = 0;
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-device-thread");
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -783,31 +791,55 @@ describe("CursorAdapterV2", () => {
       }).pipe(
         Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
           assertComplete: Effect.void,
-          open: () =>
-            Effect.succeed({
-              agentId: "native-cursor-device",
+          open: (openInput) => {
+            const agentId = openInput.agentId ?? `native-cursor-device-${++createdAgents}`;
+            return Effect.succeed({
+              agentId,
               listMessages: Effect.succeed([]),
               close: Effect.void,
+              rewindAfterRun: (runId) =>
+                rewindFails
+                  ? Effect.fail(
+                      new CursorAgentSdk.CursorAgentSdkRunnerError({
+                        method: "agent.rewind",
+                        cause: "store unavailable",
+                      }),
+                    )
+                  : Effect.sync(() => void rewoundAfter.push(runId)),
               send: (input) =>
                 Effect.sync(() => {
                   sentMessages.push(
                     typeof input.message === "string" ? input.message : input.message.text,
                   );
                   const runId = `native-cursor-run-${sentMessages.length}`;
+                  const status = nextRunStatus;
+                  const summaryCompleted = nextSummaryCompleted;
+                  nextRunStatus = "finished";
+                  nextSummaryCompleted = undefined;
                   return {
-                    agentId: "native-cursor-device",
+                    agentId,
                     runId,
-                    wait: Effect.succeed({
-                      id: runId,
-                      requestId: `native-request-${sentMessages.length}`,
-                      status: "finished" as const,
-                      model: { id: "composer-2.5" },
-                      durationMs: 1,
+                    wait: Effect.gen(function* () {
+                      if (summaryCompleted !== undefined) {
+                        yield* input.onDelta!({
+                          type: "summary-completed",
+                          ...summaryCompleted,
+                        }).pipe(Effect.orDie);
+                      }
+                      return {
+                        id: runId,
+                        requestId: `native-request-${sentMessages.length}`,
+                        status,
+                        ...(status === "error" ? { error: { message: "transient failure" } } : {}),
+                        model: { id: input.options?.model?.id ?? "composer-2.5" },
+                        durationMs: 1,
+                      };
                     }),
                     cancel: Effect.void,
                   };
                 }),
-            }),
+            });
+          },
         }),
         Effect.provide(TestProviderHost.layer({ cwd: workspace })),
       );
@@ -817,7 +849,7 @@ describe("CursorAdapterV2", () => {
         modelSelection,
         runtimePolicy,
       });
-      const providerThread = yield* runtime.ensureThread({
+      let providerThread = yield* runtime.ensureThread({
         threadId,
         modelSelection,
         runtimePolicy,
@@ -848,13 +880,27 @@ describe("CursorAdapterV2", () => {
       };
       // Starts at run 5: a conversation from before device instructions existed, now resumed.
       let runOrdinal = 4;
-      const send = Effect.fnUntraced(function* (compact = false) {
+      let lastProviderTurn: OrchestrationV2ProviderTurn | undefined;
+      const send = Effect.fnUntraced(function* (
+        compact = false,
+        nativeThreadHasTurns?: boolean,
+        options?: {
+          readonly model?: string;
+          readonly status?: "finished" | "error";
+          readonly summaryCompleted?: { readonly failed?: boolean };
+        },
+      ) {
         runOrdinal += 1;
+        nextRunStatus = options?.status ?? "finished";
+        nextSummaryCompleted = options?.summaryCompleted;
+        const turnModelSelection =
+          options?.model === undefined ? modelSelection : { instanceId, model: options.model };
         const turnInput = {
           threadId,
           providerThread,
-          modelSelection,
+          modelSelection: turnModelSelection,
           runtimePolicy,
+          ...(nativeThreadHasTurns === undefined ? {} : { nativeThreadHasTurns }),
           runId: RunId.make(`cursor-device-run-${runOrdinal}`),
           runOrdinal,
           providerTurnOrdinal: runOrdinal,
@@ -870,32 +916,151 @@ describe("CursorAdapterV2", () => {
           },
         };
         yield* compact ? runtime.compactThread!(turnInput) : runtime.startTurn(turnInput);
-        yield* runtime.events.pipe(
-          Stream.filter((event) => event.type === "turn.terminal"),
-          Stream.runHead,
+        const events = yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
         );
+        const providerTurn = events.findLast((event) => event.type === "provider_turn.updated");
+        if (providerTurn?.type === "provider_turn.updated")
+          lastProviderTurn = providerTurn.providerTurn;
         const sent = sentMessages.at(-1)!;
         return {
           orchestration: sent.includes("## T3 Code orchestration"),
           devices: sent.includes("## T3 Code devices"),
+          runtime: sent.includes("<runtime_info>"),
         };
       });
-      const told = (orchestration: boolean, devices: boolean) => ({ orchestration, devices });
+      const told = (orchestration: boolean, devices: boolean, runtime: boolean) => ({
+        orchestration,
+        devices,
+        runtime,
+      });
 
       yield* setDeviceAccess(true);
-      assert.deepEqual(yield* send(), told(false, true));
-      assert.deepEqual(yield* send(), told(false, false));
+      assert.deepEqual(yield* send(), told(false, true, true));
+      assert.deepEqual(yield* send(), told(false, false, false));
       yield* send(true);
       assert.deepEqual(
         yield* send(),
-        told(true, true),
+        told(true, true, true),
         "compaction drops what the conversation was told",
       );
       yield* setDeviceAccess(false);
-      assert.deepEqual(yield* send(), told(false, false));
+      assert.deepEqual(yield* send(), told(false, false, false));
       yield* setDeviceAccess(true);
-      assert.deepEqual(yield* send(), told(false, true), "device access turned on later");
-      assert.deepEqual(yield* send(), told(false, false));
+      assert.deepEqual(yield* send(), told(false, true, false), "device access turned on later");
+      assert.deepEqual(yield* send(), told(false, false, false));
+
+      assert.deepEqual(
+        yield* send(false, undefined, { model: "gemini-4-neon", status: "error" }),
+        told(false, false, true),
+        "a model change resends runtime instructions",
+      );
+      assert.deepEqual(
+        yield* send(),
+        told(false, false, true),
+        "reverting after a failed model-change run resends runtime instructions",
+      );
+      assert.include(sentMessages.at(-1)!, "as composer-2.5");
+      assert.deepEqual(
+        yield* send(false, undefined, { status: "error" }),
+        told(false, false, false),
+        "an unchanged turn omits runtime instructions even when it fails",
+      );
+      assert.deepEqual(
+        yield* send(),
+        told(false, false, false),
+        "a failed unchanged turn keeps delivered runtime instructions",
+      );
+      assert.deepEqual(
+        yield* send(false, undefined, { model: "gemini-4-neon", status: "error" }),
+        told(false, false, true),
+      );
+      assert.deepEqual(
+        yield* send(false, undefined, { model: "gemini-4-neon" }),
+        told(false, false, true),
+        "a failed turn does not record runtime instructions as delivered",
+      );
+      assert.include(sentMessages.at(-1)!, "as gemini-4-neon");
+      assert.deepEqual(
+        yield* send(false, undefined, {
+          model: "gemini-4-neon",
+          summaryCompleted: { failed: true },
+        }),
+        told(false, false, false),
+      );
+      assert.deepEqual(
+        yield* send(false, undefined, {
+          model: "gemini-4-neon",
+          summaryCompleted: {},
+        }),
+        told(false, false, false),
+        "a failed auto-compaction keeps delivered instructions",
+      );
+      assert.deepEqual(
+        yield* send(false, undefined, { model: "gemini-4-neon" }),
+        told(true, true, true),
+        "auto-compaction drops what the conversation was told",
+      );
+      assert.deepEqual(
+        yield* send(false, undefined, { model: "gemini-4-neon" }),
+        told(false, false, false),
+      );
+
+      const keptTurn = lastProviderTurn!;
+      yield* send(false, undefined, { model: "gemini-4-neon" });
+      const rollbackToKept = runtime.rollbackThread({
+        providerThread,
+        target: {
+          type: "provider_turn",
+          checkpointId: CheckpointId.make("cursor-device-kept-checkpoint"),
+          appRunOrdinal: runOrdinal - 1,
+          providerTurn: keptTurn,
+        },
+        providerThreadTurns: [keptTurn],
+      });
+      rewindFails = true;
+      yield* Effect.flip(rollbackToKept);
+      rewindFails = false;
+      assert.deepEqual(
+        yield* send(false, true, { model: "gemini-4-neon" }),
+        told(false, false, false),
+        "a failed rewind leaves the conversation, and what it was told, unchanged",
+      );
+      const rewound = yield* rollbackToKept;
+      assert.deepEqual(rewoundAfter, [keptTurn.nativeTurnRef?.nativeId]);
+      assert.deepEqual(
+        rewound.providerThread.nativeThreadRef,
+        providerThread.nativeThreadRef,
+        "Cursor rewinds the same agent",
+      );
+      assert.deepEqual(
+        yield* send(false, true, { model: "gemini-4-neon" }),
+        told(true, true, true),
+        "the rewound conversation may have dropped instructions a later turn carried",
+      );
+
+      const rolledBack = yield* runtime.rollbackThread({
+        providerThread,
+        target: {
+          type: "thread_start",
+          checkpointId: CheckpointId.make("cursor-device-checkpoint"),
+          appRunOrdinal: 0,
+        },
+        providerThreadTurns: [],
+      });
+      assert.strictEqual(rolledBack.providerThread.id, providerThread.id);
+      assert.notStrictEqual(
+        rolledBack.providerThread.nativeThreadRef?.nativeId,
+        providerThread.nativeThreadRef?.nativeId,
+        "a rollback to the thread's start has no checkpoint to rewind onto",
+      );
+      providerThread = rolledBack.providerThread;
+      assert.deepEqual(
+        yield* send(false, false, { model: "gemini-4-neon" }),
+        told(true, true, true),
+        "the fresh agent after a rollback has been told nothing",
+      );
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -913,6 +1078,7 @@ describe("CursorAdapterV2", () => {
       // Cursor keeps a cancelled run in the conversation only once it saved a checkpoint.
       const checkpointedRuns = new Set<string>();
       const runEnds: Array<Deferred.Deferred<"finished" | "cancelled">> = [];
+      const runDeltas: Array<(update: InteractionUpdate) => Effect.Effect<void>> = [];
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-steer-thread");
       const modelSelection = { instanceId, model: "composer-2.5" };
@@ -947,6 +1113,7 @@ describe("CursorAdapterV2", () => {
                   const runId = `native-cursor-run-${sentMessages.length}`;
                   const ended = yield* Deferred.make<"finished" | "cancelled">();
                   runEnds.push(ended);
+                  runDeltas.push((update) => input.onDelta!(update).pipe(Effect.orDie));
                   return {
                     agentId: "native-cursor-steer",
                     runId,
@@ -1061,6 +1228,11 @@ describe("CursorAdapterV2", () => {
         firstPrompt,
         "the interrupted prompt is missing from the run that replaces it",
       );
+      assert.include(
+        steered,
+        "<runtime_info>",
+        "an interrupted first run did not deliver runtime instructions",
+      );
 
       yield* Deferred.succeed(runEnds[1]!, "finished");
       yield* runtime.events.pipe(
@@ -1069,6 +1241,11 @@ describe("CursorAdapterV2", () => {
       );
       yield* runtime.startTurn(turnInput(3, "Now a cow."));
       assert.notInclude(sentMessages[2]!, firstPrompt, "a finished turn carries nothing forward");
+      assert.notInclude(
+        sentMessages[2]!,
+        "<runtime_info>",
+        "a finished turn delivered runtime instructions",
+      );
 
       const interruptRunning = Effect.gen(function* () {
         const running = Option.getOrThrow(
@@ -1122,6 +1299,39 @@ describe("CursorAdapterV2", () => {
       yield* interruptRunning;
       yield* runtime.resumeTurn!(resumeInput(9));
       assert.deepEqual(resumedRuns, [5, 6, 8, 9]);
+
+      // Compaction before a checkpointed stop invalidates the interrupted run's runtime instructions,
+      // so a subsequent native resume completion must not suppress them on the follow-up turn.
+      yield* Deferred.succeed(runEnds[8]!, "finished");
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal" && event.status === "completed"),
+        Stream.runHead,
+      );
+      const neonSelection = { instanceId, model: "gemini-4-neon" };
+      yield* runtime.startTurn({
+        ...turnInput(10, "Switch model."),
+        modelSelection: neonSelection,
+      });
+      assert.include(sentMessages[9]!, "as gemini-4-neon");
+      yield* runDeltas[9]!({ type: "summary-completed" });
+      checkpointedRuns.add("native-cursor-run-10");
+      yield* interruptRunning;
+      yield* runtime.resumeTurn!({ ...resumeInput(11), modelSelection: neonSelection });
+      assert.strictEqual(sentMessages[10], "");
+      yield* Deferred.succeed(runEnds[10]!, "finished");
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal" && event.status === "completed"),
+        Stream.runHead,
+      );
+      yield* runtime.startTurn({
+        ...turnInput(12, "After resume."),
+        modelSelection: neonSelection,
+      });
+      assert.include(
+        sentMessages[11]!,
+        "as gemini-4-neon",
+        "native resume after compaction must not mark invalidated runtime instructions delivered",
+      );
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -2312,6 +2522,53 @@ describe("CursorAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.live("opens a model added to the account after its workspace already ran an agent", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-new-model-" });
+      const backend = yield* fakeCursorBackend;
+      yield* scopedProcessEnv({
+        HOME: home,
+        USERPROFILE: home,
+        CURSOR_CONFIG_DIR: path.join(home, ".cursor"),
+      });
+      const runner = yield* CursorAgentSdk.makeCursorAgentSdkRunner(() => undefined).pipe(
+        Effect.provide(CursorSdk.layer),
+      );
+      const open = (model: string) =>
+        Effect.acquireRelease(
+          runner.open({
+            operation: "create",
+            options: makeCursorAgentOptions({
+              apiKey: "synthetic-cursor-api-key",
+              modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model },
+              runtimePolicy: {
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                cwd: home,
+              },
+              threadId: ThreadId.make(`cursor-new-model-${model}`),
+              mcpSession: undefined,
+              platform: "linux",
+            }),
+            threadId: ThreadId.make(`cursor-new-model-${model}`),
+            providerSessionId: ProviderSessionId.make(`cursor-new-model-${model}`),
+          }),
+          (session) => Effect.ignore(session.close),
+        );
+
+      yield* open("composer-2");
+      backend.models.push("composer-2.5");
+
+      const exit = yield* Effect.exit(open("composer-2.5"));
+      assert.isTrue(
+        Exit.isSuccess(exit),
+        Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "opened",
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it("maps runtime modes to the SDK sandbox and auto-review controls", () => {
     const base = {
       interactionMode: "default" as const,
@@ -2498,6 +2755,51 @@ describe("CursorAdapterV2", () => {
     const logged = JSON.stringify(CursorAgentSdk.loggedCursorAgentOptions(options));
     assert.notInclude(logged, "secret-cursor-api-key");
     assert.notInclude(logged, "secret-cursor-mcp-token");
+  });
+
+  it("loads project settings only when runtime policy permits unrestricted execution", () => {
+    const input = {
+      modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "composer-2.5" },
+      threadId: ThreadId.make("cursor-project-settings"),
+      mcpSession: undefined,
+      platform: "linux" as const,
+    };
+    const policy = { cwd: "/workspace", interactionMode: "default" as const };
+    for (const runtimeMode of [
+      "approval-required",
+      "auto",
+      "auto-accept-edits",
+      "full-access",
+    ] as const) {
+      const options = makeCursorAgentOptions({
+        ...input,
+        runtimePolicy: { ...policy, runtimeMode },
+      });
+      assert.equal(
+        options.local?.settingSources?.includes("project"),
+        runtimeMode === "full-access",
+      );
+    }
+    const unrestrictedOverrides = makeCursorAgentOptions({
+      ...input,
+      runtimePolicy: {
+        ...policy,
+        runtimeMode: "auto-accept-edits",
+        approvalPolicy: "never",
+        sandboxPolicy: { type: "dangerFullAccess" },
+      },
+    });
+    assert.notInclude(unrestrictedOverrides.local?.settingSources ?? [], "project");
+    for (const restriction of [
+      { approvalPolicy: "on-request" as const },
+      { sandboxPolicy: { type: "readOnly" as const } },
+    ]) {
+      const options = makeCursorAgentOptions({
+        ...input,
+        runtimePolicy: { ...policy, runtimeMode: "full-access", ...restriction },
+      });
+      assert.notInclude(options.local?.settingSources ?? [], "project");
+    }
   });
 
   it.effect.skipIf(!symlinksSupported)(
@@ -3142,6 +3444,7 @@ const fakeCursorBackend = Effect.gen(function* () {
     2,
     Buffer.concat([Buffer.from([0x08, 0x01]), protoField(15, Buffer.from("ctx")), protoField(10)]),
   );
+  const models = ["composer-2"];
   const runFrame = Buffer.alloc(5 + requestContextExec.length);
   runFrame.writeUInt32BE(requestContextExec.length, 1);
   requestContextExec.copy(runFrame, 5);
@@ -3156,7 +3459,7 @@ const fakeCursorBackend = Effect.gen(function* () {
           return;
         case "/v1/models":
           response.setHeader("content-type", "application/json");
-          response.end(JSON.stringify({ items: [{ id: "composer-2" }] }));
+          response.end(JSON.stringify({ items: models.map((id) => ({ id })) }));
           return;
         case "/agent.v1.AgentService/RunSSE":
           response.writeHead(200, { "content-type": "application/connect+proto" });
@@ -3198,7 +3501,7 @@ const fakeCursorBackend = Effect.gen(function* () {
         server.close(() => resume(Effect.void));
       }),
   );
-  return { requestContext };
+  return { requestContext, models };
 });
 
 function protoVarint(value: number): Buffer {

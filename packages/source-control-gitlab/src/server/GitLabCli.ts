@@ -1,6 +1,7 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
@@ -15,6 +16,7 @@ import {
   type VcsProcessExitFailureKind,
 } from "@t3tools/contracts";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import {
   decodeGitLabMergeRequestJson,
@@ -238,6 +240,24 @@ export class GitLabNamespaceDecodeError extends Schema.TaggedError<GitLabNamespa
   }
 }
 
+export class GitLabMergeRequestBodyReadError extends Schema.TaggedError<GitLabMergeRequestBodyReadError>()(
+  "GitLabMergeRequestBodyReadError",
+  {
+    operation: Schema.Literal("createMergeRequest"),
+    command: Schema.Literal("glab"),
+    cwd: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  get detail(): string {
+    return "The merge request description could not be read.";
+  }
+
+  override get message(): string {
+    return `GitLab CLI failed in ${this.operation}: ${this.detail}`;
+  }
+}
+
 export const GitLabCliError = Schema.Union([
   GitLabCliUnavailableError,
   GitLabCliAuthenticationError,
@@ -248,6 +268,7 @@ export const GitLabCliError = Schema.Union([
   GitLabMergeRequestDecodeError,
   GitLabRepositoryDecodeError,
   GitLabNamespaceDecodeError,
+  GitLabMergeRequestBodyReadError,
 ]);
 export type GitLabCliError = typeof GitLabCliError.Type;
 
@@ -280,6 +301,8 @@ export class GitLabCli extends Context.Service<
     readonly execute: (input: {
       readonly cwd: string;
       readonly host?: string | undefined;
+      /** A host taken from caller input, not from a project remote. See `ENVIRONMENT_TOKEN_VARIABLES`. */
+      readonly callerNamedHost?: string | undefined;
       readonly args: ReadonlyArray<string>;
       readonly timeoutMs?: number;
       /** Keeps sensitive payloads out of argv. */
@@ -456,9 +479,29 @@ const classifyGlabFailure = (stderr: string): VcsProcessExitFailureKind | null =
   return null;
 };
 
+/**
+ * These are the login for glab's default host (GITLAB_HOST, else gitlab.com). glab before 1.131
+ * sends them to any host a command names, so a host a caller names runs without them and falls
+ * back to that host's own `glab auth login`.
+ */
+const ENVIRONMENT_TOKEN_VARIABLES = ["GITLAB_TOKEN", "GITLAB_ACCESS_TOKEN", "OAUTH_TOKEN"] as const;
+const WITHOUT_ENVIRONMENT_TOKEN = Object.fromEntries(
+  ENVIRONMENT_TOKEN_VARIABLES.map((name) => [name, ""]),
+);
+
+const hostOf = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/^[a-z][a-z0-9+.-]*:\/\//, "")
+    .replace(/\/.*$/, "");
+
 /** @public */
 export const make = Effect.gen(function* () {
   const { process } = yield* SourceControlHost.SourceControlHost;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const environment = yield* HostProcess.Environment;
+  const defaultHost = hostOf(environment.GITLAB_HOST?.trim() || "gitlab.com");
 
   const run = (
     input: Parameters<GitLabCli["Service"]["execute"]>[0],
@@ -470,8 +513,13 @@ export const make = Effect.gen(function* () {
         command: "glab",
         args: input.args,
         cwd: input.cwd,
-        // glab may otherwise prefer a different checkout remote.
-        ...(input.host === undefined ? {} : { env: { GITLAB_HOST: input.host } }),
+        env: {
+          // glab may otherwise prefer a different checkout remote.
+          ...(input.host === undefined ? {} : { GITLAB_HOST: input.host }),
+          ...(input.callerNamedHost !== undefined && hostOf(input.callerNamedHost) !== defaultHost
+            ? WITHOUT_ENVIRONMENT_TOKEN
+            : {}),
+        },
         classifyFailure: classifyGlabFailure,
         notFoundDetail: "Merge request not found.",
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
@@ -591,6 +639,7 @@ export const make = Effect.gen(function* () {
       const { host, projectPath } = parseRepositoryLookup(input.repository);
       return execute({
         cwd: input.cwd,
+        ...(host === null ? {} : { callerNamedHost: host }),
         args: [
           "api",
           ...(host === null ? [] : ["--hostname", host]),
@@ -681,6 +730,18 @@ export const make = Effect.gen(function* () {
       );
     }),
     createMergeRequest: Effect.fn("GitLabCli.createMergeRequest")(function* (input) {
+      // A confined glab (Snap) has a private /tmp, so it cannot open the server's body file.
+      const description = yield* fileSystem.readFileString(input.bodyFile).pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitLabMergeRequestBodyReadError({
+              operation: "createMergeRequest",
+              command: "glab",
+              cwd: input.cwd,
+              cause,
+            }),
+        ),
+      );
       let project = ":fullpath";
       let targetProjectId: number | undefined;
       if (input.source?.repository || input.source?.owner) {
@@ -718,8 +779,9 @@ export const make = Effect.gen(function* () {
           "--raw-field",
           `title=${input.title}`,
           "--field",
-          `description=@${input.bodyFile}`,
+          "description=@-",
         ],
+        stdin: description,
       });
     }),
     getDefaultBranch: Effect.fn("GitLabCli.getDefaultBranch")(function (input) {

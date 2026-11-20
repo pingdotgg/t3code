@@ -4,6 +4,7 @@ import {
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import { CursorSettings } from "../settings.ts";
+import type { SDKModel } from "@cursor/sdk";
 import * as Effect from "effect/Effect";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as FileSystem from "effect/FileSystem";
@@ -164,11 +165,13 @@ export const CursorDriver: ProviderDriver<
       });
 
     let catalogModels: ReadonlyArray<ServerProviderModel> = [];
+    let catalogSdkModels: ReadonlyArray<SDKModel> = [];
     const orchestrationAdapter = yield* makeCursorAdapterV2({
       instanceId,
       environment: processEnv,
       fileLinkInstructions: effectiveConfig.fileLinkInstructions,
       getModels: () => catalogModels,
+      getSdkModels: () => catalogSdkModels,
     }).pipe(
       Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
         ...sdkRunner,
@@ -212,6 +215,7 @@ export const CursorDriver: ProviderDriver<
       auth.requireApiKey,
       auth.withAccess,
       () => catalogModels,
+      () => catalogSdkModels,
     );
 
     const checkProvider = auth.readApiKey.pipe(
@@ -250,6 +254,19 @@ export const CursorDriver: ProviderDriver<
             catalogModels = provider.models;
           }
         }),
+      ),
+      Effect.provideServiceEffect(
+        CursorSdkCatalog.CursorSdkCatalog,
+        Effect.map(CursorSdkCatalog.CursorSdkCatalog, (catalog) =>
+          CursorSdkCatalog.CursorSdkCatalog.of({
+            // Untraced: CursorSdkCatalog.read already spans this call.
+            read: Effect.fnUntraced(function* (apiKey) {
+              const snapshot = yield* catalog.read(apiKey);
+              if (snapshot.models.length > 0) catalogSdkModels = snapshot.models;
+              return snapshot;
+            }),
+          }),
+        ),
       ),
       Effect.provide(CursorSdkCatalog.layer),
       Effect.provideService(HttpClient.HttpClient, httpClient),
