@@ -541,11 +541,13 @@ describe("GhosttyTerminalSurface visibility", () => {
     const surface = await harness.create({ beforeKey: () => true });
 
     key(surface, "v", "KeyV", { altKey: true, ctrlKey: true });
+    await Promise.resolve();
+    expect(harness.onData.mock.calls.map(([data]) => data)).toEqual(["\x1b\x16"]);
+
     key(surface, "v", "KeyV", { ctrlKey: true, metaKey: true });
     await Promise.resolve();
-
+    expect(harness.onData.mock.calls.map(([data]) => data)).toEqual(["\x1b\x16", "\x1b[118;5u"]);
     expect(readText).not.toHaveBeenCalled();
-    expect(harness.onData.mock.calls.map(([data]) => data)).toContain("\x1b\x16");
   });
 
   it("keeps Ctrl+V as quoted insert for a Linux client", async () => {
