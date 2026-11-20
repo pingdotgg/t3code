@@ -1,3 +1,4 @@
+import { DESKTOP_UPDATE_RESTART_MARKER_FILE } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -1336,7 +1337,14 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     // restart while this launcher keeps running, then the restart is handed to the manager.
     const handOff = installed && start && runningInsideService && manager.kind === "schtasks";
     if (installed && start && !handOff) {
-      yield* runSteps(manager.stop);
+      const marker = path.join(input.baseDir, "runtime", DESKTOP_UPDATE_RESTART_MARKER_FILE);
+      // The running server consumes this marker during shutdown to keep its relay tunnel.
+      yield* fs.writeFileString(marker, "", { mode: 0o600 }).pipe(
+        Effect.mapError((cause) => new BootServiceInstallError({ cause })),
+      );
+      yield* runSteps(manager.stop).pipe(
+        Effect.ensuring(fs.remove(marker, { force: true }).pipe(Effect.ignore)),
+      );
     }
 
     // State first, then unit. The launcher acquires only one at a time, and a
