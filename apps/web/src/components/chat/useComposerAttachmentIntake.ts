@@ -324,15 +324,12 @@ export function useComposerAttachmentIntake(input: {
     pendingInsertion?.dispose();
     const movedThread = preparingImages.map(movedPreparingImageThread).find(Boolean);
     const completionTargetKey = movedThread ? composerTargetKey(movedThread) : attachmentTargetKey;
-    const compressionError = [...compressionErrors].findLast(([id]) =>
-      isPreparingComposerImage(completionTargetKey, id),
-    )?.[1];
     // Same tick as the draft insert below, so the strip swaps placeholders for
     // real tiles in one render. A placeholder removed meanwhile stays removed.
     const stillPreparingIds = removePreparingComposerImages(
       completionTargetKey,
       new Set(preparingImages.map((image) => image.id)),
-      { cancelSubmission: compressionError !== undefined },
+      { cancelSubmission: compressionErrors.size > 0 },
     );
     if (questionAttachmentTarget && !movedThread)
       changeQuestionAttachmentPreparation(questionAttachmentTarget, -stillPreparingIds.size);
@@ -373,6 +370,10 @@ export function useComposerAttachmentIntake(input: {
     // now other work (a failed send, an overlapping paste) may have set a
     // thread error this call knows nothing about, and clearing it would
     // swallow that message.
+    const compressionError = [...compressionErrors]
+      .filter(([id]) => stillPreparingIds.has(id))
+      .map(([, message]) => message)
+      .at(-1);
     if (compressionError !== undefined) {
       setThreadError(threadId, compressionError);
     }
