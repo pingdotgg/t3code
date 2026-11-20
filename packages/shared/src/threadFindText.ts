@@ -8,18 +8,17 @@ import {
   renderCodexInlineDirectivesAsMarkdown,
 } from "./codexMarkdownDirectives.ts";
 import { codexArtifactTemplatePresentationLabel } from "./codexArtifactTemplates.ts";
+import { buildFileLinkParentSuffixByPath, fileLinkLabel } from "./fileLinks.ts";
 import {
-  buildFileLinkParentSuffixByPath,
-  splitFilePathPosition,
-  fileLinkLabel,
-} from "./fileLinks.ts";
-import {
+  classifyMarkdownImageSource,
   isMarkdownFileLinkLabel,
   extractMarkdownLinkHrefs,
   extractInlineCodeSpans,
   inlineCodeFilePathCandidate,
-  resolveMarkdownFileLinkTarget,
+  resolveMarkdownFileLink,
+  shouldRenderMarkdownImageAsFileLink,
 } from "./markdownLinks.ts";
+import { mediaKindFromPath } from "./mediaPreview.ts";
 import { upgradeLegacyContextMessage } from "./composerContextLegacy.ts";
 import {
   isAttachmentOnlyBootstrapPrompt,
@@ -38,6 +37,9 @@ import {
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
   CHAT_USER_MARKDOWN_REMARK_PLUGINS,
+  chatMarkdownImageSource,
+  decodeMarkdownLinkEscapes,
+  type ChatMarkdownImageProperties,
 } from "./markdownPipeline.ts";
 
 // Inline wrappers (including Shiki token spans) must not split a search phrase.
@@ -102,9 +104,8 @@ interface TextTree {
   readonly type: string;
   readonly tagName?: string;
   readonly value?: string;
-  readonly properties?: {
+  readonly properties?: ChatMarkdownImageProperties & {
     readonly href?: unknown;
-    readonly src?: unknown;
     readonly dataInlineCode?: unknown;
   };
   readonly children?: ReadonlyArray<TextTree>;
@@ -112,11 +113,21 @@ interface TextTree {
 
 function markdownThreadFindText(
   markdown: string,
-  userMessage = false,
-  cwd?: string,
-  skills: readonly InlineSkill[] = [],
-  lineBreaks = false,
-  renderInsights = false,
+  {
+    userMessage = false,
+    cwd,
+    skills = [],
+    lineBreaks = false,
+    renderInsights = false,
+    theme,
+  }: {
+    userMessage?: boolean;
+    cwd: string | undefined;
+    skills?: readonly InlineSkill[];
+    lineBreaks?: boolean;
+    renderInsights?: boolean;
+    theme: "dark" | "light" | undefined;
+  },
 ): string[] {
   const processor = userMessage
     ? userProcessor
@@ -130,11 +141,13 @@ function markdownThreadFindText(
     : processor;
   const tree = renderer.runSync(renderer.parse(markdown), markdown);
   const paths = [
-    ...extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(markdown)),
+    ...extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(markdown)).map(
+      decodeMarkdownLinkEscapes,
+    ),
     ...extractInlineCodeSpans(markdown).flatMap((span) => inlineCodeFilePathCandidate(span) ?? []),
   ].flatMap((href) => {
-    const target = resolveMarkdownFileLinkTarget(href, cwd);
-    return target ? [splitFilePathPosition(target).path] : [];
+    const resolved = resolveMarkdownFileLink(href, cwd);
+    return resolved ? [resolved.position.path] : [];
   });
   const parentSuffixes = buildFileLinkParentSuffixByPath(paths);
   const segments: string[] = [];
@@ -161,6 +174,19 @@ function markdownThreadFindText(
       let candidate: string | null = null;
       if (node.tagName === "a" && typeof href === "string") {
         candidate = href;
+      } else if (node.tagName === "img") {
+        const source = chatMarkdownImageSource(node.properties, theme);
+        if (source) {
+          const { authoredSrc, classifiedSrc } = source;
+          if (
+            shouldRenderMarkdownImageAsFileLink(
+              classifyMarkdownImageSource(classifiedSrc, cwd),
+              mediaKindFromPath(classifiedSrc),
+            )
+          ) {
+            candidate = authoredSrc;
+          }
+        }
       } else if (
         node.tagName === "code" &&
         !inPre &&
@@ -170,14 +196,13 @@ function markdownThreadFindText(
           (node.children ?? []).map((child) => child.value ?? "").join(""),
         );
       }
-      const target = candidate ? resolveMarkdownFileLinkTarget(candidate, cwd) : null;
-      if (target) {
+      const resolved = candidate ? resolveMarkdownFileLink(candidate, cwd) : null;
+      if (candidate && resolved) {
         const labelText = (node: TextTree): string =>
           node.value ?? (node.children ?? []).map(labelText).join("");
         const label = labelText(node);
-        if (node.tagName === "a" && candidate && !isMarkdownFileLinkLabel(label, candidate))
-          text += `${label} `;
-        text += fileLinkLabel(splitFilePathPosition(target), parentSuffixes);
+        if (node.tagName === "a" && !isMarkdownFileLinkLabel(label, candidate)) text += `${label} `;
+        text += fileLinkLabel(resolved.position, parentSuffixes);
         return;
       }
     }
@@ -219,10 +244,14 @@ function markdownThreadFindText(
 }
 
 /** Plans render `$skill` tokens literally (no skill chips), so they are indexed as written. */
-export function searchablePlanSegments(markdown: string, cwd?: string): readonly string[] {
+export function searchablePlanSegments(
+  markdown: string,
+  cwd?: string,
+  theme?: "dark" | "light",
+): readonly string[] {
   return [
     proposedPlanTitle(markdown) ?? "Proposed plan",
-    ...markdownThreadFindText(stripDisplayedPlanMarkdown(markdown), false, cwd, []),
+    ...markdownThreadFindText(stripDisplayedPlanMarkdown(markdown), { cwd, theme }),
   ];
 }
 
@@ -230,20 +259,20 @@ export function searchableMessageSegments(
   message: Pick<OrchestrationV2ConversationMessage, "role" | "text" | "streaming" | "context">,
   cwd?: string,
   skills: readonly InlineSkill[] = [],
+  theme?: "dark" | "light",
 ): readonly string[] | null {
   if (message.role === "user") {
     // Clients hide this prompt, so find must not match text nobody can see.
     if (isAttachmentOnlyBootstrapPrompt(message.text)) return [];
     const text = message.context ? message.text : upgradeLegacyContextMessage(message.text).text;
-    return markdownThreadFindText(text, true, cwd, skills);
+    return markdownThreadFindText(text, { userMessage: true, cwd, skills, theme });
   }
   if (message.role !== "assistant") return null;
-  return markdownThreadFindText(
-    message.text || (message.streaming ? "" : "(empty response)"),
-    false,
+  return markdownThreadFindText(message.text || (message.streaming ? "" : "(empty response)"), {
     cwd,
     skills,
-    shouldPreserveAssistantLineBreaks(message.text),
-    true,
-  );
+    lineBreaks: shouldPreserveAssistantLineBreaks(message.text),
+    renderInsights: true,
+    theme,
+  });
 }

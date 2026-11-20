@@ -102,7 +102,7 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
         const notifications =
           yield* Deferred.make<ReadonlyArray<AcpProtocol.AcpIncomingNotification>>();
         yield* transport.incoming.pipe(
-          Stream.take(2),
+          Stream.take(3),
           Stream.runCollect,
           Effect.flatMap((notificationChunk) => Deferred.succeed(notifications, notificationChunk)),
           Effect.forkScoped,
@@ -143,8 +143,29 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
           },
         });
 
+        const commandResult = {
+          exit_code: null,
+          signal: null,
+          timed_out: false,
+          termination_indeterminate: true,
+        };
+        const cancelledToolFrame = encoder.encode(
+          `${encodeUnknownJsonString({
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              sessionId: "session-1",
+              update: {
+                sessionUpdate: "tool_call_update",
+                toolCallId: "cancelled-tool",
+                status: "failed",
+                command_result: commandResult,
+              },
+            },
+          })}\n`,
+        );
         // Frames split across reads, with one read ending one frame and starting the next.
-        const wire = new Uint8Array([...updateFrame, ...completionFrame]);
+        const wire = new Uint8Array([...updateFrame, ...completionFrame, ...cancelledToolFrame]);
         const splits = [10, updateFrame.length + 10, wire.length];
         let start = 0;
         for (const end of splits) {
@@ -152,9 +173,18 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
           start = end;
         }
 
-        const [update, completion] = yield* Deferred.await(notifications);
+        const [update, completion, cancelledTool] = yield* Deferred.await(notifications);
         assert.equal(update?._tag, "SessionUpdate");
         assert.equal(completion?._tag, "ElicitationComplete");
+        assert.deepEqual(cancelledTool?.params, {
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "cancelled-tool",
+            status: "failed",
+            command_result: commandResult,
+          },
+        });
       }),
   );
 
@@ -528,6 +558,31 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
             '{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"session-1"}}\n',
         },
       ]);
+    }),
+  );
+
+  it.effect("skips blank lines between agent messages", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const outcome = yield* Deferred.make<string>();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        onTermination: (error) => Deferred.succeed(outcome, error._tag).pipe(Effect.asVoid),
+      });
+      yield* transport.incoming.pipe(
+        Stream.runForEach((notification) => Deferred.succeed(outcome, notification._tag)),
+        Effect.forkScoped,
+      );
+
+      const update = encodeUnknownJsonString({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: { sessionId: "session-1", update: { sessionUpdate: "plan", entries: [] } },
+      });
+      yield* Queue.offer(input, encoder.encode(`\n\r\n \t\n${update}\n\n`));
+
+      assert.equal(yield* Deferred.await(outcome), "SessionUpdate");
     }),
   );
 
