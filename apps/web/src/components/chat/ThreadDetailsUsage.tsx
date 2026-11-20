@@ -76,6 +76,7 @@ export function ThreadDetailsUsage({
             fill={null}
             tone={null}
             value={gt("Unavailable")}
+            ariaDescription={notice}
             tooltip={<span className="text-foreground">{notice}</span>}
             opensUsage
           />
