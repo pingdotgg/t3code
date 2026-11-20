@@ -504,8 +504,11 @@ it.effect("closes connections beyond a forward's limit without tunnelling them",
     const tunnelled = endpoint.requests.length;
     const closed = yield* Effect.promise(
       () =>
-        new Promise<boolean>((resolve) => {
+        new Promise<boolean>((resolve, reject) => {
           const socket = NodeNet.connect(forward.localPort, "127.0.0.1");
+          socket.once("error", (error) => {
+            if (!("code" in error) || error.code !== "ECONNRESET") reject(error);
+          });
           socket.on("close", () => resolve(true));
           socket.on("data", () => resolve(false));
           socket.write(Uint8Array.of(2));

@@ -183,7 +183,12 @@ layer("declares what Forgejo can do", (it) => {
     Effect.gen(function* () {
       const provider = yield* ForgejoPullRequestProvider.make;
       assert.deepStrictEqual(provider.capabilities.updateMethods, ["merge", "rebase"]);
-      assert.deepStrictEqual(provider.capabilities.mergeMethods, ["merge", "squash", "rebase"]);
+      assert.deepStrictEqual(provider.capabilities.mergeMethods, [
+        "merge",
+        "squash",
+        "rebase",
+        "fast-forward",
+      ]);
       assert.ok(provider.capabilities.actions.includes("enable-auto-merge"));
       assert.strictEqual(provider.capabilities.reactions, true);
     }),
@@ -769,7 +774,7 @@ const fastForwardOnlyProvider = (
 ) =>
   ForgejoPullRequestProvider.make.pipe(
     Effect.provide(
-      Layer.mock(ForgejoCli.ForgejoCli)({
+      Layer.mock(ForgejoCli)({
         api: (input) => {
           const [path] = input.path.split("?");
           const reply = (value: unknown) =>
