@@ -324,16 +324,12 @@ async function* readChunks(
   }
 }
 
-// Match markers in one latin1 alternation; one character per byte preserves exact ASCII offsets.
+// Match markers as raw bytes; UTF-8 is self-synchronizing, so a marker's bytes
+// cannot false-match inside a multi-byte sequence, and no per-line string is
+// allocated. Buffer.indexOf per marker beats a latin1 regex on long lines.
 export function transcriptLineGate(markers: readonly [string, ...string[]]) {
-  if (markers.length === 1) {
-    const marker = Buffer.from(markers[0]);
-    return (line: Buffer) => line.includes(marker);
-  }
-  const pattern = new RegExp(
-    markers.map((marker) => marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
-  );
-  return (line: Buffer) => pattern.test(line.toString("latin1"));
+  const needle = markers.map((marker) => Buffer.from(marker));
+  return (line: Buffer) => needle.some((marker) => line.includes(marker));
 }
 
 /** Returns null on read failure; caching it as empty would hide usage until size/mtime changes. */
