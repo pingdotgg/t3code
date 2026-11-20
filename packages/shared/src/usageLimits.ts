@@ -481,24 +481,66 @@ function hasDuplicateCursorTotal(pool: LimitPool): boolean {
   );
 }
 
-export function displayLimitWindows(pool: LimitPool) {
-  if (pool.driver === "antigravity") {
-    return [...pool.windows].sort(
-      (left, right) =>
-        Number(!left.id.startsWith("gemini-")) - Number(!right.id.startsWith("gemini-")) ||
-        left.id
-          .replace(/-(5h|weekly|quota)$/, "")
-          .localeCompare(right.id.replace(/-(5h|weekly|quota)$/, "")) ||
-        WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind],
-    );
+function compareAntigravityWindows(
+  left: Pick<ServerProviderUsageWindow, "id" | "kind">,
+  right: Pick<ServerProviderUsageWindow, "id" | "kind">,
+): number {
+  return (
+    Number(!left.id.startsWith("gemini-")) - Number(!right.id.startsWith("gemini-")) ||
+    left.id
+      .replace(/-(5h|weekly|quota)$/, "")
+      .localeCompare(right.id.replace(/-(5h|weekly|quota)$/, "")) ||
+    WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind]
+  );
+}
+
+function hasDuplicateCursorTotalWindow(windows: readonly ServerProviderUsageWindow[]): boolean {
+  if (windows.length !== 2) return false;
+  const total = windows.find((window) => window.id === "totalPercentUsed");
+  const auto = windows.find((window) => window.id === "autoPercentUsed");
+  return (
+    total !== undefined &&
+    auto !== undefined &&
+    total.kind === auto.kind &&
+    total.usedPercent === auto.usedPercent &&
+    total.resetsAt === auto.resetsAt
+  );
+}
+
+function displayDriverWindows<T extends Pick<ServerProviderUsageWindow, "id" | "kind">>(
+  driver: ServerProvider["driver"],
+  windows: readonly T[],
+  duplicateCursorTotal: boolean,
+): readonly T[] {
+  if (driver === "antigravity") {
+    return [...windows].sort(compareAntigravityWindows);
   }
-  if (pool.driver !== "cursor") return pool.windows;
-  const hasAuto = pool.windows.some((window) => window.id === "autoPercentUsed");
-  const hasApi = pool.windows.some((window) => window.id === "apiPercentUsed");
-  const hideTotal = (hasAuto && hasApi) || hasDuplicateCursorTotal(pool);
-  return pool.windows
+  if (driver !== "cursor") return windows;
+  const hasAuto = windows.some((window) => window.id === "autoPercentUsed");
+  const hasApi = windows.some((window) => window.id === "apiPercentUsed");
+  const hideTotal = (hasAuto && hasApi) || duplicateCursorTotal;
+  return windows
     .filter((window) => !hideTotal || window.id !== "totalPercentUsed")
     .sort((left, right) => cursorUsageWindowRank(left.id) - cursorUsageWindowRank(right.id));
+}
+
+export function displayProviderUsageWindows(
+  driver: ServerProvider["driver"],
+  windows: readonly ServerProviderUsageWindow[],
+): readonly ServerProviderUsageWindow[] {
+  return displayDriverWindows(
+    driver,
+    windows,
+    driver === "cursor" && hasDuplicateCursorTotalWindow(windows),
+  );
+}
+
+export function displayLimitWindows(pool: LimitPool) {
+  return displayDriverWindows(
+    pool.driver,
+    pool.windows,
+    pool.driver === "cursor" && hasDuplicateCursorTotal(pool),
+  );
 }
 
 const WINDOW_KIND_ORDER: Record<ServerProviderUsageWindow["kind"], number> = {

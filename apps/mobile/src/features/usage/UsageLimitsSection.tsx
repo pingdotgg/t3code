@@ -12,6 +12,7 @@ import {
   type ServerProviderUsageWindow,
 } from "@t3tools/contracts";
 import {
+  displayProviderUsageWindows,
   type ResetCreditChoice,
   paceOf,
   paceRemainingPercent,
@@ -215,7 +216,7 @@ export function AccountLimits(props: {
         <Text className="text-sm text-foreground-muted">{notice}</Text>
       ) : (
         <View className="gap-3">
-          {limits.windows.map((window) => (
+          {displayProviderUsageWindows(props.driver, limits.windows).map((window) => (
             <WindowRow key={window.id} window={window} color={color} now={now} />
           ))}
         </View>

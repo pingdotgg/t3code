@@ -11,6 +11,7 @@ import {
 import { useAtomValue } from "@effect/atom-react";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
+  displayProviderUsageWindows,
   type LimitPace,
   paceOf,
   paceRemainingPercent,
@@ -229,6 +230,7 @@ export function LimitWindows({
   readonly compact?: boolean;
 }) {
   const color = normalizeProviderAccentColor(accentColor) ?? barColor(driver);
+  const visibleWindows = displayProviderUsageWindows(driver, windows);
   const gt = useGT();
   const m = useMessages();
   return (
@@ -239,7 +241,7 @@ export function LimitWindows({
           : "grid grid-cols-[11rem_minmax(0,1fr)_7rem] gap-x-4 gap-y-1"
       }
     >
-      {windows.map((window) => {
+      {visibleWindows.map((window) => {
         const pace = paceOf(window, now);
         const resetsIn = formatResetsIn(window, now, m);
         return (
