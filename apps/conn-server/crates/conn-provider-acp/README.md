@@ -8,8 +8,10 @@ stdio). One shared runtime, one small flavor per agent. Reference behaviour: T3'
 **State (2026-11-14): Grok, offered by the server.** The server lists T3's default `grok`
 instance, off until `providerInstances.grok` enables it, and probes the CLI as T3 does (see
 "Server entry"). `/compact` is served as T3 serves it (see "Compaction"), and so are Grok's
-background work and subagents (see "Background work and subagents"). Kiro, fx, Antigravity
-and the ACP registry are not built (see "Not built").
+background work and subagents (see "Background work and subagents").
+
+**State (2026-11-20): Antigravity, offered by the server** (see "Antigravity"). Kiro, fx and
+the ACP registry are not built (see "Not built").
 
 ## Trial: the official crates or our own JSON-RPC?
 
@@ -203,13 +205,13 @@ prompts; our replay and the stub conformance check compare against those.
   protocol 1), MCP tool
   presentation (`extractMcpToolCallIdentity`), web search and fetch projections, structured
   file changes, notices, retries.
-- **Shared runtime:** ACP protocol 2 responses (Kiro answers with v2), `session/load` and
-  resume at open, fork, `session/set_config_option`, steering, elicitation, MCP over ACP,
-  client file and terminal callbacks (`ProviderHost`; only Antigravity's files and the
-  registry's terminals use them in T3, Grok never does), authentication on `auth_required`.
+- **Shared runtime:** ACP protocol 2 responses (Kiro answers with v2; only `auth/login`
+  follows the reply's shape), `session/load` and resume at open, fork, config options other
+  than Antigravity's model, steering, elicitation, MCP over ACP, client terminal callbacks
+  (the registry's), file writes, authentication on `auth_required`.
 - **Linux launch:** T3 puts Grok's process tree in a cgroup wrapper on Linux
   (`ownDescendantProcessGroups`); we spawn it directly. macOS matches.
-- **Flavors:** Kiro, fx, Antigravity (its own adapter and stdout filter), the ACP registry.
+- **Flavors:** Kiro, fx, the ACP registry. Antigravity's gaps are listed under "Antigravity".
 - **The ACP registry's download and install: not to be built (Nick, 2026-11-14).** This
   server installs nothing: no index download, no binary, npm or uv install. Of the registry's
   11 `server.*` methods only `uninstallAcpRegistryManagedBinary` and `acceptAcpRegistryUrlAuth`
@@ -245,11 +247,55 @@ This server must not download or install; the choice is Nick's.
   `acceptAcpRegistryUrlAuth` need no network and no install; the other nine fetch the index,
   install, or start the agent.
 
+## Antigravity (`antigravity.rs`, `antigravity_provider.rs`)
+
+T3's Antigravity driver for the `agy` CLI found on `PATH` or set as `binaryPath`
+(`AntigravityDriver.ts`, `antigravityAuthSupport.ts`, `AntigravityAcpSupport.ts`,
+`AntigravityAdapterV2.ts`). The server lists the default `antigravity` instance (off) and one
+more per `providerInstances` entry with that driver (`supportsMultipleInstances`).
+
+- **Credential:** the instance's `apiKey` setting, a settings secret as in T3 (moved out of
+  `settings.json` into `<state>/secrets`), passed to the agent as `GEMINI_API_KEY`
+  (`gemini-api-key`) or `GOOGLE_API_KEY` (`agent-platform`). Never logged. Other variables of
+  the server's environment reach the agent, so a model endpoint the host sets (Orbit:
+  `GOOGLE_GEMINI_BASE_URL`) applies.
+- **Launch:** `agy acp --gemini-dir <profile> --app-data-dir antigravity-acp`, profile
+  `<state>/providers/antigravity/<sha256 of the instance id>` (0700) with
+  `antigravity-acp/settings.json` naming the sign-in method; the driver's own keys removed
+  from the inherited environment, then `GEMINI_HOME`, `AGY_ACP_FORCE_FILE_STORAGE`,
+  `BROWSER`, `PYTHONUNBUFFERED`, `ELECTRON_RUN_AS_NODE`, and `TMPDIR` = a fresh
+  `run-<random>` folder per process, removed after it ends.
+- **Wire:** `initialize` as client `zed` 0.0.0 (the CLI's version is unknown before it
+  answers; T3 the same) with `fs.readTextFile`; `authenticate` with the configured method
+  before `session/new`; `session/new` with `additionalDirectories: [attachments]` and the pull
+  request linking text as `_meta.antigravity.systemPrompt.append` when the agent offers it
+  (then the runtime notes leave it out); the model through `session/set_config_option` on the
+  `model` option (unknown models refused with T3's text, 1.3 ids of a listed family passed
+  through); Stop as `session/cancel`, waiting for the prompt's reply; a restarted agent gets
+  `session/resume`. `fs/read_text_file` is served inside the turn's workspace and the
+  attachments folder (`conn-provider-support` `RootedFiles`).
+- **Status:** no spawn, as T3 (the agent unpacks about 1 GB per launch): the executable
+  resolves and the sign-in is configured. Models, version and `ready` come with the first
+  session, as T3's `onSessionStarted`.
+- **One accepted difference:** `BROWSER` runs this server (`<self> antigravity-browser -- %s`,
+  which reports the URL on stderr with T3's marker) where T3 runs its Node with an inline
+  script.
+- **Not built:** browser sign-in (`provider.auth.*` answer "no sign-in" for every provider);
+  T3's managed runtime (`localharness_external`) and its install; links to `~/.gemini`
+  skills; `AntigravityProtocol` (tool call normalization, read repair, `interaction_*`
+  questions, the `allow_always` security warning); audio, text, PDF and video attachments as
+  ACP resources (images go as image blocks, every path in the text); background commands,
+  child work and subagents (`deferFinalizeForBackgroundWork`, `toolOutlivesPrompt`,
+  `watchPromptOutcome`); the stderr harness-failure and stdout sign-in URL filters; the
+  prompt inactivity timeout; per-turn usage; thinking levels per model; text generation;
+  usage limits; slash commands in the entry.
+
 ## Proofs
 
 ```sh
 cargo test -p conn-provider-acp                                                 # offline
 node crates/conn-provider-acp/tools/conformance.mjs   # the wire check
+node crates/conn-provider-acp/tools/antigravity-conformance.mjs   # Antigravity's launch and wire
 node crates/conn-provider-acp/tools/probe-conformance.mjs   # the status probe
 node crates/conn-provider-acp/tools/gen-instructions.mjs --check
 node crates/conn-provider-acp/tools/make-scenarios.mjs   # the hand-made scenarios

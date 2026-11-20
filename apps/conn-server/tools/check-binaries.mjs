@@ -13,7 +13,7 @@ const examples = [
   ["release", "conn-mcp", "html_cases"],
   ["debug", "conn-provider-codex", "conformance", "codex_probe"],
   ["debug", "conn-provider-claude", "conformance", "claude_probe", "t3_replay"],
-  ["debug", "conn-provider-acp", "conformance", "grok_probe"],
+  ["debug", "conn-provider-acp", "conformance", "grok_probe", "antigravity_conformance"],
   ["debug", "conn-engine", "t3_fixture_replay"],
 ];
 

@@ -66,6 +66,8 @@ function worker() {
       // The workspace as the recording's `<workspace>` stands for it: the config's, when the
       // caller knows the path as the server wrote it (a temp folder can differ from its real path).
       T3_ACP_REPLAY_WORKSPACE: config.workspace ?? process.cwd(),
+      // A flavor without T3 replay fixtures answers with T3's mock agent in its profile.
+      ...(config.agentEnv ?? {}),
     },
     stdio: ["pipe", "pipe", "inherit"],
   });

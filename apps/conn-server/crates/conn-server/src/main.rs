@@ -9,6 +9,16 @@ fn main() {
     if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("acp-mcp-bridge")) {
         std::process::exit(conn_server::acp_mcp_bridge::main());
     }
+    // Antigravity's `BROWSER`: reports a sign-in URL instead of opening a browser.
+    if std::env::args_os().nth(1).as_deref()
+        == Some(std::ffi::OsStr::new(conn_provider_acp::BROWSER_SUBCOMMAND))
+    {
+        let args: Vec<String> = std::env::args_os()
+            .skip(2)
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        std::process::exit(conn_provider_acp::browser_main(&args));
+    }
     run_server();
 }
 
@@ -54,13 +64,29 @@ fn run_server() {
         claude.helper.clone(),
         conn_provider_claude::DRIVER,
     );
-    // `claudeAgent` and `codex`, and one more provider per `providerInstances` entry of either
-    // driver, each with its entry's settings (`conn_server::instances`).
+    let antigravity = conn_provider_acp::AntigravityConfig {
+        state_dir: options.state_dir.clone(),
+        attachments_dir: Some(options.state_dir.join("attachments")),
+        self_command: None,
+    };
+    // `claudeAgent`, `codex` and `antigravity`, and one more provider per `providerInstances`
+    // entry of these drivers, each with its entry's settings (`conn_server::instances`).
     let instances = Arc::new(conn_server::instances::Instances::new(
-        &[conn_provider_claude::DRIVER, conn_provider_codex::DRIVER],
+        &[
+            conn_provider_claude::DRIVER,
+            conn_provider_codex::DRIVER,
+            conn_provider_acp::ANTIGRAVITY.driver,
+        ],
         Arc::new(
             move |id: &str, driver: &str, entry: Option<&serde_json::Value>| {
-                let provider: Arc<dyn Provider> = if driver == conn_provider_claude::DRIVER {
+                let provider: Arc<dyn Provider> = if driver == conn_provider_acp::ANTIGRAVITY.driver
+                {
+                    Arc::new(conn_provider_acp::AntigravityProvider::for_instance(
+                        id.into(),
+                        antigravity.clone(),
+                        entry,
+                    ))
+                } else if driver == conn_provider_claude::DRIVER {
                     Arc::new(ClaudeProvider::for_instance(
                         id.into(),
                         claude.clone(),

@@ -1,15 +1,18 @@
 //! The ACP provider for Conn Server: agents that speak the Agent Client Protocol on stdio
-//! (Grok first; Kiro, fx, Antigravity and the ACP registry follow the same runtime).
+//! (Grok and Antigravity; Kiro, fx and the ACP registry would follow the same runtime).
 //!
 //! - [`protocol`], [`ordered`]: JSON-RPC frames, written with T3's key order.
 //! - [`connection`]: request ids and replies on one agent's stdio.
 //! - [`mapper`], [`tools`], [`diff`]: agent frames → `ProviderEvent`s (pure, replay-tested).
 //! - [`session`]: the `Session`: process, handshake, prompts, Stop, close.
 //! - [`flavor`]: what differs per agent.
+//! - [`antigravity`], [`antigravity_provider`]: Google Antigravity (`agy acp`).
 //!
 //! Reference behaviour: `packages/provider-acp` and `packages/provider-grok` in the Conn
 //! monorepo. See `README.md` for what is ported, what is not, and the proofs.
 
+mod antigravity;
+mod antigravity_provider;
 mod connection;
 mod diff;
 pub mod flavor;
@@ -45,6 +48,10 @@ use conn_provider_support::process::{LaunchSpec, Process};
 use serde_json::json;
 use tokio::sync::mpsc;
 
+pub use antigravity::{
+    ANTIGRAVITY, AUTH_BROWSER_MARKER, AntigravitySettings, BROWSER_SUBCOMMAND, browser_main,
+};
+pub use antigravity_provider::{AntigravityConfig, AntigravityProvider};
 pub use flavor::{Flavor, GROK, Launch};
 pub use session::AcpSession;
 
@@ -344,7 +351,7 @@ fn process_spawner(launch: Launch, cwd: String) -> session::Spawner {
             program: PathBuf::from(&launch.program),
             args: launch.args.clone(),
             cwd: Some(cwd.clone()),
-            env_remove: Vec::new(),
+            env_remove: launch.env_remove.clone(),
             env_set: launch.env.clone(),
         };
         let (events_tx, events) = mpsc::channel(session::EVENT_CAPACITY);
@@ -444,6 +451,8 @@ impl Provider for AcpProvider {
                 mcp_servers: input.mcp_servers.clone(),
                 client_version: "0.0.0".into(),
                 attachments_dir: self.config.attachments_dir.clone(),
+                auth_method: None,
+                runtime_version: None,
                 self_command: self.config.self_command.clone().unwrap_or_else(|| {
                     std::env::current_exe()
                         .map(|p| p.display().to_string())

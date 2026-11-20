@@ -21,6 +21,30 @@ the run stays open. Waiting for terminal confirmation is deliberate. `idle-diff`
 split in `KNOWN` as `intermittent`; a gate either side misses still fails it. Whether to
 match T3 is open.
 
+## Antigravity (2026-11-20)
+
+Google Antigravity runs as an agent: the `agy` CLI over ACP (`agy acp`), as T3's Antigravity
+driver runs it (`conn-provider-acp/src/antigravity.rs`, `antigravity_provider.rs`; details and
+gaps in the crate README, "Antigravity"). The server lists the default `antigravity` instance
+(off) and each `providerInstances` entry with that driver.
+
+- **Credential (Nick's decision):** the instance's `apiKey` setting, a settings secret as in T3,
+  passed to `agy` only (`GEMINI_API_KEY` for `gemini-api-key`). In Orbit containers Orbit fills
+  that setting with the AI router key and sets `GOOGLE_GEMINI_BASE_URL` to the router; this
+  server has no Orbit names. Orbit must also put `agy` on `PATH` in the container image or
+  through its tool provisioning: this server installs nothing.
+- **Proof:** `tools/antigravity-conformance.mjs` (new check): T3's driver and adapter and ours
+  on one stub `agy` that replays a recording of a live `agy acp` 1.5.4
+  (`testdata/antigravity/turns.json`); argv, environment and every frame equal in two
+  scenarios (7 frames each: initialize, authenticate, session/new, the model, two prompts,
+  close). `cargo test -p conn-provider-acp antigravity`: model selection, client name, session
+  meta, settings. Live (2026-11-20): one turn on `gemini-3.8-flash` through Orbit's AI router,
+  answered "antigravity ok"; the key moved from `settings.json` to the secret store.
+- **The ACP registry stays unregistered** (Nick, 2026-11-14: no index download or install). RPC
+  196 of 251 and `/mcp` 103 tools, unchanged.
+- **Known differences:** `BROWSER` names this server's helper, not T3's Node script; the
+  status entry lists models only after the first session (T3 the same without a sign-in).
+
 ## Environment themes (2026-11-20)
 
 Agents can restyle the clients with `t3_theme_read` and `t3_theme_set`, and clients that ask

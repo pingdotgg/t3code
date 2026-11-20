@@ -4,7 +4,7 @@
 
 use crate::instructions::{
     PROMPT_PREFIXES, PROMPT_SUFFIX, RUNTIME_AFTER_HARNESS, RUNTIME_AFTER_MODEL,
-    RUNTIME_BEFORE_HARNESS,
+    RUNTIME_AFTER_MODEL_UNLINKED, RUNTIME_BEFORE_HARNESS,
 };
 
 /// `T3AcpInstructionState`.
@@ -39,8 +39,8 @@ fn single_line(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// `buildRuntimeInstructions({ harness, model })` with pull request linking.
-pub(crate) fn runtime_instructions(harness: &str, model: &str) -> String {
+/// `buildRuntimeInstructions({ harness, model, pullRequestLinking })`.
+pub(crate) fn runtime_instructions(harness: &str, model: &str, linking: bool) -> String {
     let harness = single_line(harness);
     let model = single_line(model);
     let model_info = if !model.is_empty() && model != "auto" && model != "default" {
@@ -48,9 +48,12 @@ pub(crate) fn runtime_instructions(harness: &str, model: &str) -> String {
     } else {
         String::new()
     };
-    format!(
-        "{RUNTIME_BEFORE_HARNESS}{harness}{RUNTIME_AFTER_HARNESS}{model_info}{RUNTIME_AFTER_MODEL}"
-    )
+    let after = if linking {
+        RUNTIME_AFTER_MODEL
+    } else {
+        RUNTIME_AFTER_MODEL_UNLINKED
+    };
+    format!("{RUNTIME_BEFORE_HARNESS}{harness}{RUNTIME_AFTER_HARNESS}{model_info}{after}")
 }
 
 #[cfg(test)]
@@ -90,7 +93,8 @@ mod tests {
             assert_eq!(
                 runtime_instructions(
                     case["harness"].as_str().unwrap(),
-                    case["model"].as_str().unwrap()
+                    case["model"].as_str().unwrap(),
+                    case["pullRequestLinking"] != false
                 ),
                 case["text"].as_str().unwrap(),
                 "runtime {}",

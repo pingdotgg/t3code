@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 use tokio::sync::{Mutex, mpsc};
 
 use crate::connection::{CallError, Connection, Incoming};
-use crate::flavor::{Completion, Flavor, StopStyle};
+use crate::flavor::{Completion, Flavor, ModelSwitch, StopStyle};
 use crate::mapper::{self, Disposition, Mapper, Out, PromptOutcome};
 use crate::ordered::{J, obj};
 use crate::policy;
@@ -78,6 +78,10 @@ pub(crate) struct Config {
     pub self_command: String,
     /// Where attachments are saved (`resolveAttachmentPath`); `None`: paths unavailable.
     pub attachments_dir: Option<std::path::PathBuf>,
+    /// `authMethodId`, sent eagerly when the flavor says so.
+    pub auth_method: Option<String>,
+    /// The installed agent version when known before `initialize` (`runtimeVersion`).
+    pub runtime_version: Option<String>,
 }
 
 struct Runtime {
@@ -205,6 +209,8 @@ pub(crate) fn initialize_params(
     client_version: &str,
     elicitation: bool,
 ) -> J {
+    // Only a session's runtime serves files; the probe (no elicitation) serves nothing.
+    let file_reads = flavor.client_file_reads && elicitation;
     let client_info = || {
         obj()
             .with("name", client_name.to_owned())
@@ -214,7 +220,7 @@ pub(crate) fn initialize_params(
         .with(
             "fs",
             obj()
-                .with("readTextFile", false)
+                .with("readTextFile", file_reads)
                 .with("writeTextFile", false),
         )
         .with("terminal", false)
@@ -256,13 +262,21 @@ impl AcpSession {
                 .session_id
                 .clone()
                 .unwrap_or_default();
+            // `resumeMethod: "resume"` (Antigravity): `session/resume` when the agent offers it.
+            let method = if inner.config.flavor.resume
+                && !initialize["agentCapabilities"]["sessionCapabilities"]["resume"].is_null()
+            {
+                "session/resume"
+            } else {
+                "session/load"
+            };
             let setup = connection
                 .call(
-                    "session/load",
+                    method,
                     inner.session_setup_params(&initialize, Some(&session_id)),
                 )
                 .await
-                .map_err(|e| failed("session/load", &e))?;
+                .map_err(|e| failed(method, &e))?;
             let mut state = inner.state.lock().await;
             state.initialize = initialize;
             state.setup = setup;
@@ -365,7 +379,10 @@ impl AcpSession {
                 .as_str()
                 .unwrap_or("")
                 .to_owned();
-            let notes = prompt::runtime_instructions(flavor.harness, &model);
+            let linking = !flavor
+                .session_setup
+                .is_some_and(|s| (s.carries_linking)(&state.initialize));
+            let notes = prompt::runtime_instructions(flavor.harness, &model, linking);
             let slash = user_text.trim_start().starts_with('/');
             let send_notes = !slash
                 && (compaction_marker.is_some()
@@ -382,7 +399,13 @@ impl AcpSession {
                     "ACP driver did not negotiate image prompt support",
                 ));
             }
-            blocks.extend(image_blocks);
+            // Antigravity (`buildAntigravityPrompt`): without `promptCapabilities.image` an
+            // image goes as its path only, which the text already carries.
+            let images_as_paths = flavor.client_file_reads
+                && state.initialize["agentCapabilities"]["promptCapabilities"]["image"] != true;
+            if !images_as_paths {
+                blocks.extend(image_blocks);
+            }
             if blocks.is_empty() {
                 return Err(protocol_error(
                     "ACP turn requires non-empty text or attachments",
@@ -492,6 +515,12 @@ impl AcpSession {
         Ok((session, json!({"sessionId": session_id})))
     }
 
+    /// The agent's `initialize` result and the session setup result, as last seen.
+    pub(crate) async fn handshake(&self) -> (Value, Value) {
+        let state = self.inner.state.lock().await;
+        (state.initialize.clone(), state.setup.clone())
+    }
+
     #[cfg(test)]
     pub(crate) async fn pending_requests(&self) -> usize {
         self.inner.state.lock().await.mapper.pending_len()
@@ -544,16 +573,36 @@ impl Inner {
     /// `initialize`, as `AcpSessionRuntime.initializeOnce` and effect-acp's negotiating
     /// request send it: the v2 fields, then the v1 ones.
     async fn initialize(&self, connection: &Connection) -> ProviderResult<Value> {
-        let params = initialize_params(
-            self.config.flavor,
-            "t3-code",
-            &self.config.client_version,
-            true,
-        );
-        connection
+        let flavor = self.config.flavor;
+        let (name, version) = match flavor.client_info {
+            Some(info) => info(self.config.runtime_version.as_deref()),
+            None => ("t3-code".to_owned(), self.config.client_version.clone()),
+        };
+        let params = initialize_params(flavor, &name, &version, true);
+        let initialize = connection
             .call("initialize", params)
             .await
-            .map_err(|e| failed("initialize", &e))
+            .map_err(|e| failed("initialize", &e))?;
+        if flavor.authenticate_eagerly {
+            // The configured method is authoritative: Antigravity accepts methods it does not
+            // list. effect-acp names it by the protocol generation of the reply's shape.
+            let method = if initialize.get("info").is_some() {
+                "auth/login"
+            } else {
+                "authenticate"
+            };
+            connection
+                .call(
+                    method,
+                    obj().with(
+                        "methodId",
+                        self.config.auth_method.clone().unwrap_or_default(),
+                    ),
+                )
+                .await
+                .map_err(|e| failed("authenticate", &e))?;
+        }
+        Ok(initialize)
     }
 
     /// `configureSession`'s model part: switch the session's model (and Grok's reasoning
@@ -566,6 +615,9 @@ impl Inner {
         effort: Option<&str>,
     ) -> ProviderResult<()> {
         let key = format!("{model}\u{0}{}", effort.unwrap_or(""));
+        if self.config.flavor.model_switch == ModelSwitch::ConfigOption {
+            return self.configure_option(connection, model, key).await;
+        }
         let (session_id, switch, current) = {
             let state = self.state.lock().await;
             if state.active_model.as_deref() == Some(key.as_str()) {
@@ -625,15 +677,67 @@ impl Inner {
         Ok(())
     }
 
+    /// The model through the session's `model` config option (`applyAntigravityAcpModelSelection`,
+    /// `runtime.setModel` / `setConfigOption`).
+    async fn configure_option(
+        &self,
+        connection: &Connection,
+        model: &str,
+        key: String,
+    ) -> ProviderResult<()> {
+        let (session_id, switch) = {
+            let state = self.state.lock().await;
+            if state.active_model.as_deref() == Some(key.as_str()) {
+                return Ok(());
+            }
+            (
+                state.session_id.clone().unwrap_or_default(),
+                crate::antigravity::model_switch(&state.setup, model),
+            )
+        };
+        let switch = switch.map_err(|detail| ProviderError::Failed {
+            operation: "session/set_config_option",
+            detail,
+        })?;
+        if let Some((config_id, value)) = switch {
+            let reply = connection
+                .call(
+                    "session/set_config_option",
+                    obj()
+                        .with("sessionId", session_id)
+                        .with("configId", config_id.clone())
+                        .with("value", value.clone()),
+                )
+                .await
+                .map_err(|e| failed("session/set_config_option", &e))?;
+            let mut state = self.state.lock().await;
+            match reply.get("configOptions") {
+                Some(options) if options.is_array() => {
+                    state.setup["configOptions"] = options.clone();
+                }
+                _ => crate::antigravity::set_current(&mut state.setup, &config_id, &value),
+            }
+        }
+        self.state.lock().await.active_model = Some(key);
+        Ok(())
+    }
+
     /// `session/new` (or load) params: `cwd`, then `mcpServers` (`sessionMcpServers`).
     fn session_setup_params(&self, initialize: &Value, load: Option<&str>) -> J {
         let params = match load {
             Some(session_id) => obj().with("sessionId", session_id),
             None => obj(),
         };
+        let setup = self.config.flavor.session_setup;
+        let directories = setup
+            .filter(|s| s.attachments_directory)
+            .and(self.config.attachments_dir.as_ref())
+            .map(|dir| J::Arr(vec![J::from(dir.display().to_string())]));
         params
             .with("cwd", self.config.cwd.clone())
+            .with_opt("additionalDirectories", directories)
             .with("mcpServers", J::Arr(self.session_mcp_servers(initialize)))
+            .with_opt("_meta", setup.and_then(|s| (s.meta)(initialize)))
     }
 
     /// `sessionMcpServers` over `acpMcpContext`: the HTTP entry when the agent offers HTTP
@@ -814,6 +918,10 @@ async fn drive(inner: Weak<Inner>, mut incoming: mpsc::Receiver<Incoming>, gener
                     handle_permission(&inner, generation, id, &params).await;
                     continue;
                 }
+                if method == "fs/read_text_file" && inner.config.flavor.client_file_reads {
+                    handle_read_text_file(&inner, generation, id, params).await;
+                    continue;
+                }
                 let mut state = inner.state.lock().await;
                 if state.generation != generation {
                     continue;
@@ -890,6 +998,45 @@ async fn drive(inner: Weak<Inner>, mut incoming: mpsc::Receiver<Incoming>, gener
                 inner.deliver(&mut state, outs).await;
                 return;
             }
+        }
+    }
+}
+
+/// `clientFileSystem.readTextFile`: a file under the turn's workspace or the attachments
+/// folder, read off the runtime thread.
+async fn handle_read_text_file(inner: &Arc<Inner>, generation: u64, id: RequestId, params: Value) {
+    let (connection, cwd) = {
+        let state = inner.state.lock().await;
+        if state.generation != generation {
+            return;
+        }
+        let Some(runtime) = &state.runtime else {
+            return;
+        };
+        let cwd = state.policy["cwd"]
+            .as_str()
+            .map_or_else(|| inner.config.cwd.clone(), str::to_owned);
+        (runtime.connection.clone(), cwd)
+    };
+    use conn_provider::{ProviderHost, ReadTextFile};
+    let mut roots = vec![std::path::PathBuf::from(cwd)];
+    roots.extend(inner.config.attachments_dir.clone());
+    let request = ReadTextFile {
+        path: params["path"].as_str().unwrap_or("").into(),
+        line: params["line"].as_u64().and_then(|n| u32::try_from(n).ok()),
+        limit: params["limit"].as_u64().and_then(|n| u32::try_from(n).ok()),
+    };
+    let read = conn_provider_support::host_files::RootedFiles::new(roots)
+        .read_text_file(request)
+        .await;
+    match read {
+        Ok(content) => {
+            connection.reply(&id, obj().with("content", content)).await;
+        }
+        Err(error) => {
+            connection
+                .reply_error(&id, error.code(), &error.to_string())
+                .await;
         }
     }
 }

@@ -249,6 +249,8 @@ run 2 480 "t3 fixture replay" node crates/conn-engine/tools/t3-fixture-replay/ch
 # The T3 Grok adapter and conn-provider-acp against one stub agent (no agent, no model).
 run 2 120 "acp instructions --check" node crates/conn-provider-acp/tools/gen-instructions.mjs --check
 run 3 480 "acp conformance" node crates/conn-provider-acp/tools/conformance.mjs
+# T3's Antigravity driver and adapter against ours on a recorded `agy acp` 1.5.4 (no agent, no model).
+run 3 240 "antigravity conformance" node crates/conn-provider-acp/tools/antigravity-conformance.mjs
 # T3's Grok status probe and ours against one stub CLI per scenario (no CLI, no model).
 run 2 180 "grok probe conformance" node crates/conn-provider-acp/tools/probe-conformance.mjs
 # Orbit's task-turn commands (`t3 thread`, `t3 auth session`) on the T3 server with its own

@@ -14,15 +14,13 @@ pub struct Launch {
     pub args: Vec<String>,
     /// Added to the inherited environment, in order.
     pub env: Vec<(String, String)>,
+    /// Removed from the inherited environment first.
+    pub env_remove: Vec<String>,
 }
 
 /// How Stop reaches the agent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum StopStyle {
-    #[expect(
-        dead_code,
-        reason = "the Stop path of agents that survive Stop (Kiro, fx, registry); no built flavor uses it yet"
-    )]
     /// `session/cancel` with this `_meta`, the agent stays (`runtime.cancel`).
     Cancel,
     /// `terminateRuntimeProcessGroupOnInterrupt`: the process group is stopped and the next
@@ -33,10 +31,6 @@ pub(crate) enum StopStyle {
 /// How a prompt can settle besides its reply.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Completion {
-    #[expect(
-        dead_code,
-        reason = "every flavor but Grok settles on the reply alone; none is built yet"
-    )]
     /// Only the `session/prompt` reply.
     Reply,
     /// Grok: also `_x.ai/session/prompt_complete` or a `turn_completed` session notification
@@ -51,6 +45,36 @@ pub(crate) type SelectModelFn =
 
 pub(crate) type LaunchFn = fn(&str, Option<&str>, &[(String, String)]) -> Launch;
 
+/// The installed version (`None`: unknown) → the client name and version for `initialize`.
+pub(crate) type ClientInfoFn = fn(Option<&str>) -> (String, String);
+
+/// How a flavor's model switch reaches the agent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ModelSwitch {
+    /// `session/set_model` with `modelId` (and Grok's effort as `_meta`).
+    SetModel,
+    /// `session/set_config_option` on the `model` option (`runtime.setModel` when the session
+    /// has a model config option, ACP v1 params).
+    ConfigOption,
+}
+
+/// What a flavor adds to the session setup: `sessionMeta`, `additionalDirectories`.
+#[derive(Clone, Copy)]
+pub(crate) struct SessionSetup {
+    /// `sessionMeta(initializeResult)`: the `_meta` of `session/new` (and load or resume).
+    pub meta: fn(&Value) -> Option<J>,
+    /// `additionalDirectories: [attachmentsDir]`.
+    pub attachments_directory: bool,
+    /// `sessionCarriesPullRequestLinking`: the runtime notes leave the linking text out.
+    pub carries_linking: fn(&Value) -> bool,
+}
+
+impl std::fmt::Debug for SessionSetup {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SessionSetup")
+    }
+}
+
 pub struct Flavor {
     /// `ProviderDriverKind`.
     pub driver: &'static str,
@@ -60,6 +84,18 @@ pub struct Flavor {
     pub(crate) launch: LaunchFn,
     /// `initializeMeta`.
     pub(crate) initialize_meta: Option<fn() -> J>,
+    /// `clientInfo` from the installed version (`None`: unknown); `None`: T3's own name.
+    pub(crate) client_info: Option<ClientInfoFn>,
+    /// `clientCapabilities.fs.readTextFile`: the agent may ask us for files
+    /// (`fs/read_text_file`), served from the workspace and the attachments folder.
+    pub(crate) client_file_reads: bool,
+    /// `authenticateEagerly`: `authenticate` with the configured method before `session/new`.
+    pub(crate) authenticate_eagerly: bool,
+    pub(crate) session_setup: Option<SessionSetup>,
+    pub(crate) model_switch: ModelSwitch,
+    /// `resumeMethod: "resume"`: a restarted agent gets `session/resume` (when offered), not
+    /// `session/load`.
+    pub(crate) resume: bool,
     /// `cancelMeta`, sent on `session/cancel`.
     pub(crate) cancel_meta: Option<fn() -> J>,
     pub(crate) stop: StopStyle,
@@ -287,6 +323,7 @@ fn grok_launch(
         },
         args: grok_spawn_args(runtime_mode),
         env,
+        env_remove: Vec::new(),
     }
 }
 
@@ -344,6 +381,12 @@ pub static GROK: Flavor = Flavor {
     harness: "Grok",
     launch: grok_launch,
     initialize_meta: Some(|| obj().with("clientType", "extension")),
+    client_info: None,
+    client_file_reads: false,
+    authenticate_eagerly: false,
+    session_setup: None,
+    model_switch: ModelSwitch::SetModel,
+    resume: false,
     cancel_meta: Some(|| obj().with("cancelTrigger", "ctrl_c")),
     stop: StopStyle::KillProcessGroup,
     completion: Completion::XAiPromptComplete,
