@@ -15722,22 +15722,43 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           });
           break;
         }
+        // Like a merged pull request, a rule never settles a pinned thread.
+        if (command.action === "settle" && thread.pinnedAt != null) break;
         const { runs, runtimeRequests } = yield* projectionStore
           .getThreadRecords(command.threadId, ["runs", "runtimeRequests"])
           .pipe(Effect.mapError(toProjectionError));
+        const waitsForIdle = new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: ISSUE_AUTOMATION_WAITS_FOR_IDLE,
+        });
         if (
           runs.some((run) =>
             ["queued", "preparing", "starting", "running", "waiting"].includes(run.status),
           ) ||
           runtimeRequests.some((request) => request.status === "pending")
         ) {
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause: ISSUE_AUTOMATION_WAITS_FOR_IDLE,
-          });
+          return yield* waitsForIdle;
         }
         if (command.action === "settle") {
+          // Settling detaches the provider sessions, which ends background work still in them.
+          const { providerSessions } = yield* projectionStore
+            .getThreadProviderContext(command.threadId)
+            .pipe(Effect.mapError(toProjectionError));
+          const live = providerSessions.filter(
+            (session) => session.status !== "stopped" && session.status !== "error",
+          );
+          if (live.length > 0) {
+            const { providerThreads } = yield* projectionStore
+              .getThreadRecords(command.threadId, ["providerThreads"], {
+                omitSettledSubagentRecords: true,
+              })
+              .pipe(Effect.mapError(toProjectionError));
+            for (const session of live) {
+              if (yield* sessionHasBackgroundWork(session, providerThreads))
+                return yield* waitsForIdle;
+            }
+          }
           yield* dispatchThreadMutation(
             { type: "thread.settle", commandId: command.commandId, threadId: thread.id },
             events,
@@ -16301,6 +16322,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           planned.events.length > 0 ||
           isUnobservedAcknowledgement(command) ||
           command.type === "thread.background-work.settle" ||
+          // A rule's wake of an awake thread, or its settle of a pinned one, has nothing to do.
+          command.type === "thread.issue-automation.apply" ||
           // A stale visit changes no read state.
           command.type === "thread.visit" ||
           // A read can answer a watch again before a push's reopen lands; nothing is left to clear.

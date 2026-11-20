@@ -515,6 +515,7 @@ export interface ActiveShellIndexEntry extends Pick<
   | "pinnedAt"
   | "pinOrderKey"
   | "snoozedUntil"
+  | "snoozedAt"
 > {
   /** False only when no run, request, work item, or watch can make the shell live. */
   readonly mayBeLive: boolean;
@@ -8960,8 +8961,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })));
 
-    // Pruning old events can only move a revision, which drops a waiting action rather than
-    // applying one that is stale. Without the hint, SQLite walks every event of the thread.
+    // Event pruning keeps this row, so a revision never goes back to one a waiting action
+    // recorded. Without the hint, SQLite walks every event of the thread.
     const issueAutomationRevision = (threadId: Statement.Fragment) => sql`(
       SELECT COALESCE(MAX(sequence), 0) FROM orchestration_events
         INDEXED BY idx_orchestration_events_thread_organization
@@ -9542,6 +9543,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         readonly pinned_at: string | null;
         readonly pin_order_key: string | null;
         readonly snoozed_until: string | null;
+        readonly snoozed_at: string | null;
         readonly may_be_live: number;
         readonly has_remote_tasks: number;
       }>`
@@ -9557,6 +9559,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ${indexedField("$.pinnedAt")} AS pinned_at,
           ${indexedField("$.pinOrderKey")} AS pin_order_key,
           ${indexedField("$.snoozedUntil")} AS snoozed_until,
+          ${indexedField("$.snoozedAt")} AS snoozed_at,
           -- A superset of isLiveSubagentShell: the sources of its run status, pending request,
           -- and pending background work. Each source is one list for the whole read, found
           -- through its partial index, so finished threads cost no lookups.
@@ -9621,6 +9624,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         pinnedAt: row.pinned_at === null ? null : DateTime.makeUnsafe(row.pinned_at),
         pinOrderKey: row.pin_order_key,
         snoozedUntil: row.snoozed_until === null ? null : DateTime.makeUnsafe(row.snoozed_until),
+        snoozedAt: row.snoozed_at === null ? null : DateTime.makeUnsafe(row.snoozed_at),
         mayBeLive: row.may_be_live === 1,
         hasRemoteTasks: row.has_remote_tasks === 1,
       }));

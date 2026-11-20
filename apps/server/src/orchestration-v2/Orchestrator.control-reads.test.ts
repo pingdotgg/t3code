@@ -164,6 +164,41 @@ it.effect("issue automation settles, snoozes until woken, and wakes like a timer
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect.each(["settle of a pinned thread", "wake of an awake thread"] as const)(
+  "issue automation accepts a %s and changes nothing",
+  (change) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const events = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make(`thread:automation-noop:${change}`);
+      yield* createThread(threadId);
+      if (change === "settle of a pinned thread") {
+        yield* orchestrator.dispatch({
+          type: "thread.pin",
+          commandId: CommandId.make(`pin:${change}`),
+          threadId,
+        });
+      }
+      const before = yield* projections.getThread(threadId);
+      const command = {
+        type: "thread.issue-automation.apply" as const,
+        commandId: CommandId.make(`automation-noop:${change}`),
+        threadId,
+        action: change === "wake of an awake thread" ? ("wake" as const) : ("settle" as const),
+        expectedRevision: yield* projections.getIssueAutomationRevision(threadId),
+        rulesFingerprint: automationFingerprint([]),
+      };
+      yield* orchestrator.dispatch(command);
+      const committed = yield* events
+        .readByCommandId({ commandId: command.commandId })
+        .pipe(Stream.runCollect);
+      assert.lengthOf(committed, 0);
+      assert.deepEqual(yield* projections.getThread(threadId), before);
+      assert.isTrue((yield* orchestrator.dispatch(command)).replayed);
+    }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect.each(["same-value manual wake", "user message", "changed rules"] as const)(
   "issue automation refuses a decision made before a %s",
   (change) =>

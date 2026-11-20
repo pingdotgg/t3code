@@ -443,7 +443,8 @@ linked issues wakes when any of them maps to **Wake**, settles only when all of 
 **Settle**, and otherwise snoozes. A status in no bucket, or one that could not be read, leaves
 the thread as it is. A snooze from a rule has no wake time; the thread shows **∞** in the
 Snoozed list until a status change, **Wake thread**, or a message wakes it. A thread with work
-still running waits until it is idle before it snoozes or settles.
+still running waits until it is idle before it snoozes or settles. A rule never settles a pinned
+thread.
 
 ## GitHub stacks
 

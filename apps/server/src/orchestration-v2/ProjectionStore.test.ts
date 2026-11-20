@@ -157,6 +157,7 @@ const assertShellIndexCoversShells = Effect.fnUntraced(function* () {
       | "pinnedAt"
       | "pinOrderKey"
       | "snoozedUntil"
+      | "snoozedAt"
     >,
   ) => ({
     id: row.id,
@@ -167,6 +168,7 @@ const assertShellIndexCoversShells = Effect.fnUntraced(function* () {
     pinnedAt: iso(row.pinnedAt),
     pinOrderKey: row.pinOrderKey ?? null,
     snoozedUntil: iso(row.snoozedUntil),
+    snoozedAt: iso(row.snoozedAt),
   });
   assert.deepEqual(index.map(trimmed), shells.map(trimmed));
   shells.forEach((shell, position) => {

@@ -741,6 +741,8 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
       shell("live", "parent", "running"),
       ...Array.from({ length: 25 }, (_, index) => shell(`recent-${index}`, null, null, 1)),
       shell("old", null, null, 30),
+      // Snoozed with no wake time, it stays in the snoozed list however long ago it settled.
+      { ...shell("snoozed", null, null, 50), snoozedAt: DateTime.makeUnsafe(0) },
       shell("remote-parent", null, null, 40),
       shell("remote-child-parent", "parent", null),
     ];
@@ -803,17 +805,17 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
     const withoutChildren = yield* firstSnapshot({ omitIdleSubagents: true });
     assert.deepEqual(
       withoutChildren?.threads.map((thread) => thread.id),
-      ["parent", "live", ...recent, "old", "remote-parent", "remote-child-parent"],
+      ["parent", "live", ...recent, "old", "snoozed", "remote-parent", "remote-child-parent"],
     );
     // A linked environment's clients nest its task under its parent, so that parent stays: an
     // older settled thread or an idle subagent.
     const withoutOld = yield* firstSnapshot({ omitIdleSubagents: true, omitOlderSettled: true });
     assert.deepEqual(
       withoutOld?.threads.map((thread) => thread.id),
-      ["parent", "live", ...recent, "remote-parent", "remote-child-parent"],
+      ["parent", "live", ...recent, "snoozed", "remote-parent", "remote-child-parent"],
     );
     assert.deepEqual(withoutOld?.olderSettled?.counts, [
-      { projectId: ProjectId.make("project"), count: 2 },
+      { projectId: ProjectId.make("project"), count: 3 },
     ]);
   }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
