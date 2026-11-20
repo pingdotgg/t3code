@@ -1131,23 +1131,32 @@ it.each(["other field", "document body"])(
 );
 
 it("opens a draft URL by modifier click or context menu", async () => {
-  await using screen = await mountEditor("Visit www.example.com.");
+  const draft = "Visit www.example.com/docs.";
+  await using screen = await mountEditor(draft);
+  const { editor } = screen;
+  const pathStart = draft.indexOf("/docs") + 1;
+  await act(async () => {
+    editor.view.dispatch(
+      editor.state.tr.addMark(pathStart, pathStart + 5, editor.schema.marks.bold!.create()),
+    );
+  });
   using open = vi.spyOn(window, "open").mockReturnValue(null);
   const link = screen.container.querySelector("[data-composer-url]");
-  expect(link?.textContent).toBe("www.example.com");
+  const path = screen.container.querySelector("strong");
+  expect(path?.textContent).toBe("/docs");
   for (const options of [{}, { button: 1, ctrlKey: true }, { ctrlKey: true }, { metaKey: true }]) {
     link?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...options }));
   }
   expect(open.mock.calls).toEqual([
-    ["https://www.example.com", "_blank", "noopener,noreferrer"],
-    ["https://www.example.com", "_blank", "noopener,noreferrer"],
+    ["https://www.example.com/docs", "_blank", "noopener,noreferrer"],
+    ["https://www.example.com/docs", "_blank", "noopener,noreferrer"],
   ]);
   using menu = vi.spyOn(ensureLocalApi().contextMenu, "show").mockResolvedValue("open-external");
-  link?.dispatchEvent(
+  (path?.querySelector("[data-composer-url]") ?? path)?.dispatchEvent(
     new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }),
   );
   await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(3));
   expect(menu.mock.calls[0]?.[0].map((item) => item.id)).toEqual(["open-external", "copy-link"]);
-  expect(open.mock.lastCall?.[0]).toBe("https://www.example.com");
-  expect(screen.editor.getText()).toBe("Visit www.example.com.");
+  expect(open.mock.lastCall?.[0]).toBe("https://www.example.com/docs");
+  expect(screen.editor.getText()).toBe(draft);
 });

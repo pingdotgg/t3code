@@ -733,7 +733,9 @@ function isInCodeBlock(view: EditorView): boolean {
 
 function composerUrlFromTarget(target: EventTarget | null) {
   const text =
-    target instanceof Element ? target.closest("[data-composer-url]")?.textContent : null;
+    target instanceof Element
+      ? target.closest("[data-composer-url]")?.getAttribute("data-composer-url")
+      : null;
   if (!text || !/^(?:https?:\/\/|www\.)/i.test(text)) return null;
   return /^www\./i.test(text) ? `https://${text}` : text;
 }
@@ -769,26 +771,33 @@ const ComposerUrlExtension = Extension.create({
 
 function composerUrlDecorations({ doc }: EditorState): DecorationSet {
   const decorations: Decoration[] = [];
-  doc.descendants((node, pos) => {
-    if (
-      node.type.spec.code ||
-      !node.text ||
-      node.marks.some((mark) => mark.type.spec.code) ||
-      !/https?:\/\/|www\./i.test(node.text)
-    )
-      return !node.type.spec.code;
-    for (const { start, end, value } of findLinks(node.text, "url")) {
+  let text = "";
+  let from = 0;
+  const decorateRun = () => {
+    if (!/https?:\/\/|www\./i.test(text)) return;
+    for (const { start, end, value } of findLinks(text, "url")) {
       if (/^(?:https?:\/\/|www\.)/i.test(value)) {
         decorations.push(
-          Decoration.inline(pos + start, pos + end, {
+          Decoration.inline(from + start, from + end, {
             class: "text-info-foreground",
-            "data-composer-url": "",
+            "data-composer-url": value,
             title: `${m(msg("Open link"))} (${isMacPlatform(navigator.platform) ? "⌘-click" : "Ctrl-click"})`,
           }),
         );
       }
     }
+  };
+  doc.descendants((node, pos) => {
+    if (node.type.spec.code || !node.text || node.marks.some((mark) => mark.type.spec.code))
+      return !node.type.spec.code;
+    if (pos !== from + text.length) {
+      decorateRun();
+      from = pos;
+      text = "";
+    }
+    text += node.text;
   });
+  decorateRun();
   return DecorationSet.create(doc, decorations);
 }
 
