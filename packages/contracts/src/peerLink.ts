@@ -32,6 +32,16 @@ export const PeerLinkSummary = Schema.Struct({
 });
 export type PeerLinkSummary = typeof PeerLinkSummary.Type;
 
+/**
+ * A link's name only, for a client that may read threads here but not manage access: enough to
+ * name and open a linked environment's threads, without its addresses, access or health.
+ */
+export const PeerLinkName = Schema.Struct({
+  environmentId: EnvironmentId,
+  label: Schema.String,
+});
+export type PeerLinkName = typeof PeerLinkName.Type;
+
 export const PeerLinkCreateInput = Schema.Struct({
   /** Where the peer answers: an https, Tailscale, LAN or loopback base URL. */
   url: TrimmedNonEmptyString,
@@ -70,8 +80,81 @@ export class PeerLinkError extends Schema.TaggedError<PeerLinkError>()("PeerLink
     "disabled",
   ]),
   message: Schema.String,
+  /** The environment that answered at the addresses of the one the user picked, when one did. */
+  answeredAs: Schema.optionalKey(Schema.String),
   cause: Schema.optionalKey(Schema.Defect()),
 }) {}
+
+/** What went wrong with one link, as a batch reports it per machine. */
+export type PeerLinkFailureKind = "unreachable" | "code_refused" | "wrong_environment" | "other";
+
+export const peerLinkFailureKind = (
+  error: Pick<PeerLinkError, "reason" | "answeredAs">,
+): PeerLinkFailureKind =>
+  error.answeredAs !== undefined
+    ? "wrong_environment"
+    : error.reason === "unreachable" || error.reason === "not_a_t3_environment"
+      ? "unreachable"
+      : error.reason === "pairing_rejected"
+        ? "code_refused"
+        : "other";
+
+/**
+ * Where an environment serves one of its threads to an environment linked to it, signed in with
+ * the link's own session as on `/mcp`. The stream carries the same items the owner's thread
+ * subscription does; history pages and item detail are the owner's too.
+ */
+const PEER_LINK_THREAD_ROUTE_PREFIX = "/api/links/thread";
+export const PEER_LINK_THREAD_STREAM_ROUTE = `${PEER_LINK_THREAD_ROUTE_PREFIX}/stream`;
+export const PEER_LINK_THREAD_HISTORY_ROUTE = `${PEER_LINK_THREAD_ROUTE_PREFIX}/history`;
+export const PEER_LINK_THREAD_ITEM_ROUTE = `${PEER_LINK_THREAD_ROUTE_PREFIX}/item`;
+
+/** A thread on a linked environment, as a client of this environment names it. */
+export const PeerLinkThreadInput = Schema.Struct({
+  /** The linked environment the thread lives in. */
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+});
+export type PeerLinkThreadInput = typeof PeerLinkThreadInput.Type;
+
+export const PeerLinkThreadHistoryInput = Schema.Struct({
+  ...PeerLinkThreadInput.fields,
+  /** The `historyCursor` of the snapshot or of the page before. */
+  cursor: TrimmedNonEmptyString,
+});
+export type PeerLinkThreadHistoryInput = typeof PeerLinkThreadHistoryInput.Type;
+
+export const PeerLinkThreadItemInput = Schema.Struct({
+  ...PeerLinkThreadInput.fields,
+  itemId: TurnItemId,
+  /** Unused by the server; a client keys its cache on it, as for its own threads' items. */
+  revision: Schema.optional(Schema.String),
+});
+export type PeerLinkThreadItemInput = typeof PeerLinkThreadItemInput.Type;
+
+/** Why a linked environment's thread could not be read, with the reason in words. */
+export class PeerLinkThreadReadError extends Schema.TaggedError<PeerLinkThreadReadError>()(
+  "PeerLinkThreadReadError",
+  {
+    reason: Schema.Literals([
+      /** Linked environments is off here. */
+      "disabled",
+      "unknown_link",
+      "expired",
+      /** The linked environment no longer accepts the link, or refuses the read. */
+      "rejected",
+      "unreachable",
+      "thread_not_found",
+      /** The linked environment runs a version that does not serve its threads to a link. */
+      "incompatible",
+    ]),
+    /** What this environment calls the linked one, when it still has the link. */
+    label: Schema.NullOr(Schema.String),
+    message: Schema.String,
+    /** The failure underneath, when the read got as far as the link or the linked environment. */
+    cause: Schema.optionalKey(Schema.Defect()),
+  },
+) {}
 
 /**
  * The user's answer to an agent asking to link an environment. The pairing

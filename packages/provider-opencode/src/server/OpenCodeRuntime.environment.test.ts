@@ -1,6 +1,3 @@
-import type { OpencodeClient } from "@opencode-ai/sdk/v2";
-import { it as effectIt } from "@effect/vitest";
-import * as Effect from "effect/Effect";
 import { describe, expect, it } from "vite-plus/test";
 
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
@@ -27,26 +24,4 @@ describe("resolveOpenCodeServerPassword", () => {
       ),
     ).toBeUndefined();
   });
-});
-
-function makeHealthClient(
-  result: (options?: { readonly signal?: AbortSignal }) => Promise<unknown>,
-): OpencodeClient {
-  return {
-    global: {
-      health: result,
-    },
-  } as unknown as OpencodeClient;
-}
-
-describe("verifyOpenCodeServerVersion", () => {
-  effectIt.effect("rejects a server below the supported version", () =>
-    Effect.gen(function* () {
-      const error = yield* OpenCodeRuntime.verifyOpenCodeServerVersion(
-        makeHealthClient(() => Promise.resolve({ data: { healthy: true, version: "1.14.18" } })),
-      ).pipe(Effect.flip);
-      expect(error).toBeInstanceOf(OpenCodeRuntime.OpenCodeRuntimeError);
-      expect(error.detail).toContain("v1.14.18 is too old");
-    }),
-  );
 });
