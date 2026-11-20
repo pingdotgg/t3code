@@ -691,6 +691,28 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.effect("prefers the native CLI's current sign-in over a leftover acp_token.json", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      // acp_token.json is left over from the 1.4.5 runtime or an earlier account.
+      const { probe, requests, tokenPath } = yield* fixture({ refreshToken: "stale-refresh" });
+      yield* fs.writeFileString(
+        path.join(path.dirname(tokenPath), "antigravity-oauth-token"),
+        JSON.stringify({
+          token: {
+            access_token: "access-token",
+            refresh_token: "current-refresh",
+            expiry: "2099-01-01T00:00:00Z",
+          },
+        }),
+      );
+      yield* probe;
+      expect(requests.some((request) => request.url.endsWith("/token"))).toBe(false);
+      expect(requests.map((request) => request.body).join("\n")).not.toContain("stale-refresh");
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect("reads the native CLI's keyring sign-in and reports when it has expired", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-09T12:00:00Z")));
