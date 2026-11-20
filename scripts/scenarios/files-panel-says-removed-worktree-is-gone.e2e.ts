@@ -57,7 +57,7 @@ test(
     await screen.getByText("Files").tap();
     try {
       await expect(
-        screen.getByText("This checkout no longer exists", { exact: false }),
+        screen.getByText("sending a message recreates it", { exact: false }),
       ).toBeVisible();
       await expect(screen.getByText("Loading files…")).toBeHidden();
     } finally {
