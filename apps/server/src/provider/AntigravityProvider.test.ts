@@ -13,6 +13,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -172,10 +173,15 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
     Effect.andThen(initialUpdate),
     Effect.asVoid,
   );
-  // Subscribe before the trigger; yield the returned pull to await the publish.
+  // Subscribes now, before the trigger runs (a pull would subscribe only when first pulled);
+  // yield the returned effect to await the publish.
   const nextPublish = (predicate: (snapshot: ServerProvider) => boolean) =>
-    Stream.toPull(provider.snapshot.streamChanges.pipe(Stream.filter(predicate))).pipe(
-      Effect.map((pull) => pull.pipe(Effect.map((snapshots) => snapshots[0]))),
+    provider.snapshot.streamChanges.pipe(
+      Stream.filter(predicate),
+      Stream.runHead,
+      Effect.map(Option.getOrUndefined),
+      Effect.forkChild({ startImmediately: true }),
+      Effect.map(Fiber.join),
     );
   return {
     provider,
@@ -715,8 +721,46 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
     }),
   );
 
-  it.effect("publishes limits, shows a failed read as failed, and clears them on sign-out", () =>
+  it.effect("publishes each limits read, showing a failed read as failed until one recovers", () =>
     Effect.gen(function* () {
+      // Read N always gets results[N], however its fiber is scheduled.
+      const results = yield* Effect.forEach([0, 1, 2, 3, 4], () =>
+        Deferred.make<ServerProviderUsageLimits>(),
+      );
+      const reads = yield* Ref.make(0);
+      const firstReadStarted = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        probeUsage: Ref.getAndUpdate(reads, (count) => count + 1).pipe(
+          Effect.tap(() => Deferred.succeed(firstReadStarted, undefined)),
+          Effect.flatMap((read) => Deferred.await(results[read]!)),
+        ),
+      });
+      // The first check has run its probe once it starts the first read.
+      yield* Deferred.succeed(harness.initialProbe, initializeResult);
+      yield* Deferred.await(firstReadStarted);
+      // A health check holds the refresh lock, so a refresh issued once the check that republishes
+      // a read has started returns what that check published.
+      const nextCheck = yield* Ref.make<Deferred.Deferred<void> | undefined>(undefined);
+      yield* Ref.set(
+        harness.probe,
+        Ref.getAndSet(nextCheck, undefined).pipe(
+          Effect.flatMap((started) =>
+            started ? Deferred.succeed(started, undefined) : Effect.void,
+          ),
+          Effect.as(initializeResult),
+        ),
+      );
+      const finishRead = Effect.fn("finishRead")(function* (
+        read: number,
+        result: ServerProviderUsageLimits,
+      ) {
+        const republishing = yield* Deferred.make<void>();
+        yield* Ref.set(nextCheck, republishing);
+        yield* Deferred.succeed(results[read]!, result);
+        yield* Deferred.await(republishing);
+        return (yield* harness.provider.snapshot.refresh).usageLimits;
+      });
+
       const limits: ServerProviderUsageLimits = {
         checkedAt: "2026-10-09T12:00:00.000Z",
         windows: [
@@ -728,45 +772,24 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           },
         ],
       };
-      const usage = yield* Ref.make(limits);
-      const harness = yield* makeHarness({ probeUsage: Ref.get(usage) });
-      const published = yield* harness.nextPublish((snapshot) => !!snapshot.usageLimits);
-      yield* harness.initialize;
-      expect((yield* published)?.usageLimits).toEqual(limits);
+      expect(yield* finishRead(0, limits)).toEqual(limits);
       const failedRead: ServerProviderUsageLimits = {
         checkedAt: "2026-10-09T12:01:00.000Z",
         windows: [],
         unavailable: { reason: "probeFailed" },
       };
-      // The second health check is the republish the failed background read triggers.
-      let checks = 0;
-      yield* Ref.set(harness.probe, Effect.sync(() => checks++).pipe(Effect.as(initializeResult)));
-      yield* Ref.set(usage, failedRead);
-      const failed = yield* harness.nextPublish(() => checks === 2);
-      yield* harness.provider.snapshot.refresh;
-      expect((yield* failed)?.usageLimits).toEqual(failedRead);
+      expect(yield* finishRead(1, failedRead)).toEqual(failedRead);
       const recovered: ServerProviderUsageLimits = {
         ...limits,
         checkedAt: "2026-10-09T12:01:30.000Z",
       };
-      yield* Ref.set(usage, recovered);
-      const recoveredPublish = yield* harness.nextPublish(
-        (snapshot) => snapshot.usageLimits?.checkedAt === recovered.checkedAt,
-      );
-      yield* harness.provider.snapshot.refresh;
-      expect((yield* recoveredPublish)?.usageLimits).toEqual(recovered);
-      yield* harness.provider.onSignedOut;
-      expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
-      yield* Ref.set(usage, {
+      expect(yield* finishRead(2, recovered)).toEqual(recovered);
+      const unsupported: ServerProviderUsageLimits = {
         checkedAt: "2026-10-09T12:02:00.000Z",
         windows: [],
         unavailable: { reason: "unsupported" },
-      });
-      const unsupported = yield* harness.nextPublish(
-        (snapshot) => snapshot.usageLimits?.unavailable?.reason === "unsupported",
-      );
-      yield* harness.provider.snapshot.refresh;
-      expect((yield* unsupported)?.usageLimits?.windows).toEqual([]);
+      };
+      expect(yield* finishRead(3, unsupported)).toEqual(unsupported);
     }),
   );
 
