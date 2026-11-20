@@ -502,7 +502,7 @@ export function ThreadDetailsPrRow({
             variant="ghost"
             size="sm"
             part={wrap ? "title" : part}
-            className={wrap ? "pb-1.5" : undefined}
+            multiline={wrap}
             aria-label={openAriaLabel}
             onClick={onOpen}
             onAuxClick={onOpen}
