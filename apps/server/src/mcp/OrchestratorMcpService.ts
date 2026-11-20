@@ -2494,7 +2494,7 @@ const make = Effect.gen(function* () {
         if (threadId !== null && input.workspace !== undefined) {
           return yield* failure("invalid_request", WORKSPACE_NEEDS_UNBOUND);
         }
-        // Reset the workspace only when the binding flips, so unbinding cannot leave runs in the shared checkout.
+        // Without an explicit workspace, unbinding defaults to a worktree so runs do not silently share the checkout.
         const workspace =
           input.workspace ??
           ((threadId === null) === (existing.threadId === null)
