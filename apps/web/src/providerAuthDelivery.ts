@@ -1,8 +1,11 @@
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { readCodexAuthDelivery } from "@t3tools/shared/codexAuthHandoff";
+import * as Effect from "effect/Effect";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { msg } from "gt-react";
 
 import { toastManager } from "./components/ui/toast";
+import { environmentCatalog } from "./connection/catalog";
 import { m } from "./i18n/messages";
 import { appAtomRegistry } from "./rpc/atomRegistry";
 import { environmentPresentations } from "./state/presentation";
@@ -25,20 +28,31 @@ export function startProviderAuthDelivery(): void {
   );
   if (!delivery) return;
 
-  const presentationAtom = environmentPresentations.presentationAtom(delivery.environmentId);
-  if (appAtomRegistry.get(presentationAtom)?.connection.phase === "connected") {
-    void completeProviderAuth(delivery);
-    return;
-  }
-  const unsubscribe = appAtomRegistry.subscribe(presentationAtom, (presentation) => {
-    if (presentation?.connection.phase !== "connected") return;
-    unsubscribe();
-    void completeProviderAuth(delivery);
-  });
+  void completeProviderAuth(delivery);
 }
 
 async function completeProviderAuth(delivery: ProviderAuthDelivery): Promise<void> {
+  const presentationAtom = environmentPresentations.presentationAtom(delivery.environmentId);
+  const destinationAtom = Atom.make((get) =>
+    AsyncResult.flatMap(get(environmentCatalog.catalogAtom), ({ isReady }) => {
+      // The first catalog value is a placeholder until saved environments have loaded.
+      if (!isReady) return AsyncResult.initial();
+      const presentation = get(presentationAtom);
+      if (presentation === null) return AsyncResult.success("missing");
+      return presentation.connection.phase === "connected"
+        ? AsyncResult.success("connected")
+        : AsyncResult.initial();
+    }),
+  );
+
   try {
+    const destination = await Effect.runPromise(
+      AtomRegistry.getResult(appAtomRegistry, destinationAtom),
+    );
+    if (destination === "missing") {
+      reportUnavailableEnvironment();
+      return;
+    }
     const result = await runAtomCommand(
       appAtomRegistry,
       serverEnvironment.completeProviderAuth,
@@ -60,10 +74,14 @@ async function completeProviderAuth(delivery: ProviderAuthDelivery): Promise<voi
       });
     }
   } catch {
-    toastManager.add({
-      type: "error",
-      title: m(msg("ChatGPT sign-in couldn't finish")),
-      description: m(msg("Reconnect to the environment and try again.")),
-    });
+    reportUnavailableEnvironment();
   }
+}
+
+function reportUnavailableEnvironment(): void {
+  toastManager.add({
+    type: "error",
+    title: m(msg("ChatGPT sign-in couldn't finish")),
+    description: m(msg("Reconnect to the environment and try again.")),
+  });
 }
