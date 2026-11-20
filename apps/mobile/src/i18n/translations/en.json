@@ -4016,6 +4016,8 @@
   "08da470047ab82f5": "Close terminal \"{label}\"?",
   "4f14e3fc3a216f44": "This stops the running process and clears its history.",
   "56e9fabcabc90c46": "Confirm",
+  "54e14d90a8e706d1": "Couldn't close terminal",
+  "24e27086ea1205fb": "Check the connection and try again.",
   "78f08c579ccff394": "Terminal unavailable",
   "84d7607530b6de1a": "This thread does not have a workspace root yet, so there is nowhere to open a shell.",
   "28581e897ab3904d": "Checking terminal access",

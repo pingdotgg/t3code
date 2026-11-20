@@ -4010,6 +4010,8 @@
   "08da470047ab82f5": "Fechar o terminal \"{label}\"?",
   "4f14e3fc3a216f44": "Isso encerra o processo em execução e apaga o histórico dele.",
   "56e9fabcabc90c46": "Confirmar",
+  "54e14d90a8e706d1": "Não foi possível fechar o terminal",
+  "24e27086ea1205fb": "Verifique a conexão e tente novamente.",
   "78f08c579ccff394": "Terminal indisponível",
   "84d7607530b6de1a": "Esta thread ainda não tem uma raiz de workspace, então não há onde abrir um shell.",
   "28581e897ab3904d": "Verificando acesso ao terminal",

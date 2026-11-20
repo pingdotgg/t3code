@@ -4010,6 +4010,8 @@
   "08da470047ab82f5": "¿Cerrar la terminal \"{label}\"?",
   "4f14e3fc3a216f44": "Esto detiene el proceso en ejecución y borra su historial.",
   "56e9fabcabc90c46": "Confirmar",
+  "54e14d90a8e706d1": "No se pudo cerrar la terminal",
+  "24e27086ea1205fb": "Comprueba la conexión e inténtalo de nuevo.",
   "78f08c579ccff394": "Terminal no disponible",
   "84d7607530b6de1a": "Este hilo aún no tiene raíz de espacio de trabajo, así que no hay dónde abrir un shell.",
   "28581e897ab3904d": "Comprobando el acceso a la terminal",

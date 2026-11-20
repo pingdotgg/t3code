@@ -755,14 +755,14 @@ function ThreadTerminal(props: {
       message: gt("This stops the running process and clears its history."),
       confirmText: gt("Confirm"),
       destructive: true,
-      onConfirm: () => {
+      onConfirm: async () => {
         if (!readEnvironmentScope(selectedThread.environmentId, AuthTerminalOperateScope)) return;
-        void closeTerminal({
+        const result = await closeTerminal({
           environmentId: selectedThread.environmentId,
           input: { threadId: selectedThread.id, terminalId, deleteHistory: true },
-        }).then((result) => {
-          if (AsyncResult.isSuccess(result)) exitNavigation.exited();
         });
+        if (AsyncResult.isSuccess(result)) exitNavigation.exited();
+        else Dialog.alert(gt("Couldn't close terminal"), gt("Check the connection and try again."));
       },
     });
   };

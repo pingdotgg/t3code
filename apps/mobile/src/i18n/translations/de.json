@@ -4015,6 +4015,8 @@
   "08da470047ab82f5": "Terminal „{label}“ schließen?",
   "4f14e3fc3a216f44": "Dadurch wird der laufende Prozess gestoppt und sein Verlauf gelöscht.",
   "56e9fabcabc90c46": "Bestätigen",
+  "54e14d90a8e706d1": "Terminal konnte nicht geschlossen werden",
+  "24e27086ea1205fb": "Prüfe die Verbindung und versuche es erneut.",
   "78f08c579ccff394": "Terminal nicht verfügbar",
   "84d7607530b6de1a": "Dieser Thread hat noch kein Arbeitsbereich-Stammverzeichnis, daher gibt es keinen Ort, um eine Shell zu öffnen.",
   "28581e897ab3904d": "Terminalzugriff wird geprüft",

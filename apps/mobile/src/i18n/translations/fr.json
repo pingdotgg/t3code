@@ -4010,6 +4010,8 @@
   "08da470047ab82f5": "Fermer le terminal « {label} » ?",
   "4f14e3fc3a216f44": "Cela arrête le processus en cours et efface son historique.",
   "56e9fabcabc90c46": "Confirmer",
+  "54e14d90a8e706d1": "Impossible de fermer le terminal",
+  "24e27086ea1205fb": "Vérifiez la connexion et réessayez.",
   "78f08c579ccff394": "Terminal indisponible",
   "84d7607530b6de1a": "Ce fil n’a pas encore de racine d’espace de travail, il n’y a donc nulle part où ouvrir un shell.",
   "28581e897ab3904d": "Vérification de l’accès au terminal",
