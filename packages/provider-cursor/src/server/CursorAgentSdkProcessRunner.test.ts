@@ -5,6 +5,7 @@ import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
@@ -87,6 +88,7 @@ rl.on("line", (line) => {
     return;
   }
   if (req.type === "cancel") {
+    send({ type: "protocolLog", event: { direction: "incoming", stage: "decoded", payload: { type: "run.cancel", runId: "run-worker-1" } } });
     send({ type: "response", id: req.id, ok: true, result: null });
     send({
       type: "runDone",
@@ -417,6 +419,40 @@ describe("CursorAgentSdkProcessRunner", () => {
           yield* session.close;
         }),
       ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("cancels a started run when send is interrupted before handing it off", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scriptPath = yield* writeFakeWorker;
+        const executable = yield* HostProcess.ExecutablePath;
+        const startedLogged = yield* Deferred.make<void>();
+        const cancelled = yield* Deferred.make<void>();
+
+        const runner = yield* CursorAgentSdkProcessRunner.makeCursorAgentSdkProcessRunner({
+          resolveLaunch: Effect.succeed({
+            command: executable,
+            args: [scriptPath],
+            env: { FAKE_WORKER_MODE: "cancel" },
+          }),
+          protocolLoggerFor: () => (event) => {
+            if (event.payload.type === "run.started") {
+              return Deferred.succeed(startedLogged, undefined).pipe(Effect.andThen(Effect.never));
+            }
+            if (event.payload.type === "run.cancel" && event.direction === "incoming") {
+              return Deferred.succeed(cancelled, undefined).pipe(Effect.asVoid);
+            }
+            return Effect.void;
+          },
+        });
+        const session = yield* runner.open(openInput);
+        const sending = yield* Effect.forkChild(session.send({ message: "hi" }));
+        yield* Deferred.await(startedLogged);
+        yield* Fiber.interrupt(sending);
+        yield* Deferred.await(cancelled);
+        yield* session.close;
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("forwards cancel and runs textGenerate in a disposable child process", () =>
