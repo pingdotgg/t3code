@@ -1,8 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -12,6 +15,7 @@ import * as Ref from "effect/Ref";
 import * as FileSystem from "effect/FileSystem";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as LocalDeviceHost from "./LocalDeviceHost.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -52,6 +56,20 @@ const agentFixture = Effect.fn("agentFixture")(function* (
   const daemonStopRequested = yield* Deferred.make<ReadonlyArray<string>>();
   const stateDir = agentDeviceStateDir(path, path.join(baseDir, "userdata"));
   const daemonHealthy = yield* Ref.make(true);
+  const daemonStop = {
+    output: processOutput(0),
+    removeRecord: true,
+    failure: Option.none<ProcessRunner.ProcessRunError>(),
+  };
+  const pruning = { effect: Effect.void };
+  const daemonReads = {
+    failure: Option.none<PlatformError.PlatformError>(),
+    repeatFailure: false,
+    onFailure: Effect.void,
+  };
+  const healthProbe = { body: Option.none<Effect.Effect<ArrayBuffer>>() };
+  const healthHeaders = yield* Deferred.make<void>();
+  const requests: Array<string> = [];
   const runs: Array<ProcessRunner.ProcessRunInput> = [];
   for (const [name, version, entry] of [
     ["expo-device-hub", DEVICE_HUB_VERSION, "dist/server/cli.mjs"],
@@ -72,6 +90,18 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     Effect.provideService(HostProcess.Environment, environment ?? { HOME: baseDir, PATH: "" }),
     Effect.provideService(HostProcess.IsExecutable, false),
     Effect.provideService(HostProcess.Platform, "darwin"),
+    Effect.provideService(FileSystem.FileSystem, {
+      ...fs,
+      readFileString: (file) =>
+        Effect.suspend(() => {
+          if (file === path.join(stateDir, "daemon.json") && Option.isSome(daemonReads.failure)) {
+            const failure = daemonReads.failure.value;
+            if (!daemonReads.repeatFailure) daemonReads.failure = Option.none();
+            return daemonReads.onFailure.pipe(Effect.andThen(Effect.fail(failure)));
+          }
+          return fs.readFileString(file);
+        }),
+    }),
     Effect.provideService(
       ChildProcessSpawner.ChildProcessSpawner,
       ChildProcessSpawner.make(() =>
@@ -106,51 +136,289 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     Effect.provideService(ProcessRunner.ProcessRunner, {
       run: (input) => {
         runs.push(input);
+        if (input.args.includes("daemon") && Option.isSome(daemonStop.failure)) {
+          return Effect.fail(daemonStop.failure.value);
+        }
         return input.args.includes("devices")
           ? startup(stateDir)
           : input.args.includes("daemon")
-            ? Deferred.succeed(daemonStopRequested, input.args).pipe(Effect.as(processOutput(0)))
-            : Effect.succeed(input.args.includes("-list-avds") ? avdOutput : processOutput(0));
+            ? Deferred.succeed(daemonStopRequested, input.args).pipe(
+                Effect.andThen(() =>
+                  daemonStop.removeRecord &&
+                  daemonStop.output.code === 0 &&
+                  !daemonStop.output.timedOut
+                    ? fs
+                        .remove(path.join(stateDir, "daemon.json"), { force: true })
+                        .pipe(Effect.orDie)
+                    : Effect.void,
+                ),
+                Effect.as(daemonStop.output),
+              )
+            : input.args.some((arg) => arg.includes(`[["agent-device","${AGENT_DEVICE_VERSION}"]]`))
+              ? pruning.effect.pipe(Effect.as(processOutput(0)))
+              : Effect.succeed(input.args.includes("-list-avds") ? avdOutput : processOutput(0));
       },
     }),
     Effect.provideService(
       HttpClient.HttpClient,
       HttpClient.make((request) =>
         Ref.get(daemonHealthy).pipe(
-          Effect.map((healthy) =>
-            HttpClientResponse.fromWeb(
+          Effect.tap(() =>
+            request.url.endsWith("/health")
+              ? Deferred.succeed(healthHeaders, undefined)
+              : Effect.void,
+          ),
+          Effect.map((healthy) => {
+            requests.push(request.url);
+            const response = HttpClientResponse.fromWeb(
               request,
-              new Response("ok", {
+              new Response(request.url.endsWith("/rpc") ? '{"result":{"ok":true}}' : "ok", {
                 status: request.url.endsWith("/health") && !healthy ? 503 : 200,
               }),
-            ),
-          ),
+            );
+            if (request.url.endsWith("/health") && Option.isSome(healthProbe.body)) {
+              Object.defineProperty(response, "arrayBuffer", { value: healthProbe.body.value });
+            }
+            return response;
+          }),
         ),
       ),
     ),
   );
   yield* host.ensureReady(() => Effect.void);
-  return { host, fs, baseDir, stateDir, hub, daemonHealthy, daemonStopRequested, runs };
+  return {
+    host,
+    fs,
+    baseDir,
+    stateDir,
+    hub,
+    daemonHealthy,
+    daemonStop,
+    daemonStopRequested,
+    pruning,
+    daemonReads,
+    healthProbe,
+    healthHeaders,
+    requests,
+    runs,
+  };
 });
 
 describe("AgentDevice startup", () => {
-  it.effect("restarts a cached daemon that no longer answers its health check", () =>
+  it.effect("keeps matching cleanup available until retirement is confirmed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      let startupFails = false;
+      const { host, daemonHealthy, daemonStop, requests } = yield* agentFixture((stateDir) =>
+        startupFails
+          ? Effect.succeed(processOutput(1))
+          : fs
+              .writeFileString(
+                `${stateDir}/daemon.json`,
+                JSON.stringify({ httpPort: 12345, token: "owned-token", pid: process.pid }),
+              )
+              .pipe(Effect.orDie, Effect.as(processOutput(0))),
+      );
+      yield* host.ensureAgentReady(() => Effect.void);
+      const cause = new ProcessRunner.ProcessSpawnError({
+        command: "/missing/node",
+        argumentCount: 5,
+        cause: new Error("missing executable"),
+      });
+      daemonStop.failure = Option.some(cause);
+      yield* Ref.set(daemonHealthy, false);
+      const error = yield* host.ensureAgentReady(() => Effect.void).pipe(Effect.flip);
+      expect(error).toMatchObject({ reason: "daemon_retirement_unconfirmed", cause });
+      const current = yield* host.current;
+      expect(current?.releaseAgentSession).toBeTypeOf("function");
+      if (current?.releaseAgentSession)
+        yield* current.releaseAgentSession("owned-session", "phone");
+      expect(requests.at(-1)).toBe("http://127.0.0.1:12345/rpc");
+      daemonStop.failure = Option.none();
+      startupFails = true;
+      yield* host.ensureAgentReady(() => Effect.void).pipe(Effect.flip);
+      expect((yield* host.current)?.releaseAgentSession).toBeUndefined();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each(["transient read failure", "invalid JSON"] as const)(
+    "preserves an unverified registration when %s prevents verification",
+    (scenario) =>
+      Effect.gen(function* () {
+        const previous = { httpPort: 12345, token: "previous-token", pid: process.pid };
+        const { host, fs, stateDir, daemonReads, runs } = yield* agentFixture(
+          () => Effect.die("Do not launch before establishing registration ownership"),
+          processOutput(0),
+          previous,
+        );
+        const cause = PlatformError.systemError({
+          _tag: "PermissionDenied",
+          module: "FileSystem",
+          method: "readFileString",
+          description: "read denied",
+        });
+        if (scenario === "transient read failure") daemonReads.failure = Option.some(cause);
+        const registration =
+          scenario === "invalid JSON" ? "invalid-json" : JSON.stringify(previous);
+        yield* fs.writeFileString(`${stateDir}/daemon.json`, registration);
+        const error = yield* host.ensureAgentReady(() => Effect.void).pipe(Effect.flip);
+        expect(error).toMatchObject({
+          _tag: "AgentDeviceStartError",
+          reason: "daemon_retirement_unconfirmed",
+        });
+        if (scenario === "transient read failure") expect(error).toMatchObject({ cause });
+        expect(yield* fs.readFileString(`${stateDir}/daemon.json`)).toBe(registration);
+        expect(
+          runs.filter((run) => run.args.includes("devices") || run.args.includes("daemon")),
+        ).toEqual([]);
+        expect((yield* host.current)?.releaseAgentSession).toBeUndefined();
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each(["transient", "persistent"] as const)(
+    "retries a %s post-launch registration read failure within the readiness deadline",
+    (scenario) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const readFailed = yield* Deferred.make<void>();
+        const completed = yield* Deferred.make<void>();
+        let failRegistrationRead = Effect.void;
+        const { host, daemonReads, runs } = yield* agentFixture((stateDir) =>
+          fs
+            .writeFileString(
+              `${stateDir}/daemon.json`,
+              JSON.stringify({ httpPort: 12345, token: "owned-token", pid: process.pid }),
+            )
+            .pipe(
+              Effect.orDie,
+              Effect.andThen(() => failRegistrationRead),
+              Effect.as(processOutput(0)),
+            ),
+        );
+        const cause = PlatformError.systemError({
+          _tag: "PermissionDenied",
+          module: "FileSystem",
+          method: "readFileString",
+          description: "post-launch read denied",
+        });
+        failRegistrationRead = Effect.sync(() => {
+          daemonReads.failure = Option.some(cause);
+        });
+        daemonReads.repeatFailure = scenario === "persistent";
+        daemonReads.onFailure = Deferred.succeed(readFailed, undefined).pipe(Effect.asVoid);
+        const opening = yield* Effect.forkChild(
+          host
+            .ensureAgentReady(() => Effect.void)
+            .pipe(
+              Effect.result,
+              Effect.tap(() => Deferred.succeed(completed, undefined)),
+            ),
+        );
+        yield* Deferred.await(readFailed);
+        if (scenario === "persistent") {
+          yield* TestClock.adjust("29 seconds");
+          expect(yield* Deferred.isDone(completed)).toBe(false);
+          yield* TestClock.adjust("1 second");
+        } else {
+          yield* TestClock.adjust("100 millis");
+        }
+        const result = yield* Fiber.join(opening);
+        if (scenario === "transient") {
+          expect(result).toMatchObject({
+            _tag: "Success",
+            success: { agentDevice: { token: "owned-token" } },
+          });
+          expect((yield* host.current)?.releaseAgentSession).toBeTypeOf("function");
+          yield* host.ensureAgentReady(() => Effect.void);
+        } else {
+          expect(result).toMatchObject({
+            _tag: "Failure",
+            failure: { reason: "daemon_retirement_unconfirmed", cause },
+          });
+        }
+        expect(runs.filter((run) => run.args.includes("devices"))).toHaveLength(1);
+        expect(runs.filter((run) => run.args.includes("daemon"))).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each(["timeout", "cancellation"] as const)(
+    "releases the startup lock after a stalled health body and %s",
+    (mode) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { host, healthProbe, healthHeaders, daemonStop, runs } = yield* agentFixture(
+          (stateDir) =>
+            fs
+              .writeFileString(
+                `${stateDir}/daemon.json`,
+                JSON.stringify({ httpPort: 12345, token: "owned-token", pid: process.pid }),
+              )
+              .pipe(Effect.orDie, Effect.as(processOutput(0))),
+        );
+        yield* host.ensureAgentReady(() => Effect.void);
+        const bodyReleased = yield* Deferred.make<ArrayBuffer>();
+        const bodyInterrupted = yield* Deferred.make<void>();
+        healthProbe.body = Option.some(
+          Deferred.await(bodyReleased).pipe(
+            Effect.onInterrupt(() => Deferred.succeed(bodyInterrupted, undefined)),
+          ),
+        );
+        daemonStop.output = processOutput(1);
+        yield* Effect.gen(function* () {
+          const opening = yield* Effect.forkChild(
+            host.ensureAgentReady(() => Effect.void).pipe(Effect.result),
+          );
+          yield* Deferred.await(healthHeaders);
+          if (mode === "timeout") {
+            yield* TestClock.adjust("2 seconds");
+          } else {
+            yield* Fiber.interrupt(opening).pipe(Effect.forkChild({ startImmediately: true }));
+            yield* TestClock.adjust("0 seconds");
+          }
+          expect(yield* Deferred.isDone(bodyInterrupted)).toBe(true);
+          const exit = yield* Fiber.await(opening);
+          if (mode === "cancellation") {
+            expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+          }
+          expect(runs.filter((run) => run.args.includes("daemon"))).toHaveLength(
+            mode === "timeout" ? 1 : 0,
+          );
+          yield* host.ensureReady(() => Effect.void);
+        }).pipe(Effect.ensuring(Deferred.succeed(bodyReleased, new ArrayBuffer(0))));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("replaces an inherited daemon and reuses only its own healthy daemon", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       let attempts = 0;
-      const { host, daemonHealthy } = yield* agentFixture((stateDir) =>
-        Effect.gen(function* () {
-          attempts++;
-          yield* fs
-            .writeFileString(
-              `${stateDir}/daemon.json`,
-              JSON.stringify({ httpPort: 12345 + attempts, token: `token-${attempts}` }),
-            )
-            .pipe(Effect.orDie);
-          return processOutput(0);
-        }),
+      const { host, daemonHealthy, runs, baseDir } = yield* agentFixture(
+        (stateDir) =>
+          Effect.gen(function* () {
+            attempts++;
+            yield* fs
+              .writeFileString(
+                `${stateDir}/daemon.json`,
+                JSON.stringify({ httpPort: 12345 + attempts, token: `token-${attempts}` }),
+              )
+              .pipe(Effect.orDie);
+            return processOutput(0);
+          }),
+        processOutput(0),
+        {
+          httpPort: 12345,
+          token: "previous-token",
+          pid: process.pid,
+          version: "0.0.1",
+        },
       );
+      const olderInstall = `${baseDir}/tools/agent-device/0.0.1`;
+      const olderEntry = `${olderInstall}/node_modules/agent-device/bin/agent-device.mjs`;
+      yield* fs.makeDirectory(`${olderInstall}/node_modules/agent-device/bin`, { recursive: true });
+      yield* fs.writeFileString(olderEntry, "");
+      yield* fs.writeFileString(`${olderInstall}/.install-complete`, "0.0.1");
       const first = yield* host.ensureAgentReady(() => Effect.void);
+      expect(first.agentDevice?.token).toBe("token-1");
       expect((yield* host.ensureAgentReady(() => Effect.void)).agentDevice).toEqual(
         first.agentDevice,
       );
@@ -159,11 +427,183 @@ describe("AgentDevice startup", () => {
       yield* Ref.set(daemonHealthy, false);
       const restarted = yield* host.ensureAgentReady(() => Effect.void);
       expect(attempts).toBe(2);
+      expect(runs.filter((run) => run.args.includes("daemon")).map((run) => run.args[0])).toEqual([
+        olderEntry,
+        `${baseDir}/tools/agent-device/${AGENT_DEVICE_VERSION}/node_modules/agent-device/bin/agent-device.mjs`,
+      ]);
       expect(restarted.agentDevice).toMatchObject({
         baseUrl: "http://127.0.0.1:12347",
         token: "token-2",
       });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each([
+    { scenario: "failed stop", output: processOutput(1), healthy: true, pid: process.pid },
+    {
+      scenario: "timed-out stop",
+      output: processOutput(0, "", "", true),
+      healthy: false,
+      pid: process.pid,
+    },
+    {
+      scenario: "retained registration",
+      output: processOutput(0),
+      healthy: true,
+      pid: process.pid,
+    },
+    { scenario: "failed health probe", output: processOutput(0), healthy: false, pid: process.pid },
+    { scenario: "missing owner PID", output: processOutput(0), healthy: false, pid: undefined },
+  ])("does not adopt the previous daemon after a $scenario", ({ output, healthy, pid }) =>
+    Effect.gen(function* () {
+      const previous = {
+        httpPort: 12345,
+        token: "previous-token",
+        ...(pid === undefined ? {} : { pid }),
+        version: AGENT_DEVICE_VERSION,
+      };
+      const { host, fs, stateDir, daemonStop, daemonHealthy } = yield* agentFixture(
+        () => Effect.die("Do not start a replacement until the old daemon has retired"),
+        processOutput(0),
+        previous,
+      );
+      daemonStop.output = output;
+      daemonStop.removeRecord = false;
+      yield* Ref.set(daemonHealthy, healthy);
+      const error = yield* host.ensureAgentReady(() => Effect.void).pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "AgentDeviceStartError",
+        reason: "daemon_retirement_unconfirmed",
+        exitCode: output.code,
+        cause: output,
+      });
+      expect(JSON.parse(yield* fs.readFileString(`${stateDir}/daemon.json`))).toEqual(previous);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("preserves an inherited daemon's stop execution failure", () =>
+    Effect.gen(function* () {
+      const cause = new ProcessRunner.ProcessSpawnError({
+        command: "/missing/node",
+        argumentCount: 5,
+        cause: new Error("missing executable"),
+      });
+      const { host, daemonStop } = yield* agentFixture(
+        () => Effect.die("Do not replace a daemon whose stop could not run"),
+        processOutput(0),
+        { httpPort: 12345, token: "previous-token", pid: process.pid },
+      );
+      daemonStop.failure = Option.some(cause);
+      const error = yield* host.ensureAgentReady(() => Effect.void).pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "AgentDeviceStartError",
+        reason: "daemon_retirement_unconfirmed",
+        exitCode: null,
+        cause,
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each(["startup", "pruning"] as const)(
+    "retains its daemon ownership when interrupted during %s",
+    (boundary) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const entered = yield* Deferred.make<void>();
+        const resume = yield* Deferred.make<void>();
+        let attempts = 0;
+        const { host, pruning, runs } = yield* agentFixture((stateDir) =>
+          Effect.gen(function* () {
+            attempts++;
+            yield* fs
+              .writeFileString(
+                `${stateDir}/daemon.json`,
+                JSON.stringify({
+                  httpPort: 12345,
+                  token: "owned-token",
+                  pid: process.pid,
+                }),
+              )
+              .pipe(Effect.orDie);
+            if (boundary === "startup") {
+              yield* Deferred.succeed(entered, undefined);
+              yield* Deferred.await(resume);
+            }
+            return processOutput(0);
+          }),
+        );
+        if (boundary === "pruning") {
+          pruning.effect = Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never));
+        }
+        const opening = yield* Effect.forkChild(host.ensureAgentReady(() => Effect.void));
+        yield* Deferred.await(entered);
+        const interrupting = yield* Fiber.interrupt(opening).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Deferred.succeed(resume, undefined);
+        yield* Fiber.join(interrupting);
+        expect((yield* host.current)?.releaseAgentSession).toBeTypeOf("function");
+        expect((yield* host.ensureAgentReady(() => Effect.void)).agentDevice?.token).toBe(
+          "owned-token",
+        );
+        expect(attempts).toBe(1);
+        expect(runs.filter((run) => run.args.includes("daemon"))).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each(["superseded", "removed"] as const)(
+    "invalidates cleanup after registration is %s before failed replacement",
+    (registration) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        let attempts = 0;
+        let startupFails = false;
+        const { host, stateDir, daemonStop, requests } = yield* agentFixture((stateDir) =>
+          Effect.gen(function* () {
+            attempts++;
+            if (startupFails) return processOutput(1);
+            yield* fs
+              .writeFileString(
+                `${stateDir}/daemon.json`,
+                JSON.stringify({
+                  httpPort: 12345 + attempts,
+                  token: `token-${attempts}`,
+                  pid: process.pid,
+                }),
+              )
+              .pipe(Effect.orDie);
+            return processOutput(0);
+          }),
+        );
+        yield* host.ensureAgentReady(() => Effect.void);
+        if (registration === "superseded") {
+          yield* fs.writeFileString(
+            `${stateDir}/daemon.json`,
+            JSON.stringify({
+              httpPort: 12350,
+              token: "replacement-token",
+              pid: process.pid,
+            }),
+          );
+          daemonStop.output = processOutput(1);
+          daemonStop.removeRecord = false;
+          yield* host.ensureAgentReady(() => Effect.void).pipe(Effect.flip);
+          expect((yield* host.current)?.releaseAgentSession).toBeUndefined();
+          daemonStop.output = processOutput(0);
+          daemonStop.removeRecord = true;
+        } else {
+          yield* fs.remove(`${stateDir}/daemon.json`);
+        }
+        startupFails = true;
+        yield* host.ensureAgentReady(() => Effect.void).pipe(Effect.flip);
+        expect((yield* host.current)?.releaseAgentSession).toBeUndefined();
+        startupFails = false;
+        const ready = yield* host.ensureAgentReady(() => Effect.void);
+        expect(ready.agentDevice?.token).toBe("token-3");
+        expect(ready.releaseAgentSession).toBeTypeOf("function");
+        if (ready.releaseAgentSession) yield* ready.releaseAgentSession("test-session", "phone");
+        expect(requests.at(-1)).toBe("http://127.0.0.1:12348/rpc");
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("uses the SDK a later shell environment selects", () =>
@@ -396,20 +836,34 @@ describe("AgentDevice startup", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("drops a dead daemon's record without running agent-device when the host stops", () =>
-    Effect.gen(function* () {
-      // Above the Linux and macOS PID limits, so never a live process.
-      const deadPid = 4_194_305;
-      const path = yield* Path.Path;
-      const { host, fs, stateDir, runs } = yield* agentFixture(
-        () => Effect.die("A session that never readies agent tools must not start the daemon"),
-        processOutput(0),
-        { httpPort: 12345, token: "previous-token", pid: deadPid, version: AGENT_DEVICE_VERSION },
-      );
-      yield* host.stop;
-      expect(runs.filter((run) => run.args.includes("daemon"))).toEqual([]);
-      expect(yield* fs.exists(path.join(stateDir, "daemon.json"))).toBe(false);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  it.effect.each(["ESRCH", "EPERM", "unexpected"] as const)(
+    "confirms daemon death only for ESRCH when its process probe reports %s",
+    (probeError) =>
+      Effect.gen(function* () {
+        // Above the Linux and macOS PID limits, so never a live process.
+        const deadPid = 4_194_305;
+        const kill = process.kill;
+        using _probe = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+          if (pid === deadPid && signal === 0 && probeError !== "ESRCH") {
+            const cause = new Error("Process probe failed");
+            throw probeError === "EPERM" ? Object.assign(cause, { code: "EPERM" }) : cause;
+          }
+          return kill(pid, signal);
+        });
+        const path = yield* Path.Path;
+        const { host, fs, stateDir, runs, daemonStop } = yield* agentFixture(
+          () => Effect.die("A session that never readies agent tools must not start the daemon"),
+          processOutput(0),
+          { httpPort: 12345, token: "previous-token", pid: deadPid, version: AGENT_DEVICE_VERSION },
+        );
+        daemonStop.output = processOutput(1);
+        daemonStop.removeRecord = false;
+        yield* host.stop;
+        expect(runs.filter((run) => run.args.includes("daemon"))).toHaveLength(
+          probeError === "ESRCH" ? 0 : 1,
+        );
+        expect(yield* fs.exists(path.join(stateDir, "daemon.json"))).toBe(probeError !== "ESRCH");
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("stops the agent daemon while the hub is still shutting down", () =>

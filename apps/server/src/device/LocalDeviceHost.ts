@@ -24,6 +24,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -342,8 +343,13 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       try {
         process.kill(pid, 0);
         return true;
-      } catch {
-        return false;
+      } catch (cause) {
+        return !(
+          typeof cause === "object" &&
+          cause !== null &&
+          "code" in cause &&
+          cause.code === "ESRCH"
+        );
       }
     });
 
@@ -526,10 +532,18 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     const raw = yield* fs.readFileString(daemonFilePath());
     return yield* decodeDaemonFile(raw);
   });
+  const readOptionalDaemonFile = readDaemonFile().pipe(
+    Effect.asSome,
+    Effect.catchIf(
+      (cause) => PlatformError.isPlatformError(cause) && cause.reason._tag === "NotFound",
+      () => Effect.succeed(Option.none<typeof AgentDeviceDaemonFile.Type>()),
+    ),
+  );
 
   const startAgentDeviceDaemon = Effect.fn("LocalDeviceHost.startAgentDeviceDaemon")(function* (
     agentTool: Pick<DeviceToolPaths, "entryPath">,
     nodePath: string,
+    currentEndpoint?: DeviceHost.AgentDaemonEndpoint,
   ): Effect.fn.Return<
     DeviceHost.AgentDeviceEndpoint,
     | DeviceHost.DeviceHostError
@@ -538,7 +552,19 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   > {
     const stateDir = agentDeviceStateDir(path, config.stateDir);
     yield* fs.makeDirectory(stateDir, { recursive: true }).pipe(Effect.ignore);
-    const existing = yield* readDaemonFile().pipe(Effect.option);
+    const readRegistration = readOptionalDaemonFile.pipe(
+      Effect.mapError(
+        (cause) =>
+          new DeviceHost.AgentDeviceStartError({
+            hostId,
+            stateDir,
+            exitCode: null,
+            reason: "daemon_retirement_unconfirmed",
+            cause,
+          }),
+      ),
+    );
+    const existing = yield* readRegistration;
     const daemonEnvironment: NodeJS.ProcessEnv = {
       ...(yield* currentHostEnvironment),
       AGENT_DEVICE_STATE_DIR: stateDir,
@@ -557,19 +583,73 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       entryPath: agentTool.entryPath,
     });
     if (existing._tag === "Some") {
+      const endpoint = toEndpoint(existing.value);
+      const matchesCurrent =
+        currentEndpoint?.baseUrl === endpoint.baseUrl && currentEndpoint.token === endpoint.token;
+      if (!matchesCurrent) {
+        yield* Ref.update(runningRef, (running) =>
+          running ? { ...running, agentDevice: null } : running,
+        );
+      }
       const alive = yield* HttpClient.withScope(httpClient)
         .get(`http://127.0.0.1:${existing.value.httpPort}/health`)
         .pipe(
-          Effect.timeout(Duration.seconds(2)),
           Effect.flatMap((response) =>
             response.arrayBuffer.pipe(Effect.as(response.status === 200)),
           ),
           Effect.scoped,
+          Effect.timeout(Duration.seconds(2)),
+          Effect.interruptible,
           Effect.orElseSucceed(() => false),
         );
-      if (alive) return toEndpoint(existing.value);
-      yield* fs.remove(daemonFilePath(), { force: true }).pipe(Effect.ignore);
+      if (alive && matchesCurrent) return endpoint;
+      // A failed health probe does not prove that the recorded owner exited.
+      const stopped = yield* stopAgentDeviceDaemon.pipe(Effect.result);
+      if (stopped._tag === "Failure") {
+        return yield* new DeviceHost.AgentDeviceStartError({
+          hostId,
+          stateDir,
+          exitCode: null,
+          reason: "daemon_retirement_unconfirmed",
+          cause: stopped.failure,
+        });
+      }
+      const result = stopped.success;
+      if (result && (result.timedOut || result.code !== 0)) {
+        return yield* new DeviceHost.AgentDeviceStartError({
+          hostId,
+          stateDir,
+          exitCode: result.code,
+          reason: "daemon_retirement_unconfirmed",
+          cause: result,
+        });
+      }
+      const registered = yield* fs.exists(daemonFilePath()).pipe(
+        Effect.mapError(
+          (cause) =>
+            new DeviceHost.AgentDeviceStartError({
+              hostId,
+              stateDir,
+              exitCode: result?.code ?? null,
+              reason: "daemon_retirement_unconfirmed",
+              cause,
+            }),
+        ),
+      );
+      if (registered) {
+        return yield* new DeviceHost.AgentDeviceStartError({
+          hostId,
+          stateDir,
+          exitCode: result?.code ?? null,
+          reason: "daemon_retirement_unconfirmed",
+          cause:
+            result ?? new Error("No installed agent-device CLI could retire the registration."),
+        });
+      }
     }
+    yield* Ref.update(runningRef, (running) =>
+      running ? { ...running, agentDevice: null } : running,
+    );
     // No `daemon start` exists; `devices` is the cheapest command that starts and awaits it.
     const runResult = yield* runner
       .run({
@@ -581,8 +661,16 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       })
       .pipe(Effect.result);
     // Discovery may fail after startup; accept a published endpoint or preserve the CLI failure.
-    const started = yield* readDaemonFile().pipe(Effect.option);
-    if (started._tag === "Some") return toEndpoint(started.value);
+    const started = yield* readRegistration.pipe(Effect.result);
+    if (started._tag === "Success" && started.success._tag === "Some") {
+      return toEndpoint(started.success.value);
+    }
+    if (
+      started._tag === "Failure" &&
+      (runResult._tag === "Failure" || runResult.success.timedOut || runResult.success.code !== 0)
+    ) {
+      return yield* started.failure;
+    }
     if (runResult._tag === "Failure") {
       return yield* new DeviceHost.DeviceHostError({
         hostId,
@@ -617,16 +705,20 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       });
     }
     const deadline = (yield* Clock.currentTimeMillis) + DAEMON_READY_TIMEOUT_MS;
+    let registration = started;
     while (true) {
-      const file = yield* readDaemonFile().pipe(Effect.option);
-      if (file._tag === "Some") return toEndpoint(file.value);
-      if ((yield* Clock.currentTimeMillis) > deadline) {
+      if (registration._tag === "Success" && registration.success._tag === "Some") {
+        return toEndpoint(registration.success.value);
+      }
+      if ((yield* Clock.currentTimeMillis) >= deadline) {
+        if (registration._tag === "Failure") return yield* registration.failure;
         return yield* new DeviceHost.DeviceHostTimeoutError({
           hostId,
           timeoutMs: DAEMON_READY_TIMEOUT_MS,
         });
       }
       yield* Effect.sleep(Duration.millis(DAEMON_POLL_MS));
+      registration = yield* readRegistration.pipe(Effect.result);
     }
   });
 
@@ -634,7 +726,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   // older pin), so stop it with the CLI of its recorded version when that is installed.
   const stopAgentDeviceDaemon = Effect.gen(function* () {
     if (!(yield* fs.exists(daemonFilePath()))) return;
-    const recorded = yield* readDaemonFile().pipe(Effect.option);
+    const recorded = yield* readOptionalDaemonFile;
     if (
       Option.isSome(recorded) &&
       recorded.value.pid &&
@@ -651,7 +743,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     const nodePath = yield* resolveNodeExecutable("Local device support", hostEnvironment).pipe(
       Effect.provideService(HostProcess.Platform, hostPlatform),
     );
-    yield* runner.run({
+    return yield* runner.run({
       command: nodePath,
       args: [
         entryPath,
@@ -664,11 +756,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       timeout: Duration.seconds(10),
       timeoutBehavior: "timedOutResult",
     });
-  }).pipe(
-    Effect.provideService(FileSystem.FileSystem, fs),
-    Effect.provideService(Path.Path, path),
-    Effect.ignore,
-  );
+  }).pipe(Effect.provideService(FileSystem.FileSystem, fs), Effect.provideService(Path.Path, path));
 
   const ensureHubReady = Effect.fn("LocalDeviceHost.ensureHubReady")(function* (
     onPhase: (phase: "installing" | "starting", detail?: string) => Effect.Effect<void>,
@@ -758,9 +846,12 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
           const agentDevice = yield* startAgentDeviceDaemon(
             running.agentDevice,
             running.hub.nodePath,
+            running.agentDevice,
+          ).pipe(
+            Effect.tap((agentDevice) => Ref.set(runningRef, { ...running, agentDevice })),
+            Effect.uninterruptible,
           );
-          yield* Ref.set(runningRef, { ...running, agentDevice });
-          return { ...toReady(running), agentDevice };
+          return { ...toReady({ ...running, agentDevice }), agentDevice };
         }
         const installed = yield* isAgentDeviceInstalled(config.baseDir).pipe(
           Effect.provideService(FileSystem.FileSystem, fs),
@@ -787,14 +878,17 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
           ),
         );
         yield* onPhase("starting");
-        const agentDevice = yield* startAgentDeviceDaemon(agentTool, running.hub.nodePath);
+        // A daemon can publish its registration before its startup command returns.
+        const agentDevice = yield* startAgentDeviceDaemon(agentTool, running.hub.nodePath).pipe(
+          Effect.tap((agentDevice) => Ref.set(runningRef, { ...running, agentDevice })),
+          Effect.uninterruptible,
+        );
         yield* pruneLocalDeviceTools(config.baseDir, running.hub.nodePath, "agent").pipe(
           Effect.provideService(Path.Path, path),
           Effect.provideService(ProcessRunner.ProcessRunner, runner),
           Effect.ignore,
         );
         const next = { ...running, agentDevice };
-        yield* Ref.set(runningRef, next);
         return { ...toReady(next), agentDevice };
       }),
     );
@@ -869,7 +963,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
 
   const stopAgent: DeviceHost.DeviceHost["Service"]["stopAgent"] = startLock.withPermits(1)(
     Effect.gen(function* () {
-      yield* stopAgentDeviceDaemon;
+      yield* stopAgentDeviceDaemon.pipe(Effect.ignore);
       yield* Ref.update(runningRef, (running) =>
         running ? { ...running, agentDevice: null } : running,
       );
@@ -885,7 +979,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
           stopHub(running?.hub).pipe(
             Effect.andThen(fs.remove(hubStatePath(), { force: true }).pipe(Effect.ignore)),
           ),
-          stopAgentDeviceDaemon,
+          stopAgentDeviceDaemon.pipe(Effect.ignore),
         ],
         { concurrency: "unbounded", discard: true },
       );
