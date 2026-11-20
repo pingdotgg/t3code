@@ -20,6 +20,17 @@ describe("classifyMarkdownImageSource", () => {
     });
   });
 
+  // Amp uploads local images to auth-only URLs and keeps the original file in the fragment.
+  it("maps an Amp attachment URL to its amp-media-source file", () => {
+    const source =
+      "https://ampcode.com/user-content/attachments/3f9c2a1b7e-1-shot.png" +
+      "#amp-media-source=file%3A%2F%2F%2Fworkspace%2Fproject%2F.amp%2Fin%2Fartifacts%2F1-shot.png";
+    expect(classifyMarkdownImageSource(source, "/workspace/project")).toEqual({
+      _tag: "WorkspaceFile",
+      path: "/workspace/project/.amp/in/artifacts/1-shot.png",
+    });
+  });
+
   it.each(["image.png", "javascript:alert(1)", "file://%"])(
     "blocks unsupported or unresolved source %s",
     (source) => {
