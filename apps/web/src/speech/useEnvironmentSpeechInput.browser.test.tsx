@@ -38,6 +38,7 @@ const mocks = vi.hoisted(() => ({
   voiceCapable: new Set<string>(),
   cloudVoiceCapable: new Set<string>(),
   canDictate: new Set<string>(),
+  denied: new Set<string>(),
   prepared: new Map<string, unknown>(),
   primaryEnvironmentId: "primary-env",
   statusRequests: [] as string[],
@@ -67,9 +68,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../components/sidebar/mainAppLocation", () => ({
   useCloseAppModal: () => () => Promise.resolve(),
 }));
-vi.mock("../state/session", () => ({
-  useEnvironmentScope: (id: string) => mocks.canDictate.has(id),
-  usePreparedConnection: (environmentId: string | null) => {
+vi.mock("../state/session", () => {
+  const usePreparedConnection = (environmentId: string | null) => {
     if (!environmentId || !mocks.connected.has(environmentId)) return Option.none();
     let prepared = mocks.prepared.get(environmentId);
     if (!prepared) {
@@ -77,8 +77,14 @@ vi.mock("../state/session", () => ({
       mocks.prepared.set(environmentId, prepared);
     }
     return Option.some(prepared);
-  },
-}));
+  };
+  return {
+    useEnvironmentScope: (id: string) => mocks.canDictate.has(id),
+    useEnvironmentScopeDenied: (id: string) => mocks.denied.has(id),
+    usePreparedConnection,
+    readPreparedConnection: (id: string) => Option.getOrNull(usePreparedConnection(id)),
+  };
+});
 vi.mock("../state/environments", () => ({
   usePrimaryEnvironmentId: () => mocks.primaryEnvironmentId,
   useEnvironment: (environmentId: string | null) =>
@@ -179,23 +185,29 @@ vi.mock("./browserVoiceInput", () => ({
   createBrowserVoiceInputPlatform: (
     input: Parameters<typeof createBrowserVoiceInputPlatform>[0],
   ) => {
-    const environmentId = input.prepared.environmentId;
-    mocks.platforms.push(environmentId);
+    // Throws while the destination is disconnected, as the real platform's requests do.
+    const connected = () => {
+      const prepared = input.getPrepared();
+      if (!prepared) throw new Error("The destination is disconnected.");
+      return prepared.environmentId;
+    };
     return {
       recorder: {
-        uri: `blob:${environmentId}`,
+        uri: "blob:recording",
         prepareToRecordAsync: async () => {
-          mocks.microphoneRequests.push(environmentId);
+          mocks.microphoneRequests.push(connected());
         },
         record() {},
         stop: async () => {},
       },
       transcriber: {
         prepare: async () => {
+          mocks.platforms.push(connected());
           mocks.recordingOptions.push(input.getTranscriptionOptions());
           return {
             locale: "en",
             transcribe: async () => {
+              const environmentId = connected();
               mocks.transcribeCalls.push(
                 input.cloudProvider
                   ? `${[input.cloudProvider, (input as { cloudModel?: string }).cloudModel].filter(Boolean).join(":")} via ${environmentId}`
@@ -226,6 +238,7 @@ function setup(options: { readonly destination?: string | null } = {}) {
   mocks.voiceCapable = new Set(["primary-env", THREAD_ENV, "env-a", "env-b"]);
   mocks.cloudVoiceCapable.clear();
   mocks.canDictate = new Set(mocks.voiceCapable);
+  mocks.denied.clear();
   mocks.prepared.clear();
   mocks.statusRequests = [];
   mocks.statusUnavailable = false;
@@ -264,6 +277,8 @@ function Probe(props: {
   readonly showWizard?: boolean;
   readonly ownerKey?: string;
   readonly persistent?: boolean;
+  readonly disabled?: boolean;
+  readonly startDisabled?: boolean;
 }) {
   const value = useEnvironmentSpeechInput({
     environmentId: THREAD_ENV as EnvironmentId,
@@ -271,6 +286,8 @@ function Probe(props: {
     projectName: props.projectName,
     cleanup: props.cleanup,
     ownerKey: props.ownerKey ?? "draft",
+    disabled: props.disabled,
+    startDisabled: props.startDisabled,
     persistentDraft: props.persistent
       ? {
           readStoredText: () => mocks.storedDraft,
@@ -370,21 +387,63 @@ it.each([
 );
 
 it.each([
-  ["revoked", null],
-  ["moved to another environment", "env-b"],
-  ["renewed for the same environment", "env-a"],
-])("abandons an in-progress recording when consent is %s", async (_, next) => {
+  ["consent is revoked", () => setDestination(null)],
+  ["consent is moved to another environment", () => setDestination("env-b")],
+  ["consent is renewed for the same environment", () => setDestination("env-a")],
+  ["the environment denies dictation", () => mocks.denied.add("env-a")],
+  ["the environment stops supporting transcription", () => mocks.voiceCapable.delete("env-a")],
+])("abandons an in-progress recording when %s", async (name, change) => {
   setup({ destination: "env-a" });
   await using screen = await render(<Probe />);
   await act(() => mocks.voice.start());
   expect(mocks.voice.state.phase).toBe("recording");
-  setDestination(next);
+  change();
   await screen.rerender(<Probe />);
-  if (next === null) expect(mocks.voice.available).toBe(false);
+  if (name === "consent is revoked") expect(mocks.voice.available).toBe(false);
   expect(mocks.voice.state.phase).toBe("idle");
   await act(() => mocks.voice.stop());
   expect(mocks.transcribeCalls).toEqual([]);
   expect(mocks.committed).not.toHaveBeenCalled();
+});
+
+it("keeps a recording while its destination reconnects and sends it on the new connection", async () => {
+  setup({ destination: "env-a" });
+  await using screen = await render(<Probe />);
+  await act(() => mocks.voice.start());
+  mocks.connected.delete("env-a");
+  await screen.rerender(<Probe />);
+  expect(mocks.voice.state.phase).toBe("recording");
+  expect(mocks.voice.available).toBe(true);
+  // Stopped while still disconnected: the recording waits for a retry instead of being lost.
+  await act(() => mocks.voice.stop());
+  expect(mocks.voice.state).toMatchObject({ phase: "error", errorAction: "retry" });
+  expect(mocks.committed).not.toHaveBeenCalled();
+
+  // A reconnect hands out a new connection object.
+  mocks.prepared.delete("env-a");
+  mocks.connected.add("env-a");
+  await screen.rerender(<Probe />);
+  await act(() => mocks.voice.start());
+  expect(mocks.transcribeCalls).toEqual(["env-a"]);
+  expect(mocks.microphoneRequests).toEqual(["env-a"]);
+  expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("dictated", expect.anything());
+});
+
+it.each([
+  ["cannot start right now, the transcript still lands", { startDisabled: true }, true],
+  ["can no longer take a transcript, the recording is abandoned", { disabled: true }, false],
+])("when the editor %s", async (_name, block, kept) => {
+  setup({ destination: "env-a" });
+  await using screen = await render(<Probe />);
+  await act(() => mocks.voice.start());
+  await screen.rerender(<Probe {...block} />);
+  expect(mocks.voice.state.phase).toBe(kept ? "recording" : "idle");
+  await act(() => mocks.voice.stop());
+  expect(mocks.transcribeCalls).toEqual(kept ? ["env-a"] : []);
+  expect(mocks.committed).toHaveBeenCalledTimes(kept ? 1 : 0);
+  // Neither block lets a new recording start.
+  await act(() => mocks.voice.start());
+  expect(mocks.voice.state.phase).toBe("idle");
 });
 
 it("retries a failed transcription on the same chosen environment", async () => {

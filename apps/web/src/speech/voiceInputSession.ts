@@ -24,6 +24,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import { toastManager } from "../components/ui/toast";
 import { chooseRecordingMicrophone } from "./browserMicrophones";
 import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
+import { readPreparedConnection } from "../state/session";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 import { bindAudioGrant, readCleanupGrant } from "./voiceConsent";
 import { msg } from "gt-react";
@@ -71,7 +72,7 @@ export type VoiceInputSessionActivity = {
 };
 
 type SessionKey = {
-  readonly prepared: PreparedConnection;
+  readonly environmentId: EnvironmentId;
   readonly grantId: string;
   readonly cloudProvider: CloudSpeechProvider | undefined;
   readonly cloudModel: CloudSpeechModelId | undefined;
@@ -93,7 +94,8 @@ function cleanupContext({ text, selection }: DraftInput): DraftInput {
 
 /**
  * The browser has one microphone, so every editor shares one dictation per destination. The
- * recording belongs to the target that started it, not to whichever editor is mounted now.
+ * recording belongs to the target that started it, not to whichever editor is mounted now, and
+ * to the destination, not to one connection: it outlives a reconnect and sends on the new one.
  */
 export class VoiceInputSession {
   readonly key: SessionKey;
@@ -120,7 +122,7 @@ export class VoiceInputSession {
         }
       | undefined;
     const platform = createBrowserVoiceInputPlatform({
-      prepared: key.prepared,
+      getPrepared: () => readPreparedConnection(key.environmentId),
       cloudProvider: key.cloudProvider,
       cloudModel: key.cloudModel,
       hasAudioConsent,
@@ -314,7 +316,7 @@ const registryListeners = new Set<() => void>();
 
 function sameKey(session: VoiceInputSession, key: SessionKey): boolean {
   return (
-    session.key.prepared === key.prepared &&
+    session.key.environmentId === key.environmentId &&
     session.key.grantId === key.grantId &&
     session.key.cloudProvider === key.cloudProvider &&
     session.key.cloudModel === key.cloudModel
@@ -351,21 +353,28 @@ function subscribeRegistry(listener: () => void): () => void {
   return () => registryListeners.delete(listener);
 }
 
-/** Holds the destination's shared session while mounted; null until it is retained. */
+/**
+ * Holds the destination's shared session while mounted and `usable`; null until it is retained.
+ * The connection is not part of it, so the session and its recording survive a reconnect.
+ */
 export function useRetainedVoiceInputSession(input: {
-  readonly prepared: PreparedConnection | null;
+  readonly environmentId: EnvironmentId | null;
   readonly grantId: string | null;
+  readonly usable: boolean;
   readonly cloudProvider?: CloudSpeechProvider | undefined;
   readonly cloudModel?: CloudSpeechModelId | undefined;
 }): VoiceInputSession | null {
-  const { prepared, grantId, cloudProvider, cloudModel } = input;
+  const { grantId, cloudProvider, cloudModel } = input;
+  const environmentId = input.usable ? input.environmentId : null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- retains the shared recording session for this destination while mounted
   useEffect(() => {
-    if (!prepared || !grantId || typeof navigator === "undefined") return;
-    return retainVoiceInputSession({ prepared, grantId, cloudProvider, cloudModel });
-  }, [prepared, grantId, cloudProvider, cloudModel]);
+    if (!environmentId || !grantId || typeof navigator === "undefined") return;
+    return retainVoiceInputSession({ environmentId, grantId, cloudProvider, cloudModel });
+  }, [environmentId, grantId, cloudProvider, cloudModel]);
   return useSyncExternalStore(subscribeRegistry, () =>
-    prepared && grantId ? findSession({ prepared, grantId, cloudProvider, cloudModel }) : null,
+    environmentId && grantId
+      ? findSession({ environmentId, grantId, cloudProvider, cloudModel })
+      : null,
   );
 }
 

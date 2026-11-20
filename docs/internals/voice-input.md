@@ -25,11 +25,14 @@ The [web grant](../../apps/web/src/speech/voiceConsent.ts) lives outside the pre
 window saving unrelated settings cannot resurrect a revoked grant. Each new choice
 gets a distinct grant, even if the destination was previously selected. The
 [web hook](../../apps/web/src/speech/useEnvironmentSpeechInput.ts) binds the
-controller to that grant and the selected environment's connection. It requires
+controller to that grant and the selected environment, not to one connection. It requires
 `voiceTranscription` to use the environment's model or `cloudVoiceTranscription`
-to forward audio to the selected provider. Changing the grant or losing the
-connection, permission, or required capability discards both the active recording
-and any recording retained for retry. It never chooses a fallback destination.
+to forward audio to the selected provider. Changing the grant, or the environment
+denying the permission or reporting the capability missing, discards both the active
+recording and any recording retained for retry. A dropped connection is not a refusal:
+the recording stays on the device and is sent on the environment's next connection,
+and a live stream that drops falls back to uploading the buffered audio.
+It never chooses a fallback destination.
 The settings page's transcription test uses the same hook. The microphone loopback
 test captures separately for local playback and sends nothing. The transport
 refuses redirects so credentials and audio cannot follow one to another host.

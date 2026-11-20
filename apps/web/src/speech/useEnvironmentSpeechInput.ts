@@ -33,7 +33,11 @@ import {
   useEnvironmentSettings,
 } from "../hooks/useSettings";
 import { useEnvironment } from "../state/environments";
-import { useEnvironmentScope, usePreparedConnection } from "../state/session";
+import {
+  useEnvironmentScope,
+  useEnvironmentScopeDenied,
+  usePreparedConnection,
+} from "../state/session";
 import { preferredSpeechLanguages } from "./preferredSpeechLanguages";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 import { useAudioChoice } from "./voiceConsent";
@@ -82,7 +86,13 @@ type HookInput = {
   readonly projectId?: ProjectId | null | undefined;
   readonly projectName?: string | null | undefined;
   readonly ownerKey: string;
+  /** The editor cannot take a transcript: blocks starting and abandons a running recording. */
   readonly disabled?: boolean | undefined;
+  /**
+   * Blocks starting only. A running recording continues and its transcript still lands, for a
+   * block the draft outlives, such as its environment reconnecting.
+   */
+  readonly startDisabled?: boolean | undefined;
   /**
    * Until a destination is chosen, voice input is offered and its first gesture opens Voice
    * settings. False hides it instead, for editors whose draft would not survive the navigation.
@@ -115,7 +125,8 @@ type HookInput = {
 /**
  * Microphone audio leaves this device only for the environment the person chose in
  * Voice settings. Nothing is inferred from the primary or the draft's environment, and
- * the recording is abandoned the moment that choice changes or its connection drops.
+ * the recording is abandoned the moment that choice changes or the environment refuses it.
+ * A dropped connection is neither: the recording stays on this device until it can be sent.
  */
 export function useVoiceTranscriptionDestination() {
   const gt = useGT();
@@ -126,13 +137,13 @@ export function useVoiceTranscriptionDestination() {
   const environment = useEnvironment(environmentId);
   const connection = Option.getOrNull(usePreparedConnection(environmentId));
   const canDictate = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const denied = useEnvironmentScopeDenied(environmentId, AuthOrchestrationOperateScope);
   const cloud = grant?.destination.kind === "cloud" ? grant.destination : undefined;
   const provider = cloud?.provider;
   const model = cloud?.provider === "openrouter" ? cloud.model : undefined;
+  const capabilities = environment?.serverConfig?.environment.capabilities;
   const supported =
-    environment?.serverConfig?.environment.capabilities[
-      provider ? "cloudVoiceTranscription" : "voiceTranscription"
-    ] === true;
+    capabilities?.[provider ? "cloudVoiceTranscription" : "voiceTranscription"] === true;
   return {
     ...(hydrated && choice === null ? { offerFirstRunSetup: true } : {}),
     environmentId,
@@ -147,8 +158,12 @@ export function useVoiceTranscriptionDestination() {
           })
         : (environment?.label ?? null),
     prepared: supported && canDictate ? connection : null,
+    // Only the environment saying no ends a recording; an unreachable one has not answered.
+    usable: environmentId !== null && !denied && (supported || capabilities === undefined),
   };
 }
+
+const startBlocked = (input: HookInput) => Boolean(input.disabled || input.startDisabled);
 
 export function useEnvironmentSpeechInput(input: HookInput) {
   const navigate = useNavigate();
@@ -156,7 +171,6 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const prepared = destination.prepared;
   const grantId = destination.grantId;
   const cloudProvider = destination.cloudProvider;
-  const cloudModel = destination.cloudModel;
   const draftCapabilities = useEnvironment(input.environmentId)?.serverConfig?.environment
     .capabilities;
   const originatingConnection = Option.getOrNull(usePreparedConnection(input.environmentId));
@@ -179,22 +193,20 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const [queuedStart, setQueuedStart] = useState<PreparedConnection | null>(null);
   const [setup, setSetup] = useState(INITIAL_SETUP);
   const [previousDestination, setPreviousDestination] = useState({ prepared, grantId });
-  const [previousOwner, setPreviousOwner] = useState({
-    key: input.ownerKey,
-    disabled: input.disabled,
-  });
+  const blocked = startBlocked(input);
+  const [previousOwner, setPreviousOwner] = useState({ key: input.ownerKey, blocked });
   if (previousDestination.prepared !== prepared || previousDestination.grantId !== grantId) {
     setPreviousDestination({ prepared, grantId });
     setSetup(INITIAL_SETUP);
     setQueuedStart(null);
   }
-  if (previousOwner.key !== input.ownerKey || previousOwner.disabled !== input.disabled) {
-    setPreviousOwner({ key: input.ownerKey, disabled: input.disabled });
+  if (previousOwner.key !== input.ownerKey || previousOwner.blocked !== blocked) {
+    setPreviousOwner({ key: input.ownerKey, blocked });
     setQueuedStart(null);
     setSetup(INITIAL_SETUP);
   }
 
-  const session = useRetainedVoiceInputSession({ prepared, grantId, cloudProvider, cloudModel });
+  const session = useRetainedVoiceInputSession(destination);
   const snapshot = useVoiceInputSessionSnapshot(session);
   const owns = snapshot.target?.ownerKey === input.ownerKey;
   const activity = useVoiceInputSessionActivity(session, input.ownerKey);
@@ -225,6 +237,13 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       session?.ownerChanged(latestRef.current.input.ownerKey);
     };
   }, [session]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a start or setup step awaiting one connection must not finish on its replacement
+  useEffect(() => {
+    if (!prepared) return;
+    return () => {
+      startRequestRef.current += 1;
+    };
+  }, [prepared]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the global indicator this draft is on screen
   useEffect(
     () => (input.presented === false ? undefined : presentVoiceOwner(input.ownerKey)),
@@ -296,12 +315,12 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     if (state.phase === "error") pendingSubmissionRef.current = null;
     if (state.phase !== "idle" || !pending) return;
     pendingSubmissionRef.current = null;
-    if (!input.disabled && pending.ownerKey === input.ownerKey && pending.text !== undefined)
+    if (!blocked && pending.ownerKey === input.ownerKey && pending.text !== undefined)
       pending.submit(pending.text);
-  }, [state, input.ownerKey, input.disabled]);
+  }, [state, input.ownerKey, blocked]);
 
   const submitAfterDictation = useStableCallback((submit: (text: string) => void) => {
-    if (latestRef.current.input.disabled || state.phase === "preparing") return;
+    if (startBlocked(latestRef.current.input) || state.phase === "preparing") return;
     if (!session || !voiceInputBlocksSubmission(state)) {
       submit(latestRef.current.input.readDraft().text);
       return;
@@ -395,7 +414,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   );
 
   const start = useStableCallback(async () => {
-    if (latestRef.current.input.disabled || (setup.open && setup.downloading)) return;
+    if (startBlocked(latestRef.current.input) || (setup.open && setup.downloading)) return;
     if (!grantId) {
       if (destination.offerFirstRunSetup && latestRef.current.input.offerSetup !== false)
         await navigate({ to: "/settings/voice", hash: "voice-transcription-destination" });
@@ -412,7 +431,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       request === startRequestRef.current &&
       latestRef.current.session === session &&
       latestRef.current.input.ownerKey === owner &&
-      !latestRef.current.input.disabled;
+      !startBlocked(latestRef.current.input);
     setSetup(INITIAL_SETUP);
     setQueuedStart(prepared);
     let latestStatus: EnvironmentSpeechStatus;
@@ -519,12 +538,14 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         (cloudProvider !== undefined ||
           (status?.prepared === prepared && status.value?.supported !== false));
   return {
+    // A recording this editor owns keeps its controls while the destination reconnects.
     available:
-      destinationReady &&
-      !busyElsewhere &&
-      typeof navigator !== "undefined" &&
-      Boolean(navigator.mediaDevices?.getUserMedia) &&
-      typeof AudioWorkletNode !== "undefined",
+      (owns && snapshot.state.phase !== "idle") ||
+      (destinationReady &&
+        !busyElsewhere &&
+        typeof navigator !== "undefined" &&
+        Boolean(navigator.mediaDevices?.getUserMedia) &&
+        typeof AudioWorkletNode !== "undefined"),
     status: currentStatus,
     transcriptionEnvironmentId: destination.environmentId,
     transcriptionEnvironmentLabel: destination.label,
