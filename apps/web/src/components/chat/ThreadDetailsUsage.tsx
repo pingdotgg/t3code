@@ -14,7 +14,7 @@ import {
 import { formatDuration, limitsNotice } from "@t3tools/shared/usageLimitsCopy";
 import { Link } from "@tanstack/react-router";
 import { msg, useGT, useLocale, useMessages } from "gt-react";
-import { useId, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { useNowMinute } from "../../hooks/useNowMinute";
@@ -76,7 +76,7 @@ export function ThreadDetailsUsage({
             fill={null}
             tone={null}
             value={gt("Unavailable")}
-            ariaDescription={notice}
+            ariaDetail={notice}
             tooltip={<span className="text-foreground">{notice}</span>}
             opensUsage
           />
@@ -188,7 +188,7 @@ function LimitRow({
           ? gt("{left}% left. {pace}", { left, pace: m(PACE_LABEL[pace]) })
           : gt("{left}% left", { left })
       }
-      ariaDescription={resets}
+      ariaDetail={resets}
       opensUsage
       tooltip={
         <>
@@ -215,7 +215,7 @@ function UsageRow({
   tick = null,
   value,
   ariaValue = value,
-  ariaDescription = null,
+  ariaDetail = null,
   tooltip,
   muted = false,
   opensUsage = false,
@@ -228,17 +228,17 @@ function UsageRow({
   readonly tick?: number | null;
   readonly value: string;
   readonly ariaValue?: string;
-  /** Tooltip detail that the row's aria-label would otherwise hide from screen readers. */
-  readonly ariaDescription?: string | null;
+  /** Tooltip detail read as part of the aria-label, not a description: NVDA skips descriptions in browse mode. */
+  readonly ariaDetail?: string | null;
   readonly tooltip: ReactNode;
   readonly muted?: boolean;
   readonly opensUsage?: boolean;
 }) {
   const gt = useGT();
-  const descriptionId = useId();
   const rowProps = {
-    "aria-label": gt("{label}: {value}", { label, value: ariaValue }),
-    "aria-describedby": ariaDescription ? descriptionId : undefined,
+    "aria-label": ariaDetail
+      ? gt("{label}: {value}. {detail}", { label, value: ariaValue, detail: ariaDetail })
+      : gt("{label}: {value}", { label, value: ariaValue }),
     className: cn(
       "col-span-3 grid h-6 grid-cols-subgrid items-center rounded-lg px-2.5 outline-none hover:bg-black/[0.035] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-popup-open:bg-black/[0.035] dark:hover:bg-white/[0.08] dark:data-popup-open:bg-white/[0.08]",
       opensUsage
@@ -298,11 +298,6 @@ function UsageRow({
         >
           {value}
         </span>
-        {ariaDescription ? (
-          <span id={descriptionId} className="sr-only">
-            {ariaDescription}
-          </span>
-        ) : null}
       </TooltipTrigger>
       {/* Rows sit 8px inside the card; clear its edge instead of overlapping it. */}
       <TooltipPopup side="left" sideOffset={16}>

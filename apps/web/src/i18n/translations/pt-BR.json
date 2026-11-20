@@ -4109,6 +4109,7 @@
   "1b16346722b65812": "{timeLeft}% da janela restante",
   "728c6cc1431e76c8": "Renova em {duration} · {time}",
   "e16b0b9b490c8bc7": "{label}: {value}",
+  "70d2958552ff1612": "{label}: {value}. {detail}",
   "ba67d0a9ff5dabf0": "A API da área de transferência não está disponível ao copiar o pedido para o administrador.",
   "aef4bec20e799aab": "Falha ao copiar o pedido para o administrador para a área de transferência.",
   "409185e3d9bbdb2c": "Pedido copiado",

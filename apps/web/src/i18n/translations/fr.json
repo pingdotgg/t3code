@@ -4110,6 +4110,7 @@
   "1b16346722b65812": "{timeLeft} % de la fenêtre restant",
   "728c6cc1431e76c8": "Réinitialisation dans {duration} · {time}",
   "e16b0b9b490c8bc7": "{label} : {value}",
+  "70d2958552ff1612": "{label} : {value}. {detail}",
   "ba67d0a9ff5dabf0": "L’API Presse-papiers n’est pas disponible pour copier la demande à l’administrateur.",
   "aef4bec20e799aab": "Impossible de copier la demande à l’administrateur dans le presse-papiers.",
   "409185e3d9bbdb2c": "Demande copiée",

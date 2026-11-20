@@ -4116,6 +4116,7 @@
   "1b16346722b65812": "窗口剩余 {timeLeft}%",
   "728c6cc1431e76c8": "{duration} 后重置 · {time}",
   "e16b0b9b490c8bc7": "{label}：{value}",
+  "70d2958552ff1612": "{label}：{value}。{detail}",
   "ba67d0a9ff5dabf0": "复制管理员请求时剪贴板 API 不可用。",
   "aef4bec20e799aab": "无法将管理员请求复制到剪贴板。",
   "409185e3d9bbdb2c": "已复制申请",
