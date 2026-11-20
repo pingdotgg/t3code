@@ -136,34 +136,35 @@ it.layer(layerGrokTextGenerationTest)("GrokTextGeneration", (it) => {
 
   it.effect("maps ACP failures to safe details and preserves their cause", () =>
     Effect.gen(function* () {
-      for (const [code, detail] of [
-        [-32003, "Grok usage limit reached. Try again later."],
-        [-32000, "Grok authentication is required."],
-        [-32602, "Grok ACP request failed."],
+      const promptError = (code: number) => ({
+        T3_ACP_PROMPT_ERROR_MESSAGE: "private provider payload",
+        T3_ACP_PROMPT_ERROR_CODE: String(code),
+      });
+      for (const [env, code, detail] of [
+        [promptError(-32003), -32003, "Grok usage limit reached. Try again later."],
+        [promptError(-32000), -32000, "Grok authentication is required."],
+        [promptError(-32602), -32602, "Grok ACP request failed."],
+        // The agent advertises no method T3 can run, so its own auth error must surface.
+        [{ T3_ACP_SESSION_NEW_AUTH_REQUIRED: "1" }, -32000, "Grok authentication is required."],
       ] as const) {
-        yield* withFakeAcpGrok(
-          {
-            T3_ACP_PROMPT_ERROR_MESSAGE: "private provider payload",
-            T3_ACP_PROMPT_ERROR_CODE: String(code),
-          },
-          (textGeneration) =>
-            Effect.gen(function* () {
-              const error = yield* textGeneration
-                .generateThreadTitle({
-                  cwd: process.cwd(),
-                  message: "the lint job is red",
-                  modelSelection: createModelSelection(
-                    ProviderInstanceId.make("grok"),
-                    "grok-mock-alt",
-                  ),
-                })
-                .pipe(Effect.flip);
-              expect(error.detail).toBe(detail);
-              expect(error.cause).toMatchObject({
-                code,
-                errorMessage: "private provider payload",
-              });
-            }),
+        yield* withFakeAcpGrok(env, (textGeneration) =>
+          Effect.gen(function* () {
+            const error = yield* textGeneration
+              .generateThreadTitle({
+                cwd: process.cwd(),
+                message: "the lint job is red",
+                modelSelection: createModelSelection(
+                  ProviderInstanceId.make("grok"),
+                  "grok-mock-alt",
+                ),
+              })
+              .pipe(Effect.flip);
+            expect(error.detail).toBe(detail);
+            expect(error.cause).toMatchObject({
+              code,
+              errorMessage: "private provider payload",
+            });
+          }),
         );
       }
     }),

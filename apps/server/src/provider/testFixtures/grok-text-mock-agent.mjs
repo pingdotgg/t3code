@@ -23,6 +23,14 @@ for await (const line of NodeReadline.createInterface({ input: process.stdin }))
     });
     continue;
   }
+  if (request.method === "session/new" && process.env.T3_ACP_SESSION_NEW_AUTH_REQUIRED) {
+    write({
+      jsonrpc: "2.0",
+      id: request.id,
+      error: { code: -32000, message: "private provider payload" },
+    });
+    continue;
+  }
   let result;
   switch (request.method) {
     case "initialize":
@@ -30,6 +38,7 @@ for await (const line of NodeReadline.createInterface({ input: process.stdin }))
         protocolVersion: 1,
         agentInfo: { name: "grok", version: "mock" },
         agentCapabilities: {},
+        authMethods: [{ id: "grok.login", name: "Grok login" }],
       };
       break;
     case "session/new":
