@@ -267,6 +267,12 @@ it("readThread preserves caller access errors and prefers activity-run status ov
     });
     expect(laterPage.thread.pullRequests).toBeUndefined();
     expect(laterPage.thread.pullRequestCount).toBe(8);
+    // A read from past the tail is the newest page, which a linked environment asks for.
+    const newestPage = yield* service.readThread(makeScope(), {
+      threadId: parentThreadId,
+      beforePosition: Number.MAX_SAFE_INTEGER,
+    });
+    expect(newestPage.thread.pullRequests?.map((link) => link.number)).toEqual([2, 8, 7, 6, 5]);
 
     Object.assign(projection, {
       runs: [makeRun({ id: activeRunId, ordinal: 1, status: "completed" })],
