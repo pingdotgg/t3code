@@ -28,28 +28,44 @@ window.Kit = (() => {
     if (!f) throw new Error(`Kit: no beat named ${name}`);
     return f;
   };
+  // CSS plus a trailing `:text(words)`, which keeps the matches whose text contains `words`.
+  const query = (doc, selector) => {
+    const match = /^(.*?):text\((.+)\)$/.exec(selector.trim());
+    if (!match) return [...doc.querySelectorAll(selector)];
+    return [...doc.querySelectorAll(match[1] || "*")].filter(
+      (node) =>
+        node.textContent.includes(match[2]) &&
+        ![...node.children].some(
+          (c) => c.textContent.includes(match[2]) && c.matches(match[1] || "*"),
+        ),
+    );
+  };
   const resolve = (target) => {
-    if (target instanceof Element) return { el: target, frame: null };
+    // Nodes from a beat belong to its iframe's realm, so `instanceof Element` misses them.
+    if (typeof target !== "string") {
+      const view = target.ownerDocument.defaultView;
+      return { el: target, frame: view === window ? null : view.frameElement };
+    }
     const split = target.indexOf(" >> ");
     if (split === -1) {
-      const el = document.querySelector(target);
+      const [el] = query(document, target);
       if (!el) throw new Error(`Kit: no element matches ${target}`);
       return { el, frame: null };
     }
     const frame = beat(target.slice(0, split));
     const sel = target.slice(split + 4);
-    const el = frame.contentDocument.querySelector(sel);
+    const [el] = query(frame.contentDocument, sel);
     if (!el) throw new Error(`Kit: no element matches ${sel} in beat ${frame.dataset.beat}`);
     return { el, frame };
   };
   // "* >> <selector>" matches in every beat.
   const all = (target) => {
     const split = target.indexOf(" >> ");
-    if (split === -1) return [...document.querySelectorAll(target)];
+    if (split === -1) return query(document, target);
     const name = target.slice(0, split);
     const docs =
       name === "*" ? frames().map((f) => f.contentDocument) : [beat(name).contentDocument];
-    return docs.flatMap((doc) => [...doc.querySelectorAll(target.slice(split + 4))]);
+    return docs.flatMap((doc) => query(doc, target.slice(split + 4)));
   };
   // A static edit to the frozen page, e.g. a dev-only label. Say so when you hand the video back.
   const text = (targets, value) => {
@@ -226,6 +242,22 @@ window.Kit = (() => {
         ],
         { at, dur, ease: "ease-out" },
       ),
+    // Draws solid SVG strokes in (dashed ones keep their dashes and just fade in).
+    draw: (targets, at, dur = 0.6, step = 0.08) =>
+      all(targets).map((path, i) => {
+        const start = at + i * step;
+        const view = path.ownerDocument.defaultView;
+        if (view.getComputedStyle(path).strokeDasharray !== "none" || !path.getTotalLength) {
+          return anim(path, [{ opacity: 0 }, { opacity: 1 }], { at: start, dur });
+        }
+        const length = path.getTotalLength();
+        path.style.strokeDasharray = `${length}`;
+        return anim(path, [{ strokeDashoffset: length }, { strokeDashoffset: 0 }], {
+          at: start,
+          dur,
+          ease: "cubic-bezier(.4,0,.2,1)",
+        });
+      }),
     // A punch: brief scale-up pulse that draws the eye.
     punch: (t, at, scale = 1.06) =>
       anim(

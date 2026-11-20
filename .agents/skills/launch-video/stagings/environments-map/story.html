@@ -1,0 +1,391 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      Real-app story: each beat is a frozen page of the real app (beats/<name>.html, written by
+      snapshot.mjs from a staging scenario), stacked as iframes in .app. The app was frozen at a
+      1440×720 viewport; .app scales it 1.0556× into the 1520×760 window, so a point (x, y) in a
+      beat is canvas (40 + 1.0556·x, 26 + 1.0556·y).
+    -->
+    <style>
+      @font-face {
+        font-family: Inter;
+        src: url(inter.woff2) format("woff2");
+        font-weight: 100 900;
+      }
+      @font-face {
+        font-family: JB;
+        src: url(jbmono.woff2) format("woff2");
+        font-weight: 100 800;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      :root {
+        --text: #f1f3f7;
+        --muted: #a3a3a3;
+        --dim: #636368;
+      }
+      html,
+      body {
+        width: 1600px;
+        height: 900px;
+        overflow: hidden;
+        background: #000;
+        font-family: Inter, sans-serif;
+        color: var(--text);
+        -webkit-font-smoothing: antialiased;
+      }
+      .canvas {
+        position: relative;
+        width: 1600px;
+        height: 900px;
+        overflow: hidden;
+        background:
+          radial-gradient(1000px 520px at 50% 0%, rgba(52, 107, 241, 0.13), transparent 70%), #000;
+      }
+      .cam {
+        position: absolute;
+        inset: 0;
+        transform-origin: 0 0;
+      }
+      .win {
+        position: absolute;
+        left: 40px;
+        top: 26px;
+        width: 1520px;
+        height: 760px;
+        border-radius: 14px;
+        overflow: hidden;
+        background: #000;
+        box-shadow:
+          0 0 0 1px rgba(255, 255, 255, 0.1),
+          0 40px 120px rgba(0, 0, 0, 0.8);
+      }
+      .app {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1600px;
+        height: 800px;
+        transform: scale(0.95);
+        transform-origin: 0 0;
+      }
+      .app iframe {
+        position: absolute;
+        inset: 0;
+        width: 1600px;
+        height: 800px;
+        border: 0;
+        opacity: 0;
+        background: #000;
+      }
+      .cursor {
+        position: absolute;
+        left: 0;
+        top: 0;
+        z-index: 20;
+        transform-origin: 4px 3px;
+        filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.6));
+      }
+      .shade {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 190px;
+        background: linear-gradient(to bottom, transparent, rgba(0, 0, 0, 0.96) 42%);
+        z-index: 30;
+      }
+      .cap {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 806px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 16px;
+        font-size: 40px;
+        font-weight: 700;
+        letter-spacing: -0.025em;
+        z-index: 31;
+        opacity: 0;
+      }
+      .cap .n {
+        width: 50px;
+        height: 50px;
+        border-radius: 13px;
+        display: grid;
+        place-items: center;
+        font-family: JB;
+        font-size: 25px;
+        font-weight: 700;
+        background: #191a1d;
+        color: var(--text);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+      }
+      .cap .m {
+        color: var(--muted);
+        font-weight: 560;
+      }
+      .outro {
+        position: absolute;
+        inset: 0;
+        z-index: 50;
+        opacity: 0;
+        display: grid;
+        place-items: center;
+        text-align: center;
+        background:
+          radial-gradient(760px 460px at 50% 34%, rgba(52, 107, 241, 0.16), transparent 70%), #000;
+      }
+      .outro .logo {
+        width: 176px;
+        height: 176px;
+        display: block;
+        margin: 0 auto -10px;
+        filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.35))
+          drop-shadow(0 18px 60px rgba(52, 107, 241, 0.35));
+      }
+      .outro h2 {
+        margin-top: 44px;
+        font-size: 76px;
+        line-height: 1.02;
+        font-weight: 760;
+        letter-spacing: -0.045em;
+      }
+      .outro h2 .and {
+        color: var(--muted);
+      }
+      .outro p {
+        margin-top: 22px;
+        font-size: 34px;
+        color: var(--muted);
+        font-weight: 550;
+        letter-spacing: -0.02em;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+      }
+      .outro p b {
+        color: var(--text);
+        font-weight: 650;
+      }
+      .ver {
+        font-family: JB;
+        font-size: 22px;
+        font-weight: 600;
+        color: var(--text);
+        padding: 6px 13px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.07);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+      }
+      .outro .url {
+        margin-top: 46px;
+        font-family: JB;
+        font-size: 22px;
+        color: var(--dim);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="canvas">
+      <div class="cam">
+        <div class="win">
+          <div class="app">
+            <iframe data-beat="map" src="beats/map.html"></iframe>
+            <iframe data-beat="link-menu" src="beats/link-menu.html"></iframe>
+            <iframe data-beat="link-open" src="beats/link-open.html"></iframe>
+            <iframe data-beat="link-picked" src="beats/link-picked.html"></iframe>
+            <iframe data-beat="link-done" src="beats/link-done.html"></iframe>
+            <iframe data-beat="linked" src="beats/linked.html"></iframe>
+          </div>
+        </div>
+        <div class="cursor" id="cur">
+          <svg viewBox="0 0 24 24" width="26" height="26">
+            <path
+              d="M4 2.5 L4 19.5 L8.6 15.2 L11.6 21.6 L14.6 20.2 L11.7 14 L18 14 Z"
+              fill="#fff"
+              stroke="#000"
+              stroke-width="1.4"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </div>
+      </div>
+      <div class="shade"></div>
+      <div class="cap" id="cap1">
+        <span class="n">1</span
+        ><span>Every machine <span class="m">and how you reach it.</span></span>
+      </div>
+      <div class="cap" id="cap2">
+        <span class="n">2</span><span>Fleets fold <span class="m">into one card.</span></span>
+      </div>
+      <div class="cap" id="cap3">
+        <span class="n">3</span><span>Link several <span class="m">in one go.</span></span>
+      </div>
+    </div>
+    <div class="outro">
+      <div>
+        <img class="logo" src="logo-prod.png" />
+        <h2>Environments map<br /><span class="and">all your machines at a glance</span></h2>
+        <p>Available now in <b>T3 Code</b> <span class="ver">0.1.12</span></p>
+        <div class="url">t3.codes</div>
+      </div>
+    </div>
+    <!-- kit.js last: Kit.ready waits for the beat iframes above. -->
+    <script src="kit.js"></script>
+    <script>
+      const cap = (id, from, to) =>
+        Kit.anim(
+          id,
+          [
+            { opacity: 0, transform: "translateY(14px)" },
+            { opacity: 1, transform: "none", offset: 0.06 },
+            { opacity: 1, transform: "none", offset: 0.94 },
+            { opacity: 0, transform: "translateY(-8px)" },
+          ],
+          { at: from, dur: to - from, ease: "linear" },
+        );
+      const MAP = '[aria-label="Map of your machines"]';
+      const node = (beat, label) => `${beat} >> button[data-fleet-item][aria-label^="${label}"]`;
+      const DIALOG = "[role=dialog][aria-labelledby]";
+
+      window.setup = () => {
+        Kit.beats([
+          ["map", 0],
+          ["link-menu", 9.85],
+          ["link-open", 10.9],
+          ["link-picked", 11.55],
+          ["link-done", 13.1],
+          ["linked", 14.35],
+        ]);
+        Kit.anim(
+          ".win",
+          [
+            { opacity: 0, transform: "translateY(40px) scale(.98)" },
+            { opacity: 1, transform: "none" },
+          ],
+          { at: 0, dur: 0.8 },
+        );
+
+        // 1. The map builds itself: machines, then the routes to them, then links.
+        Kit.stagger(`map >> ${MAP} button[data-fleet-item]`, 0.35, 0.07, "pop", { from: 0.85 });
+        Kit.draw(`map >> ${MAP} svg path`, 0.5, 0.7, 0.025);
+        Kit.stagger(`map >> ${MAP} > span`, 0.9, 0.03, "pop", { from: 0.7 });
+        Kit.glow(`map >> ${MAP} > span:text(LAN)`, 2.6, 1.6);
+        cap("#cap1", 0.9, 4.6);
+
+        // 2. The fleet
+        Kit.glow(node("map", "fs-44"), 5.5, 2.0);
+        Kit.punch(node("map", "fs-44"), 5.5, 1.05);
+        cap("#cap2", 4.8, 8.6);
+
+        // 3. Link several
+        Kit.press(`map >> button[data-slot=tooltip-trigger]:text(Link several)`, 9.6);
+        Kit.pop("link-menu >> [role=menu]", 9.85, { from: 0.9, origin: "top right" });
+        Kit.pop(`link-open >> ${DIALOG}`, 10.9, { from: 0.92 });
+        Kit.stagger(`link-picked >> ${DIALOG} [data-slot=checkbox-indicator]`, 11.55, 0.5, "pop", {
+          from: 0.3,
+        });
+        Kit.press(`link-picked >> ${DIALOG} [data-slot=dialog-footer] button:text(Link 2)`, 12.8);
+        Kit.rise(`link-done >> ${DIALOG} form > p`, 13.1, { y: 8 });
+        Kit.stagger(`link-done >> ${DIALOG} li:text(Linked)`, 13.15, 0.12, "punch");
+        Kit.press(`link-done >> button[data-slot=dialog-close]`, 14.15);
+        Kit.draw(`linked >> ${MAP} path[data-fleet-item]:text(Link from MacBook)`, 14.5, 0.7, 0.15);
+        Kit.stagger(`linked >> ${MAP} > span:text(Supervised)`, 15.0, 0.12, "pop", { from: 0.6 });
+        Kit.glow(node("linked", "MacBook"), 15.3, 1.6);
+        cap("#cap3", 9.0, 16.8);
+
+        Kit.anim(".outro", [{ opacity: 0 }, { opacity: 1 }], { at: 17.0, dur: 0.5 });
+        Kit.stagger(".outro .logo, .outro h2, .outro p, .outro .url", 17.05, 0.08, "rise", {
+          y: 18,
+        });
+      };
+
+      window.layoutTime = 16.9;
+      window.placeCursor = () =>
+        Kit.measure(() => {
+          Kit.camera([
+            { t: 0, on: "full" },
+            { t: 1.6, on: "full" },
+            {
+              t: 2.2,
+              on: node("map", "studio"),
+              dx: -120,
+              s: 1.8,
+              y: 380,
+              ease: "cubic-bezier(.3,1.2,.4,1)",
+            },
+            { t: 4.4, on: node("map", "studio"), dx: -120, s: 1.8, y: 380 },
+            { t: 5.1, on: node("map", "fs-44"), dx: -200, s: 1.6, y: 420 },
+            { t: 8.2, on: node("map", "fs-44"), dx: -200, s: 1.6, y: 420 },
+            {
+              t: 8.9,
+              on: `map >> button[data-slot=tooltip-trigger]:text(Link several)`,
+              dx: -220,
+              dy: 140,
+              s: 1.3,
+              y: 360,
+            },
+            {
+              t: 10.5,
+              on: `map >> button[data-slot=tooltip-trigger]:text(Link several)`,
+              dx: -220,
+              dy: 140,
+              s: 1.3,
+              y: 360,
+            },
+            { t: 11.0, on: `link-open >> ${DIALOG}`, s: 1.3, y: 430 },
+            { t: 14.2, on: `link-open >> ${DIALOG}`, s: 1.3, y: 430 },
+            { t: 14.8, on: node("linked", "gpu-2"), dx: -60, dy: 40, s: 1.45, y: 420 },
+            { t: 17.0, on: node("linked", "gpu-2"), dx: -60, dy: 40, s: 1.45, y: 420 },
+          ]);
+          Kit.cursor("#cur", [
+            { t: 8.6, at: [1250, 620], hidden: true },
+            { t: 8.8 },
+            {
+              t: 9.55,
+              at: `map >> button[data-slot=tooltip-trigger]:text(Link several)`,
+              click: true,
+            },
+            { t: 10.55, at: "link-menu >> [role=menuitem]:text(From MacBook)", click: true },
+            { t: 11.45, at: `link-picked >> ${DIALOG} li:text(gpu-1)`, dx: -120, click: true },
+            { t: 11.95, at: `link-picked >> ${DIALOG} li:text(gpu-2)`, dx: -120, click: true },
+            {
+              t: 12.75,
+              at: `link-picked >> ${DIALOG} [data-slot=dialog-footer] button:text(Link 2)`,
+              click: true,
+            },
+            { t: 14.1, at: `link-done >> button[data-slot=dialog-close]`, click: true },
+            { t: 14.5, hidden: true },
+            { t: 17, hidden: true },
+          ]);
+        });
+      Kit.timeline([
+        [1.6, 0, 1.6],
+        [0.8, 1.6, 2.2],
+        [2.6, 2.2, 4.4],
+        [0.8, 4.4, 5.1],
+        [3.4, 5.1, 8.2],
+        [0.8, 8.2, 8.9],
+        [1.2, 8.9, 9.85],
+        [0.9, 9.85, 10.6],
+        [0.6, 10.6, 11.0],
+        [1.6, 11.0, 12.1],
+        [1.0, 12.1, 12.8],
+        [0.8, 12.8, 13.1],
+        [1.6, 13.1, 14.2],
+        [0.6, 14.2, 14.8],
+        [2.2, 14.8, 16.9],
+        [0.7, 16.9, 17.6],
+        [2.8, 17.6, 17.6],
+      ]);
+    </script>
+  </body>
+</html>
