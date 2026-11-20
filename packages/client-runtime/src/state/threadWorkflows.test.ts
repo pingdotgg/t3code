@@ -4,6 +4,7 @@ import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 import {
   canForkProjectedAssistantItem,
   deriveThreadQueueWorkflowState,
+  getUserQueuedThreadRuns,
   resolveLatestMergeBackRun,
   threadSupportsProviderHandoff,
 } from "./threadWorkflows.ts";
@@ -30,6 +31,24 @@ const capabilities = (input?: {
   }) as never;
 
 describe("thread workflows", () => {
+  it("skips message history classification when no runs are queued", () => {
+    let metadataReads = 0;
+    const message = {
+      id: "message",
+      get delegatedCompletion() {
+        metadataReads++;
+        return undefined;
+      },
+    };
+    const projection = {
+      runs: [{ id: "active", status: "running", userMessageId: "message", ordinal: 1 }],
+      messages: [message],
+    } as never;
+
+    expect(getUserQueuedThreadRuns(projection)).toEqual([]);
+    expect(metadataReads).toBe(0);
+  });
+
   it("allows a completed thread to switch providers after its session detaches", () => {
     const projection = {
       thread: {
@@ -62,10 +81,11 @@ describe("thread workflows", () => {
         ...projection,
         providerThreads: [{ ...projection.providerThreads[0]!, nativeThreadRef: null }],
       }),
-    ).toBe(false);
+    ).toBe(true);
+    expect(threadSupportsProviderHandoff({ ...projection, providerThreads: [] })).toBe(false);
   });
 
-  it("sorts queued messages and gates reorder and promotion from capabilities", () => {
+  it("sorts queued messages and gates promotion from capabilities", () => {
     const state = deriveThreadQueueWorkflowState({
       thread: { id: "thread", activeProviderThreadId: "provider-thread" },
       runs: [
@@ -133,7 +153,6 @@ describe("thread workflows", () => {
       [],
     ]);
     expect(state.activeRun?.id).toBe("active");
-    expect(state.canReorder).toBe(true);
     expect(state.canPromoteToSteer).toBe(true);
     expect(state.canSendNow).toBe(false);
   });
@@ -174,6 +193,26 @@ describe("thread workflows", () => {
       expect(state.canSendNow).toBe(false);
     },
   );
+
+  it("offers to skip a running compaction even when the provider cannot steer", () => {
+    const state = deriveThreadQueueWorkflowState({
+      thread: { id: "thread", activeProviderThreadId: null },
+      runs: [
+        { id: "compact", status: "running", userMessageId: "message-compact", ordinal: 1 },
+        { id: "queued", status: "queued", userMessageId: "message-queued", ordinal: 2 },
+      ],
+      messages: [
+        { id: "message-compact", role: "user", text: "/compact", attachments: [] },
+        { id: "message-queued", role: "user", text: "Next", attachments: [] },
+      ],
+      providerThreads: [],
+      providerTurns: [],
+      providerSessions: [],
+    } as never);
+
+    expect(state.canPromoteToSteer).toBe(true);
+    expect(state.promoteSkipsCompaction).toBe(true);
+  });
 
   it("keeps held messages visible and clears the hold when they leave the queue", () => {
     for (const status of ["queued", "cancelled", "starting"] as const) {
@@ -286,7 +325,7 @@ describe("thread workflows", () => {
   });
 
   it.each(["preparing", "starting", "waiting"] as const)(
-    "does not promote queued work into a %s run",
+    "defers steering during setup and blocks it while waiting (%s)",
     (status) => {
       const state = deriveThreadQueueWorkflowState({
         thread: { id: "thread", activeProviderThreadId: "provider-thread" },
@@ -324,7 +363,7 @@ describe("thread workflows", () => {
         ],
       } as never);
 
-      expect(state.canPromoteToSteer).toBe(false);
+      expect(state.canPromoteToSteer).toBe(status !== "waiting");
     },
   );
 

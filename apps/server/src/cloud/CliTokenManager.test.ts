@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -55,7 +56,7 @@ const provideTestEnv = Effect.provide(
 
 interface DeviceFlowServer {
   readonly requests: Array<RecordedTokenRequest>;
-  readonly tokenReplies: Array<{ readonly status: number; readonly body: string }>;
+  readonly tokenReplies: Array<{ readonly status: number; readonly body: string } | "stall">;
 }
 
 const DEVICE_AUTHORIZATION_BODY = JSON.stringify({
@@ -83,7 +84,7 @@ const layerDeviceFlow = (server: DeviceFlowServer) =>
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) =>
-      Effect.sync(() => {
+      Effect.suspend(() => {
         const body =
           request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "";
         server.requests.push({ url: request.url, params: new URLSearchParams(body) });
@@ -92,12 +93,15 @@ const layerDeviceFlow = (server: DeviceFlowServer) =>
           : ((server.tokenReplies.length > 1
               ? server.tokenReplies.shift()
               : server.tokenReplies[0]) ?? oauthError("invalid_grant"));
-        return HttpClientResponse.fromWeb(
-          request,
-          new Response(reply.body, {
-            status: reply.status,
-            headers: { "content-type": "application/json" },
-          }),
+        if (reply === "stall") return Effect.never;
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(reply.body, {
+              status: reply.status,
+              headers: { "content-type": "application/json" },
+            }),
+          ),
         );
       }),
     ),
@@ -124,6 +128,7 @@ const provideRefreshManager = (
           secrets,
           Layer.mock(ExternalLauncher.ExternalLauncher)({}),
           NodeServices.layer,
+          NodeCrypto.layer,
         ),
       ),
       Layer.provideMerge(ConfigProvider.layer(ConfigProvider.fromEnv({ env: TEST_ENV }))),
@@ -248,71 +253,95 @@ it.effect.each([
     ),
 );
 
-it.layer(NodeServices.layer)("CliTokenManager.deviceAuthorizationLogin", (it) => {
-  it.effect("requests a device code, shows it, and polls until Clerk grants the token", () =>
-    Effect.gen(function* () {
-      const server: DeviceFlowServer = {
-        requests: [],
-        tokenReplies: [oauthError("authorization_pending"), tokenGranted],
-      };
-      const prompts: Array<CliTokenManager.DeviceAuthorizationPrompt> = [];
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
+  "CliTokenManager.deviceAuthorizationLogin",
+  (it) => {
+    it.effect("requests a device code, shows it, and polls until Clerk grants the token", () =>
+      Effect.gen(function* () {
+        const server: DeviceFlowServer = {
+          requests: [],
+          tokenReplies: [oauthError("authorization_pending"), tokenGranted],
+        };
+        const prompts: Array<CliTokenManager.DeviceAuthorizationPrompt> = [];
 
-      const fiber = yield* CliTokenManager.deviceAuthorizationLogin((prompt) =>
-        Effect.sync(() => {
-          prompts.push(prompt);
-        }),
-      ).pipe(Effect.provide(layerDeviceFlow(server)), provideTestEnv, Effect.forkChild);
+        const fiber = yield* CliTokenManager.deviceAuthorizationLogin((prompt) =>
+          Effect.sync(() => {
+            prompts.push(prompt);
+          }),
+        ).pipe(Effect.provide(layerDeviceFlow(server)), provideTestEnv, Effect.forkChild);
 
-      yield* TestClock.adjust(Duration.seconds(10));
-      const { token, identity } = yield* Fiber.join(fiber);
+        yield* TestClock.adjust(Duration.seconds(10));
+        const { token, identity } = yield* Fiber.join(fiber);
 
-      assert.deepEqual(prompts, [
-        {
-          verificationUri: "https://accounts.example.test/device",
-          verificationUriComplete: "https://accounts.example.test/device?user_code=BCDF-GHJK",
-          userCode: "BCDF-GHJK",
-          expiresIn: Duration.seconds(600),
-        },
-      ]);
-      assert.equal(token.accessToken, "access-token-1");
-      assert.equal(token.refreshToken, "refresh-token-1");
-      assert.equal(token.identity, "theo@example.test");
-      assert.equal(identity, "theo@example.test");
+        assert.deepEqual(prompts, [
+          {
+            verificationUri: "https://accounts.example.test/device",
+            verificationUriComplete: "https://accounts.example.test/device?user_code=BCDF-GHJK",
+            userCode: "BCDF-GHJK",
+            expiresIn: Duration.seconds(600),
+          },
+        ]);
+        assert.equal(token.accessToken, "access-token-1");
+        assert.equal(token.refreshToken, "refresh-token-1");
+        assert.equal(token.identity, "theo@example.test");
+        assert.equal(identity, "theo@example.test");
 
-      const authorization = server.requests[0]!;
-      assert.equal(authorization.url, "https://clerk.example.test/oauth/device_authorization");
-      assert.equal(authorization.params.get("client_id"), "oauth_client_test");
-      assert.equal(authorization.params.get("scope"), "openid profile email offline_access");
+        const authorization = server.requests[0]!;
+        assert.equal(authorization.url, "https://clerk.example.test/oauth/device_authorization");
+        assert.equal(authorization.params.get("client_id"), "oauth_client_test");
+        assert.equal(authorization.params.get("scope"), "openid profile email offline_access");
 
-      const polls = tokenRequests(server.requests);
-      assert.lengthOf(polls, 2);
-      for (const poll of polls) {
-        assert.equal(poll.url, "https://clerk.example.test/oauth/token");
-        assert.equal(poll.params.get("grant_type"), "urn:ietf:params:oauth:grant-type:device_code");
-        assert.equal(poll.params.get("device_code"), "device-code-1");
-        assert.equal(poll.params.get("client_id"), "oauth_client_test");
-      }
-    }),
-  );
+        const polls = tokenRequests(server.requests);
+        assert.lengthOf(polls, 2);
+        for (const poll of polls) {
+          assert.equal(poll.url, "https://clerk.example.test/oauth/token");
+          assert.equal(
+            poll.params.get("grant_type"),
+            "urn:ietf:params:oauth:grant-type:device_code",
+          );
+          assert.equal(poll.params.get("device_code"), "device-code-1");
+          assert.equal(poll.params.get("client_id"), "oauth_client_test");
+        }
+      }),
+    );
 
-  it.effect("fails with a denied error when the user rejects the request", () =>
-    Effect.gen(function* () {
-      const server: DeviceFlowServer = {
-        requests: [],
-        tokenReplies: [oauthError("access_denied")],
-      };
+    it.effect("retries a poll that never answers instead of waiting out the device code", () =>
+      Effect.gen(function* () {
+        const server: DeviceFlowServer = { requests: [], tokenReplies: ["stall", tokenGranted] };
 
-      const fiber = yield* CliTokenManager.deviceAuthorizationLogin(() => Effect.void).pipe(
-        Effect.provide(layerDeviceFlow(server)),
-        provideTestEnv,
-        Effect.flip,
-        Effect.forkChild,
-      );
-      yield* TestClock.adjust(Duration.seconds(5));
-      const result = yield* Fiber.join(fiber);
+        const fiber = yield* CliTokenManager.deviceAuthorizationLogin(() => Effect.void).pipe(
+          Effect.provide(layerDeviceFlow(server)),
+          provideTestEnv,
+          Effect.forkChild,
+        );
+        // 5 s interval, a 10 s request timeout, then the 10 s slowed-down interval.
+        yield* TestClock.adjust(Duration.seconds(25));
 
-      assert.instanceOf(result, CliTokenManager.CloudCliAuthorizationDeniedError);
-      assert.lengthOf(tokenRequests(server.requests), 1);
-    }),
-  );
-});
+        assert.lengthOf(tokenRequests(server.requests), 2);
+        const { token } = yield* Fiber.join(fiber);
+        assert.equal(token.accessToken, "access-token-1");
+      }),
+    );
+
+    it.effect("fails with a denied error when the user rejects the request", () =>
+      Effect.gen(function* () {
+        const server: DeviceFlowServer = {
+          requests: [],
+          tokenReplies: [oauthError("access_denied")],
+        };
+
+        const fiber = yield* CliTokenManager.deviceAuthorizationLogin(() => Effect.void).pipe(
+          Effect.provide(layerDeviceFlow(server)),
+          provideTestEnv,
+          Effect.flip,
+          Effect.forkChild,
+        );
+        yield* TestClock.adjust(Duration.seconds(5));
+        const result = yield* Fiber.join(fiber);
+
+        assert.instanceOf(result, CliTokenManager.CloudCliAuthorizationDeniedError);
+        assert.lengthOf(tokenRequests(server.requests), 1);
+      }),
+    );
+  },
+);

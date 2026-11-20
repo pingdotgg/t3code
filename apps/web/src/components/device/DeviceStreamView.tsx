@@ -1,8 +1,8 @@
 import type { DevicePlatform, EnvironmentId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useId, useRef, useState, type ReactNode } from "react";
+import { T, useGT } from "gt-react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
@@ -94,9 +94,12 @@ export function DeviceStreamView(props: {
   readonly axOverlay?: boolean;
   /** Lets a parent read this view's own stream state, such as its screen size. */
   readonly viewId?: string;
+  /** The host serves only serve-sim's stream and input socket (Simlock). */
+  readonly serveSimOnly?: boolean;
 }) {
   const model = deviceModel(props.platform, props.deviceName ?? "");
   const isDuo = model?.id === "iphone-duo";
+  const gt = useGT();
   const [presentation, setPresentation] = useState<"phone" | "flat">("phone");
   const [keyboardAttached, setKeyboardAttached] = useState(false);
   const cancelPhoneInputRef = useRef<(() => void) | null>(null);
@@ -119,6 +122,7 @@ export function DeviceStreamView(props: {
           platform: props.platform,
           deviceId: props.deviceId,
           access,
+          serveSimOnly: props.serveSimOnly === true,
           viewId,
         })
       : NO_SESSION_ATOM,
@@ -197,9 +201,16 @@ export function DeviceStreamView(props: {
       ? deviceAxElementsAtom({ access, platform: props.platform, deviceId: props.deviceId })
       : NO_AX_ATOM,
   );
-  const axElements = Option.getOrElse(AsyncResult.value(axResult), () => NO_AX_ELEMENTS);
+  const axElements = AsyncResult.getOrElse(axResult, () => NO_AX_ELEMENTS);
 
-  const pointerActive = useRef(false);
+  const activePointer = useRef<{ id: number; x: number; y: number } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears pointer ownership when its device input connection disconnects or is replaced
+  useEffect(() => {
+    if (!client || !inputState.connected) return;
+    return () => {
+      activePointer.current = null;
+    };
+  }, [client, inputState.connected]);
   const normalizedPoint = (event: React.PointerEvent<HTMLElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
     const x = (event.clientX - rect.left) / rect.width;
@@ -207,15 +218,23 @@ export function DeviceStreamView(props: {
     return { x: Math.min(1, Math.max(0, x)), y: Math.min(1, Math.max(0, y)) };
   };
 
+  const endPointer = (event: React.PointerEvent<HTMLElement>) => {
+    const pointer = activePointer.current;
+    if (pointer?.id !== event.pointerId) return;
+    activePointer.current = null;
+    const { x, y } = event.type === "lostpointercapture" ? pointer : normalizedPoint(event);
+    client?.sendTouch("end", x, y);
+  };
+
   const phoneUnavailableReason =
     isDuo && !screen?.supportsHingeAngle
-      ? "iPhone Duo 3D requires Device Hub 0.11.0 or newer"
+      ? gt("iPhone Duo 3D requires Device Hub {version} or newer", { version: "0.11.0" })
       : phoneUnavailable
-        ? "3D is unavailable on this browser"
+        ? gt("3D is unavailable on this browser")
         : mjpegUrl
-          ? "3D requires the H.264 stream"
+          ? gt("3D requires the H.264 stream")
           : props.axOverlay
-            ? "Turn off accessibility frames to use 3D"
+            ? gt("Turn off accessibility frames to use 3D")
             : null;
 
   const keyboardSource = deviceKeyboard(props.platform, props.deviceName ?? "");
@@ -299,13 +318,15 @@ export function DeviceStreamView(props: {
         ref={hostRef}
         className={cn(
           "relative flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden outline-none",
-          // Overlay the stream; focus (including pointer-driven focus) marks keyboard capture.
-          "after:pointer-events-none after:absolute after:inset-0 after:z-10 focus:after:ring-2 focus:after:ring-inset focus:after:ring-ring",
+          // Overlay so the ring paints above the stream canvas.
+          "after:pointer-events-none after:absolute after:inset-0 after:z-10 focus-visible:after:ring-2 focus-visible:after:ring-inset focus-visible:after:ring-ring",
           controlsInset && "pr-14",
         )}
         tabIndex={0}
         role="application"
-        aria-label={`${props.platform === "ios" ? "iOS Simulator" : "Android Emulator"} screen`}
+        aria-label={
+          props.platform === "ios" ? gt("iOS Simulator screen") : gt("Android Emulator screen")
+        }
         onKeyDown={(event) => {
           if (event.target !== event.currentTarget) return;
           if (event.metaKey && !["r", "R"].includes(event.key)) return;
@@ -333,30 +354,23 @@ export function DeviceStreamView(props: {
           className={cn("relative select-none", showPhone && "invisible pointer-events-none")}
           style={{ width: frame.width, height: frame.height }}
           onPointerDown={(event) => {
-            if (event.button !== 0) return;
+            if (event.button !== 0 || !inputState.connected || activePointer.current !== null)
+              return;
             event.currentTarget.setPointerCapture(event.pointerId);
             (event.currentTarget.parentElement as HTMLElement | null)?.focus();
-            pointerActive.current = true;
             const { x, y } = normalizedPoint(event);
+            activePointer.current = { id: event.pointerId, x, y };
             client?.sendTouch("begin", x, y);
           }}
           onPointerMove={(event) => {
-            if (!pointerActive.current) return;
+            if (activePointer.current?.id !== event.pointerId) return;
             const { x, y } = normalizedPoint(event);
+            activePointer.current = { id: event.pointerId, x, y };
             client?.sendTouch("move", x, y);
           }}
-          onPointerUp={(event) => {
-            if (!pointerActive.current) return;
-            pointerActive.current = false;
-            const { x, y } = normalizedPoint(event);
-            client?.sendTouch("end", x, y);
-          }}
-          onPointerCancel={(event) => {
-            if (!pointerActive.current) return;
-            pointerActive.current = false;
-            const { x, y } = normalizedPoint(event);
-            client?.sendTouch("end", x, y);
-          }}
+          onPointerUp={endPointer}
+          onPointerCancel={endPointer}
+          onLostPointerCapture={endPointer}
         >
           <div
             ref={mountCanvas}
@@ -433,7 +447,7 @@ export function DeviceStreamView(props: {
               size="xs"
               aria-pressed={!!showPhone}
               disabled={!!phoneUnavailableReason}
-              title={phoneUnavailableReason ?? "Show 3D phone"}
+              title={phoneUnavailableReason ?? gt("Show 3D phone")}
               onClick={() => setPresentation("phone")}
             >
               3D
@@ -444,14 +458,16 @@ export function DeviceStreamView(props: {
               aria-pressed={!showPhone}
               onClick={() => setPresentation("flat")}
             >
-              Flat
+              <T context="flat device view">Flat</T>
             </Button>
           </div>
         ) : null}
         {status === "streaming" && !inputState.connected ? (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-2">
             <span className="rounded-md bg-background/85 px-2 py-1 text-xs text-muted-foreground">
-              Input disconnected{inputState.detail ? ` (${inputState.detail})` : ""}, reconnecting…
+              {inputState.detail
+                ? gt("Input disconnected ({detail}), reconnecting…", { detail: inputState.detail })
+                : gt("Input disconnected, reconnecting…")}
             </span>
           </div>
         ) : null}
@@ -459,17 +475,19 @@ export function DeviceStreamView(props: {
           // Shown only once the device has been silent for two seconds.
           <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-2 transition-opacity delay-2000 duration-0 starting:opacity-0">
             <span className="rounded-md bg-background/85 px-2 py-1 text-xs text-muted-foreground">
-              Waiting for device video…
+              <T>Waiting for device video…</T>
             </span>
           </div>
         ) : null}
         {status !== "streaming" && !(retainingFrame && showPhone) ? (
           <div className="absolute inset-0">
             <DeviceLoadingView
-              name={props.deviceName ?? "Device"}
+              name={props.deviceName ?? gt("Device")}
               description={props.deviceDescription ?? ""}
               stage="stream"
-              message={status === "error" ? (detail ?? "Stream failed.") : "Connecting video…"}
+              message={
+                status === "error" ? (detail ?? gt("Stream failed.")) : gt("Connecting video…")
+              }
               error={status === "error"}
             >
               {status === "error" ? (
@@ -482,7 +500,7 @@ export function DeviceStreamView(props: {
                     session?.reconnect();
                   }}
                 >
-                  Reconnect
+                  <T>Reconnect</T>
                 </Button>
               ) : null}
             </DeviceLoadingView>

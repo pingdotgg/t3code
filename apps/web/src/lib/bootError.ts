@@ -26,7 +26,7 @@ function launcherCommand(launcherPath: string) {
 /** Desktop can run its bundled launcher without Node; everything else falls back to npx. */
 export async function resolveTriageCommand(bridge: DesktopBridge | undefined) {
   try {
-    const state = await bridge?.cliCommand?.getState();
+    const state = await bridge?.cliCommand.getState();
     // Windows reports onPath from its PATH entry alone; only an existing launcher proves it runs.
     if (state?.launcherPath) {
       return state.onPath ? "t3 triage" : `${launcherCommand(state.launcherPath)} triage`;
@@ -121,7 +121,7 @@ export function buildErrorReport(error: unknown, environment: BootErrorEnvironme
 
 function clientPlatform(bridge: DesktopBridge | undefined) {
   try {
-    return bridge?.getClientPlatform?.() ?? navigator.platform;
+    return bridge?.getClientPlatform() ?? navigator.platform;
   } catch {
     return navigator.platform;
   }
@@ -297,9 +297,11 @@ export function showBootError(error: unknown) {
   const copyCommand = element("button", {
     className: "boot-error-icon",
     type: "button",
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- boot failure page renders before the i18n runtime loads
     title: "Copy command",
     innerHTML: COPY_ICON,
   });
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- boot failure page renders before the i18n runtime loads
   copyCommand.setAttribute("aria-label", "Copy command");
   copyCommand.addEventListener("click", () =>
     copyText(
@@ -307,7 +309,9 @@ export function showBootError(error: unknown) {
       () => {
         copyCommand.innerHTML = CHECK_ICON;
         copyCommand.title = "Copied";
+        // oxlint-disable-next-line t3code/no-untranslated-copy -- boot failure page renders before the i18n runtime loads
         copyCommand.setAttribute("aria-label", "Copied");
+        // oxlint-disable-next-line t3code/no-untranslated-copy -- boot failure page renders before the i18n runtime loads
         announce("Copied to clipboard.");
       },
       (hint) => {
@@ -333,6 +337,7 @@ export function showBootError(error: unknown) {
       details,
       () => {
         copyDetails.textContent = "Copied";
+        // oxlint-disable-next-line t3code/no-untranslated-copy -- boot failure page renders before the i18n runtime loads
         announce("Copied to clipboard.");
       },
       (hint) => {

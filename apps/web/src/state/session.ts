@@ -3,6 +3,7 @@ import { createEnvironmentSessionAtoms } from "@t3tools/client-runtime/state/ses
 import {
   type AuthEnvironmentScope,
   type AuthSessionState,
+  AuthRelayConfigureScope,
   type EnvironmentId,
   sessionGrantsScope,
 } from "@t3tools/contracts";
@@ -25,19 +26,34 @@ export function useEnvironmentScope(
   environmentId: EnvironmentId | null,
   scope: AuthEnvironmentScope,
 ): boolean {
-  const result = useAtomValue(
+  // Select the grant: every revalidation emits a new result, and most consumers are list rows.
+  return useAtomValue(
     environmentId === null
       ? EMPTY_SESSION_STATE_ATOM
       : environmentSession.sessionStateAtom(environmentId),
+    (result) => sessionHasScope(result, scope),
   );
-  return sessionHasScope(result, scope);
+}
+
+export function useEnvironmentCanConfigureRelay(environmentId: EnvironmentId | null): boolean {
+  return useAtomValue(
+    environmentId === null
+      ? EMPTY_SESSION_STATE_ATOM
+      : environmentSession.sessionStateAtom(environmentId),
+    (result) => sessionHasScope(result, AuthRelayConfigureScope),
+  );
+}
+
+export function readEnvironmentCanConfigureRelay(environmentId: EnvironmentId): boolean {
+  const result = appAtomRegistry.get(environmentSession.sessionStateAtom(environmentId));
+  return sessionHasScope(result, AuthRelayConfigureScope);
 }
 
 export function sessionHasScope(
   result: AsyncResult.AsyncResult<AuthSessionState, unknown>,
   scope: AuthEnvironmentScope,
 ): boolean {
-  const session = Option.getOrNull(AsyncResult.value(result));
+  const session = AsyncResult.getOrElse(result, () => null);
   return result._tag !== "Failure" && session !== null && sessionGrantsScope(session, scope);
 }
 
@@ -84,6 +100,12 @@ export function usePreparedConnection(environmentId: EnvironmentId | null) {
   );
 }
 
+/** Each environment's prepared connection, in the order of the ids. */
+export const preparedConnectionsAtom = environmentAtomList(
+  "web-prepared-connections",
+  environmentSession.preparedConnectionValueAtom,
+);
+
 export function readPreparedConnection(environmentId: EnvironmentId) {
   return Option.getOrNull(
     appAtomRegistry.get(environmentSession.preparedConnectionValueAtom(environmentId)),
@@ -91,10 +113,14 @@ export function readPreparedConnection(environmentId: EnvironmentId) {
 }
 
 /** data survives SWR revalidation; isPending applies only before first resolve. */
-export function useEnvironmentSessionState(environmentId: EnvironmentId) {
-  const result = useAtomValue(environmentSession.sessionStateAtom(environmentId));
+export function useEnvironmentSessionState(environmentId: EnvironmentId | null) {
+  const result = useAtomValue(
+    environmentId === null
+      ? EMPTY_SESSION_STATE_ATOM
+      : environmentSession.sessionStateAtom(environmentId),
+  );
   return {
-    data: Option.getOrNull(AsyncResult.value(result)),
+    data: AsyncResult.getOrElse(result, () => null),
     hasError: result._tag === "Failure",
     isPending: result.waiting,
   };

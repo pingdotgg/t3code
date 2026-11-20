@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { translatableDetail } from "../errors/translatable.ts";
 import type {
   AuthClientPresentationMetadata,
   ExecutionEnvironmentDescriptor,
@@ -136,7 +138,11 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
     if (!isBearerProfile(profile)) {
       return yield* new ConnectionBlockedError({
         reason: "configuration",
-        detail: `Connection profile ${target.connectionId} is not a bearer connection.`,
+        ...translatableDetail(
+          msg("Connection profile {connectionId} is not a bearer connection.", {
+            connectionId: target.connectionId,
+          }),
+        ),
       });
     }
     if (profile.environmentId !== target.environmentId) {
@@ -160,22 +166,23 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
         }),
       ),
     );
-    if (!isBearerCredential(credential)) {
-      return yield* credentialMissingError(target.connectionId);
-    }
-    const authorized = yield* remote.authorizeBearer({
-      expectedEnvironmentId: target.environmentId,
-      httpBaseUrl: profile.httpBaseUrl,
-      wsBaseUrl: profile.wsBaseUrl,
-      bearerToken: credential.token,
-      connectionMethod: "direct",
-    });
+    const authorized =
+      credential._tag === "DpopConnectionCredential"
+        ? yield* remote.authorizeDirectDpop({
+            expectedEnvironmentId: target.environmentId,
+            connectionId: credentialConnectionId(target.connectionId),
+            httpBaseUrl: profile.httpBaseUrl,
+            wsBaseUrl: profile.wsBaseUrl,
+          })
+        : yield* remote.authorizeBearer({
+            expectedEnvironmentId: target.environmentId,
+            httpBaseUrl: profile.httpBaseUrl,
+            wsBaseUrl: profile.wsBaseUrl,
+            bearerToken: credential.token,
+            connectionMethod: "direct",
+          });
     return {
-      environmentId: authorized.environmentId,
-      label: authorized.label,
-      httpBaseUrl: authorized.httpBaseUrl,
-      socketUrl: authorized.socketUrl,
-      httpAuthorization: authorized.httpAuthorization,
+      ...authorized,
       target,
     } satisfies PreparedConnection;
   });
@@ -190,11 +197,7 @@ const makeRelayBroker = Effect.fn("clientRuntime.connection.broker.makeRelay")(f
         expectedEnvironmentId: target.environmentId,
       });
       return {
-        environmentId: authorized.environmentId,
-        label: authorized.label,
-        httpBaseUrl: authorized.httpBaseUrl,
-        socketUrl: authorized.socketUrl,
-        httpAuthorization: authorized.httpAuthorization,
+        ...authorized,
         target,
       } satisfies PreparedConnection;
     },
@@ -219,7 +222,11 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
     if (!isSshProfile(profile)) {
       return yield* new ConnectionBlockedError({
         reason: "configuration",
-        detail: `Connection profile ${target.connectionId} is not an SSH connection.`,
+        ...translatableDetail(
+          msg("Connection profile {connectionId} is not an SSH connection.", {
+            connectionId: target.connectionId,
+          }),
+        ),
       });
     }
     if (profile.environmentId !== target.environmentId) {
@@ -265,11 +272,7 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
       connectionMethod: "ssh",
     });
     return {
-      environmentId: authorized.environmentId,
-      label: authorized.label,
-      httpBaseUrl: authorized.httpBaseUrl,
-      socketUrl: authorized.socketUrl,
-      httpAuthorization: authorized.httpAuthorization,
+      ...authorized,
       target,
     } satisfies PreparedConnection;
   });
@@ -291,7 +294,9 @@ export const make = Effect.gen(function* () {
       "connection.environment.id": target.environmentId,
       "connection.target.kind": target._tag,
     });
-    const prepared = yield* (() => {
+    const authorized: PreparedConnection & {
+      readonly descriptor?: ExecutionEnvironmentDescriptor;
+    } = yield* (() => {
       switch (target._tag) {
         case "PrimaryConnectionTarget":
           return primary(target);
@@ -303,12 +308,15 @@ export const make = Effect.gen(function* () {
           return ssh({ ...entry, target });
       }
     })();
-    const descriptor = yield* fetchRemoteEnvironmentDescriptor({
-      httpBaseUrl: prepared.httpBaseUrl,
-    }).pipe(
-      Effect.mapError(mapRemoteEnvironmentError),
-      Effect.provideService(HttpClient.HttpClient, httpClient),
-    );
+    const { descriptor: authorizedDescriptor, ...prepared } = authorized;
+    const descriptor =
+      authorizedDescriptor ??
+      (yield* fetchRemoteEnvironmentDescriptor({
+        httpBaseUrl: prepared.httpBaseUrl,
+      }).pipe(
+        Effect.mapError(mapRemoteEnvironmentError),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+      ));
     if (descriptor.environmentId !== target.environmentId) {
       return yield* environmentMismatchError({
         expected: target.environmentId,
@@ -328,6 +336,7 @@ export const make = Effect.gen(function* () {
     }
     return {
       ...prepared,
+      descriptor,
       socketUrl: appendOrchestrationProtocol(prepared.socketUrl),
     };
   });

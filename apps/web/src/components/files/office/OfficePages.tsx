@@ -1,4 +1,5 @@
 /* oxlint-disable react/no-array-index-key -- A page keeps its ordinal throughout incremental layout. */
+import { useGT } from "gt-react";
 import { observeResize } from "~/lib/observeResize";
 import {
   useEffect,
@@ -24,7 +25,7 @@ export type PaintPage = (
 export function OfficePages(props: {
   pages: readonly PageSize[];
   paint: PaintPage;
-  label: string;
+  kind: "slide" | "page";
   overlay?: (index: number) => ReactNode;
   footer?: (index: number) => ReactNode;
   scrollRef?: RefObject<((index: number, y?: number) => void) | null>;
@@ -36,7 +37,7 @@ export function OfficePages(props: {
   const [width, setWidth] = useState(0);
   const [settledWidth, setSettledWidth] = useState(0);
   const [mounted, setMounted] = useState(6);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Observe the scroll container width and debounce raster resizing, releasing the observer and timer on unmount.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Observe the scroll container width and debounce raster resizing, releasing the observer and timer on unmount.
   useEffect(() => {
     const root = scroller.current;
     if (!root) return;
@@ -53,7 +54,7 @@ export function OfficePages(props: {
       unobserve();
     };
   }, []);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Yield between page mounting batches with a timer so large documents do not block the browser.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Yield between page mounting batches with a timer so large documents do not block the browser.
   useEffect(() => {
     if (mounted >= props.pages.length) return;
     const timer = setTimeout(() => setMounted((n) => Math.min(props.pages.length, n + 50)), 0);
@@ -124,29 +125,19 @@ function OfficePage(props: {
   scale: number;
   rasterScale: number;
   paint: PaintPage;
-  label: string;
+  kind: "slide" | "page";
   overlay?: (index: number) => ReactNode;
   footer?: (index: number) => ReactNode;
   onError: (error: unknown) => void;
 }) {
-  const {
-    root,
-    rasterScale,
-    index,
-    onError,
-    page,
-    paint,
-    scale,
-    register,
-    label,
-    overlay,
-    footer,
-  } = props;
+  const { root, rasterScale, index, onError, page, paint, scale, register, kind, overlay, footer } =
+    props;
+  const gt = useGT();
   const row = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const [near, setNear] = useState(false);
   const [ratio, setRatio] = useState(window.devicePixelRatio || 1);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Observe the page's viewport proximity to limit painting and text layers to nearby pages.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Observe the page's viewport proximity to limit painting and text layers to nearby pages.
   useEffect(() => {
     if (!row.current) return;
     const observer = new IntersectionObserver(
@@ -156,14 +147,14 @@ function OfficePage(props: {
     observer.observe(row.current);
     return () => observer.disconnect();
   }, [root]);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Subscribe to display density changes so canvas rasters match the current screen.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Subscribe to display density changes so canvas rasters match the current screen.
   useEffect(() => {
     const query = matchMedia(`(resolution: ${ratio}dppx)`);
     const change = () => setRatio(window.devicePixelRatio || 1);
     query.addEventListener("change", change);
     return () => query.removeEventListener("change", change);
   }, [ratio]);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Paint the visible page canvas at the current raster scale and cancel obsolete paint requests.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Paint the visible page canvas at the current raster scale and cancel obsolete paint requests.
   useEffect(() => {
     const target = canvas.current;
     if (!target || !page || !near || ratio <= 0 || rasterScale <= 0) return;
@@ -173,7 +164,7 @@ function OfficePage(props: {
     });
     return () => controller.abort();
   }, [near, index, page, paint, rasterScale, onError, ratio]);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Release the canvas backing store when its page moves away from the viewport.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Release the canvas backing store when its page moves away from the viewport.
   useEffect(() => {
     const target = canvas.current;
     if (!near && target) {
@@ -189,7 +180,11 @@ function OfficePage(props: {
           register(el);
         }}
         role="group"
-        aria-label={`${label} ${index + 1}`}
+        aria-label={
+          kind === "slide"
+            ? gt("Slide {number}", { number: String(index + 1) })
+            : gt("Page {number}", { number: String(index + 1) })
+        }
         className="relative shrink-0 shadow-md"
         style={{
           width: page.width * scale,

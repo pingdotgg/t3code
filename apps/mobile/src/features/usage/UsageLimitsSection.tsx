@@ -1,5 +1,7 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import * as Dialog from "../../components/ui/Dialog";
 import { RegistryContext, useAtomMount, useAtomValue } from "@effect/atom-react";
+import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
   AuthProvidersManageScope,
   type EnvironmentId,
@@ -10,19 +12,22 @@ import {
   type ServerProviderUsageWindow,
 } from "@t3tools/contracts";
 import {
-  formatDuration,
-  formatResetsIn,
-  limitsNotice,
+  type ResetCreditChoice,
   paceOf,
   paceRemainingPercent,
   remainingPercent,
+  resetCountdown,
 } from "@t3tools/shared/usageLimits";
+import { formatDuration, limitsNotice, resetCreditChoices } from "@t3tools/shared/usageLimitsCopy";
+import { msg, T, useGT, useMessages, Var } from "gt-react-native";
 import { type ReactNode, useContext, useRef, useState } from "react";
 import { Atom } from "effect/reactivity";
-import { Linking, Pressable, View } from "react-native";
+import { Pressable, View } from "react-native";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
+import { m as resolveNow, type MessageResolver } from "../../i18n/messages";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
@@ -36,7 +41,11 @@ import {
 } from "./usageLimitsRefresh";
 import { usageProviderKind, useProviderColors } from "./usageProviders";
 
-const PACE_LABEL = { ahead: "ahead of pace", on: "on pace", under: "under pace" } as const;
+const PACE_LABEL = {
+  ahead: msg("ahead of pace"),
+  on: msg("on pace"),
+  under: msg("under pace"),
+} as const;
 
 type Driver = ServerProvider["driver"];
 
@@ -55,7 +64,8 @@ function WindowRow(props: {
   const remaining = remainingPercent(window);
   const timeLeft = paceRemainingPercent(window, now);
   const pace = paceOf(window, now);
-  const resetsIn = formatResetsIn(window, now);
+  const m = useMessages();
+  const resetsIn = resetLabels(window, now, m)?.full;
   const [barWidth, setBarWidth] = useState(0);
   const tickX =
     timeLeft === null || barWidth < 6
@@ -87,7 +97,9 @@ function WindowRow(props: {
       <View className="flex-row items-baseline justify-between gap-3">
         <Text className="text-sm text-foreground">{window.label}</Text>
         <Text className="text-sm font-t3-medium tabular-nums text-foreground">
-          {remaining}% left
+          <T>
+            <Var>{remaining}</Var>% left
+          </T>
         </Text>
       </View>
       <View
@@ -124,7 +136,9 @@ function WindowRow(props: {
       </View>
       {pace || resetsIn ? (
         <View className="flex-row justify-between gap-3">
-          <Text className="text-xs text-foreground-tertiary">{pace ? PACE_LABEL[pace] : ""}</Text>
+          <Text className="text-xs text-foreground-tertiary">
+            {pace ? m(PACE_LABEL[pace]) : ""}
+          </Text>
           <Text className="text-xs tabular-nums text-foreground-tertiary">{resetsIn ?? ""}</Text>
         </View>
       ) : null}
@@ -134,6 +148,7 @@ function WindowRow(props: {
 
 function AccountInstanceLabel({ value }: { readonly value: string }) {
   const [revealed, setRevealed] = useState(false);
+  const gt = useGT();
   if (!value.includes("@")) {
     return (
       <Text className="shrink text-xs text-foreground-tertiary" numberOfLines={1}>
@@ -145,7 +160,7 @@ function AccountInstanceLabel({ value }: { readonly value: string }) {
     <Pressable
       className="shrink active:opacity-60"
       accessibilityRole="button"
-      accessibilityLabel={revealed ? "Hide account label" : "Reveal account label"}
+      accessibilityLabel={revealed ? gt("Hide account label") : gt("Reveal account label")}
       onPress={() => setRevealed((current) => !current)}
     >
       <Text className="text-xs text-foreground-tertiary" numberOfLines={1}>
@@ -157,6 +172,7 @@ function AccountInstanceLabel({ value }: { readonly value: string }) {
 
 export function AccountLimits(props: {
   readonly driver: Driver;
+  readonly accentColor?: string | undefined;
   readonly label: string;
   readonly instanceLabel: string;
   readonly detail: string | undefined;
@@ -168,9 +184,11 @@ export function AccountLimits(props: {
   readonly footer?: ReactNode;
 }) {
   const { limits, now, dense = false } = props;
-  const color = useBarColor(props.driver);
+  const providerColor = useBarColor(props.driver);
+  const color = normalizeProviderAccentColor(props.accentColor) ?? providerColor;
+  const m = useMessages();
   if (!limits) return null;
-  const notice = limitsNotice(limits);
+  const notice = limitsNotice(limits, m);
   const externalUsage = limits.externalUsage;
   const padding = dense ? "px-4 py-3" : "p-4";
   return (
@@ -207,9 +225,11 @@ export function AccountLimits(props: {
         <Pressable
           accessibilityRole="link"
           className="min-h-11 justify-center"
-          onPress={() => void Linking.openURL(externalUsage.url).catch(() => undefined)}
+          onPress={() => void tryOpenExternalUrl(externalUsage.url)}
         >
-          <Text className="text-sm font-t3-medium text-primary">Manage usage</Text>
+          <Text className="text-sm font-t3-medium text-primary">
+            <T>Manage usage</T>
+          </Text>
         </Pressable>
       ) : null}
       {props.footer}
@@ -218,10 +238,10 @@ export function AccountLimits(props: {
 }
 
 const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
-  reset: "Reset applied. Your windows have cleared.",
-  nothingToReset: "Nothing to reset right now.",
-  noCredit: "No reset credit left.",
-  alreadyRedeemed: "That credit was already redeemed.",
+  reset: msg("Reset applied. Your windows have cleared."),
+  nothingToReset: msg("Nothing to reset right now."),
+  noCredit: msg("No reset credit left."),
+  alreadyRedeemed: msg("That credit was already redeemed."),
 };
 
 export function ResetCredits(props: {
@@ -238,76 +258,70 @@ export function ResetCredits(props: {
   });
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const gt = useGT();
+  const m = useMessages();
   if (dense && credits.availableCount === 0 && status === null) return null;
 
-  const expiresIn = credits.nextExpiresAt
-    ? formatDuration(Date.parse(credits.nextExpiresAt) - now)
-    : null;
-  const summary =
-    credits.availableCount === 0
-      ? "No reset credits banked"
-      : `${credits.availableCount} ${credits.availableCount === 1 ? "reset credit" : "reset credits"} banked${
-          expiresIn ? ` · next expires in ${expiresIn}` : ""
-        }`;
-
-  const redeem = async () => {
+  const redeem = async (choice: ResetCreditChoice) => {
     if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     setBusy(true);
     setStatus(null);
-    const result = await consume({ environmentId, input });
+    const result = await consume({ environmentId, input: choice.input });
     setBusy(false);
     if (result._tag === "Success") {
-      setStatus(result.value.warning ?? OUTCOME_TEXT[result.value.outcome]);
+      setStatus(result.value.warning ?? resolveNow(OUTCOME_TEXT[result.value.outcome]));
       return;
     }
     setStatus(
       "error" in result.cause && result.cause.error instanceof Error
-        ? result.cause.error.message
-        : "Could not use the reset credit.",
+        ? (errorDisplayMessage(result.cause.error, resolveNow) ?? result.cause.error.message)
+        : resolveNow(msg("Could not use the reset credit.")),
     );
   };
 
-  const confirm = () => {
+  const confirm = (choice: ResetCreditChoice) => {
     if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
-    Dialog.alert(
-      "Use a reset credit?",
-      "This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone.",
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Use credit", onPress: () => void redeem() },
-      ],
-    );
+    Dialog.alert(resolveNow(msg("Use a reset credit?")), choice.confirmDescription, [
+      { text: resolveNow(msg("Cancel")), style: "cancel" },
+      { text: resolveNow(msg("Use credit")), onPress: () => void redeem(choice) },
+    ]);
   };
 
   return (
-    <View className="flex-row flex-wrap items-center gap-x-3 gap-y-1">
-      <Text className="text-xs tabular-nums text-foreground-tertiary">{summary}</Text>
-      {credits.availableCount > 0 ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityState={{ disabled: busy || !canManageProviders }}
-          disabled={busy || !canManageProviders}
-          onPress={confirm}
-          className={
-            dense
-              ? "rounded-full bg-subtle-strong px-2.5 py-1 disabled:opacity-[0.45]"
-              : "min-h-[44px] justify-center rounded-full bg-subtle-strong px-3 py-1.5 disabled:opacity-[0.45]"
-          }
-        >
-          <Text
-            className={
-              dense
-                ? "text-xs font-t3-medium text-foreground"
-                : "text-sm font-t3-medium text-foreground"
-            }
-          >
-            {busy ? "Using…" : "Use reset"}
-          </Text>
-        </Pressable>
-      ) : null}
+    <View className="gap-1">
+      {resetCreditChoices(credits, input, now, false, m).map((choice) => (
+        <View key={choice.key} className="flex-row flex-wrap items-center gap-x-3 gap-y-1">
+          <Text className="text-xs tabular-nums text-foreground-tertiary">{choice.summary}</Text>
+          {choice.availableCount > 0 ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ disabled: busy || !canManageProviders }}
+              disabled={busy || !canManageProviders}
+              onPress={() => confirm(choice)}
+              className={
+                dense
+                  ? "rounded-full bg-subtle-strong px-2.5 py-1 disabled:opacity-[0.45]"
+                  : "min-h-[44px] justify-center rounded-full bg-subtle-strong px-3 py-1.5 disabled:opacity-[0.45]"
+              }
+            >
+              <Text
+                className={
+                  dense
+                    ? "text-xs font-t3-medium text-foreground"
+                    : "text-sm font-t3-medium text-foreground"
+                }
+              >
+                {busy
+                  ? gt("Using…", { $context: "reset credit is being used" })
+                  : choice.actionLabel}
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ))}
       {!canManageProviders ? (
         <Text className="text-xs text-foreground-tertiary">
-          This connection cannot manage provider accounts.
+          <T>This connection cannot manage provider accounts.</T>
         </Text>
       ) : null}
       {status ? <Text className="text-sm text-foreground">{status}</Text> : null}
@@ -342,18 +356,16 @@ export function useRefreshLimits(
     .filter(([environmentId]) => failedIds.has(environmentId))
     .map(([, presentation]) => presentation.entry.target.label);
 
-  const refresh = (afterPending: boolean) =>
+  const refresh = () =>
     Promise.all(
-      connectedIds.map((environmentId) =>
-        refreshEnvironmentLimits(registry, environmentId, { afterPending }),
-      ),
+      connectedIds.map((environmentId) => refreshEnvironmentLimits(registry, environmentId)),
     );
   // Android RefreshControl needs a true-to-false cycle to stop, even with nothing to probe.
   const refreshManually = async () => {
     if (refreshingRef.current) return;
     refreshingRef.current = true;
     setRefreshing(true);
-    await refresh(false).finally(() => {
+    await refresh().finally(() => {
       refreshingRef.current = false;
       setRefreshing(false);
     });
@@ -363,6 +375,47 @@ export function useRefreshLimits(
     refreshing,
     failedLabels,
     refresh: refreshManually,
-    refreshAfterEnable: () => refresh(true),
   };
+}
+
+export function resetLabels(
+  window: ServerProviderUsageWindow,
+  now: number,
+  resolve: MessageResolver,
+): { readonly full: string; readonly compact: string } | null {
+  const countdown = resetCountdown(window, now);
+  if (countdown === null) return null;
+  if (countdown.kind === "now") {
+    const full = resolve(msg("resets now", { $context: "usage limit" }));
+    return { full, compact: full };
+  }
+  if (countdown.kind === "momentarily") {
+    const momentarily = resolve(msg("Resets momentarily"));
+    return { full: momentarily, compact: momentarily };
+  }
+  const duration = formatDuration(countdown.ms, resolve);
+  return { full: resolve(msg("resets in {duration}", { duration })), compact: duration };
+}
+
+export function refillLabel(
+  window: ServerProviderUsageWindow,
+  now: number,
+  percent: number,
+  resolve: MessageResolver,
+): string | null {
+  const countdown = resetCountdown(window, now);
+  if (countdown === null) return null;
+  if (countdown.kind === "now") {
+    return resolve(msg("↻ +{percent}% now", { percent, $context: "usage limit refill" }));
+  }
+  if (countdown.kind === "momentarily") {
+    return resolve(msg("↻ +{percent}% Resets momentarily", { percent }));
+  }
+  return resolve(
+    msg("↻ +{percent}% in {duration}", {
+      percent,
+      duration: formatDuration(countdown.ms, resolve),
+      $context: "usage limit refill",
+    }),
+  );
 }

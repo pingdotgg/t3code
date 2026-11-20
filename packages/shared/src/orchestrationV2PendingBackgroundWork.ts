@@ -2,6 +2,7 @@ import type {
   OrchestrationV2PendingBackgroundTask,
   OrchestrationV2ProviderThread,
   OrchestrationV2Run,
+  OrchestrationV2ThreadShell,
   OrchestrationV2TurnItem,
   ThreadId,
   ThreadPullRequestLink,
@@ -86,6 +87,18 @@ export function deriveBlockedOnThreadWait(input: {
   return hasWait;
 }
 
+/** A provider instance's background subagent outlives its run and still calls tools. */
+export function hasPendingBackgroundSubagent(
+  tasks: ReadonlyArray<PendingBackgroundWorkTask> | undefined,
+  providerInstanceId: OrchestrationV2ProviderThread["providerInstanceId"] | undefined,
+): boolean {
+  return (
+    tasks?.some(
+      (task) => task.kind === "subagent" && task.providerInstanceId === providerInstanceId,
+    ) ?? false
+  );
+}
+
 export function backgroundWorkHoldsCompletion(
   tasks: ReadonlyArray<Pick<PendingBackgroundWorkTask, "kind" | "awaited">>,
 ): boolean {
@@ -107,12 +120,34 @@ function backgroundWorkKindHoldsCompletion(kind: PendingBackgroundWorkTask["kind
   }
 }
 
+const PULL_REQUEST_WATCH_TASK_ID = "pull-request-watch:";
+
+export const isPullRequestWatchTask = (task: Pick<PendingBackgroundWorkTask, "taskId">) =>
+  task.taskId.startsWith(PULL_REQUEST_WATCH_TASK_ID);
+
+/**
+ * A monitor wakes the agent once per line, so a progress wake run's completion waits for the
+ * monitor to end. A pull request watch wakes only on news and holds while its checks run.
+ */
+export function monitorHoldsWakeCompletion(
+  thread: Pick<OrchestrationV2ThreadShell, "latestRunBackgroundWake" | "pendingBackgroundTasks">,
+): boolean {
+  return (
+    thread.latestRunBackgroundWake === true &&
+    (thread.pendingBackgroundTasks ?? []).some(
+      (task) => task.kind === "monitor" && !isPullRequestWatchTask(task),
+    )
+  );
+}
+
 type PendingBackgroundWorkRun = Pick<OrchestrationV2Run, "id" | "ordinal" | "status">;
 
 type PendingBackgroundWorkPullRequest = Pick<
   ThreadPullRequestLink,
   "host" | "repository" | "number" | "url" | "source" | "watch"
->;
+> & {
+  readonly snapshot: Pick<NonNullable<ThreadPullRequestLink["snapshot"]>, "state"> | null;
+};
 
 type PendingBackgroundWorkProviderThread = Pick<
   OrchestrationV2ProviderThread,
@@ -284,7 +319,14 @@ export function derivePendingBackgroundWork(input: {
 
   for (const task of pullRequestWatchTasks(input.pullRequests)) byTaskId.set(task.taskId, task);
 
-  return Array.from(byTaskId.values());
+  // Follow-up tasks can share a child thread; the pending list counts agents, not messages.
+  const childThreadIds = new Set<ThreadId>();
+  return Array.from(byTaskId.values()).filter((task) => {
+    if (task.kind !== "subagent" || task.childThreadId == null) return true;
+    if (childThreadIds.has(task.childThreadId)) return false;
+    childThreadIds.add(task.childThreadId);
+    return true;
+  });
 }
 
 function pullRequestWatchTasks(
@@ -297,10 +339,17 @@ function pullRequestWatchTasks(
           {
             // Links store their normalized identity, and this id only has to be unique within the
             // thread, so it reads those fields instead of parsing the URL.
-            taskId: `pull-request-watch:${link.host.toLowerCase()}/${link.repository.toLowerCase()}#${link.number}`,
+            taskId: `${PULL_REQUEST_WATCH_TASK_ID}${link.host.toLowerCase()}/${link.repository.toLowerCase()}#${link.number}`,
             description: `Watching pull request #${link.number}`,
             kind: "monitor" as const,
-            awaited: true as const,
+            // Once every check finished, a person moves the PR next: the watch stays on but holds
+            // nothing, unless the agent said it acts on the PR itself. A merged PR's watch holds
+            // until its read wakes the agent, so settling on merge waits.
+            ...(link.watch.checksPending === false &&
+            link.watch.until !== "merged" &&
+            link.snapshot?.state !== "merged"
+              ? {}
+              : { awaited: true as const }),
           },
         ],
   );

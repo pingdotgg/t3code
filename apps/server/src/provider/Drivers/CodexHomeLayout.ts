@@ -26,13 +26,19 @@ const KNOWN_SHARED_DIRECTORIES = [
   "cache",
   "logs",
   "mcp-oauth-locks",
+  "thread-writer-locks",
 ] as const;
 
-const PRIVATE_ENTRY_NAMES = new Set(["auth.json", "models_cache.json"]);
+// auth.lock guards the shadow home's private auth.json.
+const PRIVATE_ENTRY_NAMES = new Set(["auth.json", "auth.lock", "models_cache.json"]);
 // Finder maintains metadata separately for each directory, including shadow homes.
 const SHADOW_LOCAL_ENTRY_NAMES = new Set(["log", "memories", "tmp", ".DS_Store"]);
 // Shadow homes may create local runtime locks first; replace them with shared links because they guard shared state.
-const REPLACEABLE_SHARED_RUNTIME_ENTRIES = new Set(["mcp-oauth-locks", ".sqlite-maintenance.lock"]);
+const REPLACEABLE_SHARED_RUNTIME_ENTRIES = new Set([
+  "mcp-oauth-locks",
+  "thread-writer-locks",
+  ".sqlite-maintenance.lock",
+]);
 
 function resolveHomePath(path: Path.Path, home: string, value: string | undefined): string {
   const expanded =
@@ -64,6 +70,22 @@ export const resolveCodexHomeLayout = Effect.fn("resolveCodexHomeLayout")(functi
     continuationKey: `codex:home:${sharedHomePath}`,
   };
 });
+
+// Codex accepts bundled plugins only from this path under CODEX_HOME. The shared
+// config names the original home, so shadow homes must override it through their .tmp link.
+const BUNDLED_MARKETPLACE = "openai-bundled";
+
+const quoteCliArg = (value: string) => `"${value.replace(/["\\$`]/g, "\\$&")}"`;
+
+export function codexHomeLaunchArgs(path: Path.Path, layout: CodexHomeLayout, launchArgs: string) {
+  const homePath = layout.effectiveHomePath;
+  if (layout.mode !== "authOverlay" || homePath === undefined) return launchArgs;
+  const source = path.join(homePath, ".tmp", "bundled-marketplaces", BUNDLED_MARKETPLACE);
+  const setting = `marketplaces.${BUNDLED_MARKETPLACE}.source=${JSON.stringify(source)}`;
+  const override = `-c ${quoteCliArg(setting)}`;
+  // User launch args come last so an explicit source still wins.
+  return launchArgs.length > 0 ? `${override} ${launchArgs}` : override;
+}
 
 const CodexShadowHomeContext = {
   sharedHomePath: Schema.String,
@@ -251,6 +273,30 @@ const ensureSymlink = Effect.fn("CodexHomeLayout.ensureSymlink")(function* (inpu
         linkPath: link,
         targetPath: target,
       });
+    }
+
+    if (input.entryName === "thread-writer-locks") {
+      const lockNames = yield* input.fileSystem.readDirectory(link).pipe(
+        Effect.catchTags({
+          PlatformError: (cause) =>
+            new CodexShadowHomeFileSystemError({
+              sharedHomePath: input.sharedHomePath,
+              effectiveHomePath: input.effectiveHomePath,
+              operation: "readDirectory",
+              path: link,
+              entryName: input.entryName,
+              cause,
+            }),
+        }),
+      );
+      // Codex deletes a thread lock on release, so one that is left may still guard a live
+      // writer. Keep the local directory until a later setup finds none.
+      if (lockNames.some((name) => name.endsWith(".lock") && name !== ".coordination.lock")) {
+        return yield* Effect.logWarning(
+          "Codex shadow home still has thread writer locks; it will share them on a later setup.",
+          { path: link },
+        );
+      }
     }
 
     yield* input.fileSystem.remove(link, { recursive: true }).pipe(

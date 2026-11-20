@@ -3,13 +3,16 @@ import type { DeviceHubAccess } from "@t3tools/client-runtime/device/hub-access"
 import type { AtomCommandConcurrency } from "@t3tools/client-runtime/state/runtime";
 import { RegistryContext } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
+import type { Effect } from "effect/Effect";
 import { AtomRegistry } from "effect/reactivity";
 import { useEffect } from "react";
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
 
-type Result = { _tag: "Success"; value: DeviceDetail } | { _tag: "Failure"; cause: unknown };
+type Result =
+  | { _tag: "Success"; value: DeviceDetail }
+  | { _tag: "Failure"; cause: Cause.Cause<Error> };
 const { read, action, subscribe } = vi.hoisted(() => ({
   read: vi.fn<() => Promise<Result>>(),
   action: vi.fn<() => Promise<Result>>(),
@@ -19,6 +22,7 @@ const { read, action, subscribe } = vi.hoisted(() => ({
 // Stubs only the transport; the device atoms' real scheduler and lanes decide ordering.
 vi.mock(import("@t3tools/client-runtime/state/runtime"), async (original) => {
   const runtime = await original();
+  const Effects = await import("effect/Effect");
   const createEnvironmentRpcCommand = (
     _runtime: unknown,
     options: {
@@ -28,19 +32,24 @@ vi.mock(import("@t3tools/client-runtime/state/runtime"), async (original) => {
           registry: AtomRegistry.AtomRegistry,
           concurrency: AtomCommandConcurrency<unknown>,
           input: unknown,
-          execute: () => Promise<Result>,
-        ) => Promise<Result>;
+          effect: Effect<DeviceDetail, Error>,
+        ) => Effect<DeviceDetail, Error>;
       };
       readonly concurrency?: AtomCommandConcurrency<unknown>;
     },
   ) => {
     const send = options.label === "environment-data:device:detail" ? read : action;
+    const sent = Effects.promise(() => send()).pipe(
+      Effects.flatMap((result) =>
+        result._tag === "Success" ? Effects.succeed(result.value) : Effects.failCause(result.cause),
+      ),
+    );
     return {
       label: options.label,
       run: (registry: AtomRegistry.AtomRegistry, input: unknown) =>
         options.scheduler && options.concurrency
-          ? options.scheduler.schedule(registry, options.concurrency, input, () => send())
-          : send(),
+          ? options.scheduler.schedule(registry, options.concurrency, input, sent)
+          : sent,
     };
   };
   return { ...runtime, createEnvironmentRpcCommand: createEnvironmentRpcCommand as never };
@@ -116,21 +125,23 @@ it("serializes rapid actions and retains confirmed settings while pending or aft
   await vi.waitFor(() => expect(controls.detail?.settings.appearance).toBe("light"));
   const response = deferred();
   action.mockReturnValueOnce(response.promise);
-  let pending!: Promise<void>;
+  let pending!: Promise<boolean>;
   await act(async () => {
     pending = controls.act({ type: "setAppearance", value: "dark" });
-    await controls.act({ type: "setAppearance", value: "light" });
+    expect(await controls.act({ type: "setAppearance", value: "light" })).toBe(false);
   });
   expect(action).toHaveBeenCalledOnce();
   expect(controls.disabled).toBe(true);
   expect(controls.detail?.settings.appearance).toBe("light");
   await act(async () => {
     response.resolve(snapshot("dark"));
-    await pending;
+    expect(await pending).toBe(true);
   });
   expect(controls.detail?.settings.appearance).toBe("dark");
   action.mockResolvedValueOnce({ _tag: "Failure", cause: offline });
-  await act(async () => controls.act({ type: "setAppearance", value: "light" }));
+  await act(async () => {
+    expect(await controls.act({ type: "setAppearance", value: "light" })).toBe(false);
+  });
   expect(controls.detail?.settings.appearance).toBe("dark");
   expect(controls.error).toBe("Device offline");
   expect(controls.disabled).toBe(false);
@@ -142,7 +153,7 @@ it("confirms settings again after a command sent before the panel reopened", asy
   await vi.waitFor(() => expect(controls.detail).not.toBeNull());
   const response = deferred();
   action.mockReturnValueOnce(response.promise);
-  let pending!: Promise<void>;
+  let pending!: Promise<boolean>;
   await act(async () => {
     pending = controls.act({ type: "setAppearance", value: "dark" });
   });
@@ -174,7 +185,7 @@ it("does not let a read sent before an action overwrite the action's answer", as
   await screen.rerender(view(true));
   await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2));
   action.mockResolvedValueOnce(snapshot("dark"));
-  let pending!: Promise<void>;
+  let pending!: Promise<boolean>;
   await act(async () => {
     pending = controls.act({ type: "setAppearance", value: "dark" });
   });

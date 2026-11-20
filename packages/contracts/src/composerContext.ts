@@ -1,5 +1,8 @@
 import * as Schema from "effect/Schema";
 
+import { SnapShotSource } from "./chatAttachment.ts";
+
+import { AssistantCitation } from "./assistantCitations.ts";
 import {
   EnvironmentId,
   ForwardCompatibleArray,
@@ -9,6 +12,7 @@ import {
   PositiveInt,
   ThreadId,
   TrimmedNonEmptyString,
+  TurnItemId,
 } from "./baseSchemas.ts";
 import { GUEST_MESSAGE_MAX_LENGTH, GUEST_NAME_MAX_LENGTH } from "./guestShare.ts";
 
@@ -24,6 +28,8 @@ export const COMPOSER_CONTEXT_KINDS = [
   "mention",
   "skill",
   "thread",
+  "environment",
+  "response",
 ] as const;
 export type KnownComposerContextKind = (typeof COMPOSER_CONTEXT_KINDS)[number];
 
@@ -38,7 +44,7 @@ const COMPOSER_CONTEXT_ELEMENT_HTML_MAX_CHARS = 8_000;
 const COMPOSER_CONTEXT_ELEMENT_STYLES_MAX_CHARS = 8_000;
 export const COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS = 16_000;
 export const COMPOSER_CONTEXT_REVIEW_DIFF_MAX_CHARS = 32_000;
-const COMPOSER_CONTEXT_PREVIEW_COMMENT_MAX_CHARS = 8_000;
+export const COMPOSER_CONTEXT_PREVIEW_COMMENT_MAX_CHARS = 8_000;
 
 export const ComposerContextId = TrimmedNonEmptyString.check(
   Schema.isMaxLength(CONTEXT_ID_MAX_CHARS),
@@ -95,6 +101,7 @@ export const ImageContextRecord = Schema.Struct({
   ...recordBase,
   kind: Schema.Literal("image"),
   ...attachmentBinding,
+  source: Schema.optional(SnapShotSource),
 });
 export type ImageContextRecord = typeof ImageContextRecord.Type;
 
@@ -211,6 +218,42 @@ export const ThreadContextRecord = Schema.Struct({
 });
 export type ThreadContextRecord = typeof ThreadContextRecord.Type;
 
+/**
+ * One of the user's machines (a T3 Code environment), mentioned so the agent
+ * links it or works there. Only identity travels: the agent links it by id,
+ * and the user's client supplies its addresses.
+ */
+export const EnvironmentContextRecord = Schema.Struct({
+  ...recordBase,
+  kind: Schema.Literal("environment"),
+  environmentId: EnvironmentId,
+});
+export type EnvironmentContextRecord = typeof EnvironmentContextRecord.Type;
+
+/**
+ * An earlier assistant response the user is replying to. Only its identity and opening travel:
+ * the agent rereads the rest by item id, so a reply costs the same however long the response is.
+ */
+export const ResponseContextRecord = Schema.Struct({
+  ...recordBase,
+  kind: Schema.Literal("response"),
+  /** Where the response is and how it starts, as the reader saw it. */
+  citation: AssistantCitation,
+  itemId: TurnItemId,
+  /** The subagents whose results that response reported on. */
+  subagents: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        threadId: ThreadId,
+        title: ContextLabel,
+        /** Set when the subagent's thread lives on a linked environment. */
+        environmentId: Schema.optional(EnvironmentId),
+      }),
+    ).check(Schema.isMaxLength(20)),
+  ),
+});
+export type ResponseContextRecord = typeof ResponseContextRecord.Type;
+
 const isJson = Schema.is(Schema.Json);
 
 /** Excludes known discriminators so malformed known records fail their own schema. */
@@ -241,6 +284,8 @@ export const KnownComposerContextRecord = Schema.Union([
   MentionContextRecord,
   SkillContextRecord,
   ThreadContextRecord,
+  EnvironmentContextRecord,
+  ResponseContextRecord,
 ]);
 export type KnownComposerContextRecord = typeof KnownComposerContextRecord.Type;
 

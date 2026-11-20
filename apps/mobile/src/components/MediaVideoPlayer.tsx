@@ -1,6 +1,8 @@
 import { useEvent } from "expo";
 import { useVideoPlayer, VideoView } from "expo-video";
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useIsFocused } from "@react-navigation/native";
+import { T, useGT } from "gt-react-native";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { Pressable, View } from "react-native";
 
 import { AppActivityIndicator } from "./ui/AppActivityIndicator";
@@ -8,6 +10,8 @@ import { AppText } from "./ui/AppText";
 import { SymbolView } from "./ui/AppSymbol";
 import { VideoThumbnailImage } from "./VideoThumbnailImage";
 import { useMediaActions } from "../state/mediaActions";
+import { fitVideoFrame } from "../lib/videoFrameFit";
+import { loadVideoThumbnail } from "../lib/videoThumbnails";
 import { type MediaActionsSource } from "../lib/mediaActionsSource";
 import { useMediaVideoPlayback } from "../lib/useMediaVideoPlayback";
 import { MediaActionsMenu } from "./MediaActionsMenu";
@@ -21,6 +25,7 @@ function LoadedMediaVideo(props: {
   readonly visible: boolean;
   readonly onPlaybackStart?: () => void;
 }) {
+  const gt = useGT();
   const [attempt, setAttempt] = useState(0);
   // Expo's Android player also reports completed playback as idle.
   const [loadState, setLoadState] = useState<"pending" | "complete" | "error">("pending");
@@ -28,11 +33,12 @@ function LoadedMediaVideo(props: {
     player.staysActiveInBackground = false;
     player.bufferOptions = { preferredForwardBufferDuration: 5 };
   });
-  const playback = useMemo(() => createAudioPlaybackSession(player, true), [player]);
+  const playback = createAudioPlaybackSession(player, true);
   const { active, fullscreen, createPlayRequest, onFullscreenEnter, onFullscreenExit } =
     useMediaVideoPlayback(player, props, playback);
   const previousPlaybackRequested = useRef(false);
   const onPlaybackStart = useEffectEvent(() => props.onPlaybackStart?.());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to native video player events to keep the shared audio session in step
   useEffect(() => {
     const subscription = player.addListener("playingChange", ({ isPlaying }) => {
       if (isPlaying && !active.current && !fullscreen.current) playback.pause();
@@ -74,6 +80,7 @@ function LoadedMediaVideo(props: {
     if (!signal.aborted && props.playRequested) await playIfUninterrupted();
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the video source into the native player and aborts the load on cleanup
   useEffect(() => {
     const controller = new AbortController();
     // oxlint-disable-next-line react/set-state-in-effect -- Starting a native media load publishes pending before its async result.
@@ -106,19 +113,23 @@ function LoadedMediaVideo(props: {
       />
       {loadState === "error" || (loadState === "complete" && status === "error") ? (
         <View className="absolute inset-0 items-center justify-center gap-2 bg-black px-4">
-          <AppText className="text-center text-sm text-white/80">Video unavailable</AppText>
+          <AppText className="text-center text-sm text-white/80">
+            <T>Video unavailable</T>
+          </AppText>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Retry video"
+            accessibilityLabel={gt("Retry video")}
             onPress={() => setAttempt((value) => value + 1)}
             className="min-h-11 justify-center px-4"
           >
-            <AppText className="text-sm text-white">Retry</AppText>
+            <AppText className="text-sm text-white">
+              <T>Retry</T>
+            </AppText>
           </Pressable>
         </View>
       ) : loadState === "pending" || status === "loading" ? (
         <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
-          <AppActivityIndicator color="#ffffff" accessibilityLabel="Loading video" />
+          <AppActivityIndicator color="#ffffff" accessibilityLabel={gt("Loading video")} />
         </View>
       ) : null}
     </View>
@@ -133,24 +144,60 @@ interface MediaVideoPlayerProps {
   readonly thumbnailVisible?: boolean;
   readonly visible?: boolean;
   readonly unavailable?: boolean;
+  readonly unavailableDetail?: string | undefined;
   readonly expanded?: boolean;
+  /** Fill the parent and size the frame to the video's shape instead of a fixed 16:9 slot. */
+  readonly fitToVideo?: boolean;
   readonly autoPlay?: boolean;
   readonly paused?: boolean;
   readonly onPlaybackStart?: () => void;
   readonly actionsSource?: MediaActionsSource;
+  readonly borderRadius?: number;
 }
 
 function MediaVideoPlayerContent(props: MediaVideoPlayerProps) {
+  const gt = useGT();
   const mediaActions = useMediaActions(props.actionsSource);
+  const isFocused = useIsFocused();
   const [playbackUri, setPlaybackUri] = useState<string | null>(props.expanded ? props.uri : null);
   // Keep an opened player mounted while signing or reconnecting temporarily has no usable URL.
   if (playbackUri === null && props.expanded && props.uri !== null) setPlaybackUri(props.uri);
+  const unavailableText = props.unavailableDetail
+    ? gt("Video unavailable. {detail}", { detail: props.unavailableDetail })
+    : gt("Video unavailable");
+  const [videoSize, setVideoSize] = useState<{ width: number; height: number } | null>(null);
+  const [bounds, setBounds] = useState<{ width: number; height: number } | null>(null);
+  const sizeSource = props.fitToVideo && isFocused && videoSize === null ? props.uri : null;
+  // Queue before the poster so early Play cannot cancel the extraction that supplies frame dimensions.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads native thumbnail dimensions independently of the poster's lifetime
+  useLayoutEffect(() => {
+    if (sizeSource === null) return;
+    // Thumbnails are oriented like the displayed frame, unlike VideoTrack.size.
+    const controller = new AbortController();
+    void loadVideoThumbnail(
+      props.thumbnailKey,
+      async () => ({ uri: sizeSource, dispose: () => undefined }),
+      controller.signal,
+    ).then((thumbnail) => {
+      if (thumbnail && !controller.signal.aborted) {
+        setVideoSize({ width: thumbnail.width, height: thumbnail.height });
+      }
+    });
+    return () => controller.abort();
+  }, [props.thumbnailKey, sizeSource]);
+  const fittedFrame =
+    props.fitToVideo && videoSize && bounds ? fitVideoFrame(videoSize, bounds, 480) : null;
 
-  return (
+  const frame = (
     <View
       collapsable={false}
       className="overflow-hidden rounded-[10px] bg-black"
-      style={props.expanded ? { flex: 1 } : { width: "100%", maxWidth: 480, aspectRatio: 16 / 9 }}
+      style={[
+        props.expanded
+          ? { flex: 1 }
+          : (fittedFrame ?? { width: "100%", maxWidth: 480, aspectRatio: 16 / 9 }),
+        props.borderRadius === undefined ? null : { borderRadius: props.borderRadius },
+      ]}
     >
       {playbackUri ? (
         <LoadedMediaVideo
@@ -165,9 +212,13 @@ function MediaVideoPlayerContent(props: MediaVideoPlayerProps) {
         <MediaActionsMenu media={mediaActions} inModal={props.expanded} style={{ flex: 1 }}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`Play ${props.name}`}
+            accessibilityLabel={
+              props.unavailable
+                ? `${props.name}. ${unavailableText}`
+                : gt("Play {name}", { name: props.name })
+            }
             accessibilityHint={
-              mediaActions.actions.length > 0 ? "Touch and hold for media actions" : undefined
+              mediaActions.actions.length > 0 ? gt("Touch and hold for media actions") : undefined
             }
             accessibilityState={{ disabled: props.uri === null || props.unavailable === true }}
             // Stays pressable so the long-press menu still opens on a failed or unsigned tile.
@@ -187,9 +238,9 @@ function MediaVideoPlayerContent(props: MediaVideoPlayerProps) {
               />
             ) : null}
             {props.unavailable ? (
-              <AppText className="text-sm text-white/80">Video unavailable</AppText>
+              <AppText className="text-center text-sm text-white/80">{unavailableText}</AppText>
             ) : props.uri === null ? (
-              <AppActivityIndicator color="#ffffff" accessibilityLabel="Loading video" />
+              <AppActivityIndicator color="#ffffff" accessibilityLabel={gt("Loading video")} />
             ) : (
               <View className="size-12 items-center justify-center rounded-full bg-black/60">
                 <SymbolView name="play" size={28} tintColor="#ffffff" type="monochrome" />
@@ -206,6 +257,18 @@ function MediaVideoPlayerContent(props: MediaVideoPlayerProps) {
           </Pressable>
         </MediaActionsMenu>
       )}
+    </View>
+  );
+  if (!props.fitToVideo) return frame;
+  return (
+    <View
+      className="flex-1 items-center justify-center self-stretch"
+      onLayout={(event) => {
+        const { width, height } = event.nativeEvent.layout;
+        setBounds({ width, height });
+      }}
+    >
+      {frame}
     </View>
   );
 }

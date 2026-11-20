@@ -1,19 +1,25 @@
+import { requestUrl } from "../requestUrl.ts";
 // Loopback-only hubs expose shell execution or unauthenticated actions.
 // Proxy with environment read scope for streams and operate scope for input and tuning.
 import { AuthOrchestrationReadScope, AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import {
   HttpClient,
   HttpClientRequest,
+  HttpMethod,
   HttpRouter,
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/http";
 import * as Socket from "effect/socket/Socket";
+import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequest";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 
-import { authenticateMediaRequest } from "../auth/http.ts";
+import { authenticateMediaRequest, failEnvironmentInternal } from "../auth/http.ts";
+import * as SessionStore from "../auth/SessionStore.ts";
 import * as DeviceService from "./DeviceService.ts";
 import { repeatStillFrame } from "./mjpegStillFrame.ts";
 
@@ -26,14 +32,17 @@ const ALLOWED_PATHS: ReadonlyArray<RegExp> = [
   /^\/vendor\/serve-sim\/helper\/[^/]+\/panel\/(1|3)\/stream\.avcc$/,
   /^\/vendor\/serve-sim\/helper\/[^/]+\/webrtc\/(offer|close)$/,
   /^\/vendor\/serve-sim\/appstate$/,
+  /^\/vendor\/serve-emu\/api$/,
   /^\/vendor\/serve-emu\/api\/(devices|screenshot|stream-mode|stream-settings|accessibility|fold)$/,
   /^\/vendor\/serve-emu\/health$/,
 ];
 
+// Paths that take methods besides GET; one missing from ALLOWED_PATHS takes no GET.
 const MUTABLE_PATHS: ReadonlyArray<RegExp> = [
   /^\/vendor\/serve-sim\/api\/screenshot$/,
   // WebRTC signalling: opening and closing a view of the stream, so read scope.
   /^\/vendor\/serve-sim\/helper\/[^/]+\/webrtc\/(offer|close)$/,
+  /^\/vendor\/serve-emu\/webrtc\/(offer|close)$/,
   /^\/vendor\/serve-emu\/api\/(screenshot|stream-mode|stream-settings)$/,
   /^\/vendor\/serve-emu\/api\/fold$/,
 ];
@@ -75,16 +84,33 @@ const forwardHeaders = (request: HttpServerRequest.HttpServerRequest, origin: st
   return headers;
 };
 
+// Effect drops its listeners before closing a socket that is still connecting, and `ws` then
+// emits an `error` nobody handles, which exits the server.
+export const upstreamWebSocketConstructor = Layer.effect(
+  Socket.WebSocketConstructor,
+  Effect.gen(function* () {
+    const make = yield* Socket.WebSocketConstructor;
+    return (url, options) => {
+      const socket = make(url, options);
+      socket.addEventListener("error", () => undefined);
+      return socket;
+    };
+  }),
+).pipe(Layer.provide(NodeSocket.layerWebSocketConstructor));
+
 const proxyWebSocket = Effect.fn("DeviceHubProxy.proxyWebSocket")(function* (
   request: HttpServerRequest.HttpServerRequest,
   upstreamUrl: string,
   protocols: ReadonlyArray<string> = [],
+  headers: Readonly<Record<string, string>> = {},
 ) {
+  const transport = NodeHttpServerRequest.toIncomingMessage(request).socket;
   const client = yield* request.upgrade;
   const upstream = yield* Socket.makeWebSocket(upstreamUrl, {
     openTimeout: "10 seconds",
     ...(protocols.length > 0 ? { protocols: [...protocols] } : {}),
-  }).pipe(Effect.provide(NodeSocket.layerWebSocketConstructor));
+    ...(Object.keys(headers).length > 0 ? { headers: { ...headers } } : {}),
+  }).pipe(Effect.provide(upstreamWebSocketConstructor));
   yield* Effect.scoped(
     Effect.gen(function* () {
       const writeToClient = yield* client.writer;
@@ -94,7 +120,10 @@ const proxyWebSocket = Effect.fn("DeviceHubProxy.proxyWebSocket")(function* (
         pumpFrames(client, writeToUpstream),
       );
     }),
-  ).pipe(Effect.ignoreCause);
+  ).pipe(
+    Effect.onInterrupt(() => Effect.sync(() => transport.destroy())),
+    Effect.ignoreCause,
+  );
   return HttpServerResponse.empty();
 });
 
@@ -110,10 +139,14 @@ const pumpFrames =
 const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
   request: HttpServerRequest.HttpServerRequest,
   upstreamUrl: string,
+  invalidated: Effect.Effect<void>,
   extraHeaders: Readonly<Record<string, string>> = {},
 ) {
   const httpClient = HttpClient.withScope(yield* HttpClient.HttpClient);
   const method = request.method;
+  if (!HttpMethod.isHttpMethod(method)) {
+    return HttpServerResponse.text("Method Not Allowed", { status: 405 });
+  }
   const upstreamRequest = HttpClientRequest.make(method)(upstreamUrl).pipe(
     HttpClientRequest.setHeaders({
       ...forwardHeaders(request, new URL(upstreamUrl).origin),
@@ -130,7 +163,7 @@ const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
   const response = yield* httpClient.execute(upstreamRequest);
   const headers: Record<string, string> = {};
   for (const [name, value] of Object.entries(response.headers)) {
-    // A cookie from an upstream such as an EAS session's preview host would land on T3's origin.
+    // A cookie from an upstream such as an Expo Simulators session's preview host would land on T3's origin.
     if (
       name === "content-encoding" ||
       name === "transfer-encoding" ||
@@ -146,7 +179,7 @@ const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
   const body = headers["content-type"]?.startsWith("multipart/x-mixed-replace")
     ? repeatStillFrame(response.stream)
     : response.stream;
-  return HttpServerResponse.stream(body, {
+  return HttpServerResponse.stream(body.pipe(Stream.interruptWhen(invalidated)), {
     status: response.status,
     headers,
     ...(headers["content-type"] ? { contentType: headers["content-type"] } : {}),
@@ -155,27 +188,35 @@ const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
 
 const handler = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
-  const url = HttpServerRequest.toURL(request);
+  const url = requestUrl(request);
   if (Option.isNone(url)) {
     return HttpServerResponse.text("Bad Request", { status: 400 });
   }
   const hubPath = url.value.pathname.slice(DeviceService.DEVICE_HUB_ROUTE_PREFIX.length) || "/";
   const upgrade = isWebSocketUpgrade(request);
-  const allowed = (upgrade ? ALLOWED_WS_PATHS : ALLOWED_PATHS).some((pattern) =>
-    pattern.test(hubPath),
-  );
+  const matches = (paths: ReadonlyArray<RegExp>) => paths.some((pattern) => pattern.test(hubPath));
+  const allowed = upgrade
+    ? matches(ALLOWED_WS_PATHS)
+    : matches(ALLOWED_PATHS) || matches(MUTABLE_PATHS);
   if (!allowed) {
     return HttpServerResponse.text("Not Found", { status: 404 });
   }
   const readOnly = request.method === "GET" || request.method === "HEAD";
-  if (!upgrade && !readOnly && !MUTABLE_PATHS.some((pattern) => pattern.test(hubPath))) {
+  if (!upgrade && !matches(readOnly ? ALLOWED_PATHS : MUTABLE_PATHS)) {
     return HttpServerResponse.text("Method Not Allowed", { status: 405 });
   }
   const controlsDevice =
     (upgrade && hubPath !== "/api/devices/ws") ||
     (!readOnly && /\/api\/(stream-(mode|settings)|fold)$/.test(hubPath));
-  yield* authenticateMediaRequest(
+  const session = yield* authenticateMediaRequest(
     controlsDevice ? AuthOrchestrationOperateScope : AuthOrchestrationReadScope,
+  );
+  const sessions = yield* SessionStore.SessionStore;
+  const invalidated = sessions.awaitInvalidation(session.sessionId).pipe(
+    Effect.catchTags({
+      SessionCredentialVerificationError: (error) =>
+        failEnvironmentInternal("internal_error", error).pipe(Effect.ignore),
+    }),
   );
   const devices = yield* DeviceService.DeviceService;
   const ready = yield* devices.currentReadiness(url.value.searchParams.get("hostId") ?? undefined);
@@ -187,6 +228,17 @@ const handler = Effect.gen(function* () {
   upstreamSearch.delete("wsTicket");
   upstreamSearch.delete("hostId");
   const search = upstreamSearch.size > 0 ? `?${upstreamSearch.toString()}` : "";
+  const screenshotDevice = upstreamSearch.get("device");
+  if (
+    screenshotDevice &&
+    ["/vendor/serve-sim/api/screenshot", "/vendor/serve-emu/api/screenshot"].includes(hubPath)
+  ) {
+    const { png } = yield* devices.screenshot({ hostId: ready.hostId, deviceId: screenshotDevice });
+    return HttpServerResponse.uint8Array(png, {
+      contentType: "image/png",
+      headers: { "cache-control": "no-store, no-transform" },
+    });
+  }
   // Hosts with several upstreams (one per cloud session) route and authenticate requests themselves.
   const routed = ready.upstream ? yield* ready.upstream(hubPath, upstreamSearch) : undefined;
   if (routed === null) {
@@ -194,9 +246,17 @@ const handler = Effect.gen(function* () {
   }
   const upstreamUrl = routed?.url ?? `${ready.hub.origin}${hubPath}${search}`;
   if (upgrade) {
-    return yield* proxyWebSocket(request, upstreamUrl.replace(/^http/, "ws"), routed?.protocols);
+    return yield* Effect.raceFirst(
+      proxyWebSocket(
+        request,
+        upstreamUrl.replace(/^http/, "ws"),
+        routed?.protocols,
+        routed?.headers,
+      ),
+      invalidated.pipe(Effect.as(HttpServerResponse.empty())),
+    );
   }
-  return yield* proxyHttp(request, upstreamUrl, routed?.headers);
+  return yield* proxyHttp(request, upstreamUrl, invalidated, routed?.headers);
 });
 
 export const layer = HttpRouter.add("*", `${DeviceService.DEVICE_HUB_ROUTE_PREFIX}/*`, handler);

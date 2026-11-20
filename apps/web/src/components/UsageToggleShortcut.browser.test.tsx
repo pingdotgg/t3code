@@ -32,8 +32,14 @@ vi.mock(import("@tanstack/react-router"), async (original) => ({
   useNavigate: (() => state.navigate) as never,
 }));
 
+import { useCommandPaletteMount } from "../commandPaletteStore";
+import { installCommandPaletteCommands } from "../shortcuts/commandPaletteCommands";
 import { registerNavigationHistoryCommands } from "./AppSidebarLayout";
-import { CommandPalette } from "./CommandPalette";
+
+function MountedPalette() {
+  useCommandPaletteMount();
+  return null;
+}
 
 // regression: #21357
 describe("usage toggle shortcut on Usage", () => {
@@ -53,12 +59,15 @@ describe("usage toggle shortcut on Usage", () => {
   it("does not reopen Usage from the command palette", async () => {
     vi.clearAllMocks();
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
-    await using _screen = await render(<CommandPalette>{null}</CommandPalette>, {
-      router: "/usage",
-    });
+    await using screen = await render(<MountedPalette />, { router: "/usage" });
+    using navigate = vi.spyOn(screen.router!, "navigate");
+    using commands = new DisposableStack();
+    commands.defer(
+      installCommandPaletteCommands(screen.router!, { keybindings: () => keybindings }),
+    );
 
     await userEvent.keyboard("{Control>}u{/Control}");
 
-    expect(state.navigate).not.toHaveBeenCalled();
+    expect(navigate).not.toHaveBeenCalled();
   });
 });

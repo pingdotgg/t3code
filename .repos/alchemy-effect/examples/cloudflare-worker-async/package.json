@@ -19,11 +19,15 @@
   },
   "dependencies": {
     "@alchemy.run/better-auth": "workspace:*",
+    "@alchemy.run/cloudflare": "workspace:*",
     "@cloudflare/workers-types": "catalog:",
     "@effect/platform-bun": "catalog:",
     "@effect/platform-node": "catalog:",
     "alchemy": "workspace:*",
     "better-auth": "catalog:",
     "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@alchemy.run/test": "workspace:*"
   }
 }

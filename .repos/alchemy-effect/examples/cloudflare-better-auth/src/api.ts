@@ -1,7 +1,7 @@
-import * as Schema from "effect/Schema";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
+import * as Schema from "effect/Schema";
 import { User } from "./current-user.ts";
 import { Authentication } from "./middleware.ts";
 

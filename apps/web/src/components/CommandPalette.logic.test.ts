@@ -1,14 +1,18 @@
+import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type { Thread } from "../types";
 import { makeThreadFixture } from "../test-fixtures";
 import {
+  newThreadNoProjectIndex,
   buildNestedSearchItems,
+  resolveCommandPaletteProject,
   buildThreadActionItems,
   buildLinkedThreadActionItems,
   filterPinnedBrowseEntries,
   filterCommandPaletteGroups,
   reduceCommandPaletteUiState,
+  resolveAddProjectEntry,
   createCommandPaletteSearchState,
   reduceCommandPaletteSearchState,
   type CommandPaletteUiState,
@@ -32,7 +36,7 @@ describe("linked pull request thread navigation", () => {
       ],
     };
     const state = reduceCommandPaletteUiState(
-      { open: false, mode: "command", openIntent: null },
+      { open: false, mode: "command", openIntent: null, session: 0 },
       {
         _tag: "OpenSearch",
         query,
@@ -59,7 +63,7 @@ describe("linked pull request thread navigation", () => {
 describe("reduceCommandPaletteUiState", () => {
   it("opens PR search from another overlay and replaces an earlier search", () => {
     const first = reduceCommandPaletteUiState(
-      { open: true, mode: "files", openIntent: null },
+      { open: true, mode: "files", openIntent: null, session: 0 },
       {
         _tag: "OpenSearch",
         query: "https://github.com/acme/web/pull/7",
@@ -69,6 +73,7 @@ describe("reduceCommandPaletteUiState", () => {
       open: true,
       mode: "command",
       openIntent: { kind: "search", query: "https://github.com/acme/web/pull/7" },
+      session: 1,
     });
     const second = reduceCommandPaletteUiState(first, {
       _tag: "OpenSearch",
@@ -78,9 +83,55 @@ describe("reduceCommandPaletteUiState", () => {
       kind: "search",
       query: "https://github.com/acme/web/pull/8",
     });
+    // The second intent starts a new session, so the open palette starts over from it.
+    expect(second.session).toBe(2);
     expect(
       reduceCommandPaletteUiState(second, { _tag: "SetOpen", open: false }).openIntent,
     ).toBeNull();
+  });
+
+  it("keeps the session across mode switches so only intents start the palette over", () => {
+    let state: CommandPaletteUiState = {
+      open: false,
+      mode: "command",
+      openIntent: null,
+      session: 0,
+    };
+    state = reduceCommandPaletteUiState(state, { _tag: "OpenNewThreadIn" });
+    expect(state).toMatchObject({ open: true, openIntent: { kind: "new-thread-in" }, session: 1 });
+    state = reduceCommandPaletteUiState(state, { _tag: "ToggleMode", mode: "files" });
+    expect(state).toMatchObject({ mode: "files", openIntent: null, session: 1 });
+    state = reduceCommandPaletteUiState(state, { _tag: "OpenAddProject" });
+    expect(state).toMatchObject({
+      mode: "command",
+      openIntent: { kind: "add-project" },
+      session: 2,
+    });
+  });
+});
+
+describe("resolveAddProjectEntry", () => {
+  const local = EnvironmentId.make("local");
+  const remote = EnvironmentId.make("remote");
+
+  it("sends the user to connect an environment when none can add a project", () => {
+    expect(resolveAddProjectEntry([], null)).toEqual({ kind: "connect-environment" });
+  });
+
+  it("asks for an environment when there is a choice or no connected default", () => {
+    expect(
+      resolveAddProjectEntry([{ environmentId: local }, { environmentId: remote }], local),
+    ).toEqual({ kind: "choose-environment" });
+    expect(resolveAddProjectEntry([{ environmentId: local }], null)).toEqual({
+      kind: "choose-environment",
+    });
+  });
+
+  it("goes straight to sources for the only environment", () => {
+    expect(resolveAddProjectEntry([{ environmentId: local }], local)).toEqual({
+      kind: "choose-source",
+      environmentId: local,
+    });
   });
 });
 
@@ -616,11 +667,13 @@ describe("buildThreadActionItems", () => {
     ]);
   });
 
-  it("hides subagent threads but keeps forks", () => {
+  it("hides subagent threads and tasks shown under their parent but keeps forks", () => {
     const parentId = ThreadId.make("parent");
+    const delegatedId = ThreadId.make("delegated");
     const items = buildThreadActionItems({
       threads: [
         makeThread({ id: parentId, title: "Parent" }),
+        makeThread({ id: delegatedId, title: "Delegated task" }),
         makeThread({
           id: ThreadId.make("subagent"),
           title: "Subagent",
@@ -640,6 +693,9 @@ describe("buildThreadActionItems", () => {
           },
         }),
       ],
+      delegatedUnderParent: new Set([
+        threadKey({ environmentId: LOCAL_ENVIRONMENT_ID, threadId: delegatedId }),
+      ]),
       projectByKey: new Map(),
       icon: null,
       runThread: async () => undefined,
@@ -745,6 +801,26 @@ describe("filterPinnedBrowseEntries", () => {
       visibleEntries: windowsEntries,
       exactEntry: windowsEntries[0],
     });
+    const decomposed = { name: "De\u0301veloppement", fullPath: "/Users/me/De\u0301veloppement" };
+    expect(
+      filterPinnedBrowseEntries({
+        browseEntries: [decomposed],
+        filterQuery: "D\u00e9veloppement",
+        pinnedDirectoryName: "repo",
+        caseSensitive: true,
+      }).exactEntry,
+    ).toBe(decomposed);
+    expect(
+      filterPinnedBrowseEntries({
+        browseEntries: [
+          { name: "\u212B", fullPath: "/home/me/\u212B" },
+          { name: "A\u030A", fullPath: "/home/me/A\u030A" },
+        ],
+        filterQuery: "\u00C5",
+        pinnedDirectoryName: "repo",
+        caseSensitive: true,
+      }).exactEntry,
+    ).toBeNull();
   });
 });
 
@@ -825,7 +901,12 @@ describe("command palette search return", () => {
 });
 
 describe("returning from file and content search", () => {
-  const root: CommandPaletteUiState = { open: true, mode: "command", openIntent: null };
+  const root: CommandPaletteUiState = {
+    open: true,
+    mode: "command",
+    openIntent: null,
+    session: 0,
+  };
   const query = "https://github.com/acme/web/pull/7";
   const context = {
     query,
@@ -860,8 +941,49 @@ describe("returning from file and content search", () => {
   it("closing a child search discards its return context before reopening", () => {
     const child: CommandPaletteUiState = { ...root, mode: "files", parentSearch: context };
     const closed = reduceCommandPaletteUiState(child, { _tag: "SetOpen", open: false });
-    expect(closed).toEqual({ open: false, mode: "files", openIntent: null });
+    expect(closed).toEqual({ open: false, mode: "files", openIntent: null, session: 0 });
     expect(reduceCommandPaletteUiState(closed, { _tag: "BackToCommand" })).toEqual(closed);
     expect(reduceCommandPaletteUiState(closed, { _tag: "SetOpen", open: true })).toEqual(root);
+  });
+});
+
+it("resolves project metadata and browse roots within the active environment", () => {
+  const local = { title: "Local project", workspaceRoot: "/local/repo" };
+  const remote = { title: "Remote project", workspaceRoot: "/remote/repo" };
+  const projects = new Map([
+    ["local:shared-project", local],
+    ["remote:shared-project", remote],
+  ]);
+  expect(
+    resolveCommandPaletteProject(projects, EnvironmentId.make("local"), PROJECT_ID),
+  ).toBeUndefined();
+  const sharedId = ProjectId.make("shared-project");
+  expect(resolveCommandPaletteProject(projects, EnvironmentId.make("local"), sharedId)).toBe(local);
+  expect(resolveCommandPaletteProject(projects, EnvironmentId.make("remote"), sharedId)).toBe(
+    remote,
+  );
+  expect(resolveCommandPaletteProject(projects, null, sharedId)).toBeUndefined();
+  expect(resolveCommandPaletteProject(projects, EnvironmentId.make("local"), null)).toBeUndefined();
+});
+
+describe("newThreadNoProjectIndex", () => {
+  const entry = (pinned = false, isPreferred = false, isScratch = false) => ({
+    pinned,
+    isPreferred,
+    isScratch,
+  });
+
+  it("goes after the pinned projects and the first unpinned one", () => {
+    expect(newThreadNoProjectIndex([entry(false, true), entry(true), entry(true), entry()])).toBe(
+      3,
+    );
+    expect(newThreadNoProjectIndex([entry(false, true), entry(), entry(false, false, true)])).toBe(
+      1,
+    );
+  });
+
+  it("keeps a pinned or current scratch project in its own place", () => {
+    expect(newThreadNoProjectIndex([entry(false, true, true), entry()])).toBe(0);
+    expect(newThreadNoProjectIndex([entry(true), entry(true, false, true), entry()])).toBe(1);
   });
 });

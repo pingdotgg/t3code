@@ -1,6 +1,9 @@
+import { isWindowsCommandNotFound } from "@t3tools/provider-core/server/snapshotProbe";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Cause from "effect/Cause";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
@@ -142,6 +145,29 @@ describe("runProcess", () => {
     }),
   );
 
+  it.effect("reports child startup before delivering cancellation during acquisition", () =>
+    Effect.gen(function* () {
+      let started = false;
+      const spawner = makeSpawner(() =>
+        Effect.withFiber((fiber) =>
+          Effect.sync(() => {
+            fiber.interruptUnsafe();
+            return makeHandle({});
+          }),
+        ),
+      );
+      const result = yield* runWith(spawner)({
+        command: "git",
+        args: ["restore"],
+        onSpawn: () => {
+          started = true;
+        },
+      }).pipe(Effect.exit);
+      expect(Exit.isFailure(result) && Cause.hasInterruptsOnly(result.cause)).toBe(true);
+      expect(started).toBe(true);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("fails when output exceeds max buffer in default mode", () =>
     Effect.gen(function* () {
       const spawner = makeSpawner(() => Effect.succeed(makeHandle({ stdout: "x".repeat(2048) })));
@@ -265,7 +291,7 @@ describe("runProcess", () => {
 describe("isWindowsCommandNotFound", () => {
   it.effect("matches the localized German cmd.exe error text", () =>
     Effect.gen(function* () {
-      const isCommandNotFound = yield* ProcessRunner.isWindowsCommandNotFound(
+      const isCommandNotFound = yield* isWindowsCommandNotFound(
         1,
         "wird nicht als interner oder externer Befehl, betriebsfahiges Programm oder Batch-Datei erkannt",
       ).pipe(Effect.provideService(HostProcess.Platform, "win32"));

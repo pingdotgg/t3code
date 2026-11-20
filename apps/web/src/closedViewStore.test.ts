@@ -54,6 +54,18 @@ describe("closedViewStore", () => {
       threadRef: refA,
       surface: { kind: "pull-request", id: "pull-request:x", repository: "owner/repo", number: 1 },
     },
+    {
+      id: "bad",
+      kind: "panel-tab",
+      threadRef: refA,
+      surface: { kind: "thread", id: "thread:x" },
+    },
+    {
+      id: "bad",
+      kind: "panel-tab",
+      threadRef: refA,
+      surface: { kind: "linked-thread", id: "linked-thread:x", viaEnvironmentId: "env-1" },
+    },
   ])("discards incomplete saved views %j while retaining valid history", async (entry) => {
     const id = useClosedViewStore.getState().remember(diff(refA));
     const { storage, name } = useClosedViewStore.persist.getOptions();
@@ -85,6 +97,12 @@ describe("closedViewStore", () => {
 
   it("removes private metadata and malformed entries from history saved by earlier versions", async () => {
     const store = useClosedViewStore.getState();
+    const sideChatId = store.remember({
+      kind: "panel-tab",
+      threadRef: refA,
+      // Saved before a side chat's tab became a `thread` surface.
+      surface: { id: "side-chat:side", kind: "side-chat", threadId: "side" } as never,
+    });
     const publicId = store.remember(diff(refA));
     const browserId = store.remember({
       kind: "browser",
@@ -115,7 +133,11 @@ describe("closedViewStore", () => {
     expect(useClosedViewStore.getState().entries.map((entry) => entry.id)).toEqual([
       browserId,
       publicId,
+      sideChatId,
     ]);
+    expect(useClosedViewStore.getState().entries.at(-1)).toMatchObject({
+      surface: { id: "thread:side", kind: "thread", threadId: "side" },
+    });
     const saved = JSON.stringify(await storage!.getItem(name!));
     expect(saved).not.toContain("private.example");
     expect(saved).not.toContain("Private page");

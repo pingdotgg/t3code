@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Config from "effect/Config";
@@ -29,7 +30,7 @@ it.effect("loads the private writer registry as deployment configuration", () =>
       Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ HOME: home }))),
     );
     expect(JSON.parse(Redacted.value(keys))).toEqual({ maria: "digest" });
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("uses explicit deployment credentials without requiring a local registry", () =>
@@ -42,7 +43,7 @@ it.effect("uses explicit deployment credentials without requiring a local regist
       ),
     );
     expect(JSON.parse(Redacted.value(keys))).toEqual({ theo: "digest" });
-  }).pipe(Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("fails instead of deploying an empty registry when credentials are missing", () =>
@@ -54,7 +55,7 @@ it.effect("fails instead of deploying an empty registry when credentials are mis
       Effect.exit,
     );
     expect(Exit.isFailure(result)).toBe(true);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.live("rejects reserved writer names without modifying credential stores", () =>
@@ -85,7 +86,7 @@ it.live("rejects reserved writer names without modifying credential stores", () 
       expect(yield* fs.readFileString(`${state}/writers.json`)).toBe(writers);
       expect(yield* fs.readFileString(`${state}/credentials.json`)).toBe(credentials);
     }
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("writes credentials for the supplied deployed worker endpoint", () =>
@@ -106,7 +107,7 @@ it.effect("writes credentials for the supplied deployed worker endpoint", () =>
     const credential = JSON.parse(yield* fs.readFileString(file));
     expect(credential.endpoint).toBe(endpoint);
     expect(credential.name).toBe("maria");
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("refuses a concurrent registry update without changing committed credentials", () =>
@@ -128,7 +129,7 @@ it.effect("refuses a concurrent registry update without changing committed crede
     expect(Exit.isFailure(result)).toBe(true);
     expect(yield* fs.readFileString(`${state}/writers.json`)).toBe('{"maria":"digest"}');
     expect(yield* fs.exists(`${state}/theo.json`)).toBe(false);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("keeps the committed registry intact if a replacement write fails", () =>
@@ -160,7 +161,7 @@ it.effect("keeps the committed registry intact if a replacement write fails", ()
     expect(Exit.isFailure(result)).toBe(true);
     expect(yield* fs.readFileString(`${state}/writers.json`)).toBe(original);
     expect(yield* fs.exists(`${state}/writers.lock`)).toBe(false);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("preserves filesystem errors when acquiring the registry lock", () =>
@@ -191,7 +192,7 @@ it.effect("preserves filesystem errors when acquiring the registry lock", () =>
       Effect.flip,
     );
     expect(error).toBe(denied);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("refuses to initialize a missing writer registry implicitly", () =>
@@ -209,7 +210,7 @@ it.effect("refuses to initialize a missing writer registry implicitly", () =>
     );
     expect(Exit.isFailure(result)).toBe(true);
     expect(yield* fs.exists(`${home}/.config/t3-task-cache/writers.json`)).toBe(false);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("keeps existing authorization if credential publication fails", () =>
@@ -243,5 +244,5 @@ it.effect("keeps existing authorization if credential publication fails", () =>
     );
     expect(Exit.isFailure(result)).toBe(true);
     expect(yield* fs.readFileString(`${state}/writers.json`)).toBe(original);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );

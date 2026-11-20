@@ -1,3 +1,12 @@
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
+import {
+  ConnectionBlockedError,
+  ConnectionTransientError,
+} from "@t3tools/client-runtime/connection";
+import { EnvironmentRpcUnavailableError } from "@t3tools/client-runtime/rpc";
+import * as Cause from "effect/Cause";
+import * as Schema from "effect/Schema";
 import type { RefObject } from "react";
 import type { ChatComposerProps } from "./ChatComposer";
 import {
@@ -32,9 +41,11 @@ import {
 import { assetEnvironment } from "~/state/assets";
 import { copiedComposerAttachmentFile } from "~/lib/copiedComposerAttachments";
 import { countQuestionAttachments, questionAttachmentDraftId } from "../../questionAttachments";
+import { collectInlineContextIds } from "../../lib/composerContextReferences";
 import { elementContextToPreviewAnnotation } from "../../lib/elementContext";
 import { orchestrationEnvironment } from "~/state/orchestration";
 import { pendingDraftWork } from "./pendingDraftWork";
+import { readComposerImageBytes } from "./composerAttachmentFiles";
 import { randomUUID } from "~/lib/utils";
 import { readPreparedConnection } from "~/state/session";
 import { resolveAssetUrl } from "~/assets/assetUrls";
@@ -48,6 +59,10 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { countPreparingComposerImages } from "./preparingComposerImages";
+
+const isUnreachable = Schema.is(
+  Schema.Union([ConnectionTransientError, ConnectionBlockedError, EnvironmentRpcUnavailableError]),
+);
 
 async function downloadAttachmentBlob(url: string): Promise<Blob | null> {
   try {
@@ -64,6 +79,7 @@ async function downloadAttachmentBlob(url: string): Promise<Blob | null> {
  */
 export function useComposerContextImport(input: {
   readonly environmentId: EnvironmentId;
+  readonly linkedEnvironments: ReadonlyMap<EnvironmentId, string>;
   readonly activeThread: ChatComposerProps["activeThread"];
   readonly activeThreadId: ChatComposerProps["activeThreadId"];
   readonly composerDraftTarget: ChatComposerProps["composerDraftTarget"];
@@ -75,11 +91,13 @@ export function useComposerContextImport(input: {
   readonly composerContextRecords: ComposerDraftContextRecords;
   readonly composerImages: ReadonlyArray<ComposerImageAttachment>;
   readonly composerFilesRef: ChatComposerProps["composerFilesRef"];
+  readonly promptRef: RefObject<string>;
   readonly pendingThreadImportsRef: RefObject<Map<string, number>>;
   readonly addComposerFilesToDraft: (files: ComposerFileAttachment[]) => string[];
 }) {
   const {
     environmentId,
+    linkedEnvironments,
     activeThread,
     activeThreadId,
     composerDraftTarget,
@@ -91,6 +109,7 @@ export function useComposerContextImport(input: {
     composerContextRecords,
     composerImages,
     composerFilesRef,
+    promptRef,
     pendingThreadImportsRef,
     addComposerFilesToDraft,
   } = input;
@@ -104,6 +123,9 @@ export function useComposerContextImport(input: {
     (store) => store.addPreviewAnnotation,
   );
   const addComposerDraftThreadContexts = useComposerDraftStore((store) => store.addThreadContexts);
+  const addComposerDraftEnvironmentContexts = useComposerDraftStore(
+    (store) => store.addEnvironmentContexts,
+  );
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
   const loadThreadTranscript = useAtomCommand(orchestrationEnvironment.threadTranscript, {
     reportFailure: false,
@@ -142,15 +164,15 @@ export function useComposerContextImport(input: {
     const fail = (reason: string) => {
       toastManager.add({
         type: "error",
-        title: `Couldn't bring ${record.name} into this message`,
-        description: `${reason} Remove the chip or attach the file again.`,
+        title: m(msg("Couldn't bring {name} into this message", { name: record.name })),
+        description: m(msg("{reason} Remove the chip or attach the file again.", { reason })),
       });
     };
     let file = copiedComposerAttachmentFile(sourceEnvironmentId, record.attachmentId);
     if (!file) {
       const sourceConnection = readPreparedConnection(sourceEnvironmentId);
       if (!sourceConnection) {
-        fail("The environment it came from is not connected.");
+        fail(m(msg("The environment it came from is not connected.")));
         return;
       }
       const result = await createAssetUrl({
@@ -162,15 +184,35 @@ export function useComposerContextImport(input: {
           ? resolveAssetUrl(sourceConnection.httpBaseUrl, result.value.relativeUrl)
           : null;
       if (!url) {
-        fail("The original attachment is no longer available.");
+        const cause = result._tag === "Failure" ? Cause.squash(result.cause) : null;
+        fail(
+          isUnreachable(cause)
+            ? m(msg("The environment it came from is not reachable right now."))
+            : m(msg("The original attachment is no longer available.")),
+        );
         return;
       }
       const blob = await downloadAttachmentBlob(url);
       if (!blob) {
-        fail("Downloading it from the source failed.");
+        fail(m(msg("Downloading it from the source failed.")));
         return;
       }
       file = new File([blob], record.name, { type: record.mimeType || blob.type });
+      if (record.kind === "image") await readComposerImageBytes(file);
+      // Question attachments have no inline reference; annotations can own their screenshots.
+      const references = new Set(collectInlineContextIds(promptRef.current));
+      if (
+        !questionAttachmentTarget &&
+        !references.has(toKindScopedComposerContextId(record.kind, localId)) &&
+        !(
+          record.kind === "image" &&
+          references.has(previewAnnotationContextId(localId)) &&
+          getComposerDraft(composerDraftTarget)?.previewAnnotations.some(
+            (annotation) => annotation.id === localId,
+          )
+        )
+      )
+        return;
     }
     // The draft these bytes belong to may have been sent or switched away from while they
     // downloaded. Dropping them here keeps them out of whatever draft is open now.
@@ -191,7 +233,7 @@ export function useComposerContextImport(input: {
       (pendingThreadImportsRef.current.get(importTargetKey) ?? 0) > 0 &&
       countReservedAttachments() >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS
     ) {
-      fail("The attachment limit has been reached.");
+      fail(m(msg("The attachment limit has been reached.")));
       return;
     }
     if (record.kind === "image") {
@@ -206,6 +248,7 @@ export function useComposerContextImport(input: {
             sizeBytes: file.size,
             previewUrl: URL.createObjectURL(file),
             file,
+            ...(record.source ? { source: record.source } : {}),
           },
         ],
         {
@@ -216,7 +259,7 @@ export function useComposerContextImport(input: {
         },
       );
       if (!accepted.includes(localId))
-        fail("The draft rejected this attachment (duplicate or attachment limit reached).");
+        fail(m(msg("The draft rejected this attachment (duplicate or attachment limit reached).")));
     } else {
       const accepted = addComposerFilesToDraft([
         {
@@ -229,7 +272,7 @@ export function useComposerContextImport(input: {
         },
       ]);
       if (!accepted.includes(localId))
-        fail("The draft rejected this attachment (duplicate or attachment limit reached).");
+        fail(m(msg("The draft rejected this attachment (duplicate or attachment limit reached).")));
     }
   };
   const importAttachmentRecord = async (
@@ -266,7 +309,7 @@ export function useComposerContextImport(input: {
     for (const candidate of orderedRecords) {
       // Producer ids fold into context ids, so two different excerpts can collide. Only skip
       // when the draft already holds the same payload; a colliding but different record is
-      // re-minted under a fresh id so both survive the paste.
+      // re-minted under a fresh id so both survive the paste. Threads resolve below.
       const record = asKnownContextRecord(candidate);
       if (!record) continue;
       // A reminted annotation needs its screenshot under the new annotation id.
@@ -299,7 +342,7 @@ export function useComposerContextImport(input: {
                     ? existing.record.id
                     : undefined,
                 })
-              : existing?.kind === "thread"
+              : existing?.kind === "thread" || existing?.kind === "environment"
                 ? existing.record
                 : existing
                   ? (uploadedContextRecordFromDraft(existing) ?? undefined)
@@ -307,7 +350,7 @@ export function useComposerContextImport(input: {
       if (
         existingRecord &&
         isSameComposerContextPayload(existingRecord, record) &&
-        (record.kind !== "thread" || threadDraftTarget === attachmentDraftTarget)
+        record.kind !== "thread"
       ) {
         if (record.kind === "preview-annotation" && record.screenshotContextId) {
           skippedDependentAttachmentIds.add(record.screenshotContextId);
@@ -353,9 +396,35 @@ export function useComposerContextImport(input: {
           break;
         }
         case "thread": {
-          // The agent can only read threads on its own server; a pasted foreign one is dropped.
-          if (record.environmentId !== environmentId) break;
-          addComposerDraftThreadContexts(threadDraftTarget, [record], {
+          // The agent reads threads on its own server and the machines it links to; a pasted
+          // thread from any other machine is dropped.
+          if (
+            record.environmentId !== environmentId &&
+            !linkedEnvironments.has(record.environmentId)
+          )
+            break;
+          // Threads reuse their destination record by identity, reminting only on an ID collision.
+          const threads = getComposerDraft(threadDraftTarget)?.threadContexts ?? [];
+          const attached = threads.find(
+            (thread) =>
+              thread.environmentId === record.environmentId && thread.threadId === record.threadId,
+          );
+          const imported =
+            attached ??
+            (threads.some((thread) => thread.contextId === record.contextId)
+              ? { ...record, contextId: toKindScopedComposerContextId("thread", randomUUID()) }
+              : record);
+          addComposerDraftThreadContexts(threadDraftTarget, [imported], {
+            appendReference: false,
+          });
+          rewritten.set(record.contextId, imported.contextId);
+          break;
+        }
+        case "environment": {
+          // A machine means the same machine from any thread, so a pasted one is kept,
+          // but not in an answer to an agent's question, which carries no machines.
+          if (questionAttachmentTarget !== null) break;
+          addComposerDraftEnvironmentContexts(composerDraftTarget, [record], {
             appendReference: false,
           });
           rewritten.set(record.contextId, record.contextId);

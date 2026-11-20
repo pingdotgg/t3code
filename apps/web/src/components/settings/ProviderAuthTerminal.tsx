@@ -1,4 +1,5 @@
 import type { ProviderAuthResponse } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 import { GhosttyTerminalSurface } from "../../terminal/ghostty/surface";
 import { ensureLocalApi } from "../../localApi";
@@ -14,12 +15,14 @@ export default function ProviderAuthTerminal({
   readonly outputOffset?: number | undefined;
   readonly onResponse: (response: Extract<ProviderAuthResponse, { type: "terminal" }>) => void;
 }) {
+  const gt = useGT();
   const [surface, setSurface] = useState<GhosttyTerminalSurface | null>(null);
   const written = useRef(0);
   const [error, setError] = useState<string | null>(null);
   // The surface captures its callbacks once at creation.
   const respond = useStableCallback(onResponse);
   const offset = outputOffset ?? output.length;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes new auth output into the imperative Ghostty terminal surface
   useEffect(() => {
     if (!surface) return;
     const delta = offset - written.current;
@@ -34,6 +37,8 @@ export default function ProviderAuthTerminal({
       theme: terminalThemeFromApp(element),
       font: { size: 13 },
       onData: (data) => respond({ type: "terminal", data }),
+      onBinary: (data) => respond({ type: "terminal", data, binary: true }),
+      onReply: (data) => respond({ type: "terminal", data }),
       onResize: (cols, rows) => respond({ type: "terminal", data: "", size: { cols, rows } }),
       onSelectionChange: () => {},
       beforeKey: (event) => event.key !== "Tab",
@@ -41,7 +46,7 @@ export default function ProviderAuthTerminal({
         if (/^https?:\/\//i.test(url))
           void ensureLocalApi()
             .shell.openExternal(url)
-            .catch(() => setError("Could not open the provider link."));
+            .catch(() => setError(gt("Could not open the provider link.")));
       },
     })
       .then((terminal) => {
@@ -53,7 +58,7 @@ export default function ProviderAuthTerminal({
         written.current = 0;
         setSurface(terminal);
       })
-      .catch(() => setError("Could not load the sign-in terminal. Cancel and retry sign-in."));
+      .catch(() => setError(gt("Could not load the sign-in terminal. Cancel and retry sign-in.")));
     return () => {
       disposed = true;
       created?.dispose();
@@ -64,7 +69,7 @@ export default function ProviderAuthTerminal({
     <>
       <div
         ref={mountSurface}
-        aria-label="Provider sign-in terminal"
+        aria-label={gt("Provider sign-in terminal")}
         className="relative h-64 overflow-hidden rounded-md border border-border"
       />
       {error ? (

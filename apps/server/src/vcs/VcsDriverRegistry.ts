@@ -51,12 +51,6 @@ function parseDetectionCacheKey(key: string): {
   readonly requestedKind: VcsDriverKind | "auto";
 } {
   const separatorIndex = key.indexOf("\0");
-  if (separatorIndex === -1) {
-    return {
-      cwd: key,
-      requestedKind: "auto",
-    };
-  }
   return {
     requestedKind: key.slice(0, separatorIndex) as VcsDriverKind | "auto",
     cwd: key.slice(separatorIndex + 1),
@@ -91,7 +85,16 @@ export const make = Effect.gen(function* () {
     driver: VcsDriver.VcsDriver["Service"],
     cwd: string,
   ) {
-    const repository = yield* driver.detectRepository(cwd);
+    // Status, review and source control show a repository Git cannot read as none at all.
+    // Checkpoints need the failure, so CheckpointStore asks the driver directly.
+    const repository = yield* driver.detectRepository(cwd).pipe(
+      Effect.catchTags({
+        VcsProcessExitError: (error) =>
+          error.operation === GitVcsDriver.WORK_TREE_PROBE_OPERATION
+            ? Effect.succeed(null)
+            : Effect.fail(error),
+      }),
+    );
     if (!repository) {
       return null;
     }

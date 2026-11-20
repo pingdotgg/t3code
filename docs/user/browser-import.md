@@ -3,7 +3,7 @@
 The desktop app can import cookies from another browser so you can reuse its signed-in sessions
 in the preview browser.
 
-Open **Settings → Integrations → Browser profiles → Add profile**, then choose a browser under
+Open **Settings → Browser → Browser profiles → Add profile**, then choose a browser under
 **Import from**. Close the source browser before importing, and allow an operating-system keyring
 unlock prompt if one appears.
 

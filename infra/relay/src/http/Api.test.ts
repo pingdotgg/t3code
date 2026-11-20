@@ -15,7 +15,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -64,8 +63,10 @@ import * as HookInbox from "../hooks/HookInbox.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllocations.ts";
 import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvider.ts";
+import * as ManagedTunnelLimits from "../environments/ManagedTunnelLimits.ts";
 import * as AgentActivityPublisher from "../agentActivity/AgentActivityPublisher.ts";
 import * as EnvironmentPublishSignatures from "../environments/EnvironmentPublishSignatures.ts";
+import * as T3ChatAccounts from "../t3chat/T3ChatAccounts.ts";
 
 vi.mock("@clerk/backend", () => ({
   createClerkClient: vi.fn(),
@@ -128,6 +129,8 @@ describe("managed endpoint provisioning errors", () => {
           Layer.mock(EnvironmentLinks.EnvironmentLinks, {}),
           Layer.mock(ManagedEndpointProvider.ManagedEndpointProvider, {}),
           Layer.mock(Devices.Devices, {}),
+          Layer.mock(T3ChatAccounts.T3ChatAccounts, { available: false }),
+          Layer.mock(ManagedTunnelLimits.ManagedTunnelLimits, {}),
         ),
       ),
       Layer.provideMerge(
@@ -238,6 +241,8 @@ describe("device listing compatibility", () => {
               return Effect.succeed([iphone, android]);
             },
           }),
+          Layer.mock(T3ChatAccounts.T3ChatAccounts, { available: false }),
+          Layer.mock(ManagedTunnelLimits.ManagedTunnelLimits, {}),
         ),
       ),
       Layer.provideMerge(
@@ -318,6 +323,8 @@ describe("Cloudflare rate-limit retry hint", () => {
           Layer.mock(EnvironmentLinks.EnvironmentLinks, {}),
           Layer.mock(ManagedEndpointProvider.ManagedEndpointProvider, {}),
           Layer.mock(Devices.Devices, {}),
+          Layer.mock(T3ChatAccounts.T3ChatAccounts, { available: false }),
+          Layer.mock(ManagedTunnelLimits.ManagedTunnelLimits, {}),
         ),
       ),
       Layer.provideMerge(
@@ -531,6 +538,8 @@ function layerRelayUnlinkTest(input?: {
         listForUser: () => Effect.die("unused listForUser"),
         getForUser: input?.getForUser ?? (() => Effect.succeed(null)),
         findActiveManagedForEnvironment: () => Effect.die("unused findActiveManagedForEnvironment"),
+        updateLiveActivityPreference: () =>
+          Effect.die("unexpected Live Activity preference update"),
         setHoldWebhooksWhileOffline: () => Effect.die("unused setHoldWebhooksWhileOffline"),
         revokeForUser: input?.revokeForUser ?? (() => Effect.succeed(false)),
       }),
@@ -629,7 +638,10 @@ describe("relay managed tunnel recovery", () => {
         }),
       );
       expect(wrongAction).toMatchObject({ _tag: "Unauthorized" });
-    }).pipe(Effect.provideService(RelayConfiguration.RelayConfiguration, relaySettings)),
+    }).pipe(
+      Effect.provideService(RelayConfiguration.RelayConfiguration, relaySettings),
+      Effect.provide(NodeCryptoLayer.layerSignature),
+    ),
   );
 
   it.effect("rejects a signed registration proof for a different origin", () =>
@@ -671,7 +683,10 @@ describe("relay managed tunnel recovery", () => {
       );
 
       expect(error).toMatchObject({ _tag: "Unauthorized" });
-    }).pipe(Effect.provideService(RelayConfiguration.RelayConfiguration, relaySettings)),
+    }).pipe(
+      Effect.provideService(RelayConfiguration.RelayConfiguration, relaySettings),
+      Effect.provide(NodeCryptoLayer.layerSignature),
+    ),
   );
 
   it.effect("registers recovery for an existing tunnel without provisioning it", () => {
@@ -1066,52 +1081,71 @@ describe("relay managed tunnel recovery", () => {
 });
 
 describe("relay environment unlink", () => {
-  it.effect("drops the unlinked endpoint's held webhooks, even if clearing fails", () => {
-    const cleared: Array<string> = [];
-    const endpointKey = "0123456789abcdef";
-    const unlink = (clearFails: boolean) =>
-      unlinkEnvironmentRecord({
-        userId: "user-1",
-        environmentId: "environment-1",
-        managedEndpointNamespace: "dev",
-      }).pipe(
-        Effect.provide(
-          layerRelayUnlinkTest({
-            getForUser: () => Effect.succeed(linkedEnvironmentRecord),
-            revokeForUser: () => Effect.succeed(true),
-            prepareDeprovision: () =>
-              Effect.succeed({
-                userId: "user-1",
-                environmentId: "environment-1",
-                hostname: "dev-0123456789abcdef.example.test",
-                tunnelId: "tunnel-1",
-                tunnelName: `t3coderelay-managedendpoint-dev-${endpointKey}`,
-                dnsRecordId: "dns-1",
-                readyAt: "2026-07-28T00:00:00.000Z",
-                tunnelReleasedAt: null,
-                origin: null,
-                updatedAt: "2026-07-28T00:00:00.000Z",
-                generation: 1,
-              }),
-            clearInbox: (input) =>
-              clearFails
-                ? Effect.fail(
-                    new HookInbox.HookInboxError({
-                      operation: "clear",
-                      endpointKey: input.endpointKey,
-                      cause: new Error("unavailable"),
-                    }),
-                  )
-                : Effect.sync(() => void cleared.push(input.endpointKey)),
-          }),
-        ),
-      );
-    return Effect.gen(function* () {
-      expect(yield* unlink(false)).toBe(true);
-      expect(cleared).toEqual([endpointKey]);
-      expect(yield* unlink(true)).toBe(true);
-    });
-  });
+  it.effect(
+    "drops the unlinked endpoint's held webhooks, even if clearing or teardown fails",
+    () => {
+      const cleared: Array<string> = [];
+      const endpointKey = "0123456789abcdef";
+      const unlink = (clearFails: boolean, teardownFails = false) =>
+        unlinkEnvironmentRecord({
+          userId: "user-1",
+          environmentId: "environment-1",
+          managedEndpointNamespace: "dev",
+        }).pipe(
+          Effect.provide(
+            layerRelayUnlinkTest({
+              getForUser: () => Effect.succeed(linkedEnvironmentRecord),
+              revokeForUser: () => Effect.succeed(true),
+              prepareDeprovision: () =>
+                Effect.succeed({
+                  userId: "user-1",
+                  environmentId: "environment-1",
+                  hostname: "dev-0123456789abcdef.example.test",
+                  tunnelId: "tunnel-1",
+                  tunnelName: `t3coderelay-managedendpoint-dev-${endpointKey}`,
+                  dnsRecordId: "dns-1",
+                  readyAt: "2026-07-28T00:00:00.000Z",
+                  tunnelReleasedAt: null,
+                  origin: null,
+                  updatedAt: "2026-07-28T00:00:00.000Z",
+                  generation: 1,
+                }),
+              clearInbox: (input) =>
+                clearFails
+                  ? Effect.fail(
+                      new HookInbox.HookInboxError({
+                        operation: "clear",
+                        endpointKey: input.endpointKey,
+                        cause: new Error("unavailable"),
+                      }),
+                    )
+                  : Effect.sync(() => void cleared.push(input.endpointKey)),
+              ...(teardownFails
+                ? {
+                    deprovision: (input) =>
+                      Effect.fail(
+                        new ManagedEndpointProvider.ManagedEndpointDeprovisioningFailed({
+                          userId: input.userId,
+                          environmentId: input.environmentId,
+                          stage: "delete-tunnel",
+                          cause: new Error("unavailable"),
+                        }),
+                      ),
+                  }
+                : {}),
+            }),
+          ),
+        );
+      return Effect.gen(function* () {
+        expect(yield* unlink(false)).toBe(true);
+        expect(cleared).toEqual([endpointKey]);
+        expect(yield* unlink(true)).toBe(true);
+        // A later link under another key shares the inbox, so it is emptied before teardown can fail.
+        yield* unlink(false, true).pipe(Effect.flip);
+        expect(cleared).toEqual([endpointKey, endpointKey]);
+      });
+    },
+  );
 
   it.effect("commits database revocation before deprovisioning the managed endpoint", () => {
     const calls: Array<string> = [];
@@ -1450,14 +1484,14 @@ describe("relay routing fallback", () => {
         })),
       );
       expect(verified.map((input) => input.threadId)).toEqual(threadIds);
-    }).pipe(Effect.scoped),
+    }).pipe(Effect.scoped, Effect.provide(NodeCryptoLayer.layerSignature)),
   );
 });
 
 describe("relay CORS", () => {
   const origin = "https://app.t3.codes";
 
-  class HandlerFailed extends Data.TaggedError("HandlerFailed") {}
+  class HandlerFailed extends Schema.TaggedError<HandlerFailed>()("HandlerFailed", {}) {}
 
   it.effect("adds CORS headers to handler failures and defects", () =>
     Effect.gen(function* () {

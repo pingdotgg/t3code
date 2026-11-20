@@ -20,13 +20,14 @@ import {
 } from "effect/http";
 import * as Socket from "effect/socket/Socket";
 
-import { authenticateMediaRequest } from "../auth/http.ts";
+import { authenticateMediaRequest, failEnvironmentInternal } from "../auth/http.ts";
+import * as SessionStore from "../auth/SessionStore.ts";
 import { assetResponseHeaders } from "../http.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
+import { requestUrl } from "../requestUrl.ts";
 
 const PREVIEW_STREAM_ROUTE_PREFIX = "/api/preview-stream";
-/** Matches `PREVIEW_STREAM_TAB_GONE_CODE` in the client. */
 const TAB_GONE_CODE = 4404;
 
 const DEFAULT_QUALITY = 70;
@@ -54,7 +55,7 @@ const parseMessage = (chunk: Uint8Array | string): unknown => {
 // Request middleware owns tracing, including long-lived WebSocket sessions.
 const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBrowser["Service"]) {
   const request = yield* HttpServerRequest.HttpServerRequest;
-  const url = HttpServerRequest.toURL(request);
+  const url = requestUrl(request);
   if (Option.isNone(url)) return HttpServerResponse.text("Bad Request", { status: 400 });
   if (url.value.pathname === `${PREVIEW_STREAM_ROUTE_PREFIX}/download`) {
     return yield* serveDownload(browser, url.value.searchParams);
@@ -79,7 +80,8 @@ const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBr
   if (threadId.length === 0 || tabId.length === 0) {
     return HttpServerResponse.text("Not Found", { status: 404 });
   }
-  return yield* Effect.scoped(
+  const sessions = yield* SessionStore.SessionStore;
+  const stream = Effect.scoped(
     Effect.gen(function* () {
       const attached = yield* browser
         .attachViewer({
@@ -198,7 +200,9 @@ const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBr
       const receiveInput = reader.pull.pipe(
         Effect.flatMap((chunks) => Effect.forEach(chunks, receive, { discard: true })),
       );
-      return yield* Effect.raceFirst(Effect.forever(sendOutput), Effect.forever(receiveInput));
+      return yield* Effect.raceFirst(Effect.forever(sendOutput), Effect.forever(receiveInput)).pipe(
+        Effect.onInterrupt(() => Effect.sync(() => transport.destroy())),
+      );
     }),
   ).pipe(
     Effect.catchTags({
@@ -208,6 +212,16 @@ const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBr
         ),
     }),
     Effect.orElseSucceed(() => HttpServerResponse.empty()),
+  );
+  return yield* Effect.raceFirst(
+    stream,
+    sessions.awaitInvalidation(session.sessionId).pipe(
+      Effect.as(HttpServerResponse.empty()),
+      Effect.catchTags({
+        SessionCredentialVerificationError: (error) =>
+          failEnvironmentInternal("internal_error", error),
+      }),
+    ),
   );
 });
 

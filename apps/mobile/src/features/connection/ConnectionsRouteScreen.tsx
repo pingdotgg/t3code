@@ -1,18 +1,21 @@
-import { Toolbar } from "../../components/ui/Toolbar";
+import { useGT } from "gt-react-native";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 
 import { useNavigation } from "@react-navigation/native";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useCallback, useState } from "react";
-import { Platform, View } from "react-native";
+import { Fragment, useState } from "react";
+import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { AppBar } from "../../components/ui/AppBar";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { LocalEnvironmentList } from "./LocalEnvironmentList";
 import { PullRequestRoutingSettings } from "./PullRequestRoutingSettings";
+import { LinkedEnvironmentsSection } from "./LinkedEnvironmentsSection";
+import { LinkSeveralEnvironmentsAction } from "./LinkSeveralEnvironments";
 
 export function ConnectionsRouteScreen() {
+  const gt = useGT();
   const {
     connectedEnvironments,
     onReconnectEnvironment,
@@ -23,33 +26,24 @@ export function ConnectionsRouteScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const [expandedId, setExpandedId] = useState<EnvironmentId | null>(null);
-  const handleToggle = useCallback((environmentId: EnvironmentId) => {
+  const handleToggle = (environmentId: EnvironmentId) => {
     setExpandedId((prev) => (prev === environmentId ? null : environmentId));
-  }, []);
+  };
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
-      {Platform.OS === "android" ? (
-        <AndroidScreenHeader
-          title="Environments"
-          onBack={() => navigation.goBack()}
-          actions={[
-            {
-              accessibilityLabel: "Add environment",
-              icon: "plus",
-              onPress: () => navigation.navigate("ConnectionsNew"),
-            },
-          ]}
-        />
-      ) : (
-        <Toolbar placement="right">
-          <Toolbar.Button
-            icon="plus"
-            onPress={() => navigation.navigate("ConnectionsNew")}
-            separateBackground
-          />
-        </Toolbar>
-      )}
+      <AppBar
+        title={gt("Environments")}
+        onClose={() => navigation.goBack()}
+        closeAccessibilityLabel={gt("Close environments")}
+        actions={[
+          {
+            accessibilityLabel: gt("Add environment"),
+            icon: "plus",
+            onPress: () => navigation.navigate("ConnectionsNew"),
+          },
+        ]}
+      />
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
@@ -69,6 +63,20 @@ export function ConnectionsRouteScreen() {
           onSetEnabled={onSetEnvironmentEnabled}
           onUpdate={onUpdateEnvironment}
         />
+        {connectedEnvironments
+          .filter((environment) => environment.connectionState === "connected")
+          .map((environment) => (
+            <Fragment key={environment.environmentId}>
+              <LinkedEnvironmentsSection
+                environmentId={environment.environmentId}
+                environmentLabel={environment.environmentLabel}
+              />
+              <LinkSeveralEnvironmentsAction
+                environmentId={environment.environmentId}
+                environmentLabel={environment.environmentLabel}
+              />
+            </Fragment>
+          ))}
         <PullRequestRoutingSettings />
       </ScrollView>
     </View>

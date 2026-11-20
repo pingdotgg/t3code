@@ -11,6 +11,7 @@ import type { MarkdownImageSourceResolver } from "./SelectableMarkdownText.types
 export function useRetryingImageSource(resolve: MarkdownImageSourceResolver | undefined) {
   const latestRef = useRef(resolve);
   const retriesRef = useRef(new Set<() => void>());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed resolver to a ref and retries images that failed under the previous one
   useLayoutEffect(() => {
     latestRef.current = resolve;
     const retries = [...retriesRef.current];
