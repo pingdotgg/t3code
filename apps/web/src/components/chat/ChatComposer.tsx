@@ -1850,19 +1850,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const readComposerSnapshotStable = useStableCallback(readComposerSnapshot);
 
-  const dictationDisabled =
-    !canOperateThread ||
-    environmentUnavailable !== null ||
+  // Another surface owns the composer; a recording into it would land nowhere.
+  const dictationDisplaced =
     projectSelectionRequired ||
     isComposerApprovalState ||
     activePendingIsResponding ||
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
+  const dictationDisabled =
+    !canOperateThread || environmentUnavailable !== null || dictationDisplaced;
   const speechInput = useEnvironmentSpeechInput({
     environmentId,
     projectId: activeProjectId,
     projectName,
     ownerKey: questionAttachmentTarget ?? composerDraftTargetKey,
     disabled: dictationDisabled,
+    discardsRecording: dictationDisplaced,
     label: activeThread?.title ?? null,
     presented: !hiddenThread,
     // A question's answer lives only in this composer, so only the thread draft outlives it.

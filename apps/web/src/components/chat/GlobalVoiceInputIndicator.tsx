@@ -15,8 +15,16 @@ import { ComposerSpeechRecordingPill } from "./ComposerSpeechButton";
  */
 export function GlobalVoiceInputIndicator({ hidden = false }: { hidden?: boolean }) {
   const gt = useGT();
-  const { prepared, grantId, cloudProvider, cloudModel } = useVoiceTranscriptionDestination();
-  const session = useRetainedVoiceInputSession({ prepared, grantId, cloudProvider, cloudModel });
+  const { environmentId, prepared, grantId, retainOnDisconnect, cloudProvider, cloudModel } =
+    useVoiceTranscriptionDestination();
+  const session = useRetainedVoiceInputSession({
+    environmentId,
+    prepared,
+    grantId,
+    retainOnDisconnect,
+    cloudProvider,
+    cloudModel,
+  });
   const { state, target, recordingStartedAt } = useVoiceInputSessionSnapshot(session);
   const presented = useVoiceOwnerPresented(target?.ownerKey ?? null);
   const { level } = useVoiceInputSessionActivity(

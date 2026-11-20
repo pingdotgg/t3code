@@ -170,6 +170,7 @@ it.each([{ cpu: null, accelerated: 2.1 }, { cpu: 5, accelerated: null }, { accel
         label: prepared.label,
         grantId: "test",
         prepared,
+        retainOnDisconnect: true,
       }),
       async () => {
         const previous = getClientSettings();
@@ -303,7 +304,13 @@ it("tests the selected model after download and preserves its transcript across 
   const transcript = "Keep this transcript.";
   using _scope = vi.mocked(useEnvironmentScope).mockReturnValue(true);
   await vi.mocked(useVoiceTranscriptionDestination).withImplementation(
-    () => ({ environmentId: target.environmentId, label: target.label, grantId: "test", prepared }),
+    () => ({
+      environmentId: target.environmentId,
+      label: target.label,
+      grantId: "test",
+      prepared,
+      retainOnDisconnect: true,
+    }),
     async () => {
       await vi.mocked(useEnvironmentSpeechInput).withImplementation(
         (input) => ({
@@ -486,6 +493,7 @@ it.each([
       label: target.label,
       grantId: "test",
       prepared,
+      retainOnDisconnect: true,
     }));
     await using screen = await render(
       <SettingsScopeProvider search={{}} onChange={() => {}}>
@@ -562,7 +570,13 @@ it("recovers from a failed download progress poll without notifying, but reports
   });
   using notify = vi.spyOn(toastManager, "add").mockReturnValue("test");
   await vi.mocked(useVoiceTranscriptionDestination).withImplementation(
-    () => ({ environmentId: target.environmentId, label: target.label, grantId: "test", prepared }),
+    () => ({
+      environmentId: target.environmentId,
+      label: target.label,
+      grantId: "test",
+      prepared,
+      retainOnDisconnect: true,
+    }),
     async () => {
       const panel = (key: string) => (
         <SettingsScopeProvider search={{}} onChange={() => {}}>

@@ -38,9 +38,12 @@ const mocks = vi.hoisted(() => ({
   voiceCapable: new Set<string>(),
   cloudVoiceCapable: new Set<string>(),
   canDictate: new Set<string>(),
+  scopeLookupFailed: new Set<string>(),
   prepared: new Map<string, unknown>(),
   primaryEnvironmentId: "primary-env",
   statusRequests: [] as string[],
+  statusStarted: 0,
+  statusDelay: null as Promise<void> | null,
   statusUnavailable: false,
   statusTier: "accelerated" as "cpu" | "accelerated",
   modelState: "ready" as "ready" | "missing-model",
@@ -69,6 +72,8 @@ vi.mock("../components/sidebar/mainAppLocation", () => ({
 }));
 vi.mock("../state/session", () => ({
   useEnvironmentScope: (id: string) => mocks.canDictate.has(id),
+  useEnvironmentScopeDenied: (id: string) =>
+    !mocks.canDictate.has(id) && !mocks.scopeLookupFailed.has(id),
   usePreparedConnection: (environmentId: string | null) => {
     if (!environmentId || !mocks.connected.has(environmentId)) return Option.none();
     let prepared = mocks.prepared.get(environmentId);
@@ -123,7 +128,9 @@ vi.mock("../components/ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/client-runtime/voice-input")>()),
   getEnvironmentSpeechStatus: (prepared: PreparedConnection) =>
-    Effect.sync(() => {
+    Effect.promise(async () => {
+      mocks.statusStarted += 1;
+      if (mocks.statusDelay) await mocks.statusDelay;
       mocks.statusRequests.push(prepared.environmentId);
       if (mocks.statusUnavailable) throw new Error("Temporarily offline");
       return {
@@ -180,6 +187,7 @@ vi.mock("./browserVoiceInput", () => ({
     input: Parameters<typeof createBrowserVoiceInputPlatform>[0],
   ) => {
     const environmentId = input.prepared.environmentId;
+    const getPrepared = input.getPrepared ?? (() => input.prepared);
     mocks.platforms.push(environmentId);
     return {
       recorder: {
@@ -196,6 +204,7 @@ vi.mock("./browserVoiceInput", () => ({
           return {
             locale: "en",
             transcribe: async () => {
+              if (!getPrepared()) throw new Error("destination disconnected");
               mocks.transcribeCalls.push(
                 input.cloudProvider
                   ? `${[input.cloudProvider, (input as { cloudModel?: string }).cloudModel].filter(Boolean).join(":")} via ${environmentId}`
@@ -226,8 +235,11 @@ function setup(options: { readonly destination?: string | null } = {}) {
   mocks.voiceCapable = new Set(["primary-env", THREAD_ENV, "env-a", "env-b"]);
   mocks.cloudVoiceCapable.clear();
   mocks.canDictate = new Set(mocks.voiceCapable);
+  mocks.scopeLookupFailed = new Set();
   mocks.prepared.clear();
   mocks.statusRequests = [];
+  mocks.statusStarted = 0;
+  mocks.statusDelay = null;
   mocks.statusUnavailable = false;
   mocks.modelState = "ready";
   mocks.statusTier = "accelerated";
@@ -264,6 +276,8 @@ function Probe(props: {
   readonly showWizard?: boolean;
   readonly ownerKey?: string;
   readonly persistent?: boolean;
+  readonly disabled?: boolean;
+  readonly discardsRecording?: boolean;
 }) {
   const value = useEnvironmentSpeechInput({
     environmentId: THREAD_ENV as EnvironmentId,
@@ -271,6 +285,8 @@ function Probe(props: {
     projectName: props.projectName,
     cleanup: props.cleanup,
     ownerKey: props.ownerKey ?? "draft",
+    disabled: props.disabled,
+    discardsRecording: props.discardsRecording,
     persistentDraft: props.persistent
       ? {
           readStoredText: () => mocks.storedDraft,
@@ -387,6 +403,31 @@ it.each([
   expect(mocks.committed).not.toHaveBeenCalled();
 });
 
+it("does not reopen setup from a missing-model status returned for a replaced connection", async () => {
+  setup({ destination: "env-a" });
+  let resolveStatus!: () => void;
+  mocks.statusDelay = new Promise<void>((resolve) => {
+    resolveStatus = resolve;
+  });
+  mocks.modelState = "missing-model";
+  await using screen = await render(<Probe showWizard />);
+  const startPromise = mocks.voice.start();
+  await vi.waitFor(() => expect(mocks.statusStarted).toBeGreaterThanOrEqual(2));
+
+  mocks.prepared.set("env-a", { environmentId: "env-a", label: "env-a-reconnected" });
+  await screen.rerender(<Probe showWizard />);
+  resolveStatus();
+  await startPromise;
+
+  const reopened = await vi
+    .waitFor(() => expect(mocks.voice.setup.open).toBe(true), { timeout: 100 })
+    .then(() => true, () => false);
+  expect(reopened).toBe(false);
+  expect(mocks.voice.setup.open).toBe(false);
+  expect(mocks.voice.state.phase).toBe("idle");
+  expect(mocks.transcribeCalls).toEqual([]);
+});
+
 it("retries a failed transcription on the same chosen environment", async () => {
   setup({ destination: "env-a" });
   mocks.transcripts = [new Error("inference failed"), "second try"];
@@ -398,6 +439,99 @@ it("retries a failed transcription on the same chosen environment", async () => 
   if (mocks.voice.state.phase === "recording") await act(() => mocks.voice.stop());
   expect(mocks.transcribeCalls).toEqual(["env-a", "env-a"]);
   expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("second try", expect.anything());
+});
+
+it("retains an offline-first destination holder until the same destination reconnects", async () => {
+  setup({ destination: "env-a" });
+  mocks.connected.delete("env-a");
+  mocks.prepared.delete("env-a");
+  await using screen = await render(<Probe />);
+  expect(mocks.voice.state.phase).toBe("idle");
+  expectNoAudioSent();
+
+  mocks.connected.add("env-a");
+  await screen.rerender(<Probe />);
+  await act(() => mocks.voice.start());
+  expect(mocks.voice.state.phase).toBe("recording");
+  await act(() => mocks.voice.stop());
+  expect(mocks.transcribeCalls).toEqual(["env-a"]);
+});
+
+it.each([
+  ["a disconnect keeps it", false, "recording"],
+  ["a displaced composer discards it", true, "idle"],
+] as const)("when the editor is disabled mid-recording, %s", async (_name, discards, phase) => {
+  setup({ destination: "env-a" });
+  await using screen = await render(<Probe />);
+  await act(() => mocks.voice.start());
+  if (!discards) {
+    mocks.connected.delete("env-a");
+    mocks.prepared.delete("env-a");
+  }
+  // The composer's props when its environment drops, or when an approval takes it over.
+  await screen.rerender(<Probe disabled discardsRecording={discards} />);
+  expect(mocks.voice.state.phase).toBe(phase);
+});
+
+it("keeps a stopped recording local while disconnected and retries it on reconnect", async () => {
+  setup({ destination: "env-a" });
+  await using screen = await render(<Probe />);
+  await act(() => mocks.voice.start());
+  mocks.connected.delete("env-a");
+  mocks.prepared.delete("env-a");
+  await screen.rerender(<Probe />);
+  // The editor keeps its stop and cancel controls while the destination is down.
+  expect(mocks.voice.available).toBe(true);
+  await act(() => mocks.voice.stop());
+  expect(mocks.transcribeCalls).toEqual([]);
+  expect(mocks.voice.state).toMatchObject({ phase: "error", errorAction: "retry" });
+
+  mocks.connected.add("env-a");
+  await screen.rerender(<Probe />);
+  await act(() => mocks.voice.start());
+  expect(mocks.transcribeCalls).toEqual(["env-a"]);
+  expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("dictated", expect.anything());
+});
+
+it("keeps a recording alive when its last connected holder unmounts while offline", async () => {
+  setup({ destination: "env-a" });
+  mocks.storedDraft = "";
+  const view = (editor: boolean, indicator: boolean) => (
+    <>
+      {editor ? <Probe ownerKey="thread-a" persistent /> : null}
+      {indicator ? <GlobalVoiceInputIndicator /> : null}
+    </>
+  );
+  await using screen = await render(view(true, false));
+  await act(() => mocks.voice.start());
+  mocks.connected.delete("env-a");
+  mocks.prepared.delete("env-a");
+  // The indicator mounts offline, then the recording's editor unmounts.
+  await screen.rerender(view(true, true));
+  await screen.rerender(view(false, true));
+  mocks.connected.add("env-a");
+  await screen.rerender(view(false, true));
+  await page.getByRole("button", { name: "Finish voice input" }).click();
+  await vi.waitFor(() => expect(mocks.storedDraft).toBe("dictated"));
+  expect(mocks.transcribeCalls).toEqual(["env-a"]);
+});
+
+it.each([
+  ["authorization is denied", "idle"],
+  ["capability is lost", "idle"],
+  ["the session lookup fails", "recording"],
+] as const)("when a connected destination's %s, the recording ends up %s", async (loss, phase) => {
+  setup({ destination: "env-a" });
+  await using screen = await render(<Probe />);
+  await act(() => mocks.voice.start());
+  if (loss === "capability is lost") mocks.voiceCapable.delete("env-a");
+  else mocks.canDictate.delete("env-a");
+  if (loss === "the session lookup fails") mocks.scopeLookupFailed.add("env-a");
+  await screen.rerender(<Probe />);
+  expect(mocks.voice.state.phase).toBe(phase);
+  if (phase === "recording") return;
+  await act(() => mocks.voice.stop());
+  expect(mocks.transcribeCalls).toEqual([]);
 });
 
 it.each([
