@@ -1,14 +1,17 @@
+import { APP_SCHEME } from "./appScheme.ts";
 import { BUILD_HOSTED_APP_URL } from "./connectAuth.ts";
 import { isLoopbackHost } from "./preview.ts";
 
 export function providerAuthReturnUrl(
   value: string | undefined,
   hostedAppUrl: string = BUILD_HOSTED_APP_URL,
+  appScheme: string = APP_SCHEME,
 ): string | undefined {
   if (!value) return undefined;
   try {
     const url = new URL(value);
-    const desktop = ["t3code:", "t3code-dev:"].includes(url.protocol) && url.host === "app";
+    const desktop =
+      [`${appScheme}:`, `${appScheme}-dev:`].includes(url.protocol) && url.host === "app";
     const web =
       ["http:", "https:"].includes(url.protocol) &&
       (isLoopbackHost(url.hostname) || url.origin === hostedAppUrl);
@@ -33,5 +36,15 @@ export function providerAuthReturnUrl(
     return url.toString();
   } catch {
     return undefined;
+  }
+}
+
+/** A redirect to a provider web page, not a loopback listener, lands on a page showing a code to paste. */
+export function providerAuthRedirectShowsCode(authorizationUrl: string): boolean {
+  try {
+    const redirect = new URL(new URL(authorizationUrl).searchParams.get("redirect_uri") ?? "");
+    return redirect.protocol === "https:" && !isLoopbackHost(redirect.hostname);
+  } catch {
+    return false;
   }
 }
