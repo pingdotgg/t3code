@@ -17,37 +17,34 @@ export function useRegenerateProjectIcon() {
     next.add(key);
     appAtomRegistry.set(regeneratingProjectIconKeysAtom, next);
 
-    try {
-      const result = await updateProject({
-        environmentId: ref.environmentId,
-        input: { projectId: ref.projectId, regenerateIcon: true },
-      });
-      if (result._tag === "Failure") {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Failed to regenerate project icon",
-            description:
-              result.cause instanceof Error
-                ? result.cause.message
-                : "Could not generate project icon.",
-          }),
-        );
-      } else {
-        toastManager.add(
-          stackedThreadToast({
-            type: "info",
-            title: "Project icon updated",
-            description: "The icon was successfully regenerated.",
-          }),
-        );
-      }
-      return result;
-    } finally {
-      const current = appAtomRegistry.get(regeneratingProjectIconKeysAtom);
-      const cleaned = new Set(current);
+    const result = await updateProject({
+      environmentId: ref.environmentId,
+      input: { projectId: ref.projectId, regenerateIcon: true },
+    }).finally(() => {
+      const cleaned = new Set(appAtomRegistry.get(regeneratingProjectIconKeysAtom));
       cleaned.delete(key);
       appAtomRegistry.set(regeneratingProjectIconKeysAtom, cleaned);
+    });
+    if (result._tag === "Failure") {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to regenerate project icon",
+          description:
+            result.cause instanceof Error
+              ? result.cause.message
+              : "Could not generate project icon.",
+        }),
+      );
+    } else {
+      toastManager.add(
+        stackedThreadToast({
+          type: "info",
+          title: "Project icon updated",
+          description: "The icon was successfully regenerated.",
+        }),
+      );
     }
+    return result;
   };
 }

@@ -182,7 +182,7 @@ export function buildThreadActionMenuItems(
             id: "regenerate-icon" as const,
             label: state.isRegeneratingIcon ? "Regenerating icon…" : "Regenerate icon",
             icon: "refresh-cw",
-            disabled: state.isRegeneratingIcon,
+            disabled: state.isRegeneratingIcon ?? false,
           },
         ]
       : []),

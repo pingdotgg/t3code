@@ -38,14 +38,16 @@ vi.mock("./useRegenerateProjectIcon", () => ({
   useRegenerateProjectIcon: () => async () => recordEffect("regenerate-icon"),
 }));
 vi.mock("../components/CustomSnoozeDialog", () => ({ requestCustomSnooze: vi.fn() }));
-vi.mock("react", () => ({
-  useCallback: (callback: unknown) => callback,
-  useMemo: (factory: () => unknown) => factory(),
+vi.mock(import("react"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useCallback: <T>(callback: T): T => callback,
+  useMemo: <T>(factory: () => T): T => factory(),
 }));
 vi.mock("@tanstack/react-router", () => ({
   useRouter: () => ({ navigate: async () => recordEffect("project-settings") }),
 }));
-vi.mock("../state/session", () => ({
+vi.mock(import("../state/session"), async (importOriginal) => ({
+  ...(await importOriginal()),
   readEnvironmentScope: (environmentId: string, scope: string) =>
     scope === AuthOrchestrationOperateScope && state.granted.has(environmentId),
 }));
