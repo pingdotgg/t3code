@@ -19,10 +19,20 @@ import * as GitHubPullRequestApi from "../src/server/GitHubPullRequestApi.ts";
 import * as GitHubPullRequestProvider from "../src/server/GitHubPullRequestProvider.ts";
 import * as GitHubRest from "../src/server/GitHubRest.ts";
 
-const [repository, ...numbers] = process.argv.slice(2);
-if (!repository || numbers.length === 0 || numbers.some((number) => !/^\d+$/.test(number))) {
+const repeatsFlag = process.argv.find((arg) => arg.startsWith("--repeats="));
+const repeats = repeatsFlag === undefined ? 1 : Number(repeatsFlag.slice("--repeats=".length));
+const [repository, ...numbers] = process.argv
+  .slice(2)
+  .filter((arg) => !arg.startsWith("--repeats="));
+if (
+  !repository ||
+  numbers.length === 0 ||
+  numbers.some((number) => !/^\d+$/.test(number)) ||
+  !Number.isInteger(repeats) ||
+  repeats < 1
+) {
   throw new Error(
-    "Usage: node packages/source-control-github/scripts/measure-pr-preview.ts owner/repo number...",
+    "Usage: node packages/source-control-github/scripts/measure-pr-preview.ts owner/repo number... [--repeats=N]",
   );
 }
 
@@ -125,20 +135,32 @@ for (const mode of ["detail", "preview"] as const) {
         return yield* Effect.forEach(numbers.map(Number), (number) =>
           Effect.gen(function* () {
             const input = { cwd: process.cwd(), repository, host: "github.com", number };
-            reads.length = 0;
-            const start = performance.now();
-            const value = yield* mode === "detail"
-              ? provider.getChangeRequest(input)
-              : provider.getChangeRequestPreview!(input);
-            const elapsedMs = Math.round(performance.now() - start);
-            const measured = [...reads];
+            const samples: number[] = [];
+            let state: string | undefined;
+            const measured: Read[] = [];
+            // The first sample warms shared caches; min/median separate cold
+            // start from steady state instead of trusting one noisy sample.
+            for (let run = 0; run < repeats; run += 1) {
+              reads.length = 0;
+              const start = performance.now();
+              const value = yield* mode === "detail"
+                ? provider.getChangeRequest(input)
+                : provider.getChangeRequestPreview!(input);
+              samples.push(Math.round(performance.now() - start));
+              state = value.state;
+              measured.push(...reads);
+            }
+            const sorted = [...samples].sort((a, b) => a - b);
+            const medianMs = sorted[Math.floor((sorted.length - 1) / 2)] ?? 0;
             const points = measured.reduce((total, read) => total + read.cost, 0);
             return {
               repository,
               number,
               mode,
-              state: value.state,
-              elapsedMs,
+              state,
+              elapsedMs: medianMs,
+              minMs: sorted[0] ?? 0,
+              repeats,
               points,
               graphqlRequests: measured.reduce((total, read) => total + read.graphqlRequests, 0),
               restRequests: measured.reduce((total, read) => total + read.restRequests, 0),
