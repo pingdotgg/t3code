@@ -1,5 +1,6 @@
 import { pipe } from "effect/Function";
 import * as DocumentText from "../../provider/DocumentText.ts";
+import { brokenRuntimeError } from "../../provider/providerCompatibility.ts";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
@@ -1947,6 +1948,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
     driver: CODEX_PROVIDER,
+    checksVersionAtHandshake: adapterOptions.compatibility !== undefined,
     getCapabilities: Effect.fn("CodexAdapterV2.getCapabilities")(function () {
       return Effect.succeed(CodexProviderCapabilitiesV2);
     }),
@@ -2074,15 +2076,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               version && adapterOptions.compatibility
                 ? yield* adapterOptions.compatibility(version)
                 : undefined;
-            if (advisory?.status === "broken") {
-              const target =
-                advisory.recommendedVersion ?? advisory.recommendedRange ?? "a newer version";
-              return yield* new ProviderSetupError({
+            const refused =
+              version &&
+              brokenRuntimeError({
                 instanceId: adapterOptions.instanceId,
-                operation: "runtime",
-                detail: `Codex ${version} does not work with this T3 Code release. Update Codex to ${target}, then retry.`,
+                name: "Codex",
+                version,
+                advisory,
               });
-            }
+            if (refused) return yield* refused;
             yield* client.notify("initialized", undefined);
             yield* Ref.set(initialized, true);
           }),

@@ -283,6 +283,40 @@ describe("IssueService", () => {
         yield* enterprise.resolveUrl("https://code.acme.test/acme/web/issues/7"),
       ).toMatchObject({ projectId: "ghes", host: "code.acme.test", key: "7", writable: true });
 
+      // A fork lists its upstream's issues and its own, counted once, and may write to both.
+      const fork = project({ id: "fork", repository: "acme/web" });
+      const forked = yield* makeService({
+        projects: [
+          {
+            ...fork,
+            repositoryIdentity: {
+              ...fork.repositoryIdentity!,
+              origin: { canonicalKey: "github.com/me/web" },
+            },
+          },
+        ],
+        trackers: [
+          fakeTracker({
+            listIssues: (input) =>
+              Effect.succeed({ items: [issue(input.scope)], nextCursor: null }),
+            comment: (input) =>
+              Effect.sync(() => {
+                writes.push(`${input.scope}#${input.key}`);
+              }),
+          }),
+        ],
+      });
+      const listed = yield* forked.list({ state: "open" });
+      expect(listed.entries.map((entry) => entry.scope).sort()).toEqual(["acme/web", "me/web"]);
+      expect(listed.trackers).toEqual([expect.objectContaining({ projectCount: 1 })]);
+      yield* forked.comment({
+        ...own,
+        projectId: "fork" as ProjectId,
+        scope: "me/web",
+        body: "ok",
+      });
+      expect(writes).toEqual(["acme/web#1", "me/web#1"]);
+
       // Another host is not reachable through this project's credentials at all.
       const elsewhere = yield* Effect.flip(service.detail({ ...own, host: "ghe.example.test" }));
       expect(elsewhere).toMatchObject({
@@ -613,6 +647,9 @@ describe("IssueService with a standalone tracker", () => {
         ["web", "ENG"],
         ["web", "acme/web"],
       ]);
+      listed.length = 0;
+      yield* bound.list({ state: "open", excludeProjectIds: ["web" as ProjectId] });
+      expect(listed).toEqual(["github github.com acme/api"]);
       // A reference picks the project's tracker by kind; both are the project's own, so writable.
       const linearRef = {
         projectId: "web" as ProjectId,
