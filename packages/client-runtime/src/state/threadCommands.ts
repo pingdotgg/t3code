@@ -454,6 +454,7 @@ export function createThreadEnvironmentAtoms<R, E>(
     unsnooze: rowAction(sent.unsnooze),
     pin: rowAction(sent.pin),
     unpin: rowAction(sent.unpin),
+    setTag: rowAction(sent.setTag),
   };
   const optimistic = createOptimisticThreadLifecycle(snapshotAtom);
   const disconnectedAtom = Atom.family((environmentId: EnvironmentId) =>

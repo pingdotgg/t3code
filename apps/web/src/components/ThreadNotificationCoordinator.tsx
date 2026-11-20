@@ -74,7 +74,12 @@ export function startThreadNotifications(
 ): () => void {
   const pending = new Map<
     string,
-    { environmentId: EnvironmentId; threadId: ThreadId; notification: Notification }
+    {
+      environmentId: EnvironmentId;
+      threadId: ThreadId;
+      notification: Notification;
+      kind: ThreadNotificationKind;
+    }
   >();
   const watched = new Map<EnvironmentId, WatchedEnvironment>();
 
@@ -82,24 +87,37 @@ export function startThreadNotifications(
     environmentId: EnvironmentId,
     threadId: ThreadId,
     notification: Notification,
+    kind: ThreadNotificationKind,
   ) => {
     pending.get(notification.tag)?.notification.close();
-    pending.set(notification.tag, { environmentId, threadId, notification });
+    pending.set(notification.tag, { environmentId, threadId, notification, kind });
     setNotificationBadge(pending.size);
   };
   // Toast ids by thread key, so hiding or opening a thread, or removing its environment, closes them.
-  const openToasts = new Map<string, Array<ToastId>>();
+  const openToasts = new Map<string, Array<{ id: ToastId; kind: ThreadNotificationKind }>>();
   const forgetToast = (key: string, toastId: ToastId) => {
-    const remaining = (openToasts.get(key) ?? []).filter((id) => id !== toastId);
+    const remaining = (openToasts.get(key) ?? []).filter(({ id }) => id !== toastId);
     if (remaining.length === 0) openToasts.delete(key);
     else openToasts.set(key, remaining);
   };
-  const closeToasts = (shouldClose: (key: string) => boolean) => {
-    for (const [key, toastIds] of openToasts) {
-      if (!shouldClose(key)) continue;
-      for (const toastId of toastIds) toastManager.close(toastId);
-      openToasts.delete(key);
+  const closeToasts = (shouldClose: (key: string, kind: ThreadNotificationKind) => boolean) => {
+    for (const [key, toasts] of openToasts) {
+      for (const { id, kind } of toasts) {
+        if (!shouldClose(key, kind)) continue;
+        toastManager.close(id);
+        forgetToast(key, id);
+      }
     }
+  };
+  const closeHiddenCompletions = (environmentId: EnvironmentId, threadId: ThreadId) => {
+    const key = threadKey({ environmentId, threadId });
+    closeToasts((candidate, kind) => candidate === key && kind === "completion");
+    const tag = threadNotificationTag(environmentId, threadId);
+    const entry = pending.get(tag);
+    if (entry?.kind !== "completion") return;
+    entry.notification.close();
+    pending.delete(tag);
+    setNotificationBadge(pending.size);
   };
   const activeThread = () =>
     (router.state.matches.at(-1)?.params ?? {}) as {
@@ -204,7 +222,7 @@ export function startThreadNotifications(
           },
         },
       });
-      openToasts.set(toastKey, [...(openToasts.get(toastKey) ?? []), toastId]);
+      openToasts.set(toastKey, [...(openToasts.get(toastKey) ?? []), { id: toastId, kind }]);
       return;
     }
     if (
@@ -222,7 +240,7 @@ export function startThreadNotifications(
         // Windows drops clicks after a toast moves into Notification Center.
         requireInteraction: kind === "completion" && isWindowsPlatform(navigator.platform),
       });
-      trackNotification(environmentId, thread.id, notification);
+      trackNotification(environmentId, thread.id, notification, kind);
       notification.addEventListener("click", () => {
         notification.close();
         window.focus();
@@ -310,9 +328,13 @@ export function startThreadNotifications(
     entry.gate.retain(new Set(next.keys()));
     const now = Date.now();
     for (const [prior, state] of changed) {
+      const sidebarHidden = isSidebarHiddenThread(state.thread);
+      if (sidebarHidden && (prior === undefined || !isSidebarHiddenThread(prior.thread))) {
+        closeHiddenCompletions(environmentId, state.thread.id);
+      }
       entry.gate.observe(state.thread.id, prior, state, {
         archived: state.thread.archivedAt !== null,
-        quiet: state.raw.latestRunStopRequested === true || isSidebarHiddenThread(state.thread),
+        quiet: state.raw.latestRunStopRequested === true || sidebarHidden,
         snoozed: isSnoozedForNotification(state.thread, state.completedAt, now),
       });
     }

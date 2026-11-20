@@ -1447,6 +1447,7 @@ it.effect("snoozes a bound recurring thread after a completed run and leaves fai
       snoozedUntil: null,
     });
     const outcomeDone = yield* Deferred.make<void>();
+    const failedShellReady = yield* Deferred.make<void>();
     const dispatched = yield* Ref.make<ReadonlyArray<Record<string, unknown>>>([]);
     const sentMessages = yield* Ref.make<ReadonlyArray<string>>([]);
     const layer = ScheduledTaskService.layer.pipe(
@@ -1479,7 +1480,7 @@ it.effect("snoozes a bound recurring thread after a completed run and leaves fai
                 const now = yield* DateTime.now;
                 yield* Ref.update(shellState, (state) => ({
                   ...state,
-                  status: "idle",
+                  status: status === "failed" ? "failed" : "idle",
                   ...(status === "completed"
                     ? {
                         snoozedUntil: DateTime.add(now, { minutes: 1 }),
@@ -1487,6 +1488,7 @@ it.effect("snoozes a bound recurring thread after a completed run and leaves fai
                       }
                     : {}),
                 }));
+                if (status === "failed") yield* Deferred.succeed(failedShellReady, undefined);
                 return { run: { id: "run:1", status }, timedOut: false } as never;
               }),
             dispatch: (command) =>
@@ -1517,7 +1519,7 @@ it.effect("snoozes a bound recurring thread after a completed run and leaves fai
     );
     yield* Effect.gen(function* () {
       const service = yield* ScheduledTaskService.ScheduledTaskService;
-      const { task } = yield* service.upsert({
+      const input = {
         id: taskId,
         title: "Hourly check",
         prompt: "Run hourly check",
@@ -1531,7 +1533,8 @@ it.effect("snoozes a bound recurring thread after a completed run and leaves fai
         modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
         runtimeMode: "full-access",
         interactionMode: "default",
-      });
+      } as const;
+      const { task } = yield* service.upsert(input);
       const ran = yield* service.runNow({ id: task.id });
       yield* Deferred.await(outcomeDone);
       const snoozes = (yield* Ref.get(dispatched)).filter(
@@ -1544,8 +1547,8 @@ it.effect("snoozes a bound recurring thread after a completed run and leaves fai
       // A failed run must stay awake so the user sees it.
       yield* Ref.set(runStatus, "failed");
       yield* service.runNow({ id: task.id });
-      yield* Effect.yieldNow;
-      yield* Effect.yieldNow;
+      yield* Deferred.await(failedShellReady);
+      yield* service.upsert({ ...input, schedule: { type: "interval", everyMs: 7_200_000 } });
       assert.lengthOf(
         (yield* Ref.get(dispatched)).filter((command) => command.type === "thread.snooze"),
         1,

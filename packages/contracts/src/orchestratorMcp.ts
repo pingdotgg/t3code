@@ -729,8 +729,7 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
   ),
   sidebarVisibility: Schema.optional(
     ScheduledTaskSidebarVisibility.annotate({
-      description:
-        "Sidebar: 'default', 'snooze_between_runs' (recurring single-thread only), or 'hidden'.",
+      description: "Snooze requires a recurring task that reuses a thread.",
     }),
   ),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),

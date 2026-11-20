@@ -988,7 +988,7 @@ export const layer = Layer.effect(
                 if (
                   shell !== null &&
                   (shell.snoozedUntil == null || shell.snoozedByTaskId === taskId) &&
-                  !isThreadShellActive(shell)
+                  canSnoozeTaskThread(shell)
                 ) {
                   yield* threadManagement
                     .dispatch({
@@ -997,6 +997,7 @@ export const layer = Layer.effect(
                       threadId,
                       snoozedUntil: currentTask.nextRunAt,
                       scheduledTaskId: taskId,
+                      expectedRunId: run.id,
                     })
                     .pipe(
                       Effect.catchCause((cause) =>
@@ -1544,12 +1545,12 @@ export const layer = Layer.effect(
       },
     );
 
-    const isThreadShellActive = (shell: { readonly status: string }): boolean =>
-      shell.status === "preparing" ||
-      shell.status === "queued" ||
-      shell.status === "starting" ||
-      shell.status === "running" ||
-      shell.status === "waiting";
+    const canSnoozeTaskThread = (shell: {
+      readonly status: string;
+      readonly latestRun?: { readonly status: string } | null;
+    }): boolean =>
+      shell.latestRun?.status !== "failed" &&
+      !["preparing", "queued", "starting", "running", "waiting", "failed"].includes(shell.status);
 
     const unsnoozeTaskBoundThreadIfScheduled = Effect.fn(
       "ScheduledTaskService.unsnoozeTaskBoundThreadIfScheduled",
@@ -1653,7 +1654,7 @@ export const layer = Layer.effect(
             const shell = yield* threadManagement.getThreadShell(threadId);
             if (
               shell !== null &&
-              !isThreadShellActive(shell) &&
+              canSnoozeTaskThread(shell) &&
               (shell.snoozedUntil == null || shell.snoozedByTaskId === next.id)
             ) {
               const id = yield* random.uuidV4();

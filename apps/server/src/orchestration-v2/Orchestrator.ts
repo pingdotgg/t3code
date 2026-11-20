@@ -4828,10 +4828,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const projection = yield* loadProjectionForCommand(command, ["runs", "runtimeRequests"], {
         turnItemTypes: [],
       });
+      const latestRun = latestExecutedRun(projection.runs);
       if (
         command.scheduledTaskId !== undefined &&
         ((thread.snoozedUntil != null && thread.snoozedByTaskId !== command.scheduledTaskId) ||
-          projection.runs.some((run) => run.status === "queued" || isActiveRun(run)))
+          latestRun?.status === "failed" ||
+          (command.expectedRunId !== undefined && latestRun?.id !== command.expectedRunId) ||
+          projection.runs.some((run) => run.status === "queued" || isActiveRun(run)) ||
+          projection.runtimeRequests.some((request) => request.status === "pending"))
       )
         return;
       const parsedSnoozedUntil = DateTime.make(command.snoozedUntil);
@@ -16004,6 +16008,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           planned.events.length > 0 ||
           isUnobservedAcknowledgement(command) ||
           command.type === "thread.background-work.settle" ||
+          ((command.type === "thread.snooze" || command.type === "thread.unsnooze") &&
+            command.scheduledTaskId !== undefined) ||
           // A stale visit changes no read state.
           command.type === "thread.visit" ||
           // A read can answer a watch again before a push's reopen lands; nothing is left to clear.
