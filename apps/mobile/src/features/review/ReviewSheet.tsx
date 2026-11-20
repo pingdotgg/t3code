@@ -124,6 +124,7 @@ function ReviewHeader(
                       ),
                       {
                         ...sectionAction(props.sectionMenu.latestTurn, gt("Latest turn")),
+                        id: `section:${LATEST_TURN_SECTION_ID}`,
                         selected: props.followsLatestTurn,
                         onPress: () => props.onSelectSection(LATEST_TURN_SECTION_ID),
                       },
