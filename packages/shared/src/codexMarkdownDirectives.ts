@@ -318,7 +318,23 @@ function transformCodexDirectives(node: MarkdownAstNode, source: string, insideL
   }
 }
 
-function attachCodexDirectives(this: Processor) {
+type WebCitationField = readonly [node: MarkdownAstNode, key: "value" | "url", text: string];
+
+function webCitationFields(node: MarkdownAstNode, fields: WebCitationField[]): WebCitationField[] {
+  for (const key of ["value", "url"] as const) {
+    const text = node[key];
+    if (text?.includes(WEB_CITATION_OPEN)) fields.push([node, key, text]);
+  }
+  for (const child of node.children ?? []) webCitationFields(child, fields);
+  return fields;
+}
+
+interface CodexDirectiveOptions {
+  /** User-authored text shows web citation markers as typed; only assistant output hides them. */
+  readonly keepWebCitations?: boolean;
+}
+
+function attachCodexDirectives(this: Processor, options: CodexDirectiveOptions = {}) {
   const data = this.data();
   const micromarkExtensions = data.micromarkExtensions ?? (data.micromarkExtensions = []);
   const fromMarkdownExtensions = data.fromMarkdownExtensions ?? (data.fromMarkdownExtensions = []);
@@ -326,7 +342,9 @@ function attachCodexDirectives(this: Processor) {
   fromMarkdownExtensions.push(CODEX_DIRECTIVE_FROM_MARKDOWN);
 
   return (tree: unknown, file: MarkdownFile) => {
+    const kept = options.keepWebCitations ? webCitationFields(tree as MarkdownAstNode, []) : [];
     transformCodexDirectives(tree as MarkdownAstNode, String(file.value));
+    for (const [node, key, text] of kept) node[key] = text;
   };
 }
 

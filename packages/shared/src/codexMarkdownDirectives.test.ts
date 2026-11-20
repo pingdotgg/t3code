@@ -222,3 +222,23 @@ describe("directive copy adapter", () => {
     );
   });
 });
+
+describe("remarkCodexDirectives keepWebCitations", () => {
+  it("keeps web citation markers as typed in text, labels, and link destinations", () => {
+    const marker = "citeturn0search0";
+    const markdown = `See https://a.dev${marker} and [s](https://b.dev${marker}), :codex-followup[Read ${marker}]{prompt="Read"}`;
+    const processor = unified()
+      .use(remarkParse)
+      .use(remarkGfm)
+      .use(remarkCodexDirectives)
+      .use(remarkCodexDirectives, { keepWebCitations: true });
+    const tree = processor.runSync(processor.parse(markdown), { value: markdown }) as TestNode;
+    const links = tree.children?.[0]?.children?.filter((node) => node.type === "link") ?? [];
+
+    expect(textContent(tree)).toBe(`See https://a.dev${marker} and s, Read ${marker}`);
+    expect(links.map((link) => link.url)).toEqual([
+      `https://a.dev${marker}`,
+      `https://b.dev${marker}`,
+    ]);
+  });
+});

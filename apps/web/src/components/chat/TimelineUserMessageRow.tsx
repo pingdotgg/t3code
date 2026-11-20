@@ -1,5 +1,6 @@
 import { InlineAudioPreview } from "../files/InlineAudioPreview";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
+import { CHAT_USER_MARKDOWN_REMARK_PLUGINS } from "@t3tools/shared/markdownPipeline";
 import { findRevealRef } from "./markdownFindContext";
 import {
   type EnvironmentId,
@@ -1203,6 +1204,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       className="text-foreground"
       lineBreaks
       parseRawHtml={false}
+      extraRemarkPlugins={CHAT_USER_MARKDOWN_REMARK_PLUGINS}
       renderContextReference={props.renderContextReference}
       headingLevelOffset={MESSAGE_HEADING_LEVEL}
     />
