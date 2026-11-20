@@ -7439,6 +7439,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ) {
       dispatchMode = { type: "queue_after_active" };
     }
+    // An agent's automatic send must not overtake an earlier agent message still queued
+    // (e.g. behind /compact), or the agent receives them out of send order.
+    if (
+      command.deliveryIntent === "auto" &&
+      command.createdBy === "agent" &&
+      (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active")
+    ) {
+      const queuedRuns = projection.runs.filter(
+        (run) => run.status === "queued" && run.queueHeld !== true,
+      );
+      if (queuedRuns.length > 0) {
+        const queuedMessages = yield* projectionStore
+          .getMessagesById(
+            command.threadId,
+            queuedRuns.map((run) => run.userMessageId),
+          )
+          .pipe(mapDispatchError(command));
+        if ([...queuedMessages.values()].some((message) => message.createdBy === "agent")) {
+          dispatchMode = { type: "queue_after_active" };
+        }
+      }
+    }
     // An explicit restart that Stop reached has only its start left, so it
     // queues behind the stopping run like any other start.
     if (
