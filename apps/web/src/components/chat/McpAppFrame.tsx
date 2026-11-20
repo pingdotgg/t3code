@@ -10,6 +10,8 @@ import {
   type McpAppHostContext,
 } from "@t3tools/client-runtime/mcp-apps";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { isStandaloneIssueLink } from "@t3tools/client-runtime/issue-links";
 import {
   clampMcpAppHeight,
   MCP_APP_COLOR_SCHEME_PARAM,
@@ -32,11 +34,16 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { Button } from "~/components/ui/button";
 import { isElectron } from "~/env";
 import { m } from "~/i18n/messages";
+import { useOpenIssueLink } from "~/lib/openIssueLink";
+import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
 import { cn } from "~/lib/utils";
+import { issueTrackerEnvironment } from "~/state/issueTrackers";
+import { useServerConfigs } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
 import { useTurnItemDetail } from "~/state/queries";
 import { mcpAppEnvironment } from "~/state/mcpApps";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { observeResize } from "~/lib/observeResize";
 import { useNativeTitlebarHeight } from "~/lib/windowControlsOverlay";
 
@@ -168,6 +175,23 @@ export function McpAppFrame(props: {
   const updateModelContext = useAtomCommand(mcpAppEnvironment.updateModelContext, {
     reportFailure: false,
   });
+  const conversationRef = scopeThreadRef(props.environmentId, props.conversationThreadId);
+  const openChangeRequestLink = useOpenChangeRequestLink(conversationRef);
+  const openIssueLink = useOpenIssueLink(conversationRef);
+  const readTrackers = useAtomQueryRunner(issueTrackerEnvironment.connections, {
+    reportFailure: false,
+    reportDefect: false,
+  });
+  // Read ahead, as messages do, so a link the app opens resolves inside the click's activation
+  // window; a browser fallback after a slow read would be blocked as a popup.
+  const issuesEnabled =
+    useServerConfigs().get(props.environmentId)?.environment.capabilities.issues === true;
+  const trackers =
+    useEnvironmentQuery(
+      issuesEnabled
+        ? issueTrackerEnvironment.connections({ environmentId: props.environmentId, input: {} })
+        : null,
+    ).data ?? undefined;
 
   // Read live values without rebuilding the host and losing the app session.
   const readLive = useStableCallback(() => ({
@@ -180,6 +204,10 @@ export function McpAppFrame(props: {
     updateModelContext,
     displayMode,
     toolDefinition,
+    openChangeRequestLink,
+    openIssueLink,
+    readTrackers,
+    trackers,
   }));
   const hostRef = useRef<McpAppHost | null>(null);
 
@@ -311,6 +339,29 @@ export function McpAppFrame(props: {
       openLink: async (url) => {
         if (document.activeElement !== frameRef.current || !navigator.userActivation?.isActive) {
           throw new McpAppHostRefusal({ message: "Links open only from a click in the app." });
+        }
+        const current = readLive();
+        // Only a standalone tracker's link needs the bindings. They are normally read already;
+        // a click before that read finishes waits for it.
+        const trackers = !isStandaloneIssueLink(url)
+          ? undefined
+          : (current.trackers ??
+            (await current
+              .readTrackers({ environmentId: current.props.environmentId, input: {} })
+              .then((result) => (result._tag === "Success" ? result.value : undefined))));
+        const click = {
+          metaKey: false,
+          ctrlKey: false,
+          preventDefault: () => undefined,
+          stopPropagation: () => undefined,
+        };
+        if (
+          current.openChangeRequestLink(click, url) ||
+          current.openIssueLink(click, url, undefined, trackers)
+        ) {
+          // The link opened in the conversation's panel, which full screen would cover.
+          setDisplayMode("inline");
+          return;
         }
         window.open(url, "_blank", "noopener,noreferrer");
       },
