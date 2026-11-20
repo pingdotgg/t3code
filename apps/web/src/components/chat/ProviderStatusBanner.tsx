@@ -11,32 +11,15 @@ import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button, InlineButton } from "../ui/button";
 import { m, type MessageResolver } from "../../i18n/messages";
 import { formatProviderDriverKindLabel } from "../../providerModels";
+import { getProviderCompatibilityNote } from "../settings/providerStatus";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { RefreshIcon } from "../ui/refresh-icon";
 
-function getIncompatibleVersion(status: ServerProvider) {
-  const compatibility = status.compatibilityAdvisory;
-  if (status.status === "error" && status.auth.status === "unauthenticated") return null;
-  return compatibility?.status === "broken" ||
-    (status.status === "ready" && compatibility?.status === "unsupported")
-    ? compatibility
-    : null;
-}
-
-export function getProviderStatusBannerKey(status: ServerProvider | null): string | null {
-  if (!status || status.status === "disabled") return null;
-  const incompatible = getIncompatibleVersion(status);
-  if (incompatible) {
-    return [
-      status.instanceId,
-      incompatible.status,
-      status.version ?? "",
-      incompatible.message ?? "",
-    ].join("\u0000");
-  }
-  if (status.status === "ready") return null;
+// A version warning never raises the banner on its own: Orbit owns the CLI version.
+function getProviderStatusBannerKey(status: ServerProvider | null): string | null {
+  if (!status || status.status === "disabled" || status.status === "ready") return null;
   // Antigravity validates credentials at session start; unknown restart auth is not failure.
   if (
     status.driver === "antigravity" &&
@@ -93,11 +76,7 @@ export function useProviderStatusBannerDismissed(bannerKey: string | null): bool
 }
 
 export function hasProviderSetup(status: ServerProvider): boolean {
-  return (
-    status.driver === "antigravity" ||
-    status.setup?.canAuthenticate === true ||
-    status.setup?.canInstall === true
-  );
+  return status.driver === "antigravity" || status.setup?.canAuthenticate === true;
 }
 
 /** Components pass `useMessages()` so the message follows a language switch. */
@@ -105,18 +84,11 @@ export function getProviderStatusMessage(
   status: ServerProvider,
   resolve: MessageResolver = m,
 ): string {
-  if (
-    status.auth.status !== "unauthenticated" &&
-    status.compatibilityAdvisory?.status === "broken" &&
-    status.compatibilityAdvisory.message
-  ) {
-    return status.compatibilityAdvisory.message;
-  }
   if (status.message) return status.message;
   const providerName = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
-  if (!status.installed && hasProviderSetup(status)) {
+  if (!status.installed) {
     return resolve(
-      msg("Open provider setup to install {provider} on this environment.", {
+      msg("{provider} is not on this environment's PATH. Orbit installs it.", {
         provider: formatProviderDriverKindLabel(status.driver),
       }),
     );
@@ -174,29 +146,18 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
 
   const providerName = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
   const isUnauthenticated = status.status === "error" && status.auth.status === "unauthenticated";
-  const incompatible = getIncompatibleVersion(status);
   const title = isUnauthenticated
     ? gt("{provider} is unauthenticated", { provider: providerName })
-    : incompatible
-      ? incompatible.status === "broken"
-        ? gt("{provider} {version} is known to be broken", {
-            provider: providerName,
-            version: status.version ?? "",
-          })
-        : gt("{provider} {version} is unsupported", {
-            provider: providerName,
-            version: status.version ?? "",
-          })
-      : gt("{provider} provider status", { provider: providerName });
-  const message = incompatible?.message ?? getProviderStatusMessage(status, messages);
-  const isWarning =
-    incompatible?.status !== "broken" && (status.status === "warning" || incompatible !== null);
+    : gt("{provider} provider status", { provider: providerName });
+  const message = getProviderStatusMessage(status, messages);
+  const compatibilityNote = getProviderCompatibilityNote(status.compatibilityAdvisory, messages);
+  const isWarning = status.status === "warning";
 
   return (
     <div className="pointer-events-auto mx-auto w-fit max-w-[calc(100%-2rem)] pt-3">
       <Alert
         variant={isWarning ? "warning" : "error"}
-        role={incompatible && incompatible.status !== "broken" ? "status" : "alert"}
+        role="alert"
         surface="glass"
         controlAlignment="first-line"
       >
@@ -210,6 +171,9 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
                 {message}
               </TooltipPopup>
             </Tooltip>
+            {compatibilityNote ? (
+              <p className="text-muted-foreground text-xs">{compatibilityNote}</p>
+            ) : null}
             <div className="flex flex-wrap items-center justify-end gap-3">
               {onOpenProviderSetup && hasProviderSetup(status) ? (
                 <InlineButton onClick={() => onOpenProviderSetup(status.instanceId)}>

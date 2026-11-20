@@ -35,7 +35,6 @@ const untrackedRpcAckMethods = new Set<string>([
   WS_METHODS.sourceControlSignInWait,
 ]);
 const longRunningRpcAckMethods = new Set<string>([
-  WS_METHODS.serverUpdateProvider,
   WS_METHODS.serverRefreshProviders,
   WS_METHODS.serverUpdateServer,
   WS_METHODS.vcsRefreshStatus,

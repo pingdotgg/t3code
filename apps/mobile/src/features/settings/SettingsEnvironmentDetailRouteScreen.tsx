@@ -4,12 +4,7 @@ import { T, useGT, useMessages, Var } from "gt-react-native";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtom, useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import {
-  AuthProvidersManageScope,
-  AuthOrchestrationReadScope,
-  type EnvironmentId,
-  type ServerProvider,
-} from "@t3tools/contracts";
+import { AuthOrchestrationReadScope, type EnvironmentId } from "@t3tools/contracts";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { managedUpdatesDenial } from "@t3tools/client-runtime/contract-labels";
 import { sessionPermissionsUnavailableMessage } from "@t3tools/shared/authScopeOptions";
@@ -36,11 +31,7 @@ import { OutdatedServerUpdateSection } from "./OutdatedServerUpdateSection";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
-import {
-  canMaintainEnvironment,
-  canUpdateEnvironmentProvider,
-  supportsEnvironmentUpdate,
-} from "./environment-maintenance";
+import { canMaintainEnvironment, supportsEnvironmentUpdate } from "./environment-maintenance";
 import { environmentReleaseCheckAtom, releaseCheckValue } from "./environmentUpdateCheck";
 import { appName } from "@t3tools/shared/appName";
 
@@ -74,7 +65,6 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
     useAtomValue(environmentPresentations.presentationAtom(environmentId))?.entry
       .serverUpdateRequired === true;
   const updateServer = useAtomCommand(serverEnvironment.updateServer);
-  const updateProvider = useAtomCommand(serverEnvironment.updateProvider);
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders);
   const [connectionExpanded, setConnectionExpanded] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
@@ -95,7 +85,6 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
       (provider) =>
         provider.updateState?.status === "running" || provider.updateState?.status === "queued",
     ) ?? false;
-  const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const canRead = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
   const busy = !connected || pending !== null || running || providerBusy;
   const disabled = !allowed || busy;
@@ -169,25 +158,6 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
         },
       ],
     );
-  }
-
-  function requestProviderUpdate(provider: ServerProvider) {
-    if (
-      busy ||
-      !readEnvironmentScope(environmentId, AuthProvidersManageScope) ||
-      !canUpdateEnvironmentProvider(provider)
-    )
-      return;
-    void run(provider.instanceId, async () => {
-      const result = await updateProvider({
-        environmentId,
-        input: {
-          provider: provider.driver,
-          instanceId: provider.instanceId,
-        },
-      });
-      if (AsyncResult.isFailure(result)) throw squashAtomCommandFailure(result);
-    });
   }
 
   return (
@@ -377,64 +347,23 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                             </Text>
                           </View>
                           <Text className="text-sm text-foreground-muted">
-                            {provider.versionAdvisory?.latestVersion
-                              ? gt("{version} · Latest {latest}", {
-                                  version: provider.installed
-                                    ? (provider.version ?? gt("Version unknown"))
-                                    : gt("Not installed"),
-                                  latest: provider.versionAdvisory.latestVersion,
-                                })
-                              : provider.installed
+                            {gt("{version} · Managed by Orbit", {
+                              version: provider.installed
                                 ? (provider.version ?? gt("Version unknown"))
-                                : gt("Not installed")}
+                                : gt("Not installed"),
+                            })}
                           </Text>
-                          {provider.updateState && provider.updateState.status !== "idle" ? (
-                            <Text
-                              selectable
-                              className={
-                                provider.updateState.status === "failed"
-                                  ? "text-sm text-danger-foreground"
-                                  : "text-sm text-foreground-muted"
-                              }
-                            >
-                              {provider.updateState.message ??
-                                {
-                                  queued: gt("Update queued"),
-                                  running: gt("Update running"),
-                                  succeeded: gt("Update succeeded"),
-                                  failed: gt("Update failed"),
-                                  unchanged: gt("Update unchanged"),
-                                }[provider.updateState.status]}
-                            </Text>
-                          ) : null}
-                          {provider.compatibilityAdvisory?.message ? (
-                            <Text selectable className="text-sm text-foreground-muted">
-                              {provider.compatibilityAdvisory.message}
-                            </Text>
-                          ) : null}
                           {provider.unavailableReason || provider.message ? (
                             <Text selectable className="text-sm text-foreground-muted">
                               {provider.unavailableReason ?? provider.message}
                             </Text>
                           ) : null}
-                          {provider.versionAdvisory?.status === "behind_latest" &&
-                          !provider.versionAdvisory.canUpdate ? (
-                            <Text className="text-sm text-foreground-muted">
-                              <T>Update this provider on the environment's machine.</T>
+                          {provider.compatibilityAdvisory?.message ? (
+                            <Text selectable className="text-xs text-foreground-muted">
+                              {provider.compatibilityAdvisory.message}
                             </Text>
                           ) : null}
                         </View>
-                        {canUpdateEnvironmentProvider(provider) ? (
-                          <SettingsActionRow
-                            icon="arrow.up.circle"
-                            label={gt("Update {provider}", {
-                              provider: provider.displayName ?? provider.driver,
-                            })}
-                            disabled={busy || !canManageProviders}
-                            loading={pending === provider.instanceId}
-                            onPress={() => requestProviderUpdate(provider)}
-                          />
-                        ) : null}
                       </View>
                     ))}
                 </SettingsSection>

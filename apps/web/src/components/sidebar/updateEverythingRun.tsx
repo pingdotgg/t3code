@@ -55,10 +55,7 @@ function updateRunMachines(update: (machine: UpdateRunMachine) => UpdateRunMachi
 export function settleUpdateRunMachine(
   environmentId: EnvironmentId,
   failure: string | null,
-  {
-    serverUpdated = false,
-    providerFailure,
-  }: { readonly serverUpdated?: boolean; readonly providerFailure?: string | null } = {},
+  { serverUpdated = false }: { readonly serverUpdated?: boolean } = {},
 ): void {
   updateRunMachines((machine) =>
     machine.environmentId === environmentId
@@ -67,7 +64,6 @@ export function settleUpdateRunMachine(
           result: failure === null ? "done" : "failed",
           failure,
           ...(serverUpdated ? { server: null } : {}),
-          ...(providerFailure === undefined ? {} : { providerFailure }),
         }
       : machine,
   );
@@ -87,41 +83,35 @@ export function retryFailedUpdateRunServers(
   ) => Promise<ServerUpdateOutcome>,
 ): void {
   const failed = (appAtomRegistry.get(updateEverythingRunAtom)?.machines ?? []).flatMap(
-    (machine) =>
-      machine.result === "failed" && machine.server !== null
-        ? [{ target: machine.server, providerFailure: machine.providerFailure }]
-        : [],
+    (machine) => (machine.result === "failed" && machine.server !== null ? [machine.server] : []),
   );
   const pending: typeof failed = [];
-  for (const entry of failed) {
+  for (const target of failed) {
     // The host rejects a same-version update; a server that came back on the target is done.
     if (
       runsVersion(
-        appAtomRegistry.get(serverEnvironment.configValueAtom(entry.target.environmentId)),
-        entry.target.targetVersion,
+        appAtomRegistry.get(serverEnvironment.configValueAtom(target.environmentId)),
+        target.targetVersion,
       )
     ) {
-      settleUpdateRunMachine(entry.target.environmentId, entry.providerFailure, {
-        serverUpdated: true,
-      });
+      settleUpdateRunMachine(target.environmentId, null, { serverUpdated: true });
     } else {
-      pending.push(entry);
+      pending.push(target);
     }
   }
-  const targets = pending.map(({ target }) => target);
-  const retried = new Set(targets.map((target) => target.environmentId));
+  const retried = new Set(pending.map((target) => target.environmentId));
   const startedAt = Date.now();
   updateRunMachines((machine) =>
     retried.has(machine.environmentId)
       ? { ...machine, result: null, failure: null, startedAt }
       : machine,
   );
-  for (const { target, providerFailure } of pending) {
+  for (const target of pending) {
     void update(target, { quiet: true }).then((outcome) =>
       settleUpdateRunMachine(
         target.environmentId,
         outcome.status === "updated"
-          ? providerFailure
+          ? null
           : outcome.status === "failed"
             ? outcome.message
             : m(msg("Could not start the update")),
@@ -203,7 +193,6 @@ const SavedResult = Schema.Struct({
   savedAt: Schema.Number,
   localVersion: Schema.NullOr(Schema.String),
   updatedServers: Schema.Number,
-  updatedProviders: Schema.Number,
   failures: Schema.Array(Schema.String),
   handedOff: Schema.optional(Schema.Array(HandedOffServer)),
 });
@@ -235,7 +224,6 @@ export function saveUpdateEverythingResult(result: UpdateEverythingResult): void
         savedAt: Date.now(),
         localVersion: result.localVersion,
         updatedServers: result.updatedServers,
-        updatedProviders: result.updatedProviders,
         failures: result.failures,
         handedOff,
       } satisfies typeof SavedResult.Type),
@@ -288,13 +276,11 @@ function followHandedOffServers(servers: ReadonlyArray<HandedOffServer>): void {
     machines: servers.map((server) => ({
       environmentId: server.environmentId,
       label: server.label,
-      updatesProviders: false,
       server: null,
       handedOffVersion: server.targetVersion,
       startedAt: server.startedAt,
       result: null,
       failure: null,
-      providerFailure: null,
     })),
   }));
   let remaining = servers.length;
@@ -330,7 +316,6 @@ function followHandedOffServers(servers: ReadonlyArray<HandedOffServer>): void {
         showUpdateEverythingResult({
           localVersion: null,
           updatedServers,
-          updatedProviders: 0,
           failures,
           restarting: [],
         });

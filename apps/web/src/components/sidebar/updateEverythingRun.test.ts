@@ -24,7 +24,6 @@ function relaunchWhileRestarting(environmentId: EnvironmentId) {
         savedAt: now,
         localVersion: null,
         updatedServers: 0,
-        updatedProviders: 0,
         failures: [],
         handedOff: [{ environmentId, label: "Slow", targetVersion: "9.9.9", startedAt: now }],
       }),
@@ -118,7 +117,6 @@ describe("retryFailedUpdateRunServers", () => {
     const failedMachine = (environmentId: EnvironmentId) => ({
       environmentId,
       label: environmentId,
-      updatesProviders: false,
       server: {
         environmentId,
         serverLabel: environmentId,
@@ -129,7 +127,6 @@ describe("retryFailedUpdateRunServers", () => {
       startedAt: 0,
       result: "failed" as const,
       failure: rejection,
-      providerFailure: null,
     });
     setUpdateEverythingRun(() => ({
       localVersion: null,

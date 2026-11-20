@@ -1,18 +1,10 @@
 import { SettingsGroup } from "./SettingsGroup";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
-import {
-  AuthSettingsWriteScope,
-  AuthProvidersManageScope,
-  AuthOrchestrationReadScope,
-} from "@t3tools/contracts";
+import { AuthSettingsWriteScope, AuthOrchestrationReadScope } from "@t3tools/contracts";
 import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
 import { useAtomValue } from "@effect/atom-react";
 import { connectionErrorText, connectionStatusTitle } from "@t3tools/client-runtime/connection";
-import {
-  errorDisplayMessage,
-  safeErrorLogAttributes,
-  thrownErrorMessage,
-} from "@t3tools/client-runtime/errors";
+import { safeErrorLogAttributes, thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -22,7 +14,6 @@ import {
   defaultInstanceIdForDriver,
   type EnvironmentId,
   type AcpRegistryUrlAuthAction,
-  PROVIDER_DISPLAY_NAMES,
   ProviderDriverKind,
   type ProjectId,
   type ProviderInstanceConfig,
@@ -77,12 +68,6 @@ import {
   connectionPhaseDotClassName,
   connectionPhasePingClassName,
 } from "../ConnectionStatusDot";
-import {
-  isProviderSettingsUpdateCandidate,
-  isProviderUpdateActive,
-  type ProviderSettingsUpdateCandidate,
-} from "../ProviderUpdateLaunchNotification.logic";
-import { ProviderUpdatesAction } from "../ProviderUpdatesAction";
 import { Button } from "../ui/button";
 import {
   Empty,
@@ -95,7 +80,7 @@ import {
 import { ScrollArea } from "../ui/scroll-area";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { stackedThreadToast, toastManager } from "../ui/toast";
+import { toastManager } from "../ui/toast";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
 import { useManagedPolicy } from "~/state/managedPolicy";
 import { ExpandableText } from "./ExpandableText";
@@ -104,7 +89,7 @@ import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { useSecretSources } from "./SecretSourceInput";
 import { TextGeneratorsSettings } from "./TextGeneratorsSettings";
 import { UsageProviderSettings } from "./UsageProviderSettings";
-import { ProviderSetupSection, readAntigravityAuthMethod } from "./ProviderSetupSection";
+import { ProviderSetupSection } from "./ProviderSetupSection";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
 import { CodexSetupSection, CodexManagedRuntimeFields } from "./CodexSetupSection";
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
@@ -173,11 +158,6 @@ const PROVIDER_SETTINGS = providerClients.definitions.map((definition) => ({
   provider: definition.driverKind,
   hasDefaultInstance: definition.hasDefaultInstance !== false,
 }));
-
-function configuredBinaryPath(config: unknown): string {
-  if (config === null || typeof config !== "object" || !("binaryPath" in config)) return "";
-  return typeof config.binaryPath === "string" ? config.binaryPath.trim() : "";
-}
 
 // Subscribe only in the label because every status push restamps all providers' checkedAt.
 function ProviderLastChecked({ environmentId }: { environmentId: EnvironmentId }) {
@@ -597,9 +577,6 @@ export function EnvironmentProviderSettings({
   const refreshServerProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
-  const updateProvider = useAtomCommand(serverEnvironment.updateProvider, {
-    reportFailure: false,
-  });
   const uninstallAcpRegistryManagedBinary = useAtomCommand(
     serverEnvironment.uninstallAcpRegistryManagedBinary,
     { reportFailure: false },
@@ -612,11 +589,7 @@ export function EnvironmentProviderSettings({
   const [selectedInstanceId, setSelectedInstanceId] = useState<ProviderInstanceId | null>(
     targetInstanceId ?? null,
   );
-  const [updatingProviderInstanceIds, setUpdatingProviderInstanceIds] = useState<
-    ReadonlySet<ProviderInstanceId>
-  >(() => new Set());
   const refreshingRef = useRef(false);
-  const updatingInstanceIdsRef = useRef<Set<ProviderInstanceId>>(new Set());
 
   const acceptUrlAuthentication = useStableCallback(
     (instanceId: ProviderInstanceId, action: AcpRegistryUrlAuthAction) => {
@@ -685,54 +658,6 @@ export function EnvironmentProviderSettings({
       }
     })();
   };
-
-  const runProviderUpdate = useStableCallback(
-    async (
-      candidate: Pick<ProviderSettingsUpdateCandidate, "driver" | "instanceId">,
-      targetVersion?: string,
-    ) => {
-      if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
-      // Guard re-entry with a ref; deferred state updates cannot gate dispatch.
-      if (updatingInstanceIdsRef.current.has(candidate.instanceId)) {
-        return;
-      }
-      updatingInstanceIdsRef.current.add(candidate.instanceId);
-      setUpdatingProviderInstanceIds((previous) => new Set(previous).add(candidate.instanceId));
-
-      const result = await updateProvider({
-        environmentId,
-        input: {
-          provider: candidate.driver,
-          instanceId: candidate.instanceId,
-          ...(targetVersion ? { targetVersion } : {}),
-        },
-      });
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: gt("Could not update {provider}", {
-              provider: PROVIDER_DISPLAY_NAMES[candidate.driver] ?? candidate.driver,
-            }),
-            description:
-              error instanceof Error
-                ? (errorDisplayMessage(error, resolveNow) ?? error.message)
-                : gt("The provider update command could not be started."),
-          }),
-        );
-      }
-      updatingInstanceIdsRef.current.delete(candidate.instanceId);
-      setUpdatingProviderInstanceIds((previous) => {
-        if (!previous.has(candidate.instanceId)) {
-          return previous;
-        }
-        const next = new Set(previous);
-        next.delete(candidate.instanceId);
-        return next;
-      });
-    },
-  );
 
   interface InstanceRow {
     readonly instanceId: ProviderInstanceId;
@@ -965,7 +890,6 @@ export function EnvironmentProviderSettings({
   const stableToggleModelFavorite = useStableCallback(toggleModelFavorite);
   const actions: ProviderInstanceRowActions = {
     acceptUrlAuthentication,
-    runProviderUpdate,
     updateInstance,
     enableInstance,
     deleteInstance,
@@ -997,7 +921,6 @@ export function EnvironmentProviderSettings({
         readOnly={readOnly}
         canWriteSettings={canWriteSettings}
         liveProvider={serverProviders.find((candidate) => candidate.instanceId === row.instanceId)}
-        isUpdateDispatching={updatingProviderInstanceIds.has(row.instanceId)}
         showProjectOverride={showProjectOverride}
         projectOverrideValue={
           showProjectOverride
@@ -1051,7 +974,6 @@ export function EnvironmentProviderSettings({
         headerAction={
           // The ghost button's padding would inset its label, so pull the text to the card edge.
           <div className="-me-2 flex min-w-0 items-center gap-2">
-            <ProviderUpdatesAction />
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -1257,10 +1179,6 @@ interface ProviderInstanceRowActions {
     instanceId: ProviderInstanceId,
     action: AcpRegistryUrlAuthAction,
   ) => void;
-  readonly runProviderUpdate: (
-    candidate: Pick<ProviderSettingsUpdateCandidate, "driver" | "instanceId">,
-    targetVersion?: string,
-  ) => Promise<void>;
   readonly updateInstance: (
     instanceId: ProviderInstanceId,
     previous: ProviderInstanceConfig,
@@ -1300,7 +1218,6 @@ function ProviderInstanceRow({
   readOnly,
   canWriteSettings,
   liveProvider,
-  isUpdateDispatching,
   showProjectOverride,
   projectOverrideValue,
   projectOverrideEffectiveEnabled,
@@ -1320,7 +1237,6 @@ function ProviderInstanceRow({
   readonly readOnly: boolean;
   readonly canWriteSettings: boolean;
   readonly liveProvider: ServerProvider | undefined;
-  readonly isUpdateDispatching: boolean;
   readonly showProjectOverride: boolean;
   readonly projectOverrideValue: boolean | undefined;
   readonly projectOverrideEffectiveEnabled: boolean;
@@ -1339,12 +1255,6 @@ function ProviderInstanceRow({
       : undefined;
   const instance = explicitInstance ?? { driver };
   const driverOption = providerClients.get(driver);
-  const updateCandidate =
-    liveProvider !== undefined && isProviderSettingsUpdateCandidate(liveProvider)
-      ? liveProvider
-      : undefined;
-  const isInstanceUpdateRunning =
-    isUpdateDispatching || (liveProvider !== undefined && isProviderUpdateActive(liveProvider));
   const hiddenModels = modelPreferences?.hiddenModels ?? NO_MODELS;
   const modelOrder = modelPreferences?.modelOrder ?? NO_MODELS;
   const favoriteModels = Arr.filterMap(favorites, (favorite) =>
@@ -1360,13 +1270,6 @@ function ProviderInstanceRow({
       }
     : undefined;
   const codexSetupMode = driver === "codex" ? readCodexSetupMode(instance.config) : null;
-  const recommendedVersion = liveProvider?.compatibilityAdvisory?.recommendedVersion;
-  const canInstallRecommended =
-    !readOnly &&
-    liveProvider !== undefined &&
-    Boolean(liveProvider.compatibilityAdvisory?.message) &&
-    Boolean(recommendedVersion) &&
-    liveProvider.versionAdvisory?.canInstallVersion === true;
 
   return (
     <ProviderInstanceCard
@@ -1387,11 +1290,7 @@ function ProviderInstanceRow({
       readOnly={readOnly}
       runtime={
         mode === "editor" && codexSetupMode === "managed" ? (
-          <CodexManagedRuntimeFields
-            environmentId={environmentId}
-            instanceId={instanceId}
-            provider={liveProvider}
-          />
+          <CodexManagedRuntimeFields provider={liveProvider} />
         ) : undefined
       }
       canWriteSettings={canWriteSettings}
@@ -1402,8 +1301,6 @@ function ProviderInstanceRow({
             environmentLabel={environmentLabel}
             instanceId={instanceId}
             provider={liveProvider}
-            binaryPath={configuredBinaryPath(instance.config)}
-            authMethod={readAntigravityAuthMethod(instance.config)}
             enabled={resolveProviderInstanceEnabled(instance)}
             readOnly={readOnly}
             onEnable={() => actions.enableInstance(instanceId, { ...instance, enabled: true })}
@@ -1501,21 +1398,6 @@ function ProviderInstanceRow({
           setProviderModelOrder: { provider: instanceId, modelOrder: nextOrder },
         });
       }}
-      onInstallRecommended={
-        canInstallRecommended
-          ? () => {
-              void actions.runProviderUpdate(liveProvider, recommendedVersion ?? undefined);
-            }
-          : undefined
-      }
-      onRunUpdate={
-        !readOnly && updateCandidate
-          ? () => {
-              if (!isInstanceUpdateRunning) void actions.runProviderUpdate(updateCandidate);
-            }
-          : undefined
-      }
-      isUpdating={isInstanceUpdateRunning}
     />
   );
 }

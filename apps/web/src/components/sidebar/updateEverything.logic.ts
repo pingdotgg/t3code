@@ -434,62 +434,40 @@ function trackSwitchMove(
   return { selfUpdate };
 }
 
-export interface UpdateEverythingSteps<Providers, Servers> {
+export interface UpdateEverythingSteps<Servers> {
   readonly downloadLocal?: () => Promise<boolean>;
-  readonly updateProviders: () => Promise<Providers>;
-  readonly stageServers?: () => ReadonlyMap<EnvironmentId, Promise<unknown>>;
-  readonly updateServers: (
-    staged: ReadonlyMap<EnvironmentId, Promise<unknown>>,
-  ) => Promise<Servers>;
+  readonly updateServers: () => Promise<Servers>;
 }
 
-/** Finish provider installs before server restarts; servers stage meanwhile and each server's
- * update waits only on its own stage. Install this app last when localReady; failed downloads skip
- * only that install. */
-export async function runUpdateEverything<Providers, Servers>(
-  steps: UpdateEverythingSteps<Providers, Servers>,
-): Promise<{
+/** Install this app last when localReady; failed downloads skip only that install. */
+export async function runUpdateEverything<Servers>(steps: UpdateEverythingSteps<Servers>): Promise<{
   readonly localReady: boolean;
-  readonly providers: Providers;
   readonly servers: Servers;
 }> {
-  const staged = new Map(
-    Array.from(steps.stageServers?.() ?? [], ([id, stage]) => [id, stage.catch(() => undefined)]),
-  );
-  const [localReady, remote] = await Promise.all([
+  const [localReady, servers] = await Promise.all([
     steps.downloadLocal?.() ?? Promise.resolve(true),
-    steps
-      .updateProviders()
-      .then(async (providers) => ({ providers, servers: await steps.updateServers(staged) })),
+    steps.updateServers(),
   ]);
-  return { localReady, ...remote };
+  return { localReady, servers };
 }
 
-export type UpdateRunMachineStatus =
-  | "providers"
-  | "waiting"
-  | "downloading"
-  | "restarting"
-  | "done"
-  | "failed";
+export type UpdateRunMachineStatus = "waiting" | "downloading" | "restarting" | "done" | "failed";
 
 export interface UpdateRunMachine {
   readonly environmentId: EnvironmentId;
   readonly label: string;
-  readonly updatesProviders: boolean;
   readonly server: ServerUpdateTarget | null;
   readonly handedOffVersion: string | null;
   readonly startedAt: number;
   readonly result: "done" | "failed" | null;
   readonly failure: string | null;
-  readonly providerFailure: string | null;
 }
 
 export interface UpdateEverythingRun {
   /** Track switches retry through their planner, which re-checks each database. */
   readonly trackSwitch?: boolean;
   readonly localVersion: string | null;
-  readonly phase: "providers" | "servers" | "countdown" | "installing";
+  readonly phase: "servers" | "countdown" | "installing";
   readonly restartAt: number | null;
   readonly machines: ReadonlyArray<UpdateRunMachine>;
 }
@@ -501,7 +479,6 @@ export function resolveUpdateRunMachineStatus(
 ): UpdateRunMachineStatus {
   if (machine.result !== null) return machine.result;
   if (machine.handedOffVersion !== null) return "restarting";
-  if (phase === "providers" && machine.updatesProviders) return "providers";
   if (machine.server !== null && serverState.status === "running") {
     return serverState.stage === "resuming" ? "restarting" : "downloading";
   }
@@ -626,7 +603,6 @@ export function describeUpdateCapsule(
 
 /** `msg()` strings: resolve them with `m` or `useMessages()` where they show. */
 export const RUN_STATUS_LABELS: Record<UpdateRunMachineStatus, string> = {
-  providers: msg("updating providers"),
   waiting: msg("waiting"),
   downloading: msg("downloading"),
   restarting: msg("restarting"),
@@ -637,7 +613,6 @@ export const RUN_STATUS_LABELS: Record<UpdateRunMachineStatus, string> = {
 export interface UpdateEverythingResult {
   readonly localVersion: string | null;
   readonly updatedServers: number;
-  readonly updatedProviders: number;
   readonly failures: ReadonlyArray<string>;
   readonly restarting: ReadonlyArray<string>;
 }
@@ -649,22 +624,16 @@ export function collectUpdateEverythingResult(input: {
     readonly label: string;
     readonly outcome: ServerUpdateOutcome;
   }>;
-  readonly providers: ReadonlyArray<
-    | { readonly status: "interrupted" | "updated" }
-    | { readonly status: "failed"; readonly line: string }
-  >;
 }): UpdateEverythingResult {
   return {
     localVersion: input.localVersion,
     updatedServers: input.servers.filter(({ outcome }) => outcome.status === "updated").length,
-    updatedProviders: input.providers.filter((outcome) => outcome.status === "updated").length,
     restarting: [],
     failures: [
       ...input.localFailures.map((failure) => m(msg("This app: {failure}", { failure }))),
       ...input.servers.flatMap(({ label, outcome }) =>
         outcome.status === "failed" ? [`${label}: ${outcome.message}`] : [],
       ),
-      ...input.providers.flatMap((outcome) => (outcome.status === "failed" ? [outcome.line] : [])),
     ],
   };
 }
@@ -682,7 +651,6 @@ export function getUpdateEverythingToastView(
     {
       app: result.localVersion !== null && result.localVersion === appVersion,
       servers: result.updatedServers,
-      providers: result.updatedProviders,
     },
     m,
   );
@@ -722,11 +690,6 @@ export interface UpdateEverythingPlan {
   readonly servers: ReadonlyArray<
     Pick<ServerUpdateTarget, "environmentId" | "serverLabel" | "selfUpdate" | "targetVersion">
   >;
-  readonly providerMachines: ReadonlyArray<{
-    readonly environmentId: EnvironmentId;
-    readonly label: string;
-    readonly providers: ReadonlyArray<string>;
-  }>;
   readonly skipped: ReadonlyArray<SkippedMachine>;
 }
 
@@ -735,33 +698,17 @@ export interface UpdateEverythingRow {
   readonly label: string;
   readonly app: "this-app" | "server" | "desktop-app" | null;
   readonly skipped: string | null;
-  readonly providers: ReadonlyArray<string>;
 }
 
-/** "Update this app, 2 servers, and 3 providers" as one sentence per combination; null when nothing. */
+/** "Update this app and 2 servers" as one sentence per combination; null when nothing. */
 function updateTargetsSentence(
   verb: "update" | "updated",
-  targets: { readonly app: boolean; readonly servers: number; readonly providers: number },
+  targets: { readonly app: boolean; readonly servers: number },
   resolve: MessageResolver,
 ): string | null {
-  const { app, servers, providers } = targets;
-  const values = { servers, providers };
+  const { app, servers } = targets;
+  const values = { servers };
   const update = verb === "update";
-  if (app && servers > 0 && providers > 0) {
-    return update
-      ? resolve(
-          msg(
-            "Update this app, {servers, plural, one {{servers} server} other {{servers} servers}}, and {providers, plural, one {{providers} provider} other {{providers} providers}}",
-            values,
-          ),
-        )
-      : resolve(
-          msg(
-            "Updated this app, {servers, plural, one {{servers} server} other {{servers} servers}}, and {providers, plural, one {{providers} provider} other {{providers} providers}}",
-            values,
-          ),
-        );
-  }
   if (app && servers > 0) {
     return update
       ? resolve(
@@ -773,36 +720,6 @@ function updateTargetsSentence(
       : resolve(
           msg(
             "Updated this app and {servers, plural, one {{servers} server} other {{servers} servers}}",
-            values,
-          ),
-        );
-  }
-  if (app && providers > 0) {
-    return update
-      ? resolve(
-          msg(
-            "Update this app and {providers, plural, one {{providers} provider} other {{providers} providers}}",
-            values,
-          ),
-        )
-      : resolve(
-          msg(
-            "Updated this app and {providers, plural, one {{providers} provider} other {{providers} providers}}",
-            values,
-          ),
-        );
-  }
-  if (servers > 0 && providers > 0) {
-    return update
-      ? resolve(
-          msg(
-            "Update {servers, plural, one {{servers} server} other {{servers} servers}} and {providers, plural, one {{providers} provider} other {{providers} providers}}",
-            values,
-          ),
-        )
-      : resolve(
-          msg(
-            "Updated {servers, plural, one {{servers} server} other {{servers} servers}} and {providers, plural, one {{providers} provider} other {{providers} providers}}",
             values,
           ),
         );
@@ -820,21 +737,6 @@ function updateTargetsSentence(
           ),
         );
   }
-  if (providers > 0) {
-    return update
-      ? resolve(
-          msg(
-            "Update {providers, plural, one {{providers} provider} other {{providers} providers}}",
-            values,
-          ),
-        )
-      : resolve(
-          msg(
-            "Updated {providers, plural, one {{providers} provider} other {{providers} providers}}",
-            values,
-          ),
-        );
-  }
   return null;
 }
 
@@ -848,27 +750,21 @@ function joinList(parts: ReadonlyArray<string>, resolve: MessageResolver): strin
   );
 }
 
-/** One row per machine: this app's machines first, then servers, provider-only, and skipped. */
+/** One row per machine: this app's machines first, then servers and skipped. */
 export function describeUpdateEverything(
   plan: UpdateEverythingPlan,
   resolve: MessageResolver = m,
 ): {
   readonly summary: string;
   readonly version: string | null;
-  readonly providerCount: number;
   readonly rows: ReadonlyArray<UpdateEverythingRow>;
 } {
-  const providerCount = plan.providerMachines.reduce(
-    (count, machine) => count + machine.providers.length,
-    0,
-  );
   const summary =
     updateTargetsSentence(
       "update",
       {
         app: Boolean(plan.localVersion),
         servers: plan.servers.length,
-        providers: providerCount,
       },
       resolve,
     ) ?? resolve(msg("Update {items}", { items: "" }));
@@ -884,7 +780,6 @@ export function describeUpdateEverything(
       label,
       app: null,
       skipped: null,
-      providers: [],
     };
     rows.set(environmentId, { ...row, ...change });
   };
@@ -901,9 +796,6 @@ export function describeUpdateEverything(
       app: server.selfUpdate === "desktop-managed" ? "desktop-app" : "server",
     });
   }
-  for (const machine of plan.providerMachines) {
-    update(machine.environmentId, machine.label, { providers: machine.providers });
-  }
   for (const machine of plan.skipped) {
     update(machine.environmentId, machine.label, { skipped: machine.reason });
   }
@@ -914,7 +806,6 @@ export function describeUpdateEverything(
       plan.localVersion ??
       plan.servers.find((server) => server.selfUpdate !== "desktop-managed")?.targetVersion ??
       null,
-    providerCount,
     rows: Array.from(rows.values()),
   };
 }

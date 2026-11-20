@@ -69,7 +69,7 @@ import * as ProviderUsageAnalytics from "./telemetry/ProviderUsageAnalytics.ts";
 import * as ModelManifest from "./provider/ModelManifest.ts";
 import * as ResetCreditCoordinator from "./provider/resetCreditCoordinator.ts";
 import * as EventNdjsonLogger from "./provider/EventNdjsonLogger.ts";
-import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as OrbitManagedProviders from "./provider/orbitManagedProviders.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
 import * as OpenCodeServerLedger from "@t3tools/provider-opencode/server/OpenCodeServerLedger";
@@ -125,11 +125,7 @@ import * as ManagedLimits from "./policy/managedLimits.ts";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
 import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
-import * as AntigravityInstallation from "./provider/AntigravityInstallation.ts";
-import * as ProviderInstallation from "./provider/providerInstallation.ts";
-import * as CodexInstallation from "./provider/CodexInstallation.ts";
 import * as ProviderInstallationGate from "./provider/ProviderInstallationGate.ts";
-import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
 import * as ProviderAdapterRegistry from "./orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as ProviderUsageLimitsIngestion from "./provider/ProviderUsageLimitsIngestion.ts";
@@ -651,38 +647,6 @@ const layerThreadPullRequestWorker = Layer.effectDiscard(
   ThreadPullRequestService.make.pipe(Effect.flatMap((service) => service.start())),
 ).pipe(Layer.provide(layerPullRequestService));
 
-const layerProviderInstallationRefresh = Layer.effectDiscard(
-  Effect.gen(function* () {
-    const antigravity = yield* AntigravityInstallation.AntigravityInstallation;
-    const codex = yield* CodexInstallation.CodexInstallation;
-    const instances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
-    const providers = yield* ProviderRegistry.ProviderRegistry;
-    yield* Stream.merge(
-      antigravity.changes.pipe(
-        Stream.changesWith((a, b) => a.installedVersion === b.installedVersion),
-        Stream.drop(1),
-      ),
-      codex.changes.pipe(
-        Stream.changesWith((a, b) => a.installedVersion === b.installedVersion),
-        Stream.drop(1),
-      ),
-    ).pipe(
-      Stream.runForEach((state) =>
-        instances.listInstances.pipe(
-          Effect.flatMap((entries) =>
-            Effect.forEach(
-              entries.filter((instance) => instance.driverKind === state.driver),
-              (instance) => providers.refreshInstance(instance.instanceId),
-              { discard: true },
-            ),
-          ),
-        ),
-      ),
-      Effect.forkScoped,
-    );
-  }),
-);
-
 // The desktop app and the background service start the server again after it exits.
 const layerServerRestart = Layer.effect(
   DatabaseStorage.ServerRestart,
@@ -737,8 +701,6 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     }),
   ).pipe(Layer.provide(DelegatedTaskQuestionReactor.layer), Layer.provide(ProjectionStoreV2.layer)),
   ProviderUsageLimitsIngestion.layer,
-  layerProviderInstallationRefresh,
-  ProviderInstallation.layer,
   ReplayMarkers.layer,
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
 ).pipe(
@@ -766,14 +728,6 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // Provider hydration builds the Claude runner, which reports agents to the same scanner the
   // terminal and preview layers share.
   Layer.provideMerge(layerPortScanner),
-  Layer.provideMerge(
-    Layer.mergeAll(
-      AntigravityInstallation.AntigravityInstallation.layer.pipe(
-        Layer.provide(layerServerSettings),
-      ),
-      CodexInstallation.CodexInstallation.layer,
-    ),
-  ),
 );
 
 const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
@@ -784,7 +738,7 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
       layerProviderEventLoggers,
       ModelManifest.layerModelCatalog.pipe(Layer.provideMerge(ModelManifest.layer)),
       ResetCreditCoordinator.layer,
-      ProviderLatestVersions.layer,
+      OrbitManagedProviders.layerNoLatestVersions,
       McpProviderSessions.layer,
     ),
   ),

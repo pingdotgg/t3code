@@ -539,7 +539,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                         key={target.environmentId}
                         icon="server.rack"
                         label={target.label}
-                        value={gt("Server and provider updates")}
+                        value={gt("Server updates")}
                         onPress={() =>
                           navigation.navigate("SettingsEnvironmentDetail", {
                             environmentId: target.environmentId,
@@ -551,33 +551,16 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                 ) : null}
                 <SettingsSection title={gt("Updates")}>
                   <SettingsSwitchRow
-                    icon="arrow.clockwise"
-                    label={gt("Check provider updates")}
+                    icon="arrow.uturn.forward"
+                    label={gt("Continue after restart")}
                     subtitle={managedSubtitle(
-                      "enableProviderUpdateChecks",
-                      projectSelected
-                        ? gt("Environment-wide setting. Select All projects to change it.")
-                        : gt(
-                            "Check installed provider CLIs for newer versions and fetch model catalog updates. When off, new models may not appear.",
-                          ),
+                      "continueThreadsAfterServerUpdate",
+                      gt("Resume interrupted threads after an update or restart."),
                     )}
-                    value={uniform("enableProviderUpdateChecks")}
-                    disabled={disabledFor("enableProviderUpdateChecks")}
-                    onValueChange={(value) => write({ enableProviderUpdateChecks: value })}
+                    value={uniform("continueThreadsAfterServerUpdate")}
+                    disabled={disabledFor("continueThreadsAfterServerUpdate")}
+                    onValueChange={(value) => write({ continueThreadsAfterServerUpdate: value })}
                   />
-                  <View className="border-t border-border-subtle">
-                    <SettingsSwitchRow
-                      icon="arrow.uturn.forward"
-                      label={gt("Continue after restart")}
-                      subtitle={managedSubtitle(
-                        "continueThreadsAfterServerUpdate",
-                        gt("Resume interrupted threads after an update or restart."),
-                      )}
-                      value={uniform("continueThreadsAfterServerUpdate")}
-                      disabled={disabledFor("continueThreadsAfterServerUpdate")}
-                      onValueChange={(value) => write({ continueThreadsAfterServerUpdate: value })}
-                    />
-                  </View>
                   <View className="border-t border-border-subtle">
                     <SettingsSwitchRow
                       icon="bolt.circle"

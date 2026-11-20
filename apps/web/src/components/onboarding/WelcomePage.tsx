@@ -62,16 +62,12 @@ import {
   type OnboardingProjectGroup,
   splitOnboardingProjectPath,
 } from "../../onboarding/projectImport.logic";
-import {
-  resolveOnboardingProviderInstallCommand,
-  resolveOnboardingProviderLoginCommand,
-} from "../../onboarding/providerReadiness.logic";
+import { resolveOnboardingProviderLoginCommand } from "../../onboarding/providerReadiness.logic";
 import {
   cliTerminalStep,
   codexCardProvider,
   codexNeedsSetup,
   groupWelcomeAgents,
-  isBrokenVersion,
   turnedOnInstance,
   welcomeAgentState,
   welcomeOffersPhone,
@@ -483,14 +479,8 @@ function AgentsSection({
   const showMore = moreOpen ?? false;
   const acpAllowed = isManagedDriverAllowed(serverConfig?.managedPolicy, ACP_REGISTRY_DRIVER_KIND);
   const stateOf = (provider: ServerProvider) => welcomeAgentState(provider, serverConfig?.settings);
-  const needsInstallOrSignIn = (provider: ServerProvider) => {
-    const state = stateOf(provider);
-    return (
-      isInstallableDriver(provider.driver) &&
-      !isBrokenVersion(provider) &&
-      (state === "install" || state === "signIn")
-    );
-  };
+  const needsSignIn = (provider: ServerProvider) =>
+    isInstallableDriver(provider.driver) && stateOf(provider) === "signIn";
   // Codex's card also offers ChatGPT sign-in, which still works when the CLI check failed.
   // Codex setup stays mounted by instance while its status changes, so a sign-in that starts
   // after an install is not lost when the agent moves between groups or briefly leaves the list.
@@ -512,6 +502,7 @@ function AgentsSection({
   const openTerminal = (provider: ServerProvider) => {
     if (
       !isInstallableDriver(provider.driver) ||
+      !provider.installed ||
       serverConfig === null ||
       !readEnvironmentScope(environmentId, AuthTerminalOperateScope)
     )
@@ -521,16 +512,11 @@ function AgentsSection({
       driver: provider.driver,
       providerInstanceId: provider.instanceId,
       cwd: serverConfig.cwd,
-      command: provider.installed
-        ? resolveOnboardingProviderLoginCommand(
-            provider,
-            serverConfig.settings,
-            serverConfig.environment.platform.os,
-          )
-        : resolveOnboardingProviderInstallCommand(
-            provider.driver,
-            serverConfig.environment.platform.os,
-          ),
+      command: resolveOnboardingProviderLoginCommand(
+        provider,
+        serverConfig.settings,
+        serverConfig.environment.platform.os,
+      ),
       keybindings: serverConfig.keybindings,
     });
   };
@@ -604,9 +590,8 @@ function AgentsSection({
         </Button>
       );
     }
-    // Settings updates a broken CLI the way it was installed, including a custom binary path.
-    if (isBrokenVersion(provider))
-      return settingsAction(gt("Update", { $context: "verb, updates an agent CLI" }));
+    // Orbit installs a missing CLI; there is nothing to do here.
+    if (state === "install") return null;
     if (serverConfig !== null && codexNeedsSetup(provider, serverConfig.settings)) {
       const open = codexSetupId === provider.instanceId;
       return (
@@ -621,11 +606,10 @@ function AgentsSection({
         </Button>
       );
     }
-    if (needsInstallOrSignIn(provider)) {
+    if (needsSignIn(provider)) {
       return (
         <TerminalAction
           name={name}
-          signIn={state === "signIn"}
           disabled={
             terminalSession?.providerInstanceId === provider.instanceId ||
             serverConfig === null ||
@@ -643,8 +627,7 @@ function AgentsSection({
   const notes = [
     !canOperateTerminal &&
     [...found, ...available].some(
-      (provider) =>
-        needsInstallOrSignIn(provider) || codexNeedsSetup(provider, serverConfig?.settings),
+      (provider) => needsSignIn(provider) || codexNeedsSetup(provider, serverConfig?.settings),
     )
       ? gt("This connection cannot control terminals.")
       : null,
@@ -1198,17 +1181,15 @@ function OnboardingCodexSetup({
 
 function TerminalAction({
   name,
-  signIn,
   disabled,
   onClick,
 }: {
   readonly name: string;
-  readonly signIn: boolean;
   readonly disabled: boolean;
   readonly onClick: () => void;
 }) {
   const gt = useGT();
-  const label = signIn ? gt("Sign in") : gt("Install");
+  const label = gt("Sign in");
   return (
     <Button
       size="xs"
@@ -1238,23 +1219,17 @@ function AgentRow({
   const name = agentName(provider);
   const gt = useGT();
   const messages = useMessages();
-  // Claude Code and Codex tiles show Install or Set up; other agents that are on say why not.
-  const brokenMessage = isBrokenVersion(provider)
-    ? (provider.compatibilityAdvisory?.message ?? null)
-    : null;
+  // Agents that are on say why they are not ready. Orbit installs a missing CLI.
   const detail =
     state === "install"
-      ? isInstallableDriver(provider.driver)
-        ? null
-        : gt("Not installed")
+      ? gt("{agent} is not on this environment's PATH. Orbit installs it.", { agent: name })
       : compact || state === "ready" || state === "checking"
         ? null
         : state === "attention"
           ? (provider.unavailableReason ??
-            brokenMessage ??
             provider.message ??
             getProviderSummary(provider, messages).headline)
-          : (brokenMessage ?? getProviderSummary(provider, messages).headline);
+          : getProviderSummary(provider, messages).headline;
   return (
     <div className={cn("flex items-center gap-3", compact ? "min-h-9" : "min-h-10 py-1")}>
       <RowIcon>
@@ -1460,7 +1435,7 @@ function AgentInstallTerminal({
             threadRef={threadRef}
             threadId={AGENT_ONBOARDING_THREAD_ID}
             terminalId={terminalId}
-            terminalLabel={gt("Install {agent}", { agent: driver })}
+            terminalLabel={gt("{action}: {agent}", { action: gt("Sign in"), agent: driver })}
             cwd={cwd}
             providerInstanceId={providerInstanceId}
             advancedTypography={advancedTypography}

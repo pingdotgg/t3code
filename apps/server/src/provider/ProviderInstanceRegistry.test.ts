@@ -1,5 +1,4 @@
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import * as CodexInstallation from "./CodexInstallation.ts";
 import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
@@ -180,11 +179,6 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       }),
     ),
     Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-    Layer.provideMerge(
-      Layer.mock(CodexInstallation.CodexInstallation)({
-        managedDirectory: "unused-managed-installation",
-      }),
-    ),
     Layer.provideMerge(Layer.mock(ServerSecretStore.ServerSecretStore)({})),
     Layer.provideMerge(Layer.mock(SecretResolver.SecretResolver)({})),
     Layer.provideMerge(

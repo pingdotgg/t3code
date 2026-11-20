@@ -300,7 +300,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         status: "disabled",
         auth: { status: "unknown" },
         models: [],
-        setup: { canAuthenticate: true, canInstall: true },
+        setup: { canAuthenticate: true, canInstall: false },
         showInteractionModeToggle: false,
         supportsConversationRollback: true,
         supportsTextGeneration: false,

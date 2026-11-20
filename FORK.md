@@ -110,6 +110,9 @@ from this tree.
   - The test-login group of the browser's key menu: `credentials.listForSite` and
     `credentials.fillForSite`. Vault logins in that menu stay; the desktop fills them itself.
   - Linear and other standalone trackers: `issueTrackers.*`. GitHub issues stay.
+  - Provider install and update: `provider.install.*` and `server.updateProvider`. Orbit
+    installs and updates provider CLIs; see [Provider CLIs](#provider-clis). The T3 server
+    does not mount them either.
 
   The Diagnostics panel, the Usage page and the key menu's test-login group may later be
   removed from Conn itself.
@@ -1300,6 +1303,31 @@ Sources:
 - `packages/contracts/src/rpc.ts` (`OfficialWsRpcGroup`, `ForkWsRpcGroup`).
 - `apps/server/src/wsFork.ts`, `ws.ts`.
 
+### Provider CLIs
+
+Orbit installs and updates every provider CLI (vp, brew and brew-cask) and owns PATH: the brew
+and vp bins on Nodes, the agent folder in containers. Conn and the Conn Server never install,
+update or remove one (Nick, 2026-11-20).
+
+- **Finding a CLI.** Each CLI is resolved on PATH, or the instance's `binaryPath`; the version
+  comes from the binary on every health check. Antigravity runs `agy` (`agy --version`, sessions
+  `agy acp`); the managed `localharness` runtime is gone. Managed Codex (the ChatGPT account
+  mode) runs `codex` from PATH. `binaryPath` stays: removing it touches every driver schema, the
+  settings form and saved settings, and its default already resolves on PATH.
+- **Server.** `ws.ts` does not mount `provider.install.*` or `server.updateProvider`; the
+  contracts keep them, so the sync and the Conn Server's generated contract do not move.
+  `provider/orbitManagedProviders.ts` supplies a `ProviderLatestVersions` layer that never looks
+  up a release, and strips `versionAdvisory` and `setup.canInstall` from published snapshots. A
+  compatibility advisory never blocks a Codex session.
+- **Clients.** Each provider shows its version and "Managed by Orbit". No install, update or
+  remove control, no update pill or launch notification, no update-check toggle. A
+  compatibility advisory is one quiet line; it never replaces the status, raises an alert, or
+  hides models.
+- **Conn Server.** Serves neither group; `apps/conn-server/docs/status.md` lists them.
+
+Sources: `apps/server/src/provider/orbitManagedProviders.ts`, `providerCliOnPath.ts`,
+`Drivers/AntigravityDriver.ts`, `CodexManagedRuntime.ts`, `ws.ts`.
+
 ### Codex MCP network wait
 
 Codex starts a thread's MCP servers once and never retries one that failed.
@@ -1354,6 +1382,13 @@ Sources:
      it past any new upstream ID and extend the reconcile).
    - `apps/web/src/components/chat/ChatComposer.tsx`: take upstream's draft
      changes, but keep `composerEnvironmentContexts` from `composerDraft`.
+   - Provider CLIs: upstream files deleted for [Provider CLIs](#provider-clis)
+     (`provider/AntigravityInstallation.ts`, `CodexInstallation.ts`,
+     `providerInstallation.ts`, `providerMaintenanceRunner.ts`, their tests, and the web
+     provider-update components) stay deleted on a modify/delete conflict. Port an upstream fix
+     only when it touches PATH lookup or version reading. Keep the five-tag filter in `ws.ts`, the
+     `layerNoLatestVersions` line in `server.ts` and the `withoutProviderMaintenance` call in
+     `ProviderRegistry.ts`.
    - Composer: upstream's composer redesign (#25869) is adopted as of
      2026-10-30 (Nick); Conn's own composer animation is retired. On conflicts
      in composer files take upstream's composer and re-apply only the listed

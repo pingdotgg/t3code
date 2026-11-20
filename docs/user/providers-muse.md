@@ -58,9 +58,8 @@ itself. Manage them with `muse skills` on the host.
 Forking a Muse conversation starts a new session with a copy of the conversation
 context. Conversation rewind is unavailable.
 
-Install Muse and sign in on the host; in-app installation and sign-in are not
-available. Updates can run from **Settings → Providers** when T3 Code recognizes
-the Muse launcher; otherwise update Muse on that host manually.
+Orbit installs and updates Muse on the host; sign in there. In-app installation,
+updates, and sign-in are not available.
 
 To stop using Muse in an environment, disable it in **Settings → Providers**.
 This keeps the host's Muse login, thread history, and workspace files.

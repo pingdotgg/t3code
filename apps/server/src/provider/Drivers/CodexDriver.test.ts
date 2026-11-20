@@ -1,4 +1,3 @@
-import * as CodexInstallation from "../CodexInstallation.ts";
 import * as CodexManagedTokenBroker from "../CodexManagedTokenBroker.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
@@ -57,11 +56,6 @@ const layerDeps = ServerConfig.layerTest(process.cwd(), {
   Layer.provideMerge(
     Layer.mock(CodexAdapterV2.CodexAppServerClientFactory)({
       open: () => Effect.die("Maintenance resolution must not open a Codex session"),
-    }),
-  ),
-  Layer.provideMerge(
-    Layer.mock(CodexInstallation.CodexInstallation)({
-      managedDirectory: "unused-managed-installation",
     }),
   ),
   Layer.provideMerge(Layer.mock(ServerSecretStore.ServerSecretStore)({})),
@@ -153,44 +147,26 @@ it.layer(layerTest)("CodexDriver", (it) => {
           scopes: ["chatgpt.tokens.use.direct"],
         });
         const replaceAccount = store.set(new TextEncoder().encode(replacement)).pipe(Effect.orDie);
-        const executable = {
-          executablePath: "/user/bin/codex",
-          managedVersionDirectory: null,
-          source: "local" as const,
-          version: "0.156.1",
-        };
-        const installation = yield* CodexInstallation.CodexInstallation;
         const serverConfig = yield* ServerConfig.ServerConfig;
         const sharedHome = NodePath.join(serverConfig.stateDir, "shared-codex-home");
+        const binDirectory = NodePath.join(serverConfig.stateDir, "orbit-bin");
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.makeDirectory(binDirectory, { recursive: true });
+        const codexOnPath = NodePath.join(binDirectory, "codex");
+        yield* fileSystem.writeFileString(codexOnPath, "#!/bin/sh\nexit 0\n");
+        yield* fileSystem.chmod(codexOnPath, 0o755);
         const launches: Array<
           Parameters<CodexAdapterV2.CodexAppServerClientFactoryShape["open"]>[0]
         > = [];
 
-        let interruptedChecks = 0;
-        let failAcquire = false;
-        const startupChecksInterrupted = yield* Deferred.make<void>();
-        const acquire = () =>
-          Effect.suspend(() => {
-            if (failAcquire)
-              return Effect.fail(
-                new CodexInstallation.CodexInstallationError({
-                  operation: "acquire",
-                  detail: "The fixture runtime is unavailable",
-                }),
-              );
-            if (interruptedChecks === 2) return Effect.succeed(executable);
-            interruptedChecks += 1;
-            return (
-              interruptedChecks === 2
-                ? Deferred.succeed(startupChecksInterrupted, undefined)
-                : Effect.void
-            ).pipe(Effect.andThen(Effect.interrupt));
-          });
         const instance = yield* CodexDriver.create({
           instanceId,
           displayName: "Restored account",
           enabled: true,
-          environment: [{ name: "OPENAI_API_KEY", value: "ambient-key", sensitive: true }],
+          environment: [
+            { name: "OPENAI_API_KEY", value: "ambient-key", sensitive: true },
+            { name: "PATH", value: binDirectory, sensitive: false },
+          ],
           config: { ...CodexDriver.defaultConfig(), setupMode: "managed", homePath: sharedHome },
         }).pipe(
           Effect.provideService(
@@ -203,19 +179,12 @@ it.layer(layerTest)("CodexDriver", (it) => {
             }),
           ),
           Effect.provideService(
-            CodexInstallation.CodexInstallation,
-            CodexInstallation.CodexInstallation.of({
-              ...installation,
-              managedDirectory: "unused-managed-installation",
-              resolve: () => Effect.succeed(executable),
-              acquire,
-            }),
-          ),
-          Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
-            ChildProcessSpawner.make(() =>
+            ChildProcessSpawner.make((command) =>
               Effect.gen(function* () {
-                if (replacementTiming === "during-probe") {
+                const isVersionRead =
+                  command._tag === "StandardCommand" && command.args.includes("--version");
+                if (replacementTiming === "during-probe" && !isVersionRead) {
                   yield* Deferred.succeed(probeEntered, undefined);
                   yield* Deferred.await(resumeProbe);
                 }
@@ -239,7 +208,6 @@ it.layer(layerTest)("CodexDriver", (it) => {
           Stream.runHead,
           Effect.forkScoped,
         );
-        yield* Deferred.await(startupChecksInterrupted);
         const refresh = yield* instance.snapshot.refresh.pipe(Effect.forkChild);
         if (replacementTiming === "during-probe") {
           yield* Deferred.await(probeEntered);
@@ -248,13 +216,15 @@ it.layer(layerTest)("CodexDriver", (it) => {
         }
         const restored = yield* Fiber.join(refresh);
         if (replacementTiming === "during-probe") {
-          expect(catalogTokens).toEqual([]);
+          // Checks that began before the swap never send the old token; later ones use the new one.
+          expect(catalogTokens).not.toContain("Bearer dummy-owned-access");
           expect(restored.models).toEqual([]);
           expect(restored.auth.email).toBe("replacement@example.test");
           expect(restored.auth.profileId).toBe("oaiapp_replacement");
           return;
         }
-        expect(catalogTokens).toEqual(["Bearer dummy-owned-access"]);
+        // Startup checks and the refresh may each read the catalog; all with the same account.
+        expect(new Set(catalogTokens)).toEqual(new Set(["Bearer dummy-owned-access"]));
         expect(restored.auth.email).toBe("account@example.test");
         expect(restored.runtimePaths?.homePath).toBe(sharedHome);
         expect(restored.runtimePaths?.shadowHomePath).toContain(
@@ -262,12 +232,6 @@ it.layer(layerTest)("CodexDriver", (it) => {
         );
         const scan = yield* instance.snapshotForCwd!(serverConfig.stateDir).pipe(Effect.exit);
         expect(Exit.isFailure(scan)).toBe(true);
-        failAcquire = true;
-        const runtimeScan = yield* instance.snapshotForCwd!(serverConfig.stateDir).pipe(
-          Effect.exit,
-        );
-        failAcquire = false;
-        expect(Exit.isFailure(runtimeScan)).toBe(true);
         yield* Deferred.await(observedAccount);
 
         const threadId = ThreadId.make("managed-account-thread");
@@ -285,7 +249,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
           .pipe(Effect.scoped, Effect.exit);
         expect(launches).toHaveLength(1);
         const launch = launches[0]!;
-        expect(launch.settings.binaryPath).toBe(executable.executablePath);
+        expect(launch.settings.binaryPath).toBe(codexOnPath);
         expect(launch.settings.launchArgs).toContain("openai_token_sharing");
         expect(launch.environment.ACCESS_TOKEN).toBeUndefined();
         expect(launch.settings.launchArgs).toContain("__managed-chatgpt-token");

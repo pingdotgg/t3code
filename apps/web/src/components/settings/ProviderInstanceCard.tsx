@@ -1,11 +1,5 @@
-import { Spinner } from "~/components/ui/spinner";
-
 import {
-  AlertTriangleIcon,
   CheckIcon,
-  ArrowUpCircleIcon,
-  CopyIcon,
-  DownloadIcon,
   ExternalLinkIcon,
   LayersIcon,
   PlusIcon,
@@ -16,7 +10,7 @@ import {
 } from "lucide-react";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
-import { Fragment, useState, type ReactElement, type ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 import { T, useGT, useMessages, Var } from "gt-react";
 import {
   isProviderDriverKind,
@@ -39,7 +33,6 @@ import {
   toCustomModelSetting,
 } from "@t3tools/shared/model";
 import { cn } from "../../lib/utils";
-import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { Badge } from "../ui/badge";
@@ -51,7 +44,6 @@ import { Switch } from "../ui/switch";
 import { ManagedControl, ManagedNotice } from "../ManagedPolicy";
 import { managedInstanceLocks, useManagedPolicy } from "../../state/managedPolicy";
 import { disallowedProviderMessage, isManagedDriverAllowed } from "@t3tools/contracts";
-import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type {
   ProviderClientDefinition,
@@ -77,9 +69,8 @@ import {
   pendingCustomModelSaves,
   settleCustomModelSave,
 } from "./customModelSaves.logic";
-import { getProviderRestartNotice } from "../ProviderUpdateLaunchNotification.logic";
 import {
-  getProviderVersionAdvisoryPresentation,
+  getProviderCompatibilityNote,
   PROVIDER_STATUS_STYLES,
   getProviderStatusKey,
   getProviderSummary,
@@ -88,22 +79,6 @@ import {
 } from "./providerStatus";
 
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
-
-function ProviderStatusDiagnostic({
-  detail,
-  children,
-}: {
-  detail: string | null;
-  children: ReactElement;
-}) {
-  if (!detail) return children;
-  return (
-    <Tooltip>
-      <TooltipTrigger render={children} />
-      <TooltipPopup side="top">{detail}</TooltipPopup>
-    </Tooltip>
-  );
-}
 
 const ENVIRONMENT_VARIABLE_NAME_PLACEHOLDER = "VARIABLE_NAME";
 
@@ -728,9 +703,6 @@ interface ProviderInstanceCardProps {
   readonly onFavoriteModelsChange: (next: ReadonlyArray<string>) => void;
   readonly onToggleFavorite: (model: string) => void;
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
-  readonly onRunUpdate?: (() => void) | undefined;
-  readonly onInstallRecommended?: (() => void) | undefined;
-  readonly isUpdating?: boolean | undefined;
   readonly onAcceptUrlAuth?: ((action: AcpRegistryUrlAuthAction) => void) | undefined;
   readonly environmentId?: EnvironmentId | undefined;
   readonly secretSources?: ReadonlyArray<SecretSource>;
@@ -799,9 +771,6 @@ export function ProviderInstanceCard({
   onFavoriteModelsChange,
   onToggleFavorite,
   onModelOrderChange,
-  onRunUpdate,
-  onInstallRecommended,
-  isUpdating = false,
   onAcceptUrlAuth,
   environmentId,
   acpProjects = EMPTY_ACP_PROJECTS,
@@ -812,7 +781,6 @@ export function ProviderInstanceCard({
   const m = useMessages();
   const enabled = projectOverride?.effectiveEnabled ?? resolveProviderInstanceEnabled(instance);
   const effectiveProvider = liveProvider && { ...liveProvider, enabled };
-  const compatibility = enabled ? liveProvider?.compatibilityAdvisory : undefined;
   const statusKey = enabled ? getProviderStatusKey(effectiveProvider) : "disabled";
   const statusStyle = PROVIDER_STATUS_STYLES[statusKey];
   const summary = enabled
@@ -825,35 +793,9 @@ export function ProviderInstanceCard({
       ? (providerAuthLabel(liveProvider.auth, m) ?? null)
       : null;
   const versionLabel = getProviderVersionLabel(liveProvider?.version);
-  const versionAdvisory = getProviderVersionAdvisoryPresentation(
-    liveProvider?.versionAdvisory,
-    liveProvider?.compatibilityAdvisory,
-    enabled,
-    m,
-  );
-  const updateCommand = versionAdvisory?.updateCommand ?? null;
-  const updateState = liveProvider?.updateState;
-  const updateProgress = isUpdating
-    ? ((updateState?.status === "queued" || updateState?.status === "running"
-        ? updateState.message
-        : null) ?? gt("Starting update"))
+  const compatibilityNote = enabled
+    ? getProviderCompatibilityNote(liveProvider?.compatibilityAdvisory, m)
     : null;
-  const updateProblem =
-    !isUpdating && (updateState?.status === "failed" || updateState?.status === "unchanged")
-      ? updateState.message
-      : null;
-  const restartNotice =
-    enabled && !isUpdating && liveProvider ? getProviderRestartNotice(liveProvider) : null;
-  const hasCompatibilityWarning =
-    compatibility !== undefined &&
-    compatibility.status !== "supported" &&
-    compatibility.status !== "unknown";
-  const VersionAdvisoryIcon = hasCompatibilityWarning ? AlertTriangleIcon : ArrowUpCircleIcon;
-  const onRunVersionAction = readOnly
-    ? undefined
-    : versionAdvisory?.targetVersion
-      ? onInstallRecommended
-      : onRunUpdate;
   const urlAuthAction = liveProvider?.auth.action;
   const displayName =
     instance.displayName?.trim() || driverOption?.label || String(instance.driver);
@@ -866,24 +808,6 @@ export function ProviderInstanceCard({
         managedPolicy?.organization,
         driverOption?.label ?? String(instance.driver),
       );
-  const { copyToClipboard } = useCopyToClipboard<{ providerName: string }>({
-    onCopy: ({ providerName }) => {
-      toastManager.add({
-        type: "success",
-        title: gt("{provider} update command copied", { provider: providerName }),
-        description: gt("Run it in a terminal when you are ready to update."),
-      });
-    },
-    onError: (error, { providerName }) => {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: gt("Could not copy {provider} update command", { provider: providerName }),
-          description: error.message,
-        }),
-      );
-    },
-  });
 
   const driverKind: ProviderDriverKind | null = isProviderDriverKind(instance.driver)
     ? instance.driver
@@ -1018,14 +942,7 @@ export function ProviderInstanceCard({
       <span className={cn("size-1.5 shrink-0 rounded-full", statusStyle.dot)} aria-hidden />
     ) : null;
   const needsAttention = statusKey === "warning" || statusKey === "error";
-  const statusDiagnostic = hasCompatibilityWarning && needsAttention ? summary.detail : null;
-  const inlineStatusDetail = hasCompatibilityWarning
-    ? compatibility?.status === "broken"
-      ? gt("Incompatible")
-      : compatibility?.status === "unsupported"
-        ? gt("Unsupported")
-        : gt("Limited support")
-    : summary.detail;
+  const inlineStatusDetail = summary.detail;
   const editorStatusNode =
     isAuthenticated && authEmail ? (
       <>
@@ -1052,124 +969,6 @@ export function ProviderInstanceCard({
         ) : null}
       </>
     );
-  const versionAdvisoryNode = versionAdvisory ? (
-    <Popover>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <PopoverTrigger
-              render={
-                <Button
-                  type="button"
-                  size={mode === "list" ? "icon-micro" : "icon-xs"}
-                  variant="ghost-muted"
-                  className={mode === "list" ? "pointer-events-auto relative shrink-0" : undefined}
-                  aria-label={gt("{status}, view details", {
-                    status: updateProgress ? gt("Updating") : versionAdvisory.title,
-                  })}
-                >
-                  {updateProgress ? (
-                    <Spinner tone="muted" {...(mode === "list" ? { size: "sm" as const } : {})} />
-                  ) : (
-                    <VersionAdvisoryIcon
-                      className={cn(
-                        mode === "list" && "size-3.5",
-                        hasCompatibilityWarning && "text-warning",
-                      )}
-                    />
-                  )}
-                </Button>
-              }
-            />
-          }
-        />
-        <TooltipPopup side="top">
-          {updateProgress ? gt("Updating") : versionAdvisory.title}
-        </TooltipPopup>
-      </Tooltip>
-      <PopoverPopup side="bottom" align="end" width="md" aria-label={versionAdvisory.title}>
-        <div className="grid min-w-0 gap-3">
-          <div className="grid gap-0.5">
-            <p className="text-ui font-semibold leading-tight text-foreground">
-              {versionAdvisory.title}
-            </p>
-            <p
-              className={cn(
-                "text-ui leading-snug [overflow-wrap:anywhere]",
-                versionAdvisory.emphasis === "strong" ? "text-warning" : "text-muted-foreground",
-              )}
-            >
-              {versionAdvisory.detail}
-            </p>
-          </div>
-          {onRunVersionAction ? (
-            <Button
-              type="button"
-              size="xs"
-              variant="outline"
-              className="w-full"
-              disabled={isUpdating}
-              onClick={onRunVersionAction}
-            >
-              {isUpdating ? <Spinner /> : <DownloadIcon />}
-              {isUpdating
-                ? gt("Updating")
-                : versionAdvisory.targetVersion
-                  ? gt("Install {version}", {
-                      version: getProviderVersionLabel(versionAdvisory.targetVersion),
-                    })
-                  : gt("Update now")}
-            </Button>
-          ) : null}
-          {updateProgress || updateProblem ? (
-            <p
-              aria-live="polite"
-              className={cn(
-                "text-ui leading-snug [overflow-wrap:anywhere]",
-                updateProblem ? "text-warning" : "text-muted-foreground",
-              )}
-            >
-              {updateProgress ?? updateProblem}
-            </p>
-          ) : null}
-          {onRunVersionAction && updateCommand ? (
-            <div className="flex items-center gap-2 text-ui text-muted-foreground">
-              <span aria-hidden className="h-px flex-1 bg-(--glass-divider)" />
-              <T>or, update manually using</T>
-              <span aria-hidden className="h-px flex-1 bg-(--glass-divider)" />
-            </div>
-          ) : null}
-          {updateCommand ? (
-            <div className="flex min-w-0 items-center gap-1 rounded-lg border border-(--glass-divider)! bg-(--shell-highlight) py-0.5 pr-0.5 pl-2">
-              <code className="min-w-0 flex-1 truncate font-mono text-ui text-foreground">
-                {updateCommand}
-              </code>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      type="button"
-                      size="icon-xs"
-                      variant="ghost-muted"
-                      className="shrink-0"
-                      onClick={() => copyToClipboard(updateCommand, { providerName: displayName })}
-                      aria-label={gt("Copy update command")}
-                    >
-                      <CopyIcon className="size-3" />
-                    </Button>
-                  }
-                />
-                <TooltipPopup side="top">
-                  <T>Copy command</T>
-                </TooltipPopup>
-              </Tooltip>
-            </div>
-          ) : null}
-        </div>
-      </PopoverPopup>
-    </Popover>
-  ) : null;
-
   if (mode === "list") {
     return (
       <div
@@ -1202,29 +1001,18 @@ export function ProviderInstanceCard({
                   {versionLabel}
                 </span>
               ) : null}
-              {versionAdvisoryNode}
             </span>
             <span className="mt-0.5 flex items-start gap-1.5 text-ui text-muted-foreground/80">
-              {/* The dot describes provider health, not the update in progress. */}
-              {statusDotNode && !updateProgress ? (
+              {statusDotNode ? (
                 <span className="flex h-[1.45em] shrink-0 items-center">{statusDotNode}</span>
               ) : null}
-              <ProviderStatusDiagnostic detail={statusDiagnostic}>
-                <span
-                  tabIndex={statusDiagnostic ? 0 : undefined}
-                  aria-live="polite"
-                  className="pointer-events-auto line-clamp-2 [overflow-wrap:anywhere]"
-                >
-                  {updateProgress ? (
-                    gt("Updating · {progress}", { progress: updateProgress })
-                  ) : (
-                    <>
-                      {summary.headline}
-                      {needsAttention && inlineStatusDetail ? ` · ${inlineStatusDetail}` : null}
-                    </>
-                  )}
-                </span>
-              </ProviderStatusDiagnostic>
+              <span
+                aria-live="polite"
+                className="pointer-events-auto line-clamp-2 [overflow-wrap:anywhere]"
+              >
+                {summary.headline}
+                {needsAttention && inlineStatusDetail ? ` · ${inlineStatusDetail}` : null}
+              </span>
             </span>
           </span>
         </div>
@@ -1265,7 +1053,6 @@ export function ProviderInstanceCard({
         </Badge>
       ) : null}
       {versionCodeNode}
-      {versionAdvisoryNode}
       <span
         inert={readOnly}
         aria-disabled={readOnly || undefined}
@@ -1292,17 +1079,14 @@ export function ProviderInstanceCard({
   // Provider status gets its own row instead of hanging under the name field.
   const statusContent = (
     <>
-      <ProviderStatusDiagnostic detail={statusDiagnostic}>
-        <div
-          tabIndex={statusDiagnostic ? 0 : undefined}
-          className="flex min-w-0 flex-wrap items-baseline gap-x-1.5"
-        >
-          {editorStatusNode}
-        </div>
-      </ProviderStatusDiagnostic>
-      {restartNotice ? (
-        <p aria-live="polite" className="text-xs leading-snug [overflow-wrap:anywhere]">
-          {restartNotice}
+      <div className="flex min-w-0 flex-wrap items-baseline gap-x-1.5">{editorStatusNode}</div>
+      <p className="text-xs leading-snug text-muted-foreground [overflow-wrap:anywhere]">
+        {versionLabel ? `${versionLabel} · ` : null}
+        <T>Managed by Orbit</T>
+      </p>
+      {compatibilityNote ? (
+        <p className="text-xs leading-snug text-muted-foreground [overflow-wrap:anywhere]">
+          {compatibilityNote}
         </p>
       ) : null}
       {urlAuthAction && onAcceptUrlAuth ? (

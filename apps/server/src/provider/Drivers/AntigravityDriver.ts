@@ -31,7 +31,7 @@ import {
   makeAntigravityTextGeneration,
 } from "../../textGeneration/AntigravityTextGeneration.ts";
 import { makeAntigravityAuth, type AntigravityAuth } from "../AntigravityAuth.ts";
-import * as AntigravityInstallation from "../AntigravityInstallation.ts";
+import { resolveProviderCliOnPath, type ProviderCliOnPath } from "../providerCliOnPath.ts";
 import * as AntigravityUsage from "./AntigravityUsage.ts";
 import {
   antigravityAuthConfigIssue,
@@ -97,7 +97,6 @@ function refreshFailureDetail(cause: unknown) {
 }
 
 export type AntigravityDriverEnv =
-  | AntigravityInstallation.AntigravityInstallation
   | ProviderHost.ProviderHost
   | ChildProcessSpawner.ChildProcessSpawner
   | Digest.Digest
@@ -136,7 +135,6 @@ export const AntigravityDriver: ProviderDriver<
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const host = yield* ProviderHost.ProviderHost;
     const selfInvocation = yield* resolveSelfInvocation();
-    const installation = yield* AntigravityInstallation.AntigravityInstallation;
     const loggers = yield* ProviderEventLoggers.ProviderEventLoggers;
     const modelCatalog = yield* ModelCatalog.ModelCatalog;
     const currentCatalog = modelCatalog.current(DRIVER);
@@ -152,6 +150,26 @@ export const AntigravityDriver: ProviderDriver<
     };
     const authConfigIssue = antigravityAuthConfigIssue(auth);
     const processEnvironment = yield* mergeProviderInstanceEnvironment(environment);
+    // Orbit installs and updates agy; it is found on PATH only, never installed here.
+    const resolveExecutable = resolveProviderCliOnPath(
+      settings.binaryPath || "agy",
+      processEnvironment,
+    ).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+      Effect.filterOrFail(
+        (found): found is ProviderCliOnPath => found !== null,
+        () =>
+          new ProviderSetupError({
+            instanceId,
+            operation: "resolve",
+            detail: settings.binaryPath
+              ? "The custom Antigravity executable is not installed or not executable."
+              : "Antigravity (agy) is not installed on this environment's PATH. Orbit installs it.",
+          }),
+      ),
+    );
     const userHome = resolveAntigravityUserHome(
       yield* HostProcess.Platform,
       processEnvironment,
@@ -214,17 +232,7 @@ export const AntigravityDriver: ProviderDriver<
           detail: authConfigIssue,
         });
       }
-      const executable = yield* installation.acquire(settings.binaryPath, processEnvironment).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderSetupError({
-              instanceId,
-              operation: "resolve",
-              detail: cause.detail,
-              cause,
-            }),
-        ),
-      );
+      const executable = yield* resolveExecutable;
       const profile = yield* prepareAntigravityProfile({
         profileDirectory,
         baseEnv: processEnvironment,
@@ -283,7 +291,7 @@ export const AntigravityDriver: ProviderDriver<
         authMethod: auth.authMethod,
         childProcessSpawner: spawner,
         spawn: buildAntigravityAcpSpawnInput({
-          installation: executable,
+          installation: { executablePath: executable.executablePath, harnessPath: null },
           profile,
           cwd: runtimeInput.cwd,
           baseEnv: spawnEnvironment,
@@ -293,9 +301,7 @@ export const AntigravityDriver: ProviderDriver<
       }).pipe(Effect.provideService(SecureRandom.SecureRandom, random));
       return {
         ...runtime,
-        ...(executable.harnessPath === null
-          ? { setMode: (modeId: string) => runtime.setMode(antigravityCliSessionMode(modeId)) }
-          : {}),
+        setMode: (modeId: string) => runtime.setMode(antigravityCliSessionMode(modeId)),
         start: () =>
           runtime
             .start()
@@ -396,9 +402,7 @@ export const AntigravityDriver: ProviderDriver<
       usesBrowser: antigravityAuthUsesBrowser(auth.authMethod),
     });
 
-    // The probe must not spawn. The agent is a PyInstaller one-file bundle
-    // that unpacks about 1 GB per launch, and the health check runs every
-    // minute.
+    // The probe runs only `agy --version`, never the ACP agent, so it stays cheap every minute.
     const probe = Effect.gen(function* () {
       yield* modelCatalog.refreshInBackground;
       if (authConfigIssue !== null) {
@@ -408,17 +412,7 @@ export const AntigravityDriver: ProviderDriver<
           detail: authConfigIssue,
         });
       }
-      const executable = yield* installation.resolve(settings.binaryPath, processEnvironment).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderSetupError({
-              instanceId,
-              operation: "resolve",
-              detail: cause.detail,
-              cause,
-            }),
-        ),
-      );
+      const executable = yield* resolveExecutable;
       return {
         protocolVersion: 1,
         agentCapabilities: {

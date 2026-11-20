@@ -7,8 +7,8 @@ of the sidebar and **Settings → Environments** offer to update it.
 ## Update everything at once
 
 The update button at the bottom of the sidebar updates every connected machine
-in one step. It updates outdated providers, then servers that are behind, then
-the desktop app you are using. Servers move to the
+in one step. It updates servers that are behind, then the desktop app you are
+using. Provider CLIs are not part of it; Orbit updates them. Servers move to the
 version your desktop app is installing, or to your web app's version. A
 background service stays on its current release channel. A remote desktop app
 installs the latest release from its own channel. Hover the button to see what
@@ -172,24 +172,12 @@ Configure npm on the server's machine. If that registry cannot be reached, the
 release shows as unavailable; T3 Code does not try the public registry instead.
 Machines without npm check the public npm registry directly.
 
-## Update providers
+## Provider CLIs
 
-**Settings → Providers** shows provider updates for the selected environment.
-**Update all** updates every outdated provider on every connected environment
-at once. Hover it to see which providers it will update. A provider is left out
-when any of its enabled, outdated instances offers only a manual update command,
-or when its instances use different update commands, such as two instances that
-run different CLI installs. Update those by hand, or point every instance of the
-provider at the same CLI.
-
-After a successful provider CLI update, T3 Code refreshes model discovery for
-every enabled instance of that provider using its own configuration. Connected
-clients receive the refreshed catalogs automatically. Provider update checks
-must be enabled to download the latest T3 Code model catalog.
-
-Provider updates do not restart running chats. An existing session can keep
-using the previous CLI until it ends. If discovery fails, check the provider
-status and refresh it again.
+Orbit installs and updates provider CLIs. **Settings → Providers** shows each
+provider's version and "Managed by Orbit". T3 Code has no provider update
+button. After Orbit updates a CLI, refresh provider status to load its models.
+Running chats keep the previous CLI until their session ends.
 
 ## Mobile updates
 
@@ -199,13 +187,9 @@ current release channel. Keep the app open while the environment updates and
 reconnects. Hosts that cannot update remotely show instructions for updating on
 the machine instead.
 
-The same page lets you refresh provider status and update supported providers.
-These controls require a connected environment and permission to operate it.
-Provider update checks and restart continuation preferences are in
-**Settings → Maintenance**. If provider update checks are disabled, enable them
-there before refreshing to find newer versions. The same setting controls whether
-T3 Code downloads model catalog updates, so with it off new models may not appear
-until you enable it and refresh provider status.
+The same page lets you refresh provider status and shows each provider's
+version. These controls require a connected environment and permission to
+operate it. Restart continuation preferences are in **Settings → Maintenance**.
 
 Install App Store or Google Play releases as usual. The mobile app can also
 download updates in the background and apply them when you next leave the app.

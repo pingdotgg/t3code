@@ -30,7 +30,6 @@ const state = vi.hoisted(() => ({
   updateEnvironmentIds: [] as string[],
   mutationEnvironmentIds: [] as string[],
   refresh: vi.fn(),
-  updateProvider: vi.fn(),
   uninstall: vi.fn(),
   acceptUrlAuth: vi.fn(),
   updateSettings: vi.fn(),
@@ -50,7 +49,6 @@ vi.mock(import("../../state/server"), async (original) => {
   state.providerAuthQuery = providerAuth;
   const commandLabels = {
     refreshProviders: "refresh",
-    updateProvider: "update",
     uninstallAcpRegistryManagedBinary: "uninstall",
     acceptAcpRegistryUrlAuth: "accept-url-auth",
   } as const;
@@ -77,7 +75,6 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
   useAtomCommand: ((command: { label?: string }) =>
     ({
       refresh: state.refresh,
-      update: state.updateProvider,
       uninstall: state.uninstall,
       "accept-url-auth": state.acceptUrlAuth,
     })[command.label ?? ""] ?? vi.fn()) as never,
@@ -165,10 +162,6 @@ vi.mock(import("./UsageProviderSettings"), async (original) => ({
   ...(await original()),
   UsageProviderSettings: (() => null) as never,
 }));
-vi.mock(import("../ProviderUpdatesAction"), async (original) => ({
-  ...(await original()),
-  ProviderUpdatesAction: (() => null) as never,
-}));
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { EnvironmentProviderSettings } from "./ProviderSettingsPanel";
@@ -190,15 +183,6 @@ function provider(): ServerProvider {
     models: [{ slug: "chosen", name: "Chosen", isCustom: false, capabilities: null }],
     slashCommands: [],
     skills: [],
-    versionAdvisory: {
-      status: "behind_latest",
-      currentVersion: "1.0.0",
-      latestVersion: "1.1.0",
-      updateCommand: "pnpm add -g @openai/codex@latest",
-      canUpdate: true,
-      checkedAt: "2026-07-24T12:00:00.000Z",
-      message: "Update available.",
-    },
   };
 }
 
@@ -243,7 +227,6 @@ async function setup() {
   state.mutateProviderInstance.mockReset().mockResolvedValue(AsyncResult.success({}));
   state.confirm.mockReset().mockResolvedValue(false);
   state.refresh.mockReset().mockResolvedValue(AsyncResult.success(undefined));
-  state.updateProvider.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.uninstall.mockReset().mockResolvedValue(AsyncResult.success({}));
   state.acceptUrlAuth.mockReset().mockResolvedValue(AsyncResult.success({ accepted: true }));
   await setProviders([]);
@@ -446,7 +429,7 @@ describe("EnvironmentProviderSettings routing", () => {
       {
         ...provider(),
         auth: { status: "unauthenticated" },
-        setup: { canAuthenticate: true, canInstall: true },
+        setup: { canAuthenticate: true, canInstall: false },
       },
     ]);
     await using _screen = await render(panel({ targetInstanceId: codexId }));

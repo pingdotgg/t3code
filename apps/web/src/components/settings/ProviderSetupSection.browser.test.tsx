@@ -3,7 +3,6 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderAuthState,
-  type ProviderInstallState,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { userEvent } from "vite-plus/test/browser";
@@ -13,18 +12,12 @@ import { act, render } from "../../../test/render";
 
 const setup = vi.hoisted(() => ({
   auth: null as ProviderAuthState | null,
-  installation: null as ProviderInstallState | null,
   authState: vi.fn(() => "auth"),
-  installState: vi.fn(() => "installation"),
   startAuth: vi.fn(),
   completeAuth: vi.fn(),
   respondAuth: vi.fn(),
   cancelAuth: vi.fn(),
   logoutAuth: vi.fn(),
-  startInstall: vi.fn(),
-  cancelInstall: vi.fn(),
-  removeInstall: vi.fn(),
-  confirm: vi.fn(),
 }));
 
 vi.mock(import("../../state/server"), async (original) => {
@@ -34,15 +27,11 @@ vi.mock(import("../../state/server"), async (original) => {
     serverEnvironment: {
       ...actual.serverEnvironment,
       providerAuthState: setup.authState as never,
-      providerInstallState: setup.installState as never,
       startProviderAuth: setup.startAuth as never,
       completeProviderAuth: setup.completeAuth as never,
       respondProviderAuth: setup.respondAuth as never,
       cancelProviderAuth: setup.cancelAuth as never,
       logoutProviderAuth: setup.logoutAuth as never,
-      startProviderInstall: setup.startInstall as never,
-      cancelProviderInstall: setup.cancelInstall as never,
-      removeProviderInstallation: setup.removeInstall as never,
     },
   };
 });
@@ -60,9 +49,7 @@ vi.mock(import("../../state/query"), async (original) => {
   return {
     ...(await original()),
     useEnvironmentQuery: ((atom: string) => ({
-      data: useSyncExternalStore(subscribe, () =>
-        atom === "auth" ? setup.auth : setup.installation,
-      ),
+      data: useSyncExternalStore(subscribe, () => (atom === "auth" ? setup.auth : null)),
       error: null,
       isPending: false,
       refresh: vi.fn(),
@@ -73,10 +60,6 @@ const publish = () =>
   act(async () => {
     for (const listener of queryListeners) listener();
   });
-vi.mock(import("../../localApi"), async (original) => ({
-  ...(await original()),
-  ensureLocalApi: () => ({ dialogs: { confirm: setup.confirm } }) as never,
-}));
 
 import { ProviderSetupSection } from "./ProviderSetupSection";
 
@@ -94,7 +77,7 @@ const provider: ServerProvider = {
   models: [],
   skills: [],
   slashCommands: [],
-  setup: { canAuthenticate: true, canInstall: true },
+  setup: { canAuthenticate: true, canInstall: false },
 };
 
 function authState(patch: Partial<ProviderAuthState> = {}): ProviderAuthState {
@@ -113,7 +96,6 @@ interface SectionOptions {
   readOnly?: boolean;
   provider?: ServerProvider;
   enabled?: boolean;
-  binaryPath?: string;
 }
 
 function section(options: SectionOptions = {}) {
@@ -123,7 +105,6 @@ function section(options: SectionOptions = {}) {
       environmentLabel="Remote Google device"
       instanceId={instanceId}
       provider={options.provider ?? provider}
-      binaryPath={options.binaryPath}
       enabled={options.enabled ?? true}
       readOnly={options.readOnly ?? false}
       onEnable={vi.fn()}
@@ -155,67 +136,12 @@ async function renderSetup(options: SectionOptions = {}) {
 function resetSetup() {
   vi.clearAllMocks();
   setup.auth = authState();
-  setup.installation = {
-    driver: ProviderDriverKind.make("antigravity"),
-    operationId: null,
-    phase: "idle",
-    downloadedBytes: 0,
-    totalBytes: null,
-    version: null,
-    installedVersion: null,
-    canRemove: false,
-    message: null,
-  };
-  for (const command of [
-    setup.startAuth,
-    setup.completeAuth,
-    setup.cancelAuth,
-    setup.logoutAuth,
-    setup.startInstall,
-    setup.cancelInstall,
-    setup.removeInstall,
-  ]) {
+  for (const command of [setup.startAuth, setup.completeAuth, setup.cancelAuth, setup.logoutAuth]) {
     command.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
   }
-  setup.confirm.mockReset().mockResolvedValue(false);
 }
 
 describe("Antigravity setup", () => {
-  it("can start installation before the first install snapshot arrives", async () => {
-    resetSetup();
-    setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
-    const idleInstallation = setup.installation!;
-    setup.installation = null;
-    let resolveStart!: () => void;
-    const command = new Promise<{ _tag: "Success"; value: undefined }>((resolve) => {
-      resolveStart = () => resolve({ _tag: "Success", value: undefined });
-    });
-    setup.startInstall.mockReturnValueOnce(command);
-    await using screen = await renderSetup({ provider: { ...provider, installed: false } });
-
-    await screen.click("Install Antigravity");
-    await expect
-      .element(screen.getByRole("status").filter({ hasText: "Starting installation." }))
-      .toBeVisible();
-
-    setup.installation = {
-      ...idleInstallation,
-      operationId: "install-1",
-      phase: "downloading",
-      downloadedBytes: 1_000_000,
-      totalBytes: 2_000_000,
-    };
-    await publish();
-    await expect
-      .element(screen.getByRole("button", { name: "Cancel installation" }))
-      .toBeDisabled();
-    await act(async () => resolveStart());
-    await expect.element(screen.getByRole("button", { name: "Cancel installation" })).toBeEnabled();
-    await expect
-      .element(screen.getByRole("status").filter({ hasText: "Downloading 1.0 MB of 2.0 MB." }))
-      .toBeVisible();
-  });
-
   it("waits for verified auth after submitting a callback to the selected environment", async () => {
     resetSetup();
     const callbackUrl = "http://127.0.0.1:5555/?state=test-only&code=test-only";
@@ -264,21 +190,5 @@ describe("Antigravity setup", () => {
 
     expect(setup.completeAuth).not.toHaveBeenCalled();
     expect(setup.authState).toHaveBeenLastCalledWith({ environmentId, input: { instanceId } });
-  });
-
-  it("does not let a shared managed install hide an invalid custom binary path", async () => {
-    resetSetup();
-    setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
-    setup.installation = {
-      ...setup.installation!,
-      installedVersion: "test-version",
-      canRemove: true,
-    };
-    await using screen = await renderSetup({
-      provider: { ...provider, installed: false },
-      binaryPath: "/missing/antigravity",
-    });
-    expect(screen.button("Sign in")?.disabled).toBe(true);
-    expect(setup.startAuth).not.toHaveBeenCalled();
   });
 });

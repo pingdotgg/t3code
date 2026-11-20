@@ -87,7 +87,7 @@ describe("groupWelcomeAgents", () => {
           availability: "unavailable",
           unavailableReason: "Invalid config for instance 'broken'.",
         }),
-        // Signed in and healthy, but the server knows this CLI version is broken.
+        // A version warning does not change the state: Orbit owns the CLI version.
         provider("Codex", {
           compatibilityAdvisory: {
             status: "broken",
@@ -109,9 +109,9 @@ describe("groupWelcomeAgents", () => {
       allowAll,
     );
 
-    expect(names(groups.found)).toEqual(["Broken", "Codex", "Registry"]);
+    expect(names(groups.found)).toEqual(["Codex", "Broken", "Registry"]);
     expect(names(groups.available)).toEqual(["Pi"]);
-    expect(groups.readyCount).toBe(0);
+    expect(groups.readyCount).toBe(1);
     expect(groups.checking).toBe(false);
   });
 
@@ -151,28 +151,24 @@ describe("cliTerminalStep", () => {
       }),
     ).toBe("wait");
     expect(step({ installed: false, status: "warning", auth: { status: "unknown" } })).toBe("wait");
-    expect(step({ installed: false, status: "error", auth: { status: "unknown" } })).toBe("open");
+    // Orbit installs a missing CLI, so there is no terminal to open.
+    expect(step({ installed: false, status: "error", auth: { status: "unknown" } })).toBe("done");
+    expect(step({ installed: false, status: "error" })).toBe("done");
     expect(step({ auth: { status: "unauthenticated" } })).toBe("open");
     // A check that timed out still gets the sign-in command.
     expect(step({ status: "error", auth: { status: "unknown" } })).toBe("open");
-    // A broken version is updated from its row in Settings, signed in, signed out, or unchecked.
+    // A version warning does not change what the terminal is for.
     const broken = {
       status: "broken",
       message: "Update Codex.",
       recommendedVersion: null,
       recommendedRange: null,
     } as const;
-    expect(step({ compatibilityAdvisory: broken })).toBe("done");
     expect(step({ compatibilityAdvisory: broken, auth: { status: "unauthenticated" } })).toBe(
-      "done",
+      "open",
     );
-    expect(
-      step({ compatibilityAdvisory: broken, status: "error", auth: { status: "unknown" } }),
-    ).toBe("done");
     // Signed in but needing a look for another reason: a sign-in would not help.
     expect(step({ status: "warning" })).toBe("done");
-    // Signed in from its home files with the binary gone: the installer.
-    expect(step({ installed: false, status: "error" })).toBe("open");
     expect(step()).toBe("done");
   });
 });
@@ -192,13 +188,12 @@ describe("codexNeedsSetup", () => {
     const setup = (overrides: Partial<ServerProvider>) =>
       codexNeedsSetup(provider("Codex", overrides), undefined);
 
-    expect(setup({ installed: false, status: "error", auth: { status: "unknown" } })).toBe(true);
     expect(setup({ auth: { status: "unauthenticated" } })).toBe(true);
     // A check that timed out can still sign in with ChatGPT.
     expect(setup({ status: "error", auth: { status: "unknown" } })).toBe(true);
-    // Signed in from its home files but the binary is gone: Install, not the card.
-    expect(setup({ installed: false, status: "error" })).toBe(false);
-    // A broken version gets Update on its row.
+    // Orbit installs a missing Codex; the card has nothing to offer until then.
+    expect(setup({ installed: false, status: "error", auth: { status: "unknown" } })).toBe(false);
+    // A version warning never hides the card.
     expect(
       setup({
         auth: { status: "unauthenticated" },
@@ -209,7 +204,7 @@ describe("codexNeedsSetup", () => {
           recommendedRange: null,
         },
       }),
-    ).toBe(false);
+    ).toBe(true);
     expect(setup({})).toBe(false);
     const claude = provider("Claude", { auth: { status: "unauthenticated" } });
     expect(codexNeedsSetup(claude, undefined)).toBe(false);

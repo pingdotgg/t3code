@@ -1,20 +1,20 @@
 # Antigravity
 
 T3 Code runs Google's official Antigravity ACP agent on your selected environment.
-T3 manages its own CLI installation and sign-in, separate from your terminal or IDE. Google controls
+Orbit installs and updates the Antigravity CLI; T3 Code finds it on the environment's `PATH`
+and manages sign-in, separate from your terminal or IDE. Google controls
 which models and account access are available through this agent.
 
 ## Set up Antigravity
 
 On web or desktop, open **Settings > Providers**, choose the environment that runs
-your project, and enable Antigravity. Install its runtime there, then choose
-**Sign in** and complete the browser sign-in. Wait for T3 Code to confirm
-account access and load models before starting a thread. Once the runtime is installed,
-you can also sign in from **Settings > Providers** in the mobile app.
+your project, and enable Antigravity. Choose **Sign in** and complete the browser
+sign-in. Wait for T3 Code to confirm account access and load models before
+starting a thread. You can also sign in from **Settings > Providers** in the
+mobile app.
 
-Installation continues if you leave settings or reconnect. Setup requires
-permission to operate the environment; update an older server if it does not offer
-Antigravity setup.
+If Antigravity is not on the environment's `PATH`, Orbit has not installed it
+there yet. Setup requires permission to operate the environment.
 
 ### Sign in from a remote device
 
@@ -49,33 +49,15 @@ ambient `GEMINI_API_KEY` and Google credential variables do not override them.
 Changing the method stops the instance's sessions. Sign out before replacing an
 account.
 
-## Runtime installation
+## The Antigravity CLI
 
-Managed installation supports Apple Silicon and Intel macOS, Linux x64 or ARM64
-with glibc or musl, and Windows x64 or ARM64. Allow at least 1.25 GiB of free disk
-space for downloading and staging an update.
-
-### Use a manual installation
-
-Install [Antigravity CLI](https://antigravity.google/docs/getting-started) on the environment.
-Set **Binary path** to its `agy` executable and update it yourself.
-Leave the field blank to use the managed runtime, or a compatible executable on
-`PATH` if no managed runtime is installed.
+Orbit installs and updates the Antigravity CLI on each environment. T3 Code shows
+its version in provider settings and never installs, updates, or removes it.
+To use another executable, set **Binary path**; leave it blank to use `agy` on
+`PATH`.
 On Windows, **Binary path** can also be a `.cmd` or `.bat` script that only sets
 variables and then runs `agy_acp_server.exe` by its full path or a `%~dp0`-relative
 path; keep `localharness_external.exe` beside that executable.
-
-## Update the managed runtime
-
-In web or desktop provider settings, choose **Update Antigravity** when an update
-is available. T3 checks Google's CLI release channel while provider update checks
-are enabled. Installing or reinstalling also checks that channel. Updates keep
-your profile and existing runtime available if the new release fails validation.
-
-Updating an older 1.4.5 installation migrates it to the native CLI. You may need to
-sign in again after migration. Threads already running finish with their original
-runtime; new sessions use the updated release. Custom binary paths keep using the
-executable you selected.
 
 ## Models and threads
 
@@ -130,29 +112,23 @@ activity.
 ## Accounts and removal
 
 Add an Antigravity provider instance for each Google account in
-**Settings > Providers** on web or desktop. Each has its own sign-in; downloaded
-runtimes are shared on the environment.
+**Settings > Providers** on web or desktop. Each has its own sign-in; the CLI is
+shared on the environment.
 
-| Action                    | Effect                                                            |
-| ------------------------- | ----------------------------------------------------------------- |
-| Disable                   | Stops the instance's sessions and keeps its Google sign-in.       |
-| Sign out                  | Stops the instance's sessions and removes its saved Google login. |
-| Remove downloaded runtime | Removes the shared installation and keeps Google credentials.     |
+| Action   | Effect                                                            |
+| -------- | ----------------------------------------------------------------- |
+| Disable  | Stops the instance's sessions and keeps its Google sign-in.       |
+| Sign out | Stops the instance's sessions and removes its saved Google login. |
 
-All three keep thread history and workspace files. Sending `/logout` by itself in
+Both keep thread history and workspace files. Sending `/logout` by itself in
 a thread signs out its instance, including stopping that instance's other sessions.
 Sign out, then sign in again to replace an account.
-
-Before removing a managed runtime, disable its instances and cancel any active
-installation. Clear any explicit binary path pointing into that runtime. Removal
-is refused while the runtime is in use.
 
 ## Run a native goal
 
 When your Antigravity runtime offers `/goal`, send `/goal` followed by a verifiable
 objective. Antigravity keeps working until it completes the goal or you cancel it.
-If you still use the older 1.4.5 runtime, update Antigravity in provider settings,
-then refresh provider status.
+An older 1.4.5 runtime has no `/goal`; once Orbit updates it, refresh provider status.
 
 Use Stop to interrupt a running goal, then ask Antigravity to stop pursuing it
 before starting more work. Ordinary follow-ups wait until the running turn ends.

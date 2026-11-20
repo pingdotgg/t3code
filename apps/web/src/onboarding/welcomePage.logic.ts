@@ -24,8 +24,8 @@ const ACP_REGISTRY_DRIVER = ProviderDriverKind.make("acpRegistry");
 
 /**
  * An agent's state for new threads on this computer. The server also lists agents that only some
- * projects turn on, lists an agent it could not load as off, which Turn on cannot fix, and can pass
- * a CLI whose version it knows is broken.
+ * projects turn on, and lists an agent it could not load as off, which Turn on cannot fix. A
+ * version warning never changes the state: Orbit owns the CLI version.
  */
 export function welcomeAgentState(
   provider: ServerProvider,
@@ -36,7 +36,6 @@ export function welcomeAgentState(
     return "disabled";
   }
   const state = getOnboardingProviderState(provider);
-  if (state === "ready" && provider.compatibilityAdvisory?.status === "broken") return "attention";
   // An ACP agent that is not prepared reports the same fields as one still being checked.
   return state === "checking" && provider.driver === ACP_REGISTRY_DRIVER ? "attention" : state;
 }
@@ -87,11 +86,6 @@ export function turnedOnInstance(instance: ProviderInstanceConfig): ProviderInst
   };
 }
 
-/** A CLI the server knows is too old or otherwise broken for T3 Code; Settings updates it. */
-export function isBrokenVersion(provider: ServerProvider) {
-  return provider.installed && provider.compatibilityAdvisory?.status === "broken";
-}
-
 /**
  * What "Use existing CLI" does next for Codex: wait for the CLI's own check, open its terminal,
  * or stop. Only the ChatGPT sign-in runtime reports `setup.canAuthenticate`.
@@ -103,20 +97,16 @@ export function cliTerminalStep(
   if (provider.setup?.canAuthenticate === true) return "wait";
   const state = welcomeAgentState(provider, settings);
   if (state === "checking") return "wait";
-  // A broken version is updated from its row, and an installed, signed-in CLI needs no terminal.
-  if (isBrokenVersion(provider)) return "done";
-  if (provider.installed && provider.auth.status === "authenticated") return "done";
+  // Orbit installs a missing CLI, and an installed, signed-in CLI needs no terminal.
+  if (!provider.installed || provider.auth.status === "authenticated") return "done";
   // The terminal shows the command first, so it also helps a CLI whose check failed.
-  const fixable =
-    state === "install" ||
-    state === "signIn" ||
-    (state === "attention" && isProviderAvailable(provider));
+  const fixable = state === "signIn" || (state === "attention" && isProviderAvailable(provider));
   return fixable ? "open" : "done";
 }
 
 /**
  * Whether Codex's row opens its setup card, which offers ChatGPT sign-in or the CLI. A signed-in
- * or broken Codex gets its plain row action instead, since the card has nothing left for it.
+ * Codex, or one Orbit has not installed yet, gets its plain row instead.
  */
 export function codexNeedsSetup(
   provider: ServerProvider,
@@ -125,16 +115,12 @@ export function codexNeedsSetup(
   if (
     provider.driver !== "codex" ||
     provider.auth.status === "authenticated" ||
-    isBrokenVersion(provider)
+    !provider.installed
   ) {
     return false;
   }
   const state = welcomeAgentState(provider, settings);
-  return (
-    state === "install" ||
-    state === "signIn" ||
-    (state === "attention" && isProviderAvailable(provider))
-  );
+  return state === "signIn" || (state === "attention" && isProviderAvailable(provider));
 }
 
 /**

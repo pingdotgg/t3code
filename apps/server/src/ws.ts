@@ -184,9 +184,7 @@ import * as AcpRegistrySessions from "./provider/AcpRegistrySessions.ts";
 import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
-import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ProviderAuthService from "./provider/ProviderAuthService.ts";
-import * as ProviderInstallation from "./provider/providerInstallation.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as NpmRelease from "./cloud/npmRelease.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -715,9 +713,18 @@ function projectFileFailureContext(
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
+// Orbit installs and updates provider CLIs, so the server does not mount these.
+const ORBIT_MANAGED_PROVIDER_TAGS = [
+  WS_METHODS.providerInstallStart,
+  WS_METHODS.providerInstallCancel,
+  WS_METHODS.providerInstallSubscribe,
+  WS_METHODS.providerInstallRemove,
+  WS_METHODS.serverUpdateProvider,
+] as const;
+export const MountedOfficialWsRpcGroup = OfficialWsRpcGroup.omit(...ORBIT_MANAGED_PROVIDER_TAGS);
 // Middleware added later wraps middleware added earlier, so instrumentation wraps authorization.
 const ServerWsRpcGroup =
-  OfficialWsRpcGroup.middleware(RpcScopeAuthorization).middleware(RpcInstrumentation);
+  MountedOfficialWsRpcGroup.middleware(RpcScopeAuthorization).middleware(RpcInstrumentation);
 
 // RpcGroup.toLayer derives each handler's requirements by scanning every RPC in
 // the group, so its type cost grows with handlers × RPCs. Near 200 methods that
@@ -1553,9 +1560,7 @@ export const layerWsRpc = (
       const acpRegistryRuntimeCoordinator =
         yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
       const acpRegistrySessions = yield* AcpRegistrySessions.AcpRegistrySessions;
-      const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const providerAuth = yield* ProviderAuthService.ProviderAuthService;
-      const providerInstallation = yield* ProviderInstallation.ProviderInstallation;
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const npmRelease = yield* NpmRelease.NpmRelease;
       const config = yield* ServerConfig.ServerConfig;
@@ -2629,8 +2634,6 @@ export const layerWsRpc = (
                 ),
               ),
           ),
-        [WS_METHODS.serverUpdateProvider]: (input) =>
-          providerMaintenanceRunner.updateProvider(input),
         [WS_METHODS.providerConsumeResetCredit]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (input) {
@@ -2679,10 +2682,6 @@ export const layerWsRpc = (
         [WS_METHODS.providerAuthLogout]: (input) => providerAuth.logout(input),
         [WS_METHODS.providerAuthSubscribe]: (input) =>
           providerAuth.subscribe(input, currentSessionId),
-        [WS_METHODS.providerInstallStart]: (input) => providerInstallation.start(input),
-        [WS_METHODS.providerInstallCancel]: (input) => providerInstallation.cancel(input),
-        [WS_METHODS.providerInstallSubscribe]: (input) => providerInstallation.subscribe(input),
-        [WS_METHODS.providerInstallRemove]: (input) => providerInstallation.remove(input),
         [WS_METHODS.serverUpdateServer]: (input) => serverSelfUpdate.update(input),
         [WS_METHODS.serverGetNpmRelease]: (input) => npmRelease.get(input),
         [WS_METHODS.serverUpdateServerWithProgress]: (input) =>
@@ -3712,7 +3711,6 @@ export const layer = Layer.unwrap(
               Layer.provide(DefectReporter.layer),
               Layer.provide(AcpRegistrySessions.layer),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
-              Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(Layer.succeed(NpmRelease.NpmRelease, npmRelease)),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
               // Share server-lifetime PR caches so WS mutations invalidate every client's HTTP diffs.

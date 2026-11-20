@@ -5,7 +5,7 @@ custom agents, steering, hooks, and MCP configuration.
 
 ## Set Up Kiro
 
-1. Install the Kiro CLI on the machine running the T3 Code server. On macOS or Linux, run
+1. Orbit installs the Kiro CLI on the machine running the T3 Code server. To install it by hand, on macOS or Linux run
    `curl -fsSL https://cli.kiro.dev/install | bash`. On Windows 11, run
    `irm 'https://cli.kiro.dev/install.ps1' | iex` in PowerShell. Kiro's
    [installation guide](https://kiro.dev/docs/getting-started/installation/) lists other options.

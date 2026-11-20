@@ -855,15 +855,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("queue steer running turn send default behavior composer")],
   },
   {
-    id: "provider-update-checks",
-    title: msg("Provider update checks"),
-    to: "/settings/maintenance",
-    searchTerms: [
-      msg("installed cli versions newer available codex claude cursor grok fx kiro opencode"),
-    ],
-    scope: "environment-defaults",
-  },
-  {
     id: "continue-threads-after-server-update",
     title: msg("Continue threads after restarts"),
     to: "/settings/maintenance",

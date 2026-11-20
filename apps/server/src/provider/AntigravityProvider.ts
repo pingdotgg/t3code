@@ -203,7 +203,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           : "Antigravity is disabled in T3 Code settings.",
       },
     }),
-    setup: { canAuthenticate: true, canInstall: true },
+    setup: { canAuthenticate: true, canInstall: false },
     supportsConversationRollback: true,
     supportsTextGeneration: false,
     workspaceSnapshots: [],
@@ -290,7 +290,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
         : failure?._tag === "ProviderSetupError"
           ? failure.detail.trim() || "Antigravity could not complete its local health check."
           : missingInstallation
-            ? "Antigravity ACP runtime is not installed or its executable could not be found."
+            ? "Antigravity (agy) is not installed on this environment's PATH. Orbit installs it."
             : failure
               ? "Antigravity could not complete its local health check."
               : `Antigravity did not respond to its local health check within ${timeoutMs / 1_000} seconds.`;
@@ -313,8 +313,13 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
         draft: {
           ...draft,
           installed: !missingInstallation,
-          // Lightweight custom-launcher probes lack versions; preserve the real handshake's version.
-          version: version === "unknown" ? draft.version : version || draft.version,
+          // A failed probe clears the version, so a replaced binary never keeps the old one.
+          version:
+            initialized === undefined
+              ? null
+              : version === "unknown"
+                ? draft.version
+                : version || draft.version,
           status: errorMessage ? "error" : authenticated ? "ready" : "warning",
           checkedAt: updatedAt,
           usageLimits: missingInstallation ? undefined : draft.usageLimits,
