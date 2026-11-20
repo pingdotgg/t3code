@@ -28,7 +28,14 @@ import {
   TYPOGRAPHY_ADVANCED_STORAGE_KEY,
 } from "../../appearanceFonts";
 import { AdvancedSettings } from "./AdvancedSettings";
-import { CodeFontPreview, PromptFontPreview, TerminalFontPreview } from "./SettingsFontPreviews";
+import { useTheme } from "../../hooks/useTheme";
+import { getThemeDefinition, resolveThemeHalf } from "../../themePalette";
+import {
+  CodeFontPreview,
+  PromptFontPreview,
+  ReplyFontPreview,
+  TerminalFontPreview,
+} from "./SettingsFontPreviews";
 import { discoverInstalledFonts, FontFamilyPicker, useFontEnumeration } from "./FontFamilyPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
@@ -59,11 +66,20 @@ function resolveFontDefaultFamilies() {
 function useFontDefaultFamilies() {
   const gt = useGT();
   const settings = useScopedSettings();
-  const [defaults] = useState(resolveFontDefaultFamilies);
+  const { theme, themeHalves, resolvedTheme } = useTheme();
+  const absolutely =
+    getThemeDefinition(resolveThemeHalf(theme, themeHalves, resolvedTheme))?.typography ===
+    "absolutely";
+  const [systemDefaults] = useState(resolveFontDefaultFamilies);
+  const defaults = {
+    sans: absolutely ? "DM Sans" : systemDefaults.sans,
+    code: absolutely ? "JetBrains Mono" : systemDefaults.code,
+  };
   const sans = defaults.sans ?? gt("System default");
   return {
     sans,
     code: defaults.code ?? gt("System monospace"),
+    terminal: systemDefaults.code ?? gt("System monospace"),
     interfaceFamily: settings.fontFamilySans.trim() || sans,
   };
 }
@@ -78,7 +94,7 @@ function InterfaceFontRow({ preview }: { preview?: ReactNode }) {
     <FontFamilySettingsRow
       {...searchableSetting("interface-font")}
       resetLabel={gt("Reset interface font to default")}
-      description={gt("Everything outside code blocks and the terminal.")}
+      description={gt("Menus, controls, and user messages.")}
       defaultFamily={defaults.sans}
       defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilySans}
       value={settings.fontFamilySans}
@@ -98,6 +114,32 @@ function InterfaceFontRow({ preview }: { preview?: ReactNode }) {
         onChange: (fontSizeInterface) => updateSettings({ fontSizeInterface }),
       }}
       {...(preview !== undefined ? { preview } : {})}
+    />
+  );
+}
+
+function ReplyFontRow() {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const defaults = useFontDefaultFamilies();
+  const { theme, themeHalves, resolvedTheme } = useTheme();
+  const typography = getThemeDefinition(
+    resolveThemeHalf(theme, themeHalves, resolvedTheme),
+  )?.typography;
+  const defaultFamily = typography === "absolutely" ? "Source Serif 4" : defaults.interfaceFamily;
+  return (
+    <FontFamilySettingsRow
+      {...searchableSetting("reply-font")}
+      resetLabel={gt("Reset reply font to default")}
+      description={gt("Agent replies. Leave blank to follow the theme.")}
+      defaultFamily={defaultFamily}
+      defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilyReply}
+      value={settings.fontFamilyReply}
+      onValueChange={(fontFamilyReply) => updateSettings({ fontFamilyReply })}
+      onReset={() => updateSettings({ fontFamilyReply: DEFAULT_UNIFIED_SETTINGS.fontFamilyReply })}
+      preview={<ReplyFontPreview />}
     />
   );
 }
@@ -193,7 +235,7 @@ function TerminalFontRow() {
       {...searchableSetting("terminal-font")}
       resetLabel={gt("Reset terminal font to default")}
       description={gt("Terminal output, independent from code blocks and diffs.")}
-      defaultFamily={defaults.code}
+      defaultFamily={defaults.terminal}
       defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilyTerminal}
       value={settings.fontFamilyTerminal}
       onValueChange={(fontFamilyTerminal) => updateSettings({ fontFamilyTerminal })}
@@ -289,6 +331,7 @@ function FontSettingsGroup() {
   return (
     <>
       <InterfaceFontRow />
+      <ReplyFontRow />
       <PromptFontRow />
       <CodeFontRow />
       <TerminalFontRow />
@@ -328,6 +371,7 @@ function SimpleFontRows() {
   return (
     <>
       <InterfaceFontRow preview={<PromptFontPreview />} />
+      <ReplyFontRow />
       <CodeFontRow
         title={gt("Monospace font")}
         resetLabel={gt("Reset monospace font to default")}
@@ -411,7 +455,7 @@ function FontFamilySettingsRow({
   onValueChange: (value: string) => void;
   onReset: () => void;
   requireMonospace?: boolean;
-  size: {
+  size?: {
     label: string;
     min: number;
     max: number;
@@ -469,7 +513,7 @@ function FontFamilySettingsRow({
     onReset();
   };
   const resetAction =
-    value !== defaultValue || size.value !== size.defaultValue ? (
+    value !== defaultValue || (size !== undefined && size.value !== size.defaultValue) ? (
       <SettingResetButton ariaLabel={resetLabel} onClick={resetToDefault} />
     ) : null;
   const fontEnumeration = useFontEnumeration();
@@ -536,29 +580,31 @@ function FontFamilySettingsRow({
   const control = (
     <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto @min-[32rem]/settings-row:flex-nowrap">
       <div className="min-w-36 flex-1 sm:w-44 sm:flex-none">{familyControl}</div>
-      <Select
-        value={String(size.value)}
-        onValueChange={(next) => {
-          if (typeof next !== "string") return;
-          const parsed = Number(next);
-          if (Number.isInteger(parsed) && parsed >= size.min && parsed <= size.max) {
-            size.onChange(parsed);
-          }
-        }}
-      >
-        <SelectTrigger size="sm" className="w-22 shrink-0" aria-label={size.label}>
-          <SelectValue>{size.value} px</SelectValue>
-        </SelectTrigger>
-        <SelectPopup align="end" alignItemWithTrigger={false}>
-          {Array.from({ length: size.max - size.min + 1 }, (_, index) => size.min + index).map(
-            (px) => (
-              <SelectItem hideIndicator key={px} value={String(px)}>
-                {px} px
-              </SelectItem>
-            ),
-          )}
-        </SelectPopup>
-      </Select>
+      {size ? (
+        <Select
+          value={String(size.value)}
+          onValueChange={(next) => {
+            if (typeof next !== "string") return;
+            const parsed = Number(next);
+            if (Number.isInteger(parsed) && parsed >= size.min && parsed <= size.max) {
+              size.onChange(parsed);
+            }
+          }}
+        >
+          <SelectTrigger size="sm" className="w-22 shrink-0" aria-label={size.label}>
+            <SelectValue>{size.value} px</SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            {Array.from({ length: size.max - size.min + 1 }, (_, index) => size.min + index).map(
+              (px) => (
+                <SelectItem hideIndicator key={px} value={String(px)}>
+                  {px} px
+                </SelectItem>
+              ),
+            )}
+          </SelectPopup>
+        </Select>
+      ) : null}
     </div>
   );
   return (

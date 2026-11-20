@@ -170,7 +170,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
           </CommandList>
         ) : (
           <div className="px-5 pt-3.5 pb-7">
-            <p className="text-secondary-label text-xs">
+            <p className="text-secondary-label text-xs in-data-[typography=absolutely]:text-sm in-data-[typography=absolutely]:font-normal in-data-[typography=absolutely]:leading-5">
               {props.isLoading
                 ? props.triggerKind === "skill" || props.triggerKind === "slash-command"
                   ? gt("Searching workspace skills...")
@@ -269,7 +269,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         />
       ) : null}
       <span className="flex min-w-0 flex-1 items-center gap-2">
-        <span className="min-w-0 max-w-[45%] shrink-0 truncate font-sans text-xs font-medium">
+        <span className="min-w-0 max-w-[45%] shrink-0 truncate font-sans text-xs font-medium in-data-[typography=absolutely]:text-sm in-data-[typography=absolutely]:font-normal in-data-[typography=absolutely]:leading-5">
           {isSlashSkill ? (
             <>
               <span className="text-secondary-label">/skill:</span>
@@ -285,7 +285,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
             render={
               <span
                 ref={descriptionRef}
-                className="min-w-0 flex-1 truncate text-left text-secondary-label text-xs"
+                className="min-w-0 flex-1 truncate text-left text-secondary-label text-xs in-data-[typography=absolutely]:text-sm in-data-[typography=absolutely]:font-normal in-data-[typography=absolutely]:leading-5"
               />
             }
           >

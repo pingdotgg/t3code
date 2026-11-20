@@ -9889,8 +9889,18 @@
   "40f58619ace8deec": "Sökväg i inställningar",
   "b2cf8f129e8f4ef4": "Förhandsvisning av promptteckensnitt",
   "8382185ec8f04bb0": "Förhandsvisning av terminalteckensnitt",
+  "e91fde3ffe2d2e63": [
+    "Låt oss bygga något genomtänkt. Jag kan hjälpa dig att komma igång med ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": "helloWorld()"
+    },
+    "."
+  ],
   "745b1f5e1c4b87e8": "Gränssnittets teckensnitt",
   "bf17f93eb361d733": "Promptens teckensnitt",
+  "25315f17545ed0b8": "Svarstypsnitt",
   "8ab87e62970b7426": "Kodens teckensnitt",
   "2fd3e76456c4b881": "Terminalens teckensnitt",
   "b050658dc576bfcd": "Webbläsarens visningsyta",
@@ -11333,8 +11343,10 @@
   "f307391eb1c5c9d7": "Håll titlarna till några ord. Börja med huvudämnet.",
   "ea6f97bad03faf84": "Systemets teckensnitt med fast bredd",
   "afa0ba3d124d9b8a": "Återställ gränssnittets typsnitt till standard",
-  "eb19ce0364bb9a6e": "Allt utanför kodblock och terminalen.",
+  "a089cec996e9ae13": "Menyer, kontroller och användarmeddelanden.",
   "bbbdfdb72e0f1ee6": "Teckenstorlek i gränssnittet",
+  "c82ed39072a4a5e1": "Återställ svarstypsnitt till standard",
+  "e7120bcccf726ffb": "Agentsvar. Lämna tomt för att följa temat.",
   "420480830ee825c2": "Återställ promptens typsnitt till standard",
   "64e56157990fb1d0": "Bara rutan där du skriver promptar. Fast bredd fungerar bra här.",
   "a71de523221501bc": "Teckenstorlek i prompten",
@@ -11684,6 +11696,7 @@
   "8c8364d44fa28d22": "dev nightly latest kanal grafik pill etikett dölj ingen",
   "2d90635156dfcb5a": "typografi typsnitt familj storlek system sans",
   "d32e93777e4819c8": "typografi typsnitt familj storlek inmatningsfält inmatning",
+  "819100039ed0f1d2": "typografi typsnitt assistent svar chatt seriff",
   "120d2e7e8c848ee9": "typografi typsnitt familj storlek fast bredd monospace kodblock diffar filförhandsvisningar",
   "0b9c40baa3536bff": "typografi typsnitt familj storlek fast bredd monospace utdata",
   "f7a87dd572619b1c": "typografi avancerat prompt kod terminal typsnitt familj storlek individuellt",

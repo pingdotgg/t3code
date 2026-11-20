@@ -56,7 +56,13 @@ export function createMobileThemeRuntimeOperations(
   if (previous === null || previous.baseFontSize !== next.baseFontSize) {
     const variables = resolveTextScaleVariables(next.baseFontSize);
     for (const themeName of UNIWIND_THEME_NAMES) {
-      operations.push({ kind: "update-text-variables", themeName, variables });
+      operations.push({
+        kind: "update-text-variables",
+        themeName,
+        variables: themeName.startsWith("absolutely-")
+          ? resolveTextScaleVariables(next.baseFontSize, "absolutely")
+          : variables,
+      });
     }
   }
 

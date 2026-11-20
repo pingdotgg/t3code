@@ -9879,8 +9879,18 @@
   "40f58619ace8deec": "Ruta de navegación de ajustes",
   "b2cf8f129e8f4ef4": "Vista previa de la fuente del prompt",
   "8382185ec8f04bb0": "Vista previa de la fuente de la terminal",
+  "e91fde3ffe2d2e63": [
+    "Creemos algo bien pensado. Puedo ayudarte a empezar con ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": "helloWorld()"
+    },
+    "."
+  ],
   "745b1f5e1c4b87e8": "Fuente de la interfaz",
   "bf17f93eb361d733": "Fuente del prompt",
+  "25315f17545ed0b8": "Fuente de las respuestas",
   "8ab87e62970b7426": "Fuente del código",
   "2fd3e76456c4b881": "Fuente de la terminal",
   "b050658dc576bfcd": "Viewport del navegador",
@@ -11320,8 +11330,10 @@
   "f307391eb1c5c9d7": "Limita los títulos a unas pocas palabras. Empieza por el tema principal.",
   "ea6f97bad03faf84": "Monoespaciada del sistema",
   "afa0ba3d124d9b8a": "Restablecer la fuente de la interfaz al valor predeterminado",
-  "eb19ce0364bb9a6e": "Todo lo que está fuera de los bloques de código y la terminal.",
+  "a089cec996e9ae13": "Menús, controles y mensajes del usuario.",
   "bbbdfdb72e0f1ee6": "Tamaño de la fuente de la interfaz",
+  "c82ed39072a4a5e1": "Restablecer la fuente de las respuestas",
+  "e7120bcccf726ffb": "Respuestas del agente. Deja el campo vacío para seguir el tema.",
   "420480830ee825c2": "Restablecer la fuente del prompt al valor predeterminado",
   "64e56157990fb1d0": "Solo el cuadro donde escribes los prompts. Una monoespaciada funciona bien aquí.",
   "a71de523221501bc": "Tamaño de la fuente del prompt",
@@ -11671,6 +11683,7 @@
   "8c8364d44fa28d22": "dev nightly latest canal ilustración píldora etiqueta ocultar ninguno",
   "2d90635156dfcb5a": "tipografía familia tamaño sistema sans",
   "d32e93777e4819c8": "tipografía familia tamaño cuadro mensaje compositor entrada",
+  "819100039ed0f1d2": "tipografía familia asistente respuesta chat serif",
   "120d2e7e8c848ee9": "tipografía familia tamaño monoespaciada bloques de código diffs vistas previas de archivos",
   "0b9c40baa3536bff": "tipografía familia tamaño monoespaciada salida",
   "f7a87dd572619b1c": "tipografía avanzado prompt código terminal fuente familia tamaño individualmente",

@@ -5,6 +5,14 @@ appearance or stay in light or dark mode. To use different themes for light and 
 the corresponding preview within each theme. Appearance preferences are saved separately on each
 device or browser.
 
+Under **Typography**, set **Reply font** to give agent replies a different typeface from the
+interface. Leave it blank to follow the theme's typography. Code keeps its own font. Custom fonts
+must be installed on the device where you use the app.
+
+**Absolutely** pairs neutral light and dark palettes with serif agent replies on web, desktop,
+and mobile. It uses bundled DM Sans, Source Serif 4, and JetBrains Mono fonts for the interface, replies,
+and code without installing fonts separately. Explicit typography preferences override the theme.
+
 On web and desktop, use **Change theme** in the command palette to select a theme without leaving chat.
 Press **Cmd+Option+A** on macOS or **Ctrl+Alt+A** on Windows/Linux to open the theme picker directly.
 Use **Change appearance** in the command palette to choose System, Light, or Dark independently of

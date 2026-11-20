@@ -9891,8 +9891,18 @@
   "40f58619ace8deec": "Settings breadcrumb",
   "b2cf8f129e8f4ef4": "Prompt font preview",
   "8382185ec8f04bb0": "Terminal font preview",
+  "e91fde3ffe2d2e63": [
+    "Let’s build something thoughtful. I can help you get started with ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": "helloWorld()"
+    },
+    "."
+  ],
   "745b1f5e1c4b87e8": "Interface font",
   "bf17f93eb361d733": "Prompt font",
+  "25315f17545ed0b8": "Reply font",
   "8ab87e62970b7426": "Code font",
   "2fd3e76456c4b881": "Terminal font",
   "b050658dc576bfcd": "Browser viewport",
@@ -11335,8 +11345,10 @@
   "f307391eb1c5c9d7": "Keep titles to a few words. Lead with the main subject.",
   "ea6f97bad03faf84": "System monospace",
   "afa0ba3d124d9b8a": "Reset interface font to default",
-  "eb19ce0364bb9a6e": "Everything outside code blocks and the terminal.",
+  "a089cec996e9ae13": "Menus, controls, and user messages.",
   "bbbdfdb72e0f1ee6": "Interface font size",
+  "c82ed39072a4a5e1": "Reset reply font to default",
+  "e7120bcccf726ffb": "Agent replies. Leave blank to follow the theme.",
   "420480830ee825c2": "Reset prompt font to default",
   "64e56157990fb1d0": "Only the box you write prompts in. Mono works well here.",
   "a71de523221501bc": "Prompt font size",
@@ -11686,6 +11698,7 @@
   "8c8364d44fa28d22": "dev nightly latest channel artwork pill label hide none",
   "2d90635156dfcb5a": "typography family size system sans",
   "d32e93777e4819c8": "typography family size composer input",
+  "819100039ed0f1d2": "typography family assistant response chat serif",
   "120d2e7e8c848ee9": "typography family size monospace code blocks diffs file previews",
   "0b9c40baa3536bff": "typography family size monospace output",
   "f7a87dd572619b1c": "typography advanced prompt code terminal font family size individually",

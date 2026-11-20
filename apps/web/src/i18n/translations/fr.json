@@ -9881,8 +9881,18 @@
   "40f58619ace8deec": "Fil d’Ariane des paramètres",
   "b2cf8f129e8f4ef4": "Aperçu de la police du prompt",
   "8382185ec8f04bb0": "Aperçu de la police du terminal",
+  "e91fde3ffe2d2e63": [
+    "Créons quelque chose de réfléchi. Je peux vous aider à démarrer avec ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": "helloWorld()"
+    },
+    "."
+  ],
   "745b1f5e1c4b87e8": "Police de l’interface",
   "bf17f93eb361d733": "Police du prompt",
+  "25315f17545ed0b8": "Police des réponses",
   "8ab87e62970b7426": "Police du code",
   "2fd3e76456c4b881": "Police du terminal",
   "b050658dc576bfcd": "Fenêtre d’affichage du navigateur",
@@ -11325,8 +11335,10 @@
   "f307391eb1c5c9d7": "Limiter les titres à quelques mots. Commencer par le sujet principal.",
   "ea6f97bad03faf84": "Monospace du système",
   "afa0ba3d124d9b8a": "Réinitialiser la police de l’interface à la valeur par défaut",
-  "eb19ce0364bb9a6e": "Tout ce qui est hors des blocs de code et du terminal.",
+  "a089cec996e9ae13": "Menus, commandes et messages de l’utilisateur.",
   "bbbdfdb72e0f1ee6": "Taille de police de l’interface",
+  "c82ed39072a4a5e1": "Rétablir la police des réponses par défaut",
+  "e7120bcccf726ffb": "Réponses de l’agent. Laissez vide pour suivre le thème.",
   "420480830ee825c2": "Réinitialiser la police du prompt à la valeur par défaut",
   "64e56157990fb1d0": "Uniquement la zone où vous rédigez les prompts. Une police monospace y convient bien.",
   "a71de523221501bc": "Taille de police du prompt",
@@ -11676,6 +11688,7 @@
   "8c8364d44fa28d22": "dev nightly dernière canal illustration pastille libellé masquer aucun",
   "2d90635156dfcb5a": "typographie famille taille système sans",
   "d32e93777e4819c8": "typographie famille taille zone de saisie saisie",
+  "819100039ed0f1d2": "typographie famille assistant réponse discussion empattement",
   "120d2e7e8c848ee9": "typographie famille taille chasse fixe blocs de code diffs aperçus de fichiers",
   "0b9c40baa3536bff": "typographie famille taille chasse fixe sortie",
   "f7a87dd572619b1c": "typographie avancé prompt code terminal famille de police taille individuellement",

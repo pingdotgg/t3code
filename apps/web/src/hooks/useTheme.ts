@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import { useSyncExternalStore } from "react";
 import {
   applyThemePalette,
+  getThemeDefinition,
   CUSTOM_THEMES_STORAGE_KEY,
   invalidateCustomThemes,
   canonicalThemePreference,
@@ -499,6 +500,11 @@ export function subscribeRenderedAppearance(listener: () => void): () => void {
     unsubscribeTheme();
     unsubscribePreview();
   };
+}
+
+export function getRenderedTypography() {
+  const { theme, themeHalves, resolvedTheme } = getSnapshot();
+  return getThemeDefinition(resolveThemeHalf(theme, themeHalves, resolvedTheme))?.typography;
 }
 
 export function getRenderedAppearance(): ThemeAppearance {

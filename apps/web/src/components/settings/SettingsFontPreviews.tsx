@@ -2,7 +2,7 @@ import type { ServerProviderSkill } from "@t3tools/contracts";
 import { preloadPatchFile } from "@pierre/diffs/ssr";
 import { useAtomValue } from "@effect/atom-react";
 import * as Effect from "effect/Effect";
-import { useGT } from "gt-react";
+import { T, useGT } from "gt-react";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -27,6 +27,16 @@ const PROMPT_PREVIEW_TEXT =
   "[SettingsPanels.tsx](apps/web/src/components/settings/SettingsPanels.tsx) before shipping.";
 
 function noop() {}
+
+export function ReplyFontPreview() {
+  return (
+    <p className="mt-1 mb-2 rounded-lg border border-border bg-background px-3 py-2 font-reply text-sm leading-relaxed">
+      <T>
+        Let’s build something thoughtful. I can help you get started with <code>helloWorld()</code>.
+      </T>
+    </p>
+  );
+}
 
 export function PromptFontPreview() {
   const gt = useGT();

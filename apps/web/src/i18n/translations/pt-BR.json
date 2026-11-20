@@ -9880,8 +9880,18 @@
   "40f58619ace8deec": "Trilha de navegação das configurações",
   "b2cf8f129e8f4ef4": "Pré-visualização da fonte do prompt",
   "8382185ec8f04bb0": "Pré-visualização da fonte do terminal",
+  "e91fde3ffe2d2e63": [
+    "Vamos criar algo bem pensado. Posso ajudar você a começar com ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": "helloWorld()"
+    },
+    "."
+  ],
   "745b1f5e1c4b87e8": "Fonte da interface",
   "bf17f93eb361d733": "Fonte do prompt",
+  "25315f17545ed0b8": "Fonte das respostas",
   "8ab87e62970b7426": "Fonte do código",
   "2fd3e76456c4b881": "Fonte do terminal",
   "b050658dc576bfcd": "Viewport do navegador",
@@ -11324,8 +11334,10 @@
   "f307391eb1c5c9d7": "Mantenha os títulos com poucas palavras. Comece pelo assunto principal.",
   "ea6f97bad03faf84": "Monoespaçada do sistema",
   "afa0ba3d124d9b8a": "Redefinir a fonte da interface para o padrão",
-  "eb19ce0364bb9a6e": "Tudo fora dos blocos de código e do terminal.",
+  "a089cec996e9ae13": "Menus, controles e mensagens do usuário.",
   "bbbdfdb72e0f1ee6": "Tamanho da fonte da interface",
+  "c82ed39072a4a5e1": "Restaurar a fonte padrão das respostas",
+  "e7120bcccf726ffb": "Respostas do agente. Deixe em branco para seguir o tema.",
   "420480830ee825c2": "Redefinir a fonte do prompt para o padrão",
   "64e56157990fb1d0": "Só a caixa em que você escreve os prompts. Fontes mono funcionam bem aqui.",
   "a71de523221501bc": "Tamanho da fonte do prompt",
@@ -11675,6 +11687,7 @@
   "8c8364d44fa28d22": "dev nightly latest canal arte pílula rótulo ocultar nenhum",
   "2d90635156dfcb5a": "tipografia família tamanho sistema sans",
   "d32e93777e4819c8": "tipografia família tamanho editor de mensagens entrada",
+  "819100039ed0f1d2": "tipografia família assistente resposta chat serifa",
   "120d2e7e8c848ee9": "tipografia família tamanho monoespaçada blocos de código diffs pré-visualizações de arquivos",
   "0b9c40baa3536bff": "tipografia família tamanho monoespaçada saída",
   "f7a87dd572619b1c": "tipografia avançado prompt código terminal fonte família tamanho individualmente",

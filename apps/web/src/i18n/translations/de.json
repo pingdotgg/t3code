@@ -9882,8 +9882,18 @@
   "40f58619ace8deec": "Navigationspfad der Einstellungen",
   "b2cf8f129e8f4ef4": "Vorschau der Prompt-Schrift",
   "8382185ec8f04bb0": "Vorschau der Terminal-Schrift",
+  "e91fde3ffe2d2e63": [
+    "Lass uns etwas Durchdachtes entwickeln. Ich helfe dir beim Einstieg mit ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": "helloWorld()"
+    },
+    "."
+  ],
   "745b1f5e1c4b87e8": "Oberflächenschrift",
   "bf17f93eb361d733": "Prompt-Schrift",
+  "25315f17545ed0b8": "Antwortschrift",
   "8ab87e62970b7426": "Code-Schrift",
   "2fd3e76456c4b881": "Terminal-Schrift",
   "b050658dc576bfcd": "Browser-Viewport",
@@ -11325,8 +11335,10 @@
   "f307391eb1c5c9d7": "Titel auf wenige Wörter beschränken. Mit dem Hauptthema beginnen.",
   "ea6f97bad03faf84": "System-Monospace",
   "afa0ba3d124d9b8a": "Schrift der Oberfläche auf Standard zurücksetzen",
-  "eb19ce0364bb9a6e": "Alles außerhalb von Codeblöcken und dem Terminal.",
+  "a089cec996e9ae13": "Menüs, Steuerelemente und Benutzernachrichten.",
   "bbbdfdb72e0f1ee6": "Schriftgröße der Oberfläche",
+  "c82ed39072a4a5e1": "Antwortschrift auf Standard zurücksetzen",
+  "e7120bcccf726ffb": "Antworten des Agenten. Leer lassen, um dem Design zu folgen.",
   "420480830ee825c2": "Prompt-Schrift auf Standard zurücksetzen",
   "64e56157990fb1d0": "Nur das Feld, in das du Prompts schreibst. Monospace eignet sich hier gut.",
   "a71de523221501bc": "Schriftgröße für Prompts",
@@ -11678,6 +11690,7 @@
   "8c8364d44fa28d22": "dev nightly latest kanal artwork badge bezeichnung ausblenden keine",
   "2d90635156dfcb5a": "typografie schriftart größe system sans",
   "d32e93777e4819c8": "typografie schriftart größe eingabefeld eingabe",
+  "819100039ed0f1d2": "Typografie Schriftfamilie Assistent Antwort Chat Serifen",
   "120d2e7e8c848ee9": "typografie schriftart größe monospace codeblöcke diffs dateivorschauen",
   "0b9c40baa3536bff": "typografie schriftart größe monospace ausgabe",
   "f7a87dd572619b1c": "typografie erweitert prompt code terminal schriftart größe einzeln",

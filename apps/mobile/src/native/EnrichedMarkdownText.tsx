@@ -48,7 +48,7 @@ function enrichedStyle(
   dark: boolean,
   fontScale: number,
 ): MarkdownStyle {
-  const monospace = Platform.OS === "ios" ? "Menlo" : "monospace";
+  const monospace = style.codeFontFamily ?? (Platform.OS === "ios" ? "Menlo" : "monospace");
   // Keep the radius modest: iOS clips square table-cell borders without stroking the corner arcs.
   const block = {
     marginTop: 4,
@@ -72,7 +72,7 @@ function enrichedStyle(
       color: style.strongColor,
       fontFamily: style.headingFontFamily,
       fontSize,
-      lineHeight: fontSize * 1.35,
+      lineHeight: fontSize * (style.headingLineHeightMultiplier ?? 1.35),
       marginTop: 8,
     };
   };
@@ -93,7 +93,11 @@ function enrichedStyle(
     h4: heading(4),
     h5: heading(5),
     h6: heading(6),
-    strong: { color: style.strongColor, fontFamily: style.boldFontFamily, fontWeight: "normal" },
+    strong: {
+      color: style.strongColor,
+      fontFamily: style.boldFontFamily,
+      fontWeight: "normal",
+    },
     link: { color: style.linkColor, underline: false },
     code: {
       fontFamily: monospace,
@@ -107,7 +111,8 @@ function enrichedStyle(
       color: style.codeColor,
       backgroundColor: style.codeBlockBackgroundColor,
       fontFamily: monospace,
-      fontSize: style.fontSize * 0.9,
+      fontSize: style.codeBlockFontSize ?? style.fontSize * 0.9,
+      lineHeight: style.codeBlockLineHeight ?? style.lineHeight,
       ...block,
       padding: 12,
       syntaxColors: dark
