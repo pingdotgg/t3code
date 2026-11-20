@@ -995,6 +995,12 @@ describe("VcsStatusBroadcaster", () => {
           currentBranch: (cwd) => Effect.succeed(localStatus(cwd).refName),
           readRefSnapshot: () => Effect.succeed("refs"),
           remoteStatus: (input) => Effect.succeed(remoteStatus(input.cwd)),
+          upstreamDivergence: (cwd) =>
+            Effect.succeed({
+              refName: "main",
+              aheadCount: 0,
+              behindCount: remoteStatus(cwd).behindCount,
+            }),
           invalidateLocalStatus: () => Effect.void,
           invalidateRemoteStatus: () => Effect.void,
           invalidateStatus: () => Effect.void,

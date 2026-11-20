@@ -680,6 +680,8 @@ export const make = Effect.gen(function* () {
     function* (cwd: string) {
       const mainCheckout = yield* mainCheckoutOf(cwd);
       if (mainCheckout === null || !(yield* autoPullPolicy.isEnabled(mainCheckout))) return;
+      const divergence = yield* workflow.upstreamDivergence(mainCheckout);
+      if (divergence === null || divergence.aheadCount > 0 || divergence.behindCount <= 0) return;
       yield* withRemoteWriteLock(
         mainCheckout,
         Effect.gen(function* () {
@@ -688,8 +690,10 @@ export const make = Effect.gen(function* () {
         }),
       );
     },
-    Effect.catchCause((cause) =>
-      Effect.logWarning("Automatic pull of a worktree's main checkout failed", { cause }),
+    Effect.catch((error) =>
+      Effect.logWarning("Automatic pull of a worktree's main checkout failed", {
+        errorTag: error._tag,
+      }),
     ),
     Effect.forkIn(broadcasterScope),
     Effect.asVoid,
