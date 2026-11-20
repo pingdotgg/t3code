@@ -13,7 +13,11 @@ import {
 } from "../../state/use-model-option-memory";
 import {
   canCommitPendingModel,
+  overlayPendingOptionDescriptors,
+  partitionThreadSettingsDescriptors,
   pendingModelAfterPress,
+  resolveDefaultProviderFilter,
+  resolveEffectiveProviderFilter,
   resolvePendingRuntimeMode,
 } from "./thread-settings-sheet-state";
 
@@ -84,6 +88,115 @@ describe("thread settings sheet state", () => {
         { mode: "full-access", disabledReason: "Managed policy" },
       ]),
     ).toBeUndefined();
+  });
+
+  it("preserves untouched descriptor defaults when overlaying partial staged options", () => {
+    const descriptors = [
+      {
+        id: "effort",
+        label: "Reasoning",
+        type: "select" as const,
+        options: [
+          { id: "medium", label: "Medium" },
+          { id: "high", label: "High", isDefault: true },
+        ],
+        currentValue: "high",
+      },
+      {
+        id: "ultracode",
+        label: "Ultracode",
+        type: "boolean" as const,
+        currentValue: false,
+      },
+    ];
+
+    expect(
+      overlayPendingOptionDescriptors(descriptors, [{ id: "ultracode", value: true }]).map(
+        ({ id, currentValue }) => ({ id, currentValue }),
+      ),
+    ).toEqual([
+      { id: "effort", currentValue: "high" },
+      { id: "ultracode", currentValue: true },
+    ]);
+  });
+
+  it("partitions reasoning, speed, ultracode, and non-reasoning selects without duplicating serviceTier", () => {
+    const serviceTierOnly = partitionThreadSettingsDescriptors([
+      {
+        id: "serviceTier",
+        label: "Service Tier",
+        type: "select",
+        options: [
+          { id: "default", label: "Standard", isDefault: true },
+          { id: "priority", label: "Fast" },
+        ],
+        currentValue: "default",
+      },
+      {
+        id: "agent",
+        label: "Agent",
+        type: "select",
+        options: [{ id: "build", label: "Build", isDefault: true }],
+        currentValue: "build",
+      },
+      {
+        id: "ultracode",
+        label: "Ultracode",
+        type: "boolean",
+        currentValue: false,
+      },
+    ]);
+
+    expect(serviceTierOnly.reasoning).toBeNull();
+    expect(serviceTierOnly.speed?.id).toBe("serviceTier");
+    expect(serviceTierOnly.ultracode?.id).toBe("ultracode");
+    expect(serviceTierOnly.extraOptions.map((descriptor) => descriptor.id)).toEqual(["agent"]);
+  });
+
+  it("defaults to Favorites only when visible favorites exist and widens search from Favorites", () => {
+    const model = modelOption("gpt-next");
+    const groups = [{ providerKey: "codex", providerLabel: "Codex", models: [model] }];
+
+    expect(
+      resolveDefaultProviderFilter({
+        providerGroups: groups,
+        favoriteKeys: new Set(),
+        favoritesFilter: "@favorites",
+      }),
+    ).toBeNull();
+    expect(
+      resolveDefaultProviderFilter({
+        providerGroups: groups,
+        favoriteKeys: new Set([model.key]),
+        favoritesFilter: "@favorites",
+      }),
+    ).toBe("@favorites");
+    expect(
+      resolveDefaultProviderFilter({
+        providerGroups: groups,
+        favoriteKeys: new Set([model.key]),
+        lockedProviderInstanceId: ProviderInstanceId.make("codex"),
+        favoritesFilter: "@favorites",
+      }),
+    ).toBeNull();
+    expect(
+      resolveEffectiveProviderFilter({
+        userFilter: undefined,
+        defaultFilter: "@favorites",
+        searchQuery: "haiku",
+        manageHidden: false,
+        favoritesFilter: "@favorites",
+      }),
+    ).toBeNull();
+    expect(
+      resolveEffectiveProviderFilter({
+        userFilter: "codex",
+        defaultFilter: "@favorites",
+        searchQuery: "haiku",
+        manageHidden: false,
+        favoritesFilter: "@favorites",
+      }),
+    ).toBe("codex");
   });
   it("preserves in-progress edits when the staged model is pressed again", () => {
     rememberModelOptions("codex", "gpt-next", [{ id: "effort", value: "medium" }]);

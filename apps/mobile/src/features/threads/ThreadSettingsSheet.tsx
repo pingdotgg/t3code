@@ -57,7 +57,7 @@ import Animated, {
   LinearTransition,
   useReducedMotion,
 } from "react-native-reanimated";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text, AppTextInput } from "../../components/ui/AppText";
@@ -121,9 +121,13 @@ import {
   favoritesFirst,
   modelFavoriteKey,
   modelMatchesCatalogQuery,
+  overlayPendingOptionDescriptors,
+  partitionThreadSettingsDescriptors,
   pendingModelAfterPress,
-  resolvePendingRuntimeMode,
   providerSectionIsCollapsed,
+  resolveDefaultProviderFilter,
+  resolveEffectiveProviderFilter,
+  resolvePendingRuntimeMode,
 } from "./thread-settings-sheet-state";
 import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
 import type { MessageResolver } from "../../i18n/messages";
@@ -147,10 +151,10 @@ const EMPTY_MODEL_FAVORITES: ReadonlyArray<{
 }> = [];
 const FAVORITES_PROVIDER_FILTER = "@favorites";
 const PERMISSION_SYMBOLS = {
-  "approval-required": { ios: "lock", android: "lock" },
+  "approval-required": "lock",
   "auto-accept-edits": "pencil",
   auto: "checkmark.circle",
-  "full-access": { ios: "lock.open", android: "lock" },
+  "full-access": "lock.open",
 } as const satisfies Record<RuntimeMode, AppSymbolName>;
 // Servers that predate `migrateModelPreferences` drop it and keep reporting null favorites.
 const attemptedMigrationGenerations = new Map<EnvironmentId, number>();
@@ -329,6 +333,7 @@ type ThreadSettingsSessionValue = {
   readonly manageHidden: boolean;
   readonly setManageHidden: (value: boolean) => void;
   readonly runtimeMode: RuntimeMode;
+  readonly runtimeModeBlocked: boolean;
   readonly runtimeModeChoices: ReadonlyArray<RuntimeModeChoice>;
   readonly onUpdateRuntimeMode: (mode: RuntimeMode) => void;
   readonly displayedDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
@@ -337,6 +342,7 @@ type ThreadSettingsSessionValue = {
   readonly reportedModelSelection: ModelSelection | null;
   readonly providerExpansionOverrides: ReadonlySet<string>;
   readonly hasLegacyModels: boolean;
+  readonly hasCustomProviderFilter: boolean;
   readonly pendingModel: ModelOption | null;
   readonly providerFilter: string | null;
   readonly searchQuery: string;
@@ -512,17 +518,50 @@ function ThreadSettingsSessionProvider(
     });
   };
   const [showLegacyToggle, setShowLegacyToggle] = useState(false);
-  const [providerFilter, setProviderFilter] = useState<string | null>(FAVORITES_PROVIDER_FILTER);
+  const [userProviderFilter, setUserProviderFilter] = useState<string | null | undefined>(
+    undefined,
+  );
   const [searchQuery, setSearchQuery] = useState("");
   const [providerExpansionOverrides, setProviderExpansionOverrides] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
   const [pendingModel, setPendingModel] = useState<ModelOption | null>(null);
-  const [pendingOptions, setPendingOptions] =
-    useState<ReadonlyArray<ProviderOptionSelection> | null>(null);
+  const [pendingOptions, setPendingOptions] = useState<{
+    readonly modelKey: string;
+    readonly options: ReadonlyArray<ProviderOptionSelection>;
+  } | null>(null);
   const [pendingRuntimeMode, setPendingRuntimeMode] = useState<RuntimeMode | null>(null);
-  const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
-  const displayedPrompt = pendingPrompt ?? props.prompt;
+  const [pendingPrompt, setPendingPrompt] = useState<{
+    readonly basePrompt: string;
+    readonly value: string;
+  } | null>(null);
+  const selectedModelKey = props.selectedModel
+    ? modelFavoriteKey(props.selectedModel.instanceId, props.selectedModel.model)
+    : null;
+  const activePendingOptions =
+    pendingOptions !== null && pendingOptions.modelKey === selectedModelKey
+      ? pendingOptions.options
+      : null;
+  const activePendingPrompt =
+    pendingPrompt !== null && pendingPrompt.basePrompt === props.prompt
+      ? pendingPrompt.value
+      : null;
+  const displayedPrompt = activePendingPrompt ?? props.prompt;
+  const defaultProviderFilter = resolveDefaultProviderFilter({
+    providerGroups,
+    favoriteKeys,
+    ...(props.lockedProviderInstanceId
+      ? { lockedProviderInstanceId: props.lockedProviderInstanceId }
+      : {}),
+    favoritesFilter: FAVORITES_PROVIDER_FILTER,
+  });
+  const providerFilter = resolveEffectiveProviderFilter({
+    userFilter: userProviderFilter,
+    defaultFilter: defaultProviderFilter,
+    searchQuery,
+    manageHidden,
+    favoritesFilter: FAVORITES_PROVIDER_FILTER,
+  });
 
   const isApplied = (option: ModelOption) =>
     option.selection.instanceId === props.selectedModel?.instanceId &&
@@ -535,13 +574,7 @@ function ThreadSettingsSessionProvider(
         capabilities: pendingModel.capabilities,
         selections: pendingModel.selection.options,
       })
-    : props.optionDescriptors.map((descriptor): ProviderOptionDescriptor => {
-        if (pendingOptions === null) return descriptor;
-        const value = pendingOptions.find((option) => option.id === descriptor.id)?.value;
-        if (descriptor.type === "select")
-          return { ...descriptor, currentValue: typeof value === "string" ? value : undefined };
-        return { ...descriptor, currentValue: typeof value === "boolean" ? value : undefined };
-      });
+    : overlayPendingOptionDescriptors(props.optionDescriptors, activePendingOptions);
   const promptTraits = getPromptControlledTraits(displayedDescriptors, displayedPrompt);
   const displayedModel = props.providerGroups.flatMap((group) => group.models).find(isDisplayed);
   const runtimeModeChoices = withManagedRuntimeModeLimits(
@@ -581,11 +614,11 @@ function ThreadSettingsSessionProvider(
         );
       }
       props.onSelectModel(pendingModel);
-    } else if (pendingOptions !== null) {
-      props.onUpdateOptionSelections(pendingOptions);
+    } else if (activePendingOptions !== null) {
+      props.onUpdateOptionSelections(activePendingOptions);
     }
-    if (pendingPrompt !== null && pendingPrompt !== props.prompt)
-      props.onPromptChange(pendingPrompt);
+    if (activePendingPrompt !== null && activePendingPrompt !== props.prompt)
+      props.onPromptChange(activePendingPrompt);
     if (stagedRuntimeMode !== null && stagedRuntimeMode !== props.runtimeMode)
       props.onUpdateRuntimeMode(stagedRuntimeMode);
     return true;
@@ -605,7 +638,7 @@ function ThreadSettingsSessionProvider(
     if (descriptor?.type === "select") {
       if (!change) return;
       if (change.prompt !== displayedPrompt) {
-        setPendingPrompt(change.prompt);
+        setPendingPrompt({ basePrompt: props.prompt, value: change.prompt });
       }
     }
     const next = change
@@ -619,8 +652,8 @@ function ThreadSettingsSessionProvider(
         ...pendingModel,
         selection: { ...pendingModel.selection, options: next },
       });
-    } else {
-      setPendingOptions(next);
+    } else if (selectedModelKey !== null) {
+      setPendingOptions({ modelKey: selectedModelKey, options: next });
     }
   };
 
@@ -668,21 +701,23 @@ function ThreadSettingsSessionProvider(
     toggleHidden,
     pendingHiddenKeys,
     runtimeMode: compatibleRuntimeMode,
+    runtimeModeBlocked: stagedRuntimeMode === undefined,
     runtimeModeChoices,
     onUpdateRuntimeMode: (mode) => setPendingRuntimeMode(mode === props.runtimeMode ? null : mode),
     displayedDescriptors,
     promptTraits,
     displayedModelSelection:
       pendingModel?.selection ??
-      (pendingOptions !== null && props.selectedModel
-        ? { ...props.selectedModel, options: pendingOptions }
+      (activePendingOptions !== null && props.selectedModel
+        ? { ...props.selectedModel, options: activePendingOptions }
         : props.selectedModel),
     reportedModelSelection:
-      pendingModel || pendingOptions !== null ? null : (props.reportedModelSelection ?? null),
+      pendingModel || activePendingOptions !== null ? null : (props.reportedModelSelection ?? null),
     favoriteKeys,
     favoritesLoaded,
     providerExpansionOverrides,
     hasLegacyModels,
+    hasCustomProviderFilter: userProviderFilter !== undefined && providerFilter !== null,
     pendingModel,
     providerFilter,
     searchQuery,
@@ -692,7 +727,7 @@ function ThreadSettingsSessionProvider(
     isApplied,
     isDisplayed,
     pressModel,
-    setProviderFilter,
+    setProviderFilter: setUserProviderFilter,
     setSearchQuery,
     setShowLegacy: setShowLegacyToggle,
     toggleProvider,
@@ -1009,9 +1044,11 @@ function SettingSegments(props: {
   readonly onChange: (value: string | boolean) => void;
 }) {
   return (
-    <View className="gap-1.5">
-      <View className="flex-row items-center justify-between gap-2">
-        <Text className="text-sm text-foreground-muted">{props.label}</Text>
+    <View className="gap-2">
+      <View className="flex-row flex-wrap items-center justify-between gap-2">
+        <Text className="text-sm text-foreground-muted" numberOfLines={1}>
+          {props.label}
+        </Text>
         {props.trailing}
       </View>
       <View className="min-h-11 flex-row gap-1 rounded-xl border border-border-subtle bg-subtle p-1">
@@ -1054,23 +1091,16 @@ function ThreadSettingsOptionsItem(props: {
   const m = useMessages();
   const session = useThreadSettingsSession();
   const configs = useAtomValue(environmentServerConfigsAtom);
+  const activeProviderInstanceId =
+    session.displayedModelSelection?.instanceId ?? session.providerInstanceId;
   const selectedProvider = session.environmentId
     ? (configs
         .get(session.environmentId)
-        ?.providers.find((provider) => provider.instanceId === session.providerInstanceId) ?? null)
+        ?.providers.find((provider) => provider.instanceId === activeProviderInstanceId) ?? null)
     : null;
-  const reasoning = session.promptTraits.primarySelectDescriptor;
-  const speed =
-    session.displayedDescriptors.find(
-      (entry) => entry.id === "serviceTier" && entry.type === "select",
-    ) ??
-    session.displayedDescriptors.find(
-      (entry) => entry.id === "fastMode" && entry.type === "boolean",
-    );
-  const ultracode =
-    session.displayedDescriptors.find(
-      (entry) => entry.id === "ultracode" && entry.type === "boolean",
-    ) ?? null;
+  const { reasoning, speed, ultracode, extraOptions } = partitionThreadSettingsDescriptors(
+    session.displayedDescriptors,
+  );
   const speedChoices =
     speed?.type === "select"
       ? selectableChoices(speed).map((choice) => ({
@@ -1101,10 +1131,10 @@ function ThreadSettingsOptionsItem(props: {
       accessibilityLabel={ultracode.label}
       accessibilityRole="switch"
       accessibilityState={{ checked: ultracodeActive }}
-      hitSlop={6}
+      hitSlop={{ top: 10, bottom: 2, left: 8, right: 8 }}
       className={cn(
-        "min-h-8 flex-row items-center gap-1.5 rounded-lg border px-2.5 py-1 active:opacity-70",
-        ultracodeActive ? "border-border bg-grouped-card" : "border-border-subtle bg-subtle",
+        "min-h-9 flex-row items-center gap-1.5 rounded-lg border px-2.5 py-1 active:opacity-70",
+        ultracodeActive ? "border-primary bg-primary" : "border-border-subtle bg-subtle",
       )}
       onPress={() => {
         void Haptics.selectionAsync();
@@ -1114,21 +1144,28 @@ function ThreadSettingsOptionsItem(props: {
       <SymbolView
         name="flowchart"
         size={13}
-        tintColorClassName={ultracodeActive ? "accent-foreground" : "accent-foreground-muted"}
+        tintColorClassName={
+          ultracodeActive ? "accent-primary-foreground" : "accent-foreground-muted"
+        }
       />
       <Text
+        numberOfLines={1}
         className={cn(
           "text-xs font-t3-medium",
-          ultracodeActive ? "text-foreground" : "text-foreground-muted",
+          ultracodeActive ? "text-primary-foreground" : "text-foreground-muted",
         )}
       >
         {ultracode.label}
       </Text>
+      {ultracodeActive ? (
+        <SymbolView name="checkmark" size={11} tintColorClassName="accent-primary-foreground" />
+      ) : null}
     </Pressable>
   ) : null;
-  const extraOptions = session.displayedDescriptors.filter(
-    (entry) => entry.id !== reasoning?.id && entry.id !== speed?.id && entry.id !== ultracode?.id,
-  );
+  const reasoningUltrathinkControlled =
+    reasoning !== null &&
+    reasoning.id === session.promptTraits.primarySelectDescriptor?.id &&
+    session.promptTraits.ultrathinkPromptControlled;
 
   return (
     <View className="gap-3 border-b border-border-subtle px-3 pb-4 pt-3">
@@ -1144,17 +1181,26 @@ function ThreadSettingsOptionsItem(props: {
             />
           </View>
         ) : null}
-        <View className="min-w-0 flex-1 gap-1.5">
-          <Text className="text-sm text-foreground-muted">{gt("Permissions")}</Text>
+        <View className="min-w-0 flex-1 gap-2">
+          <Text className="text-sm text-foreground-muted" numberOfLines={1}>
+            {gt("Permissions")}
+          </Text>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={[
               gt("Permissions"),
-              runtimeLabel === undefined ? undefined : m(runtimeLabel),
+              session.runtimeModeBlocked
+                ? gt("Permission mode unavailable")
+                : runtimeLabel === undefined
+                  ? undefined
+                  : m(runtimeLabel),
             ]
               .filter(Boolean)
               .join(", ")}
-            className="min-h-11 flex-row items-center gap-2 rounded-xl bg-grouped-card px-3 py-1"
+            className={cn(
+              "min-h-11 flex-row items-center gap-2 rounded-xl bg-grouped-card px-3 py-1",
+              session.runtimeModeBlocked && "border border-warning",
+            )}
             onPress={() => props.onOpenSubmenu({ kind: "runtime" })}
           >
             <SymbolView
@@ -1166,7 +1212,11 @@ function ThreadSettingsOptionsItem(props: {
               numberOfLines={1}
               className="min-w-0 flex-1 text-sm font-t3-medium text-foreground"
             >
-              {runtimeLabel === undefined ? undefined : m(runtimeLabel)}
+              {session.runtimeModeBlocked
+                ? gt("Permission mode unavailable")
+                : runtimeLabel === undefined
+                  ? undefined
+                  : m(runtimeLabel)}
             </Text>
             <SymbolView
               name="chevron.right"
@@ -1176,36 +1226,11 @@ function ThreadSettingsOptionsItem(props: {
           </Pressable>
         </View>
       </View>
-      {extraOptions.length ? (
-        <View className="overflow-hidden rounded-xl bg-grouped-card">
-          {extraOptions.map((descriptor) =>
-            descriptor.type === "select" ? (
-              <DisclosureRow
-                key={descriptor.id}
-                label={descriptor.label}
-                value={getProviderOptionCurrentLabel(
-                  descriptor,
-                  session.displayedModelSelection,
-                  session.reportedModelSelection,
-                )}
-                onPress={() => props.onOpenSubmenu({ kind: "descriptor", id: descriptor.id })}
-              />
-            ) : (
-              <SwitchRow
-                key={descriptor.id}
-                label={descriptor.label}
-                value={descriptor.currentValue ?? false}
-                onValueChange={(value) => session.applyOptionChange(descriptor.id, value)}
-              />
-            ),
-          )}
-        </View>
-      ) : null}
       {reasoning ? (
         <SettingSegments
           label={gt("Reasoning")}
           trailing={ultracodeToggle}
-          choices={(session.promptTraits.ultrathinkPromptControlled
+          choices={(reasoningUltrathinkControlled
             ? reasoning.options.filter(
                 (choice) =>
                   !reasoning.promptInjectedValues?.includes(choice.id) ||
@@ -1216,11 +1241,12 @@ function ThreadSettingsOptionsItem(props: {
             value: choice.id,
             label: choice.label,
           }))}
-          selected={
-            session.promptTraits.ultrathinkPromptControlled ? "ultrathink" : currentValue(reasoning)
-          }
+          selected={reasoningUltrathinkControlled ? "ultrathink" : currentValue(reasoning)}
           onChange={(value) => {
-            if (session.promptTraits.ultrathinkInBodyText) {
+            if (
+              reasoning.id === session.promptTraits.primarySelectDescriptor?.id &&
+              session.promptTraits.ultrathinkInBodyText
+            ) {
               Dialog.alert(
                 gt("Reasoning controlled by prompt"),
                 gt(
@@ -1233,7 +1259,39 @@ function ThreadSettingsOptionsItem(props: {
           }}
         />
       ) : ultracodeToggle ? (
-        <View className="flex-row items-center">{ultracodeToggle}</View>
+        <View className="flex-row items-center justify-between gap-2">
+          <Text className="text-sm text-foreground-muted" numberOfLines={1}>
+            {gt("Workflow")}
+          </Text>
+          {ultracodeToggle}
+        </View>
+      ) : null}
+      {extraOptions.length ? (
+        <View className="overflow-hidden rounded-xl bg-grouped-card">
+          {extraOptions.map((descriptor, index) =>
+            descriptor.type === "select" ? (
+              <DisclosureRow
+                key={descriptor.id}
+                label={descriptor.label}
+                value={getProviderOptionCurrentLabel(
+                  descriptor,
+                  session.displayedModelSelection,
+                  session.reportedModelSelection,
+                )}
+                isLast={index === extraOptions.length - 1}
+                onPress={() => props.onOpenSubmenu({ kind: "descriptor", id: descriptor.id })}
+              />
+            ) : (
+              <SwitchRow
+                key={descriptor.id}
+                label={descriptor.label}
+                value={currentValue(descriptor) === true}
+                isLast={index === extraOptions.length - 1}
+                onValueChange={(value) => session.applyOptionChange(descriptor.id, value)}
+              />
+            ),
+          )}
+        </View>
       ) : null}
     </View>
   );
@@ -1248,7 +1306,9 @@ function ThreadSettingsMainContent(props: {
   const session = useThreadSettingsSession();
   const insets = useSafeAreaInsets();
   const barOverlap = useBarOverlap();
-  const searching = useKeyboardState((state) => state.isVisible);
+  const keyboardVisible = useKeyboardState((state) => state.isVisible);
+  const [searchFocused, setSearchFocused] = useState(false);
+  const searching = searchFocused && keyboardVisible;
   const refreshProvidersCommand = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
@@ -1379,6 +1439,20 @@ function ThreadSettingsMainContent(props: {
           >
             <SymbolView name="star.fill" size={17} tintColorClassName="accent-foreground" />
           </Pressable>
+          {session.providerGroups.length > 1 ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={gt("All providers")}
+              accessibilityState={{ selected: session.providerFilter === null }}
+              className={cn(
+                "size-11 items-center justify-center rounded-lg",
+                session.providerFilter === null && "bg-subtle-strong",
+              )}
+              onPress={() => session.setProviderFilter(null)}
+            >
+              <SymbolView name="square.grid.2x2" size={16} tintColorClassName="accent-foreground" />
+            </Pressable>
+          ) : null}
           {session.providerGroups.map((group) => (
             <Pressable
               key={group.providerKey}
@@ -1436,7 +1510,9 @@ function ThreadSettingsMainContent(props: {
           autoCapitalize="none"
           autoCorrect={false}
           className="min-h-11 rounded-lg bg-grouped-card px-3 text-sm text-foreground"
+          onBlur={() => setSearchFocused(false)}
           onChangeText={session.setSearchQuery}
+          onFocus={() => setSearchFocused(true)}
           placeholder={gt("Search models")}
           returnKeyType="search"
           value={session.searchQuery}
@@ -1447,83 +1523,62 @@ function ThreadSettingsMainContent(props: {
 }
 
 function ThreadSettingsChoiceContent(props: {
-  readonly submenu: ThreadSettingsSubmenuPage;
+  readonly submenu: Extract<ThreadSettingsSubmenuPage, { readonly kind: "descriptor" }>;
   readonly onSelected: () => void;
 }) {
   const insets = useSafeAreaInsets();
   const gt = useGT();
-  const m = useMessages();
   const session = useThreadSettingsSession();
-  const descriptorId = props.submenu.kind === "descriptor" ? props.submenu.id : null;
-
-  const activeDescriptor =
-    descriptorId !== null
-      ? session.displayedDescriptors.find(
-          (descriptor) => descriptor.type === "select" && descriptor.id === descriptorId,
-        )
-      : undefined;
+  const activeDescriptor = session.displayedDescriptors.find(
+    (descriptor) => descriptor.type === "select" && descriptor.id === props.submenu.id,
+  );
 
   const submenuContent =
-    props.submenu.kind === "runtime"
+    activeDescriptor?.type === "select"
       ? {
-          rows: session.runtimeModeChoices.map((choice) => ({
-            id: choice.mode,
-            label: m(choice.label),
-            description: choice.disabledReason ?? m(choice.description),
-            disabled: choice.disabledReason !== undefined,
-            selected: choice.mode === session.runtimeMode,
+          rows: (session.promptTraits.ultrathinkPromptControlled &&
+          activeDescriptor.id === session.promptTraits.primarySelectDescriptor?.id
+            ? activeDescriptor.options.filter(
+                (choice) =>
+                  !activeDescriptor.promptInjectedValues?.includes(choice.id) ||
+                  choice.id === "ultrathink",
+              )
+            : selectableChoices(activeDescriptor)
+          ).map((choice) => ({
+            id: choice.id,
+            label: choice.label,
+            description: choice.description,
+            disabled: false,
+            selected:
+              choice.id ===
+              (session.promptTraits.ultrathinkPromptControlled &&
+              activeDescriptor.id === session.promptTraits.primarySelectDescriptor?.id
+                ? "ultrathink"
+                : getProviderOptionCurrentValue(
+                    activeDescriptor,
+                    session.displayedModelSelection,
+                    session.reportedModelSelection,
+                  )),
             onPress: () => {
               void Haptics.selectionAsync();
-              session.onUpdateRuntimeMode(choice.mode);
+              if (
+                session.promptTraits.ultrathinkInBodyText &&
+                activeDescriptor.id === session.promptTraits.primarySelectDescriptor?.id
+              ) {
+                Dialog.alert(
+                  gt("Reasoning controlled by prompt"),
+                  gt(
+                    'Your prompt contains "ultrathink" in the text. Remove it to change this option.',
+                  ),
+                );
+                return;
+              }
+              session.applyOptionChange(activeDescriptor.id, choice.id);
               props.onSelected();
             },
           })),
         }
-      : activeDescriptor?.type === "select"
-        ? {
-            rows: (session.promptTraits.ultrathinkPromptControlled &&
-            activeDescriptor.id === session.promptTraits.primarySelectDescriptor?.id
-              ? activeDescriptor.options.filter(
-                  (choice) =>
-                    !activeDescriptor.promptInjectedValues?.includes(choice.id) ||
-                    choice.id === "ultrathink",
-                )
-              : selectableChoices(activeDescriptor)
-            ).map((choice) => ({
-              id: choice.id,
-              label: choice.label,
-              description: choice.description,
-              disabled: false,
-              selected:
-                choice.id ===
-                (session.promptTraits.ultrathinkPromptControlled &&
-                activeDescriptor.id === session.promptTraits.primarySelectDescriptor?.id
-                  ? "ultrathink"
-                  : getProviderOptionCurrentValue(
-                      activeDescriptor,
-                      session.displayedModelSelection,
-                      session.reportedModelSelection,
-                    )),
-              onPress: () => {
-                void Haptics.selectionAsync();
-                if (
-                  session.promptTraits.ultrathinkInBodyText &&
-                  activeDescriptor.id === session.promptTraits.primarySelectDescriptor?.id
-                ) {
-                  Dialog.alert(
-                    gt("Reasoning controlled by prompt"),
-                    gt(
-                      'Your prompt contains "ultrathink" in the text. Remove it to change this option.',
-                    ),
-                  );
-                  return;
-                }
-                session.applyOptionChange(activeDescriptor.id, choice.id);
-                props.onSelected();
-              },
-            })),
-          }
-        : null;
+      : null;
 
   if (!submenuContent) {
     return <View className="flex-1 bg-sheet" />;
@@ -1560,7 +1615,9 @@ function ThreadSettingsChoiceContent(props: {
 
 type ThreadSettingsPickerStackParams = {
   ThreadSettingsModels: undefined;
-  ThreadSettingsChoice: ThreadSettingsSubmenuPage & { readonly title: string };
+  ThreadSettingsChoice: Extract<ThreadSettingsSubmenuPage, { readonly kind: "descriptor" }> & {
+    readonly title: string;
+  };
 };
 
 type ThreadSettingsPickerPresentation = {
@@ -1587,10 +1644,11 @@ function ThreadSettingsModelsScreen() {
   const presentation = useThreadSettingsPickerPresentation();
   const navigation = useNavigation<NativeStackNavigationProp<ThreadSettingsPickerStackParams>>();
   const m = useMessages();
-  const insets = useSafeAreaInsets();
+  const reducedMotion = useReducedMotion();
+  const reduceMotionEnabled = useReduceMotionEnabled();
   const [permissionsOpen, setPermissionsOpen] = useState(false);
   const dismissPermissions = () => setPermissionsOpen(false);
-  const hasCustomCatalogFilter = session.providerFilter !== null || session.showLegacy;
+  const hasCustomCatalogFilter = session.hasCustomProviderFilter || session.showLegacy;
   const commitAndClose = useEffectEvent(() => {
     if (!session.commitPendingModel()) return;
     presentation.onClose();
@@ -1676,77 +1734,90 @@ function ThreadSettingsModelsScreen() {
         />
       </ScreenContent>
       <Modal
-        animationType="fade"
+        animationType={reducedMotion || reduceMotionEnabled ? "none" : "fade"}
         transparent
         visible={permissionsOpen}
         onRequestClose={dismissPermissions}
       >
-        <View className="flex-1 justify-end bg-black/60">
-          <Pressable className="absolute inset-0" accessible={false} onPress={dismissPermissions} />
-          <View
-            accessibilityViewIsModal
-            className="max-h-[80%] rounded-t-3xl bg-sheet px-4 pt-2"
-            style={{ paddingBottom: insets.bottom + 12 }}
-          >
-            <View className="flex-row items-center justify-between">
-              <Text
-                accessibilityRole="header"
-                className="pl-3 text-base font-t3-medium text-foreground"
-              >
-                {gt("Permissions")}
-              </Text>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={gt("Close permissions")}
-                className="size-11 items-center justify-center"
-                onPress={dismissPermissions}
-              >
-                <SymbolView name="xmark" size={16} tintColorClassName="accent-foreground" />
-              </Pressable>
-            </View>
-            <ScrollView bounces={false} className="grow-0 rounded-xl bg-grouped-card">
-              {session.runtimeModeChoices.map((choice, index) => (
-                <Pressable
-                  key={choice.mode}
-                  accessibilityRole="radio"
-                  accessibilityState={{
-                    checked: choice.mode === session.runtimeMode,
-                    disabled: choice.disabledReason !== undefined,
-                  }}
-                  accessibilityHint={choice.disabledReason}
-                  disabled={choice.disabledReason !== undefined}
-                  className={cn(
-                    "min-h-12 flex-row items-center gap-3 px-3 py-2 active:bg-subtle",
-                    index !== session.runtimeModeChoices.length - 1 &&
-                      "border-b border-border-subtle",
-                    choice.disabledReason !== undefined && "opacity-50",
-                  )}
-                  onPress={() => {
-                    void Haptics.selectionAsync();
-                    session.onUpdateRuntimeMode(choice.mode);
-                    dismissPermissions();
-                  }}
+        <SafeAreaProvider style={{ flex: 1 }}>
+          <View className="flex-1 justify-end bg-black/60">
+            <Pressable
+              className="absolute inset-0"
+              accessible={false}
+              onPress={dismissPermissions}
+            />
+            <SafeAreaView
+              accessibilityViewIsModal
+              edges={["bottom"]}
+              className="max-h-[80%] rounded-t-3xl bg-sheet px-4 pb-3 pt-2"
+            >
+              <View className="flex-row items-center justify-between">
+                <Text
+                  accessibilityRole="header"
+                  className="pl-3 text-base font-t3-medium text-foreground"
                 >
-                  <SymbolView
-                    name={PERMISSION_SYMBOLS[choice.mode]}
-                    size={17}
-                    tintColorClassName="accent-foreground"
-                  />
-                  <Text className="flex-1 text-base text-foreground">{m(choice.label)}</Text>
-                  <View className="w-5 items-center">
-                    {choice.mode === session.runtimeMode ? (
-                      <SymbolView
-                        name="checkmark"
-                        size={16}
-                        tintColorClassName="accent-foreground"
-                      />
-                    ) : null}
-                  </View>
+                  {gt("Permissions")}
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={gt("Close permissions")}
+                  className="size-11 items-center justify-center"
+                  onPress={dismissPermissions}
+                >
+                  <SymbolView name="xmark" size={16} tintColorClassName="accent-foreground" />
                 </Pressable>
-              ))}
-            </ScrollView>
+              </View>
+              <ScrollView bounces={false} className="grow-0 rounded-xl bg-grouped-card">
+                {session.runtimeModeChoices.map((choice, index) => (
+                  <Pressable
+                    key={choice.mode}
+                    accessibilityRole="radio"
+                    accessibilityState={{
+                      checked: choice.mode === session.runtimeMode,
+                      disabled: choice.disabledReason !== undefined,
+                    }}
+                    accessibilityHint={choice.disabledReason}
+                    disabled={choice.disabledReason !== undefined}
+                    className={cn(
+                      "min-h-12 flex-row items-center gap-3 px-3 py-2 active:bg-subtle",
+                      index !== session.runtimeModeChoices.length - 1 &&
+                        "border-b border-border-subtle",
+                      choice.disabledReason !== undefined && "opacity-50",
+                    )}
+                    onPress={() => {
+                      void Haptics.selectionAsync();
+                      session.onUpdateRuntimeMode(choice.mode);
+                      dismissPermissions();
+                    }}
+                  >
+                    <SymbolView
+                      name={PERMISSION_SYMBOLS[choice.mode]}
+                      size={17}
+                      tintColorClassName="accent-foreground"
+                    />
+                    <View className="min-w-0 flex-1">
+                      <Text className="text-base text-foreground">{m(choice.label)}</Text>
+                      {choice.disabledReason ? (
+                        <Text className="text-xs text-foreground-muted">
+                          {choice.disabledReason}
+                        </Text>
+                      ) : null}
+                    </View>
+                    <View className="w-5 items-center">
+                      {choice.mode === session.runtimeMode ? (
+                        <SymbolView
+                          name="checkmark"
+                          size={16}
+                          tintColorClassName="accent-foreground"
+                        />
+                      ) : null}
+                    </View>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            </SafeAreaView>
           </View>
-        </View>
+        </SafeAreaProvider>
       </Modal>
     </>
   );

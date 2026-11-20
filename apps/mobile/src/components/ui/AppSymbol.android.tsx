@@ -82,6 +82,7 @@ import IconInfoCircle from "@tabler/icons-react-native/IconInfoCircle";
 import IconKeyboard from "@tabler/icons-react-native/IconKeyboard";
 import IconKeyboardHide from "@tabler/icons-react-native/IconKeyboardHide";
 import IconLock from "@tabler/icons-react-native/IconLock";
+import IconLockOpen from "@tabler/icons-react-native/IconLockOpen";
 import IconLayoutColumns from "@tabler/icons-react-native/IconLayoutColumns";
 import IconLayoutSidebar from "@tabler/icons-react-native/IconLayoutSidebar";
 import IconLayoutSidebarRight from "@tabler/icons-react-native/IconLayoutSidebarRight";
@@ -237,6 +238,8 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "line.3.horizontal.decrease": IconFilter,
   "line.3.horizontal.decrease.circle": IconFilter,
   "line.3.horizontal.decrease.circle.fill": IconFilterFilled,
+  lock: IconLock,
+  "lock.open": IconLockOpen,
   macmini: IconServer,
   macstudio: IconDeviceDesktop,
   magnifyingglass: IconSearch,
