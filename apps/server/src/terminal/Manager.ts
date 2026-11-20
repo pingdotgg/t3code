@@ -1392,8 +1392,7 @@ const MAX_HELD_CSI_LENGTH = 4_096;
 const MAX_HELD_ESCAPE_LENGTH = 5;
 // Leads the held text of a string or CSI that outgrew its limit, whose rest stays out of history.
 // Only its introducer is still held, with a final ESC or high surrogate that may begin its end.
-// Other held text starts with ESC. Strip it before sending held text to a client, because a CAN
-// cancels the open sequence there.
+// Other held text starts with ESC, so this marker never collides with it.
 const DROPPED_SEQUENCE = "\u0018";
 // The first drop writes ST to history. The dropped sequence's own ESC ended whatever history left
 // open before it, and ST does the same on replay. In ground state ST does nothing.
