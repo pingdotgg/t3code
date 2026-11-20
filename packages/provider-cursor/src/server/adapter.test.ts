@@ -762,6 +762,8 @@ describe("CursorAdapterV2", () => {
       const sentMessages: Array<string> = [];
       const rewoundAfter: Array<string> = [];
       let rewindFails = false;
+      let nextRunStatus: "finished" | "error" = "finished";
+      let nextSummaryCompleted: { readonly failed?: boolean } | undefined;
       let createdAgents = 0;
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-device-thread");
@@ -810,15 +812,28 @@ describe("CursorAdapterV2", () => {
                     typeof input.message === "string" ? input.message : input.message.text,
                   );
                   const runId = `native-cursor-run-${sentMessages.length}`;
+                  const status = nextRunStatus;
+                  const summaryCompleted = nextSummaryCompleted;
+                  nextRunStatus = "finished";
+                  nextSummaryCompleted = undefined;
                   return {
                     agentId,
                     runId,
-                    wait: Effect.succeed({
-                      id: runId,
-                      requestId: `native-request-${sentMessages.length}`,
-                      status: "finished" as const,
-                      model: { id: "composer-2.5" },
-                      durationMs: 1,
+                    wait: Effect.gen(function* () {
+                      if (summaryCompleted !== undefined) {
+                        yield* input.onDelta!({
+                          type: "summary-completed",
+                          ...summaryCompleted,
+                        }).pipe(Effect.orDie);
+                      }
+                      return {
+                        id: runId,
+                        requestId: `native-request-${sentMessages.length}`,
+                        status,
+                        ...(status === "error" ? { error: { message: "transient failure" } } : {}),
+                        model: { id: input.options?.model?.id ?? "composer-2.5" },
+                        durationMs: 1,
+                      };
                     }),
                     cancel: Effect.void,
                   };
@@ -866,12 +881,24 @@ describe("CursorAdapterV2", () => {
       // Starts at run 5: a conversation from before device instructions existed, now resumed.
       let runOrdinal = 4;
       let lastProviderTurn: OrchestrationV2ProviderTurn | undefined;
-      const send = Effect.fnUntraced(function* (compact = false, nativeThreadHasTurns?: boolean) {
+      const send = Effect.fnUntraced(function* (
+        compact = false,
+        nativeThreadHasTurns?: boolean,
+        options?: {
+          readonly model?: string;
+          readonly status?: "finished" | "error";
+          readonly summaryCompleted?: { readonly failed?: boolean };
+        },
+      ) {
         runOrdinal += 1;
+        nextRunStatus = options?.status ?? "finished";
+        nextSummaryCompleted = options?.summaryCompleted;
+        const turnModelSelection =
+          options?.model === undefined ? modelSelection : { instanceId, model: options.model };
         const turnInput = {
           threadId,
           providerThread,
-          modelSelection,
+          modelSelection: turnModelSelection,
           runtimePolicy,
           ...(nativeThreadHasTurns === undefined ? {} : { nativeThreadHasTurns }),
           runId: RunId.make(`cursor-device-run-${runOrdinal}`),
@@ -900,27 +927,68 @@ describe("CursorAdapterV2", () => {
         return {
           orchestration: sent.includes("## T3 Code orchestration"),
           devices: sent.includes("## T3 Code devices"),
+          runtime: sent.includes("<runtime_info>"),
         };
       });
-      const told = (orchestration: boolean, devices: boolean) => ({ orchestration, devices });
+      const told = (orchestration: boolean, devices: boolean, runtime: boolean) => ({
+        orchestration,
+        devices,
+        runtime,
+      });
 
       yield* setDeviceAccess(true);
-      assert.deepEqual(yield* send(), told(false, true));
-      assert.deepEqual(yield* send(), told(false, false));
+      assert.deepEqual(yield* send(), told(false, true, true));
+      assert.deepEqual(yield* send(), told(false, false, false));
       yield* send(true);
       assert.deepEqual(
         yield* send(),
-        told(true, true),
+        told(true, true, true),
         "compaction drops what the conversation was told",
       );
       yield* setDeviceAccess(false);
-      assert.deepEqual(yield* send(), told(false, false));
+      assert.deepEqual(yield* send(), told(false, false, false));
       yield* setDeviceAccess(true);
-      assert.deepEqual(yield* send(), told(false, true), "device access turned on later");
-      assert.deepEqual(yield* send(), told(false, false));
+      assert.deepEqual(yield* send(), told(false, true, false), "device access turned on later");
+      assert.deepEqual(yield* send(), told(false, false, false));
+
+      assert.deepEqual(
+        yield* send(false, undefined, { model: "gemini-4-neon", status: "error" }),
+        told(false, false, true),
+        "a model change resends runtime instructions",
+      );
+      assert.deepEqual(
+        yield* send(false, undefined, { model: "gemini-4-neon" }),
+        told(false, false, true),
+        "a failed turn does not record runtime instructions as delivered",
+      );
+      assert.include(sentMessages.at(-1)!, "as gemini-4-neon");
+      assert.deepEqual(
+        yield* send(false, undefined, {
+          model: "gemini-4-neon",
+          summaryCompleted: { failed: true },
+        }),
+        told(false, false, false),
+      );
+      assert.deepEqual(
+        yield* send(false, undefined, {
+          model: "gemini-4-neon",
+          summaryCompleted: {},
+        }),
+        told(false, false, false),
+        "a failed auto-compaction keeps delivered instructions",
+      );
+      assert.deepEqual(
+        yield* send(false, undefined, { model: "gemini-4-neon" }),
+        told(true, true, true),
+        "auto-compaction drops what the conversation was told",
+      );
+      assert.deepEqual(
+        yield* send(false, undefined, { model: "gemini-4-neon" }),
+        told(false, false, false),
+      );
 
       const keptTurn = lastProviderTurn!;
-      yield* send();
+      yield* send(false, undefined, { model: "gemini-4-neon" });
       const rollbackToKept = runtime.rollbackThread({
         providerThread,
         target: {
@@ -935,8 +1003,8 @@ describe("CursorAdapterV2", () => {
       yield* Effect.flip(rollbackToKept);
       rewindFails = false;
       assert.deepEqual(
-        yield* send(false, true),
-        told(false, false),
+        yield* send(false, true, { model: "gemini-4-neon" }),
+        told(false, false, false),
         "a failed rewind leaves the conversation, and what it was told, unchanged",
       );
       const rewound = yield* rollbackToKept;
@@ -947,8 +1015,8 @@ describe("CursorAdapterV2", () => {
         "Cursor rewinds the same agent",
       );
       assert.deepEqual(
-        yield* send(false, true),
-        told(true, true),
+        yield* send(false, true, { model: "gemini-4-neon" }),
+        told(true, true, true),
         "the rewound conversation may have dropped instructions a later turn carried",
       );
 
@@ -969,8 +1037,8 @@ describe("CursorAdapterV2", () => {
       );
       providerThread = rolledBack.providerThread;
       assert.deepEqual(
-        yield* send(false, false),
-        told(true, true),
+        yield* send(false, false, { model: "gemini-4-neon" }),
+        told(true, true, true),
         "the fresh agent after a rollback has been told nothing",
       );
     }).pipe(
@@ -1138,6 +1206,11 @@ describe("CursorAdapterV2", () => {
         firstPrompt,
         "the interrupted prompt is missing from the run that replaces it",
       );
+      assert.include(
+        steered,
+        "<runtime_info>",
+        "an interrupted first run did not deliver runtime instructions",
+      );
 
       yield* Deferred.succeed(runEnds[1]!, "finished");
       yield* runtime.events.pipe(
@@ -1146,6 +1219,11 @@ describe("CursorAdapterV2", () => {
       );
       yield* runtime.startTurn(turnInput(3, "Now a cow."));
       assert.notInclude(sentMessages[2]!, firstPrompt, "a finished turn carries nothing forward");
+      assert.notInclude(
+        sentMessages[2]!,
+        "<runtime_info>",
+        "a finished turn delivered runtime instructions",
+      );
 
       const interruptRunning = Effect.gen(function* () {
         const running = Option.getOrThrow(
