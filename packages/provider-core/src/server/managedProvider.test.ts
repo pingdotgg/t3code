@@ -15,6 +15,7 @@ import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ProviderHost from "./ProviderHost.ts";
@@ -1027,6 +1028,78 @@ describe("makeManagedServerProvider", () => {
         } as const;
         yield* Ref.set(probeSnapshot, { ...refreshedSnapshot, usageLimits: completeLimits });
         assert.deepStrictEqual((yield* provider.refresh).usageLimits, completeLimits);
+      }),
+    ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
+
+  it.effect("does not let a check that read the limits before a newer read republish them", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const older = {
+          checkedAt: "2026-04-10T00:00:01.000Z",
+          windows: [{ id: "weekly", kind: "weekly", label: "Weekly", usedPercent: 75 }],
+        } as const;
+        const newer = {
+          checkedAt: "2026-04-10T00:00:02.000Z",
+          windows: [],
+          unavailable: { reason: "probeFailed" },
+        } as const;
+        const limits = yield* SubscriptionRef.make<ServerProvider["usageLimits"]>(older);
+        const holdCheck = yield* Ref.make<Effect.Effect<void>>(Effect.void);
+        const checks = yield* Ref.make(0);
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Effect.gen(function* () {
+            const base =
+              (yield* Ref.updateAndGet(checks, (count) => count + 1)) === 1
+                ? refreshedSnapshot
+                : refreshedSnapshotSecond;
+            const usageLimits = yield* SubscriptionRef.get(limits);
+            yield* Effect.flatten(Ref.get(holdCheck));
+            return { ...base, usageLimits };
+          }),
+          retainUsageLimits: false,
+          enrichSnapshot: ({ publishSnapshot }) =>
+            SubscriptionRef.changes(limits).pipe(
+              Stream.runForEach((usageLimits) =>
+                publishSnapshot({ ...refreshedSnapshot, usageLimits }),
+              ),
+            ),
+          refreshOnInterval: false,
+        });
+        yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
+
+        const checkRead = yield* Deferred.make<void>();
+        const releaseCheck = yield* Deferred.make<void>();
+        yield* Ref.set(
+          holdCheck,
+          Deferred.succeed(checkRead, undefined).pipe(Effect.andThen(Deferred.await(releaseCheck))),
+        );
+        const published = yield* provider.streamChanges.pipe(
+          Stream.takeUntil((snapshot) => snapshot.message === refreshedSnapshotSecond.message),
+          Stream.runCollect,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        const refresh = yield* provider.refresh.pipe(Effect.forkChild);
+        yield* Deferred.await(checkRead);
+        const newerPublished = yield* provider.streamChanges.pipe(
+          Stream.filter((snapshot) => snapshot.usageLimits?.checkedAt === newer.checkedAt),
+          Stream.runHead,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* SubscriptionRef.set(limits, newer);
+        yield* Fiber.join(newerPublished);
+        yield* Deferred.succeed(releaseCheck, undefined);
+
+        assert.deepStrictEqual(
+          Array.from(yield* Fiber.join(published), (snapshot) => snapshot.usageLimits),
+          [newer, newer],
+        );
+        assert.deepStrictEqual((yield* Fiber.join(refresh)).usageLimits, newer);
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
