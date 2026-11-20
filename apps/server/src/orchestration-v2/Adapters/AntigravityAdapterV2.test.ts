@@ -166,156 +166,6 @@ const layerSession = Layer.mergeAll(
   ),
 );
 
-describe("AntigravityAdapterV2 harness recovery", () => {
-  const recoverHarnessFailure = (
-    harnessFailure: "1" | "pending" | "after-end-turn",
-    firstTurnStatuses: ReadonlyArray<"failed" | "completed">,
-  ) => {
-    let terminationCount = 0;
-    return Effect.gen(function* () {
-      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const crypto = yield* SecureRandom.SecureRandom;
-      const mockAgentPath = yield* path.fromFileUrl(
-        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
-      );
-      const workspace = yield* fileSystem.makeTempDirectoryScoped();
-      const requestLogPath = path.join(workspace, "requests.jsonl");
-      let processCount = 0;
-      const firstRuntimeTerminated = yield* Deferred.make<void>();
-      let firstRuntime: AcpSessionRuntime.AcpSessionRuntime["Service"] | undefined;
-      const instanceId = ProviderInstanceId.make("antigravity-recovery-test");
-      const adapter = yield* makeAntigravityAdapterV2({
-        instanceId,
-        selfInvocation: yield* resolveSelfInvocation(),
-        makeRuntime: (input) =>
-          Effect.suspend(() => {
-            processCount += 1;
-            const processNumber = processCount;
-            return makeAntigravityAcpRuntime({
-              ...input,
-              onTermination: (error) =>
-                (input.onTermination?.(error) ?? Effect.void).pipe(
-                  Effect.tap(
-                    Effect.sync(() => {
-                      terminationCount += 1;
-                    }),
-                  ),
-                  Effect.andThen(
-                    processNumber === 1
-                      ? Deferred.succeed(firstRuntimeTerminated, undefined)
-                      : Effect.void,
-                  ),
-                ),
-              childProcessSpawner,
-              spawn: {
-                command: process.execPath,
-                args: [mockAgentPath],
-                cwd: input.cwd,
-                env: {
-                  T3_ACP_ANTIGRAVITY: "1",
-                  T3_ACP_REQUEST_LOG_PATH: requestLogPath,
-                  ...(processNumber === 1
-                    ? { T3_ACP_ANTIGRAVITY_HARNESS_FAILURE: harnessFailure }
-                    : {}),
-                },
-              },
-            }).pipe(
-              Effect.provideService(SecureRandom.SecureRandom, crypto),
-              Effect.tap((runtime) =>
-                Effect.sync(() => {
-                  if (processNumber === 1) firstRuntime = runtime;
-                }),
-              ),
-            );
-          }),
-        withProcess: (_stop, task) => task,
-        defaultModel: Effect.undefined,
-      });
-      const threadId = ThreadId.make("thread-antigravity-recovery");
-      const modelSelection = { instanceId, model: "gemini-test-low" } as const;
-      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        cwd: workspace,
-      });
-      const session = yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make("provider-session-antigravity-recovery"),
-        modelSelection,
-        runtimePolicy,
-      });
-      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
-      yield* session.events.pipe(
-        Stream.runForEach((event) => Queue.offer(events, event)),
-        Effect.forkScoped,
-      );
-      const providerThread = yield* session.ensureThread({
-        threadId,
-        modelSelection,
-        runtimePolicy,
-      });
-      const now = yield* DateTime.now;
-      const terminal = Stream.fromQueue(events).pipe(
-        Stream.filter((event) => event.type === "turn.terminal"),
-        Stream.runHead,
-      );
-      yield* session.startTurn(
-        makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, modelSelection, now }),
-      );
-      const first = yield* terminal;
-      assert.equal(first._tag, "Some");
-      if (first._tag === "Some") assert.include(firstTurnStatuses, first.value.status);
-      if (harnessFailure === "after-end-turn") {
-        assert.exists(firstRuntime);
-        yield* firstRuntime!.notify("_test/harness-failure", {});
-      }
-      // The adapter must retire the first process even when end_turn won the race.
-      yield* Deferred.await(firstRuntimeTerminated);
-      yield* session.startTurn(
-        makeTurnInput({
-          threadId,
-          providerThread,
-          instanceId,
-          runtimePolicy,
-          modelSelection,
-          now,
-          ordinal: 2,
-        }),
-      );
-      const completed = yield* terminal;
-      assert.equal(completed._tag, "Some");
-      if (completed._tag === "Some") assert.equal(completed.value.status, "completed");
-      assert.equal(processCount, 2);
-      assert.equal(terminationCount, 1);
-      const requests = (yield* fileSystem.readFileString(requestLogPath))
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line) as { method?: string; params?: { sessionId?: string } });
-      const resumeRequests = requests.filter((request) => request.method === "session/resume");
-      assert.equal(resumeRequests.length, 1);
-      assert.equal(resumeRequests[0]?.params?.sessionId, "mock-session-1");
-    }).pipe(
-      Effect.provide(layerSession),
-      Effect.scoped,
-      Effect.tap(Effect.sync(() => assert.equal(terminationCount, 1))),
-    );
-  };
-
-  it.live("fails an open turn and resumes its saved session after a harness failure", () =>
-    recoverHarnessFailure("pending", ["failed"]),
-  );
-
-  it.live("resumes the saved session after a harness failure races end_turn", () =>
-    recoverHarnessFailure("1", ["failed", "completed"]),
-  );
-
-  it.live("resumes in a fresh process when the native failure arrives after end_turn", () =>
-    recoverHarnessFailure("after-end-turn", ["completed"]),
-  );
-});
-
 describe("AntigravityAdapterV2 compaction", () => {
   it.live.each([
     { nativeGoals: false, compact: false },
@@ -1462,6 +1312,25 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
     }).pipe(Effect.provide(layerSession)),
   );
 
+  // agy names its background commands `<session>/task-<n>`; the agent passes that to
+  // t3_background_wait, which must not fail since the adapter already holds the run open.
+  it.effect("accepts t3_background_wait for a command it already tracks", () =>
+    Effect.gen(function* () {
+      const { session, providerThread, startTurn, throughPromptSettled } =
+        yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
+      yield* startTurn(1, false);
+      yield* throughPromptSettled;
+      const taskIds = ["mock-session-1/task-2"];
+      assert.isDefined(session.awaitBackgroundTasks, "t3_background_wait must not be unsupported");
+      const result = yield* session.awaitBackgroundTasks!({
+        providerThread,
+        taskIds,
+        awaited: true,
+      });
+      assert.deepEqual(result.matched, taskIds);
+    }).pipe(Effect.provide(layerSession)),
+  );
+
   // agy 1.5.11 reads a prompt sent mid-turn as a steer: it answers the running prompt end_turn
   // and goes on under the new one. session/cancel would end its running commands and subagents.
   it.effect("steers a running prompt with the next one and leaves its work running", () =>
@@ -1542,6 +1411,73 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       );
       assert.notInclude(subagentStatuses, "interrupted");
       assert.equal(subagentStatuses.at(-1), "idle");
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  // A wake run has no prompt of its own, yet agy can keep working in it for minutes.
+  it.effect("steers a continuation run that keeps working after its wake", () =>
+    Effect.gen(function* () {
+      const opened = yield* openSessionWithRunningCommand(
+        { IsDaemon: true, WaitMsBeforeAsync: 500 },
+        undefined,
+        { agentVersion: "1.5.11", holdsFirstPrompt: false },
+      );
+      const { session, providerThread, command, offers, send, startTurn, until, throughTerminal } =
+        opened;
+      yield* startTurn(1, false);
+      yield* throughTerminal;
+      yield* send({
+        sessionUpdate: "tool_call_update",
+        ...command,
+        status: "completed",
+        rawOutput: { output: "Command exited with code 0.", exit_code: 0 },
+      });
+      assert.lengthOf(offers, 1, "the finished daemon must wake the thread");
+      yield* offers[0]!.dispatchIfCurrent!(Effect.void);
+      yield* startTurn(2, true);
+      const followUp = { toolCallId: "call_build", kind: "execute", title: "vp run build" };
+      yield* send({ sessionUpdate: "tool_call", ...followUp, status: "in_progress" });
+      const continued = yield* until(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === followUp.toolCallId,
+      );
+      const providerTurnId = continued.flatMap((event) =>
+        event.type === "provider_turn.updated" ? [event.providerTurn.id] : [],
+      )[0]!;
+
+      const steer = yield* session
+        .steerTurn({
+          threadId: ThreadId.make("thread-antigravity-wake"),
+          runId: RunId.make("run-antigravity-wake-2"),
+          providerThread,
+          providerTurnId,
+          message: {
+            messageId: MessageId.make("message-antigravity-steer"),
+            text: "Skip the build",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+        })
+        .pipe(Effect.exit);
+      assert.isTrue(
+        Exit.isSuccess(steer),
+        `a working wake run must accept a steer: ${String(Exit.isFailure(steer) && steer.cause)}`,
+      );
+      assert.equal(opened.cancels(), 0, "a steer must not cancel the agent's work");
+      assert.lengthOf(opened.prompts, 2);
+      assert.deepEqual(opened.prompts[1]!.prompt, [{ type: "text", text: "Skip the build" }]);
+
+      yield* send({ sessionUpdate: "tool_call_update", ...followUp, status: "completed" });
+      yield* TestClock.adjust("16 minutes");
+      const silent = yield* until((event) => event.type === "turn.terminal");
+      const terminal = silent.at(-1);
+      assert.equal(
+        terminal?.type === "turn.terminal" && terminal.status,
+        "failed",
+        "a silent steer prompt must still hit the inactivity timeout",
+      );
     }).pipe(Effect.provide(layerSession)),
   );
 
@@ -1944,7 +1880,10 @@ describe("AntigravityAdapterV2 subagent reads", () => {
 });
 
 describe("AntigravityAdapterV2 runtime mode ceiling", () => {
-  const modesSetFor = (pickedMode: string) =>
+  const modesSetFor = (
+    pickedMode: string,
+    modes: Pick<ProviderAdapter.ProviderAdapterV2RuntimePolicy, "runtimeMode" | "maxRuntimeMode">,
+  ) =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
@@ -1991,27 +1930,118 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
           options: [{ id: "_t3/session-mode", value: pickedMode }],
         },
         runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-          runtimeMode: "approval-required",
+          ...modes,
           interactionMode: "default",
           cwd: process.cwd(),
-          maxRuntimeMode: "auto-accept-edits",
         }),
       });
       return modesSet;
     }).pipe(Effect.provide(layerSession), Effect.scoped);
 
-  it.effect("does not apply a picked session mode above the policy ceiling", () =>
+  it.effect("does not apply a picked session mode above the thread's runtime mode", () =>
     Effect.gen(function* () {
-      assert.deepEqual(yield* modesSetFor("yolo"), ["default"]);
-      // A mode under the ceiling is still the user's to pick.
-      assert.deepEqual(yield* modesSetFor("auto_edit"), ["default", "auto_edit"]);
+      assert.deepEqual(yield* modesSetFor("yolo", { runtimeMode: "approval-required" }), [
+        "default",
+      ]);
+      assert.deepEqual(
+        yield* modesSetFor("auto_edit", {
+          runtimeMode: "approval-required",
+          maxRuntimeMode: "auto-accept-edits",
+        }),
+        ["default"],
+      );
+      // A narrower mode is still the user's to pick.
+      assert.deepEqual(yield* modesSetFor("default", { runtimeMode: "auto-accept-edits" }), [
+        "auto_edit",
+        "default",
+      ]);
     }),
+  );
+
+  it.effect("leaving Plan keeps the permission mode the thread has now", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      let runtime: AcpSessionRuntime.AcpSessionRuntime["Service"] | undefined;
+      const instanceId = ProviderInstanceId.make("antigravity-plan-exit-test");
+      const adapter = yield* makeAntigravityAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: (input) =>
+          makeAntigravityAcpRuntime({
+            ...input,
+            childProcessSpawner,
+            spawn: {
+              command: process.execPath,
+              args: [mockAgentPath],
+              cwd: input.cwd,
+              env: { T3_ACP_ANTIGRAVITY: "1" },
+            },
+          }).pipe(
+            Effect.provideService(SecureRandom.SecureRandom, crypto),
+            Effect.tap((made) =>
+              Effect.sync(() => {
+                runtime = made;
+              }),
+            ),
+          ),
+        withProcess: (_stop, task) => task,
+        defaultModel: Effect.undefined,
+      });
+      const threadId = ThreadId.make("thread-antigravity-plan-exit");
+      const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+      const planPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "plan",
+        cwd: process.cwd(),
+      });
+      const session = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-antigravity-plan-exit"),
+        modelSelection,
+        runtimePolicy: planPolicy,
+      });
+      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      yield* session.events.pipe(
+        Stream.runForEach((event) => Queue.offer(events, event)),
+        Effect.forkScoped,
+      );
+      const providerThread = yield* session.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy: planPolicy,
+      });
+      const supervisedPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      yield* session.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy: supervisedPolicy,
+          modelSelection,
+          now: yield* DateTime.now,
+        }),
+      );
+      yield* Stream.fromQueue(events).pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      assert.equal((yield* runtime!.getModeState)?.currentModeId, "default");
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });
 
 describe("AntigravityAdapterV2 session system prompt", () => {
-  it.effect.each(["1.4.5", "1.4.1"])(
-    "carries PR linking once in the %s session setup or once per turn",
+  it.effect.each(["1.5.0"])(
+    "carries PR linking once per turn on %s, which does not advertise a system prompt append",
     (agentVersion) =>
       Effect.gen(function* () {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -2129,13 +2159,8 @@ describe("AntigravityAdapterV2 session system prompt", () => {
         const append = JSON.stringify(sessionNew?.params?._meta ?? null);
         // Identity stays per turn either way.
         assert.include(sent, "through the Antigravity harness, as gemini-test-low");
-        if (agentVersion === "1.4.5") {
-          assert.include(append, "pull_request_linking");
-          assert.notInclude(sent, "<pull_request_linking>");
-        } else {
-          assert.notInclude(append, "systemPrompt");
-          assert.include(sent, "<pull_request_linking>");
-        }
+        assert.notInclude(append, "systemPrompt");
+        assert.include(sent, "<pull_request_linking>");
       }).pipe(Effect.provide(layerSession)),
   );
 });

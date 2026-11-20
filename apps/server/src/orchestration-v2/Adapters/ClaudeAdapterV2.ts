@@ -72,7 +72,7 @@ import type {
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- the SDK takes a Node ChildProcess for the CLI.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeUtil from "node:util";
-import { parseCliArgs, tokenizeCliArgs } from "@t3tools/shared/cliArgs";
+import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import {
   claudeMcpToolName,
@@ -172,6 +172,8 @@ import {
 } from "../../provider/Drivers/ClaudeSkillDispatch.ts";
 import {
   claudeLaunchArgDirectories,
+  claudeLaunchArgParseOptions,
+  claudeLaunchArgPluginDirectories,
   customClaudeApiEndpointHost,
   discoverClaudeSkills,
   readClaudeSettingsEnv,
@@ -356,30 +358,6 @@ function mergeClaudeStreamUsage(
   };
 }
 export const CLAUDE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CLAUDE_PROVIDER);
-// The Claude CLI takes the next token as this flag's value even when it starts with `--`.
-const claudeLaunchArgParseOptions = { valueFlags: ["append-system-prompt"] };
-
-// Claude's --plugin-dir is repeatable; parseCliArgs keeps only the last one.
-function claudeLaunchArgPluginDirectories(launchArgs: string): ReadonlyArray<string> {
-  const tokens = tokenizeCliArgs(launchArgs);
-  const directories: string[] = [];
-  for (let index = 0; index < tokens.length && tokens[index] !== "--"; index++) {
-    const token = tokens[index]!;
-    if (!token.startsWith("--") || token.includes("=")) {
-      if (token.startsWith("--plugin-dir=")) directories.push(token.slice("--plugin-dir=".length));
-      continue;
-    }
-    const next = tokens[index + 1];
-    const takesNext =
-      next !== undefined &&
-      (!next.startsWith("--") || claudeLaunchArgParseOptions.valueFlags.includes(token.slice(2)));
-    if (!takesNext) continue;
-    if (token === "--plugin-dir") directories.push(next);
-    index++;
-  }
-  return directories;
-}
-
 const CLAUDE_SCRIPT_EXTENSIONS = [".js", ".mjs", ".tsx", ".ts", ".jsx"];
 // The SDK has no control-request deadline; the CLI waits up to 30 s per MCP server.
 const CLAUDE_MCP_REGISTRATION_TIMEOUT = "90 seconds";
@@ -594,7 +572,7 @@ export const ClaudeProviderCapabilitiesV2 = {
     supportsInterrupt: true,
     supportsNativeResume: true,
     supportsActiveSteering: true,
-    activeSteeringInterruptsTools: true,
+    activeSteeringInterruptsTools: false,
     supportsSteeringByInterruptRestart: false,
     supportsQueuedMessages: true,
     terminalStatusQuality: "strong",
@@ -613,6 +591,7 @@ export const ClaudeProviderCapabilitiesV2 = {
     emitsToolOutput: true,
     supportsMcpTools: true,
     supportsDynamicToolCallbacks: true,
+    supportsBackgroundWait: true,
   },
   approvals: {
     supportsCommandApproval: true,
@@ -12124,7 +12103,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     failureHint,
                     usageLimited,
                   );
-            const resetTimes = Array.from(context.rateLimitResetTimes.values());
+            const resultResetAt =
+              resultFailure?.class === "usage_limit" ? resultFailure.resetAt : null;
+            // An untyped rejection without a reset is the gateway's own 429; its text names the reset.
+            const resetTimes = Array.from(context.rateLimitResetTimes)
+              .filter(
+                ([type, time]) => !(type === "unknown" && time === null && resultResetAt != null),
+              )
+              .map(([, time]) => time);
             const assistantLimit = context.latestAssistantRateLimit;
             if (
               assistantLimit?.type != null &&
@@ -12132,8 +12118,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ) {
               resetTimes.push(assistantLimit.resetAt);
             }
-            if (resultFailure?.class === "usage_limit" && resultFailure.resetAt != null) {
-              resetTimes.push(resultFailure.resetAt);
+            if (resultResetAt != null) {
+              resetTimes.push(resultResetAt);
             }
             const resetAt =
               resetTimes.length > 0 && resetTimes.every((time) => time !== null)

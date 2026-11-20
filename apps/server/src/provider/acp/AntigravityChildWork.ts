@@ -405,14 +405,20 @@ async function readChildTranscript(
   try {
     const stat = await handle.stat();
     if (!stat.isFile()) return undefined;
-    const length = Math.min(stat.size, byteCap);
-    const buffer = Buffer.alloc(length);
-    const { bytesRead } = await handle.read(buffer, 0, length, stat.size - length);
-    const truncated = stat.size > length;
-    let contents = buffer.subarray(0, bytesRead).toString("utf8");
-    // A tail read starts mid-line.
-    if (truncated) contents = contents.slice(contents.indexOf("\n") + 1);
-    return { steps: transcriptSteps(contents, prompt), truncated };
+    const tailStart = Math.max(0, stat.size - byteCap);
+    // One extra byte tells whether the retained tail starts on a line boundary.
+    const readStart = Math.max(0, tailStart - 1);
+    const buffer = Buffer.alloc(stat.size - readStart);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, readStart);
+    const bytes = buffer.subarray(0, bytesRead);
+    let lineStart = 0;
+    if (tailStart > 0) {
+      const newline = bytes.indexOf(0x0a);
+      if (newline === -1) return { steps: [], truncated: true };
+      lineStart = newline + 1;
+    }
+    const contents = bytes.toString("utf8", lineStart);
+    return { steps: transcriptSteps(contents, prompt), truncated: tailStart > 0 };
   } finally {
     await handle.close();
   }
@@ -520,6 +526,7 @@ const decodeDetachedSubagent = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
       conversationId: Schema.optional(Schema.String),
+      state: Schema.optional(Schema.String),
       subagentDescriptor: Schema.optional(
         Schema.Struct({
           role: Schema.optional(Schema.String),
@@ -646,8 +653,9 @@ async function findDetachedInvokeRecord(
 
 /**
  * agy 1.5 children outlive their `invoke_subagent` call and the agent reports no end for them:
- * a child is done, or waits for guidance, once its message is in the parent's inbox. Returns the
- * launching tool call ids of children with no message yet; none when the records prove nothing.
+ * a child is done, or waits for guidance, once its message is in the parent's inbox or its record
+ * says it was killed. Returns the launching tool call ids of children with neither; none when the
+ * records prove nothing.
  */
 export const readAntigravityChildrenAtWork = Effect.fn("readAntigravityChildrenAtWork")(
   function* (input: {
@@ -669,6 +677,9 @@ export const readAntigravityChildrenAtWork = Effect.fn("readAntigravityChildrenA
       const atWork: Array<string> = [];
       for (const childId of childIds) {
         if (reported.has(childId)) continue;
+        // `manage_subagents` kill only marks the record; a killed child never reports.
+        const subagent = await readDetachedSubagent(profileRoot, input.rootSessionId, childId);
+        if (subagent?.state === "SUBAGENT_STATE_KILLED") continue;
         for (const message of await readInbox(profileRoot, childId)) {
           const launch = detachedLaunchCall(message, input.rootSessionId);
           if (launch !== undefined && input.toolCallIds.includes(launch.id)) {
