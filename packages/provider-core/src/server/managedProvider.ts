@@ -74,8 +74,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly refreshOnInterval?: boolean | ((snapshot: ServerProvider) => boolean);
   readonly checkProviderOnSettingsChange?: (previous: Settings, next: Settings) => boolean;
   /**
-   * False makes enrichment the only writer of limits: it publishes the limits it reports, so a
-   * failed read or a cleared account replaces the last good one, and a check keeps what it finds.
+   * False publishes the limits that probes and enrichment report, so a failed read or a cleared
+   * account replaces the last good read instead of keeping it.
    */
   readonly retainUsageLimits?: boolean;
 }): Effect.fn.Return<
@@ -221,19 +221,18 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           differs(probedSnapshot.auth.email?.toLowerCase(), previous.email?.toLowerCase()) ||
           (probedSnapshot.auth.workspaceId !== undefined &&
             probedSnapshot.auth.workspaceId !== previous.workspaceId);
-        // The check may have read limits older than ones enrichment published meanwhile.
-        const usageLimits =
-          input.retainUsageLimits === false
+        const usageLimits = switchedAccount
+          ? probedSnapshot.usageLimits
+          : probedSnapshot.usageLimits === undefined &&
+              state.snapshot.usageLimits !== usageBeforeProbe
             ? state.snapshot.usageLimits
-            : switchedAccount
+            : input.retainUsageLimits === false &&
+                probedSnapshot.usageLimits?.unavailable?.reason === "probeFailed"
               ? probedSnapshot.usageLimits
-              : probedSnapshot.usageLimits === undefined &&
-                  state.snapshot.usageLimits !== usageBeforeProbe
-                ? state.snapshot.usageLimits
-                : resolveUsageLimitsAfterProbe({
-                    published: state.snapshot.usageLimits,
-                    probed: probedSnapshot.usageLimits,
-                  });
+              : resolveUsageLimitsAfterProbe({
+                  published: state.snapshot.usageLimits,
+                  probed: probedSnapshot.usageLimits,
+                });
         const workspaceId =
           usageLimits === probedSnapshot.usageLimits ? undefined : state.snapshot.auth.workspaceId;
         const usageAuthLabel =

@@ -49,7 +49,7 @@ const HEALTH_CHECK_TIMEOUT_MS = 90_000;
 const SIGN_IN_MESSAGE = "Sign in with Google to use Antigravity.";
 const AUTH_UNCHECKED_MESSAGE =
   "Antigravity is installed. Google account access is not checked yet.";
-// Set while sign-in republishes, so that health check leaves the quota read to the session start.
+// Set while a finished quota read republishes, so that health check does not read again.
 const PublishingUsage = Context.Reference<boolean>("t3/provider/AntigravityPublishingUsage", {
   defaultValue: () => false,
 });
@@ -253,6 +253,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   // One read runs at a time; sign-in and sign-out interrupt it so a stale account never lands.
   const usageRead = yield* FiberHandle.make();
   const republish = yield* Deferred.make<Effect.Effect<ServerProvider>>();
+  const scope = yield* Effect.scope;
   const refreshUsage = Effect.fn("AntigravityProvider.refreshUsage")(function* () {
     if (!options.probeUsage || (yield* PublishingUsage)) return;
     yield* FiberHandle.run(
@@ -266,6 +267,14 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
               usageLimits: probed,
             },
           })),
+        ),
+        Effect.andThen(
+          Deferred.await(republish).pipe(
+            Effect.flatten,
+            Effect.provideService(PublishingUsage, true),
+            Effect.ignoreCause({ log: true }),
+            Effect.forkIn(scope),
+          ),
         ),
       ),
       // Store the fiber before it runs, so a sign-out during the read can interrupt it.
