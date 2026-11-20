@@ -37,13 +37,16 @@ session's cwd. Provider switches still use portable handoff summaries.
 See the [adapter](../../packages/provider-pi/src/server/adapter.ts).
 
 Antigravity separates account profiles per instance while sharing installed executables across the
-environment. It forces file-based credential storage because the native macOS keychain entry would
-otherwise be shared across instances. The launch environment removes ambient Google credentials,
+environment. The 1.5 CLI keeps every profile's sign-in in one OS keyring entry and ignores
+`AGY_ACP_FORCE_FILE_STORAGE`; only its SSH-session check stores the sign-in in the profile, so Google
+account instances launch with `SSH_CONNECTION` set and sign in with `--login`. Gemini Enterprise
+has no such sign-in and still shares the keyring entry. The launch environment removes ambient Google credentials,
 so an instance cannot silently use another account or billing project. The agent also resolves
-its user-global skill directories and plugins under that profile, so the profile links those two
-skill directories and each enabled plugin back to the user's real `~/.gemini`. Plugins are linked
-one by one, never as a folder, so plugins installed into the profile itself keep working. A plugin's
-own hooks and MCP servers come with it, while top-level MCP servers, hooks, and rules stay out.
+its user-global skill directories, rules, and plugins under that profile, so the profile links those
+two skill directories, the global `AGENTS.md` and `GEMINI.md` rules (copied on Windows), and each
+enabled plugin back to the user's real `~/.gemini`. Plugins are linked one by one, never as a
+folder, so plugins installed into the profile itself keep working. A plugin's own hooks and MCP
+servers come with it, while the top-level `~/.gemini/config/mcp_config.json` and `hooks.json` stay out.
 See [profile isolation](../../apps/server/src/provider/antigravityAuthSupport.ts).
 
 The [Antigravity installer](../../apps/server/src/provider/AntigravityInstallation.ts) outlives
