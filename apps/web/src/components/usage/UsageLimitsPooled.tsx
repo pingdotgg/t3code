@@ -392,150 +392,74 @@ function SegmentTriggers({
     .filter(Boolean)
     .join(", ");
   return (
-    <>
-      <PopoverTrigger
-        handle={popover}
-        payload={payload}
-        openOnHover
-        render={
-          <button
-            ref={segmentRef}
-            type="button"
-            style={{ gridColumn: index, gridRow: 1, ...paceMark?.gappedTrack }}
-            aria-label={segmentLabel}
-            className="relative h-5 min-w-0 cursor-pointer rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-inset data-[popup-open]:ring-border @2xl/pool:h-8"
-          />
-        }
-      >
-        <div aria-hidden className="absolute inset-0 overflow-hidden rounded-md">
-          {/* Clipped inside the rounded clip so the bar's own corners keep their antialiasing. */}
-          <div className="absolute inset-0" style={paceMark?.gap}>
-            <div
-              aria-hidden
-              className="absolute inset-y-0 left-0 rounded-md opacity-35"
-              style={{ width: `${remaining}%`, backgroundColor: color }}
-            />
-            {remaining < 100 && reset && refillPercent > 0 ? (
-              <div
-                aria-hidden
-                className="absolute inset-y-0 right-0 opacity-20"
-                style={{
-                  width: `${Math.min(100 - remaining, refillPercent)}%`,
-                  backgroundImage: `repeating-linear-gradient(135deg, ${color} 0 1px, transparent 1px 5px)`,
-                }}
-              />
-            ) : null}
-          </div>
-        </div>
-        {paceMark ? (
-          <span
-            aria-hidden
-            className="absolute inset-y-0.5 w-0.5 -translate-x-1/2 rounded-full bg-foreground"
-            style={paceMark.tick}
-          />
-        ) : null}
-        <span
-          aria-hidden
-          className="absolute inset-0 flex items-center justify-center overflow-hidden rounded-md text-3xs leading-none font-semibold text-foreground/80 tabular-nums @2xl/pool:hidden"
-        >
-          {index}
-        </span>
-        <div className="relative hidden h-full min-w-0 items-center gap-1.5 overflow-hidden rounded-md px-2 text-xs @2xl/pool:flex">
-          {showAccountName ? (
-            <AccountName
-              account={account}
-              className="min-w-0 truncate font-medium text-foreground"
-            />
-          ) : null}
-          {/* A single-account bar repeats the headline percentage. */}
-          {showAccountName ? (
-            <span className="shrink-0 font-semibold text-foreground tabular-nums">
-              {remaining}%
-            </span>
-          ) : null}
-          {resetsIn || credits ? (
-            <span className="ms-auto flex min-w-0 items-center gap-1.5 overflow-hidden rounded-sm bg-background/85 px-1.5 py-0.5 text-2xs whitespace-nowrap text-foreground tabular-nums">
-              {refillIn ?? ""}
-              {credits ? (
-                <>
-                  {resetsIn ? (
-                    <span aria-hidden className="text-muted-foreground">
-                      ·
-                    </span>
-                  ) : null}
-                  <span aria-hidden className="inline-flex items-center gap-0.5 font-semibold">
-                    <TicketIcon className="size-3" aria-hidden />
-                    {credits}
-                  </span>
-                </>
-              ) : null}
-            </span>
-          ) : null}
-        </div>
-      </PopoverTrigger>
-      <LegendRow payload={payload} color={color} now={now} index={index} />
-    </>
-  );
-}
-
-function LegendRow({
-  payload,
-  color,
-  now,
-  index,
-}: {
-  readonly payload: SegmentPayload;
-  readonly color: string;
-  readonly now: number;
-  readonly index: number;
-}) {
-  const popover = use(SegmentPopoverContext) ?? undefined;
-  const { account, window } = payload;
-  const remaining = remainingPercent(window);
-  const m = useMessages();
-  const resetsIn = formatResetsIn(window, now, m, "refill");
-  const credits = account.limits.resetCredits?.availableCount ?? 0;
-  const gt = useGT();
-  return (
     <PopoverTrigger
       handle={popover}
       payload={payload}
-      style={{ gridColumn: "1 / -1", gridRow: index + 1 }}
-      render={<Button variant="ghost" size="compact" />}
-      className="min-w-0 @2xl/pool:hidden"
+      openOnHover
+      render={
+        <button
+          ref={segmentRef}
+          type="button"
+          style={{ gridColumn: index, gridRow: 1, ...paceMark?.gappedTrack }}
+          aria-label={segmentLabel}
+          className="relative h-8 min-w-0 cursor-pointer rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-inset data-[popup-open]:ring-border"
+        />
+      }
     >
-      <span className="relative inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-3xs leading-none font-semibold text-foreground/80 tabular-nums">
+      <div aria-hidden className="absolute inset-0 overflow-hidden rounded-md">
+        {/* Clipped inside the rounded clip so the bar's own corners keep their antialiasing. */}
+        <div className="absolute inset-0" style={paceMark?.gap}>
+          <div
+            aria-hidden
+            className="absolute inset-y-0 left-0 rounded-md opacity-35"
+            style={{ width: `${remaining}%`, backgroundColor: color }}
+          />
+          {remaining < 100 && reset && refillPercent > 0 ? (
+            <div
+              aria-hidden
+              className="absolute inset-y-0 right-0 opacity-20"
+              style={{
+                width: `${Math.min(100 - remaining, refillPercent)}%`,
+                backgroundImage: `repeating-linear-gradient(135deg, ${color} 0 1px, transparent 1px 5px)`,
+              }}
+            />
+          ) : null}
+        </div>
+      </div>
+      {paceMark ? (
         <span
           aria-hidden
-          className="absolute inset-0 rounded-sm opacity-35"
-          style={{ backgroundColor: color }}
+          className="absolute inset-y-0.5 w-0.5 -translate-x-1/2 rounded-full bg-foreground"
+          style={paceMark.tick}
         />
-        <span className="sr-only">{`${gt("Segment")} `}</span>
-        <span className="relative">{index}</span>
-      </span>
-      <AccountName account={account} className="min-w-0 truncate font-medium text-foreground" />
-      <span className="shrink-0 font-semibold text-foreground tabular-nums">{remaining}%</span>
-      <span className="ms-auto flex shrink-0 items-center gap-1.5 text-2xs text-muted-foreground tabular-nums">
-        {resetsIn ?? ""}
-        {credits ? (
-          <>
-            {resetsIn ? <span aria-hidden>·</span> : null}
-            <span
-              aria-hidden
-              className="inline-flex items-center gap-0.5 font-semibold text-foreground"
-            >
-              <TicketIcon className="size-3" aria-hidden />
-              {credits}
-            </span>
-            <span className="sr-only">
-              {gt(
-                "{count, plural, one {{count} reset credit banked} other {{count} reset credits banked}}",
-                { count: credits },
-              )}
-            </span>
-          </>
+      ) : null}
+      <div className="relative flex h-full min-w-0 items-center gap-1.5 overflow-hidden rounded-md px-2 text-xs">
+        {showAccountName ? (
+          <AccountName account={account} className="min-w-0 truncate font-medium text-foreground" />
         ) : null}
-      </span>
+        {/* A single-account bar repeats the headline percentage. */}
+        {showAccountName ? (
+          <span className="shrink-0 font-semibold text-foreground tabular-nums">{remaining}%</span>
+        ) : null}
+        {resetsIn || credits ? (
+          <span className="ms-auto flex min-w-0 items-center gap-1.5 overflow-hidden rounded-sm bg-background/85 px-1.5 py-0.5 text-2xs whitespace-nowrap text-foreground tabular-nums">
+            {refillIn ?? ""}
+            {credits ? (
+              <>
+                {resetsIn ? (
+                  <span aria-hidden className="text-muted-foreground">
+                    ·
+                  </span>
+                ) : null}
+                <span aria-hidden className="inline-flex items-center gap-0.5 font-semibold">
+                  <TicketIcon className="size-3" aria-hidden />
+                  {credits}
+                </span>
+              </>
+            ) : null}
+          </span>
+        ) : null}
+      </div>
     </PopoverTrigger>
   );
 }
@@ -552,7 +476,7 @@ function PoolBar({
   const restores = new Map(pool.resets.map((reset) => [reset.member.account.key, reset]));
   const gt = useGT();
   return (
-    <div className="@container/pool min-w-0">
+    <div className="min-w-0">
       <div
         className="grid gap-x-1 gap-y-1"
         style={{ gridTemplateColumns: `repeat(${pool.columns.length}, minmax(0, 1fr))` }}
@@ -574,12 +498,9 @@ function PoolBar({
             <div
               key={member.account.key}
               style={{ gridColumn: position + 1, gridRow: 1 }}
-              className="flex h-5 min-w-0 items-center justify-center gap-1.5 overflow-hidden rounded-md border border-dashed border-border text-3xs whitespace-nowrap text-muted-foreground @2xl/pool:h-8 @2xl/pool:justify-start @2xl/pool:px-2 @2xl/pool:text-xs"
+              className="flex h-8 min-w-0 items-center justify-start gap-1.5 overflow-hidden rounded-md border border-dashed border-border px-2 text-xs whitespace-nowrap text-muted-foreground"
             >
-              <AccountName
-                account={member.account}
-                className="hidden min-w-0 truncate @2xl/pool:inline-flex"
-              />
+              <AccountName account={member.account} className="inline-flex min-w-0 truncate" />
               {gt("$0 cap")}
             </div>
           ) : null,
