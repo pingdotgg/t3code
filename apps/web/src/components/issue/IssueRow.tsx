@@ -6,6 +6,7 @@ import { cn } from "~/lib/utils";
 import {
   PAGE_ROW_CLASS,
   PAGE_ROW_HOVER_CLASS,
+  PAGE_ROW_SKIP_CLASS,
   PAGE_ROW_PRESS_CLASS,
   PullRequestRowLabels,
 } from "../pullRequest/PullRequestRow";
@@ -48,7 +49,8 @@ function IssueRowImpl({
   return (
     <div
       className={cn(
-        "flex items-center rounded-lg [content-visibility:auto] [contain-intrinsic-block-size:61px]",
+        "flex items-center rounded-lg",
+        PAGE_ROW_SKIP_CLASS,
         selected ? "bg-selection-subtle" : PAGE_ROW_HOVER_CLASS,
       )}
     >
