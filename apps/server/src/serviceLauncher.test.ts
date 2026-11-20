@@ -38,6 +38,7 @@ import {
   compareExactServiceVersions,
   decodeServiceState,
   isExactServiceVersion,
+  decodeServiceUnit,
   disabledServiceTask,
   SERVICE_ENV_FILE,
   SERVICE_LAUNCHER_PROTOCOL,
@@ -473,19 +474,21 @@ setInterval(() => {}, 1_000);
       // Task Scheduler keeps logon settings separately from the saved XML.
       let task = disabledServiceTask(headlessUnit.replace("1.1.0", "1.0.0"));
       const schtasks = async (...args: ReadonlyArray<string>) => {
-        if (args[0] === "/Create") task = await NodeFSP.readFile(args[2] ?? "", "utf8");
+        if (args[0] === "/Create") task = decodeServiceUnit(await NodeFSP.readFile(args[2] ?? ""));
         return { stdout: task };
       };
 
       yield* Effect.promise(() => registerServiceTask(unitPath, "t3code-PC-theo", schtasks));
       assert.equal(task, disabledServiceTask(headlessUnit));
-      assert.equal(yield* fs.readFileString(unitPath), headlessUnit);
+      const savedUnit = yield* fs.readFile(unitPath);
+      assert.deepEqual([...savedUnit.subarray(0, 2)], [0xff, 0xfe]);
+      assert.equal(decodeServiceUnit(savedUnit), headlessUnit);
       assert.deepEqual(yield* fs.readDirectory(root), ["t3code-task.xml"]);
 
       task = unit.replace("1.1.0", "1.0.0");
       yield* Effect.promise(() => registerServiceTask(unitPath, "t3code-PC-theo", schtasks));
       assert.equal(task, unit);
-      assert.equal(yield* fs.readFileString(unitPath), unit);
+      assert.equal(decodeServiceUnit(yield* fs.readFile(unitPath)), unit);
     }),
   );
 

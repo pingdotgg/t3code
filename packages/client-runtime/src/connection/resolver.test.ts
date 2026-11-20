@@ -128,6 +128,8 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
         })),
     mintLanCredential: () => Effect.die("unused"),
     authorizeDpopHttp: () => Effect.die("unused"),
+    authorizeDirectDpop: () => Effect.die("unused"),
+    authorizeDirectDpopHttp: () => Effect.die("unused"),
     rememberCheckedDescriptor: () => Effect.void,
     renewDpopBeforeExpiry: () => Effect.die("unused"),
   });

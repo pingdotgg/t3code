@@ -12,6 +12,7 @@ import {
 } from "@t3tools/provider-core/server/modelEvaluation";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { modelEvaluationCases } from "./cases.ts";
 import { gradeModelEvaluation } from "./grade.ts";
@@ -91,6 +92,7 @@ if (values["dry-run"]) {
     `Validated ${prepared.length} cases and wrote prompts.json only. No scored results or model calls. Cost: $0.\n`,
   );
 } else {
+  const ServerConfig = await import("../../apps/server/src/config.ts");
   const { makeClaudeTextGeneration } =
     await import("../../apps/server/src/textGeneration/ClaudeTextGeneration.ts");
   await Effect.runPromise(
@@ -169,6 +171,12 @@ if (values["dry-run"]) {
       NodeFS.writeFileSync(NodePath.join(outDirectory, "summary.md"), summary);
       process.stdout.write(summary);
       if (failed) process.exitCode = 1;
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(
+      Effect.provide(
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-model-eval-state-" }).pipe(
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    ),
   );
 }

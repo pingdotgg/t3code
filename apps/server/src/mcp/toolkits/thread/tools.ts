@@ -88,7 +88,7 @@ const QUEUE_READ_ACTIONS = ["list", "read"] as const;
 const QueueTool = Tool.make("t3_queue", {
   ...commandTool,
   description:
-    "Manage a thread's queued messages. Omit `threadId` for this thread. list: send order, paged by `cursor` and `limit`. read: up to 16,000 chars of one. edit: replace its `text`; attachments stay. cancel. reorder: before `beforeRunId`, or to the end with null. promote_to_steer: send it now as steering to active `targetRunId`. Writes fail once the run is no longer queued.",
+    "Manage queued messages (default: this thread). list in send order with cursor/limit; read up to 16,000 chars; edit text without changing attachments; cancel; reorder before beforeRunId (null: end); promote_to_steer sends to active targetRunId now. Writes require a queued run.",
   parameters: Schema.Struct({
     action: Schema.Literals([
       ...QUEUE_READ_ACTIONS,
@@ -171,7 +171,7 @@ const ThreadConfigureTool = Tool.make("t3_thread_configure", {
 const ThreadGroupTool = Tool.make("t3_thread_group", {
   ...commandTool,
   description:
-    "Bring models from any provider into a visible thread as peers who talk to the user and each other, for a shared discussion. To hand off work, use `delegate_task`. Omit `threadId` for this thread. status: read the group. invite: seat `modelSelection`, with values from `orchestrator_capabilities`; fails while group conversations are off in Settings. remove: the seat `handle`. discuss: say `message` to everyone, or only to the `to` handles. end: the thread's own model continues with the full discussion in context.",
+    "Host a visible discussion with peer models across providers; delegate_task hands off work instead. Default threadId: here. status reads; invite takes modelSelection from orchestrator_capabilities (requires groups enabled); remove takes handle; discuss sends message to all or to handles in `to`; end leaves the discussion in the thread's context.",
   parameters: Schema.Struct({
     action: Schema.Literals(["status", "invite", "remove", "discuss", "end"]),
     environmentId: OrchestratorMcpEnvironmentTarget,
@@ -188,7 +188,7 @@ const ThreadGroupTool = Tool.make("t3_thread_group", {
 const ThreadTransferTool = Tool.make("t3_thread_transfer", {
   ...commandTool,
   description:
-    "Move context between threads. Omit `threadId` for this thread. fork: copy it from `sourcePoint` (default latest stable run) into a new thread with the same setup; no turn runs yet. merge_back: merge it from `sourcePoint` into a related `targetThreadId` in the same project. status: its context transfers.",
+    "Move thread context (default: here). fork copies sourcePoint (default latest stable run) to a new thread with the same setup, without running a turn; merge_back copies into a related same-project targetThreadId; status lists transfers.",
   parameters: Schema.Struct({
     action: Schema.Literals(["fork", "merge_back", "status"]),
     environmentId: OrchestratorMcpEnvironmentTarget,
@@ -215,7 +215,7 @@ const ThreadTransferTool = Tool.make("t3_thread_transfer", {
 const ThreadSearchTool = Tool.make("t3_thread_search", {
   ...commandTool,
   description:
-    "Search finished user and assistant messages, or with source=tools finished tool output. Every word must appear in one result; quote to keep a phrase. complete=false: older output is still indexing. Project scope applies before the limit. Omit projectId to use the calling thread project. Callers outside a thread search all projects when projectId is absent. Archived threads require includeArchived. Continue with nextCursor using the same query and scope. Each thread contributes one matching item. Search compressed history with t3_conversation_summary_search. Read around a hit: t3_thread_read with its itemId and view=activity, then afterPosition or beforePosition and a small limit.",
+    "Search finished messages or source=tools output. All words must match one item; quote phrases. One hit per thread. complete=false means indexing. Project filter applies before limit; default here, or all projects outside a thread. Archived requires includeArchived. Page with nextCursor and unchanged query/scope. For compressed history use t3_conversation_summary_search. Read around a hit via t3_thread_read, itemId, view=activity and a small beforePosition/afterPosition page.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     ...OrchestrationSearchThreadsInput.fields,

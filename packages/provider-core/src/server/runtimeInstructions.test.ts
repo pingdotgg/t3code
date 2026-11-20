@@ -19,6 +19,7 @@ describe("buildRuntimeInstructions", () => {
 
     assert.include(instructions, "Link each PR you create, take over, or push to");
     assert.include(instructions, "every stack layer");
+    assert.include(instructions, "link_issue");
     assert.include(instructions, "Skip PRs you only read or review");
     assert.include(instructions, "If linking fails, say so.");
     assert.notInclude(instructions, "git log -1");
@@ -50,7 +51,7 @@ describe("buildRuntimeInstructions", () => {
     assert.include(instructions, "call unwatch_pull_request");
   });
 
-  it("sends PR reads through T3's tools and keeps gh for writes and gaps", () => {
+  it("sends PR operations through T3's tools and keeps gh for gaps", () => {
     const instructions = buildRuntimeInstructions({ harness: "Codex" });
 
     assert.include(instructions, "Read pull requests through T3.");
@@ -59,6 +60,7 @@ describe("buildRuntimeInstructions", () => {
       "pull_request_status returns head, checks, reviews and mergeability",
     );
     assert.include(instructions, "gh spends the same GitHub rate limit");
+    assert.include(instructions, "Use T3 tools for PR writes when available.");
     assert.include(instructions, "stop all GitHub reads, gh included, until the time it names");
   });
 });

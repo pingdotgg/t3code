@@ -39,7 +39,7 @@ import * as Layer from "effect/Layer";
 import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
-import { createEnvironmentRpcCommand } from "./runtime.ts";
+import { createEnvironmentRpcCommand, runAtomCommand } from "./runtime.ts";
 import { SshConnectionProfile, type ConnectionCatalogEntry } from "../connection/catalog.ts";
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -108,7 +108,7 @@ describe("command permissions", () => {
         }),
       );
       const { routeInference } = createInferenceProxyAtoms(routeRuntime);
-      const result = yield* Effect.promise(() =>
+      const result = yield* Effect.exit(
         routeInference.run(registry, {
           host: { environmentId: env, label: "Host" },
           consumer: { environmentId: other, label: "Consumer" },
@@ -290,7 +290,7 @@ describe("command permissions", () => {
         },
       } as InferenceFleetEnvironment["serverConfig"];
       const result = discovery
-        ? yield* Effect.promise(() =>
+        ? yield* Effect.exit(
             enableInferenceRouting.run(registry, {
               consumer: consumerIdentity,
               driver: "codex",
@@ -303,7 +303,7 @@ describe("command permissions", () => {
               ],
             }),
           )
-        : yield* Effect.promise(() =>
+        : yield* Effect.exit(
             routeInference.run(registry, {
               host: hostIdentity,
               consumer: consumerIdentity,
@@ -737,9 +737,10 @@ describe("command permissions", () => {
     });
     const target = { environmentId: env, input: { id: ScheduledTaskId.make("task") } };
     try {
-      const first = command.run(registry, target);
+      const quiet = { reportFailure: false, reportDefect: false };
+      const first = runAtomCommand(registry, command, target, quiet);
       await entered;
-      const second = command.run(registry, target);
+      const second = runAtomCommand(registry, command, target, quiet);
       registry.set(sessions(env), AsyncResult.success(grant(false)));
       release();
       expect((await first)._tag).toBe("Success");
@@ -915,10 +916,10 @@ it.effect(
       setAccess(false);
       expect(yield* readLinks).toEqual({ links: [] });
       const linkInput = { url: peer.urls[0]!, pairingCode: "test-code", access: peer.access };
-      const link = Effect.promise(() =>
+      const link = Effect.exit(
         peerLinks.link.run(registry, { environmentId: env, input: linkInput }),
       );
-      const unlink = Effect.promise(() =>
+      const unlink = Effect.exit(
         peerLinks.unlink.run(registry, {
           environmentId: env,
           input: { environmentId: peer.environmentId },

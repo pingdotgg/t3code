@@ -30,7 +30,7 @@ export const ConversationSummariesToolkit = Toolkit.make(
   Tool.make("t3_conversation_summary_search", {
     ...shared,
     description:
-      "Search stored summaries across a project, optionally one thread, most relevant first. Use 1-3 distinctive terms: every query word must match (Unicode full-text terms, not substring or FTS syntax), so when nothing matches, rephrase with fewer or different terms in another call. Returns verified previews up to 1000 UTF-16 units each; limit defaults to 10, maximum 20. Read full statements with t3_conversation_summary_describe. Expand a hit with t3_conversation_summary_expand using its projectId, threadId and id as summaryId; recurse through child summaries for original evidence. Follow nextCursor with the same query and scope, even after an empty page. Never generates summaries.",
+      "Search stored project summaries by relevance, optionally per thread. Use 1-3 distinctive full-text words (all must match; no substring/FTS syntax); rephrase if empty. Verified previews: up to 1000 UTF-16 units; limit 10 by default, max 20. Use t3_conversation_summary_describe for full statements, t3_conversation_summary_expand with projectId/threadId/id as summaryId and recurse into children for evidence. Follow nextCursor with unchanged query/scope even after empty pages. Never generates summaries.",
     parameters: Schema.Struct({
       ...ConversationSummarySearchInput.fields,
       environmentId: OrchestratorMcpEnvironmentTarget,
@@ -42,7 +42,7 @@ export const ConversationSummariesToolkit = Toolkit.make(
   Tool.make("t3_conversation_summary_list", {
     ...shared,
     description:
-      "List stored thread summaries (messages/tool evidence), oldest first, with enabled status and last pass. query is a literal case-insensitive substring of statement text. Follow cursor=nextCursor with the same query. Never generates summaries.",
+      "List stored message/tool summaries oldest first, with enabled status and last pass. query is a case-insensitive literal substring of statement text; page with nextCursor and the same query. Never generates summaries.",
     parameters: Schema.Struct({
       ...ConversationSummaryListInput.fields,
       environmentId: OrchestratorMcpEnvironmentTarget,
@@ -54,7 +54,7 @@ export const ConversationSummariesToolkit = Toolkit.make(
   Tool.make("t3_conversation_summary_describe", {
     ...shared,
     description:
-      "Read a summary's statements, citation keys and sources: message/tool refs with digests and optional UTF-16 ranges (end exclusive), or a roll-up's child summary ids. Verify claims with t3_conversation_summary_expand. Stale summaries expose no text.",
+      "Read statements, citation keys and sources (message/tool refs with digests and optional end-exclusive UTF-16 ranges, or child summary IDs). Verify with t3_conversation_summary_expand. Stale summaries have no text.",
     parameters: Schema.Struct({
       ...ConversationSummaryDescribeInput.fields,
       environmentId: OrchestratorMcpEnvironmentTarget,
@@ -66,7 +66,7 @@ export const ConversationSummariesToolkit = Toolkit.make(
   Tool.make("t3_conversation_summary_expand", {
     ...shared,
     description:
-      "Read original messages/tool output, or a roll-up's child summaries; expand a cited child for original evidence. Once that evidence answers the question, no further thread read is needed. Changed, removed, archived or unfinished sources are unavailable. maxChars (default 12000, max 48000 UTF-16 units) bounds page text; limit bounds sources. Continue with offset=nextOffset AND textOffset=nextTextOffset even when offset repeats. null nextOffset ends paging.",
+      "Read original messages/tool output or roll-up children. Expand cited children to verify; stop when evidence answers the question. Changed, removed, archived or unfinished sources are unavailable. maxChars bounds page text (12,000 default, 48,000 max UTF-16 units); limit bounds sources. Page with offset=nextOffset AND textOffset=nextTextOffset even if offset repeats; null nextOffset ends paging.",
     parameters: Schema.Struct({
       ...ConversationSummaryExpandInput.fields,
       environmentId: OrchestratorMcpEnvironmentTarget,

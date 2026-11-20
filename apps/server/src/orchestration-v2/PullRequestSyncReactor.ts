@@ -18,7 +18,10 @@ import {
   threadPullRequestKeysEqual,
   visibleThreadPullRequests,
 } from "../sourceControl/threadPullRequests.ts";
-import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
+import {
+  isChangeRequestCloseCommand,
+  sourceControlDefinitions,
+} from "../sourceControl/sourceControlDefinitions.ts";
 import {
   classifyAgentShellCommands,
   COMMAND_SEPARATOR,
@@ -45,6 +48,7 @@ import * as Metrics from "../observability/Metrics.ts";
 import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { forkParked } from "../serverActivation.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { isTerminalRunStatus } from "./ThreadManagementService.ts";
@@ -60,11 +64,6 @@ export const QUIET_SYNC_INTERVAL_MS = 5 * 60 * 1_000;
 const CLOSED_FINAL_AFTER_MS = 24 * 60 * 60 * 1_000;
 // A link whose host read failed waits a sweep, then twice as long after each further failure.
 const FAILED_READ_BACKOFF_MS = 60 * 1_000;
-
-const isChangeRequestCloseCommand = (command: string) =>
-  sourceControlDefinitions.definitions.some(
-    (definition) => definition.changeRequestCloseCommand?.test(command) === true,
-  );
 
 const CREATE_COMMANDS = sourceControlDefinitions.definitions.flatMap(
   ({ kind, changeRequestCreateCommand: command }) =>
@@ -666,7 +665,10 @@ export const make = Effect.gen(function* () {
     Effect.suspend(() => {
       if (scope === "requested") requestedSweepQueued = false;
       return pullRequests.withSharedProjectReads(sweep(scope));
-    }).pipe(Effect.catchCause(logSkipped("pull request sync sweep failed", {}))),
+    }).pipe(
+      Effect.provideService(VcsProcess.Background, true),
+      Effect.catchCause(logSkipped("pull request sync sweep failed", {})),
+    ),
   );
 
   // Threads that ran a close command this run, with the commands already read for.

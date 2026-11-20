@@ -14,6 +14,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import type { SchemaError } from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import type * as SqlClient from "effect/sql/SqlClient";
 import type { MigrationError } from "effect/sql/Migrator";
@@ -206,7 +207,7 @@ export function runOrchestratorV2ProviderReplayScenario<
   options: {
     readonly databaseLayer?: Layer.Layer<
       SqlClient.SqlClient,
-      MigrationError | PlatformError.PlatformError | SqlError
+      MigrationError | PlatformError.PlatformError | SchemaError | SqlError
     >;
     readonly runEffectWorker?: boolean;
     readonly runContinuationWorker?: boolean;
@@ -221,6 +222,7 @@ export function runOrchestratorV2ProviderReplayScenario<
   | Error
   | MigrationError
   | PlatformError.PlatformError
+  | SchemaError
   | SqlError,
   never
 > {
@@ -249,7 +251,7 @@ export function layerProviderReplay<Transcript extends ProviderReplayTranscript,
   options: {
     readonly databaseLayer?: Layer.Layer<
       SqlClient.SqlClient,
-      MigrationError | PlatformError.PlatformError | SqlError
+      MigrationError | PlatformError.PlatformError | SchemaError | SqlError
     >;
     readonly runEffectWorker?: boolean;
     readonly runContinuationWorker?: boolean;
@@ -264,7 +266,7 @@ export function layerProviderReplay<Transcript extends ProviderReplayTranscript,
   | EventSink.EventSinkV2
   | CommandOutputRecorder.CommandOutputRecorder
   | ProviderSessionManager.ProviderSessionManagerV2,
-  Error | MigrationError | PlatformError.PlatformError | SqlError
+  Error | MigrationError | PlatformError.PlatformError | SchemaError | SqlError
 > {
   const layerRegistry = harness.makeProviderAdapterRegistryLayer(
     scenario.transcript,
@@ -283,7 +285,7 @@ export function layerWithRegistry<Error>(
   options: {
     readonly databaseLayer?: Layer.Layer<
       SqlClient.SqlClient,
-      MigrationError | PlatformError.PlatformError | SqlError
+      MigrationError | PlatformError.PlatformError | SchemaError | SqlError
     >;
     readonly runEffectWorker?: boolean;
     readonly runContinuationWorker?: boolean;
@@ -304,7 +306,7 @@ export function layerWithRegistry<Error>(
   | ProviderSessionManager.ProviderSessionManagerV2
   | CommandOutputRecorder.CommandOutputRecorder
   | ThreadCommandExecutor.ThreadCommandExecutor,
-  Error | MigrationError | PlatformError.PlatformError | SqlError
+  Error | MigrationError | PlatformError.PlatformError | SchemaError | SqlError
 > {
   const layerServerConfig = Layer.effect(
     ServerConfig.ServerConfig,
@@ -437,7 +439,12 @@ export function layerWithRegistry<Error>(
     ),
     Layer.provide(layerServerSettings),
     Layer.provide(
-      Layer.mergeAll(layerEventSinkProvided, layerStores, layerProviderSessionManagerProvided),
+      Layer.mergeAll(
+        layerEventSinkProvided,
+        McpAppModelContext.layerEmpty,
+        layerStores,
+        layerProviderSessionManagerProvided,
+      ),
     ),
   );
   const layerRuntimeRequestServiceProvided = RuntimeRequestService.layer.pipe(
@@ -611,7 +618,7 @@ export function layerWithRegistry<Error>(
   // Build recovery before runtime so it commits before the effect worker claims work.
   const layerStartupRecovery: Layer.Layer<
     never,
-    MigrationError | PlatformError.PlatformError | SqlError
+    MigrationError | PlatformError.PlatformError | SchemaError | SqlError
   > =
     options.recoverOnStartup === true
       ? Layer.effectDiscard(

@@ -39,7 +39,6 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import { formatMessageWithProvenance } from "@t3tools/provider-core/server/messageProvenance";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
@@ -103,42 +102,26 @@ const delegatedTaskStatusTranscriptFile = new URL(
   import.meta.url,
 );
 
-function attributedChildPrompt(value: unknown): unknown {
-  if (
-    typeof value === "string" &&
-    [delegatedPrompt, cancellationPrompt, queuedFollowupPrompt].includes(value)
-  )
-    return formatMessageWithProvenance(value, {
-      createdBy: "agent",
-      creationSource: "mcp",
-      senderThreadId: parentThreadId,
-    });
-  if (Array.isArray(value)) return value.map(attributedChildPrompt);
-  if (typeof value !== "object" || value === null) return value;
-  return Object.fromEntries(
-    Object.entries(value).map(([key, entry]) => [key, attributedChildPrompt(entry)]),
-  );
-}
-
 const readDelegatedTaskStatusTranscript = Effect.fn("readDelegatedTaskStatusTranscript")(
   function* (followupResult: string) {
     const fs = yield* FileSystem.FileSystem;
     const text = yield* fs.readFileString(NodeURL.fileURLToPath(delegatedTaskStatusTranscriptFile));
+    // The recording names the parent, then the child, after the fixture's titles; this test's differ.
+    const threadNames = ["MCP replay parent", delegatedPrompt];
     const transcript = yield* decodeProviderReplayNdjson(
-      text.replaceAll(queuedFollowupResult, followupResult),
+      text
+        .replaceAll(queuedFollowupResult, followupResult)
+        .replace(
+          /"name":"Replay fixture: delegated_task_status"/g,
+          () => `"name":${JSON.stringify(threadNames.shift())}`,
+        ),
     );
     // The recording ends when the recorder closes the app-server while the parent
     // turn is still open. This test keeps acting as that parent afterwards, and
     // replaying the exit would kill the shared process and fail the parent run.
     return {
       ...transcript,
-      entries: transcript.entries
-        .filter((entry) => entry.type !== "runtime_exit")
-        .map((entry) =>
-          entry.type === "expect_outbound"
-            ? { ...entry, frame: attributedChildPrompt(entry.frame) }
-            : entry,
-        ),
+      entries: transcript.entries.filter((entry) => entry.type !== "runtime_exit"),
     };
   },
   Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
@@ -298,7 +281,9 @@ describe("orchestrator MCP toolkit", () => {
         Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
         Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
         Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
-        Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+        Layer.provide(
+          Layer.mock(ProjectService.ProjectService)({ workspaceScanDirectory: Effect.succeed }),
+        ),
         Layer.provideMerge(
           SecretRequests.layer.pipe(
             Layer.provide(layerMemorySecretStore),

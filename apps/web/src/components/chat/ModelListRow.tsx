@@ -1,8 +1,10 @@
 import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
+import { T, useGT } from "gt-react";
 import { memo } from "react";
 import { CheckIcon, StarIcon } from "lucide-react";
 import { getDisplayModelName } from "./providerIconUtils";
 import { ComboboxItem } from "../ui/combobox";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -28,10 +30,12 @@ export const ModelListRow = memo(function ModelListRow(props: {
   /** Marks this instance apart from another of the same provider. */
   showInstanceBadge: boolean;
   showNewBadge?: boolean;
+  unavailable?: boolean;
   jumpLabel?: string | null;
   disabledReason?: string | null;
   onToggleFavorite: (instanceId: ProviderInstanceId, slug: string) => void;
 }) {
+  const gt = useGT();
   const model = {
     slug: props.slug,
     name: props.name,
@@ -44,7 +48,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
       selectedFill={false}
       index={props.index}
       value={modelPickerModelKey(props.instanceId, props.slug)}
-      disabled={Boolean(props.disabledReason)}
+      disabled={props.unavailable || Boolean(props.disabledReason)}
       className={cn(
         "group relative w-full !min-w-0 max-w-full cursor-pointer",
         props.disabledReason &&
@@ -86,10 +90,15 @@ export const ModelListRow = memo(function ModelListRow(props: {
         {props.showNewBadge ? (
           <span
             className="shrink-0 rounded border border-update/35 bg-update/15 px-0.5 py-px text-3xs font-bold uppercase leading-none tracking-wide text-update-foreground"
-            aria-label="New model"
+            aria-label={gt("New model")}
           >
-            New
+            {gt("New", { $context: "badge on a newly added model" })}
           </span>
+        ) : null}
+        {props.unavailable ? (
+          <Badge variant="outline" size="sm">
+            <T context="badge on a model that cannot be selected">Unavailable</T>
+          </Badge>
         ) : null}
       </div>
 
@@ -108,7 +117,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
                   event.stopPropagation();
                 }}
                 disabled={Boolean(props.disabledReason)}
-                aria-label={props.isFavorite ? "Remove from favorites" : "Add to favorites"}
+                aria-label={props.isFavorite ? gt("Remove from favorites") : gt("Add to favorites")}
               >
                 <StarIcon
                   className={cn(
@@ -122,7 +131,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
             }
           />
           <TooltipPopup side="top" align="center">
-            {props.isFavorite ? "Remove from favorites" : "Add to favorites"}
+            {props.isFavorite ? gt("Remove from favorites") : gt("Add to favorites")}
           </TooltipPopup>
         </Tooltip>
         {props.jumpLabel ? <Kbd>{props.jumpLabel}</Kbd> : null}

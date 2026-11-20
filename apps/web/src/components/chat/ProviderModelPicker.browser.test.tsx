@@ -204,10 +204,10 @@ it("lists a model reported twice by one provider once, with contiguous jump shor
   const options = new Map([
     [
       instanceId,
-      ["a", "b", "c", "c", "d", "d", "e"].map((slug) => ({
+      ["a", "b", "c", "c", "d", "d", "e", "f"].map((slug) => ({
         slug,
         name: `Model ${slug.toUpperCase()}`,
-        isUnavailable: slug === "e",
+        isUnavailable: slug === "e" || slug === "f",
       })),
     ],
   ]);
@@ -236,6 +236,7 @@ it("lists a model reported twice by one provider once, with contiguous jump shor
   await expect.element(trigger.getByText("Unavailable", { exact: true })).toBeVisible();
   await trigger.click();
   await expect.element(page.getByRole("option", { name: /Model A/ })).toBeVisible();
+  await expect.element(page.getByRole("option", { name: /Model E/ })).toBeDisabled();
   await vi.waitFor(() =>
     expect(
       page
@@ -250,6 +251,7 @@ it("lists a model reported twice by one provider once, with contiguous jump shor
       ["Model B", "2"],
       ["Model C", "3"],
       ["Model D", "4"],
+      ["Model E", undefined],
     ]),
   );
 });

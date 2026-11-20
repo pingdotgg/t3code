@@ -175,6 +175,9 @@ export const seedDevReplayInstance = Effect.fn(
 const vaultConfigs = (settings: ServerSettings) =>
   Object.entries(settings.secretProviders).map(([id, { kind, config }]) => [id, kind, config]);
 
+// A host built earlier (for the ACP registry) lacks PortDiscovery; build this one fresh.
+export const providerHostLayer = Layer.fresh(ProviderHostLive.layer);
+
 export const layerSettingsWatcher = (
   settingsChanges: Stream.Stream<ServerSettings>,
   // The settings the registry was built from: a change queued during startup differs from these.
@@ -250,7 +253,7 @@ export const layer: Layer.Layer<
     }).pipe(
       Layer.provide(ProviderOrchestrationAdapterInfrastructure.layer),
       Layer.provide(AcpRegistrySupport.layerFromHost),
-      Layer.provide(ProviderHostLive.layer),
+      Layer.provide(providerHostLayer),
       Layer.provide(Layer.succeed(HostProcess.Environment, hostEnvironment)),
       Layer.provide(SecretResolver.layer),
     );

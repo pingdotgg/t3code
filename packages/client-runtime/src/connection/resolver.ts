@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { translatableDetail } from "../errors/translatable.ts";
 import type {
   AuthClientPresentationMetadata,
   ExecutionEnvironmentDescriptor,
@@ -141,7 +143,11 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
     if (!isBearerProfile(profile)) {
       return yield* new ConnectionBlockedError({
         reason: "configuration",
-        detail: `Connection profile ${target.connectionId} is not a bearer connection.`,
+        ...translatableDetail(
+          msg("Connection profile {connectionId} is not a bearer connection.", {
+            connectionId: target.connectionId,
+          }),
+        ),
       });
     }
     if (profile.environmentId !== target.environmentId) {
@@ -225,6 +231,21 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
         }),
       ),
     );
+    if (credential._tag === "DpopConnectionCredential") {
+      if (entry.discovery !== undefined) {
+        return yield* new ConnectionTransientError({
+          reason: "endpoint-unavailable",
+          ...translatableDetail(msg("Discovered endpoint could not prove its identity.")),
+        });
+      }
+      const authorized = yield* remote.authorizeDirectDpop({
+        expectedEnvironmentId: target.environmentId,
+        connectionId: credentialConnectionId(target.connectionId),
+        httpBaseUrl: profile.httpBaseUrl,
+        wsBaseUrl: profile.wsBaseUrl,
+      });
+      return { ...authorized, target } satisfies PreparedConnection;
+    }
     if (!isBearerCredential(credential)) {
       return yield* credentialMissingError(target.connectionId);
     }
@@ -238,7 +259,7 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
     ) {
       return yield* new ConnectionTransientError({
         reason: "endpoint-unavailable",
-        detail: "Discovered endpoint could not prove its identity.",
+        ...translatableDetail(msg("Discovered endpoint could not prove its identity.")),
       });
     }
     const authorized = yield* remote.authorizeBearer({
@@ -289,7 +310,11 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
     if (!isSshProfile(profile)) {
       return yield* new ConnectionBlockedError({
         reason: "configuration",
-        detail: `Connection profile ${target.connectionId} is not an SSH connection.`,
+        ...translatableDetail(
+          msg("Connection profile {connectionId} is not an SSH connection.", {
+            connectionId: target.connectionId,
+          }),
+        ),
       });
     }
     if (profile.environmentId !== target.environmentId) {

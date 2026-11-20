@@ -12,12 +12,14 @@ import { makeThreadFixture } from "../../test-fixtures";
 import { ChatComposer, type ChatComposerHandle, type ChatComposerProps } from "./ChatComposer";
 import { useComposerSelection } from "./useComposerSelection";
 
-vi.mock("../../state/primaryEnvironment", async () => {
+vi.mock(import("../../state/primaryEnvironment"), async (original) => {
+  const actual = await original();
   const { Atom } = await import("effect/reactivity");
   return {
+    ...actual,
     primaryEnvironmentIdAtom: Atom.make(null),
-    hostEnvironmentIdAtom: Atom.make(null),
-    themeEnvironmentIdAtom: Atom.make(null),
+    hostEnvironmentIdAtom: Atom.make<string | null>(null),
+    localEnvironmentIdAtom: Atom.make(null),
   };
 });
 

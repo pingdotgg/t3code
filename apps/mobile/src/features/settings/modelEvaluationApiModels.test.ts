@@ -5,17 +5,15 @@ import {
   type ListTextGeneratorModelsInput,
   type ListTextGeneratorModelsResult,
 } from "@t3tools/contracts";
-import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
-import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import { expect, vi } from "vite-plus/test";
 
-type ModelListResult = AtomCommandResult<ListTextGeneratorModelsResult, string>;
 type Request = { environmentId: EnvironmentId; input: ListTextGeneratorModelsInput };
 
 const state = vi.hoisted(() => ({
-  listModels: (_request: Request): Promise<ModelListResult> => {
+  listModels: (_request: Request): Effect.Effect<ListTextGeneratorModelsResult, string> => {
     throw new Error("model discovery not set up");
   },
 }));
@@ -52,14 +50,13 @@ function setup(ids: readonly string[], listModels: typeof state.listModels) {
 
 it.effect("keeps discovery failures visible and can reload unchanged settings after recovery", () =>
   Effect.gen(function* () {
-    using h = setup(["offline-api"], async () => AsyncResult.failure(Cause.fail("offline")));
+    using h = setup(["offline-api"], () => Effect.fail("offline"));
 
-    const failed = yield* Effect.exit(h.read(0));
-    expect(failed._tag).toBe("Failure");
+    expect(yield* Effect.flip(h.read(0))).toBe("offline");
     expect(h.registry.get(h.catalog)[0]?._tag).toBe("Failure");
 
-    state.listModels = async ({ input }) =>
-      AsyncResult.success({
+    state.listModels = ({ input }) =>
+      Effect.succeed({
         models: input.refresh ? [{ id: "recovered-model", name: "Recovered model" }] : [],
       });
     h.registry.refresh(h.catalog);
@@ -70,17 +67,17 @@ it.effect("keeps discovery failures visible and can reload unchanged settings af
 
 it.effect("shows each API's models while another discovery request is still pending", () =>
   Effect.gen(function* () {
-    const slow = Promise.withResolvers<ModelListResult>();
-    using h = setup(["slow-api", "ready-api"], async ({ input }) =>
+    const slow = yield* Deferred.make<ListTextGeneratorModelsResult>();
+    using h = setup(["slow-api", "ready-api"], ({ input }) =>
       input.id === "slow-api"
-        ? slow.promise
-        : AsyncResult.success({ models: [{ id: "ready-model", name: "Ready model" }] }),
+        ? Deferred.await(slow)
+        : Effect.succeed({ models: [{ id: "ready-model", name: "Ready model" }] }),
     );
 
     expect(yield* h.read(1)).toEqual([{ id: "ready-model", name: "Ready model" }]);
     expect(h.registry.get(h.catalog)[0]?.waiting).toBe(true);
 
-    slow.resolve(AsyncResult.success({ models: [{ id: "slow-model", name: "Slow model" }] }));
+    yield* Deferred.succeed(slow, { models: [{ id: "slow-model", name: "Slow model" }] });
     expect(yield* h.read(0)).toEqual([{ id: "slow-model", name: "Slow model" }]);
     expect(h.registry.get(h.catalog)[1]?._tag).toBe("Success");
   }),

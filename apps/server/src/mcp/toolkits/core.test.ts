@@ -173,7 +173,7 @@ it.effect(
       const tool = server.tools.find(({ tool }) => tool.name === "t3_project_code_query")?.tool;
       expect(tool?.annotations?.readOnlyHint).toBe(true);
       expect(tool?.annotations?.destructiveHint).toBe(false);
-      expect(tool?.description).toContain("before broad repository-reading loops");
+      expect(tool?.description).toContain("code graph before broad reads");
 
       const denied = yield* server
         .callTool({
@@ -196,7 +196,7 @@ it.effect(
         ({ tool }) => tool.name === "t3_project_file_history",
       )?.tool;
       expect(history?.annotations?.readOnlyHint).toBe(true);
-      expect(history?.description).toContain("not that the thread authored the change");
+      expect(history?.description).toContain("presence is not authorship");
       // File history joins files to threads, so it needs thread access, not filesystem access.
       const historyDenied = yield* server
         .callTool({
@@ -548,7 +548,10 @@ it.effect("records only failed calls of tools that hand off no work", () => {
 });
 
 // A thread read whose runs or messages are bounded by nothing but the thread.
-const historyReads = (reads: Array<string>) => {
+const historyReads = (
+  reads: Array<string>,
+  queued?: { readonly attachments: ReadonlyArray<unknown>; readonly dispatched: Array<unknown> },
+) => {
   const record = (
     fields: ReadonlyArray<string>,
     filter: ProjectionStore.ProjectionRecordFilter | undefined,
@@ -574,9 +577,20 @@ const historyReads = (reads: Array<string>) => {
     getProjectThreadRecords: (_target, fields, filter) =>
       Effect.sync(() => record(fields, filter)).pipe(Effect.as(projection as never)),
     getThreadRecords: (_id, fields, filter) =>
-      Effect.sync(() => record(fields, filter)).pipe(Effect.as(projection as never)),
-    getMessagesById: () => Effect.succeed(new Map()),
-    dispatch: () => Effect.succeed({ sequence: 1 } as never),
+      Effect.sync(() => record(fields, filter)).pipe(
+        Effect.as({
+          ...projection,
+          runs:
+            queued === undefined
+              ? projection.runs
+              : [{ id: "run:queued", status: "queued", userMessageId: "message:queued" }],
+        } as never),
+      ),
+    getMessagesById: () =>
+      Effect.succeed(new Map(queued === undefined ? [] : [["message:queued", queued]]) as never),
+    hasReceipt: () => Effect.succeed(false),
+    dispatch: (command) =>
+      Effect.sync(() => queued?.dispatched.push(command)).pipe(Effect.as({ sequence: 1 } as never)),
   });
 };
 
@@ -607,6 +621,8 @@ it.effect("t3_queue list and read load only the queued runs and their messages",
 
 it.effect("handoff analytics read only the caller's active run and its message", () => {
   const reads: Array<string> = [];
+  const attachments = [{ type: "image", id: "shot", name: "shot.png" }];
+  const dispatched: Array<unknown> = [];
   const recorded = Deferred.makeUnsafe<void>();
   return Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
@@ -621,12 +637,25 @@ it.effect("handoff analytics read only the caller's active run and its message",
       );
     yield* Deferred.await(recorded);
     expect(reads).toEqual([]);
+    // The edit keeps the queued image, so `/logout` stays an ordinary prompt and is not refused.
+    const attached = yield* server
+      .callTool({
+        name: "t3_queue",
+        arguments: { action: "edit", queuedRunId: "run:queued", text: " /LOGOUT " },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(attached.isError).not.toBe(true);
+    expect(dispatched).toMatchObject([{ text: "Edited" }, { text: " /LOGOUT ", attachments }]);
+    expect(dispatched[0]).not.toHaveProperty("attachments");
   }).pipe(
     Effect.provide(
       layerThreadToolkit.pipe(
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
-        Layer.provide(historyReads(reads)),
+        Layer.provide(historyReads(reads, { attachments, dispatched })),
         Layer.provide(
           Layer.succeed(
             AnalyticsService.AnalyticsService,
@@ -1435,6 +1464,46 @@ it.effect.each(["t3_thread_interrupt", "t3_workflow_stop"])(
           Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
           Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
           Layer.provide(Layer.mock(ThreadGroupService.ThreadGroupService)({})),
+          Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+          Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+          Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+          Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+          Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+          Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+        ),
+      ),
+    ),
+);
+
+it.effect(
+  "t3_background_wait marks work from a turn Claude started before T3 started its run",
+  () =>
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const result = yield* server
+        .callTool({ name: "t3_background_wait", arguments: { taskIds: ["checks"] } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(result.structuredContent).toEqual({ matched: ["checks"], unmatched: [] });
+    }).pipe(
+      Effect.provide(
+        layerOrchestratorToolkit.pipe(
+          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+          Layer.provide(NodeCrypto.layer),
+          Layer.provide(
+            Layer.mock(ThreadManagement.ThreadManagementService)({
+              getThreadShell: (id) =>
+                Effect.succeed(McpToolAccessTestkit.liveThreadShell(id, { activeRunId: null })),
+              awaitBackgroundTasks: ({ taskIds }) =>
+                Effect.succeed({ matched: taskIds, unmatched: [] }),
+            }),
+          ),
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
+          Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
+          Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
           Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
           Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
           Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),

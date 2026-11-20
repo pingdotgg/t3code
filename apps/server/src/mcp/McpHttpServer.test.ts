@@ -12,6 +12,7 @@ import {
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
   PreviewTabId,
+  ProjectId,
   ProviderInstanceId,
   ProviderInteractionMode,
   RuntimeMode,
@@ -49,6 +50,7 @@ import * as PreviewManager from "../preview/Manager.ts";
 import * as IssueService from "../issue/IssueService.ts";
 import * as ThreadIssueService from "../orchestration-v2/ThreadIssueService.ts";
 import * as DeviceService from "../device/DeviceService.ts";
+import * as GitManager from "../git/GitManager.ts";
 import * as PullRequestReviewGuideService from "../pullRequest/PullRequestReviewGuideService.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerConfig from "../config.ts";
@@ -113,6 +115,7 @@ const layerPullRequestsTest = McpHttpServer.layerPullRequestsToolkit.pipe(
       Layer.mock(PullRequestOracle.PullRequestOracle)({}),
       Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
       Layer.mock(PullRequestService.PullRequestService)({}),
+      Layer.mock(GitManager.GitManager)({}),
       Layer.mock(Orchestrator.OrchestratorV2)({}),
       Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
       NodeServices.layer,
@@ -685,6 +688,34 @@ it.effect("decodes null optional arguments the way it decodes omitted ones", () 
   }).pipe(Effect.provide(layerRecordingTools(calls)));
 });
 
+it.effect("decodes a JSON-stringified delegate target as the same object", () => {
+  const calls: Array<unknown> = [];
+  return Effect.gen(function* () {
+    const task = "Inspect";
+    const target = {
+      providerInstanceId: "codex",
+      model: "gpt-6.2-sol",
+      options: { reasoningEffort: "medium" },
+    };
+    yield* callTool("delegate_task", { task, target });
+    yield* callTool("delegate_task", { task, target: JSON.stringify(target) });
+
+    for (const invalidTarget of ["{model:", '{"model":42}']) {
+      const error = yield* Effect.flip(callTool("delegate_task", { task, target: invalidTarget }));
+      expect(error).toBeInstanceOf(McpSchema.InvalidParams);
+    }
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toEqual({
+      task,
+      target: {
+        ...target,
+        options: [{ id: "reasoningEffort", value: "medium" }],
+      },
+    });
+    expect(calls[1]).toEqual(calls[0]);
+  }).pipe(Effect.provide(layerRecordingTools(calls)));
+});
+
 it.effect("rejects arguments a tool does not declare instead of dropping them", () => {
   const calls: Array<unknown> = [];
   return Effect.gen(function* () {
@@ -789,7 +820,7 @@ it.effect.each(clampedListLimits)(
 
 it("keeps cross-tool routing out of the delegate_task description", () => {
   const description = OrchestratorToolkit.tools.delegate_task.description ?? "";
-  expect(description).toContain("Start one child agent with only `task`");
+  expect(description).toContain("child agent with only task, no parent history");
   // Review rounds, follow-ups, and polling are routed in the system text.
   expect(description).not.toContain("t3_thread_send");
   expect(description).not.toContain("Do not poll");
@@ -813,7 +844,7 @@ it.effect(
       expect(linkTool?.tool.annotations?.idempotentHint).toBe(true);
       expect(linkTool?.tool.annotations?.openWorldHint).toBe(false);
       expect(linkTool?.tool.description).toContain("Link a PR to this thread");
-      expect(linkTool?.tool.description).toContain("settles the thread on merge");
+      expect(linkTool?.tool.description).toContain("settlement on merge");
 
       const denied = yield* server
         .callTool({ name: "list_thread_pull_requests", arguments: {} })
@@ -1176,6 +1207,38 @@ it.effect("answers 2026-07-28 discovery and keeps 2025-06-18 as the initialize f
       expect(tools.error).toBeUndefined();
       expect(tools.result.tools).toEqual(
         expect.arrayContaining([expect.objectContaining({ name: "probe" })]),
+      );
+
+      // The Go MCP SDK sends this without request metadata, though 2026-07-28 does not define it.
+      const rootsChanged = (
+        client: HttpClient.HttpClient,
+        message: object = {},
+        headers: Record<string, string> = {},
+      ) =>
+        client.post("/mcp", {
+          headers: {
+            accept: "application/json, text/event-stream",
+            "mcp-method": "notifications/roots/list_changed",
+            "mcp-protocol-version": "2026-07-28",
+            ...headers,
+          },
+          body: HttpBody.text(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              method: "notifications/roots/list_changed",
+              params: {},
+              ...message,
+            }),
+            "application/json",
+          ),
+        });
+      const acknowledged = yield* rootsChanged(httpClient);
+      expect(acknowledged.status).toBe(202);
+      expect(yield* acknowledged.text).toBe("");
+      expect((yield* rootsChanged(yield* HttpClient.HttpClient)).status).toBe(401);
+      expect((yield* rootsChanged(httpClient, { id: 7 })).status).toBe(400);
+      expect((yield* rootsChanged(httpClient, {}, { origin: "https://example.com" })).status).toBe(
+        403,
       );
 
       const initializeResponse = yield* httpClient.post("/mcp", {
@@ -1844,7 +1907,7 @@ it.effect("hides tools for links and refuses another environment while the beta 
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("lists issue and pull request watch tools according to the caller", () =>
+it.effect("lists issues, watches and forge tools according to the caller and project", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const scopeFor = (
@@ -1866,6 +1929,7 @@ it.effect("lists issue and pull request watch tools according to the caller", ()
       const scopes = new Map([
         ["parentToken", scopeFor("parentToken", false)],
         ["childToken", scopeFor("childToken", true)],
+        ["noForgeToken", scopeFor("noForgeToken", false)],
       ]);
       const serverLayer = McpHttpServer.layerMcpTransport(
         Layer.merge(McpHttpServer.layerPullRequestsToolkit, McpHttpServer.layerIssuesToolkit),
@@ -1905,9 +1969,17 @@ it.effect("lists issue and pull request watch tools according to the caller", ()
             }),
             Layer.mock(PullRequestOracle.PullRequestOracle)({}),
             Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
-            Layer.mock(PullRequestService.PullRequestService)({}),
+            Layer.mock(PullRequestService.PullRequestService)({
+              servesProject: (projectId) => Effect.succeed(projectId !== "project-noForgeToken"),
+            }),
+            Layer.mock(GitManager.GitManager)({}),
             Layer.mock(Orchestrator.OrchestratorV2)({}),
-            Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              getThreadShell: (threadId) =>
+                Effect.succeed({
+                  projectId: ProjectId.make(threadId.replace("thread-", "project-")),
+                } as never),
+            }),
             NodeServices.layer,
             NodeCrypto.layer,
           ),
@@ -1961,6 +2033,28 @@ it.effect("lists issue and pull request watch tools according to the caller", ()
       expect(childTools).toContain("link_pull_request");
       expect(childTools).not.toContain("watch_pull_request");
       expect(childTools).not.toContain("unwatch_pull_request");
+      expect(parentTools).toEqual(
+        expect.arrayContaining([
+          "pull_request_read",
+          "pull_request_review",
+          "pull_request_merge",
+          "ci_logs",
+          "ci_rerun",
+        ]),
+      );
+      const noForgeTools = yield* listedTools("noForgeToken");
+      expect(noForgeTools).toEqual(
+        expect.arrayContaining(["link_pull_request", "watch_pull_request"]),
+      );
+      const oracleTools = ["pull_request_status", "pull_request_failures", "pull_request_feedback"];
+      expect(noForgeTools).toEqual(expect.arrayContaining(oracleTools));
+      expect(
+        noForgeTools.filter(
+          (name) =>
+            (name.startsWith("pull_request_") && !oracleTools.includes(name)) ||
+            name.startsWith("ci_"),
+        ),
+      ).toEqual([]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

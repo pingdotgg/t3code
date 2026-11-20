@@ -2,6 +2,7 @@ import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { ThreadContextRecord, ProjectId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { MessagesSquareIcon } from "lucide-react";
+import { useGT } from "gt-react";
 
 import { useProject, useThreadShell } from "~/state/entities";
 import { orchestrationEnvironment } from "~/state/orchestration";
@@ -16,6 +17,7 @@ export function ThreadContextChip(props: {
   copyMarkdown?: string;
   unreadable?: boolean;
 }) {
+  const gt = useGT();
   const { environmentId, threadId } = props.record;
   const shell = useThreadShell({ environmentId, threadId });
   const lookup = useEnvironmentQuery(
@@ -44,7 +46,7 @@ export function ThreadContextChip(props: {
                 draggable={false}
               />
             }
-            aria-label={`Thread, ${title}`}
+            aria-label={gt("Thread, {title}", { title })}
             data-markdown-copy={props.copyMarkdown}
             className="no-underline"
           >
@@ -59,8 +61,10 @@ export function ThreadContextChip(props: {
       />
       <TooltipPopup side="top">
         {props.unreadable
-          ? "On another machine, so this machine's agent can't read it. Remove it or switch back to send."
-          : "Open thread"}
+          ? gt(
+              "On another machine, so this machine's agent can't read it. Remove it or switch back to send.",
+            )
+          : gt("Open thread")}
       </TooltipPopup>
     </Tooltip>
   );
