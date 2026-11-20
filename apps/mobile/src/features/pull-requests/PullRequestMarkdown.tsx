@@ -23,7 +23,7 @@ import {
   sourceControlClients,
   type ReferenceAutolink,
 } from "@t3tools/client-runtime/source-control-clients";
-import { linkReferenceAutolinks } from "./pullRequestAutolinks";
+import { nativePullRequestMarkdown } from "./pullRequestAutolinks";
 
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
@@ -44,6 +44,7 @@ const AutolinksContext = createContext<((text: string) => ReadonlyArray<Referenc
   null,
 );
 const LineBreaksContext = createContext(false);
+const GithubEmojiContext = createContext(false);
 const ChangeRequestUrlContext = createContext<string | null>(null);
 
 export function PullRequestMarkdownRepository(props: {
@@ -75,11 +76,13 @@ export function PullRequestMarkdownRepository(props: {
     : null;
   return (
     <AutolinksContext value={autolinks}>
-      <LineBreaksContext value={lineBreaks}>
-        <ChangeRequestUrlContext value={url ?? null}>
-          <PullRequestMediaContext value={media}>{props.children}</PullRequestMediaContext>
-        </ChangeRequestUrlContext>
-      </LineBreaksContext>
+      <GithubEmojiContext value={provider === "github"}>
+        <LineBreaksContext value={lineBreaks}>
+          <ChangeRequestUrlContext value={url ?? null}>
+            <PullRequestMediaContext value={media}>{props.children}</PullRequestMediaContext>
+          </ChangeRequestUrlContext>
+        </LineBreaksContext>
+      </GithubEmojiContext>
     </AutolinksContext>
   );
 }
@@ -166,18 +169,21 @@ function PullRequestBodySegmentView(props: {
   readonly onTaskListUndone: () => void;
 }) {
   const { segment, onTaskListChange } = props;
+  const autolinks = useContext(AutolinksContext);
+  const githubEmoji = useContext(GithubEmojiContext);
   if (segment.kind === "markdown") {
+    const prose = nativePullRequestMarkdown(segment.text, autolinks, githubEmoji);
     return (
       <PullRequestMarkdownContent
         key={props.undoneTicks}
-        markdown={segment.text}
+        markdown={prose.markdown}
         gallery={props.gallery}
         lineBreaks={props.lineBreaks}
         onTaskListItemPress={
           onTaskListChange
             ? (event) => {
                 const offset = markdownTaskMarkerOffset(
-                  segment.text,
+                  prose.markdown,
                   event.index,
                   event.text,
                   event.checked,
@@ -185,7 +191,7 @@ function PullRequestBodySegmentView(props: {
                 const kept =
                   offset !== null &&
                   onTaskListChange({
-                    markerOffset: segment.sourceOffset + offset,
+                    markerOffset: segment.sourceOffset + prose.sourceOffset(offset),
                     checked: event.checked,
                   });
                 if (!kept) props.onTaskListUndone();
@@ -224,12 +230,10 @@ function PullRequestMarkdownContent(props: {
   readonly onTaskListItemPress?: SelectableMarkdownTextProps["onTaskListItemPress"];
 }) {
   const hostLineBreaks = useContext(LineBreaksContext);
-  const autolinks = useContext(AutolinksContext);
   const mediaContext = useContext(PullRequestMediaContext);
   const changeRequestUrl = useContext(ChangeRequestUrlContext);
   const resolveMediaUrl = (href: string) =>
     changeRequestUrl ? resolveChangeRequestMediaUrl(href, changeRequestUrl) : href;
-  const markdown = linkReferenceAutolinks(props.markdown, autolinks);
   const openPullRequest = useOpenPullRequest();
   const openLink = (href: string) => {
     void openPullRequest(href);
@@ -242,7 +246,7 @@ function PullRequestMarkdownContent(props: {
   return (
     <FilePreviewGallery value={props.gallery}>
       <SelectableMarkdownText
-        markdown={markdown}
+        markdown={props.markdown}
         preserveSoftBreaks={props.lineBreaks ?? hostLineBreaks}
         textStyle={styles.nativeTextStyle}
         onLinkPress={openLink}
