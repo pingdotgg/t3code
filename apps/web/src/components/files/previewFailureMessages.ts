@@ -133,6 +133,8 @@ const PREVIEW_FAILURE_MESSAGES = {
   "tiff-color-format": msg("This TIFF color format is not supported."),
   "image-decoding-unavailable": msg("Image decoding is unavailable."),
   "image-decode-failed": msg("Could not decode this image."),
+  "model-invalid": msg("This 3D model could not be read."),
+  "model-webgl-unavailable": msg("3D previews need WebGL, which is unavailable in this window."),
 } as const;
 
 export type PreviewFailureCode = keyof typeof PREVIEW_FAILURE_MESSAGES;

@@ -20,6 +20,7 @@ import {
   isWorkspaceImagePreviewPath,
   isWorkspaceFontPreviewPath,
   isWorkspaceVideoPreviewPath,
+  modelPreviewKind,
   officePreviewKind,
   binaryPreviewKind,
 } from "@t3tools/shared/filePreview";
@@ -468,6 +469,8 @@ function WorkspaceDocumentPreview(props: {
   readonly absolutePath: string;
   readonly workspaceRoot: string;
   readonly name: string;
+  readonly linkPath: string;
+  readonly composerDraftTarget: ScopedThreadRef | DraftId;
   readonly workspaceMutationId: string | null;
   readonly refreshRevision: number;
 }) {
@@ -515,6 +518,8 @@ function WorkspaceDocumentPreview(props: {
       sizeBytes={0}
       asset={{ environmentId: props.environmentId, resource }}
       origin={gt("File", { $context: "label for a file opened from the workspace" })}
+      composerDraftTarget={props.composerDraftTarget}
+      modelLinkPath={props.linkPath}
     />
   );
 }
@@ -1266,6 +1271,7 @@ export default function FilePreviewPanel({
     relativePath !== null &&
     (binaryPreviewKind({ name: relativePath }) !== null ||
       officePreviewKind({ name: relativePath }) !== null ||
+      modelPreviewKind({ name: relativePath }) !== null ||
       isWorkspaceFontPreviewPath(relativePath));
   const isHtml = relativePath !== null && !isPdf && isBrowserPreviewFile(relativePath);
   const isHostFile =
@@ -1663,6 +1669,7 @@ export default function FilePreviewPanel({
               asset={{ environmentId, attachmentId: attachment.id }}
               htmlRender={attachment.htmlRender === true}
               threadRef={threadRef}
+              composerDraftTarget={composerDraftTarget}
             />
           ) : relativePath && isVideo && absolutePath ? (
             <WorkspaceVideoPreview
@@ -1740,6 +1747,8 @@ export default function FilePreviewPanel({
               absolutePath={absolutePath}
               workspaceRoot={cwd}
               name={relativePath.split(/[\\/]/).at(-1) || relativePath}
+              linkPath={relativePath}
+              composerDraftTarget={composerDraftTarget}
               workspaceMutationId={workspaceMutationId}
               refreshRevision={fileRefreshRevision}
             />

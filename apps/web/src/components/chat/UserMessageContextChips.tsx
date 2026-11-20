@@ -68,6 +68,8 @@ import {
   type ReviewCommentContext,
 } from "../../reviewCommentContext";
 import { TimelineRowCtx } from "./timelineRowContext";
+import { modelAnnotationFileTarget, openFileAtModelView } from "../files/modelAnnotations";
+import { Button } from "../ui/button";
 import { userMessageFileLabel } from "./TimelineUserMessageRow.logic";
 
 function UserMessageMentionChip(props: {
@@ -162,6 +164,7 @@ function UserMessagePreviewAnnotationDetails(props: {
   const messages = useMessages();
   const visibleElements = props.record.elements ?? [];
   const targetText = previewAnnotationTargetText(props.record, messages);
+  const modelTarget = ctx.threadRef ? modelAnnotationFileTarget(props.record.pageUrl) : null;
   return (
     <div className="max-w-full overflow-hidden rounded-lg border border-border/70 bg-background/70">
       {props.image?.previewUrl ? (
@@ -187,8 +190,22 @@ function UserMessagePreviewAnnotationDetails(props: {
         </div>
       )}
       <div className="min-w-0 px-3 py-2.5">
-        <div className="text-message-foreground text-xs font-medium">
-          {props.record.pageTitle?.trim() || props.record.pageUrl || gt("Preview annotation")}
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="min-w-0 flex-1 truncate text-message-foreground text-xs font-medium">
+            {props.record.pageTitle?.trim() || props.record.pageUrl || gt("Preview annotation")}
+          </div>
+          {modelTarget && ctx.threadRef ? (
+            <Button
+              size="micro"
+              variant="outline"
+              onClick={() => {
+                if (ctx.threadRef)
+                  openFileAtModelView(ctx.threadRef, modelTarget.path, modelTarget.view);
+              }}
+            >
+              <T>Open view</T>
+            </Button>
+          ) : null}
         </div>
         {props.record.comment ? (
           <div className="mt-1 whitespace-pre-wrap wrap-break-word text-sm">

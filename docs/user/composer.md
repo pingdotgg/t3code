@@ -433,3 +433,15 @@ including filenames or folders containing `#` or `?`.
 
 On mobile, select a PDF attachment or link to open it. iOS uses the native viewer;
 Android opens a compatible installed file viewer.
+
+## 3D models in the file viewer
+
+On web and desktop, STL, 3MF, and GLB files open as 3D views from the workspace, a file
+link, or an attachment. Drag to orbit, Shift-drag to pan, and scroll to zoom; **Top**,
+**Front**, **Iso**, and **Fit** reset the camera. STL files carry no units, so their size
+assumes millimeters. Files over 128 MB are not previewed, and 3MF print settings are not shown.
+
+Choose **Annotate** and click the model to pin numbered notes. **Send to chat** adds them to
+your draft as one preview annotation with a screenshot. **Open view** in its details reopens
+the file at the saved camera. When the file changes, earlier notes keep their text but no
+longer point at the surface. Mobile shows these annotations but does not render 3D models.
