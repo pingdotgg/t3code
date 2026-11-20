@@ -1012,27 +1012,6 @@ it.layer(
     }),
   );
 
-  it.effect("treats a thread as active if session membership changes during inspection", () =>
-    Effect.gen(function* () {
-      let managerRef: TerminalManager.TerminalManager | null = null;
-      const { manager } = yield* createManager(5, {
-        processTable: Effect.gen(function* () {
-          if (managerRef !== null) {
-            yield* managerRef.open(openInput({ terminalId: "raced", threadId: "thread-raced" }));
-          }
-          return [
-            { pid: 9000, ppid: 1, name: "zsh" },
-            { pid: 100, ppid: 9000, name: "zsh" },
-          ];
-        }),
-      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
-      managerRef = manager;
-      yield* manager.open(openInput({ terminalId: "initial", threadId: "thread-raced" }));
-
-      expect(yield* manager.hasActiveSubprocess({ threadId: "thread-raced" })).toBe(true);
-    }),
-  );
-
   it.effect.each([
     ["linux", ["SIGHUP", "SIGTERM"]],
     ["win32", ["SIGTERM"]],

@@ -3959,18 +3959,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             Effect.map((result) => result.hasRunningSubprocess),
             Effect.orElseSucceed(() => session.hasRunningSubprocess),
           );
-    if (Option.isSome(yield* Effect.findFirst(running, isActive))) return true;
-    const latestRunning = (yield* sessionsForThread(input.threadId)).filter(
-      (session): session is TerminalSessionState & { pid: number } =>
-        session.status === "running" && Number.isInteger(session.pid),
-    );
-    return (
-      latestRunning.length !== running.length ||
-      latestRunning.some(
-        (session, index) =>
-          session.terminalId !== running[index]?.terminalId || session.pid !== running[index]?.pid,
-      )
-    );
+    return Option.isSome(yield* Effect.findFirst(running, isActive));
   });
 
   return TerminalManager.of({
